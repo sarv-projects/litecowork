@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:litecowork:schema:domain-event:v1",
+  "title": "LiteCowork DomainEvent v1",
+  "type": "object",
+  "required": ["event_id", "workspace_id", "entity_type", "entity_id", "origin_runtime_id", "origin_sequence", "hlc_timestamp", "correlation_id", "schema_version", "type", "payload", "recorded_at", "payload_digest"],
+  "properties": {
+    "event_id": {"type": "string", "minLength": 1},
+    "workspace_id": {"type": "string", "minLength": 1},
+    "entity_type": {"type": "string", "minLength": 1},
+    "entity_id": {"type": "string", "minLength": 1},
+    "origin_runtime_id": {"type": "string", "minLength": 1},
+    "origin_sequence": {"type": "integer", "minimum": 1},
+    "entity_revision": {"type": ["integer", "null"], "minimum": 1},
+    "hlc_timestamp": {"type": "string", "minLength": 1},
+    "correlation_id": {"type": "string", "minLength": 1},
+    "causation_id": {"type": ["string", "null"]},
+    "schema_version": {"type": "integer", "const": 1},
+    "type": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]+\\.v[0-9]+$"},
+    "payload": {"type": "object"},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "payload_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"}
+  },
+  "additionalProperties": false
+}

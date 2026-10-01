@@ -1,4 +1,4 @@
-# AgentCowork Architecture
+# LiteCowork Architecture
 
 **Status:** vNext target architecture. This file is the current system authority.
 Supporting documents may add detail but must not contradict it. Decision records in
@@ -8,7 +8,7 @@ for historical reference only.
 
 ## 1. Product definition
 
-AgentCowork is a **durable execution workspace for AI agents**. Its central object is
+LiteCowork is a **durable execution workspace around external agents**. Its central object is
 the user's durable Task, not a model, agent, browser, computer, MCP server, or device.
 
 ```text
@@ -18,7 +18,7 @@ User intent → Conversation → durable Task
 ```
 
 A compatible agent can be a worker; capabilities can be discovered and activated as
-needed; any AgentCowork Runtime can host an Attempt; compatible environments can be
+needed; any LiteCowork Runtime can host an Attempt; compatible environments can be
 selected for that Attempt; and other agents can collaborate. None of these owns the
 user's Task.
 
@@ -27,17 +27,17 @@ user's Task.
 1. **Task truth survives replaceable workers.** A Task is durable; an AgentSession and
    an Attempt are replaceable. Correctness never depends on preserving a private agent
    transcript or teleporting a live process.
-2. **External agents own reasoning.** AgentCowork stores and presents plans, checks
+2. **External agents own reasoning.** LiteCowork stores and presents plans, checks
    structure and policy, and coordinates execution. It does not provide a second
    reasoning loop, planner, or hidden Goal Keeper.
 3. **Keep identities distinct.** Task, Step, Attempt, Agent, AgentSession, Runtime,
    Environment, Capability, Effect, Artifact, Evidence, and ExecutionLease are separate
    concepts with separate owners.
 4. **Govern only mediated effects.** Core Trust, authorization tickets, audit, and
-   verification govern calls routed through AgentCowork. An agent's native tools and
+   verification govern calls routed through LiteCowork. An agent's native tools and
    effects remain under that agent's policy and carry reported or observed provenance;
-   AgentCowork must not claim a Core receipt for them.
-5. **Discover progressively.** Workers receive a small Cowork Gateway surface and
+   LiteCowork must not claim a Core receipt for them.
+5. **Discover progressively.** Workers receive a small LiteCowork Gateway surface and
    discover only the capability or skill needed. An installed catalog is not a grant.
 6. **Replicate domain truth, not databases.** Runtimes exchange versioned domain events,
    immutable artifacts, resource manifests, and fenced ownership. They do not sync
@@ -48,6 +48,9 @@ user's Task.
 8. **Completion requires evidence.** Worker self-report is a proposal. Completion is
    determined from required outputs, effect reconciliation, approvals, and acceptance
    evidence.
+9. **Direct attachment cannot bypass Core guarantees.** Use direct capability tools only
+   when the provider can enforce the required grant, Effect, idempotency, and fencing
+   contract. Otherwise route consequential calls through the LiteCowork Gateway.
 
 ## 3. Canonical concepts and ownership
 
@@ -61,7 +64,7 @@ user's Task.
 | Attempt | One worker's execution of one Step, admitted and tracked by the Task Runtime. |
 | AgentProfile / AgentBinding | Discovered agent and its negotiated host binding, owned by Agent Fabric. |
 | AgentSession | Agent-specific reasoning session; optional native session handles are optimizations, not Task truth. |
-| Runtime | A running `agentcoworkd` instance, with identity, role, presence, and resource offers. |
+| Runtime | A running `litecoworkd` instance, with identity, role, presence, and resource offers. |
 | Environment | The actual place an Attempt acts: local workspace, worktree, container, VM, browser, desktop, or remote sandbox. |
 | CapabilityRef | Reference to a capability package/service/version, resolved through the independent LitePSM ecosystem. |
 | CapabilityGrant | Task/Attempt-scoped authorization for an exact capability and operation. |
@@ -75,13 +78,13 @@ and environment snapshots may accelerate resume but are never required for corre
 
 ## 4. Core and adapter boundary
 
-### AgentCowork Core owns
+### LiteCowork Core owns
 
 - Conversation identity and the durable Task model: revisions, plan/step projection,
   Attempts, scheduling admission, budgets, cancellation, and ResumePackets.
 - Agent Fabric contracts and host-created delegation lifecycle, without taking over an
   agent's internal subagent system or reasoning.
-- Cowork Capability Gateway, CapabilityBroker, scoped grants, activations, and LitePSM
+- LiteCowork Capability Gateway, CapabilityBroker, scoped grants, activations, and LitePSM
   client integration.
 - Runtime identity, pairing, presence, event/artifact replication, execution leases,
   fencing, handoff, and failover coordination.
@@ -106,30 +109,32 @@ work, not break Task durability or runtime coordination.
 
 ### LitePSM is independent
 
-LitePSM owns package ecosystem truth and lifecycle: discovery, resolution, install,
-update, package verification, provider supervision, and removal across MCP servers,
-Agent Skills, Agent Plugins, Connectors, Agents, and future package types. AgentCowork
-owns only task-specific references, grants, activations, and offers. A listing is not
-trusted code, an installed package, an account connection, or an authorization grant.
+LitePSM owns package ecosystem truth and lifecycle. LiteCowork owns only task-specific
+references, grants, activations, and offers. A listing is not trusted code, an installed
+package, an account connection, or an authorization grant. The selected LitePSM service
+base URL is `https://litepsm.sarveshbh-2022.workers.dev/`. Its API, authentication,
+manifest, package taxonomy, and install/activation contract remain owned by LitePSM and
+are deliberately not specified here.
 
-## 5. Cowork Capability Gateway
+## 5. LiteCowork Capability Gateway
 
 Every controlled worker receives one small permanent MCP gateway, not the entire
 installed tool inventory. The initial primitive family is:
 
 ```text
-cowork.capabilities.search / describe / activate / invoke / list_active
-cowork.skills.search / load
-cowork.agents.search / delegate / status / message / cancel
-cowork.task.read / update_plan / finish
-cowork.artifacts.read / publish
-cowork.user.ask
+litecowork.capabilities.search / describe / activate / invoke / list_active
+litecowork.skills.search / load
+litecowork.agents.search / delegate / status / message / cancel
+litecowork.task.read / update_plan / finish
+litecowork.artifacts.read / publish
+litecowork.user.ask
 ```
 
-Resolve exact package version and digest through LitePSM, check binding compatibility,
-scope, policy, and budget, then create a task-scoped grant. If the agent supports dynamic
-MCP attachment, attach the native tools. Otherwise proxy the operation through the
-Gateway. If attachment can only change at a session boundary, use the proxy for the
+Resolve an exact package version and digest through LitePSM, check binding compatibility,
+scope, policy, and budget, then create a task-scoped grant. Direct attachment is allowed
+only when the provider can enforce the required grant and Effect/fence contract. Route
+consequential calls through the Gateway when those guarantees cannot be enforced on the
+direct path. If attachment can change only at a session boundary, use the proxy for the
 current turn and attach natively at the next safe boundary. Never rewrite a discovered
 agent's private configuration or copy host skills into its native directories.
 
@@ -147,11 +152,11 @@ none is universal.
 The lead agent proposes decomposition and worker choice. Core checks eligibility,
 permissions, placement, isolation, budget, concurrency, depth, and deadline, then creates
 child Attempts. Native subagents stay agent-owned and are only observed when the agent
-reports them; host delegation creates durable AgentCowork Attempts.
+reports them; host delegation creates durable LiteCowork Attempts.
 
-### AgentCowork Runtime and Mesh
+### LiteCowork Runtime and Mesh
 
-`agentcoworkd` is headless and uses the same contracts on a workstation, home server,
+`litecoworkd` is headless and uses the same contracts on a workstation, home server,
 VPS, container, or managed cloud. A Runtime may provide workspace-hub, executor,
 resource-node, channel-host, trigger-host, and operator-endpoint roles. A standalone
 install combines the roles it needs. The Workspace Hub coordinates ownership and
@@ -164,7 +169,7 @@ initial system; do not build consensus/HA algorithms without a demonstrated need
 
 ### Environment Fabric
 
-Runtime means the AgentCowork daemon. Environment means the execution substrate. A
+Runtime means the LiteCowork daemon. Environment means the execution substrate. A
 Runtime can host or reach multiple Environments. Providers expose probe, create, attach,
 execute, resource exposure, optional checkpoint/restore, and destroy operations. Initial
 provider candidates include local workspace, Git worktree, container, VM, remote machine,
@@ -235,12 +240,12 @@ provenance. Library is a user-facing projection, and saving or publishing is exp
 Evidence distinguishes:
 
 - **REPORTED:** a worker claims an action or result.
-- **OBSERVED:** AgentCowork or a provider saw a response or state change.
+- **OBSERVED:** LiteCowork or a provider saw a response or state change.
 - **VERIFIED:** a suitable independent check confirmed the required postcondition.
 
 Prefer deterministic checks (schema, hash, tests, provider reconciliation, structured
 postconditions); use semantic/model review only when criteria require judgment. A worker
-calling `cowork.task.finish` proposes completion. The Task Runtime checks required
+calling `litecowork.task.finish` proposes completion. The Task Runtime checks required
 outputs, active children, approvals, ambiguous Effects, and acceptance evidence before
 marking the Task complete. Other outcomes include verifying, needs-user, incomplete, and
 blocked.
@@ -249,10 +254,10 @@ blocked.
 
 Keep these protocols separate:
 
-1. **Operator:** desktop/web/mobile/CLI to `agentcoworkd`.
+1. **Operator:** desktop/web/mobile/CLI to `litecoworkd`.
 2. **Mesh:** Runtime to Runtime identity, sync, presence, leases, and remote invocation.
 3. **Agent:** Runtime to external agent over ACP, A2A, SDK/API, or CLI adapter.
-4. **Capability:** Agent to Cowork Gateway MCP, Broker, LitePSM, or provider.
+4. **Capability:** Agent to LiteCowork Gateway MCP, Broker, LitePSM, or provider.
 5. **Environment:** Attempt to EnvironmentProvider.
 6. **Human channels:** Telegram, Slack, Discord, Teams, email, and webhook adapters feed
    authenticated messages into the same Conversation/Task model; they do not own a
@@ -283,9 +288,9 @@ replaceable parts rather than implementing every domain.
 
 ## 13. Build sequence
 
-1. Local `agentcoworkd`, Operator surface, durable Conversation/Task, and one qualified
+1. Local `litecoworkd`, Operator surface, durable Conversation/Task, and one qualified
    external AgentAdapter.
-2. Cowork Gateway, LitePSM client, one capability, scoped grant, Effect/Artifact record,
+2. LiteCowork Gateway, LitePSM client, one capability, scoped grant, Effect/Artifact record,
    and verifier; kill and replace the agent session from a portable ResumePacket.
 3. Heterogeneous host delegation with bounded TaskPacket and ResultEnvelope.
 4. Two Runtimes, event/artifact replication, execution leases, fencing, and explicit
@@ -296,7 +301,14 @@ replaceable parts rather than implementing every domain.
 Do not build cloud continuation, messaging, broad domain providers, or elaborate
 Workbench before the preceding vertical slice proves its contracts.
 
-## 14. Initial implementation shape
+## 14. Contract map and authority
+
+[`docs/COVERAGE-MATRIX.md`](docs/COVERAGE-MATRIX.md) indexes the complete HLD, LLD,
+API, persistence, security, UI, motion, operations, and acceptance contracts. Each
+concern has one normative document; other documents link to it. The source reconciliation
+and dispositions are recorded in [`docs/SOURCE-RECONCILIATION.md`](docs/SOURCE-RECONCILIATION.md).
+
+## 15. Initial implementation shape
 
 Start as one headless Runtime plus an Operator application and a small set of domain
 modules. A candidate source layout is:

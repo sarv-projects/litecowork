@@ -1,36 +1,100 @@
 # Failure and Recovery
 
-Recovery preserves Task truth and avoids repeating uncertain external effects. A
-portable Task checkpoint is authoritative; a process, AgentSession, and Environment
-snapshot are replaceable.
-
 ## Recovery ladder
 
-1. Reconcile every ambiguous Effect.
-2. Retry the same safe, idempotent operation with the same idempotency identity.
-3. Resume the Attempt from the latest portable ResumePacket.
-4. Replace the AgentSession while keeping Task and Attempt provenance explicit.
-5. Create a new Attempt for the same Step.
-6. Ask the lead agent for a revised PlanRevision.
-7. Ask the user or stop.
+Always prefer the smallest safe recovery:
 
-Repeated failure with no state/evidence change must stop rather than loop indefinitely.
+```text
+0 reconcile ambiguous Effect
+1 retry same safe operation with same idempotency identity
+2 resume Attempt from portable/native checkpoint
+3 replace AgentSession
+4 create new Attempt for same Step
+5 ask lead agent for revised PlanRevision
+6 ask user
+```
 
-## Effect uncertainty
+Stop when the same failure signature recurs with no meaningful new state/evidence and configured recovery budget is exhausted.
 
-If an operation starts but its response is lost, mark the Effect `AMBIGUOUS`; do not
-blindly repeat it. Reconcile through the provider's state, idempotency key, message ID,
-artifact digest, or another suitable observation. Resolve as observed/verified, safe to
-retry, or needs-user. An agent's statement alone is `REPORTED` evidence.
+## Failure signature
 
-## Continuation classes
+```text
+FailureSignature = hash(
+  component_kind,
+  error_code,
+  operation,
+  capability/provider,
+  target_class,
+  normalized_root_cause
+)
+```
 
-- `SAFE_PORTABLE`: only mediated/fenced or disposable-isolated consequential effects;
-  automatic continuation can be allowed.
-- `REPLAYABLE`: read-only or provably idempotent operations; reconcile before retry.
-- `HANDOFF_REQUIRED`: native/unfenced effects exist; require explicit user/agent handoff.
-- `LOCAL_BOUND`: a required device/session/resource is available only on a missing local
-  Runtime; wait for it or offer a separate user-directed alternative.
+Do not include volatile timestamps/random IDs.
 
-Eligibility also requires compatible agent and Environment offers, available Task inputs,
-proper secret placement, policy approval, reconciled effects, and remaining budget.
+## Failure matrix
+
+| Component | Failure | Detection | Default response |
+|---|---|---|---|
+| Lead AgentSession | process/session lost | adapter event/stream EOF | replace session from ResumePacket; new Attempt if ownership changed |
+| Child agent | lost/fails | adapter event | retry child independently or let lead revise plan |
+| Runtime | offline | presence + lease expiry | reconcile Effects; eligible failover only |
+| Environment | provisioning fail | provider error | alternate provider/runtime or fail Step |
+| Environment | corrupted/unhealthy | health/test | checkpoint if safe, recreate, new Attempt |
+| MCP/provider | process dies | activation health/invoke error | restart activation; retry read/idempotent operations only |
+| LitePSM | unavailable | client error | existing locked activations continue; new discovery waits/fails clearly |
+| Secret/OAuth | revoked/expired | auth error | WAITING_RESOURCE; re-auth; new SecretLease |
+| BlobStore | unavailable | storage error | pause Artifact publication; retry; never create version referencing missing blob |
+| StateStore | unavailable | storage error | stop authoritative mutations; UI may show cached read-only state |
+| Mesh partition | transport/heartbeat | retain local safe work under policy; no conflicting new cross-runtime lease |
+| Hub unavailable | failed calls | cross-device coordination pauses; local policy governs existing attempts |
+| Event projection | bug/corruption | checksum/invariant | rebuild projection from journal |
+| External effect | timeout after send | missing definitive response | mark AMBIGUOUS; reconcile before retry |
+| Verifier | crash | run timeout | retry verifier or alternate verifier; Task remains VERIFYING |
+| Approval channel | unavailable | delivery error | approval stays PENDING; use another eligible surface |
+| Capability update | incompatible | health/resolve | in-flight lock remains; rollback/choose old version for new activation if available |
+
+## Retry classes
+
+### Safe automatic retry
+- read-only operation
+- local deterministic computation
+- failed-before-send confirmed
+- idempotent provider operation with stable idempotency key
+
+### Reconcile first
+- email/message send
+- payment/order mutation
+- publish/deploy
+- delete/move external resource
+- calendar/CRM update if provider acknowledgement uncertain
+
+### Never auto-retry without user/policy
+- destructive operation without idempotency/reconciliation support
+- native unfenced side effect after runtime loss
+- action whose semantic target may have changed since checkpoint
+
+## Recovery budgets
+
+Every Task may define:
+
+```text
+RecoveryBudget {
+  max_same_signature_retries
+  max_step_attempts
+  max_plan_revisions_due_to_failure
+  max_recovery_wall_time
+}
+```
+
+Budget exhaustion produces BLOCKED/NEEDS_USER with failure summary.
+
+## Split-brain defense
+
+- all Core-mediated conflicting mutations validate active fencing token.
+- new lease epoch supersedes all older epochs.
+- stale runtime reconnect cannot mutate using cached authority.
+- native external effects outside Core are classified HANDOFF_REQUIRED/LOCAL_BOUND as appropriate and are not falsely fenced.
+
+## Projection recovery
+
+Durable event journal is source of truth for replayable projections. Projection schema changes may rebuild from event stream plus immutable records/blobs.

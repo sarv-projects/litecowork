@@ -1,0 +1,13 @@
+# Historical predecessor material (kept locally, never part of the new source tree)
+archive_code/
+archives_docs/
+ARCHIVE/
+archives/
+archive/
+
+# Local/editor output
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

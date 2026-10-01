@@ -10,10 +10,10 @@ removal form a separate ecosystem lifecycle from task-specific authorization and
 
 ## Decision
 
-LitePSM owns package/ecosystem truth. AgentCowork owns CapabilityRefs, Offers, Grants,
+LitePSM owns package/ecosystem truth. LiteCowork owns CapabilityRefs, Offers, Grants,
 and Activations scoped to a Task/Attempt, and integrates through a LitePSM client.
 
 ## Consequences
 
 Catalog discovery and package installation grant no execution authority. Active Tasks
-pin exact versions/digests. AgentCowork does not build a second marketplace.
+pin exact versions/digests. LiteCowork does not build a second marketplace.

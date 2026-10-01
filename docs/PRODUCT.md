@@ -1,57 +1,97 @@
-# Product Shape
+# Product Contract
 
-This document details the user-facing contract defined by
-[ARCHITECTURE.md](../ARCHITECTURE.md) §11.
+## Promise
 
-## Navigation
+LiteCowork lets a user describe work once and have the Task survive agent replacement, process failure, device changes and capability changes while remaining understandable and controllable.
 
-Keep the primary navigation to:
+## Core user expectations
 
-- **Home** — one composer for questions and tasks, plus recent work.
-- **Tasks** — durable outcomes, current Steps/Attempts, blockers, and results.
-- **Library** — explicit saved/uploaded/imported/linked resources and generated artifacts.
-- **Automations** — triggers that create ordinary Tasks under a stated execution policy.
-- **Discover** — agents and LitePSM-backed capabilities, skills, connectors, and plugins.
+1. Simple questions remain conversation; outcome-oriented work becomes durable Task state.
+2. User does not need to understand MCP, ACP, providers or runtime topology for ordinary use.
+3. User can inspect internals when desired through Inspector.
+4. Work may continue in cloud only when inputs, secrets, capabilities and effect safety permit it.
+5. LiteCowork never claims completion solely because a worker says "done".
+6. LiteCowork does not fake visual interaction when structured/API capabilities were used.
+7. Connected capabilities are discovered progressively instead of flooding every agent context.
+8. Parallel/heterogeneous agents may collaborate but lead reasoning remains agent-owned.
+9. User can steer/cancel and see what is blocked or waiting for them.
+10. Reusable procedures can be proposed as Skills and then become LitePSM-managed packages.
 
-Do not make Agents, Models, MCP, Plugins, Providers, Environments, Memory, or Workflows
-default top-level destinations. Show advanced controls contextually or in Settings and
-Inspector surfaces.
+## Primary navigation
 
-## Composer and durable work
+```text
+Home
+Tasks
+Library
+Automations
+Discover
+```
 
-The same composer accepts a question or an outcome request. A short answer need not
-create a Task. A durable, multi-step outcome materializes a Task under the current
-Conversation. The UI should make that transition understandable without requiring a
-mode toggle.
+Technical surfaces such as Agents, MCP, Providers, Environments, Runtime details and protocols live under Settings/Inspector/Discover details.
 
-The attachment menu supports files, folders, screenshots, Library resources, and
-connected apps. Connection setup and per-Task capability grants are separate actions.
+## Conversation and Task behavior
 
-## Task and Live Desk
+The composer accepts questions and outcomes in the same place. Ordinary conversation
+does not need a Task. A clear request for durable, outcome-oriented work may materialize
+a Task; an explicit user request always may. The conversational lead may request
+materialization, but ambiguous intent is clarified instead of being sent through a
+separate hidden planner. A committed Task is linked to the originating Conversation and
+message. See `EXPERIENCE.md` and `FLOWS.md` for the UI and command sequence.
 
-Show goal, status, current observable work, Runtime location, artifact results, and any
-decision needed from the user. Use ordinary words such as “This computer”, “Cloud”,
-“Waiting for your laptop”, and “Needs you”. Agent identity and protocol details belong in
-an optional Inspector.
+Conversation preserves the human-facing exchange. Task records the durable work and
+requirements. The user can steer, revise, pause, cancel, or inspect a Task without
+depending on one agent transcript. A Task that continues on another Runtime starts a new
+Attempt from portable state; no process migration is promised.
 
-Visual activity must correspond to persisted Task/Step/Attempt or verifier state. Only
-show a worker lane after an Attempt exists; only show a capability as used after a real
-invocation; only show an Artifact after its version exists; only show a verified mark
-after verification completed. Handoffs show checkpointing and a new Runtime taking
-ownership, never a process teleport.
+## Runtime choices
 
-## Library and Workbench
+LiteCowork supports a local-only installation and can connect to a user-controlled or
+managed always-available Runtime. Local and remote Runtime instances use the same domain
+contracts. Cross-device availability is conditional on replicated inputs, eligible
+agents/capabilities, secrets, Environment support, policy, budget, and safe Effects. The
+UI names the actual blocker rather than presenting cloud continuation as unconditional.
 
-Library is a projection over artifacts and explicit user resources, not a cognitive
-memory engine. Saving an Artifact to Library is an explicit action.
+The initial product is a single-user Workspace coordinated by one authoritative Hub.
+Additional Runtimes may execute eligible Attempts. Multi-tenant collaboration, automatic
+Hub consensus, and transparent migration of native processes are not v1 promises.
 
-Workbench renders the current artifact or a provider's real UI. It may host document,
-spreadsheet, slide, PDF, image, code/diff, browser, terminal, or MCP app surfaces as
-capabilities are integrated. Do not simulate another product's GUI when no such surface
-is actually running.
+## Capability and trust expectations
 
-## Motion and accessibility
+Discover is the user-facing path to compatible agents and external capabilities. LitePSM
+is the selected external package ecosystem; LiteCowork adds Task-scoped compatibility,
+grants, activation, effect handling, and verification. The selected base URL and deferred
+integration details are in `CAPABILITY-FABRIC.md`. Installing or connecting something
+does not by itself authorize it for every Task.
 
-Motion should explain a real state transition and remain useful with reduced motion
-enabled. Reduced-motion behavior can use state changes and short fades without changing
-the underlying information or available actions.
+The user sees the requested operation and scope when approval is needed. A message
+channel may start or steer permitted work, but a weakly authenticated channel cannot
+approve a high-impact action. Credentials are not copied to another Runtime without
+explicit placement and secret-lease policy.
+
+## Output and completion expectations
+
+Providers may create documents, spreadsheets, code changes, research, or other
+domain-specific outputs. LiteCowork owns Artifact identity, version, provenance, and
+availability. Publishing/saving to Library is explicit. A completion label means the
+Task's mandatory criteria met their declared evidence requirements; a worker's
+completion claim alone is never enough.
+
+## Product limits
+
+LiteCowork reports what it can observe. It does not claim control over an external
+agent's private tools, credentials, hidden usage, or unmediated side effects. Where an
+action cannot be fenced or reconciled, continuation may require a handoff or user
+decision. Those limits are shown as state, not hidden behind a success animation.
+
+## Product non-goals for Core
+
+LiteCowork Core is not:
+- a universal model router
+- a cognitive memory engine
+- an Office suite
+- a browser-agent implementation
+- a computer-use model
+- a code intelligence platform
+- a web-search engine
+- a second plugin marketplace
+- a general workflow-engine competitor

@@ -5,7 +5,7 @@
 
 ## Context
 
-AgentCowork needs durable outcomes across replaceable agents, processes, devices, and
+LiteCowork needs durable outcomes across replaceable agents, processes, devices, and
 execution substrates. A host-owned reasoning loop would make the product another agent
 framework and bind Task correctness to one implementation.
 

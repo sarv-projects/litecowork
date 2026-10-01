@@ -5,13 +5,13 @@
 
 ## Context
 
-Local, VPS, and cloud deployments should run the same headless AgentCowork Runtime, but
+Local, VPS, and cloud deployments should run the same headless LiteCowork Runtime, but
 the place where one Attempt acts may be a separate worktree, container, VM, browser, or
 desktop session.
 
 ## Decision
 
-Runtime identifies a running `agentcoworkd` and its Mesh identity/roles. Environment
+Runtime identifies a running `litecoworkd` and its Mesh identity/roles. Environment
 identifies the execution substrate selected for an Attempt. Cloud continuation belongs
 to the overall Runtime model and uses a new Attempt after handoff/recovery.
 
