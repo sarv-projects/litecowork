@@ -22,15 +22,21 @@ ownership and fields are in `DATA-MODEL.md`; legal transitions are in
 WorkspaceId ConversationId MessageId TaskId TaskSpecRevisionId PlanRevisionId
 StepId AttemptId AgentProfileId AgentBindingId AgentSessionId RuntimeId
 EnvironmentId EnvironmentCheckpointId CapabilityId CapabilityGrantId
-CapabilityActivationId ArtifactId ArtifactVersionId EffectId EvidenceId
+CapabilityActivationId ArtifactId EffectId EvidenceId
 VerificationRunId ApprovalId AutomationId OccurrenceId ExecutionLeaseId
-HandoffId ConnectionId ChannelBindingId ChannelEventReceiptId PrincipalId SecretRefId
+HandoffId ConnectionId ChannelBindingId PrincipalId SecretRefId
 SecretLeaseId AuditRecordId EventId RequestId CorrelationId
 ```
 
 ## Status enums
 
 ```text
+WorkspaceStatus = ACTIVE | ARCHIVED
+ReplicationPolicy = LOCAL_ONLY | METADATA_ONLY | ACTIVE_TASK_INPUTS | SELECTED_FOLDERS | FULL_WORKSPACE
+AgentSessionKind = LEAD_PLANNING | STEP_EXECUTION
+ChannelEventKind = INBOUND | EDIT | DELETE
+ChannelEventReceiptStatus = RECEIVED | PROCESSING | ACCEPTED | REJECTED | FAILED
+
 TaskStatus = DRAFT | READY | RUNNING | WAITING_USER | BLOCKED | VERIFYING |
   NEEDS_USER | INCOMPLETE | COMPLETED | FAILED | CANCEL_REQUESTED | CANCELLED
 
@@ -46,16 +52,20 @@ RuntimeAvailability = PAIRING | ONLINE | DEGRADED | DRAINING | OFFLINE | REVOKED
 EnvironmentStatus = NEW | PROVISIONING | READY | BUSY | CHECKPOINTING |
   SUSPENDED | FAILED | DESTROYING | DESTROYED
 CapabilityGrantStatus = ACTIVE | REVOKED | EXPIRED
-CapabilityActivationStatus = STARTING | HEALTHY | DEGRADED | FAILED | STOPPING | STOPPED
+CapabilityActivationStatus = STARTING | ACTIVE | FAILED | STOPPING | STOPPED
+ActivationHealth = HEALTHY | DEGRADED | UNHEALTHY | UNKNOWN
+ArtifactLibraryStatus = TRANSIENT | SAVED | ARCHIVED
 ApprovalStatus = PENDING | APPROVED | DENIED | EXPIRED | CANCELLED
 AutomationStatus = ENABLED | PAUSED | DISABLED
 OccurrenceStatus = PENDING | CLAIMED | STARTED | COMPLETED | SKIPPED | FAILED
+ClaimEpoch = monotonically increasing u64 per claimable receipt/occurrence
 LeaseStatus = ACTIVE | RELEASING | RELEASED | EXPIRED | REVOKED
 FailoverClass = SAFE_PORTABLE | REPLAYABLE | HANDOFF_REQUIRED | LOCAL_BOUND
 EvidenceLevel = REPORTED | OBSERVED | VERIFIED
 EffectState = PROPOSED | STARTED | ACKNOWLEDGED | RECONCILING | OBSERVED |
   VERIFIED | FAILED | AMBIGUOUS
 
+SecretLeaseStatus = ACTIVE | REVOKED | EXPIRED
 ConnectionStatus = CONNECTING | CONNECTED | DEGRADED | REAUTH_REQUIRED | DISCONNECTED
 ChannelBindingStatus = ACTIVE | DEGRADED | REVOKED
 HandoffPhase = REQUESTED | DRAINING_SOURCE | CHECKPOINTING | REPLICATING |
@@ -83,6 +93,17 @@ ResourceRef {
 Use a revision-pinned reference when correctness depends on exact input. V1 schemes are
 listed in `DATA-MODEL.md`. A local absolute path is never presumed to exist on another
 Runtime.
+
+## Conversation content
+
+```text
+MessageContentBlock =
+  TEXT { text: string }
+  | RESOURCE { resource_ref: ResourceRef, display_name?: string }
+```
+
+Content blocks are ordered and immutable after message creation. Binary content is
+always carried by a ResourceRef; the message body never embeds arbitrary binary data.
 
 ## Referenced values
 
@@ -115,6 +136,12 @@ CapabilityRequirement {
   semantic_requirement: string
   operation_ids: string[]
   resource_scope?: ResourceScope
+}
+
+ResourceScope {
+  resource_refs: ResourceRef[]
+  operation_ids: string[]
+  constraints: JsonObject
 }
 ```
 
@@ -210,6 +237,7 @@ successful reconciliation is also required.
 ```text
 AssuranceLevel = VIEW_ONLY | STEER_SAFE | APPROVE_SAFE |
   APPROVE_SENSITIVE | LOCAL_STRONG
+ChannelAction = VIEW | STEER | APPROVE_SAFE | APPROVE_SENSITIVE
 ```
 
 Domain errors contain a typed code, safe message, retryability, correlation ID, and
@@ -218,10 +246,14 @@ resource existence.
 
 ```text
 NOT_FOUND UNAUTHORIZED FORBIDDEN POLICY_DENIED APPROVAL_REQUIRED
+WORKSPACE_ARCHIVED WORKSPACE_NOT_QUIESCENT STALE_WORKSPACE_VERSION
 INVALID_ARGUMENT INVALID_TRANSITION STALE_VERSION STALE_SPEC_REVISION CONFLICT
+ARTIFACT_ARCHIVED INVALID_ARTIFACT_TRANSITION
 TASK_TERMINAL INVALID_PLAN PLAN_CYCLE STEP_NOT_READY LEASE_CONFLICT STALE_FENCE
 PLACEMENT_UNAVAILABLE RUNTIME_UNAVAILABLE ENVIRONMENT_UNAVAILABLE
 CAPABILITY_UNAVAILABLE CAPABILITY_UNHEALTHY SECRET_UNAVAILABLE RESOURCE_UNAVAILABLE
+AUTOMATION_NOT_FOUND AUTOMATION_REVISION_NOT_FOUND AUTOMATION_DISABLED INVALID_TRIGGER
+STALE_CLAIM_EPOCH MISFIRE_LIMIT_EXCEEDED OCCURRENCE_CONFLICT
 EFFECT_AMBIGUOUS EFFECT_RECONCILIATION_REQUIRED VERIFICATION_FAILED RATE_LIMITED
 TIMEOUT DEPENDENCY_UNAVAILABLE UNSUPPORTED_VERSION INTEGRITY_FAILURE INTERNAL
 ```

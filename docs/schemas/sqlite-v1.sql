@@ -4,10 +4,12 @@ CREATE TABLE workspaces (
   workspace_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   owner_principal_id TEXT NOT NULL,
-  replication_policy TEXT NOT NULL,
+  replication_policy TEXT NOT NULL CHECK (replication_policy IN ('LOCAL_ONLY', 'METADATA_ONLY', 'ACTIVE_TASK_INPUTS', 'SELECTED_FOLDERS', 'FULL_WORKSPACE')),
+  replication_scope_refs_json TEXT NOT NULL DEFAULT '[]',
   hub_runtime_id TEXT,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'ARCHIVED')),
   created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1
 );
 
@@ -15,7 +17,6 @@ CREATE TABLE conversations (
   conversation_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
   title TEXT,
-  status TEXT NOT NULL,
   created_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1
 );
@@ -24,7 +25,7 @@ CREATE TABLE conversation_messages (
   message_id TEXT PRIMARY KEY,
   conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id),
   author_json TEXT NOT NULL,
-  role TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('USER', 'AGENT', 'SYSTEM_NOTICE', 'CHANNEL')),
   content_json TEXT NOT NULL,
   resource_refs_json TEXT NOT NULL DEFAULT '[]',
   source_channel_ref_json TEXT,
@@ -38,14 +39,16 @@ CREATE TABLE tasks (
   conversation_id TEXT REFERENCES conversations(conversation_id),
   current_spec_revision INTEGER NOT NULL,
   current_plan_revision INTEGER,
-  status TEXT NOT NULL,
-  lead_attempt_id TEXT,
-  priority TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('DRAFT', 'READY', 'RUNNING', 'WAITING_USER', 'BLOCKED', 'VERIFYING', 'NEEDS_USER', 'INCOMPLETE', 'COMPLETED', 'FAILED', 'CANCEL_REQUESTED', 'CANCELLED')),
+  lead_agent_binding_id TEXT REFERENCES agent_bindings(agent_binding_id) DEFERRABLE INITIALLY DEFERRED,
+  priority TEXT NOT NULL CHECK (priority IN ('LOW', 'NORMAL', 'HIGH')),
   created_by_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   completed_at TEXT,
-  version INTEGER NOT NULL DEFAULT 1
+  version INTEGER NOT NULL DEFAULT 1,
+  FOREIGN KEY(task_id, current_spec_revision) REFERENCES task_spec_revisions(task_id, revision) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(task_id, current_plan_revision) REFERENCES plan_revisions(task_id, revision) DEFERRABLE INITIALLY DEFERRED
 );
 CREATE INDEX idx_tasks_workspace_status ON tasks(workspace_id, status, updated_at DESC);
 
@@ -63,6 +66,8 @@ CREATE TABLE task_spec_revisions (
   budget_json TEXT,
   deadline TEXT,
   source_message_refs_json TEXT NOT NULL DEFAULT '[]',
+  placement_preference TEXT NOT NULL,
+  preferred_lead_agent_binding_id TEXT REFERENCES agent_bindings(agent_binding_id),
   authored_by_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (task_id, revision)
@@ -72,11 +77,15 @@ CREATE TABLE plan_revisions (
   task_id TEXT NOT NULL REFERENCES tasks(task_id),
   revision INTEGER NOT NULL,
   task_spec_revision INTEGER NOT NULL,
-  produced_by_attempt TEXT NOT NULL,
+  produced_by_agent_session_id TEXT NOT NULL,
+  produced_by_attempt_id TEXT,
   steps_json TEXT NOT NULL,
   reason_for_revision TEXT,
   created_at TEXT NOT NULL,
-  PRIMARY KEY (task_id, revision)
+  PRIMARY KEY (task_id, revision),
+  FOREIGN KEY(task_id, task_spec_revision) REFERENCES task_spec_revisions(task_id, revision) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(task_id, produced_by_agent_session_id) REFERENCES agent_sessions(task_id, agent_session_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(task_id, produced_by_attempt_id, produced_by_agent_session_id) REFERENCES agent_sessions(task_id, attempt_id, agent_session_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE steps (
@@ -89,11 +98,14 @@ CREATE TABLE steps (
   dependencies_json TEXT NOT NULL DEFAULT '[]',
   required_capabilities_json TEXT NOT NULL DEFAULT '[]',
   acceptance_criteria_json TEXT NOT NULL DEFAULT '[]',
-  status TEXT NOT NULL,
-  current_attempt_id TEXT REFERENCES attempts(attempt_id) DEFERRABLE INITIALLY DEFERRED,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'READY', 'RUNNING', 'WAITING_USER', 'BLOCKED', 'VERIFYING', 'COMPLETED', 'FAILED', 'CANCEL_REQUESTED', 'CANCELLED', 'SUPERSEDED')),
+  current_attempt_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1
+  version INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(task_id, step_id),
+  FOREIGN KEY(task_id, plan_revision) REFERENCES plan_revisions(task_id, revision) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(task_id, current_attempt_id) REFERENCES attempts(task_id, attempt_id) DEFERRABLE INITIALLY DEFERRED
 );
 CREATE INDEX idx_steps_task_status ON steps(task_id, status);
 
@@ -101,7 +113,7 @@ CREATE TABLE agent_profiles (
   agent_profile_id TEXT PRIMARY KEY,
   provider_key TEXT NOT NULL,
   display_name TEXT NOT NULL,
-  adapter_kind TEXT NOT NULL,
+  adapter_kind TEXT NOT NULL CHECK (adapter_kind IN ('ACP', 'A2A', 'SDK', 'CLI', 'TERMINAL')),
   capabilities_json TEXT NOT NULL,
   discovered_at TEXT NOT NULL
 );
@@ -110,10 +122,10 @@ CREATE TABLE agent_bindings (
   agent_binding_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
   agent_profile_id TEXT NOT NULL REFERENCES agent_profiles(agent_profile_id),
-  runtime_id TEXT,
+  runtime_id TEXT REFERENCES runtimes(runtime_id),
   auth_ref TEXT,
   configuration_json TEXT NOT NULL DEFAULT '{}',
-  enabled INTEGER NOT NULL,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
   created_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1
 );
@@ -127,7 +139,7 @@ CREATE TABLE runtimes (
   architecture TEXT NOT NULL,
   roles_json TEXT NOT NULL,
   trust_zone TEXT NOT NULL,
-  availability TEXT NOT NULL,
+  availability TEXT NOT NULL CHECK (availability IN ('PAIRING', 'ONLINE', 'DEGRADED', 'DRAINING', 'OFFLINE', 'REVOKED')),
   resource_capacity_json TEXT NOT NULL DEFAULT '{}',
   last_seen TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1
@@ -136,7 +148,7 @@ CREATE INDEX idx_runtimes_workspace_availability ON runtimes(workspace_id, avail
 
 CREATE TABLE runtime_offers (
   runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
-  offer_kind TEXT NOT NULL,
+  offer_kind TEXT NOT NULL CHECK (offer_kind IN ('AGENT', 'CAPABILITY', 'ENVIRONMENT', 'CHANNEL', 'TRIGGER')),
   offer_ref TEXT NOT NULL,
   compatible INTEGER NOT NULL,
   constraints_json TEXT NOT NULL DEFAULT '{}',
@@ -162,7 +174,7 @@ CREATE TABLE environments (
   runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
   provider_kind TEXT NOT NULL,
   class TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('NEW', 'PROVISIONING', 'READY', 'BUSY', 'CHECKPOINTING', 'SUSPENDED', 'FAILED', 'DESTROYING', 'DESTROYED')),
   locator_json TEXT NOT NULL DEFAULT '{}',
   isolation_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
@@ -181,36 +193,47 @@ CREATE TABLE environment_checkpoints (
 CREATE TABLE attempts (
   attempt_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(task_id),
-  step_id TEXT NOT NULL REFERENCES steps(step_id),
+  step_id TEXT NOT NULL,
   parent_attempt_id TEXT REFERENCES attempts(attempt_id),
   agent_binding_id TEXT NOT NULL REFERENCES agent_bindings(agent_binding_id),
-  agent_session_id TEXT REFERENCES agent_sessions(agent_session_id) DEFERRABLE INITIALLY DEFERRED,
+  agent_session_id TEXT,
   runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
   environment_id TEXT NOT NULL REFERENCES environments(environment_id),
   capability_grant_ids_json TEXT NOT NULL DEFAULT '[]',
   execution_lease_id TEXT,
-  failover_class TEXT NOT NULL,
+  failover_class TEXT NOT NULL CHECK (failover_class IN ('SAFE_PORTABLE', 'REPLAYABLE', 'HANDOFF_REQUIRED', 'LOCAL_BOUND')),
   checkpoint_ref_json TEXT,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('CREATED', 'PREPARING', 'RUNNING', 'WAITING_APPROVAL', 'WAITING_RESOURCE', 'CHECKPOINTING', 'COMPLETED', 'FAILED', 'ABANDONED', 'CANCEL_REQUESTED', 'CANCELLED')),
   failure_json TEXT,
   started_at TEXT,
   settled_at TEXT,
   created_at TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1
+  version INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(task_id, attempt_id),
+  FOREIGN KEY(task_id, step_id) REFERENCES steps(task_id, step_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(task_id, attempt_id, agent_session_id) REFERENCES agent_sessions(task_id, attempt_id, agent_session_id) DEFERRABLE INITIALLY DEFERRED
 );
 CREATE INDEX idx_attempts_task_step_status ON attempts(task_id, step_id, status);
 
 CREATE TABLE agent_sessions (
   agent_session_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
   agent_binding_id TEXT NOT NULL REFERENCES agent_bindings(agent_binding_id),
-  attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id),
+  session_kind TEXT NOT NULL CHECK (session_kind IN ('LEAD_PLANNING', 'STEP_EXECUTION')),
+  attempt_id TEXT,
   native_session_ref TEXT,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('STARTING', 'ACTIVE', 'INTERRUPTING', 'CLOSING', 'CLOSED', 'LOST')),
   started_at TEXT NOT NULL,
   last_event_at TEXT,
   closed_at TEXT,
-  version INTEGER NOT NULL DEFAULT 1
+  version INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(task_id, agent_session_id),
+  UNIQUE(task_id, attempt_id, agent_session_id),
+  FOREIGN KEY(task_id, attempt_id) REFERENCES attempts(task_id, attempt_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((session_kind = 'LEAD_PLANNING' AND attempt_id IS NULL) OR (session_kind = 'STEP_EXECUTION' AND attempt_id IS NOT NULL))
 );
+CREATE UNIQUE INDEX uq_active_lead_planning_session_per_task ON agent_sessions(task_id)
+  WHERE session_kind = 'LEAD_PLANNING' AND status IN ('STARTING', 'ACTIVE', 'INTERRUPTING', 'CLOSING');
 
 CREATE TABLE execution_leases (
   lease_id TEXT PRIMARY KEY,
@@ -220,7 +243,7 @@ CREATE TABLE execution_leases (
   runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
   epoch INTEGER NOT NULL,
   fencing_token TEXT NOT NULL UNIQUE,
-  state TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('ACTIVE', 'RELEASING', 'RELEASED', 'EXPIRED', 'REVOKED')),
   checkpoint_ref_json TEXT,
   acquired_at TEXT NOT NULL,
   renew_by TEXT NOT NULL,
@@ -241,7 +264,7 @@ CREATE TABLE capability_grants (
   secret_refs_json TEXT NOT NULL DEFAULT '[]',
   granted_by_json TEXT NOT NULL,
   expires_at TEXT,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'REVOKED', 'EXPIRED')),
   created_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1
 );
@@ -254,7 +277,7 @@ CREATE TABLE secret_leases (
   capability_ref_json TEXT,
   runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
   allowed_usage_json TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'REVOKED', 'EXPIRED')),
   issued_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1
@@ -267,7 +290,8 @@ CREATE TABLE capability_activations (
   runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
   mode TEXT NOT NULL,
   provider_handle_ref TEXT,
-  health TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('STARTING', 'ACTIVE', 'FAILED', 'STOPPING', 'STOPPED')),
+  health TEXT NOT NULL CHECK (health IN ('HEALTHY', 'DEGRADED', 'UNHEALTHY', 'UNKNOWN')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1
@@ -290,7 +314,7 @@ CREATE TABLE connections (
   external_provider_ref TEXT NOT NULL,
   account_ref TEXT,
   secret_refs_json TEXT NOT NULL DEFAULT '[]',
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('CONNECTING', 'CONNECTED', 'DEGRADED', 'REAUTH_REQUIRED', 'DISCONNECTED')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1
@@ -299,12 +323,13 @@ CREATE TABLE connections (
 CREATE TABLE channel_bindings (
   channel_binding_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  connection_id TEXT REFERENCES connections(connection_id),
   provider_ref TEXT NOT NULL,
   external_account_ref TEXT NOT NULL,
   identity_ref_json TEXT NOT NULL,
-  assurance_level TEXT NOT NULL,
+  assurance_level TEXT NOT NULL CHECK (assurance_level IN ('VIEW_ONLY', 'STEER_SAFE', 'APPROVE_SAFE', 'APPROVE_SENSITIVE', 'LOCAL_STRONG')),
   allowed_actions_json TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'DEGRADED', 'REVOKED')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1
@@ -321,12 +346,14 @@ CREATE TABLE channel_thread_mappings (
 CREATE TABLE channel_event_receipts (
   channel_binding_id TEXT NOT NULL REFERENCES channel_bindings(channel_binding_id),
   provider_event_id TEXT NOT NULL,
-  event_kind TEXT NOT NULL,
+  event_kind TEXT NOT NULL CHECK (event_kind IN ('INBOUND', 'EDIT', 'DELETE')),
   payload_digest TEXT NOT NULL,
   conversation_id TEXT REFERENCES conversations(conversation_id),
   message_id TEXT REFERENCES conversation_messages(message_id),
   received_at TEXT NOT NULL,
-  state TEXT NOT NULL,
+  claim_epoch INTEGER NOT NULL DEFAULT 0,
+  claim_expires_at TEXT,
+  state TEXT NOT NULL CHECK (state IN ('RECEIVED', 'PROCESSING', 'ACCEPTED', 'REJECTED', 'FAILED')),
   PRIMARY KEY(channel_binding_id, provider_event_id)
 );
 
@@ -337,26 +364,67 @@ CREATE TABLE artifacts (
   kind TEXT NOT NULL,
   display_name TEXT NOT NULL,
   current_version INTEGER NOT NULL,
-  library_status TEXT NOT NULL,
+  library_status TEXT NOT NULL CHECK (library_status IN ('TRANSIENT', 'SAVED', 'ARCHIVED')),
   created_at TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+  CHECK (current_version >= 1),
+  FOREIGN KEY(artifact_id, current_version) REFERENCES artifact_versions(artifact_id, version) DEFERRABLE INITIALLY DEFERRED
 );
 CREATE INDEX idx_artifacts_task ON artifacts(task_id, current_version);
 
+CREATE TRIGGER guard_artifact_update
+BEFORE UPDATE ON artifacts
+WHEN NEW.version <> OLD.version + 1
+  OR (OLD.library_status <> NEW.library_status AND NOT (
+    (OLD.library_status = 'TRANSIENT' AND NEW.library_status = 'SAVED') OR
+    (OLD.library_status = 'SAVED' AND NEW.library_status = 'ARCHIVED')
+  ))
+  OR (OLD.library_status = 'ARCHIVED' AND NEW.current_version <> OLD.current_version)
+BEGIN
+  SELECT RAISE(ABORT, 'INVALID_ARTIFACT_TRANSITION');
+END;
+
 CREATE TABLE artifact_versions (
   artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
-  version INTEGER NOT NULL,
+  version INTEGER NOT NULL CHECK (version >= 1),
   created_by_attempt TEXT REFERENCES attempts(attempt_id),
   input_refs_json TEXT NOT NULL DEFAULT '[]',
   content_digest TEXT NOT NULL,
-  storage_ref TEXT NOT NULL,
+  storage_ref_json TEXT NOT NULL,
   media_type TEXT NOT NULL,
-  size_bytes INTEGER NOT NULL,
+  size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
   provenance_json TEXT NOT NULL,
   verification_refs_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
   PRIMARY KEY(artifact_id, version)
 );
+CREATE TRIGGER guard_artifact_version_insert
+BEFORE INSERT ON artifact_versions
+WHEN (SELECT library_status FROM artifacts WHERE artifact_id = NEW.artifact_id) = 'ARCHIVED'
+  OR (
+    EXISTS (SELECT 1 FROM artifact_versions WHERE artifact_id = NEW.artifact_id)
+    AND NEW.version <> (SELECT current_version + 1 FROM artifacts WHERE artifact_id = NEW.artifact_id)
+  )
+  OR (
+    NOT EXISTS (SELECT 1 FROM artifact_versions WHERE artifact_id = NEW.artifact_id)
+    AND NEW.version <> (SELECT current_version FROM artifacts WHERE artifact_id = NEW.artifact_id)
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'ARTIFACT_VERSION_CONFLICT');
+END;
+
+CREATE TRIGGER artifact_versions_no_update
+BEFORE UPDATE ON artifact_versions
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_ARTIFACT_VERSION');
+END;
+
+CREATE TRIGGER artifact_versions_no_delete
+BEFORE DELETE ON artifact_versions
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_ARTIFACT_VERSION');
+END;
+
 CREATE INDEX idx_artifact_digest ON artifact_versions(content_digest);
 
 CREATE TABLE effects (
@@ -367,11 +435,12 @@ CREATE TABLE effects (
   operation TEXT NOT NULL,
   target_json TEXT NOT NULL,
   idempotency_key TEXT,
-  state TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('PROPOSED', 'STARTED', 'ACKNOWLEDGED', 'RECONCILING', 'OBSERVED', 'VERIFIED', 'FAILED', 'AMBIGUOUS')),
   request_digest TEXT NOT NULL,
   result_ref_json TEXT,
   observed_state_json TEXT,
   verification_ref TEXT,
+  dispatch_ordinal INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1
@@ -383,7 +452,7 @@ CREATE TABLE evidence (
   evidence_id TEXT PRIMARY KEY,
   task_id TEXT NOT NULL REFERENCES tasks(task_id),
   subject_ref TEXT NOT NULL,
-  level TEXT NOT NULL,
+  level TEXT NOT NULL CHECK (level IN ('REPORTED', 'OBSERVED', 'VERIFIED')),
   kind TEXT NOT NULL,
   producer_json TEXT NOT NULL,
   payload_ref_json TEXT,
@@ -397,7 +466,7 @@ CREATE TABLE audit_records (
   principal_json TEXT NOT NULL,
   action TEXT NOT NULL,
   resource_ref_json TEXT,
-  decision TEXT NOT NULL,
+  decision TEXT NOT NULL CHECK (decision IN ('ALLOW', 'DENY', 'REQUIRE_APPROVAL')),
   reason_code TEXT NOT NULL,
   correlation_id TEXT NOT NULL,
   occurred_at TEXT NOT NULL,
@@ -411,7 +480,7 @@ CREATE TABLE verification_runs (
   criterion_id TEXT NOT NULL,
   verifier_kind TEXT NOT NULL,
   subject_refs_json TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'RUNNING', 'PASSED', 'FAILED', 'INCONCLUSIVE')),
   evidence_refs_json TEXT NOT NULL DEFAULT '[]',
   started_at TEXT,
   completed_at TEXT
@@ -423,42 +492,63 @@ CREATE TABLE approvals (
   requested_by_attempt TEXT REFERENCES attempts(attempt_id),
   kind TEXT NOT NULL,
   action_summary TEXT NOT NULL,
+  target_ref_json TEXT NOT NULL,
+  scope_digest TEXT NOT NULL,
   action_digest TEXT NOT NULL,
-  risk TEXT NOT NULL,
+  risk TEXT NOT NULL CHECK (risk IN ('SAFE', 'SENSITIVE', 'HIGH_IMPACT')),
   required_assurance TEXT NOT NULL,
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'APPROVED', 'DENIED', 'EXPIRED', 'CANCELLED')),
   requested_at TEXT NOT NULL,
   expires_at TEXT,
   resolved_by_json TEXT,
   resolved_at TEXT,
   version INTEGER NOT NULL DEFAULT 1
 );
-CREATE INDEX idx_approvals_workspace_status ON approvals(task_id, status);
+CREATE INDEX idx_approvals_task_status ON approvals(task_id, status);
 
 CREATE TABLE automations (
   automation_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
   name TEXT NOT NULL,
+  current_revision INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ENABLED', 'PAUSED', 'DISABLED')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  FOREIGN KEY(automation_id, current_revision) REFERENCES automation_revisions(automation_id, revision) DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE automation_revisions (
+  automation_id TEXT NOT NULL REFERENCES automations(automation_id),
+  revision INTEGER NOT NULL,
   trigger_json TEXT NOT NULL,
   task_template_json TEXT NOT NULL,
   execution_policy_json TEXT NOT NULL,
-  status TEXT NOT NULL,
+  authored_by_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1
+  PRIMARY KEY(automation_id, revision)
 );
 
 CREATE TABLE automation_occurrences (
   occurrence_id TEXT PRIMARY KEY,
   automation_id TEXT NOT NULL REFERENCES automations(automation_id),
-  automation_version INTEGER NOT NULL,
-  scheduled_key TEXT NOT NULL,
-  scheduled_for TEXT NOT NULL,
+  automation_revision INTEGER NOT NULL,
+  occurrence_key TEXT NOT NULL,
+  scheduled_for TEXT,
+  trigger_input_ref_json TEXT,
+  trigger_payload_digest TEXT,
+  claim_epoch INTEGER NOT NULL DEFAULT 0,
+  claim_expires_at TEXT,
   task_id TEXT REFERENCES tasks(task_id),
-  status TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'CLAIMED', 'STARTED', 'COMPLETED', 'SKIPPED', 'FAILED')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  UNIQUE(automation_id, scheduled_key)
+  UNIQUE(automation_id, occurrence_key),
+  FOREIGN KEY(automation_id, automation_revision) REFERENCES automation_revisions(automation_id, revision) DEFERRABLE INITIALLY DEFERRED
 );
+CREATE INDEX idx_automation_occurrences_status ON automation_occurrences(automation_id, status, created_at);
+CREATE INDEX idx_automation_occurrences_claim ON automation_occurrences(status, claim_expires_at);
+CREATE INDEX idx_channel_receipts_claim ON channel_event_receipts(state, claim_expires_at);
 
 CREATE TABLE domain_events (
   event_id TEXT PRIMARY KEY,
@@ -471,7 +561,7 @@ CREATE TABLE domain_events (
   hlc_timestamp TEXT NOT NULL,
   correlation_id TEXT NOT NULL,
   causation_id TEXT,
-  schema_version INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL CHECK (schema_version >= 1),
   type TEXT NOT NULL,
   payload_json TEXT NOT NULL,
   recorded_at TEXT NOT NULL,
@@ -509,7 +599,7 @@ CREATE TABLE handoffs (
   source_attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id),
   source_runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
   target_runtime_id TEXT REFERENCES runtimes(runtime_id),
-  phase TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('REQUESTED', 'DRAINING_SOURCE', 'CHECKPOINTING', 'REPLICATING', 'RECONCILING', 'LEASE_RELEASE', 'TARGET_PREPARE', 'TARGET_LEASE', 'TARGET_ATTEMPT', 'COMPLETED', 'FAILED')),
   resume_packet_ref_json TEXT,
   blockers_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,

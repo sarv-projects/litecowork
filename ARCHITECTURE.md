@@ -56,10 +56,11 @@ user's Task.
 
 | Concept | Meaning and owner |
 |---|---|
+| Workspace | User-owned durable boundary for Conversations, Tasks, policy, and replication scope. |
 | Conversation | User-visible exchange across surfaces. An ordinary question need not create a Task. |
 | Task | Durable outcome the user wants, owned by the Task Runtime. |
 | TaskSpecRevision | Immutable revision of objective, constraints, outputs, criteria, approvals, and budget. |
-| PlanRevision | Agent-proposed, versioned plan stored by Core; Core validates shape and policy but does not invent strategy. |
+| PlanRevision | Agent-proposed, versioned plan stored by Core; Core validates shape and policy but does not invent strategy. Promotion and Step materialization commit atomically. |
 | Step | Semantic unit from the current plan. |
 | Attempt | One worker's execution of one Step, admitted and tracked by the Task Runtime. |
 | AgentProfile / AgentBinding | Discovered agent and its negotiated host binding, owned by Agent Fabric. |
@@ -80,7 +81,7 @@ and environment snapshots may accelerate resume but are never required for corre
 
 ### LiteCowork Core owns
 
-- Conversation identity and the durable Task model: revisions, plan/step projection,
+- Workspace ownership, lifecycle, and replication policy; Conversation identity and the durable Task model: revisions, plan/step projection,
   Attempts, scheduling admission, budgets, cancellation, and ResumePackets.
 - Agent Fabric contracts and host-created delegation lifecycle, without taking over an
   agent's internal subagent system or reasoning.
@@ -93,6 +94,8 @@ and environment snapshots may accelerate resume but are never required for corre
   calls.
 - Durable event journal, Artifact/Effect/Evidence records, verification orchestration,
   automation trigger-to-Task creation, and operator projections/API.
+
+Workspace replication policy selects resources eligible for replication; it never grants capabilities or secrets. Policy changes affect future transfers and do not silently erase copies already present on another Runtime. Archived Workspaces are read-only: they retain authorized reads but reject domain mutations.
 
 These responsibilities may start as a modular monolith. They are not a mandate to
 create a network of internal microservices or dozens of crates before a vertical slice
@@ -178,7 +181,7 @@ available.
 
 ## 7. Durable state, events, and replication
 
-The event journal is the durable change history for Conversations, Tasks, plans, Steps,
+The event journal is the durable change history for Workspaces, Conversations, Tasks, plans, Steps,
 Attempts, Effects, approvals, Artifacts, leases, and Runtime presence. Events carry a
 stable event ID, workspace/entity identity, origin Runtime and sequence, optional entity
 revision, logical timestamp, correlation/causation IDs, schema version, type, and payload.

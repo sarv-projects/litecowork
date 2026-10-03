@@ -53,6 +53,9 @@ Recurring trigger creates ordinary Task and deduplicates duplicate trigger deliv
 - worker cannot set Task COMPLETED directly
 - old fence rejected after new epoch
 - ArtifactVersion references committed blob digest
+- archived Artifact rejects new content versions and remains readable by immutable version
+- stale concurrent Artifact publication does not overwrite the winning version
+- archive replay does not append a second transition event
 - duplicate external channel event creates no duplicate message/task
 - duplicate automation trigger creates no duplicate occurrence task
 - package update does not alter in-flight CapabilityLock

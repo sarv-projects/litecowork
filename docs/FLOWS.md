@@ -4,15 +4,28 @@ Each flow's durable writes occur through the owning service. Domain events commi
 same transaction as aggregate updates; UI is a projection and never drives truth
 directly. The listed sequence is normative unless a linked owner contract is stricter.
 
+## F00 — Workspace creation, replication policy, and archive
+
+Actors: User, Operator UI, WorkspaceService, TrustService, RuntimeMesh.
+
+1. The user creates a Workspace. If no replication policy is supplied, it is created as `LOCAL_ONLY`.
+2. The UI explains each replication scope before the user explicitly enables cloud replication. `SELECTED_FOLDERS` requires one or more revision-pinned `workspace-folder://` ResourceRefs.
+3. WorkspaceService commits the Workspace and `workspace.created` event.
+4. A policy edit is a versioned prospective change; it does not erase already replicated bytes or grant permissions/secrets.
+5. Archive is accepted only when every Task is terminal and every Automation is disabled. WorkspaceService commits `ARCHIVED`; reads and existing authorized artifact/resource downloads remain available, while every domain mutation is rejected, including Task changes, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel materialization.
+
+Events: `workspace.created.v1`, `workspace.replication_policy.changed.v1`, `workspace.archived.v1`.
+
+UI: show the selected policy and its scope; an archived Workspace is visibly read-only. No archive/delete animation occurs before the archive event is committed.
+
 ## F01 — Simple conversation, no Task
 
 Actors: User, Operator UI, ConversationService, lead chat agent.
 
 1. User sends factual/simple message.
 2. message appended to Conversation.
-3. the conversational agent answers; no separate Core intent/planning model is invoked.
-4. agent answers.
-5. response appended as ConversationMessage.
+3. the conversational agent produces an answer; no separate Core intent/planning model is invoked.
+4. response appended as ConversationMessage.
 
 Events: `conversation.message.added`.
 
@@ -26,26 +39,30 @@ UI: ordinary conversation; no Task card.
 2. ConversationService persists the ConversationMessage.
 3. TaskService creates Task + TaskSpecRevision(1) and binds the source message in one
    transaction; if the message and Task originate in one command, both commit together.
-4. lead AgentBinding selected from user/default policy.
-5. plan/initial Attempt starts.
-6. UI message expands into a Task card only after `task.created.v1` is durable. Ambiguous
-   intent remains a Conversation or gets a clarifying question; Core runs no hidden
-   intent planner.
+4. TaskService pins the selected lead AgentBinding and placement preference.
+5. PlanningCoordinator starts a Task-scoped `LEAD_PLANNING` AgentSession without an Attempt,
+   lease, Environment, or consequential capability grant.
+6. After the session is ready, Task becomes RUNNING. The lead proposes PlanRevision(1);
+   TaskService validates/promotes it and materializes Steps. Only then are Step Attempts
+   admitted.
+7. UI message expands into a Task card only after `task.created.v1` is durable. The planning
+   phase may show a concise “Planning” status but creates no Live Desk work lane until a
+   Step Attempt exists. Ambiguous intent remains a Conversation or gets a clarifying
+   question; Core runs no hidden intent planner.
 
 ## F03 — Local Task happy path
 
-1. Task READY.
-2. lead submits PlanRevision.
-3. Steps materialized.
-4. Step READY.
-5. placement selects local Runtime + Environment.
-6. Attempt + lease + Step ownership commit atomically in the Hub transaction.
-7. AgentSession starts after commit; Attempt becomes RUNNING only on adapter readiness.
-8. agent executes.
-9. artifact/effect/evidence recorded.
-10. agent proposes finish.
-11. verification runs.
-12. Task COMPLETED.
+1. Workspace is ACTIVE and local-only or otherwise permits the selected local resources.
+2. A lead planning session proposes a plan; TaskService promotes PlanRevision and materializes Steps.
+3. Step becomes READY.
+4. placement selects local Runtime + Environment.
+5. Attempt + lease + Step ownership commit atomically in the Hub transaction.
+6. AgentSession starts after commit; Attempt becomes RUNNING only on adapter readiness.
+7. agent executes.
+8. Artifact/Effect/Evidence are recorded.
+9. agent proposes finish.
+10. verification runs.
+11. Task COMPLETED.
 
 ## F04 — Capability discovery and direct attachment
 
@@ -58,7 +75,7 @@ UI: ordinary conversation; no Task card.
 7. provider installed/started on eligible Runtime if needed.
 8. direct attach only if the provider enforces the Task grant and required Effect/fence
    contract; otherwise select proxy.
-9. activation becomes HEALTHY.
+9. activation lifecycle status becomes `ACTIVE`; a separate health observation records `HEALTHY`.
 10. worker invokes the capability; a direct mutation cannot bypass authorization or
     recovery. If neither path preserves required guarantees, the operation is unavailable.
 
@@ -134,7 +151,8 @@ No parent full transcript is copied by default.
 3. ArtifactStore creates immutable ArtifactVersion.
 4. event emitted.
 5. UI shows artifact only after version exists.
-6. later edit creates version N+1; prior version remains addressable.
+6. Later edit publishes version N+1 with expected Artifact aggregate version; prior versions remain addressable.
+7. If a concurrent publisher wins, the stale publisher receives `STALE_VERSION`; preserve its draft and require explicit rebase or separate Artifact publication.
 
 ## F12 — Completion verification
 
@@ -203,17 +221,22 @@ Example: email send request left process, network failed before response.
 4. runtime capabilities/environments advertised.
 5. UI displays new device/runtime.
 
-## F18 — Scheduled automation
+## F18 — Automation trigger and occurrence
 
-1. trigger host fires logical occurrence.
-2. occurrence claim deduplicated.
-3. Automation enabled/overlap policy checked.
-4. ordinary Task created from template.
-5. Task executes through normal runtime.
-6. result artifact/notification produced.
-7. occurrence terminal state recorded.
-Task creation and recording its occurrence reference are one transaction; duplicate
-deliveries of the same scheduled key return that Task.
+1. Trigger host authenticates the source, normalizes any external payload, computes its digest, and resolves a bounded content-addressed ResourceRef; raw secret material is excluded.
+2. Trigger host derives the revision-independent occurrence key from stable trigger identity.
+3. TriggerCoordinator atomically claims `(automation_id, occurrence_key)`, stores the input ref/digest on first claim, and verifies the
+   Automation is enabled, captures its current immutable AutomationRevision, and increments
+   `claim_epoch`. If an edit races the claim, the transaction order decides the pinned
+   revision; the claim is never reinterpreted afterward.
+4. Same-key/same-digest duplicate returns the existing logical occurrence/Task. Same-key
+   delivery with a different digest is rejected and audited; it cannot overwrite input.
+   A reclaimed claim has a higher epoch; stale claimants cannot create or settle its Task.
+5. Overlap policy is evaluated against that pinned revision.
+6. A Task is created from the revision-pinned template and bounded input ref; the occurrence
+   Task reference commits atomically with Task creation.
+7. Task executes through the normal Task Runtime; the occurrence settles from Task outcome.
+8. Result artifact/notification follows ordinary Artifact/Channel rules.
 
 ## F19 — Conditional monitor with no change
 
@@ -255,7 +278,7 @@ No separate bot Task store.
 ## F23 — OAuth/secret expires mid-Task
 
 1. capability invocation returns auth failure.
-2. activation -> DEGRADED/FAILED.
+2. the activation remains `ACTIVE` unless its lifecycle actually fails; health is recorded as `DEGRADED` or `UNHEALTHY` independently.
 3. Attempt WAITING_RESOURCE/approval as appropriate.
 4. reconnect/re-auth creates/updates SecretRef outside transcript.
 5. new SecretLease issued.
@@ -273,18 +296,63 @@ Never permit two workers to mutate same checkout without explicit serialization.
 
 ## F25 — User changes lead agent
 
-1. current Attempt reaches checkpoint/safe boundary when possible.
-2. ResumePacket created.
-3. old session closed/abandoned.
-4. new AgentBinding + AgentSession starts as new Attempt where required.
-5. Task identity/history unchanged.
+1. User requests the new AgentBinding; TaskService validates Workspace ownership, enabled
+   status, protocol compatibility, and placement availability.
+2. TaskService records the requested lead binding and emits `task.lead_agent.changed.v1`.
+   New planning/plan submissions use the new binding; existing Attempts retain their own
+   agent identity and current lease while they drain or are cancelled at a safe boundary.
+3. If a `LEAD_PLANNING` session is active, PlanningCoordinator closes it and starts a new
+   planning session; no Attempt is fabricated.
+4. TaskService writes a portable ResumePacket when execution context must be replaced.
+   A replacement execution Attempt starts only after the prior lease is settled and open
+   Effects are reconciled.
+5. Task identity and prior session/Attempt history remain unchanged.
+
+## F26 — Artifact Library archive
+
+Precondition: the Workspace is active and the Artifact is SAVED. The user confirms the named Artifact and understands that archive removes it from the default Library view while preserving authorized version reads.
+
+1. Operator sends `POST /v1/artifacts/{id}/archive` with Idempotency-Key and If-Match.
+2. ArtifactStore authenticates/authorizes the owner, checks the aggregate version and SAVED state, then atomically commits ARCHIVED, increments Artifact.version, and appends `artifact.library.archived.v1`.
+3. A replay with the same key returns its recorded result. A fresh command after archive with current If-Match returns the current representation without a second transition event; stale If-Match conflicts.
+4. Existing immutable ArtifactVersions remain readable under current authorization. A linked Artifact archive does not mutate or delete the external provider object.
+5. UI removes the item from the default Library projection after the committed event and retains it in archived/history views.
+
+## F27 — Connection and channel binding setup, permissions, and revocation
+
+Actors: User, provider-owned setup surface/ChannelAdapter, ConnectionService, ChannelService, TrustService.
+
+1. The user starts setup through the selected integration's provider-owned flow. The
+   Operator API does not prescribe OAuth, device-code, webhook-secret, or callback
+   mechanics.
+2. The provider authenticates its account and external identity. Credential bytes stay
+   in the provider-owned secret mechanism; LiteCowork receives references and normalized
+   status only.
+3. ConnectionService records the Connection state. For a human-facing channel,
+   ChannelService records the ChannelBinding using provider-attested identity and
+   assurance with `allowed_actions = []`.
+4. The owner reviews the binding and explicitly sets allowed actions. TrustService
+   authorizes the change; an authority increase may require Approval. The versioned
+   binding update and `channel.binding.changed.v1` event commit atomically.
+5. On disconnect, ConnectionService blocks new capability use through that Connection;
+   any linked ChannelBinding is non-authorizing even before its status projection
+   updates. Binding revocation separately blocks inbound commands. Existing Conversations,
+   Tasks, Artifacts, Effects, and audit history remain readable; no external account or
+   credential is deleted.
+
+Events: `connection.state.changed.v1`, `channel.binding.changed.v1`.
+
+UI: show provider status, authenticated identity, assurance level, and granted actions.
+Never show a binding as authorized while its allowed-action set is empty or its status
+is REVOKED.
 
 ## Flow outputs and UI projection
 
 | Flow | Durable result | Required UI projection / failure behavior |
 |---|---|---|
+| F00 | Workspace policy/lifecycle event | Show policy scope; archived Workspace is read-only |
 | F01 | Conversation messages only | Ordinary exchange; no Task card |
-| F02 | Task + initial spec linked to source message | Inline Task appears only after commit; failure is explicit |
+| F02 | Task + initial spec linked to source message | Task card follows commit; planning is shown without a fake lane |
 | F03 | Plan, Steps, lease, Attempt, outputs, verification | Lanes reflect persisted state; completion follows evaluator |
 | F04 | Capability lock, grant, activation, invocation/Effect | Show capability only when active/used; unsafe path is unavailable |
 | F05 | Proxy call, optional next-boundary attachment | Current turn continues without a forced restart |
@@ -293,21 +361,23 @@ Never permit two workers to mutate same checkout without explicit serialization.
 | F08 | Child failure/recovery event | Only affected lane stops; independent children continue |
 | F09 | New TaskSpecRevision or steering message | Show revision impact and stale child results |
 | F10 | Cancel intent, settled Attempts/Effects, terminal or needs-user state | Show Stopping until Effects reconcile; preserve outputs/history |
-| F11 | Immutable ArtifactVersion | Show only after blob digest and manifest commit |
+| F11 | Immutable ArtifactVersion and expected-version publication | Show only after blob digest and manifest commit; preserve stale concurrent drafts |
 | F12 | VerificationRun/Evidence and Task result | Indicator follows a real verifier; no checkmark on fail/inconclusive |
 | F13 | Handoff phases, old lease release, new Attempt | Show Cloud only after target lease; failure retains source location |
 | F14 | Loss detection, lease expiry, reconciliation, eligibility | Show uncertainty/blocker until takeover is safe |
 | F15 | Ambiguous Effect and reconciliation evidence | Never display success or resend while uncertain |
 | F16 | Accepted/rejected events and updated cursor | Show reconnect/stale/conflict; no silent last-writer-wins |
 | F17 | Paired Runtime identity and offers | Device appears only after one-use token validation/authentication |
-| F18 | Deduplicated occurrence and ordinary Task | One occurrence/Task per scheduled key |
+| F18 | Revision-pinned occurrence and ordinary Task | One logical occurrence/Task; stale claim epochs are fenced |
 | F19 | Completed Task with `NO_ACTION` result | Suppress notification only under saved policy |
 | F20 | Shared Conversation/Task plus channel receipt | Same Task identity across surfaces; delivery failure is separate |
 | F21 | Approval routed to stronger surface | Weak channel shows a link, not an enabled sensitive action |
 | F22 | Existing CapabilityLock unchanged | In-flight Task stays pinned; no silent upgrade |
-| F23 | Degraded activation and SecretLease recovery | Show reconnect/reauth blocker; retry under Effect policy only |
+| F23 | Degraded activation health and SecretLease recovery | Show reconnect/reauth blocker; retry under Effect policy only |
 | F24 | Isolated worktrees, diff Artifacts, integration result | Preserve branch provenance; conflicting edits block merge |
-| F25 | New lead binding/session and Attempt history | Task identity stays stable; handoff appears after new Attempt exists |
+| F25 | New lead binding/session and Attempt history | Planning replacement creates no Attempt; execution replacement waits for lease safety |
+| F26 | Artifact library archive event | Remove from default Library projection; preserve authorized version reads and linked source |
+| F27 | Connection/ChannelBinding state and action changes | Show provider-attested identity, explicit authority, and preserved history on revocation |
 
 ## Shared flow invariants
 

@@ -12,7 +12,32 @@ Automations
 Discover
 ```
 
-Advanced technical detail lives in Inspector/Settings/Discover details.
+Advanced technical detail lives in Inspector/Settings/Discover details. A Workspace selector is available in the app shell when more than one Workspace exists; it does not add a sixth primary navigation destination.
+
+## Workspace setup and selection
+
+Workspace creation is part of first-run setup and Settings. The user sees the replication scope in plain language before choosing a policy:
+
+- `LOCAL_ONLY`: stays on this Runtime.
+- `METADATA_ONLY`: syncs Workspace and Task metadata, not file contents.
+- `ACTIVE_TASK_INPUTS`: transfers only inputs and outputs required by cloud-eligible active Tasks.
+- `SELECTED_FOLDERS`: transfers selected, revision-pinned folders and Task outputs.
+- `FULL_WORKSPACE`: explicit whole-Workspace replication with a clear storage/privacy summary.
+
+Creation defaults to `LOCAL_ONLY`; cloud enablement is a separate explicit action. Changing policy applies prospectively and explains that copies already transferred are retained. Archive is a separate, confirmed action available only after Tasks are terminal and Automations disabled. Archived Workspaces remain browsable and show a persistent read-only banner.
+
+States: first-run, create in progress, policy saving, cloud unavailable, archive blocked with named active Tasks/Automations, archived/read-only, stale policy version/conflict.
+
+## User interaction flows
+
+- **Create Workspace:** explain local-only default and available replication scopes; create only after the user commits the choice.
+- **Enable cloud:** show eligible content, storage implications, required Runtime/agent/secrets, and any unavailable inputs; save the policy only after explicit confirmation. If the update conflicts or fails, retain the old selection.
+- **Archive:** show the exact nonterminal Tasks or enabled Automations that block archive. After successful archive, retain navigation/read access and show the read-only banner.
+- **Connect a capability:** move from Discover details to requested scope/approval, then show it as ready only after activation health succeeds.
+- **Approve an action:** present exact action, target, scope, risk, and required assurance; stale/expired approvals require a fresh request rather than replaying approval.
+- **Change lead agent:** choose an eligible Workspace binding, submit a versioned request, show existing Attempts draining under their pinned identity, and show the new lead only after the assignment event.
+- **Create or edit an Automation:** preview trigger/timezone, Task template, overlap/retry behavior, placement, and notifications; save edits as a new immutable revision. Each occurrence detail displays the revision it pinned.
+- **Pair a Runtime:** explain its role and advertised local resources, issue a short-lived one-use pairing action, and show it as available only after identity verification.
 
 ## Home
 
@@ -46,6 +71,7 @@ Advanced popover may expose Agent, Model (when agent exposes it), Reasoning, Exe
 Conversation is the human continuity surface. Task cards appear inline when durable work materializes.
 
 Task card states:
+- Planning (Task is durable; lead planning session is active; no Step lane exists yet)
 - Ready
 - Running
 - Waiting for you
@@ -73,13 +99,13 @@ Task detail sections:
 - approvals/blockers
 - activity timeline
 - execution location
-- actions: steer, cancel, retry/recover where valid
+- actions: steer, request a lead-agent change, cancel, retry/recover where valid
 
 ## Live Desk
 
 Live Desk projects real work into outcome-oriented lanes.
 
-Default hides agent names and protocol internals. Each lane corresponds to real Step/Attempt state.
+Default hides agent names and protocol internals. A planning status may appear before plan acceptance, but no work lane appears until real Steps and Attempts exist. Each lane corresponds to real Step/Attempt state.
 
 Possible lane elements:
 - source/resource card
@@ -119,6 +145,7 @@ Filters/resources:
 - Uploaded
 - Imported
 - Linked
+- Archived
 - Templates
 - Skills
 - Saved workflows
@@ -129,8 +156,8 @@ Saving/promotion is explicit. Linked resources show provider and external revisi
 
 Screens:
 - list
-- create/edit
-- run/occurrence history
+- create/edit; each definition edit creates an immutable AutomationRevision
+- run now for ManualTrigger; run/occurrence history with the pinned revision for each run
 - next scheduled run
 - status/paused/disabled
 - last result
@@ -189,17 +216,18 @@ Every surface must define:
 
 | Surface | Primary content | Primary actions | No-data/error behavior |
 |---|---|---|---|
+| Workspace selector/setup | Workspace name, replication scope, status | Create, select, update policy, archive when quiescent | Creation defaults to local-only; cloud scope is explicit; archive blockers name active Tasks/Automations |
 | Home | Composer, recent Conversations/Tasks, Runtime availability | Start a Conversation, attach resources, reopen recent work | First-use guidance; offline local-only explanation; reconnect state with cached data labeled stale |
 | Conversation | Ordered messages, attachments, inline Task cards | Reply, attach, steer linked Task, cancel where allowed | Empty prompt; send failure preserves draft; message/task creation is idempotent |
 | Task list | Durable outcome, status, next required action, latest update | Filter, open, cancel, retry/recover if legal | Empty filter-specific state; cached/offline status is visibly stale |
 | Task detail | Current spec revision, progress, artifacts, blockers, history | Steer, approve, cancel, request recovery, open artifact | Missing/archived resources are identified; no fabricated progress |
 | Live Desk | Steps, active Attempts, inputs, capability activity, artifacts, verification | Inspect lane, respond, stop, open result | No lanes before Steps/Attempts exist; preserve last known state as stale when disconnected |
-| Workbench | Selected versioned Artifact or actual provider UI | View/edit through owning provider, publish a new version | Unsupported preview offers download; provider loss does not imply artifact loss |
-| Library | Saved/generated/uploaded/imported/linked resources | Search, open, promote, archive, remove link | Empty state explains how to save/import; stale linked revisions are marked |
-| Automations | Trigger, next run, policy, recent occurrences | Create, edit, pause, resume, disable | Missed/failed occurrence is explicit; duplicate trigger is shown once logically |
+| Workbench | Selected versioned Artifact or actual provider UI | View/edit through owning provider, publish a new version | Unsupported preview offers download; provider loss does not imply artifact loss; stale publication keeps the draft and requires explicit rebase |
+| Library | Saved/generated/uploaded/imported/linked resources | Search, open, promote, archive a linked reference, view archived resources | Empty state explains how to save/import; stale linked revisions are marked; archive removes the item from the default Library view without deleting its external source |
+| Automations | Trigger, next run, policy, recent occurrences | Create, edit, run manual trigger, pause, resume, disable | Missed/failed occurrence is explicit; duplicate trigger is shown once logically |
 | Discover | LitePSM-backed user-facing offers and compatible agents | Inspect, connect/enable, grant required scope | LitePSM unavailable shows a dependency error; cached items are labeled stale |
 | Inspector | IDs, revisions, Agent/Runtime/Environment, locks, grants, Effects, Evidence, protocols | Copy diagnostics, inspect provenance | Redact credentials and secret values; unavailable details are marked unknown |
-| Settings | Workspace, Runtime/device, connections, security, storage and preferences | Pair/revoke, configure, export/delete according to policy | Each setting shows whether it applies locally, to the Hub, or to the Workspace |
+| Settings | Workspace, Runtime/device, AgentBindings, connections, security, storage and preferences | Pair/revoke, enable/disable agents, configure, export/delete according to policy | Each setting shows whether it applies locally, to the Hub, or to the Workspace; profile availability may be stale when its Runtime is offline |
 
 ## Task state language
 
@@ -221,8 +249,17 @@ Use one plain-language primary label mapped from the canonical Task status:
 | `CANCELLED` | Cancelled | Review preserved work and effects |
 
 The UI may combine state with blocker detail (`Waiting for your laptop — needs local
-Chrome`) but does not define new domain state. Attempt and Step state appears in the
-Inspector or lane details.
+Chrome`) but does not define new domain state. `Planning` is a presentation of RUNNING when
+a LEAD_PLANNING session is active and no PlanRevision has been promoted; it is not a new
+TaskStatus. Show `Getting ready` while the Task is READY and the planning session is not
+yet active. Attempt and Step state appears in the Inspector or lane details.
+
+## Workspace and archive projection
+
+- The active Workspace is explicit in the app shell; switching never changes ownership of a Conversation or Task.
+- Replication policy is shown as scope, not as a security grant. Capability and secret access still require their own authorization.
+- Policy updates do not imply remote deletion. The UI states that already-replicated copies remain until separately managed.
+- Archive does not delete or hide history. Archived Workspaces are read-only; inbound channel messages are rejected with a clear channel-side response.
 
 ## Cross-device continuity
 
@@ -239,13 +276,17 @@ Inspector or lane details.
 
 ## Task creation from the composer
 
-There is one composer and no Chat/Cowork mode switch. A clearly outcome-oriented user
+There is one composer and no chat-versus-task mode switch. A clearly outcome-oriented user
 request or explicit create-Task action creates a structured Task through the normal
 TaskService. The bound conversational agent may request Task materialization when intent
 is clear. If the request is ambiguous about whether durable execution is wanted, continue
 the Conversation or ask one concise question. Task creation becomes visible only after
 its message, initial TaskSpecRevision, and event commit atomically. Core does not run a
 separate hidden intent/planning model.
+
+## Initial planning projection
+
+While the lead planning session is active, show “Planning” with session status and stop/steer affordances permitted by Task policy. Do not show a fabricated worker lane, environment, runtime handoff, progress percentage, or artifact. Once PlanRevision and Step Attempts exist, Live Desk lanes may appear from their persisted state.
 
 ## Honesty rules
 

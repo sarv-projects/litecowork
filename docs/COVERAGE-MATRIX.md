@@ -26,12 +26,14 @@ decision.
 | Domain language | [`../GLOSSARY.md`](../GLOSSARY.md) |
 | Product identity, HLD, ownership, invariants | [`../ARCHITECTURE.md`](../ARCHITECTURE.md) |
 | Product promise, user-visible outcomes, Core non-goals | [`PRODUCT.md`](PRODUCT.md) |
+| Workspace identity, owner, lifecycle, and replication policy | [`DATA-MODEL.md`](DATA-MODEL.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md) |
 | Entity meaning, fields, relationships, invariants | [`DATA-MODEL.md`](DATA-MODEL.md) |
 | Shared enums, value types, error taxonomy | [`SCHEMAS.md`](SCHEMAS.md) |
 | Legal lifecycle transitions and transition owners | [`STATE-MACHINES.md`](STATE-MACHINES.md) |
 | Service methods, dependencies, forbidden edges | [`SERVICES.md`](SERVICES.md) and owning domain contracts |
 | Task, plan, Attempt, checkpoint semantics | [`TASK-RUNTIME.md`](TASK-RUNTIME.md) |
 | Agent sessions, adapters, delegation | [`AGENT-FABRIC.md`](AGENT-FABRIC.md) |
+| Discovered AgentProfiles, Workspace bindings, enablement | [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md) |
 | Capability use and LitePSM boundary | [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md) |
 | Runtime identity, replication, conflict, leases, handoff | [`RUNTIME-MESH.md`](RUNTIME-MESH.md) |
 | Execution substrates and cleanup | [`ENVIRONMENTS.md`](ENVIRONMENTS.md) |

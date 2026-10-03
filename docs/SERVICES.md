@@ -4,6 +4,18 @@ This file fixes service ownership and dependency direction. Domain method/value 
 are defined in their owner documents; implementations return typed results and do not
 expose database models directly.
 
+### WorkspaceService
+
+```text
+create(CreateWorkspaceRequest) -> Workspace
+get(WorkspaceId) -> Workspace
+list(WorkspaceQuery) -> Page<WorkspaceSummary>
+update_replication_policy(UpdateWorkspacePolicyRequest) -> Workspace
+archive(ArchiveWorkspaceRequest) -> Workspace
+```
+
+The authenticated owner is the only Workspace principal in v1. Policy updates are prospective; they do not erase already replicated data. Archive requires all Tasks to be terminal and all Automations disabled, then makes the Workspace read-only. The service rejects every domain mutation for archived Workspaces, including Task changes, capability grants/activation, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel work. Authorized reads and Artifact/Resource downloads remain available.
+
 ## Public application ports
 
 ### ConversationService
@@ -28,6 +40,22 @@ Defined in `TASK-RUNTIME.md`. Owns Task, TaskSpecRevision, PlanRevision, Step an
 
 Defined in `AGENT-FABRIC.md`. Protocol boundary to external agents.
 
+### AgentBindingService
+
+```text
+list_profiles(WorkspaceId, RuntimeId?, Cursor?, Limit) -> Page<AgentProfileView>
+list_bindings(WorkspaceId, AgentBindingQuery, Cursor?, Limit) -> Page<AgentBindingView>
+get_binding(AgentBindingId) -> AgentBindingView
+create_binding(CreateAgentBindingRequest) -> AgentBinding
+enable_binding(AgentBindingId, expected_version) -> AgentBinding
+disable_binding(AgentBindingId, expected_version) -> AgentBinding
+```
+
+Profiles are Runtime-discovered inventory; bindings are durable Workspace authorization
+records. Creation requires a currently observed profile and starts disabled. Enablement
+checks TrustService and Runtime availability. Disablement blocks new admission without
+rewriting already admitted Attempts or sessions.
+
 ### CapabilityBroker
 
 Defined in `CAPABILITY-FABRIC.md`. Owns task-scoped capability resolution/grants/activation/invocation coordination.
@@ -42,7 +70,7 @@ Defined in `ENVIRONMENTS.md`. Provider boundary; EnvironmentManager owns canonic
 
 ### ArtifactStore
 
-Defined in `ARTIFACTS-EVIDENCE.md`.
+Defined in `ARTIFACTS-EVIDENCE.md`. It commits a digest-verified initial version on create; every later version uses expected Artifact aggregate version. Library promotion and archive use the same optimistic concurrency boundary and emit their events atomically.
 
 ### TrustService
 
@@ -61,9 +89,8 @@ interface AutomationService {
   pause(AutomationId, expected_version) -> Automation
   resume(AutomationId, expected_version) -> Automation
   disable(AutomationId, expected_version) -> Automation
-  claim_occurrence(ClaimOccurrenceRequest) -> AutomationOccurrence
-  materialize_task(OccurrenceId) -> TaskId
-  settle_occurrence(SettleOccurrenceRequest) -> AutomationOccurrence
+  get(AutomationId) -> AutomationView
+  list(WorkspaceId, Cursor?, Limit) -> Page<AutomationSummary>
 }
 ```
 
@@ -75,7 +102,16 @@ Defined in `CHANNELS.md`.
 
 Owns connection references and lifecycle metadata. It never stores provider credential
 bytes. Account-specific authorization and package behavior remain with the external
-provider/LitePSM contract.
+provider/LitePSM contract. Provider-owned setup creates or updates the Connection after
+its authentication flow; Operator API exposes only normalized metadata, status, and
+disconnect. Provider-specific setup UI, callbacks, and credential exchange are outside
+the Operator API and remain deferred with the integration contract.
+
+```text
+list(WorkspaceId, ConnectionQuery, Cursor?, Limit) -> Page<ConnectionSummary>
+get(ConnectionId) -> ConnectionView
+disconnect(ConnectionId, expected_version) -> ConnectionView
+```
 
 ### ChannelService
 
@@ -83,7 +119,26 @@ Owns ChannelBinding identity, assurance, action permissions, and revocation. It 
 own Conversation or Task truth; it calls ConversationService/TaskService after identity
 and authorization checks.
 
+```text
+list_bindings(WorkspaceId, ChannelBindingQuery, Cursor?, Limit) -> Page<ChannelBindingSummary>
+get_binding(ChannelBindingId) -> ChannelBindingView
+update_allowed_actions(ChannelBindingId, expected_version, ChannelAction[]) -> ChannelBindingView
+revoke_binding(ChannelBindingId, expected_version) -> ChannelBindingView
+```
+
+Channel-provider setup creates the binding from authenticated provider identity; the
+owner then reviews its allowed actions. The provider, not the caller, supplies the
+authenticated identity and assurance level.
+
 ## Internal application services
+
+### PlanningCoordinator
+
+Coordinates a TaskService-authorized PlanningAssignment with AgentSessionSupervisor. It may start only a LEAD_PLANNING session for the current lead binding and TaskSpecRevision; it does not author or promote PlanRevision records.
+
+### AgentSessionSupervisor
+
+Owns AgentSession lifecycle for both LEAD_PLANNING and STEP_EXECUTION sessions. It invokes the negotiated AgentAdapter and emits normalized lifecycle outcomes; it cannot mutate Task state directly.
 
 ### AttemptRunner
 
@@ -132,7 +187,17 @@ Consumes domain events and builds Task/Conversation/LiveDesk/Notification projec
 
 ### TriggerCoordinator
 
-Owns AutomationOccurrence claiming/dedup and invokes AutomationService.materialize_task.
+```text
+claim(ClaimOccurrenceRequest) -> OccurrenceClaim
+request_manual_occurrence(ManualOccurrenceRequest) -> AutomationOccurrence
+materialize_task(OccurrenceId, claim_epoch) -> TaskId
+settle_occurrence(SettleOccurrenceRequest, claim_epoch) -> AutomationOccurrence
+```
+
+Derives the canonical key, pins the current AutomationRevision in the claim transaction,
+checks enabled/overlap policy, and fences late workers by claim_epoch. Task creation and
+its occurrence reference commit atomically. It invokes TaskService; it does not own Task
+execution.
 
 ### NotificationService
 
@@ -198,8 +263,12 @@ application command coordinates service owners inside a single transaction scope
 
 ```text
 ConversationService -> StateStore, EventStore
-TaskService -> StateStore, EventStore, TrustService, PlacementService, CompletionEvaluator
-AttemptRunner -> AgentAdapter, CapabilityBroker, EnvironmentManager, LeaseCoordinator, Artifact/Effect services
+WorkspaceService -> StateStore, EventStore, TrustService
+TaskService -> StateStore, EventStore, TrustService, PlacementService, CompletionEvaluator, PlanningCoordinator
+AgentBindingService -> RuntimeMesh read models, AgentAdapter discovery, TrustService, StateStore, EventStore
+PlanningCoordinator -> AgentSessionSupervisor, AgentAdapter, TaskService read port
+AgentSessionSupervisor -> AgentAdapter, StateStore, EventStore
+AttemptRunner -> AgentSessionSupervisor, CapabilityBroker, EnvironmentManager, LeaseCoordinator, Artifact/Effect services
 PlacementService -> RuntimeMesh read models, Agent registry, Trust policy, Environment offers
 CapabilityBroker -> LitePSM adapter (contract deferred), TrustService, EffectService, Runtime inventory
 RuntimeMesh -> EventStore, BlobStore, StateStore, transport adapter
@@ -207,8 +276,8 @@ EnvironmentManager -> EnvironmentProvider adapters, StateStore, EventStore
 ArtifactStore -> BlobStore, StateStore, EventStore
 TrustService -> StateStore, EventStore, SecretStorePort
 CompletionEvaluator -> Verifier registry, StateStore
-AutomationService -> StateStore, EventStore, TaskService
-TriggerCoordinator -> AutomationService
+AutomationService -> StateStore, EventStore
+TriggerCoordinator -> AutomationService, TaskService, StateStore, EventStore
 ProjectionService -> EventStore/read stream + projection stores
 ChannelService -> TrustService, ConversationService, TaskService
 ConnectionService -> TrustService, SecretStorePort, external provider adapter

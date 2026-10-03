@@ -46,15 +46,33 @@ AgentCapabilities {
 }
 ```
 
+## Profiles and Workspace bindings
+
+AgentAdapter discovery yields an `AgentProfile` for an available Runtime offer. Profiles
+describe protocol/features; they do not carry credentials or imply authorization. The
+owner creates a Workspace `AgentBinding` that refers to a discovered profile, optional
+Runtime placement, an opaque SecretRef, and non-secret adapter configuration. If
+`runtime_id` is null, placement may choose any eligible Runtime currently advertising
+that profile; otherwise only the named Runtime is eligible. New
+bindings are disabled until explicitly enabled. Disabling prevents new planning/Attempt
+admission; sessions already admitted stay pinned and settle under their current Task,
+lease, and Effect rules.
+
+The profile list is a Runtime inventory projection that includes currently observed
+Runtime IDs and offer expiry; it may go stale when a Runtime goes offline. Binding
+history remains durable. Agent-specific installation and login
+flows remain adapter-owned; secret bytes never enter the AgentBinding API.
+
 ## SessionSpec
 
 ```text
 SessionSpec {
-  attempt_id
+  task_id
   workspace_id
+  session_kind: LEAD_PLANNING | STEP_EXECUTION
+  attempt_id?
   task_packet_ref
-  environment
-  cwd?
+  environment?
   capability_attachments[]
   context_attachments[]
   execution_policy
@@ -62,6 +80,11 @@ SessionSpec {
   deadline?
 }
 ```
+
+Session admission rules:
+- LEAD_PLANNING is authorized by a PlanningAssignment, bound to the current lead AgentBinding and TaskSpecRevision, and has no Attempt or Environment write access.
+- STEP_EXECUTION requires one admitted Attempt, its Runtime/Environment, active lease, and scoped grants.
+- A planning session can search/describe capabilities and load skills for planning, but cannot invoke consequential capabilities or publish Artifacts. Execution authority is never implied by an AgentSession alone.
 
 ## Normalized events
 

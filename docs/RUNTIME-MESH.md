@@ -27,6 +27,9 @@ RuntimeDescriptor {
 ```
 
 Descriptors are snapshots/projections, not source-of-truth for Task state.
+`agents`, `capability_offers`, and `environment_offers` are bounded inventory summaries
+with their own `observed_at`/`expires_at` values. AgentProfiles discovered through them
+can become stale independently of Runtime identity or Workspace AgentBindings.
 
 ## Runtime identity
 
@@ -53,7 +56,11 @@ Private keys remain local. Rotation creates a new key version signed by the curr
 5. Mutual TLS/session authentication starts.
 6. Pairing token becomes unusable.
 
-Tokens are single-use and short-lived.
+Tokens are single-use and short-lived. The Hub chooses expiry under deployment policy;
+an operator request may ask for a shorter lifetime but cannot extend the policy maximum.
+The bearer token is returned once to the authenticated Operator surface, stored only as a
+verifier/digest, and excluded from domain events, logs, inventory, and replication. A
+successful pairing atomically consumes it; expired/replayed tokens are rejected.
 
 ## Presence
 
@@ -148,9 +155,9 @@ author domain events.
 Entity-specific rules:
 
 - TaskSpecRevision: append-only. Concurrent revisions with same parent create siblings; hub chooses neither silently. UI/lead resolves by producing a new revision that names both parents in reconciliation metadata.
-- PlanRevision: append-only, but only authoritative lead Attempt may mark a revision current.
+- PlanRevision: append-only. A current authorized LEAD_PLANNING session or currently leased lead execution Attempt may propose a revision; TaskService alone validates and promotes it against the current TaskSpecRevision.
 - ConversationMessage: append-only; ordering projection uses HLC + origin sequence.
-- ArtifactVersion: immutable; concurrent versions may coexist until one is promoted current.
+- ArtifactVersion: immutable and sequential per Artifact. Concurrent publishers use Artifact aggregate `version`; one commit wins, stale publishers must re-read and explicitly rebase or create a separate Artifact. There is no implicit branch or current-version promotion.
 - Approval resolution: first valid terminal resolution wins; later conflicting resolution rejected.
 - ExecutionLease: epoch/fencing is authoritative.
 

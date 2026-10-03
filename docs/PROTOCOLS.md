@@ -8,6 +8,17 @@ Transport:
 - local desktop: IPC preferred
 - remote/web/mobile: authenticated HTTPS + WebSocket/stream transport
 
+Workspace scope:
+- every Workspace-scoped HTTP request carries `X-Workspace-ID`; local IPC carries the
+  equivalent selected-Workspace context field
+- Workspace list/create are the only unscoped Operator operations
+- a Workspace ID in a path or body must equal the selected context; resource IDs are
+  resolved to their owning Workspace and are never authorization credentials
+- missing or mismatched context is rejected as `FORBIDDEN` without revealing whether a
+  referenced Workspace or resource exists
+- WebSocket subscriptions are bound to the selected context; the subscription's
+  `workspace_id` must match `X-Workspace-ID`
+
 Responsibilities:
 - conversations/messages
 - Task CRUD/steer/cancel

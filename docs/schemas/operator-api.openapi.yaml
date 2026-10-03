@@ -9,16 +9,103 @@ servers:
   - url: https://localhost/v1
 security:
   - operatorAuth: []
+    workspaceContext: []
 tags:
+  - name: workspaces
   - name: conversations
   - name: tasks
   - name: approvals
   - name: artifacts
   - name: automations
   - name: runtimes
+  - name: agents
+  - name: connections
+  - name: channels
   - name: discover
   - name: resources
 paths:
+  /workspaces:
+    get:
+      tags: [workspaces]
+      operationId: listWorkspaces
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Workspaces owned by the authenticated principal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WorkspacePage' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [workspaces]
+      operationId: createWorkspace
+      security:
+        - operatorAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWorkspaceRequest' }
+      responses:
+        '201':
+          description: Workspace created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        default: { $ref: '#/components/responses/Error' }
+  /workspaces/{workspaceId}:
+    get:
+      tags: [workspaces]
+      operationId: getWorkspace
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Workspace owned by the authenticated principal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [workspaces]
+      operationId: updateWorkspacePolicy
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateWorkspacePolicyRequest' }
+      responses:
+        '200':
+          description: Policy update applies to future replication transfers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        default: { $ref: '#/components/responses/Error' }
+  /workspaces/{workspaceId}/archive:
+    post:
+      tags: [workspaces]
+      operationId: archiveWorkspace
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Quiescent Workspace archived and made read-only
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Workspace' }
+        default: { $ref: '#/components/responses/Error' }
   /conversations:
     post:
       tags: [conversations]
@@ -82,6 +169,17 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ConversationMessage' }
+        default: { $ref: '#/components/responses/Error' }
+  /conversations/{conversationId}/tasks:
+    get:
+      tags: [conversations]
+      operationId: listConversationTasks
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { description: 'Tasks associated with the Conversation', content: { application/json: { schema: { $ref: '#/components/schemas/TaskPage' } } } }
         default: { $ref: '#/components/responses/Error' }
   /tasks:
     get:
@@ -147,7 +245,23 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/SteerTaskRequest' }
       responses:
-        '202': { description: Steering accepted for Task Runtime processing }
+        '202': { description: Steering accepted for Task Runtime processing, content: { application/json: { schema: { $ref: '#/components/schemas/CommandReceipt' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /tasks/{taskId}/lead-agent:
+    post:
+      tags: [tasks]
+      operationId: changeTaskLeadAgent
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeLeadAgentRequest' }
+      responses:
+        '202': { description: Lead replacement accepted; active Attempts drain under lease and Effect rules, content: { application/json: { schema: { $ref: '#/components/schemas/CommandReceipt' } } } }
         default: { $ref: '#/components/responses/Error' }
   /tasks/{taskId}/cancel:
     post:
@@ -158,7 +272,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/IfMatch'
       responses:
-        '202': { description: Cancellation requested; Task may remain stopping while Effects settle }
+        '202': { description: Cancellation requested; Task may remain stopping while Effects settle, content: { application/json: { schema: { $ref: '#/components/schemas/CommandReceipt' } } } }
         default: { $ref: '#/components/responses/Error' }
   /tasks/{taskId}/retry:
     post:
@@ -167,13 +281,14 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TaskId'
         - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/RecoveryRequest' }
       responses:
-        '202': { description: Recovery request accepted if legal for current state }
+        '202': { description: Recovery request accepted if legal for current state, content: { application/json: { schema: { $ref: '#/components/schemas/CommandReceipt' } } } }
         default: { $ref: '#/components/responses/Error' }
   /tasks/{taskId}/spec-revisions:
     get:
@@ -218,7 +333,7 @@ paths:
           description: Immutable PlanRevision history
           content:
             application/json:
-              schema: { type: array, items: { type: object } }
+              schema: { type: array, items: { $ref: '#/components/schemas/PlanRevision' } }
         default: { $ref: '#/components/responses/Error' }
   /tasks/{taskId}/steps:
     get:
@@ -227,7 +342,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TaskId'
       responses:
-        '200': { description: Task Steps, content: { application/json: { schema: { type: array, items: { type: object } } } } }
+        '200': { description: 'Task Steps', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Step' } } } } }
         default: { $ref: '#/components/responses/Error' }
   /tasks/{taskId}/attempts:
     get:
@@ -236,7 +351,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TaskId'
       responses:
-        '200': { description: Task Attempts, content: { application/json: { schema: { type: array, items: { type: object } } } } }
+        '200': { description: 'Task Attempts', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Attempt' } } } } }
         default: { $ref: '#/components/responses/Error' }
   /tasks/{taskId}/timeline:
     get:
@@ -247,7 +362,7 @@ paths:
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
       responses:
-        '200': { description: Projected Task timeline, content: { application/json: { schema: { $ref: '#/components/schemas/TimelinePage' } } } }
+        '200': { description: 'Projected Task timeline', content: { application/json: { schema: { $ref: '#/components/schemas/TimelinePage' } } } }
         default: { $ref: '#/components/responses/Error' }
   /tasks/{taskId}/artifacts:
     get:
@@ -256,7 +371,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TaskId'
       responses:
-        '200': { description: Artifact summaries, content: { application/json: { schema: { type: array, items: { type: object } } } } }
+        '200': { description: 'Artifact summaries', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Artifact' } } } } }
         default: { $ref: '#/components/responses/Error' }
   /tasks/{taskId}/effects:
     get:
@@ -265,7 +380,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/TaskId'
       responses:
-        '200': { description: Effect summaries with evidence level, content: { application/json: { schema: { type: array, items: { type: object } } } } }
+        '200': { description: 'Effect summaries with evidence level', content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Effect' } } } } }
         default: { $ref: '#/components/responses/Error' }
   /approvals:
     get:
@@ -276,8 +391,25 @@ paths:
           in: query
           schema: { type: string, enum: [PENDING, APPROVED, DENIED, EXPIRED, CANCELLED] }
         - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
-        '200': { description: Approval page, content: { application/json: { schema: { type: array, items: { type: object } } } } }
+        '200': { description: 'Approval page', content: { application/json: { schema: { $ref: '#/components/schemas/ApprovalPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /approvals/{approvalId}:
+    get:
+      tags: [approvals]
+      operationId: getApproval
+      parameters:
+        - name: approvalId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Approval bound to an exact target and action digest
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Approval' }
         default: { $ref: '#/components/responses/Error' }
   /approvals/{approvalId}/resolve:
     post:
@@ -294,15 +426,27 @@ paths:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [decision]
-              properties:
-                decision: { type: string, enum: [APPROVE, DENY] }
-                confirmation_digest: { type: [string, 'null'] }
+            schema: { $ref: '#/components/schemas/ResolveApprovalRequest' }
       responses:
-        '200': { description: Approval decision recorded }
+        '200': { description: Approval decision recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Approval' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /artifacts:
+    get:
+      tags: [artifacts]
+      operationId: listArtifacts
+      parameters:
+        - name: library_status
+          in: query
+          required: false
+          schema: { type: string, enum: [TRANSIENT, SAVED, ARCHIVED] }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Authorized Artifacts filtered by Library status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactPage' }
         default: { $ref: '#/components/responses/Error' }
   /artifacts/{artifactId}:
     get:
@@ -314,7 +458,87 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '200': { description: Artifact metadata, content: { application/json: { schema: { type: object } } } }
+        '200':
+          description: Artifact metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artifact' }
+        default: { $ref: '#/components/responses/Error' }
+  /artifacts/{artifactId}/versions/{version}:
+    get:
+      tags: [artifacts]
+      operationId: getArtifactVersion
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: version
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Immutable artifact version metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtifactVersion' }
+        default: { $ref: '#/components/responses/Error' }
+  /artifacts/{artifactId}/versions/{version}/content:
+    get:
+      tags: [artifacts]
+      operationId: downloadArtifactVersion
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: version
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Immutable artifact bytes; Content-Type is the stored media type
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        default: { $ref: '#/components/responses/Error' }
+  /artifacts/{artifactId}/promote:
+    post:
+      tags: [artifacts]
+      operationId: promoteArtifact
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Artifact promoted into the user Library
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artifact' }
+        default: { $ref: '#/components/responses/Error' }
+  /artifacts/{artifactId}/archive:
+    post:
+      tags: [artifacts]
+      operationId: archiveArtifact
+      parameters:
+        - name: artifactId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200':
+          description: Saved Artifact archived and removed from the default Library projection
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Artifact' }
         default: { $ref: '#/components/responses/Error' }
   /library:
     get:
@@ -322,15 +546,19 @@ paths:
       operationId: listLibrary
       parameters:
         - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
-        '200': { description: Library page, content: { application/json: { schema: { type: array, items: { type: object } } } } }
+        '200': { description: 'Library page', content: { application/json: { schema: { $ref: '#/components/schemas/ArtifactPage' } } } }
         default: { $ref: '#/components/responses/Error' }
   /automations:
     get:
       tags: [automations]
       operationId: listAutomations
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
-        '200': { description: Automation page, content: { application/json: { schema: { type: array, items: { type: object } } } } }
+        '200': { description: 'Automation page', content: { application/json: { schema: { $ref: '#/components/schemas/AutomationPage' } } } }
         default: { $ref: '#/components/responses/Error' }
     post:
       tags: [automations]
@@ -341,9 +569,13 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, required: [workspace_id, trigger, task_template, execution_policy] }
+            schema: { $ref: '#/components/schemas/CreateAutomationRequest' }
       responses:
-        '201': { description: Automation created }
+        '201':
+          description: Automation and immutable revision 1 created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Automation' }
         default: { $ref: '#/components/responses/Error' }
   /automations/{automationId}:
     get:
@@ -355,7 +587,7 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '200': { description: Automation definition }
+        '200': { description: Automation definition, content: { application/json: { schema: { $ref: '#/components/schemas/Automation' } } } }
         default: { $ref: '#/components/responses/Error' }
     patch:
       tags: [automations]
@@ -371,34 +603,119 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object }
+            schema: { $ref: '#/components/schemas/UpdateAutomationRequest' }
       responses:
-        '200': { description: Automation updated }
+        '200': { description: Automation updated, content: { application/json: { schema: { $ref: '#/components/schemas/Automation' } } } }
         default: { $ref: '#/components/responses/Error' }
-  /automations/{automationId}/{action}:
+  /automations/{automationId}/run:
     post:
       tags: [automations]
-      operationId: changeAutomationState
+      operationId: runAutomationNow
       parameters:
         - name: automationId
           in: path
           required: true
           schema: { type: string }
-        - name: action
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManualAutomationRunRequest' }
+      responses:
+        '202':
+          description: Manual occurrence accepted and pinned to the current revision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationOccurrence' }
+        default: { $ref: '#/components/responses/Error' }
+  /automations/{automationId}/revisions:
+    get:
+      tags: [automations]
+      operationId: listAutomationRevisions
+      parameters:
+        - name: automationId
           in: path
           required: true
-          schema: { type: string, enum: [pause, resume, disable] }
+          schema: { type: string }
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Immutable AutomationRevision history
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationRevisionPage' }
+        default: { $ref: '#/components/responses/Error' }
+  /automations/{automationId}/occurrences:
+    get:
+      tags: [automations]
+      operationId: listAutomationOccurrences
+      parameters:
+        - name: automationId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Logical occurrences pinned to immutable AutomationRevisions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AutomationOccurrencePage' }
+        default: { $ref: '#/components/responses/Error' }
+  /automations/{automationId}/pause:
+    post:
+      tags: [automations]
+      operationId: pauseAutomation
+      parameters:
+        - name: automationId
+          in: path
+          required: true
+          schema: { type: string }
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/IfMatch'
       responses:
-        '200': { description: Automation state changed }
+        '200': { description: Automation paused, content: { application/json: { schema: { $ref: '#/components/schemas/Automation' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /automations/{automationId}/resume:
+    post:
+      tags: [automations]
+      operationId: resumeAutomation
+      parameters:
+        - name: automationId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200': { description: Automation resumed, content: { application/json: { schema: { $ref: '#/components/schemas/Automation' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /automations/{automationId}/disable:
+    post:
+      tags: [automations]
+      operationId: disableAutomation
+      parameters:
+        - name: automationId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200': { description: Automation disabled permanently, content: { application/json: { schema: { $ref: '#/components/schemas/Automation' } } } }
         default: { $ref: '#/components/responses/Error' }
   /runtimes:
     get:
       tags: [runtimes]
       operationId: listRuntimes
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
       responses:
-        '200': { description: Runtime descriptors; secrets and private keys are omitted }
+        '200': { description: Runtime descriptors; secrets and private keys are omitted, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimePage' } } } }
         default: { $ref: '#/components/responses/Error' }
   /runtimes/pair-token:
     post:
@@ -410,9 +727,9 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, required: [workspace_id, allowed_roles, expires_at] }
+            schema: { $ref: '#/components/schemas/CreatePairingTokenRequest' }
       responses:
-        '201': { description: Single-use short-lived pairing token; returned once }
+        '201': { description: Single-use short-lived pairing token; returned once, content: { application/json: { schema: { $ref: '#/components/schemas/PairingToken' } } } }
         default: { $ref: '#/components/responses/Error' }
   /runtimes/{runtimeId}/revoke:
     post:
@@ -426,7 +743,7 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
         - $ref: '#/components/parameters/IfMatch'
       responses:
-        '200': { description: Runtime authority revoked }
+        '200': { description: Runtime authority revoked, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeDescriptor' } } } }
         default: { $ref: '#/components/responses/Error' }
   /runtimes/{runtimeId}/offers:
     get:
@@ -438,7 +755,185 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '200': { description: Runtime offers with expiry and compatibility evidence }
+        '200': { description: Runtime offers with expiry and compatibility evidence, content: { application/json: { schema: { $ref: '#/components/schemas/RuntimeOfferPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /agent-profiles:
+    get:
+      tags: [agents]
+      operationId: listAgentProfiles
+      parameters:
+        - name: runtime_id
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { description: Runtime-discovered profiles with unexpired offer observations; inventory becomes stale when a Runtime is offline, content: { application/json: { schema: { $ref: '#/components/schemas/AgentProfilePage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /agent-bindings:
+    get:
+      tags: [agents]
+      operationId: listAgentBindings
+      parameters:
+        - name: runtime_id
+          in: query
+          schema: { type: string }
+        - name: enabled
+          in: query
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { description: Workspace AgentBindings, content: { application/json: { schema: { $ref: '#/components/schemas/AgentBindingPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      tags: [agents]
+      operationId: createAgentBinding
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAgentBindingRequest' }
+      responses:
+        '201': { description: Disabled AgentBinding created from a currently discovered profile, content: { application/json: { schema: { $ref: '#/components/schemas/AgentBinding' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /agent-bindings/{agentBindingId}:
+    get:
+      tags: [agents]
+      operationId: getAgentBinding
+      parameters:
+        - name: agentBindingId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: AgentBinding view; auth is represented by SecretRef only, content: { application/json: { schema: { $ref: '#/components/schemas/AgentBinding' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /agent-bindings/{agentBindingId}/enable:
+    post:
+      tags: [agents]
+      operationId: enableAgentBinding
+      parameters:
+        - name: agentBindingId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200': { description: Binding enabled for new planning/Attempt admission, content: { application/json: { schema: { $ref: '#/components/schemas/AgentBinding' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /agent-bindings/{agentBindingId}/disable:
+    post:
+      tags: [agents]
+      operationId: disableAgentBinding
+      parameters:
+        - name: agentBindingId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200': { description: Binding disabled for new admission; already admitted sessions remain pinned and settle safely, content: { application/json: { schema: { $ref: '#/components/schemas/AgentBinding' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /connections:
+    get:
+      tags: [connections]
+      operationId: listConnections
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [CONNECTING, CONNECTED, DEGRADED, REAUTH_REQUIRED, DISCONNECTED] }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { description: Normalized connection metadata, without credentials, content: { application/json: { schema: { $ref: '#/components/schemas/ConnectionPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /connections/{connectionId}:
+    get:
+      tags: [connections]
+      operationId: getConnection
+      parameters:
+        - name: connectionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Normalized connection metadata, content: { application/json: { schema: { $ref: '#/components/schemas/Connection' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /connections/{connectionId}/disconnect:
+    post:
+      tags: [connections]
+      operationId: disconnectConnection
+      parameters:
+        - name: connectionId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200': { description: Connection use stopped; provider account and historical records are preserved, content: { application/json: { schema: { $ref: '#/components/schemas/Connection' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /channel-bindings:
+    get:
+      tags: [channels]
+      operationId: listChannelBindings
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [ACTIVE, DEGRADED, REVOKED] }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200': { description: Channel identity bindings and their current authority, content: { application/json: { schema: { $ref: '#/components/schemas/ChannelBindingPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /channel-bindings/{channelBindingId}:
+    get:
+      tags: [channels]
+      operationId: getChannelBinding
+      parameters:
+        - name: channelBindingId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Channel binding projection, content: { application/json: { schema: { $ref: '#/components/schemas/ChannelBinding' } } } }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [channels]
+      operationId: updateChannelBindingActions
+      parameters:
+        - name: channelBindingId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateChannelBindingActionsRequest' }
+      responses:
+        '200': { description: Allowed channel actions updated after TrustService authorization, content: { application/json: { schema: { $ref: '#/components/schemas/ChannelBinding' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /channel-bindings/{channelBindingId}/revoke:
+    post:
+      tags: [channels]
+      operationId: revokeChannelBinding
+      parameters:
+        - name: channelBindingId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/IfMatch'
+      responses:
+        '200': { description: Binding revoked; inbound commands are rejected and history is preserved, content: { application/json: { schema: { $ref: '#/components/schemas/ChannelBinding' } } } }
         default: { $ref: '#/components/responses/Error' }
   /discover/search:
     get:
@@ -451,9 +946,9 @@ paths:
           schema: { type: string, minLength: 1 }
         - name: kind
           in: query
-          schema: { type: string }
+          schema: { type: string, enum: [APP, CAPABILITY, SKILL, AGENT] }
       responses:
-        '200': { description: Bounded user-facing candidates; package details remain LitePSM-owned }
+        '200': { description: Bounded user-facing candidates; package details remain LitePSM-owned, content: { application/json: { schema: { $ref: '#/components/schemas/DiscoverItemPage' } } } }
         default: { $ref: '#/components/responses/Error' }
   /discover/items/{itemId}:
     get:
@@ -465,7 +960,43 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        '200': { description: Normalized user-facing capability/agent description }
+        '200': { description: Normalized user-facing capability/agent description, content: { application/json: { schema: { $ref: '#/components/schemas/DiscoverItem' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /capabilities/{capabilityId}/connect-or-install:
+    post:
+      tags: [discover]
+      operationId: connectOrInstallCapability
+      parameters:
+        - name: capabilityId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConnectCapabilityRequest' }
+      responses:
+        '202': { description: Capability resolution/connection accepted; approval or runtime activation may still be required, content: { application/json: { schema: { $ref: '#/components/schemas/CapabilitySetupReceipt' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /capabilities/{capabilityId}/test:
+    post:
+      tags: [discover]
+      operationId: testCapabilityConnection
+      parameters:
+        - name: capabilityId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TestCapabilityRequest' }
+      responses:
+        '200': { description: Bounded connection health result; no package-manager internals are returned, content: { application/json: { schema: { $ref: '#/components/schemas/CapabilityHealthResult' } } } }
         default: { $ref: '#/components/responses/Error' }
   /resources/uploads:
     post:
@@ -477,15 +1008,16 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, required: [workspace_id, display_name, media_type, size_bytes] }
+            schema: { $ref: '#/components/schemas/CreateResourceUploadRequest' }
       responses:
-        '201': { description: Bounded temporary upload session }
+        '201': { description: Bounded temporary upload session, content: { application/json: { schema: { $ref: '#/components/schemas/ResourceUploadSession' } } } }
         default: { $ref: '#/components/responses/Error' }
   /resources/uploads/{uploadId}/content:
     put:
       tags: [resources]
       operationId: uploadResourceContent
       parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
         - name: uploadId
           in: path
           required: true
@@ -509,15 +1041,25 @@ paths:
           schema: { type: string }
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
-        '201': { description: Digest-verified immutable ResourceRef }
+        '201': { description: Digest-verified immutable blob ResourceRef, content: { application/json: { schema: { $ref: '#/components/schemas/CommittedResourceRef' } } } }
         default: { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
+    workspaceContext:
+      type: apiKey
+      in: header
+      name: X-Workspace-ID
+      description: Required Workspace scope for all operations except listing/creating Workspaces; for path/body Workspace IDs, values must match.
     operatorAuth:
       type: http
       scheme: bearer
       bearerFormat: opaque
   parameters:
+    WorkspaceId:
+      name: workspaceId
+      in: path
+      required: true
+      schema: { type: string }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -556,6 +1098,621 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/ApiError' }
   schemas:
+    CreateWorkspaceRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        replication_policy:
+          type: string
+          description: Defaults to LOCAL_ONLY. Cloud replication requires an explicit user-selected policy.
+          default: LOCAL_ONLY
+          enum: [LOCAL_ONLY, METADATA_ONLY, ACTIVE_TASK_INPUTS, SELECTED_FOLDERS, FULL_WORKSPACE]
+        replication_scope_refs:
+          type: array
+          default: []
+          description: Required and revision-pinned when replication_policy is SELECTED_FOLDERS.
+          items: { $ref: '#/components/schemas/ResourceRef' }
+    UpdateWorkspacePolicyRequest:
+      type: object
+      additionalProperties: false
+      required: [replication_policy]
+      properties:
+        replication_policy:
+          type: string
+          enum: [LOCAL_ONLY, METADATA_ONLY, ACTIVE_TASK_INPUTS, SELECTED_FOLDERS, FULL_WORKSPACE]
+        replication_scope_refs:
+          type: array
+          items: { $ref: '#/components/schemas/ResourceRef' }
+    Workspace:
+      type: object
+      required: [workspace_id, name, owner_principal_id, replication_policy, replication_scope_refs, status, version, created_at, updated_at]
+      properties:
+        workspace_id: { type: string }
+        name: { type: string }
+        owner_principal_id: { type: string }
+        replication_policy:
+          type: string
+          enum: [LOCAL_ONLY, METADATA_ONLY, ACTIVE_TASK_INPUTS, SELECTED_FOLDERS, FULL_WORKSPACE]
+        replication_scope_refs:
+          type: array
+          items: { $ref: '#/components/schemas/ResourceRef' }
+        hub_runtime_id: { type: [string, 'null'] }
+        status: { type: string, enum: [ACTIVE, ARCHIVED] }
+        version: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    WorkspacePage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Workspace' } }
+        next_cursor: { type: [string, 'null'] }
+    Connection:
+      type: object
+      required: [connection_id, workspace_id, external_provider_ref, status, created_at, updated_at, version]
+      properties:
+        connection_id: { type: string }
+        workspace_id: { type: string }
+        external_provider_ref: { type: string }
+        account_ref: { type: [string, 'null'] }
+        status: { type: string, enum: [CONNECTING, CONNECTED, DEGRADED, REAUTH_REQUIRED, DISCONNECTED] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    ConnectionPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Connection' } }
+        next_cursor: { type: [string, 'null'] }
+    ChannelBinding:
+      type: object
+      required: [channel_binding_id, workspace_id, connection_id, provider_ref, external_account_ref, identity_ref, assurance_level, allowed_actions, status, created_at, updated_at, version]
+      properties:
+        channel_binding_id: { type: string }
+        workspace_id: { type: string }
+        connection_id: { type: [string, 'null'] }
+        provider_ref: { type: string }
+        external_account_ref: { type: string }
+        identity_ref: { $ref: '#/components/schemas/PrincipalRef' }
+        assurance_level: { type: string, enum: [VIEW_ONLY, STEER_SAFE, APPROVE_SAFE, APPROVE_SENSITIVE, LOCAL_STRONG] }
+        allowed_actions:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [VIEW, STEER, APPROVE_SAFE, APPROVE_SENSITIVE] }
+        status: { type: string, enum: [ACTIVE, DEGRADED, REVOKED] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    ChannelBindingPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ChannelBinding' } }
+        next_cursor: { type: [string, 'null'] }
+    UpdateChannelBindingActionsRequest:
+      type: object
+      additionalProperties: false
+      required: [allowed_actions]
+      properties:
+        allowed_actions:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [VIEW, STEER, APPROVE_SAFE, APPROVE_SENSITIVE] }
+    JsonObject:
+      type: object
+      additionalProperties: true
+    PlacementPreference:
+      oneOf:
+        - type: string
+          enum: [AUTO, LOCAL_ONLY, CLOUD_PREFERRED, CLOUD_ONLY]
+        - type: object
+          additionalProperties: false
+          required: [runtime_id]
+          properties:
+            runtime_id: { type: string }
+    SecretRef:
+      type: object
+      required: [secret_ref_id, provider_ref, placement]
+      properties:
+        secret_ref_id: { type: string }
+        provider_ref: { type: string }
+        placement: { type: string, enum: [LOCAL_ONLY, CLOUD_AVAILABLE, RUNTIME_BOUND, EXTERNAL_AGENT_OWNED] }
+    RetryPolicy:
+      type: object
+      additionalProperties: false
+      required: [max_attempts, initial_backoff_ms, max_backoff_ms, multiplier, jitter, retryable_error_codes]
+      properties:
+        max_attempts: { type: integer, minimum: 0 }
+        initial_backoff_ms: { type: integer, minimum: 0 }
+        max_backoff_ms: { type: integer, minimum: 0 }
+        multiplier: { type: number, exclusiveMinimum: 0 }
+        jitter: { type: boolean }
+        retryable_error_codes: { type: array, items: { type: string } }
+    TaskInputBinding:
+      type: object
+      additionalProperties: false
+      required: [source_pointer, template_variable, value_kind, required]
+      properties:
+        source_pointer: { type: string, minLength: 1 }
+        template_variable: { type: string, minLength: 1 }
+        value_kind: { type: string, enum: [TEXT, RESOURCE_REF] }
+        required: { type: boolean }
+        max_bytes: { type: [integer, 'null'], minimum: 1 }
+    AgentCapabilities:
+      type: object
+      required: [protocol, session, input, extension, reporting, environment, limits]
+      properties:
+        protocol: { type: string }
+        protocol_version: { type: [string, 'null'] }
+        session:
+          type: object
+          required: [resume, steer, interrupt, cancel, fork]
+          properties:
+            resume: { type: boolean }
+            steer: { type: boolean }
+            interrupt: { type: boolean }
+            cancel: { type: boolean }
+            fork: { type: boolean }
+        input:
+          type: object
+          required: [text, image, file, resources]
+          properties:
+            text: { type: boolean }
+            image: { type: boolean }
+            file: { type: boolean }
+            resources: { type: boolean }
+        extension:
+          type: object
+          required: [mcp_stdio, mcp_http, skills, plugins, dynamic_attach]
+          properties:
+            mcp_stdio: { type: boolean }
+            mcp_http: { type: boolean }
+            skills: { type: boolean }
+            plugins: { type: boolean }
+            dynamic_attach: { type: boolean }
+        reporting:
+          type: object
+          required: [tool_calls, plan, usage, native_subagents, approvals]
+          properties:
+            tool_calls: { type: boolean }
+            plan: { type: boolean }
+            usage: { type: boolean }
+            native_subagents: { type: boolean }
+            approvals: { type: boolean }
+        environment:
+          type: object
+          required: [cwd, extra_directories]
+          properties:
+            cwd: { type: boolean }
+            extra_directories: { type: boolean }
+        limits:
+          type: object
+          properties:
+            max_context_hint: { type: [integer, 'null'], minimum: 0 }
+            max_concurrent_sessions: { type: [integer, 'null'], minimum: 1 }
+    AgentProfile:
+      type: object
+      required: [agent_profile_id, provider_key, display_name, adapter_kind, capabilities, discovered_at]
+      properties:
+        agent_profile_id: { type: string }
+        provider_key: { type: string }
+        display_name: { type: string }
+        adapter_kind: { type: string, enum: [ACP, A2A, SDK, CLI, TERMINAL] }
+        capabilities: { $ref: '#/components/schemas/AgentCapabilities' }
+        discovered_at: { type: string, format: date-time }
+    AgentProfilePage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AgentProfileView' } }
+        next_cursor: { type: [string, 'null'] }
+    AgentProfileView:
+      allOf:
+        - $ref: '#/components/schemas/AgentProfile'
+        - type: object
+          required: [observations]
+          properties:
+            observations:
+              type: array
+              items: { $ref: '#/components/schemas/AgentProfileObservation' }
+    AgentProfileObservation:
+      type: object
+      additionalProperties: false
+      required: [runtime_id, offer_expires_at]
+      properties:
+        runtime_id: { type: string }
+        offer_expires_at: { type: string, format: date-time }
+    AgentBinding:
+      type: object
+      required: [agent_binding_id, workspace_id, agent_profile_id, runtime_id, auth_ref, configuration, enabled, created_at, version]
+      properties:
+        agent_binding_id: { type: string }
+        workspace_id: { type: string }
+        agent_profile_id: { type: string }
+        runtime_id: { type: [string, 'null'] }
+        auth_ref:
+          oneOf:
+            - $ref: '#/components/schemas/SecretRef'
+            - type: 'null'
+        configuration: { $ref: '#/components/schemas/JsonObject' }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    AgentBindingPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AgentBinding' } }
+        next_cursor: { type: [string, 'null'] }
+    CreateAgentBindingRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, agent_profile_id]
+      properties:
+        workspace_id: { type: string }
+        agent_profile_id: { type: string }
+        runtime_id: { type: [string, 'null'] }
+        auth_ref:
+          oneOf:
+            - $ref: '#/components/schemas/SecretRef'
+            - type: 'null'
+        configuration: { $ref: '#/components/schemas/JsonObject' }
+    PrincipalRef:
+      type: object
+      additionalProperties: false
+      required: [principal_id, kind]
+      properties:
+        principal_id: { type: string }
+        kind: { type: string, enum: [USER, SERVICE, RUNTIME, AGENT, CHANNEL_IDENTITY] }
+    MessageContentBlock:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind, text]
+          properties:
+            kind: { const: TEXT }
+            text: { type: string }
+        - type: object
+          additionalProperties: false
+          required: [kind, resource_ref]
+          properties:
+            kind: { const: RESOURCE }
+            resource_ref: { $ref: '#/components/schemas/ResourceRef' }
+            display_name: { type: [string, 'null'] }
+    ApprovalRequirement:
+      type: object
+      additionalProperties: false
+      required: [requirement_id, action_class, required_assurance, mandatory]
+      properties:
+        requirement_id: { type: string }
+        action_class: { type: string }
+        required_assurance: { type: string, enum: [VIEW_ONLY, STEER_SAFE, APPROVE_SAFE, APPROVE_SENSITIVE, LOCAL_STRONG] }
+        mandatory: { type: boolean }
+    AcceptanceCriterion:
+      type: object
+      additionalProperties: false
+      required: [criterion_id, description, required_evidence, mandatory]
+      properties:
+        criterion_id: { type: string }
+        description: { type: string }
+        subject_refs: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
+        required_evidence: { type: string, enum: [REPORTED, OBSERVED, VERIFIED] }
+        verifier_hint: { type: [string, 'null'] }
+        mandatory: { type: boolean }
+    OutputRequirement:
+      type: object
+      additionalProperties: false
+      required: [output_id, description, mandatory]
+      properties:
+        output_id: { type: string }
+        description: { type: string }
+        kind: { type: [string, 'null'] }
+        media_type: { type: [string, 'null'] }
+        destination:
+          oneOf:
+            - $ref: '#/components/schemas/ResourceRef'
+            - type: 'null'
+        mandatory: { type: boolean }
+    BudgetSpec:
+      type: object
+      additionalProperties: false
+      properties:
+        max_wall_time_ms: { type: [integer, 'null'], minimum: 0 }
+        max_cost_minor_units: { type: [integer, 'null'], minimum: 0 }
+        currency: { type: [string, 'null'], minLength: 3, maxLength: 3 }
+        max_tokens: { type: [integer, 'null'], minimum: 0 }
+        max_child_attempts: { type: [integer, 'null'], minimum: 0 }
+        max_concurrency: { type: [integer, 'null'], minimum: 1 }
+    CapabilityRequirement:
+      type: object
+      additionalProperties: false
+      required: [semantic_requirement, operation_ids]
+      properties:
+        semantic_requirement: { type: string }
+        operation_ids: { type: array, items: { type: string } }
+        resource_scope: { $ref: '#/components/schemas/ResourceScope' }
+    ResourceScope:
+      type: object
+      additionalProperties: false
+      properties:
+        resource_refs: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
+        operation_ids: { type: array, items: { type: string } }
+        constraints: { type: object, additionalProperties: true }
+    FailureRecord:
+      type: object
+      required: [code, category, safe_message, retryable, signature, correlation_id]
+      properties:
+        code: { type: string }
+        category: { type: string, enum: [TRANSIENT, PERMANENT, POLICY, USER_REQUIRED, AMBIGUOUS] }
+        safe_message: { type: string }
+        retryable: { type: boolean }
+        signature: { type: string }
+        correlation_id: { type: string }
+        details: { type: [object, 'null'], additionalProperties: true }
+    ProvenanceRecord:
+      type: object
+      required: [source_resource_refs, source_digests, transformations, tool_reports]
+      properties:
+        created_by_attempt: { type: [string, 'null'] }
+        provider_or_capability: { type: [string, 'null'] }
+        source_resource_refs: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
+        source_digests: { type: array, items: { type: string } }
+        transformations: { type: array, items: { type: string } }
+        tool_reports: { type: array, items: { type: object, additionalProperties: true } }
+    PlannedStep:
+      type: object
+      additionalProperties: false
+      required: [logical_key, title, objective, depends_on_logical_keys, required_capabilities, acceptance_criteria]
+      properties:
+        logical_key: { type: string, minLength: 1 }
+        title: { type: string, minLength: 1 }
+        objective: { type: string, minLength: 1 }
+        depends_on_logical_keys: { type: array, uniqueItems: true, items: { type: string } }
+        required_capabilities: { type: array, items: { $ref: '#/components/schemas/CapabilityRequirement' } }
+        acceptance_criteria: { type: array, items: { $ref: '#/components/schemas/AcceptanceCriterion' } }
+    PlanRevision:
+      type: object
+      required: [task_id, revision, task_spec_revision, produced_by_agent_session_id, steps, created_at]
+      properties:
+        task_id: { type: string }
+        revision: { type: integer, minimum: 1 }
+        task_spec_revision: { type: integer, minimum: 1 }
+        produced_by_agent_session_id: { type: string }
+        produced_by_attempt_id: { type: [string, 'null'] }
+        steps: { type: array, items: { $ref: '#/components/schemas/PlannedStep' } }
+        reason_for_revision: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+    Step:
+      type: object
+      required: [step_id, task_id, plan_revision, title, objective, dependencies, required_capabilities, acceptance_criteria, status, created_at, updated_at, version]
+      properties:
+        step_id: { type: string }
+        task_id: { type: string }
+        plan_revision: { type: integer, minimum: 1 }
+        logical_key: { type: [string, 'null'] }
+        title: { type: string }
+        objective: { type: string }
+        dependencies: { type: array, items: { type: string } }
+        required_capabilities: { type: array, items: { $ref: '#/components/schemas/CapabilityRequirement' } }
+        acceptance_criteria: { type: array, items: { $ref: '#/components/schemas/AcceptanceCriterion' } }
+        status: { type: string, enum: [PENDING, READY, RUNNING, WAITING_USER, BLOCKED, VERIFYING, COMPLETED, FAILED, CANCEL_REQUESTED, CANCELLED, SUPERSEDED] }
+        current_attempt_id: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    Attempt:
+      type: object
+      required: [attempt_id, task_id, step_id, agent_binding_id, runtime_id, environment_id, capability_grant_ids, failover_class, status, created_at, version]
+      properties:
+        attempt_id: { type: string }
+        task_id: { type: string }
+        step_id: { type: string }
+        parent_attempt_id: { type: [string, 'null'] }
+        agent_binding_id: { type: string }
+        agent_session_id: { type: [string, 'null'] }
+        runtime_id: { type: string }
+        environment_id: { type: string }
+        capability_grant_ids: { type: array, items: { type: string } }
+        execution_lease_id: { type: [string, 'null'] }
+        failover_class: { type: string, enum: [SAFE_PORTABLE, REPLAYABLE, HANDOFF_REQUIRED, LOCAL_BOUND] }
+        checkpoint_ref:
+          oneOf:
+            - $ref: '#/components/schemas/ResourceRef'
+            - type: 'null'
+        status: { type: string, enum: [CREATED, PREPARING, RUNNING, WAITING_APPROVAL, WAITING_RESOURCE, CHECKPOINTING, COMPLETED, FAILED, ABANDONED, CANCEL_REQUESTED, CANCELLED] }
+        failure:
+          oneOf:
+            - $ref: '#/components/schemas/FailureRecord'
+            - type: 'null'
+        started_at: { type: [string, 'null'], format: date-time }
+        settled_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    Effect:
+      type: object
+      required: [effect_id, task_id, attempt_id, operation, target, state, request_digest, dispatch_ordinal, created_at, updated_at, version]
+      properties:
+        effect_id: { type: string }
+        task_id: { type: string }
+        attempt_id: { type: string }
+        capability_ref:
+          oneOf:
+            - $ref: '#/components/schemas/CapabilityRef'
+            - type: 'null'
+        operation: { type: string }
+        target:
+          oneOf:
+            - $ref: '#/components/schemas/ResourceRef'
+            - type: string
+        idempotency_key: { type: [string, 'null'] }
+        state: { type: string, enum: [PROPOSED, STARTED, ACKNOWLEDGED, RECONCILING, OBSERVED, VERIFIED, FAILED, AMBIGUOUS] }
+        request_digest: { type: string }
+        dispatch_ordinal: { type: integer, minimum: 0 }
+        result_ref:
+          oneOf:
+            - $ref: '#/components/schemas/ResourceRef'
+            - type: 'null'
+        observed_state: { type: [object, 'null'], additionalProperties: true }
+        verification_ref: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    TimelineEntry:
+      type: object
+      required: [entry_id, event_type, summary, occurred_at]
+      properties:
+        entry_id: { type: string }
+        event_type: { type: string }
+        summary: { type: string }
+        entity_ref: { type: [string, 'null'] }
+        actor_ref: { $ref: '#/components/schemas/PrincipalRef' }
+        evidence_level: { type: [string, 'null'], enum: [REPORTED, OBSERVED, VERIFIED, null] }
+        occurred_at: { type: string, format: date-time }
+        correlation_id: { type: [string, 'null'] }
+    CommandReceipt:
+      type: object
+      additionalProperties: false
+      required: [command_id, entity_ref, accepted_at, correlation_id]
+      properties:
+        command_id: { type: string }
+        entity_ref: { type: string }
+        accepted_at: { type: string, format: date-time }
+        correlation_id: { type: string }
+    RuntimeDescriptor:
+      type: object
+      required: [runtime_id, workspace_id, device_identity, runtime_version, platform, architecture, roles, trust_zone, availability, agents, capability_offers, environment_offers, resource_capacity, last_seen, version]
+      properties:
+        runtime_id: { type: string }
+        workspace_id: { type: string }
+        device_identity:
+          type: object
+          required: [device_id, public_key, key_version, issued_at]
+          properties:
+            device_id: { type: string }
+            public_key: { type: string }
+            key_version: { type: integer, minimum: 1 }
+            issued_at: { type: string, format: date-time }
+            display_name: { type: [string, 'null'] }
+        runtime_version: { type: string }
+        platform: { type: string }
+        architecture: { type: string }
+        roles: { type: array, uniqueItems: true, items: { type: string, enum: [WORKSPACE_HUB, EXECUTOR, RESOURCE_NODE, CHANNEL_HOST, TRIGGER_HOST, OPERATOR_ENDPOINT] } }
+        trust_zone: { type: string }
+        availability: { type: string, enum: [PAIRING, ONLINE, DEGRADED, DRAINING, OFFLINE, REVOKED] }
+        agents: { type: array, items: { $ref: '#/components/schemas/AgentProfile' } }
+        capability_offers: { type: array, items: { $ref: '#/components/schemas/RuntimeOffer' } }
+        environment_offers: { type: array, items: { $ref: '#/components/schemas/RuntimeOffer' } }
+        resource_capacity: { type: object, additionalProperties: true }
+        last_seen: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    RuntimePage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/RuntimeDescriptor' } }
+        next_cursor: { type: [string, 'null'] }
+    RuntimeOffer:
+      type: object
+      required: [runtime_id, offer_kind, offer_ref, compatible, constraints, observed_at, expires_at]
+      properties:
+        runtime_id: { type: string }
+        offer_kind: { type: string, enum: [AGENT, CAPABILITY, ENVIRONMENT, CHANNEL, TRIGGER] }
+        offer_ref: { type: string }
+        compatible: { type: boolean }
+        constraints: { type: object, additionalProperties: true }
+        observed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    RuntimeOfferPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/RuntimeOffer' } }
+        next_cursor: { type: [string, 'null'] }
+    CreatePairingTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, allowed_roles]
+      properties:
+        workspace_id: { type: string }
+        allowed_roles: { type: array, minItems: 1, uniqueItems: true, items: { type: string, enum: [WORKSPACE_HUB, EXECUTOR, RESOURCE_NODE, CHANNEL_HOST, TRIGGER_HOST, OPERATOR_ENDPOINT] } }
+        requested_ttl_ms: { type: [integer, 'null'], minimum: 1000 }
+    PairingToken:
+      type: object
+      required: [pairing_token, workspace_id, allowed_roles, expires_at]
+      properties:
+        pairing_token: { type: string, minLength: 1, writeOnly: true }
+        workspace_id: { type: string }
+        allowed_roles: { type: array, items: { type: string, enum: [WORKSPACE_HUB, EXECUTOR, RESOURCE_NODE, CHANNEL_HOST, TRIGGER_HOST, OPERATOR_ENDPOINT] } }
+        expires_at: { type: string, format: date-time }
+    CapabilityRef:
+      type: object
+      required: [capability_id, source, package_version, digest]
+      properties:
+        capability_id: { type: string }
+        source: { type: string }
+        package_version: { type: string }
+        digest: { type: string }
+        component: { type: [string, 'null'] }
+    DiscoverItem:
+      type: object
+      required: [item_ref, kind, display_name, summary, compatibility]
+      properties:
+        item_ref: { type: string }
+        kind: { type: string, enum: [APP, CAPABILITY, SKILL, AGENT] }
+        display_name: { type: string }
+        summary: { type: string }
+        description: { type: [string, 'null'] }
+        compatibility: { type: string, enum: [COMPATIBLE, INCOMPATIBLE, UNKNOWN] }
+        compatibility_reason: { type: [string, 'null'] }
+        requires_user_action: { type: boolean, default: false }
+    DiscoverItemPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/DiscoverItem' } }
+        next_cursor: { type: [string, 'null'] }
+    CapabilitySetupReceipt:
+      type: object
+      required: [operation_id, capability_id, state, correlation_id]
+      properties:
+        operation_id: { type: string }
+        capability_id: { type: string }
+        state: { type: string, enum: [ACCEPTED, AWAITING_APPROVAL, ACTIVATING, READY, FAILED] }
+        approval_id: { type: [string, 'null'] }
+        activation_id: { type: [string, 'null'] }
+        correlation_id: { type: string }
+    CapabilityHealthResult:
+      type: object
+      required: [health, checked_at]
+      properties:
+        health: { type: string, enum: [HEALTHY, DEGRADED, UNHEALTHY, UNKNOWN] }
+        checked_at: { type: string, format: date-time }
+        safe_summary: { type: [string, 'null'] }
+    CreateResourceUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, display_name, media_type, size_bytes]
+      properties:
+        workspace_id: { type: string }
+        display_name: { type: string, minLength: 1 }
+        media_type: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        expected_digest: { type: [string, 'null'], pattern: '^[a-f0-9]{64}$' }
+    ResourceUploadSession:
+      type: object
+      required: [upload_id, workspace_id, display_name, media_type, expected_size_bytes, state, expires_at]
+      properties:
+        upload_id: { type: string }
+        workspace_id: { type: string }
+        display_name: { type: string }
+        media_type: { type: string }
+        expected_size_bytes: { type: integer, minimum: 0 }
+        expected_digest: { type: [string, 'null'] }
+        state: { type: string, enum: [OPEN, CONTENT_RECEIVED, COMMITTED, EXPIRED] }
+        expires_at: { type: string, format: date-time }
     CreateConversationRequest:
       type: object
       additionalProperties: false
@@ -565,12 +1722,11 @@ components:
         title: { type: [string, 'null'] }
     Conversation:
       type: object
-      required: [conversation_id, workspace_id, status, version, created_at]
+      required: [conversation_id, workspace_id, version, created_at]
       properties:
         conversation_id: { type: string }
         workspace_id: { type: string }
         title: { type: [string, 'null'] }
-        status: { type: string, enum: [ACTIVE, ARCHIVED] }
         version: { type: integer, minimum: 1 }
         created_at: { type: string, format: date-time }
     AppendMessageRequest:
@@ -578,7 +1734,7 @@ components:
       additionalProperties: false
       required: [content]
       properties:
-        content: { type: array, items: { type: object } }
+        content: { type: array, items: { $ref: '#/components/schemas/MessageContentBlock' } }
         resource_refs: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
     ConversationMessage:
       type: object
@@ -586,9 +1742,9 @@ components:
       properties:
         message_id: { type: string }
         conversation_id: { type: string }
-        author: { type: object }
+        author: { $ref: '#/components/schemas/PrincipalRef' }
         role: { type: string, enum: [USER, AGENT, SYSTEM_NOTICE, CHANNEL] }
-        content: { type: array, items: { type: object } }
+        content: { type: array, items: { $ref: '#/components/schemas/MessageContentBlock' } }
         resource_refs: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
         created_at: { type: string, format: date-time }
     MessagePage:
@@ -609,12 +1765,13 @@ components:
         constraints: { type: array, items: { type: string } }
         non_goals: { type: array, items: { type: string } }
         input_refs: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
-        required_outputs: { type: array, items: { type: object } }
-        acceptance_criteria: { type: array, items: { type: object } }
-        approvals_required: { type: array, items: { type: object } }
-        budget: { type: [object, 'null'] }
+        required_outputs: { type: array, items: { $ref: '#/components/schemas/OutputRequirement' } }
+        acceptance_criteria: { type: array, items: { $ref: '#/components/schemas/AcceptanceCriterion' } }
+        approvals_required: { type: array, items: { $ref: '#/components/schemas/ApprovalRequirement' } }
+        budget: { oneOf: [{ $ref: '#/components/schemas/BudgetSpec' }, { type: 'null' }] }
         deadline: { type: [string, 'null'], format: date-time }
-        execution_preference: { type: string }
+        placement_preference: { $ref: '#/components/schemas/PlacementPreference' }
+        preferred_lead_agent_binding_id: { type: [string, 'null'] }
     ReviseTaskSpecRequest:
       type: object
       additionalProperties: false
@@ -625,12 +1782,14 @@ components:
         constraints: { type: array, items: { type: string } }
         non_goals: { type: array, items: { type: string } }
         input_refs: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
-        required_outputs: { type: array, items: { type: object } }
-        acceptance_criteria: { type: array, items: { type: object } }
-        approvals_required: { type: array, items: { type: object } }
+        required_outputs: { type: array, items: { $ref: '#/components/schemas/OutputRequirement' } }
+        acceptance_criteria: { type: array, items: { $ref: '#/components/schemas/AcceptanceCriterion' } }
+        approvals_required: { type: array, items: { $ref: '#/components/schemas/ApprovalRequirement' } }
+        placement_preference: { $ref: '#/components/schemas/PlacementPreference' }
+        preferred_lead_agent_binding_id: { type: [string, 'null'] }
     TaskSpecRevision:
       type: object
-      required: [task_id, revision, objective, authored_by, created_at]
+      required: [task_id, revision, parent_revisions, objective, constraints, non_goals, required_outputs, acceptance_criteria, approvals_required, input_refs, placement_preference, authored_by, created_at]
       properties:
         task_id: { type: string }
         revision: { type: integer, minimum: 1 }
@@ -638,16 +1797,27 @@ components:
         objective: { type: string }
         constraints: { type: array, items: { type: string } }
         non_goals: { type: array, items: { type: string } }
+        required_outputs: { type: array, items: { $ref: '#/components/schemas/OutputRequirement' } }
+        acceptance_criteria: { type: array, items: { $ref: '#/components/schemas/AcceptanceCriterion' } }
+        approvals_required: { type: array, items: { $ref: '#/components/schemas/ApprovalRequirement' } }
         input_refs: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
-        acceptance_criteria: { type: array, items: { type: object } }
+        budget: { oneOf: [{ $ref: '#/components/schemas/BudgetSpec' }, { type: 'null' }] }
+        deadline: { type: [string, 'null'], format: date-time }
+        source_message_refs: { type: array, items: { type: string } }
+        placement_preference: { $ref: '#/components/schemas/PlacementPreference' }
+        preferred_lead_agent_binding_id: { type: [string, 'null'] }
+        authored_by: { $ref: '#/components/schemas/PrincipalRef' }
         created_at: { type: string, format: date-time }
     Task:
       type: object
-      required: [task_id, workspace_id, current_spec_revision, status, version, created_at]
+      required: [task_id, workspace_id, lead_agent_binding_id, priority, created_by, current_spec_revision, status, version, created_at, updated_at]
       properties:
         task_id: { type: string }
         workspace_id: { type: string }
         conversation_id: { type: [string, 'null'] }
+        lead_agent_binding_id: { type: [string, 'null'] }
+        priority: { type: string, enum: [LOW, NORMAL, HIGH] }
+        created_by: { $ref: '#/components/schemas/PrincipalRef' }
         current_spec_revision: { type: integer, minimum: 1 }
         current_plan_revision: { type: [integer, 'null'], minimum: 1 }
         status:
@@ -670,6 +1840,12 @@ components:
       properties:
         message: { type: string, minLength: 1 }
         classification: { type: string, enum: [CHAT_ONLY, TASK_SPEC_CHANGE, PLAN_HINT, URGENT_INTERRUPT, CANCEL] }
+    ChangeLeadAgentRequest:
+      type: object
+      additionalProperties: false
+      required: [agent_binding_id]
+      properties:
+        agent_binding_id: { type: string, minLength: 1 }
     RecoveryRequest:
       type: object
       additionalProperties: false
@@ -680,8 +1856,254 @@ components:
       type: object
       required: [items]
       properties:
-        items: { type: array, items: { type: object } }
+        items: { type: array, items: { $ref: '#/components/schemas/TimelineEntry' } }
         next_cursor: { type: [string, 'null'] }
+    ResolveApprovalRequest:
+      type: object
+      additionalProperties: false
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [APPROVE, DENY] }
+        confirmation_digest: { type: [string, 'null'] }
+    Approval:
+      type: object
+      required: [approval_id, task_id, kind, action_summary, target_ref, scope_digest, action_digest, risk, required_assurance, status, requested_at, version]
+      properties:
+        approval_id: { type: string }
+        task_id: { type: string }
+        requested_by_attempt: { type: [string, 'null'] }
+        kind: { type: string }
+        action_summary: { type: string }
+        target_ref: { $ref: '#/components/schemas/ResourceRef' }
+        scope_digest: { type: string }
+        action_digest: { type: string }
+        risk: { type: string, enum: [SAFE, SENSITIVE, HIGH_IMPACT] }
+        required_assurance: { type: string }
+        status: { type: string, enum: [PENDING, APPROVED, DENIED, EXPIRED, CANCELLED] }
+        requested_at: { type: string, format: date-time }
+        expires_at: { type: [string, 'null'], format: date-time }
+        resolved_by:
+          oneOf:
+            - $ref: '#/components/schemas/PrincipalRef'
+            - type: 'null'
+        resolved_at: { type: [string, 'null'], format: date-time }
+        version: { type: integer, minimum: 1 }
+    Artifact:
+      type: object
+      required: [artifact_id, workspace_id, kind, display_name, current_version, library_status, created_at, version]
+      properties:
+        artifact_id: { type: string }
+        workspace_id: { type: string }
+        task_id: { type: [string, 'null'] }
+        kind: { type: string }
+        display_name: { type: string }
+        current_version: { type: integer, minimum: 1 }
+        library_status: { type: string, enum: [TRANSIENT, SAVED, ARCHIVED] }
+        created_at: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    ArtifactVersion:
+      type: object
+      required: [artifact_id, version, input_refs, content_digest, storage_ref, media_type, size_bytes, provenance, created_at]
+      properties:
+        artifact_id: { type: string }
+        version: { type: integer, minimum: 1 }
+        created_by_attempt: { type: [string, 'null'] }
+        input_refs: { type: array, items: { $ref: '#/components/schemas/ResourceRef' } }
+        content_digest: { type: string }
+        storage_ref: { $ref: '#/components/schemas/BlobRef' }
+        media_type: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        provenance: { $ref: '#/components/schemas/ProvenanceRecord' }
+        verification_refs: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+    ConnectCapabilityRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id]
+      properties:
+        workspace_id: { type: string }
+        runtime_id: { type: [string, 'null'] }
+        requested_scope: { $ref: '#/components/schemas/ResourceScope' }
+    TestCapabilityRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id]
+      properties:
+        workspace_id: { type: string }
+        runtime_id: { type: [string, 'null'] }
+    ApprovalPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Approval' } }
+        next_cursor: { type: [string, 'null'] }
+    AutomationPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Automation' } }
+        next_cursor: { type: [string, 'null'] }
+    AutomationRevisionPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AutomationRevision' } }
+        next_cursor: { type: [string, 'null'] }
+    AutomationOccurrencePage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AutomationOccurrence' } }
+        next_cursor: { type: [string, 'null'] }
+    ArtifactPage:
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Artifact' } }
+        next_cursor: { type: [string, 'null'] }
+    TriggerSpec:
+      oneOf:
+        - $ref: '#/components/schemas/ScheduleTrigger'
+        - $ref: '#/components/schemas/WebhookTrigger'
+        - $ref: '#/components/schemas/ConnectorEventTrigger'
+        - $ref: '#/components/schemas/ManualTrigger'
+      discriminator:
+        propertyName: kind
+    ScheduleTrigger:
+      type: object
+      additionalProperties: false
+      required: [kind, timezone, rrule_or_cron, missed_run_policy, ambiguous_local_time, nonexistent_local_time]
+      properties:
+        kind: { const: SCHEDULE }
+        timezone: { type: string, description: IANA time-zone identifier }
+        rrule_or_cron: { type: string, minLength: 1 }
+        start_at: { type: [string, 'null'], format: date-time }
+        end_at: { type: [string, 'null'], format: date-time }
+        missed_run_policy: { type: string, enum: [SKIP, RUN_LATEST, RUN_ALL_BOUNDED] }
+        ambiguous_local_time: { type: string, enum: [EARLIER, LATER] }
+        nonexistent_local_time: { type: string, enum: [SKIP, NEXT_VALID] }
+    WebhookTrigger:
+      type: object
+      additionalProperties: false
+      required: [kind, source_identity, auth_profile_ref, authentication_mode, replay_window_ms, max_payload_bytes]
+      properties:
+        kind: { const: WEBHOOK }
+        source_identity: { type: string, minLength: 1 }
+        auth_profile_ref: { type: string }
+        authentication_mode: { type: string, enum: [SIGNATURE, BEARER_SECRET, MUTUAL_TLS] }
+        replay_window_ms: { type: integer, minimum: 1 }
+        max_payload_bytes: { type: integer, minimum: 1 }
+        delivery_id_field: { type: [string, 'null'] }
+    ConnectorEventTrigger:
+      type: object
+      additionalProperties: false
+      required: [kind, connection_id, provider_event_type]
+      properties:
+        kind: { const: CONNECTOR_EVENT }
+        connection_id: { type: string }
+        provider_event_type: { type: string, minLength: 1 }
+        filter_expression: { type: [object, 'null'] }
+    ManualTrigger:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { const: MANUAL }
+    TaskTemplate:
+      type: object
+      additionalProperties: false
+      required: [objective_template]
+      properties:
+        objective_template: { type: string, minLength: 1 }
+        constraints: { type: array, items: { type: string } }
+        non_goals: { type: array, items: { type: string } }
+        required_outputs: { type: array, items: { $ref: '#/components/schemas/OutputRequirement' } }
+        acceptance_criteria: { type: array, items: { $ref: '#/components/schemas/AcceptanceCriterion' } }
+        approvals_required: { type: array, items: { $ref: '#/components/schemas/ApprovalRequirement' } }
+        input_bindings: { type: array, items: { $ref: '#/components/schemas/TaskInputBinding' } }
+        budget_ceiling: { oneOf: [{ $ref: '#/components/schemas/BudgetSpec' }, { type: 'null' }] }
+    AutomationExecutionPolicy:
+      type: object
+      additionalProperties: false
+      required: [placement_preference, max_concurrent_occurrences, overlap_policy, retry_policy, notification_policy]
+      properties:
+        placement_preference: { $ref: '#/components/schemas/PlacementPreference' }
+        max_concurrent_occurrences: { type: integer, minimum: 1, default: 1 }
+        overlap_policy: { type: string, enum: [SKIP, QUEUE, CANCEL_OLD, ALLOW] }
+        retry_policy: { $ref: '#/components/schemas/RetryPolicy' }
+        budget_ceiling: { oneOf: [{ $ref: '#/components/schemas/BudgetSpec' }, { type: 'null' }] }
+        notification_policy: { type: string, enum: [ALWAYS, ON_SUCCESS, ON_FAILURE, ON_CONDITION, SILENT] }
+        misfire_max_count: { type: [integer, 'null'], minimum: 1 }
+    ManualAutomationRunRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        trigger_values: { type: object, additionalProperties: true }
+    CreateAutomationRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, name, trigger, task_template, execution_policy]
+      properties:
+        workspace_id: { type: string }
+        name: { type: string, minLength: 1 }
+        trigger: { $ref: '#/components/schemas/TriggerSpec' }
+        task_template: { $ref: '#/components/schemas/TaskTemplate' }
+        execution_policy: { $ref: '#/components/schemas/AutomationExecutionPolicy' }
+    UpdateAutomationRequest:
+      type: object
+      additionalProperties: false
+      required: [name, trigger, task_template, execution_policy]
+      properties:
+        name: { type: string, minLength: 1 }
+        trigger: { $ref: '#/components/schemas/TriggerSpec' }
+        task_template: { $ref: '#/components/schemas/TaskTemplate' }
+        execution_policy: { $ref: '#/components/schemas/AutomationExecutionPolicy' }
+    Automation:
+      type: object
+      required: [automation_id, workspace_id, name, current_revision, status, version, created_at, updated_at]
+      properties:
+        automation_id: { type: string }
+        workspace_id: { type: string }
+        name: { type: string }
+        current_revision: { type: integer, minimum: 1 }
+        status: { type: string, enum: [ENABLED, PAUSED, DISABLED] }
+        version: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AutomationRevision:
+      type: object
+      required: [automation_id, revision, trigger, task_template, execution_policy, authored_by, created_at]
+      properties:
+        automation_id: { type: string }
+        revision: { type: integer, minimum: 1 }
+        trigger: { $ref: '#/components/schemas/TriggerSpec' }
+        task_template: { $ref: '#/components/schemas/TaskTemplate' }
+        execution_policy: { $ref: '#/components/schemas/AutomationExecutionPolicy' }
+        authored_by: { $ref: '#/components/schemas/PrincipalRef' }
+        created_at: { type: string, format: date-time }
+    AutomationOccurrence:
+      type: object
+      required: [occurrence_id, automation_id, automation_revision, occurrence_key, claim_epoch, status, created_at]
+      properties:
+        occurrence_id: { type: string }
+        automation_id: { type: string }
+        automation_revision: { type: integer, minimum: 1 }
+        occurrence_key: { type: string, pattern: '^[a-f0-9]{64}$' }
+        claim_epoch: { type: integer, minimum: 0 }
+        claim_expires_at: { type: [string, 'null'], format: date-time }
+        scheduled_for: { type: [string, 'null'], format: date-time }
+        trigger_input_ref: { oneOf: [{ $ref: '#/components/schemas/ResourceRef' }, { type: 'null' }] }
+        trigger_payload_digest: { type: [string, 'null'] }
+        task_id: { type: [string, 'null'] }
+        status: { type: string, enum: [PENDING, CLAIMED, STARTED, COMPLETED, SKIPPED, FAILED] }
+        created_at: { type: string, format: date-time }
+    BlobRef:
+      type: object
+      required: [digest, size_bytes, media_type]
+      properties:
+        digest: { type: string, minLength: 1 }
+        size_bytes: { type: integer, minimum: 0 }
+        media_type: { type: string }
     ResourceRef:
       type: object
       required: [scheme, id]
@@ -692,6 +2114,15 @@ components:
         revision: { type: [string, 'null'] }
         digest: { type: [string, 'null'] }
         metadata: { type: [object, 'null'] }
+    CommittedResourceRef:
+      allOf:
+        - $ref: '#/components/schemas/ResourceRef'
+        - type: object
+          required: [digest]
+          properties:
+            scheme: { const: blob }
+            id: { type: string, pattern: '^[a-f0-9]{64}$' }
+            digest: { type: string, pattern: '^[a-f0-9]{64}$' }
     ApiError:
       type: object
       required: [code, message, retryable, correlation_id]

@@ -14,24 +14,67 @@ interface ArtifactStore {
   get_version(ArtifactId, version) -> ArtifactVersion
   open_blob(BlobRef) -> BlobStream
   promote_to_library(PromoteArtifactRequest) -> Artifact
-  list(ArtifactQuery) -> Page<ArtifactSummary>
+  archive(ArchiveArtifactRequest) -> Artifact
+  list(ArtifactQuery) -> Page<Artifact>
 }
 ```
 
-ArtifactVersion is immutable after publication.
+ArtifactVersion is immutable after publication. `create` requires already committed content and atomically creates Artifact version 1 plus both `artifact.created.v1` and `artifact.version.created.v1`. `add_version` uses the caller's expected Artifact aggregate version; it cannot accept a blob until BlobStore has verified and committed its digest.
+
+```text
+CreateArtifactRequest {
+  workspace_id: WorkspaceId
+  task_id: TaskId?
+  kind: string
+  display_name: string
+  content: BlobRef
+  input_refs: ResourceRef[]
+  created_by_attempt: AttemptId?
+  provenance: ProvenanceRecord
+  verification_refs: EvidenceId[]
+}
+
+AddArtifactVersionRequest {
+  artifact_id: ArtifactId
+  expected_version: u64
+  content: BlobRef
+  input_refs: ResourceRef[]
+  created_by_attempt: AttemptId?
+  provenance: ProvenanceRecord
+  verification_refs: EvidenceId[]
+}
+
+PromoteArtifactRequest {
+  artifact_id: ArtifactId
+  expected_version: u64
+}
+
+ArchiveArtifactRequest {
+  artifact_id: ArtifactId
+  expected_version: u64
+}
+
+ArtifactQuery {
+  library_status?: ArtifactLibraryStatus
+  task_id?: TaskId
+  cursor?: string
+  limit: u32
+}
+```
 
 Draft editors may use provider-specific temporary state; publishing creates a new immutable version.
 The blob must be fully committed and its digest verified before the version/event is
 visible. Artifact IDs are stable; versions are monotonically increasing per Artifact.
-Concurrent output from separate Attempts may create separate Artifact records or
-versions, but only an explicit promotion changes the Artifact's current version. A
-directory/tree is represented as a manifest of child refs plus content digests, not as
-an unbounded local path.
+Adding a version requires the expected Artifact aggregate version. In one transaction, the store assigns the next integer version, appends the immutable ArtifactVersion, advances current_version, increments Artifact.version, and appends the event. Concurrent publication loses with STALE_VERSION; it cannot overwrite or silently branch. The caller must re-read and explicitly rebase or publish a separate Artifact. Publishing to an ARCHIVED Artifact fails with ARTIFACT_ARCHIVED. Library promotion/archive changes library_status and Artifact.version, not the content version. A directory/tree is represented as a manifest of child refs plus content digests, not as an unbounded local path.
 
 An Artifact may be generated, uploaded, imported, or linked. A linked Artifact retains
 its external provider and revision; it does not imply that bytes were replicated. A
 stale or unavailable linked revision is labeled as such. Publishing a new version never
 overwrites an earlier one.
+
+`listLibrary` returns only SAVED artifacts. `list(ArtifactQuery)` returns authorized artifacts and supports the Archived Library filter.
+
+An Artifact follows TRANSIENT -> SAVED -> ARCHIVED. Only explicit Library promotion moves TRANSIENT to SAVED; archive moves SAVED to ARCHIVED. Both commands use If-Match/expected_version and increment the Artifact aggregate version on transition. Repeating an already-applied command with the same Idempotency-Key returns the recorded result; archiving an already archived Artifact with the current expected Artifact version returns its current representation without another transition event; a stale expected version still returns STALE_VERSION. Archived artifacts retain immutable versions and authorized direct reads, but disappear from the default Library projection. ArtifactStore owns these transitions and emits the matching event.
 
 ## Provenance
 

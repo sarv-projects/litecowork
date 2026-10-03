@@ -9,6 +9,7 @@ apps/
 crates/
   domain/
     common/
+    workspace/
     conversation/
     task/
     artifact/
@@ -17,7 +18,10 @@ crates/
 
   runtime/
     supervisor/
+    workspace-service/
     task-service/
+    planning-coordinator/
+    agent-session-supervisor/
     scheduler/
     attempt-runner/
     completion/
@@ -95,7 +99,9 @@ Forbidden dependencies:
 
 Build only:
 - local `litecoworkd`
+- WorkspaceService with explicit replication policy and archive lifecycle
 - Task/Event/SQLite stores
+- Task-scoped LEAD_PLANNING session before Steps/Attempts
 - one ACP AgentAdapter
 - LiteCowork Gateway
 - LitePSM client
@@ -104,7 +110,7 @@ Build only:
 - one deterministic Verifier
 - minimal desktop Conversation/Task/Live Desk
 
-Acceptance: kill worker and resume from portable Task state.
+Acceptance: create a local-only Workspace; create a Task; start an attempt-free lead planning session; promote its PlanRevision and materialize Steps; execute one Step; kill the worker and resume from portable Task state. Confirm no Live Desk lane appears before a Step Attempt exists.
 
 ## Milestone 2 — heterogeneous agents
 
@@ -121,6 +127,10 @@ One ChannelAdapter (Telegram or Email) through same Conversation/Task store.
 ## Milestone 5 — automation
 
 Schedule trigger -> deduplicated occurrence -> ordinary Task.
+
+## Documentation and implementation gates
+
+Before a domain is implemented, its canonical schema, legal transitions/owner, command/event contract, authorization rule, failure/recovery behavior, UI projection, and compatibility policy must agree across its owner document and the shared schema/API/event/storage references. LitePSM package/API/manifest details remain intentionally deferred to the configured LitePSM service; LiteCowork specifies only its internal broker port and stable user-facing capability references.
 
 ## Definition of done for a domain feature
 

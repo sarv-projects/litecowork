@@ -16,21 +16,29 @@ interface ChannelAdapter {
 
 Providers may include Telegram, Slack, Discord, Teams, Email and Webhook.
 
+## Provider setup and operator controls
+
+Provider-specific account authorization and callback mechanics belong to the selected
+ChannelAdapter/package and are intentionally not standardized here. After authenticating
+an external account and identity, the adapter reports normalized Connection and
+ChannelBinding metadata to their owning services. LiteCowork stores references, action
+permissions, assurance, and status only; credential bytes remain in the provider-owned
+secret mechanism. The owner reviews allowed actions through the Operator API. Disconnect
+or revocation blocks future use without erasing history or deleting the external account.
+
 ## Identity mapping
 
 ```text
 ChannelBinding {
   channel_binding_id
   workspace_id
+  connection_id?
   provider
   external_account_id
   identity
   authentication_strength
   assurance_level
-  can_view
-  can_steer
-  can_approve_safe
-  can_approve_sensitive
+  allowed_actions: ChannelAction[]
   status
 }
 ```
@@ -51,7 +59,7 @@ InboundChannelEvent {
 }
 ```
 
-`provider_event_id` is deduplicated.
+`provider_event_id` is deduplicated by the composite key (channel_binding_id, provider_event_id). Its receipt moves through RECEIVED, PROCESSING, and one terminal ACCEPTED, REJECTED, or FAILED state. Every PROCESSING claim increments claim_epoch; a completion with a stale epoch is rejected after reclaim, preventing a late worker from overwriting the current receipt.
 
 Attachments become ResourceRefs/Artifacts before Task consumption.
 Inbound content is untrusted. Sender identity comes from the authenticated provider
@@ -75,7 +83,7 @@ agents can access them.
 ## Outbound delivery
 
 Delivery receipts are Evidence at REPORTED/OBSERVED level depending on provider semantics. If actual delivery/read status matters, a verifier or provider reconciliation is required.
-Outbound sends use a stable delivery/request identity. If the provider times out after
+Outbound sends use a stable delivery/request identity and are tracked as Effects/Evidence, not ChannelEventReceipt rows. If the provider times out after
 accepting a message, the delivery is ambiguous and must be reconciled before retry to
 avoid duplicate user-visible replies. A delivery receipt does not complete its linked
 Task.

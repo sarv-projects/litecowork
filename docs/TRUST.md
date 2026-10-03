@@ -90,7 +90,9 @@ ApprovalRequest {
   task_id
   attempt_id?
   requested_action
-  target
+  target_ref
+  scope_digest
+  action_digest
   reason
   risk
   required_assurance
@@ -99,7 +101,7 @@ ApprovalRequest {
 }
 ```
 
-Approval is tied to the exact action scope/digest. Material changes require new approval.
+Approval persists target_ref, scope_digest, and action_digest. The digest binds the exact operation, target revision, requested scope, Task, and Attempt when present. Material changes require new approval.
 Approval is a one-time authorization decision, not a reusable capability grant. It is
 consumed atomically with grant/effect admission and cannot be replayed against a changed
 request digest or resource revision.

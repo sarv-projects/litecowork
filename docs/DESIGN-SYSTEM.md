@@ -15,6 +15,12 @@ Required token families:
 ## Core components
 
 - AppShell
+- WorkspaceSwitcher
+- WorkspaceSetupForm
+- ReplicationPolicySelector
+- ArchivedWorkspaceBanner
+- PlanningStatus
+- AutomationRevisionHistory
 - SidebarNav
 - Composer
 - AttachmentChip
@@ -41,6 +47,12 @@ Every component defines normal, hover/focus, disabled, loading, error and reduce
 Status color/icon must not be the only signal. Text label is required for warning/error/needs-user states.
 
 `REPORTED`, `OBSERVED`, `VERIFIED` use distinguishable labels/icons; only VERIFIED may use definitive verification styling.
+
+## Workspace policy components
+
+`ReplicationPolicySelector` explains what content may transfer, which Runtime can receive it, and whether the choice applies prospectively. `SELECTED_FOLDERS` requires at least one revision-pinned folder reference. `ArchivedWorkspaceBanner` is persistent, textual, and exposes available read/download actions while explaining why write actions are disabled. Archive confirmation names active Tasks/Automations that block the transition.
+
+`PlanningStatus` identifies the lead planning phase without displaying a fake work lane, Environment, or progress meter. `AutomationRevisionHistory` distinguishes the current definition from the immutable revision pinned by each occurrence.
 
 ## Accessibility
 

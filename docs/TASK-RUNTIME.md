@@ -16,9 +16,9 @@ interface TaskService {
   list(TaskQuery) -> Page<TaskSummary>
 
   revise_spec(ReviseTaskSpecRequest) -> TaskSpecRevision
-  submit_plan(SubmitPlanRequest) -> PlanRevision
-
-  materialize_steps(MaterializeStepsRequest) -> Step[]
+  request_initial_plan(RequestPlanRequest) -> PlanningAssignment
+  submit_plan(SubmitPlanRequest) -> PlanAcceptance
+  change_lead_agent(ChangeLeadAgentRequest) -> Task
   create_attempt(CreateAttemptRequest) -> Attempt
 
   steer(SteerTaskRequest) -> TaskSpecRevision | ConversationMessage
@@ -30,6 +30,16 @@ interface TaskService {
   checkpoint(CreateResumePacketRequest) -> ResourceRef
   propose_completion(CompletionProposal) -> VerificationRunId
   finalize(FinalizeTaskRequest) -> Task
+}
+```
+
+Plan acceptance result:
+
+```text
+PlanAcceptance {
+  plan_revision: PlanRevision
+  materialized_steps: Step[]
+  task_version: u64
 }
 ```
 
@@ -48,19 +58,23 @@ interface TaskService {
   approvals_required[]
   budget?
   deadline?
-  preferred_lead_agent?
-  execution_preference?
+  preferred_lead_agent_binding_id?
+  placement_preference?
 }
 ```
 
-Creation is atomic: Task + TaskSpecRevision(1) + `task.created` event.
+Creation is atomic: Task + TaskSpecRevision(1) + `task.created` event. The selected lead AgentBinding is stored on Task and referenced by the initial spec as `preferred_lead_agent_binding_id`; the placement preference is pinned in that spec. A new Task enters planning without creating a Step, Attempt, ExecutionLease, or Environment.
 The operator appends the originating ConversationMessage in the same command boundary
 when the Task came from a message. A standalone Task may omit a Conversation.
+
+## Initial planning session
+
+TaskService creates a PlanningAssignment for the current lead binding and TaskSpecRevision. PlanningCoordinator asks AgentSessionSupervisor to start a LEAD_PLANNING AgentSession. The session has Task read, plan proposal, and user-clarification tools only; it has no Attempt, lease, Environment write access, consequential capability invocation, or artifact publication. TaskService changes READY to RUNNING only after the session is ready. Plan acceptance creates/promotes a PlanRevision and materializes Steps; only then can an execution Attempt be admitted. A planning session may be replaced without changing Task identity or fabricating an Attempt.
 
 ## Plan acceptance
 
 `submit_plan` validates:
-- references current TaskSpec revision or explicitly states older revision
+- references exactly the current TaskSpec revision; stale proposals are rejected with STALE_SPEC_REVISION
 - Step IDs unique within plan
 - no dependency cycles
 - all dependencies exist
@@ -69,12 +83,28 @@ when the Task came from a message. A standalone Task may omit a Conversation.
 
 It does not evaluate whether the plan is intellectually good.
 
-Plan materialization is a separate command. It pins the TaskSpec revision used by the
-plan, checks stable Step keys, dependency references and cycles, then creates the new
-Step records and `step.created` events. When a newer PlanRevision replaces work, a
-completed Step remains historical; an unstarted obsolete Step becomes `SUPERSEDED`; an
-active Step is cancelled or allowed to reach a safe boundary under the new revision.
-Only the current lead Attempt under a valid lease may promote the current PlanRevision.
+Plan acceptance is one TaskService transaction: append immutable PlanRevision, advance
+Task.current_plan_revision, create the Step records, supersede obsolete unstarted Steps,
+and append all related events. It returns PlanAcceptance. A crash therefore cannot leave a
+current PlanRevision with no corresponding Steps. The internal materialization helper is
+idempotent but is not a separately observable command. A completed Step remains historical;
+an unstarted obsolete Step becomes `SUPERSEDED`; an active Step is cancellation-requested
+or allowed to reach a safe boundary under the new revision, and its lease remains authoritative
+until settled. An authorized LEAD_PLANNING AgentSession may propose the initial plan without
+an Attempt. For later proposals, the producer must be the currently assigned lead planning
+session or the current lead execution Attempt under a valid lease. TaskService validates
+producer authority and plan structure, then alone promotes the PlanRevision.
+
+## Lead-agent change
+
+`change_lead_agent` validates that the AgentBinding belongs to the same Workspace, is enabled,
+and has a compatible Runtime/protocol. It records the requested lead binding and emits a
+`task.lead_agent.changed.v1` event. New planning and plan submissions are authorized only
+for the new binding. Existing Attempts retain their attempt-scoped AgentBinding and lease
+while they drain or are cancelled at a safe boundary. Planning replacement creates a fresh
+LEAD_PLANNING session without an Attempt. A replacement execution Attempt may not acquire
+the Step until its prior lease is released, expired, or revoked and open Effects are reconciled. The Task and its history
+remain stable.
 
 ## Attempt creation
 
