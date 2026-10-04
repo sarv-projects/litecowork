@@ -28,10 +28,14 @@ interface EnvironmentProvider {
 EnvironmentSpec {
   class
   runtime_id
-  task_id
-  attempt_id?
+  owner_workspace_id
+  lifetime: ATTEMPT | TASK_RETAINED | WORKSPACE_PERSISTENT
+  owner_task_id?       # required for ATTEMPT / TASK_RETAINED
+  attempt_id?         # required for ATTEMPT once bound
   isolation
   resource_limits
+  budget_ceiling
+  budget_enforcement_policy: REQUIRE_PROVIDER_ENFORCED | ALLOW_HOST_MONITORED
   filesystem
   network_policy
   secret_leases[]
@@ -40,6 +44,37 @@ EnvironmentSpec {
   cleanup_policy
 }
 ```
+
+Creation requires a provider request ID and explicit Workspace authorization. ATTEMPT
+and TASK_RETAINED require an owner Task in the same Workspace; WORKSPACE_PERSISTENT has
+no owner Task and is admitted through an explicit Workspace resource action. Execution
+still names the using Task/Attempt and receives fresh scoped authority. A persistent
+Environment's provision-time `secret_leases[]` are short-lived allocation credentials,
+not retained connector tokens or grants inherited by later work. `REQUIRE_PROVIDER_ENFORCED`
+blocks provisioning unless the provider enforces the requested cost cap. The explicit
+`ALLOW_HOST_MONITORED` policy is monitor-only and can overshoot when the host is offline,
+suspended, or the provider reports charges late; the UI states that limitation before
+confirmation. An `UNAVAILABLE` estimate/enforcement state never appears as a guaranteed
+ceiling. Persistent Environment cost and wall-time ceilings are cumulative from creation
+and do not reset on a schedule. Budget usage is attributed to the Environment and, when
+applicable, separately to each using Task; unknown or stale observations remain unknown.
+Cost comparisons require the pinned budget currency; v1 performs no implicit FX
+conversion. At the limit, admission of new uses stops. EnvironmentManager requests a
+safe checkpoint/suspend and reconciles in-flight Invocations and Effects; unresolved
+Effects block destructive cleanup. A provider-enforced cap remains active while the
+Runtime is offline. A host-monitored threshold may be exceeded during a disconnection and
+must not be described as a hard cap.
+
+For v1, `budget_ceiling` and `budget_enforcement_policy` are immutable after successful
+provisioning; there is no in-place top-up, reset, or budget-change API. At `LIMIT_REACHED`,
+the Environment stops admitting new uses and follows the safe checkpoint/suspend path.
+Current consumers are told which Task/Step is blocked. They may select another already
+eligible Environment or explicitly provision a replacement through the normal preview
+and approval flow. A replacement is a different Environment: LiteCowork does not assume
+that provider process state or private filesystem contents can be cloned. Reuse requires
+explicitly resolving the needed files/state as Resources or Artifacts and admitting a new
+Attempt with fresh grants, leases, and budget checks. Existing Attempt bindings never
+silently change.
 
 ## Isolation
 
@@ -90,6 +125,33 @@ Environment is destroyed only when:
 - required checkpoints/artifacts are committed,
 - unresolved effects do not require the environment for reconciliation.
 
+## Lifetime and reuse
+
+Every Environment declares a lifetime:
+
+```text
+ATTEMPT
+TASK_RETAINED
+WORKSPACE_PERSISTENT
+```
+
+`ATTEMPT` is the default and is eligible for cleanup after that Attempt settles and all
+checkpoint/effect-reconciliation holds clear. `TASK_RETAINED` may be reused only within
+the owning Task and its explicit recovery policy. `WORKSPACE_PERSISTENT` is an explicit,
+user-visible Environment that may retain files, installed dependencies, or processes
+between Tasks. It is a provider-owned resource with Workspace owner, retention/expiry,
+cost, storage, network, backup, and cleanup policy; it is not implicit in a Task checkpoint
+or ordinary cloud sandbox. Reuse never carries grants, approvals, SecretLeases,
+EnvironmentControlLeases, or ExecutionLeases into a new Task/Attempt. Each use rechecks
+identity, Environment health, resource revisions, trust policy, and current authorization.
+Persistent Environments are not destroyed by ordinary Attempt cleanup and require an
+explicit owner action or expiry policy.
+
+Providers must report whether an Environment survives a Runtime incarnation. A process
+bound to a local daemon is reattached only after process identity verification; a cloud VM
+may persist, but its provider must independently verify that the recorded handle points to
+the expected Environment before use.
+
 ## File exposure
 
 `expose_file` resolves a ResourceRef into an environment-accessible path or mount.
@@ -106,9 +168,27 @@ Ports are denied by default for isolated environments unless the provider or Tas
 
 ## Checkpoint semantics
 
-EnvironmentCheckpoint is an optimization, never Task truth.
+EnvironmentCheckpoint is an optimization, never Task truth. Its opaque provider handle is
+stored only in an incarnation-scoped Runtime-local binding and is never accepted as
+authorization. The checkpoint digest identifies provider-reported snapshot content; it
+does not make that content available to another Runtime. Cross-Runtime Task recovery uses
+the ResumePacket and pinned Resource/Artifact inputs to create a new Environment.
 
-A restored environment must still receive current TaskSpec, grants, lease/fencing token and effect state.
+A provider that exports actual snapshot bytes may publish them as a content-addressed
+`portable_snapshot_ref`; its BlobRef digest must equal the checkpoint digest. Only that
+form is eligible for cross-Runtime restore, and only when the receiving provider supports
+the exact checkpoint format/version. Blob replication and backup must satisfy both the
+Environment's `INCLUDE_CHECKPOINTS` policy and the Workspace replication policy. A
+provider-only checkpoint has no portable ref and is never presented as portable merely
+because a digest exists. Restore always rechecks provider compatibility, Environment
+identity/health, current TaskSpec, grants, current lease ID/epoch and Runtime incarnation,
+the private fencing credential at the enforcing provider, and Effect state. The credential
+travels only over authenticated private Runtime/provider control; it is not included in the
+restore request visible to an Agent or Operator.
+
+A restored Environment receives current TaskSpec, grants, and Effect state. Its enforcing
+provider receives the current lease/fence over private authenticated control, never through
+the Agent-facing restore request.
 
 ## Provider result and isolation rules
 
@@ -131,6 +211,11 @@ A restored environment must still receive current TaskSpec, grants, lease/fencin
   the provider's private filesystem is not itself durable Task state.
 - Environment state changes are written by EnvironmentManager and emitted as
   `environment.*` events. Provider logs do not directly change Task or Attempt state.
+- An application attachment records whether the provider attached to a pre-existing user
+  process or launched a process it owns. Cleanup may stop only a LiteCowork-launched
+  instance under the explicit Environment cleanup policy; it never closes a pre-existing
+  application. Browser/desktop UI permission and login/session requirements are rechecked
+  at each Attempt.
 
 ## Attempt binding
 
@@ -143,3 +228,11 @@ lease/fence, input references, and reconciled Effect state.
 Providers are qualified with conformance tests for isolation, stale-fence rejection,
 resource exposure, cleanup, crash recovery, and output integrity before their offers are
 advertised as eligible.
+
+## Workspace archive
+
+A persistent workload must be stopped/suspended and observed quiescent before its Workspace
+can become read-only. Admission is fenced during archive; unknown provider state blocks
+archive rather than pretending a background process stopped. Retained filesystem and
+checkpoint state is preserved under the Workspace's storage/backup policy. Archive does
+not itself authorize destructive Environment cleanup.

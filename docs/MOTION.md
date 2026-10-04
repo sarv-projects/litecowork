@@ -4,7 +4,8 @@ Motion communicates domain change; it never invents work.
 
 ## Tokens
 
-Recommended baseline tokens (implementation may tune visually without changing semantics):
+These v1 timing/easing values are normative. Changing them requires a design-system update;
+semantic triggers and reduced-motion behavior remain invariant.
 
 ```text
 duration.instant = 80ms
@@ -19,13 +20,41 @@ ease.exit     = cubic-bezier(0.4, 0, 1, 1)
 
 No essential information depends on motion.
 
+Interactive color/border/focus transitions use `duration.fast`; content/status transitions
+use only the table below. Avoid spring physics, overshoot, parallax, continuous shimmer,
+and looping progress animation. Indeterminate work is shown with a static label/icon and
+an accessible busy state, not a decorative animation.
+
 ## Semantic transitions
+
+| Domain/UI change | Trigger that must already be committed | Motion |
+|---|---|---|
+| Conversation message appears | `conversation.message.added.v1` projection | Fade in 120ms, standard easing; no slide-in |
+| Message expands to Task card | `task.created.v1` projection | Height + opacity, 180ms, enter easing |
+| Default AgentBinding changes | `workspace.default_agent_binding.changed.v1` projection | Update selected label with 120ms fade; no automatic agent-switch animation |
+| Planning status appears | `agent.session.started.v1` for TASK_PLANNING | Opacity 120ms; no lane, spinner, or percentage |
+| Workstream lane appears | persisted Step/Attempt projection reaches RUNNING | Height + opacity, 180ms, enter easing |
+| Capability source attaches | activation/invocation reaches STARTING/DISPATCHED | Opacity 120ms; source text uses actual operation |
+| Delegation branch appears | child Attempt committed | Height + opacity, 180ms; native subagent is labeled reported |
+| Artifact version appears | ManagedBlob digest verified or ExternalResource pin validated, then ArtifactVersion committed | Opacity + 0.98→1 scale, 120ms, standard easing |
+| Blocker/UserRequest enters view | corresponding durable record appears | Opacity 180ms; one border emphasis for 280ms, then static |
+| Verification state advances | VerificationRun projection changes | Icon/fill 120ms; no continuous intermediate animation |
+| Task pauses/resumes | committed pause/resume/lease events | Text/status change 180ms; old process is never depicted as restarting |
+| Human/Agent control changes | control lease owner/epoch projection changes | Badge/label 120ms; never animate queued pointer input |
+| Resource freshness changes | location/revision projection changes | Label + linked freshness icon 120ms |
+| Task lane fails | affected lane projects failure | Border/status update 180ms; no screen-wide flash |
+| Handoff phase/location changes | each Handoff phase committed; target lease required for final location | Current phase label 180ms; “Saving progress…” only during checkpoint/transfer, target only after lease acquisition |
+| Archived Workspace banner appears | `workspace.archived.v1` projection | Banner fade 180ms; persistent read-only state |
+
+Historical hydration, cursor resync, and initial page load render the current state without
+replaying transitions. An animation is never queued from an earlier event after the latest
+projection has advanced.
 
 ### Workspace creation, policy change, and archive
 Workspace creation appears only after `workspace.created.v1` commits. A replication-policy change updates its displayed label after `workspace.replication_policy.changed.v1`; it must not imply that previously replicated data was deleted. Archive enters a persistent read-only presentation only after `workspace.archived.v1` commits. Blocked archive requests show active Tasks/Automations without an archive transition.
 
 ### Initial planning
-Show a quiet “Planning” status when a real LEAD_PLANNING session becomes active. Do not create an animated work lane before PlanRevision promotion and Step/Attempt creation. When the first Attempt is created, add the lane using the normal dispatch transition.
+Show a quiet “Planning” status when a real TASK_PLANNING session becomes active. Do not create an animated work lane before PlanRevision promotion and Step/Attempt creation. When the first Attempt is created, add the lane using the normal dispatch transition.
 
 ### Automation revision
 Editing an Automation may animate its revision-history entry after the immutable revision event. Existing pending/running occurrences keep their pinned revision; do not restart, retitle, or visually replay them because the current definition changed.
@@ -43,7 +72,8 @@ Source card attaches to lane after activation/invocation starts. Text reflects a
 Child branch expands only after host child Attempt is durable. Native subagent may show `reported child` style if merely reported.
 
 ### Artifact
-New ArtifactVersion enters with fast fade and subtle 0.98 -> 1.0 scale. Never animate before blob/version commit.
+New ArtifactVersion enters with fast fade and subtle 0.98 -> 1.0 scale. Never animate before content validation and version commit; a linked external Artifact
+does not require a local blob.
 
 ### Library archive
 After `artifact.library.archived.v1`, fade the item out of the default Library projection. Do not animate deletion of the external source or immutable versions.
@@ -55,10 +85,34 @@ Indicator stages:
 ○ -> ◔ -> ◑ -> ✓
 ```
 
-Progress states correspond to actual verification run status. Failed/inconclusive does not end with checkmark.
+Partial-fill states require actual verifier stage/progress observations; elapsed time
+never invents fractional progress. A verifier exposing only RUNNING shows a static checking
+icon/label until a result exists. Failed/inconclusive does not end with a checkmark, and a
+passing individual check does not itself certify the whole Task.
 
 ### Needs user
-Relevant lane pauses; approval/blocker card may use low-frequency subtle emphasis. Avoid continuous distracting pulse.
+Relevant lane pauses. A new approval/blocker card may use the one-time 280ms border
+emphasis in the table, then stays static. Never pulse continuously.
+
+### Task pause/resume
+On `PAUSE_REQUESTED`, show “Pausing safely” and update the visible stage only from
+committed checkpoint/reconciliation/lease events. On `PAUSED`, settle to a static paused
+state. If an Effect blocks pause, keep that blocker visible and do not run a completion
+transition. Resume motion begins after TaskService accepts resume. Planning can resume
+without an Attempt. An execution lane appears only after TaskService re-admits a retained
+same-incarnation Attempt under a fresh higher-epoch lease or commits a new Attempt/lease.
+Do not animate an old process waking up.
+
+### Human control takeover
+Show the current controller label and the committed control epoch change. During takeover,
+indicate that queued agent input is being discarded; enable human controls only after the
+new HUMAN epoch is active. Returning to the Agent shows fresh observation/reconciliation
+before a new Agent epoch. Never replay cursor/input animations from an earlier epoch.
+
+### Resource freshness and notifications
+A Resource location changing to STALE/UNKNOWN updates its label and linked downstream
+outputs after the projection event. A UserRequest arrival may use a brief badge/fade; a
+NotificationDelivery acknowledgement never animates a Task into completion.
 
 ### Failure
 Only affected lane transitions to failure state. No global red flash unless workspace-level catastrophic failure affects all work.
@@ -74,6 +128,16 @@ Cloud
 
 when handoff phases actually progress. Never depict process teleportation.
 
+## Runtime, Routine, and trigger presentation
+
+Runtime recovery, AgentHost startup, and dependency waiting update static labels from
+observed lifecycle state using `duration.fast`. Installation does not animate worker
+startup. Routine creation/revision appears only after its event commits; saving an Operator
+draft does not create a running lane. A due occurrence waiting for a laptop shows its
+actual dependency blocker. Reconnecting or waking refreshes current state without replaying
+missed worker animations. Quick Entry opens with a 120ms fade, with immediate display under
+reduced motion; opening it never sends or captures context automatically.
+
 ## Interrupted animations
 
 UI state is always derived from latest projection. If a new state arrives mid-animation:
@@ -84,6 +148,5 @@ UI state is always derived from latest projection. If a new state arrives mid-an
 ## Reduced motion
 
 When enabled:
-- replace transforms with opacity/state changes.
-- remove pulses/continuous progress motion.
+- apply state changes immediately without transforms, fades, pulses, or continuous progress.
 - retain textual status and icons.

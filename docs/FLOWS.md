@@ -8,39 +8,77 @@ directly. The listed sequence is normative unless a linked owner contract is str
 
 Actors: User, Operator UI, WorkspaceService, TrustService, RuntimeMesh.
 
-1. The user creates a Workspace. If no replication policy is supplied, it is created as `LOCAL_ONLY`.
-2. The UI explains each replication scope before the user explicitly enables cloud replication. `SELECTED_FOLDERS` requires one or more revision-pinned `workspace-folder://` ResourceRefs.
-3. WorkspaceService commits the Workspace and `workspace.created` event.
-4. A policy edit is a versioned prospective change; it does not erase already replicated bytes or grant permissions/secrets.
-5. Archive is accepted only when every Task is terminal and every Automation is disabled. WorkspaceService commits `ARCHIVED`; reads and existing authorized artifact/resource downloads remain available, while every domain mutation is rejected, including Task changes, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel materialization.
+1. The user creates a Workspace. WorkspaceService commits `LOCAL_ONLY` and an empty selected-root set when no other allowed initial policy is supplied, then emits `workspace.created`.
+2. The user adds persistent WorkspaceRoots for selected folders. A one-time message attachment does not create a root.
+3. The UI explains each replication scope before the user explicitly enables cloud replication. `SELECTED_FOLDERS` requires one or more active WorkspaceRoot IDs in this Workspace; it follows new revisions under each root rather than pinning one snapshot.
+4. WorkspaceService applies a versioned prospective policy update and stores the selected root IDs transactionally with `workspace.replication_policy.changed`.
+5. A policy edit never erases already replicated bytes or grants permissions/secrets. Archive is accepted only when every Task is terminal and every Automation is disabled. WorkspaceService commits `ARCHIVED`; reads and existing authorized artifact/resource downloads remain available, while every domain mutation is rejected, including Task changes, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel materialization.
 
-Events: `workspace.created.v1`, `workspace.replication_policy.changed.v1`, `workspace.archived.v1`.
+Events: `workspace.created.v1`, `workspace.replication_policy.changed.v1`,
+`workspace.default_agent_binding.changed.v1`, `workspace.archived.v1`.
 
 UI: show the selected policy and its scope; an archived Workspace is visibly read-only. No archive/delete animation occurs before the archive event is committed.
 
 ## F01 — Simple conversation, no Task
 
-Actors: User, Operator UI, ConversationService, lead chat agent.
+Actors: User, Operator UI, ConversationService, AgentTurnCoordinator,
+AgentSessionSupervisor, active AgentBinding.
 
-1. User sends factual/simple message.
-2. message appended to Conversation.
-3. the conversational agent produces an answer; no separate Core intent/planning model is invoked.
-4. response appended as ConversationMessage.
+Preconditions: Workspace is ACTIVE; an enabled Conversation override or Workspace-default
+AgentBinding and compatible AgentEndpoint are available; the user message and selected
+context pass Workspace scope. If none is eligible, the draft is retained and the user is
+directed to connect/enable/select an AgentBinding before a turn is created.
 
-Events: `conversation.message.added`.
+1. User submits a message. ConversationService appends the ConversationMessage and
+   ConversationTurn before dispatch.
+2. AgentTurnCoordinator starts a fresh `AgentSessionScope.CONVERSATION` session bound to
+   this ConversationTurn;
+   it has a `conversation_id` and no Task, Step, Attempt, lease, or Environment.
+3. ContextService sends the current WorkspaceInstructionRevision, selected visible
+   messages, and explicitly attached ResourceRefs. No task-only material is implicitly
+   included.
+4. The agent produces a response. ConversationService appends it with the producing
+   AgentSession, AgentBinding, and ConversationTurn provenance. The coordinator observes
+   adapter quiescence, closes the session, and releases its host-use reference before the
+   turn settles. If the agent creates a structured UserRequest, the same close/release
+   occurs while the turn waits; the UserRequest pins this exact turn/session, and the user's
+   response first moves that turn to `WAITING_DEPENDENCY`; it continues only that turn in
+   a fresh session after required provider input acceptance and session readiness, using a
+   bounded Conversation projection that includes the request and immutable response.
 
-No Task/Step/Attempt required unless the agent execution itself is represented internally as ephemeral chat work.
+Events: `conversation.message.added.v1`, `conversation.turn.created.v1`,
+`agent.session.started.v1`, `agent.session.closed.v1`, `user.request.created.v1`,
+`user.request.resolved.v1`, `conversation.turn.retried.v1`,
+`conversation.turn.resumed.v1`, `conversation.turn.settled.v1`, and any applicable
+`capability.invocation.*.v1`.
 
-UI: ordinary conversation; no Task card.
+No Task/Step/Attempt/ExecutionLease is created. A Conversation-scoped Gateway credential
+allows only the explicitly granted read-only methods. If the request needs durable
+outcome work or a consequential action, ordinary Task materialization rules apply before
+that work is admitted.
+
+Failure behavior: a lost session marks the turn FAILED and retryable at the turn level;
+it does not fail a Task. An explicit retry moves that same turn back to RUNNING, increments
+its retry ordinal, and creates a replacement Conversation session. Prior partial agent
+output remains provenance-tagged and is not treated as a final response.
+
+UI: ordinary conversation; no Task card or fake Live Desk lane. Show the selected agent
+only when the user opens advanced details.
 
 ## F02 — Conversation materializes a Task
 
+Precondition: Task admission resolves an enabled, eligible AgentBinding from an explicit
+request or the Workspace default. If none is available, return `AGENT_UNAVAILABLE`, keep
+the composer draft, and create no Task or ConversationTurn; first-use setup runs before
+the user resubmits.
+
 1. User asks for outcome-oriented work or explicitly creates a Task from a message.
 2. ConversationService persists the ConversationMessage.
-3. TaskService creates Task + TaskSpecRevision(1) and binds the source message in one
-   transaction; if the message and Task originate in one command, both commit together.
+3. TaskService creates Task + TaskSpecRevision(1), pins the current
+   WorkspaceInstructionRevision, and binds the source message in one transaction; if the
+   message and Task originate in one command, both commit together.
 4. TaskService pins the selected lead AgentBinding and placement preference.
-5. PlanningCoordinator starts a Task-scoped `LEAD_PLANNING` AgentSession without an Attempt,
+5. PlanningCoordinator starts a Task-scoped `TASK_PLANNING` AgentSession without an Attempt,
    lease, Environment, or consequential capability grant.
 6. After the session is ready, Task becomes RUNNING. The lead proposes PlanRevision(1);
    TaskService validates/promotes it and materializes Steps. Only then are Step Attempts
@@ -73,8 +111,10 @@ UI: ordinary conversation; no Task card.
 5. Broker resolves exact package version/digest.
 6. Trust evaluates grant/approval.
 7. provider installed/started on eligible Runtime if needed.
-8. direct attach only if the provider enforces the Task grant and required Effect/fence
-   contract; otherwise select proxy.
+8. direct native tools only through a host-managed broker relay that records each
+   CapabilityInvocation and enforces the session-scope grant plus required Effect/fence
+   contract; otherwise select the Gateway proxy tool. An independently connected tool is
+   agent-owned and outside those guarantees.
 9. activation lifecycle status becomes `ACTIVE`; a separate health observation records `HEALTHY`.
 10. worker invokes the capability; a direct mutation cannot bypass authorization or
     recovery. If neither path preserves required guarantees, the operation is unavailable.
@@ -97,8 +137,12 @@ Same as F04 through grant, but agent cannot hot-attach.
 3. Attempt -> WAITING_APPROVAL.
 4. UI shows exact requested action and scope.
 5. user approves on adequate-assurance surface.
-6. TrustService atomically records the decision and issues the scoped grant; Attempt
-   resumes only after activation and secret prerequisites are healthy.
+6. TrustService records the user decision. For this capability-escalation flow, the
+   authorized command atomically creates the scoped CapabilityGrant and consumes the
+   Approval in one ApprovalUse bound to that grant and the exact approved request digest.
+   A later consequential invocation requires its own Effect admission and, if its risk
+   policy requires approval, a separate ApprovalUse bound to that Effect. Attempt resumes
+   only after activation and secret prerequisites are healthy.
 
 Denied/expired approval produces policy failure or revised plan; no effect is executed.
 
@@ -134,15 +178,49 @@ No parent full transcript is copied by default.
 
 ## F10 — Cancellation
 
-1. User requests cancellation with the expected Task version.
-2. Task -> CANCEL_REQUESTED.
-3. signal all host-owned Attempts.
-4. block new consequential Effects/grants.
-5. interrupt/cancel agents.
-6. reconcile open Effects.
-7. terminate isolated environments where safe.
-8. Task -> CANCELLED after authoritative work settles and Effects reconcile. If an Effect
-   remains ambiguous, Task becomes NEEDS_USER with cancellation intent retained.
+Actors: User, TaskService, PlanningCoordinator, AttemptRunner, AgentAdapter,
+InvocationRunner, CompletionEvaluator, VerifierRunner, EffectReconciler, LeaseCoordinator,
+ConversationService, TrustService.
+
+1. User requests cancellation with the expected Task version. TaskService serializes this
+   against completion on the Task aggregate version. If completion already committed, the
+   cancel command returns that terminal result. Otherwise Task becomes `CANCEL_REQUESTED`,
+   fencing CompletionEvaluator and admitting no new grants, Attempts, Effects,
+   CapabilityInvocations, or VerificationRuns.
+2. ConversationService and TrustService consume the Task status event and transition
+   pending Task-scoped UserRequests and pending Approvals to `CANCELLED`. Their owner
+   services make these changes; TaskService waits for their closure events. Responses
+   committed before cancellation remain immutable, but any resulting provider work is
+   still cancelled and reconciled.
+3. TaskService rejects late plan proposals after cancellation wins the Task-version race;
+   PlanningCoordinator asks AgentSessionSupervisor to close the active TASK_PLANNING
+   session.
+   Signal host-owned Attempts and ask AgentAdapters to interrupt/cancel.
+4. Ask InvocationRunner to cancel each in-flight Task-planning/Attempt CapabilityInvocation.
+   Provider acknowledgement records cancellation intent only; wait for authoritative
+   provider terminal state. Conversation-scoped Invocations are outside the Task.
+5. Reconcile open Effects and settle/abandon Attempts; terminate isolated Environments
+   where policy allows.
+6. Let active VerificationRuns settle against their pinned criteria and `ResourceInput` values;
+   append their results/Evidence, but reject any late completion finalization because the
+   Task is already `CANCEL_REQUESTED`.
+7. Task becomes `CANCELLED` only after the planning session, Attempts, Invocations,
+   VerificationRuns, pending Task-scoped requests/Approvals, and Effects have settled. If a provider may still be
+   acting, an owner-service closure or verifier remains unsettled, or an Effect remains
+   ambiguous, keep `CANCEL_REQUESTED` and show the blocker; do not claim cancellation.
+
+Cancellation is valid from `PAUSED` and supersedes `PAUSE_REQUESTED`; a saved ResumePacket
+remains history and is not resumed. A late Task-scoped user response after cancellation
+is rejected and cannot start an AgentSession or provider delivery. Cancellation withdraws
+an `AWAITING_RESPONSE`/`PENDING` local provider-input outbox as `CANCELLED`; a dispatched
+or ambiguous response is reconciled and the provider Invocation must settle before the
+Task becomes `CANCELLED`.
+
+Events: `task.status.changed.v1`, Attempt and CapabilityInvocation status events,
+`agent.session.closed.v1` for the planning session, `user.request.resolved.v1` and
+`approval.resolved.v1` for owner-service closures, `verification.started.v1`/
+`verification.completed.v1` for already-active runs, lease and Effect events, and the
+final Task status event.
 
 ## F11 — Artifact production/revision
 
@@ -162,7 +240,9 @@ No parent full transcript is copied by default.
 4. VerifierRegistry selects deterministic verifier first.
 5. evidence appended.
 6. all mandatory criteria pass -> COMPLETED.
-7. failed criterion -> INCOMPLETE or RUNNING with recovery.
+7. failed criterion with a permitted recovery -> READY, then a new Step Attempt moves the
+   Task to RUNNING; without a permitted recovery, settle as INCOMPLETE, BLOCKED,
+   NEEDS_USER, or terminal FAILED according to the classified outcome.
 8. uncertain semantic criterion -> NEEDS_USER or independent verifier agent.
 
 ## F13 — Graceful local -> cloud handoff
@@ -208,10 +288,16 @@ Example: email send request left process, network failed before response.
 1. local Runtime was offline while Hub received new events.
 2. reconnect authenticates identity.
 3. exchange replication cursors.
-4. upload local unseen events; download Hub unseen events.
+4. transfer immutable blobs referenced by eligible locally committed events, verify their
+   digests, then submit event envelopes; download Hub events and referenced blobs in the
+   same dependency order.
 5. Hub validates origin authority, expected revisions, transition owner, and fences.
-6. entity-specific conflict rules apply; rejected stale events cannot change projections.
-7. stale lease/fence cannot regain authority.
+6. Offline mutable commands are submitted as pending intents and revalidated against the
+   Hub's current aggregate version; they are not uploaded as already committed events.
+   Entity-specific conflict rules apply, and rejected stale intents/events cannot change
+   projections.
+7. stale lease/fence cannot regain authority. A Runtime cannot reclaim an Attempt merely
+   because it has locally stored events from an expired epoch.
 
 ## F17 — Runtime pairing
 
@@ -301,7 +387,7 @@ Never permit two workers to mutate same checkout without explicit serialization.
 2. TaskService records the requested lead binding and emits `task.lead_agent.changed.v1`.
    New planning/plan submissions use the new binding; existing Attempts retain their own
    agent identity and current lease while they drain or are cancelled at a safe boundary.
-3. If a `LEAD_PLANNING` session is active, PlanningCoordinator closes it and starts a new
+3. If a `TASK_PLANNING` session is active, PlanningCoordinator closes it and starts a new
    planning session; no Attempt is fabricated.
 4. TaskService writes a portable ResumePacket when execution context must be replaced.
    A replacement execution Attempt starts only after the prior lease is settled and open
@@ -346,6 +432,284 @@ UI: show provider status, authenticated identity, assurance level, and granted a
 Never show a binding as authorized while its allowed-action set is empty or its status
 is REVOKED.
 
+## F28 — Persistent WorkspaceRoot and deterministic search
+
+Actors: User, Operator UI, ResourceService, WorldIndexer, local Runtime.
+
+Precondition: Workspace is ACTIVE; the user explicitly selects one folder Resource and
+one observed location.
+
+1. ResourceService validates the location identity and records WorkspaceRoot with an
+   explicit metadata/content watch policy and independent replication policy.
+2. WorldIndexer observes only beneath that granted root and emits Resource/Revision/
+   Location facts; it performs no home/drive scan.
+3. Operator search returns deterministic name/type/date/freshness/text matches with
+   stable ResourceRefs, available locations, and match reasons. Search uses no model
+   tokens and does not attach results to agent context.
+4. User or Agent explicitly selects a revision-pinned ResourceRef. ResourceResolver
+   validates location, digest/revision, policy, and access before exposure.
+5. If watcher overflow or Runtime loss occurs, affected location freshness becomes
+   `UNKNOWN`/`STALE`; bounded reconciliation revalidates identity before it returns to
+   current availability.
+6. If two locations report independent revisions from a common ancestor, ResourceService
+   preserves both heads, sets `current_revision_id` to null, and projects `CONFLICTED`.
+   Unpinned resolution returns `RESOURCE_CONFLICT`; the user can inspect revision ancestry
+   and pin a branch, or produce a verified merge whose ancestry includes the heads merged.
+   Selecting a branch never deletes or hides its sibling.
+
+Events: `workspace.root.created.v1`, `resource.created.v1`,
+`resource.revision.observed.v1`, `resource.location.changed.v1`.
+
+UI: distinguish one-time attachment from persistent “Add to Workspace”; show root policy,
+freshness and location. When conflicted, show the revision branches and require an explicit
+pin or merge before using an unpinned reference. No selected search result enters agent
+context silently.
+
+## F29 — Asynchronous MCP Task-backed capability call
+
+Actors: Agent, LiteCowork Gateway, CapabilityBroker, InvocationRunner, MCP server,
+ConversationService/TaskService.
+
+Preconditions: The server advertises and negotiates the versioned Tasks extension for
+this request; the AgentSession has a matching scoped read/write grant; any consequential
+operation has the required Approval/Effect/fence path.
+
+1. Gateway authenticates the session credential. CapabilityBroker checks scope/grant and
+   commits CapabilityInvocation with immutable request digest before provider dispatch.
+2. `tools/call` returns `resultType: task`; InvocationRunner persists the opaque provider
+   task ID only in the encrypted Runtime-local invocation binding, then commits initial
+   status, creation time, expiry/latest TTL, and poll hint before acknowledging the Gateway
+   caller.
+3. InvocationRunner polls via `tasks/get` or consumes negotiated status notification,
+   respecting the provider poll hint and TTL; provider state updates the Invocation, not
+   LiteCowork Task status.
+4. On `input_required`, materialize a UserRequest from each bounded input request and
+   store its provider request key only in the encrypted Runtime-local ProviderInputBinding.
+   Validate and persist the user's response. For a Conversation-scoped request, move its
+   exact ConversationTurn to `WAITING_DEPENDENCY`; for a Task/Attempt request, keep the
+   associated Attempt in `WAITING_RESOURCE` or the Task `BLOCKED` if no other Step can
+   proceed. InvocationRunner sends the matching key/value through `tasks/update`. An
+   acknowledgement is not acceptance: poll `tasks/get` until the exact key is no longer
+   outstanding and the provider has authoritative state, or the provider reaches a terminal
+   state that can be reconciled. Acceptance permits fresh-session continuation. A rejected
+   response with provider state still `INPUT_REQUIRED` creates a new UserRequest for the
+   current provider key and returns the same ConversationTurn to `WAITING_USER`; unresolved
+   acceptance leaves it `WAITING_DEPENDENCY` and starts no new AgentSession. A repeated poll
+   cannot create a second inbox item or resume another turn/Attempt.
+5. On completion, store result refs and settle Invocation. A returned tool `isError` is
+   result content; extension-level `failed` is an Invocation failure.
+6. On cancellation, `tasks/cancel` acknowledgement records intent only. Keep the
+   Invocation `CANCEL_REQUESTED` until provider state/result is observed and any Effect
+   reconciled.
+
+Events: `capability.invocation.created.v1`, `dispatched.v1`, `checkpointed.v1`, and
+`status.changed.v1`, plus any UserRequest/Effect/Evidence events.
+
+Failure behavior: provider TTL expiry or lost handle does not imply success or cancellation;
+mark `AMBIGUOUS`, reconcile where possible, otherwise ask the user. If the initial handle
+response is lost, do not redispatch without proven provider idempotency/lookup. The MCP
+task ID is never presented as a LiteCowork Task ID.
+
+If the linked UserRequest expires before an answer, mark its local ProviderInputBinding
+`EXPIRED`, cancel or reconcile the provider operation, and keep the ConversationTurn in
+`WAITING_DEPENDENCY` until the operation is quiescent. Then fail the turn retryably with
+`USER_REQUEST_EXPIRED`; for Task/Attempt scope block the affected Step and allow unrelated
+Steps to continue.
+
+UI: show one capability operation under its real Conversation/Task lane; never create a
+second user-visible Task for the provider handle.
+
+## F30 — Pause and resume a Task
+
+Actors: User, Operator UI, TaskService, AttemptRunner, AgentAdapter, InvocationRunner,
+CompletionEvaluator, VerifierRunner, EffectReconciler, LeaseCoordinator.
+
+Precondition: Task is nonterminal and user has authority to manage it.
+
+1. User requests pause with current Task version. TaskService commits
+   `PAUSE_REQUESTED`, records the prior resumable state, stops new Attempt admission, and
+   fences CompletionEvaluator from finalizing or starting new VerificationRuns.
+2. TaskService fences late plan proposals. PlanningCoordinator asks AgentSessionSupervisor
+   to close any active TASK_PLANNING session; AttemptRunner asks active execution workers
+   for a safe-boundary interrupt and checkpoints a portable ResumePacket. It does not claim
+   to stop an external process without evidence.
+3. InvocationRunner stops new calls, requests cancellation for active Task-planning/Attempt provider operations,
+   and waits for authoritative terminal status. A confirmed `INPUT_REQUIRED` invocation
+   is quiescent and remains linked to its UserRequest until Task resume.
+4. Let already-active VerificationRuns settle against their pinned criteria and `ResourceInput` values.
+   Their Evidence remains valid for that pinned revision, but they cannot finalize the
+   Task while pause is pending.
+5. Reconcile every open Effect, settle/abandon Attempts, and release their leases. A
+   quiescent `INPUT_REQUIRED` Invocation may retain its source Attempt in `WAITING_RESOURCE`
+   without a live lease, but only with a committed checkpoint and reconciled Environment.
+6. Only when the planning session, required host work, active provider calls, and
+   VerificationRuns are settled, and Effects are reconciled, does TaskService commit
+   `PAUSED`.
+7. On resume, revalidate input revisions/locations, grants, secrets, capability locks,
+   Environment, budget, and open Effects. Re-admit a retained provider-input Attempt only
+   on the same Runtime incarnation and Environment, with a fresh AgentSession and higher
+   lease epoch. Other work uses a new Attempt; preserve pending UserRequests.
+8. If a Task-scoped UserRequest is answered after the Task reaches `PAUSED`, persist the
+   response and show it as queued; do not deliver it to the provider or start an Attempt.
+   On explicit resume, planning-scope input waits for a fresh active planner under the
+   same current lead/TaskSpec; Attempt-scope input waits for the retained source Attempt
+   to be re-admitted under a fresh lease. If the source Attempt/Runtime cannot be
+   retained, reconcile or cancel the old Invocation; a new Attempt receives the response
+   only as bounded context for newly authorized work. During
+   `PAUSE_REQUESTED`, reject a response with `CONFLICT` and leave the request pending.
+   Approved-but-unused records remain unconsumed until resumed work admits the exact
+   action.
+
+Events: `task.pause.requested.v1`, `agent.session.closed.v1`, `attempt.checkpointed.v1`,
+`capability.invocation.status.changed.v1`, `verification.completed.v1` for any run already
+in progress, lease/effect reconciliation events, `task.paused.v1`, and `task.resumed.v1`.
+
+Failure behavior: an unsafe checkpoint, unresolved Effect, unconfirmed provider
+Invocation, or unsettled VerificationRun leaves the Task `PAUSE_REQUESTED` with a visible
+blocker and linked UserRequest when input is needed; it never reports `PAUSED` prematurely.
+If completion commits before the pause command, the Task is already complete and cannot be
+paused. Pause never cancels or deletes the Task.
+
+UI: show `Pausing safely` with real stages, then `Paused`; resume remains disabled until
+state revalidation completes. Motion follows `MOTION.md`.
+
+## F31 — Human takes over Browser/Desktop control
+
+Actors: User, Operator UI, EnvironmentManager, AgentSessionSupervisor,
+EnvironmentProvider, EffectReconciler.
+
+Precondition: An Attempt has an active EnvironmentControlLease owned by an Agent and the
+user is authenticated on an adequate-assurance Operator surface.
+
+1. User submits takeover with the current control epoch.
+2. EnvironmentManager stops admitting agent input, drains or rejects in-flight input,
+   invalidates queued commands, atomically changes owner to HUMAN, increments epoch, and
+   delivers the new runtime-private fencing credential only to the enforcing provider over
+   authenticated control. Operator receives the new owner/epoch view without the credential.
+3. EnvironmentProvider rejects every old-epoch Agent command. Queued commands from the
+   old epoch are discarded and never replayed.
+4. LiteCowork captures a fresh Environment observation and reconciles external state and
+   Effects. Human actions are observed/reported under the human identity.
+5. To return control, user explicitly requests it with the current epoch. The system
+   refreshes observation, reconciles drift/Effects, and only then grants Agent ownership
+   under a new epoch and refreshed AgentSession context.
+
+Events: `environment.control.lease.changed.v1`, observation/effect/evidence records.
+
+Failure behavior: a stale expected epoch is rejected; if state cannot be observed or an
+Effect is ambiguous, keep the human in control or require a user decision. Never resume
+queued agent input.
+
+UI: identify the actual Browser/Desktop Environment, show who currently controls it, and
+animate only after the owner/epoch event commits. Human control is not a new Attempt and
+does not silently change the Runtime ExecutionLease.
+
+## F32 — Workspace instruction revision and Task pinning
+
+Actors: User, WorkspaceService, TaskService, ContextService, AgentSessionSupervisor.
+
+1. User saves new instructions as an immutable WorkspaceInstructionRevision with content
+   digest and author.
+2. WorkspaceService advances the current revision pointer atomically with its event.
+3. New Conversation turns receive that current revision at a safe boundary. Existing Task
+   contexts stay pinned to their TaskSpec revision.
+4. To apply new instructions to an existing Task, user explicitly creates a new
+   TaskSpecRevision naming the selected instruction revision; the prior Task history is
+   preserved.
+
+Events: `workspace.instructions.revision.created.v1` and, only when the Task is revised,
+`task.spec.revised.v1`.
+
+UI: show revision history and identify the instruction revision used by each active Task.
+Instruction edits do not silently rewrite already-running agent context.
+
+## F33 — Resource change invalidates derived outputs
+
+Actors: WorldIndexer, DependencyService, ArtifactStore, VerificationService,
+Operator UI.
+
+1. A provider observation records a new ResourceRevision and location freshness.
+2. DependencyService follows exact input revision edges and appends InvalidationRecords
+   for derived ArtifactVersions and VerificationRuns that used the changed source.
+3. Immutable ArtifactVersion/Evidence/VerificationRun history remains intact; only the
+   current freshness projection becomes STALE.
+4. Re-verification creates a new VerificationRun bound to the new TaskSpec criterion
+   digest and input digests. Rebuilding an output creates a new ArtifactVersion.
+
+Events: `resource.revision.observed.v1`, `resource.invalidation.created.v1`, and any new
+verification/artifact events.
+
+UI: label stale outputs and the exact changed input; never keep a green verification mark
+for stale inputs.
+
+## F34 — Reusable Skill proposal
+
+Actors: User, SkillProposalService, redactor/validator, TrustService, LitePSM adapter.
+
+1. After successful work, the user or Agent explicitly requests a reusable Skill draft.
+2. SkillProposalService creates a `SKILL_DRAFT` Artifact from selected method/provenance,
+   strips Task-specific data and secrets, and records redaction/validation results.
+3. User reviews exact content and approves or rejects the proposal. Approval is not
+   inferred from a successful Task.
+4. On approval, LiteCowork hands the reviewed content/reference to LitePSM publication
+   once its contract is available; LitePSM owns package versioning/distribution.
+
+Events: `skill.proposal.created.v1`, `skill.proposal.status.changed.v1`, Artifact and
+ApprovalUse events where applicable.
+
+Failure behavior: a redaction failure blocks publication; LiteCowork never stores a hidden
+autonomous memory rewrite or claims publication before LitePSM acknowledgement.
+
+UI: show proposal state, redaction status, exact reviewable draft, and publication result.
+
+## F35 — Notification delivery after a Task event
+
+Actors: ProjectionService, NotificationService, ChannelAdapter, User.
+
+1. A committed Task/Approval/Automation event is evaluated against the current
+   NotificationPreference and quiet-hours policy.
+2. NotificationService creates one deduplicated NotificationDelivery with a stable key.
+3. ChannelAdapter attempts delivery under rate limit/backoff; retries reuse the same
+   logical delivery identity where provider semantics allow.
+4. `SENT` means provider acknowledgement only. Task/Approval state is read independently
+   from the domain projection.
+
+Events: `notification.preference.changed.v1`, `notification.delivery.changed.v1`, and
+the source domain event.
+
+Failure behavior: duplicate source events cannot create duplicate logical deliveries;
+delivery exhaustion becomes visible without altering Task completion.
+
+UI: distinguish “notification delivered” from “Task completed”; show mute/quiet-hours and
+channel fallback state.
+
+## F36 — Workspace backup and restore
+
+Actors: BackupService, StateStore, EventStore, BlobStore, RuntimeMesh, Workspace owner.
+
+1. BackupService obtains a consistent Workspace snapshot, per-origin event cursors,
+   referenced blob manifest, schema version, integrity digest, and encryption-key reference.
+2. It verifies every object and publishes an immutable WorkspaceBackupManifest only after
+   all checks pass; incomplete capture has no restorable manifest.
+3. Restore starts only on a locally authenticated empty installation. It validates the
+   key/schema, verifies and decrypts required data, loads the point-in-time snapshot and
+   included event history through the manifest cursors, and rebuilds projections before
+   enabling writes.
+4. Restored installation registers a new Runtime identity; it never revives old leases or
+   fencing epochs. Events created after the backup barrier arrive only through later
+   authorized Mesh replication. Secret bytes are not in the backup; Connections are
+   revalidated and may require reauthentication. Active Effects are reconciled before
+   Task execution resumes.
+
+Records: `workspace_backup_manifests`, a backup-operation AuditRecord, and the resulting
+new Runtime registration. Backup manifests/bytes are control-plane recovery metadata, not
+ordinary replicated Workspace domain events.
+
+Failure behavior: incomplete/invalid backups are rejected as unrestorable; source history
+remains untouched. Restore drills must prove no expired Runtime regains authority.
+
+UI: show last verified backup time, restore point, and any missing artifact/effect blocker.
+
 ## Flow outputs and UI projection
 
 | Flow | Durable result | Required UI projection / failure behavior |
@@ -378,6 +742,190 @@ is REVOKED.
 | F25 | New lead binding/session and Attempt history | Planning replacement creates no Attempt; execution replacement waits for lease safety |
 | F26 | Artifact library archive event | Remove from default Library projection; preserve authorized version reads and linked source |
 | F27 | Connection/ChannelBinding state and action changes | Show provider-attested identity, explicit authority, and preserved history on revocation |
+| F28 | WorkspaceRoot, Resource observations, deterministic search | Show stable ResourceRef, freshness, location and explicit attachment; no token-backed semantic claim |
+| F29 | Durable Invocation and provider task lifecycle | One capability activity; provider handle is never shown as a LiteCowork Task |
+| F30 | Pause/resume events, ResumePacket, settled Attempts/Effects and fresh leases | Show real pause stages/blockers; never conflate pause with cancellation |
+| F31 | EnvironmentControlLease owner/epoch transition and fresh observation | Show current human/Agent controller; reject stale queued input |
+| F32 | Workspace instruction revision and optional TaskSpecRevision pin update | Show exact revision used; active Task context does not silently change |
+| F33 | ResourceRevision and InvalidationRecords | Mark affected Artifact/Evidence stale while preserving immutable history |
+| F34 | SkillProposal review/redaction/publication state | Show exact draft; publication is not claimed before LitePSM confirms |
+| F35 | NotificationDelivery state | Show transport acknowledgement separately from Task status |
+| F36 | Verified backup manifest/restore checks/new Runtime identity | Show recoverability and blockers; never restore old lease authority |
+| F37 | Runtime incarnation readiness and recovery mutations | No installed worker launches solely from boot |
+| F38 | Operational host reference and AgentSession state | Cold/starting/ready follows observed admission; idle stop cannot kill live sessions |
+| F39 | Routine revision and explicitly confirmed Automation | Draft cancellation persists no reusable job or schedule |
+| F40 | Revision-pinned occurrence, cursor and dependency blockers | Due/offline differs from not yet due; one logical run |
+| F41 | Fresh offers/resources, reconciled Effects and misfire occurrences | No stale action replay or expired lease revival on wake |
+| F42 | Read-only preview, accepted drain and eventual stop observation | Closing UI differs from stopping daemon; acceptance differs from stopped |
+| F43 | Workspace-owned Environment lifecycle, budget and provider identity | Persistent compute remains visible/costed; every Task use gets fresh authority |
+| F44 | Deduplicated Needs You projection | Inbox actions remain on the owning record; delivery status is not Task status |
+
+
+## F37 — Runtime boot and incarnation recovery
+
+**Actors/preconditions:** OS service manager or authenticated Operator; installed Runtime,
+exclusive installation lock, accessible StateStore and authorized startup policy.
+
+1. Acquire the lock and create a RuntimeIncarnation; open storage and apply supported
+   migrations before admitting commands that mutate Task execution.
+2. Validate journal/checkpoints; recover claims and reconcile stale leases, Effects, and
+   owned process handles. Restore scheduler cursors and mark watcher gaps stale.
+3. Reconnect the Hub, refresh offers, and resume authorized resource observation.
+4. Publish readiness only after mandatory recovery gates pass. Installed workers remain
+   cold; recovery never starts every agent/provider/application.
+
+**Failure/UI/postcondition:** storage or integrity failure prevents execution admission;
+show recovery/degraded reasons. Local operational incarnation state and logs record boot
+progress; domain mutations caused by recovery retain their normal typed events. A ready
+Runtime has a fresh incarnation and no authority inherited merely from an old PID.
+
+## F38 — Lazy agent admission and idle teardown
+
+**Actors/preconditions:** AttemptRunner, AgentHostSupervisor, adapter; admitted session
+scope and eligible endpoint, with authorization and budget already checked.
+
+1. Single-flight `ensure_ready` for the endpoint/incarnation/hosting mode; acquire a host
+   reference before spawning or attaching. Negotiate concurrency and isolation.
+2. Start the AgentSession only after readiness. Remote API/A2A endpoints need no local
+   process. Existing external processes remain externally owned.
+3. On turn/assignment settlement or an authorized wait, observe adapter quiescence, close
+   the AgentSession, and release its host binding. A waiting ConversationTurn resumes with
+   a new session after a UserRequest response. A durable asynchronous CapabilityInvocation
+   continues under InvocationRunner after the agent session closes; its result reaches a
+   replacement Attempt session only after lease/incarnation/checkpoint revalidation.
+4. At zero references, idle policy may stop an owned host; recheck references atomically
+   before stopping.
+
+**Failure/UI/postcondition:** startup failure blocks the requested session and consumes
+its bounded retry policy, without starting unrelated agents. Display cold/starting/ready
+from operational state; Task status follows session/Attempt events. Concurrent admission
+cannot race idle teardown into killing an active worker.
+
+## F39 — Save a Routine, run it, and schedule it
+
+**Actors/preconditions:** user, Operator, RoutineService, TaskService, AutomationService;
+authorized Workspace and source work visible to the user.
+
+1. Prepare an unsaved, redacted Operator draft with inputs, outputs, criteria, capabilities,
+   placement, verification and budget. Strip secrets and Task-specific private data.
+2. User Save creates Routine and immutable RoutineRevision. A manual run validates input
+   schema and creates an ordinary Task pinned to that revision.
+3. Schedule opens a separate review of trigger definitions, host placement, misfire policy,
+   permissions and execution dependencies. Only explicit confirmation enables Automation.
+4. Later edits create revisions; existing Tasks and claimed occurrences retain their pins.
+
+**Failure/UI/postcondition:** invalid inputs or archived Routine reject new work. Cancelling
+an unsaved draft creates no Routine or Automation. Show Routines/Automations/Runs separately;
+commit events reflect persisted revisions, never an optimistic claim of a scheduled run.
+
+## F40 — Trigger fires while execution dependencies are offline
+
+**Actors/preconditions:** TriggerCoordinator, Hub/local trigger host, TaskService, Placement;
+enabled revision-pinned Automation and authorized trigger observation.
+
+1. Deduplicate delivery by automation, stable trigger identity and logical occurrence key;
+   fence the trigger host epoch and persist the occurrence/cursor transactionally.
+2. Evaluate inputs and execution dependencies independently of where the trigger ran.
+   A cloud schedule can become due while its local Excel/resource dependency is offline.
+3. Record WAITING_DEPENDENCY with explicit blockers instead of starting an ineligible
+   worker. Runtime/resource availability changes cause bounded eligibility reevaluation.
+4. Admit work once dependencies, authorization and current claim authority are valid;
+   preserve the original occurrence identity rather than manufacturing a second run.
+
+**Failure/UI/postcondition:** expiry, revocation and revised policy are checked before
+admission. Display “Due; waiting for this computer” and the actual dependencies. Distinct
+triggers do not silently coalesce; notification delivery does not settle Task success.
+
+## F41 — Sleep/wake and schedule catch-up
+
+**Actors/preconditions:** OS resume notification, RuntimeResumeCoordinator, resource index,
+TriggerCoordinator; a previously active Runtime or a new incarnation after restart.
+
+1. Reconnect and validate incarnation/process identity and Hub authority. Observation gaps
+   become stale until watcher cursors are validated or scoped rescans complete.
+2. Reprobe offers; reconcile interrupted Effects and local execution before admitting
+   deferred work. Expired leases never revive just because the machine wakes.
+3. Evaluate missed schedule slots using the pinned timezone/recurrence semantics and
+   SKIP, RUN_ONCE_WHEN_AVAILABLE or CATCH_UP_BOUNDED policy. Deduplicate against durable
+   occurrences; condition watchers compare retained cursors and expose observation gaps.
+4. Resume eligible local work with fresh leases/checkpoints; cloud work keeps its current
+   ownership. Wake attempts remain optional and never a correctness prerequisite.
+
+**Failure/UI/postcondition:** unresolved side effects or unknown watcher history block
+unsafe replay. Show reconnect/stale/waiting states until reconciled; sleeping local work
+is never presented as still executing.
+
+## F42 — Explicit Runtime stop and safe drain
+
+**Actors/preconditions:** authenticated Operator, RuntimeLifecycleService, TaskService,
+Mesh; user requests stop against the current incarnation.
+
+1. Preview dependent Tasks, local triggers, roots and shared services; present cancel,
+   move eligible work, or explicit stop choices before committing the request.
+2. Stop new local admission. Reach checkpoint boundaries, reconcile Effects and hand off
+   eligible work through ordinary lease release/new Attempt semantics.
+3. Preserve unresolved local-bound work and scheduler cursors. Shut down only owned
+   processes/resources under their lifetime policy; never close a pre-existing user app.
+4. Flush committed state and mark the incarnation stopped before process exit when possible.
+
+**Failure/UI/postcondition:** unsafe drain reports concrete blockers. Forced process loss
+uses unexpected-loss recovery and cannot claim a clean pause. UI exit alone does not issue
+this flow; cloud Tasks survive an unrelated local Runtime stop.
+
+## F43 — Provision and later reuse a persistent Environment
+
+**Actors/preconditions:** Workspace owner, Operator, EnvironmentManager, provider,
+TrustService; provider offer is current and the user supplies bounded source Resources,
+placement, network, resource, retention, backup and budget policy.
+
+1. Preview provider class, Runtime, estimated cost/retention and pinned Resource inputs.
+   Reject missing budget ceilings and unsupported network/isolation requirements.
+2. The preview issues a short-lived, principal-bound digest for the exact normalized
+   request and selected eligibility/quote basis. After explicit confirmation, create
+   echoes that digest; the service consumes it once, reserves budget and commits a
+   Workspace-owned Environment without a Task owner plus its event before provider I/O.
+   Return the current `PROVISIONING` view.
+3. Verify provider handle identity and health before projecting `READY`. Record locator
+   material in provider-private storage, never the Operator view or ordinary event.
+4. A later Task references the Environment but receives fresh Task/Attempt grants,
+   SecretLeases, control and execution leases. Resource revisions are revalidated.
+5. Suspend waits for use refs, Invocations and Effects; resume probes identity/health and
+   revalidates sources. Destroy additionally waits for checkpoint/artifact retention holds.
+6. At `LIMIT_REACHED`, stop new admissions, safely checkpoint/suspend, settle in-flight
+   Invocations/Effects, and mark dependent Steps `BLOCKED` with `BUDGET_EXCEEDED`. There is
+   no v1 in-place top-up/reset. To select an existing Environment, the Operator requests a
+   fresh step placement preview, shows eligible candidates/blockers, and sends the chosen
+   candidate plus `plan_digest` in `recover_step`; TaskService revalidates the digest and
+   eligibility before creating an Attempt. The user may instead run provision preview and
+   confirmation for a distinct replacement, then refresh placement options. Private
+   provider state is not cloned implicitly, and continuation starts a new Attempt with
+   explicit inputs.
+
+**Failure/UI/postcondition:** provision timeout is reconciled by provider request ID
+before allocation retry. Unknown provider state blocks duplicate create/destroy. Display
+provisioning/failure/current consumer, selected vs actual budget enforcement, cumulative
+usage/confidence/observation time, and cost/retention policy; reaching the ceiling blocks
+new use and starts safe suspension. The UI offers eligible replacement options and names
+the state-transfer limitation. Substrate deletion does not delete Task provenance.
+Workspace archive retains the Environment suspended only after provider quiescence is
+established.
+
+## F44 — Needs You aggregation and deduplication
+
+**Actors/preconditions:** Operator query, NeedsYouQueryService, Approval/UserRequest/Task
+projections; authenticated owner of the selected Workspace.
+
+1. Read open underlying records, check Workspace access and materialize a rebuildable
+   inbox projection. A linked blocker references its approval/request item rather than
+   adding a duplicate. An unlinked blocker uses `(task_id, blocker_id)` identity.
+2. Exclude notification deliveries, resolved requests and nonactionable progress from the
+   open count. Include a local-Runtime blocker only when it names an actionable dependency.
+3. Route action to the specific Approval/UserRequest/Task/Runtime contract; the inbox GET
+   cannot mutate decisions. Late/expired projections are rechecked at command time.
+
+**Failure/UI/postcondition:** offline cached counts are labeled stale. A failed/retried
+notification does not duplicate an inbox item, and responding to a UserRequest never
+resolves an Approval.
 
 ## Shared flow invariants
 

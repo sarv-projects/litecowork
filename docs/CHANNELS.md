@@ -28,28 +28,37 @@ or revocation blocks future use without erasing history or deleting the external
 
 ## Identity mapping
 
+Persisted channel identity uses the canonical `ChannelBinding` from `DATA-MODEL.md`:
+
 ```text
 ChannelBinding {
-  channel_binding_id
-  workspace_id
-  connection_id?
-  provider
-  external_account_id
-  identity
-  authentication_strength
-  assurance_level
+  channel_binding_id: ChannelBindingId
+  workspace_id: WorkspaceId
+  connection_id: ConnectionId?
+  provider_ref: string
+  external_account_ref: string
+  identity_ref: PrincipalRef
+  assurance_level: AssuranceLevel
   allowed_actions: ChannelAction[]
-  status
+  status: ACTIVE | REVOKED | DEGRADED
+  created_at: Timestamp
+  updated_at: Timestamp
+  provenance: ProvenanceRecord
+  verification_refs: EvidenceId[]
+  version: u64
 }
 ```
+
+`InboundChannelEvent` below is a provider transport DTO, not another persisted channel
+identity schema.
 
 ## Inbound message
 
 ```text
 InboundChannelEvent {
   provider_event_id
-  binding_id
-  thread_ref
+  channel_binding_id
+  thread_ref: ChannelThreadRef
   sender_external_id
   timestamp
   text?

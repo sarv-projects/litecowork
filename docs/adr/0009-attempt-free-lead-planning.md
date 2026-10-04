@@ -9,7 +9,7 @@ A lead agent must be able to propose the first PlanRevision before Steps exist. 
 
 ## Decision
 
-Authorize a Task-scoped LEAD_PLANNING AgentSession without an Attempt, lease, or writable Environment. It may clarify intent and propose a plan. TaskService validates and promotes the plan, then materializes Steps; execution Attempts begin afterward. Planning sessions cannot invoke consequential capabilities or publish artifacts.
+Authorize a Task-scoped TASK_PLANNING AgentSession without an Attempt, lease, or writable Environment. It may clarify intent and propose a plan. TaskService validates and promotes the plan, then materializes Steps; execution Attempts begin afterward. Planning sessions cannot invoke consequential capabilities or publish artifacts.
 
 ## Consequences
 

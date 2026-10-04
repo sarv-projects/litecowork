@@ -59,10 +59,102 @@ Task requires capability unknown at start; agent searches LiteCowork Gateway, Li
 Successful repeated procedure -> draft SKILL.md -> remove task-specific secrets -> user review -> LitePSM-managed version -> next Task uses pinned skill.
 
 ### B19 Human takeover
-Agent uses browser/desktop capability; human takes over; LiteCowork stops automated input, resnapshots state, then resumes safely.
+Agent controls a browser/desktop Environment; user takes control with the current
+EnvironmentControlLease epoch; queued agent input is discarded and old-epoch calls are
+rejected. LiteCowork observes the human-modified state, reconciles drift/Effects, then
+returns control only under a new Agent epoch. Verify no action queued before takeover is
+replayed and the Runtime ExecutionLease is not confused with the input-control lease.
 
 ### B20 Verification honesty
 Worker claims output complete but file missing/layout broken/test failing; LiteCowork refuses COMPLETED until verifier passes or user accepts exception.
+
+### B21 Persistent folder context
+Add a local folder as a WorkspaceRoot once, then search it from a later Task without
+reattaching it. Check stable Resource identity across local/cloud copies, bounded
+deterministic search with zero model tokens, no implicit context attachment, watcher-gap
+freshness, and identity revalidation after Runtime reconnect.
+
+### B22 Pause versus cancel
+Pause a Task with active workers and an open Effect. Verify new Attempts stop, workers
+reach safe boundaries, ResumePacket is committed, Effects reconcile, leases release, and
+Task becomes PAUSED only when safe. Resume must create fresh Attempt/lease epochs. Repeat
+with an ambiguous Effect and confirm pause reports a blocker rather than claiming success.
+Repeat while a TASK_PLANNING session is active: pause/cancel must close it, reject a late
+PlanRevision after the Task-version transition, and never leave a Step created after the
+pause/cancel fence.
+Repeat with a long-running MCP Task: cancellation acknowledgement alone must not permit
+`PAUSED`; a provider-confirmed `input_required` invocation may remain quiescent, with its
+UserRequest deferred until resume. Also cancel from both `PAUSED` and `PAUSE_REQUESTED`;
+verify cancellation supersedes pause, pending Task-scoped UserRequests and Approvals close
+through their owning services, stale responses cannot restart work, and cancellation still
+waits for provider operations, VerificationRuns, and ambiguous Effects to settle.
+
+### B23 Asynchronous capability call
+Invoke a long-running read-only MCP operation that returns a Tasks-extension handle. Kill
+the AgentSession, resume polling from the durable CapabilityInvocation, handle
+`input_required` through UserRequest/`tasks/update`, and prove the MCP task ID is not a
+LiteCowork Task. For Streamable HTTP, verify `Mcp-Method` and `Mcp-Name=taskId` routing on
+all follow-up calls. Test provider expiry and cancellation acknowledgement without
+assuming the operation stopped. Lose authoritative provider state while the invocation is
+WAITING and INPUT_REQUIRED; record AMBIGUOUS and require reconciliation before pausing,
+cancelling, or retrying.
+
+### B24 Requirement and evidence pinning
+Change an acceptance criterion while preserving its ID and change an input Resource
+revision. Verify old VerificationRuns cannot satisfy the new requirement and dependent
+Artifact/Evidence projections become stale without mutating immutable history.
+
+### B25 MCP Skill manifest and origin safety
+
+Connect two MCP servers publishing same-named Skills, reference a Skill URI absent from a
+partial listing, change one manifest after approval, serve a mismatched digest/size/
+frontmatter, include a nested Skill, expose an unlisted directory child, and advertise a
+dynamic Skill. Verify origin-qualified identity, explicit `skills/get` confirmation,
+directory-read negotiation, no manifest expansion, no shadowing, content-bound approval
+invalidation, cross-origin read isolation, explicit nested consent, and v1 refusal to
+activate dynamic content.
+
+### B26 One-time approval replay
+Deliver the same approved command twice and attempt to reuse the approval against a
+different request digest. Exactly one ApprovalUse may commit; duplicate same-request
+delivery returns the deduplicated result, while changed scope/digest is rejected.
+
+### B27 Notification is not completion
+Deliver a Task notification successfully while the Task remains RUNNING, then fail
+notification delivery after the Task completes. Task truth must remain independent from
+channel acknowledgement and delivery retry.
+
+### B28 Backup and restore
+Restore a Workspace from a verified database snapshot, event cursor, and blob manifest.
+Verify integrity, current projections, artifact access, open-effect reconciliation, and a
+new Runtime identity. Prove that restore never revives a prior ExecutionLease epoch.
+
+### B29 Pause/cancel during verification
+Race pause and cancellation against a Task in VERIFYING while one VerificationRun is
+active. Confirm the Task aggregate version serializes the outcomes, no late verifier result
+can complete a Task after pause/cancel commits, active runs remain bound to their criterion
+and input digests, and pause/cancel stays pending until each run settles or reaches its
+bounded INCONCLUSIVE timeout.
+
+### B30 Persistent Environment provision and reuse
+
+Preview several Runtime/provider offers for a persistent Environment. Check cost-estimate
+confidence, provider versus host budget enforcement, resource/network limits, source pin
+freshness, retention, and backup implications. Create only after explicit confirmation;
+reboot or suspend/resume it; use it from a later Task with fresh grants; then destroy it
+after all consumers/effect/checkpoint holds settle. Unknown provider state blocks duplicate
+provision/destroy. Workspace archive retains the Environment safely suspended. At the
+cumulative ceiling, confirm new use stops, affected Steps become `BLOCKED`, and there is no
+in-place budget update/reset. Preview eligible alternatives, choose one by candidate ID and
+plan digest, and verify a fresh Attempt binds to it only after atomic revalidation. Also
+provision a replacement and verify that private provider state is not implicitly cloned.
+
+### B31 Needs You inbox consistency
+
+Create an Approval and blocker linked to it, a UserRequest and blocker linked to it, plus
+an independent actionable blocker. Confirm the inbox shows three stable source identities,
+not five rows. Retry/fail notifications without changing counts. Resolve each underlying
+record and confirm stale cached counts are marked stale and refreshed on reconnect.
 
 ## Failure/edge benchmark extensions
 
@@ -81,6 +173,13 @@ Worker claims output complete but file missing/layout broken/test failing; LiteC
 - Runtime reconnects with stale fence
 - capability unhealthy after discovery
 - cloud lacks required local Chrome/session/secret
+- DNS rebinding/redirect attempts target IPv4/IPv6 private or metadata addresses
+- local MCP Gateway token replay from another process or after session revocation
+- MCP App requests an undeclared domain or ungranted tool
+- conflicting chunk retry reuses an upload range with different bytes
+- upload/archive parser encounters traversal, symlink escape, or decompression bomb
+- simultaneous Workspace instruction revisions are pinned to the correct Task specs
+- current MCP Tasks extension expires provider state during a LiteCowork AgentSession loss
 
 ## Scoring dimensions
 
@@ -96,3 +195,18 @@ Do not collapse to one leaderboard score. Record:
 - usage/cost where observable
 - artifacts produced
 - user-visible truthfulness defects
+
+## Lifecycle and reusable-work scenarios
+
+| Scenario | Required evidence |
+|---|---|
+| Boot with many installed agents/providers | Ready daemon, live authorized watchers/scheduler, no unrelated worker launch |
+| Concurrent turns and idle host teardown | One compatible host admission, live references protected, bounded owned cleanup |
+| Save weekly review as Routine and schedule it | Reviewed immutable Routine revision, explicit Automation confirmation, exact Task pins |
+| Cloud schedule needs laptop Excel | One occurrence waiting on named dependencies; no ineligible cloud execution |
+| Sleep through several schedule slots | Pinned misfire/DST behavior, cursor continuity, bounded deduplicated catch-up |
+| Stop local Runtime while work runs | Dependency preview, checkpoint/reconciliation or honest blocker, cloud ownership preserved |
+| Reboot with user-opened apps and persistent VM | No user-app termination; provider reattachment with fresh identity/control authority |
+
+Record these separately from implementation throughput benchmarks; a successful outcome
+without correct ownership, deduplication and truthful UI fails the scenario.

@@ -32,7 +32,7 @@ discarded; each entry's destination or disposition is listed below.
 | `docs/CHANNELS.md` | Adopted as `docs/CHANNELS.md`; channels remain human transports, not agent protocols or Task owners. |
 | `docs/COVERAGE-MATRIX.md` | Adopted and expanded to include every current contract and this reconciliation. |
 | `docs/DATA-MODEL.md` | Adopted and extended with missing connection, channel, handoff, audit, and secret-lease records and invariants. |
-| `docs/DESIGN-SYSTEM.md` | Adopted as `docs/DESIGN-SYSTEM.md`; visual identity choices remain explicitly open. |
+| `docs/DESIGN-SYSTEM.md` | Adopted and finalized as `docs/DESIGN-SYSTEM.md`; v1 visual tokens, component states, responsive layout, accessibility, and contrast requirements are fixed. |
 | `docs/ENVIRONMENTS.md` | Adopted and extended as `docs/ENVIRONMENTS.md`; lifecycle, isolation, and cleanup ownership are explicit. |
 | `docs/EVENTS.md` | Adopted and expanded as `docs/EVENTS.md` plus `docs/schemas/domain-event.schema.json`. |
 | `docs/EXPERIENCE.md` | Adopted and expanded as `docs/EXPERIENCE.md`; LiteCowork UI naming and cross-device states are authoritative. |
@@ -80,3 +80,33 @@ discarded; each entry's destination or disposition is listed below.
    are not treated as facts to implement.
 5. Items called “deferred” in `COVERAGE-MATRIX.md` remain visible and cannot be inferred
    from example schemas or implementation conveniences.
+
+## Runtime, Routine and UX proposal disposition (45 numbered items)
+
+The duplicated proposal is one input, not two independent confirmations. Item numbers
+below refer to that proposal; adoption is constrained by current domain contracts.
+
+| Items | Disposition and current authority |
+|---|---|
+| 1 | Dated primary-source research in COMPETITIVE-RESEARCH; rollout dates and uncertain sources are qualified. OpenHands' GitHub/event integrations are distinguished from an unverified generic cron/polling service. Competitor internals and exclusivity claims are not inferred. |
+| 2–7 | Adopted independent Operator/Runtime/worker lifetimes, startup policy, boot recovery, incarnation identity and sleep semantics in RUNTIME-LIFECYCLE. OS startup is not an Automation. |
+| 8 | WakeProvider remains a later, best-effort Mesh provider; availability cannot assume successful wake or closed-lid support. |
+| 9 | Resume coordinator validates watchers, stale observations, Effects and deferred work before admission. |
+| 10–16 | AgentHostInstance, lazy single-flight admission, negotiated sharing/model changes, operation-scoped session close/replacement, and drain-safe lead replacement in AGENT-FABRIC and RUNTIME-LIFECYCLE. Durable AgentSession provenance is separated from Runtime-local host/native handles; prewarming is optional and existing Attempts remain pinned. |
+| 17–18 | Capability/app demand activation adopted; LitePSM owns provider process supervision. Only verified owned app instances may be automatically closed. |
+| 19 | ExecutionDependencyPlan is an infrastructure readiness DAG, with cycle detection/idempotent prepare/reverse owned cleanup; no reasoning or general workflow engine. |
+| 20–25 | Broader typed triggers, separate placement, stable cursor identity, misfires and WAITING_DEPENDENCY adopted in AUTOMATION. Provider-specific triggers are enabled only after qualification. |
+| 26–28 | Routine/RoutineRevision added in ROUTINES; Automation pins a reviewed reusable work revision. Routines/Automations/Runs are separate views. |
+| 29–33 | Persistent conversation recents, Needs You, one composer and explicit save/schedule actions adopted in EXPERIENCE. Agent Auto means explicit binding/default, not a hidden model router. |
+| 34 | Quick Entry remains an optional Operator feature; capture and send require user action. |
+| 35–37 | Two desktop executables, explicit stop preview/drain and advance dependency availability adopted in API, RUNTIME-LIFECYCLE and EXPERIENCE. Closing UI is distinct from stopping daemon. |
+| 38–39 | Offer readiness, lightweight authorized structural resource observation, and small local application inventory adopted; semantic indexing/LLM/OCR stays demand-driven external work. |
+| 40 | Human takeover uses separate EnvironmentControlLease epochs, fresh observation and rejected queued stale actions in ENVIRONMENTS and F31. |
+| 41 | LiteCowork owns a normalized per-Runtime ProviderHost view and derives its active Activation references; LitePSM owns package/process lifecycle and global process counts. Sharing, health freshness, and isolation are explicit in CAPABILITY-FABRIC, DATA-MODEL, SERVICES, RUNTIME-LIFECYCLE, and the Operator API. No second package/process supervisor is introduced. |
+| 42 | Native abstractions stop at Routine/Automation/Task; deterministic workflow engines remain external capabilities. |
+| 43–44 | Control-plane framing adopted in ARCHITECTURE; “no competitor combines all” rejected as unproven. Supervisor ownership is refined to preserve LitePSM independence. |
+| 45 | Cross-contract coverage tracked in COVERAGE-MATRIX, typed schema candidates, flows and conformance scenarios; coverage is not a claim of implemented runtime behavior. |
+
+LitePSM integration is intentionally limited to its recorded selected service. Its MCP,
+plugin, package, authentication and supervision wire contracts remain deferred until the
+actual service contract is provided or independently verified with user authorization.

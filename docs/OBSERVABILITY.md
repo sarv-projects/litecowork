@@ -14,6 +14,11 @@ task_id
 step_id
 attempt_id
 runtime_id
+runtime_incarnation_id
+host_instance_id
+routine_id
+automation_id
+trigger_id
 agent_binding_id
 capability_id
 environment_id
@@ -26,6 +31,7 @@ Never log raw secrets, tokens, cookies or unredacted provider credentials.
 ### Task
 - tasks_created_total
 - task_completion_rate
+- task_create_latency
 - task_time_to_first_attempt
 - task_end_to_end_duration
 - tasks_needing_user
@@ -34,13 +40,15 @@ Never log raw secrets, tokens, cookies or unredacted provider credentials.
 ### Attempts/agents
 - attempts_started/completed/failed
 - agent_session_loss_total
+- attempt_resume_duration
+- process_crash_recovery_duration
 - delegation_children_total
 - recovery_attempts_total
 - repeated_failure_stop_total
 
 ### Capabilities
 - capability_search_latency
-- activation_latency
+- capability_activation_latency
 - invocation_latency
 - invocation_failure_rate
 - approval_required_rate
@@ -64,7 +72,28 @@ Never log raw secrets, tokens, cookies or unredacted provider credentials.
 - blob_transfer_latency
 - blob_digest_failures
 - event_append_latency
+- event_to_projection_latency
+- event_to_operator_update_latency
 - projection_rebuild_time
+
+### World Index
+- local_resource_search_latency by root-count and indexed-item-count tier
+- index_update_lag after filesystem/provider observation
+- watcher_gap_reconciliation_duration
+- root_scan_duration and bytes inspected
+- stale/unknown-location result rate
+
+### Runtime and automation lifecycle
+- daemon recovery/drain duration and unresolved recovery blockers
+- cold AgentHost start duration, active use refs, idle-stop duration, orphan reconciliation
+- dependency preparation duration and failures by prerequisite kind
+- trigger lag, misfire/coalesced/skipped occurrence count, cursor gaps and host-epoch rejection
+- due occurrences waiting for Runtime/resources and wait duration
+- Routine materialization failures and pinned-revision conflicts
+
+Process existence is measured separately from installed inventory. Provider process
+restart/idle policy remains LitePSM-owned; LiteCowork observes activation/invocation health.
+Identifiers belong in logs/traces rather than unbounded metric labels.
 
 ## Tracing
 
@@ -87,8 +116,9 @@ Audit retention may exceed debug-log retention.
 
 Exact targets may be tuned after profiling, but tests/monitoring must cover:
 - daemon startup
+- local deterministic Resource search by Workspace size tier
 - Task create latency
-- UI projection propagation
+- event-to-projection and event-to-UI propagation
 - capability search/activation
 - lease renew latency
 - runtime offline detection
@@ -97,3 +127,14 @@ Exact targets may be tuned after profiling, but tests/monitoring must cover:
 - artifact transfer throughput
 - idle CPU/RAM footprint
 - max concurrent Attempts under supported hardware tiers
+- Attempt/process crash recovery and Task continuation duration
+
+Before Stage 1 exits, record a reproducible baseline for daemon startup, idle CPU/RAM,
+Task creation, deterministic Resource search, event-to-UI propagation, local crash
+recovery, and CapabilityHost activation/binding overhead through a deterministic LitePSM
+adapter fixture. The activation measurement must report LiteCowork control-plane time
+separately from the fixture's provider-start time; it must not be presented as a real
+provider startup result. Freeze numeric Stage 1 targets from those measurements. Stage 3
+adds real LitePSM/MCP activation and provider recovery measurements, retaining the Stage 1
+control-plane budget and publishing provider-specific latency separately. Cross-Runtime
+recovery receives measured targets when Mesh exists; none are invented in advance.

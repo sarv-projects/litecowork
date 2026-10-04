@@ -19,7 +19,7 @@ interface ArtifactStore {
 }
 ```
 
-ArtifactVersion is immutable after publication. `create` requires already committed content and atomically creates Artifact version 1 plus both `artifact.created.v1` and `artifact.version.created.v1`. `add_version` uses the caller's expected Artifact aggregate version; it cannot accept a blob until BlobStore has verified and committed its digest.
+ArtifactVersion is immutable after publication. Every Artifact has one stable Resource of kind `ARTIFACT`; each ArtifactVersion maps to exactly one immutable ResourceRevision of that Resource. `create` requires already committed content and atomically creates the Artifact, Artifact Resource/revision, version 1, and their creation events (`resource.created.v1`, `resource.revision.observed.v1`, `artifact.created.v1`, and `artifact.version.created.v1`). `add_version` appends both an ArtifactVersion and corresponding ResourceRevision under the caller's expected Artifact aggregate version and emits both version/revision events; it cannot accept a blob until BlobStore has verified and committed its digest. During creation, establish the Resource's current revision before inserting its ArtifactVersion; the database checks that the initial Artifact version and Resource head agree. During later publication, advance the Resource head before the Artifact current-version pointer, whose update is rejected unless it names the matching ResourceRevision. Both operations commit all rows, pointers, and events in one transaction.
 
 ```text
 CreateArtifactRequest {
@@ -27,8 +27,8 @@ CreateArtifactRequest {
   task_id: TaskId?
   kind: string
   display_name: string
-  content: BlobRef
-  input_refs: ResourceRef[]
+  content: ArtifactContent
+  input_refs: PinnedResourceRef[]
   created_by_attempt: AttemptId?
   provenance: ProvenanceRecord
   verification_refs: EvidenceId[]
@@ -37,8 +37,8 @@ CreateArtifactRequest {
 AddArtifactVersionRequest {
   artifact_id: ArtifactId
   expected_version: u64
-  content: BlobRef
-  input_refs: ResourceRef[]
+  content: ArtifactContent
+  input_refs: PinnedResourceRef[]
   created_by_attempt: AttemptId?
   provenance: ProvenanceRecord
   verification_refs: EvidenceId[]
@@ -62,10 +62,12 @@ ArtifactQuery {
 }
 ```
 
-Draft editors may use provider-specific temporary state; publishing creates a new immutable version.
-The blob must be fully committed and its digest verified before the version/event is
-visible. Artifact IDs are stable; versions are monotonically increasing per Artifact.
-Adding a version requires the expected Artifact aggregate version. In one transaction, the store assigns the next integer version, appends the immutable ArtifactVersion, advances current_version, increments Artifact.version, and appends the event. Concurrent publication loses with STALE_VERSION; it cannot overwrite or silently branch. The caller must re-read and explicitly rebase or publish a separate Artifact. Publishing to an ARCHIVED Artifact fails with ARTIFACT_ARCHIVED. Library promotion/archive changes library_status and Artifact.version, not the content version. A directory/tree is represented as a manifest of child refs plus content digests, not as an unbounded local path.
+Draft editors may use provider-specific temporary state; publishing creates a new immutable version and ResourceRevision.
+`MANAGED_BLOB` content must be fully committed and digest-verified before its version/event
+is visible. `EXTERNAL_RESOURCE` content pins a stable ResourceRef and provider revision;
+it records an observed digest only when supplied by the provider and does not copy bytes
+into BlobStore. Artifact IDs are stable; versions are monotonically increasing per Artifact.
+Adding a version requires the expected Artifact aggregate version. In one transaction, the store assigns the next integer version, appends the immutable ArtifactVersion and matching ResourceRevision, advances Artifact.current_version and Resource.current_revision_id, increments their aggregate versions, and appends both events. The current Artifact and Resource pointers must identify the same version. Concurrent publication loses with STALE_VERSION; it cannot overwrite or silently branch. The caller must re-read and explicitly rebase or publish a separate Artifact. Publishing to an ARCHIVED Artifact fails with ARTIFACT_ARCHIVED. Library promotion/archive changes library_status and Artifact.version, not the content version or Resource head. A directory/tree is represented as a manifest of child refs plus content digests, not as an unbounded local path.
 
 An Artifact may be generated, uploaded, imported, or linked. A linked Artifact retains
 its external provider and revision; it does not imply that bytes were replicated. A
@@ -78,16 +80,13 @@ An Artifact follows TRANSIENT -> SAVED -> ARCHIVED. Only explicit Library promot
 
 ## Provenance
 
-```text
-ProvenanceRecord {
-  created_by_attempt?
-  provider_or_capability?
-  source_resource_refs[]
-  source_digests[]
-  transformations[]
-  tool_reports[]
-}
-```
+`ProvenanceRecord` and `ProvenanceTransformation` are shared value types defined
+canonically in `SCHEMAS.md`. ArtifactStore requires `ArtifactVersion.input_refs` to equal
+the distinct refs in `provenance.source_inputs` and every transformation's `inputs`; an
+external ArtifactContent ref is included too. This is the exact dependency set used to
+build reverse invalidation edges. Provenance retains each consumed-byte digest and the
+provider/capability, transformation, and tool-report references that explain how content
+was produced.
 
 ## Effect service
 
@@ -106,8 +105,10 @@ interface EffectService {
 ```
 
 A LiteCowork-mediated consequential call must have Effect(PROPOSED) persisted before
-external mutation starts. Grant, approval, active Attempt, and current fencing token are
-checked at dispatch. The Effect binds the request digest, capability/operation, target,
+external mutation starts. Grant, approval, active Attempt, and current lease/fencing
+authorization are checked at dispatch. The runtime-private fencing credential is supplied
+only to the enforcing provider; durable Effect/lease records contain no raw credential.
+The Effect binds the request digest, capability/operation, target,
 Attempt, and stable idempotency key when the provider supports one. Read-only calls may
 omit an Effect unless audit policy requires it.
 
@@ -152,7 +153,9 @@ VERIFIED  # required postcondition independently checked
 
 Evidence is immutable and append-only.
 Each Evidence item names its subject, producer, observation method, time, and optional
-payload digest/ref. Agent output is untrusted data. `REPORTED` can support a progress
+payload digest/ref. Verification evidence is additionally bound to one TaskSpecRevision,
+criterion digest, verifier/version, exact revision-pinned input ResourceRefs, and the
+digests of the bytes actually consumed. Agent output is untrusted data. `REPORTED` can support a progress
 display but cannot satisfy an `OBSERVED` or `VERIFIED` criterion. A later independent
 check appends a new record at its own level.
 
@@ -175,8 +178,10 @@ Selection order:
 7. independent verifier agent
 8. user approval
 
-Use semantic/LLM verification only when deterministic verification cannot express the criterion.
-Verifier output includes the exact criterion revision, input digests, verifier identity,
+Verifier runs are read-only with respect to the target Task, Artifacts, Resources, and
+external Effects; they receive bounded read grants only. Use semantic/LLM verification
+only when deterministic verification cannot express the criterion.
+Verifier output includes the exact criterion revision, pinned input refs and digests, verifier identity,
 result, and Evidence refs. A verifier cannot alter the TaskSpec or source Artifact. A
 user may accept an exception only through an explicit approval decision, recorded as
 Evidence at the assurance level allowed by policy.
@@ -188,14 +193,29 @@ VerificationRun {
   verification_run_id
   task_id
   criterion_id
+  task_spec_revision
+  criterion_digest
   verifier_kind
+  verifier_version
   subject_refs[]
+  inputs: ResourceInput[]
   status: PENDING | RUNNING | PASSED | FAILED | INCONCLUSIVE
   evidence_refs[]
   started_at?
   completed_at?
 }
 ```
+
+`inputs` pairs each exact pinned Resource revision with the optional digest of bytes
+presented to the verifier. This consumer-observed digest is distinct from an optional
+provider-observed digest on `ResourceRevision`; when both exist they must match, or the
+run fails with `INTEGRITY_FAILURE` and cannot produce passing Evidence.
+
+A criterion ID is not a stable meaning by itself: changing criterion text, TaskSpec
+revision, relevant source Resource revision/observed digest, or verifier semantics requires a new run. A prior
+PASSED run cannot satisfy a changed criterion or changed inputs. Dependency invalidation
+marks downstream verification projections stale without modifying immutable Evidence or
+ArtifactVersion records.
 
 ## Library
 

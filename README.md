@@ -27,3 +27,15 @@ permissions, artifacts, Effects, evidence, Runtime ownership, and verification.
 LitePSM is the selected external package/capability ecosystem. Its configured service
 base URL is recorded in `docs/CAPABILITY-FABRIC.md`; its API and package contract are
 intentionally deferred to the LitePSM authority.
+
+## Runtime and reusable work
+
+The desktop Operator and headless `litecoworkd` have independent lifetimes. Background
+coordination, authorized resource observation and schedules run in the daemon; agents,
+capability providers and Environments are activated only when work requires them.
+See [Runtime lifecycle](docs/RUNTIME-LIFECYCLE.md).
+
+A [Routine](docs/ROUTINES.md) defines reusable work; an
+[Automation](docs/AUTOMATION.md) defines when it runs; a Task records one execution.
+Trigger placement is separate from execution placement, so cloud schedules can wait
+explicitly for local resources.

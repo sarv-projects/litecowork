@@ -1,72 +1,262 @@
-# Design System Requirements
+# Design System
 
-This document specifies semantic requirements, not brand colors. Exact visual tokens may evolve without changing architecture.
+This is the v1 visual and component contract for LiteCowork. It defines a calm neutral
+operator workspace: readable surfaces, one cobalt action color, status colors with
+accessible text labels, and no decorative activity that could be mistaken for work.
+Framework and component-library choice remain implementation details; app components
+must implement the anatomy, tokens, states, and accessibility behavior defined here.
 
-## Token groups
+## Design principles
 
-Required token families:
-- typography: display, heading, body, label, code
-- spacing: 4/8-based scale or equivalent
-- radius: compact/card/panel/pill
-- elevation: surface, overlay, modal
-- motion: from `MOTION.md`
-- semantic colors: neutral, info, active, success, warning, danger, verification, offline
+- Keep the conversation and requested outcome visually primary; protocol and provider
+  details stay in Inspector/Settings.
+- Show the actual Workspace, AgentBinding, Runtime, Environment, resource location, and
+  control owner wherever they affect a decision.
+- Use surface, typography, icon, and label together to distinguish status; never depend
+  on color alone.
+- Prefer stable layout and short state transitions over continuous motion.
+- Use bundled/system fonts and local assets. The desktop shell must not fetch fonts or
+  component code from a third-party CDN at runtime.
 
-## Core components
+## Color tokens
 
-- AppShell
-- WorkspaceSwitcher
-- WorkspaceSetupForm
-- ReplicationPolicySelector
-- ArchivedWorkspaceBanner
-- PlanningStatus
-- AutomationRevisionHistory
-- SidebarNav
-- Composer
-- AttachmentChip
-- TaskCard
-- TaskStatusBadge
-- WorkstreamLane
-- SourceCard
-- CapabilityActivityCard
-- ArtifactCard
-- ApprovalCard
-- BlockerCard
-- VerificationIndicator
-- RuntimeLocationBadge
-- InspectorPanel
-- WorkbenchPanel
-- TimelineEvent
-- AutomationCard
-- DiscoverItemCard
+The v1 default is light, with system/light/dark selection. The dark theme preserves the
+same semantic assignments. Raw palette values are primitive tokens; product meaning is
+assigned in semantic tokens; components consume only semantic/component tokens.
 
-Every component defines normal, hover/focus, disabled, loading, error and reduced-motion behavior where applicable.
+```css
+/* Primitive palette */
+:root {
+  color-scheme: light;
+  --lc-white: #FFFFFF;
+  --lc-ink: #171D27;
+  --lc-neutral-50: #F6F8FB;
+  --lc-neutral-100: #EFF2F6;
+  --lc-neutral-200: #DCE2EA;
+  --lc-neutral-300: #C5CDD8;
+  --lc-neutral-400: #8A95A5;
+  --lc-neutral-500: #687385;
+  --lc-neutral-600: #515C6C;
+  --lc-neutral-800: #262E3A;
+  --lc-neutral-900: #171D27;
+  --lc-blue-100: #EAF0FF;
+  --lc-blue-600: #2457D6;
+  --lc-blue-700: #1C45AD;
+  --lc-green-100: #E6F5EB;
+  --lc-green-700: #145C3B;
+  --lc-amber-100: #FFF4CE;
+  --lc-amber-800: #694900;
+  --lc-red-100: #FDECEC;
+  --lc-red-700: #A12D2D;
+  --lc-info-100: #E8F2FF;
+  --lc-info-700: #1556A2;
+}
 
-## Semantic status mapping
+/* Semantic light theme */
+:root {
+  --color-background: var(--lc-neutral-50);
+  --color-surface: var(--lc-white);
+  --color-surface-raised: var(--lc-white);
+  --color-text: var(--lc-ink);
+  --color-text-muted: var(--lc-neutral-600);
+  --color-text-subtle: var(--lc-neutral-500);
+  --color-border: var(--lc-neutral-200);
+  --color-border-strong: var(--lc-neutral-300);
+  --color-primary: var(--lc-blue-600);
+  --color-primary-hover: var(--lc-blue-700);
+  --color-primary-soft: var(--lc-blue-100);
+  --color-focus: var(--lc-blue-600);
+  --color-info: var(--lc-info-700);
+  --color-info-soft: var(--lc-info-100);
+  --color-success: var(--lc-green-700);
+  --color-success-soft: var(--lc-green-100);
+  --color-warning: var(--lc-amber-800);
+  --color-warning-soft: var(--lc-amber-100);
+  --color-danger: var(--lc-red-700);
+  --color-danger-soft: var(--lc-red-100);
+}
 
-Status color/icon must not be the only signal. Text label is required for warning/error/needs-user states.
+.theme-dark {
+  color-scheme: dark;
+  --color-background: #11151C;
+  --color-surface: #1A2029;
+  --color-surface-raised: #222A35;
+  --color-text: #EEF2F7;
+  --color-text-muted: #A9B3C2;
+  --color-text-subtle: #8995A5;
+  --color-border: #394453;
+  --color-border-strong: #526072;
+  --color-primary: #ADC2FF;
+  --color-primary-hover: #C4D2FF;
+  --color-primary-soft: #202F51;
+  --color-focus: #ADC2FF;
+  --color-info: #9EC8FF;
+  --color-info-soft: #1A314A;
+  --color-success: #8AD1A4;
+  --color-success-soft: #173724;
+  --color-warning: #FFD980;
+  --color-warning-soft: #423516;
+  --color-danger: #FFB1AC;
+  --color-danger-soft: #482423;
+}
+```
 
-`REPORTED`, `OBSERVED`, `VERIFIED` use distinguishable labels/icons; only VERIFIED may use definitive verification styling.
+Text contrast for the selected foreground/background pairs is at least 6.1:1 in the
+light palette and 7.3:1 in the dark status palette; body text must meet WCAG 2.2 AA
+(4.5:1), large text and meaningful UI boundaries must meet 3:1. A theme change must
+re-run contrast checks for every semantic pair. Do not use opacity to create muted text
+without rechecking contrast.
 
-## Workspace policy components
+Status assignments:
 
-`ReplicationPolicySelector` explains what content may transfer, which Runtime can receive it, and whether the choice applies prospectively. `SELECTED_FOLDERS` requires at least one revision-pinned folder reference. `ArchivedWorkspaceBanner` is persistent, textual, and exposes available read/download actions while explaining why write actions are disabled. Archive confirmation names active Tasks/Automations that block the transition.
+| Meaning | Semantic tokens | Required non-color cue |
+|---|---|---|
+| Active/selected | `color-primary`, `color-primary-soft` | Selected label/icon or control state |
+| Informational | `color-info`, `color-info-soft` | Info icon and concise text |
+| Success/verified | `color-success`, `color-success-soft` | “Completed” or “Verified” plus check icon |
+| Warning/needs user | `color-warning`, `color-warning-soft` | “Needs you”/“Waiting” label and action |
+| Failure/destructive | `color-danger`, `color-danger-soft` | Error label and recovery explanation |
+| Offline/unknown | `color-text-muted`, `color-border` | “Offline”/“Unknown” label; never imply failure or absence |
 
-`PlanningStatus` identifies the lead planning phase without displaying a fake work lane, Environment, or progress meter. `AutomationRevisionHistory` distinguishes the current definition from the immutable revision pinned by each occurrence.
+`REPORTED`, `OBSERVED`, and `VERIFIED` use distinct labels and icons. Only VERIFIED uses
+the success/check treatment. An agent's completion claim cannot render as verified.
 
-## Accessibility
+## Type, space, shape, and elevation
 
-- keyboard reachable actions
-- visible focus ring
-- logical tab order
-- screen-reader labels for status/verification
-- WCAG contrast targets
-- no color-only meaning
-- reduced motion support
-- live-region announcements for important Task/approval transitions, throttled to avoid noise
+```css
+:root {
+  --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-code: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  --text-xs: 0.75rem;    /* 12px */
+  --text-sm: 0.875rem;  /* 14px */
+  --text-md: 1rem;      /* 16px */
+  --text-lg: 1.25rem;   /* 20px */
+  --text-xl: 1.5rem;    /* 24px */
+  --text-display: 2rem; /* 32px */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --radius-control: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-panel: 1rem;
+  --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgb(18 28 45 / 0.06);
+  --shadow-overlay: 0 12px 32px rgb(18 28 45 / 0.16);
+  --ring-width: 2px;
+  --ring-offset: 2px;
+}
+```
 
-## Responsive behavior
+Body text is 16px/1.5; secondary labels may use 14px/1.4; metadata may use 12px/1.4
+only when nonessential information remains legible. Use 20–24px for section headings and
+32px for the Home prompt/title. Use sentence case, short labels, and tabular numerals for
+timestamps, byte sizes, usage, and version identifiers. Code and opaque identifiers use
+the code font and can wrap or copy; they must not force horizontal page scrolling.
 
-Desktop: conversation + optional Live Desk/Workbench side panels.
-Tablet: one secondary panel at a time.
-Mobile: Conversation/Task first; Live Desk and Inspector become stacked/detail routes. Approvals remain clear and require explicit action.
+Spacing uses a 4px base. Component internals use 4/8/12/16px; cards and sections use
+20/24/32px. Use 8px control radius, 12px cards, 16px major panels, and pill radius only
+for compact status badges. Shadows separate overlays from the page; ordinary cards use
+border + subtle shadow, not elevation alone.
+
+## Component contract
+
+All component colors reference semantic tokens. Component-specific tokens may alias
+semantic tokens but may not introduce hard-coded hex values in component styles.
+
+| Component | V1 anatomy/size | Required states and behavior |
+|---|---|---|
+| Primary button | 40px high desktop, 44px touch; 16px horizontal padding | Default, hover, pressed, visible focus, disabled, loading; loading keeps label and announces busy |
+| Secondary/outline button | Same hit target, neutral surface/border | Same states; never visually outranks the primary action |
+| Destructive button | Danger semantic colors | Confirmation names the consequence; no destructive action on hover alone |
+| Icon button | 40px desktop, 44px touch; 18px icon | Accessible name/tooltip; visible focus; disabled/loading behavior as applicable |
+| Text field | 40px desktop, 44px touch; label + control + hint/error | Default, hover, focus, invalid, disabled, loading; error is text and `aria-describedby` |
+| Composer | Multiline, grows to 6 lines then scrolls; send button stays visible | Draft remains through admission errors; no eligible AgentBinding shows setup action without clearing text |
+| Task/Artifact/Resource card | 16px padding; title, status, one-line context, actions | Focusable only when interactive; freshness/location and status remain textual |
+| Blocker/UserRequest card | Status icon, safe message, resolution hint, explicit action/expiry | UserRequest answer is never styled as Approval; stale/expired request disables submission |
+| Approval card | Exact operation, target, scope, assurance, expiry, approve/deny | Dangerous action is never preselected; replay/stale approval asks for a fresh decision |
+| Status badge | 12px label + icon; 20–24px high | Text always names status; no color-only badge |
+| Dialog/sheet | Title, short consequence, scrollable body, explicit footer | Focus trap, Escape behavior appropriate to action, initial focus, return focus, destructive confirm |
+| Timeline row | Timestamp, actor/source, event text, optional linked resource | History order follows projection cursor; old events do not replay animations |
+
+Button state priority is disabled, loading, pressed, focus, hover, default. Hover and
+pressed change surface shade/border only; do not move important content. Focus uses a
+2px semantic focus ring with 2px surface offset. Disabled controls remain readable and
+explain a blocking prerequisite nearby; do not rely on opacity alone. Every async control
+announces `aria-busy`; invalid inputs use `aria-invalid` and a linked error message.
+
+## Layout and responsive behavior
+
+- Desktop app shell: 240px expanded navigation rail, 64px collapsed rail; content min-width
+  560px; Inspector 320px; Workbench 420–720px. Users can close secondary panels.
+- At 900–1279px: navigation may collapse; only one secondary panel is open at once.
+- Below 900px: navigation becomes a labeled drawer; Inspector/Workbench become detail
+  routes or stacked panels. Conversation and Task actions stay primary.
+- Below 600px: single-column layout, full-width composer, bottom-safe-area padding, dialogs
+  become full-screen sheets, and all touch targets are at least 44px.
+- At 200% zoom, the interface reflows without losing actions or requiring two-dimensional
+  scrolling except for inherently tabular/diagram content, which gets an accessible list.
+
+Live Desk workstreams are aligned to outcomes and use neutral lane surfaces; do not assign
+permanent colors to Agents or model vendors. Provider/source identities use text/icon.
+Workbench preserves the source Artifact title/version and unsaved-edit state at every
+viewport.
+
+## Accessibility and motion
+
+- Keyboard order follows visual order; all actions are keyboard operable.
+- Focus never disappears behind a sticky header, panel, or modal.
+- Status/verification changes use a polite live region; interruptive prompts use an
+  appropriate alert/dialog announcement and are throttled to avoid repetitive updates.
+- Screen readers receive the full state and action label, not an unexplained icon or color.
+- Reduced motion keeps state text, icons, and focus indicators; it removes nonessential
+  transforms, pulses, and continuous progress effects.
+- Timing and semantic transition rules are owned by [`MOTION.md`](MOTION.md).
+
+## Workspace policy and domain-specific components
+
+`ReplicationPolicySelector` states which content may transfer, which Runtime may receive
+it, and that changes apply prospectively. `SELECTED_FOLDERS` requires selected active
+WorkspaceRoot IDs and explains that new revisions under those roots remain in scope.
+`ArchivedWorkspaceBanner` persists and names available read/download actions;
+archive confirmation lists blocking Tasks/Automations.
+
+`PlanningStatus` identifies active lead planning without a fake work lane, Environment,
+or progress meter. `AutomationRevisionHistory` distinguishes the current definition from
+the immutable revision pinned by each occurrence. Resource cards separate Resource
+identity from provider/path location and show freshness per location. Notification rows
+distinguish delivery acknowledgement from Task state. `ControlOwnerBadge` names Agent or
+Human control and the current input epoch without implying ExecutionLease ownership.
+
+## Background-work components
+
+`RecentConversationList` retains stable Conversation identity and current Workspace scope;
+keyboard selection reopens the existing exchange. `NeedsYouBadge` exposes a textual pending
+count and stale marker; linked blocker/request/approval entries are deduplicated as defined
+in EXPERIENCE. UserRequest answers and sensitive approvals remain distinct controls.
+
+`RoutineCard` shows revision, typed input requirements and execution dependencies without
+claiming a run is active. `AutomationTriggerList` separates TriggerHost from execution
+placement and presents each enabled trigger's timezone/misfire behavior. `OccurrenceRow`
+shows due/waiting/started/settled status alongside the actual linked Task outcome.
+
+`RuntimeStopDialog` renders a read-only dependency preview and explicit choices; after
+confirmation, display accepted drain separately from observed process stop. Changed
+incarnation/dependencies invalidate stale assumptions and show updated blockers. An
+installed/cold agent or startable provider uses neutral availability labels without busy
+animation. Quick Entry follows normal composer draft, attachment preview and focus rules.
+
+`PersistentEnvironmentCard` shows provider health separately from current use, names
+resource/network limits and retention, and displays estimate confidence and budget
+enforcement policy separately from actual enforcement (`provider-enforced`,
+`host-monitored`, or unavailable) in text. It shows observed cumulative usage, currency,
+confidence and observation time; missing/stale usage uses the explicit Unknown state and
+never a zero value. Provision
+confirmation blocks on missing required budgets; a monitored cap is labeled best-effort.
+Suspend/resume/destroy controls expose active-use blockers and never suggest the data is
+gone until provider destruction is confirmed.

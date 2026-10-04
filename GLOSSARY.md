@@ -1,4 +1,4 @@
-# LiteCowork
+# LiteCowork Glossary
 
 This glossary fixes the product's domain language. It names the durable work, workers,
 execution locations, permissions, and evidence that LiteCowork coordinates.
@@ -14,6 +14,21 @@ _Avoid_: Chat session as the work record
 The durable outcome a user wants accomplished, including its requirements, progress,
 outputs, and unresolved decisions.
 _Avoid_: Run, workflow instance
+
+**Routine**:
+A user-reviewed reusable work definition. Its immutable revisions define the job, inputs,
+outputs and criteria independently of any trigger or execution.
+_Avoid_: Skill, workflow engine
+
+**Automation**:
+A revision-pinned Routine plus trigger definitions and execution policy. Each logical
+occurrence can create one ordinary Task; trigger host and execution host are separate.
+_Avoid_: Agent process, schedule alone
+
+**AutomationOccurrence**:
+One deduplicated trigger delivery or due schedule slot, with pinned Routine/Automation
+revisions, claim authority, dependency state and its produced Task reference.
+_Avoid_: Agent Attempt
 
 **TaskSpecRevision**:
 An immutable version of the user's objective, constraints, required outputs, acceptance
@@ -40,13 +55,28 @@ An external reasoning worker that owns its model choice, reasoning, and native t
 _Avoid_: Model
 
 **AgentSession**:
-One agent-specific reasoning context used by an Attempt; it may be replaceable or
-unavailable after failure.
+One agent-specific reasoning context scoped to a Conversation, Task planning, or an
+Attempt; it may be replaceable or unavailable after failure.
 _Avoid_: Task, durable transcript
+
+**WorkspaceInstructionRevision**:
+An immutable, explicitly authored Workspace guidance revision that a Task pins when its
+specification is created or revised.
+_Avoid_: Hidden agent memory
 
 **Runtime**:
 A running LiteCowork daemon with identity, roles, presence, and execution capacity.
 _Avoid_: Environment
+
+**RuntimeIncarnation**:
+One daemon lock-holder process lifetime under a persistent Runtime identity. Restart
+creates a new incarnation and requires revalidation of process handles and observations.
+_Avoid_: New device identity
+
+**AgentHostInstance**:
+Runtime-local operational host or endpoint handle serving admitted AgentSessions, with
+explicit ownership and use references. Installed software need not have a running host.
+_Avoid_: AgentSession, durable Task
 
 **Environment**:
 The execution substrate in which an Attempt acts, such as a workspace, worktree,
@@ -84,9 +114,29 @@ current Attempt.
 _Avoid_: Lock without fencing
 
 **ResourceRef**:
-A stable, optionally revision-pinned reference to content or a resource that a Runtime
-can resolve.
+A stable logical Resource reference, optionally pinned to a revision/digest, independent
+of the Runtime, Environment, connector, or path where it is currently available.
 _Avoid_: Assumed shared local path
+
+**ResourceLocation**:
+A provider/runtime/environment-scoped locator and availability record for a logical
+Resource.
+_Avoid_: Resource identity
+
+**WorkspaceRoot**:
+A user-authorized persistent folder Resource and location that LiteCowork may observe
+under an explicit watch policy.
+_Avoid_: One-time attachment
+
+**World Index**:
+A factual, bounded index of explicitly granted Resources, identities, revisions,
+locations, relationships, freshness, and deterministic search results.
+_Avoid_: Reasoning world model, cognitive memory
+
+**CapabilityInvocation**:
+A durable record of one capability operation, including dispatch, asynchronous provider
+task state, cancellation, partial results, and final results.
+_Avoid_: Effect; LiteCowork Task
 
 **Human channel**:
 An external messaging transport that maps authenticated messages into a Conversation;

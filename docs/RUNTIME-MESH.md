@@ -18,18 +18,25 @@ RuntimeDescriptor {
   roles[]
   trust_zone
   availability
-  agents[]
-  capability_offers[]
-  environment_offers[]
+  startup_policy
+  current_incarnation_id?
+  offers: RuntimeOffer[]
   resource_capacity
   last_seen
 }
 ```
 
 Descriptors are snapshots/projections, not source-of-truth for Task state.
-`agents`, `capability_offers`, and `environment_offers` are bounded inventory summaries
-with their own `observed_at`/`expires_at` values. AgentProfiles discovered through them
-can become stale independently of Runtime identity or Workspace AgentBindings.
+`offers` is the single bounded inventory projection, typed by `offer_kind` and carrying
+its own `observed_at`/`expires_at`. AgentEndpoint offers, capability-provider offers,
+environment-provider offers, channel adapters, and trigger providers use the same
+availability envelope; there is no separate CapabilityOffer truth. AgentProfile and
+AgentEndpoint identities are stable; their RuntimeOffer observations and local
+AgentEndpointBindings are incarnation-scoped and can expire independently of Runtime
+identity or Workspace bindings.
+For `offer_kind = AGENT_ENDPOINT`, `offer_ref` is the stable `AgentEndpointId`; the offer
+contains readiness/compatibility only, while the local binding resolves the executable or
+remote endpoint locator.
 
 ## Runtime identity
 
@@ -46,6 +53,27 @@ DeviceIdentity {
 ```
 
 Private keys remain local. Rotation creates a new key version signed by the currently trusted key when possible; recovery pairing is required if old key is unavailable.
+
+## Runtime incarnation registry
+
+Every daemon start creates a new `RuntimeIncarnationId` under its stable RuntimeId. Before
+that process may publish presence, offers, AgentSessions, CapabilityActivations, or other
+records containing the incarnation ID, it registers the authenticated incarnation with the
+Workspace Hub. The Hub durably stores and distributes the compact `RuntimeIncarnation`
+record to authorized Workspace peers; this is Mesh control metadata, not a Task-domain
+event. Runtime lifecycle state updates are versioned and authenticated by the paired device
+key. A duplicate identical registration is idempotent; reuse of an incarnation ID with
+different identity fields or a stale state version is rejected. A Runtime with an
+unregistered incarnation cannot publish ONLINE presence or work events.
+
+The shared registry contains RuntimeId, incarnation ID, process start time, LiteCowork
+version, unclean-recovery flag, lifecycle state, and state version. OS boot IDs and local
+diagnostics are held only in `RuntimeIncarnationLocalObservation`; they are neither
+distributed nor included in Workspace backups. Registry entries remain available while any
+durable event, session, activation, Environment, lease/audit record, or backup cursor
+references them. Peers apply aggregate state that names an incarnation only after its
+authenticated registry record is present. This ordering makes incarnation foreign keys
+valid without treating a stale presence frame as proof of current execution authority.
 
 ## Pairing
 
@@ -69,6 +97,7 @@ Runtimes send heartbeat every configurable interval.
 ```text
 PresenceFrame {
   runtime_id
+  runtime_incarnation_id
   sequence
   status
   resource_capacity
@@ -78,7 +107,9 @@ PresenceFrame {
 }
 ```
 
-Presence TTL should be > heartbeat interval and configurable. `OFFLINE` is a projection; leases use independent expiry rules.
+Presence frames bind sequence numbers to the authenticated Runtime incarnation. A new
+incarnation resets its frame sequence; frames from an earlier incarnation cannot restore
+readiness or revive old handles. Presence TTL should be > heartbeat interval and configurable. `OFFLINE` is a projection; leases use independent expiry rules.
 
 ## Mesh service
 
@@ -89,13 +120,16 @@ interface RuntimeMesh {
   get_runtime(RuntimeId) -> RuntimeDescriptor
   list_runtimes(WorkspaceId) -> RuntimeDescriptor[]
 
+  register_incarnation(RuntimeIncarnationRegistration) -> RuntimeIncarnation
+  publish_incarnation_state(RuntimeIncarnationStateUpdate) -> Ack
+
   publish_presence(PresenceFrame) -> Ack
   advertise_offers(RuntimeOffers) -> Ack
 
-  acquire_lease(AcquireLeaseRequest) -> ExecutionLease
-  renew_lease(RenewLeaseRequest) -> ExecutionLease
+  acquire_lease(AcquireLeaseRequest) -> ExecutionLeaseGrant
+  renew_lease(RenewLeaseRequest) -> LeaseRenewalResult
   release_lease(ReleaseLeaseRequest) -> ExecutionLease
-  validate_fence(FencingToken, StepId) -> FenceDecision
+  validate_fence(FencingCredential, StepId, AuthenticatedRuntime) -> FenceDecision
 
   replicate_events(EventBatch) -> ReplicationAck
   fetch_events(EventCursor) -> EventBatch
@@ -108,28 +142,171 @@ interface RuntimeMesh {
 }
 ```
 
+Lease request/response values are internal Mesh contracts, not Operator API schemas:
+
+```text
+AcquireLeaseRequest {
+  request_id
+  task_id
+  step_id
+  attempt_id
+  runtime_id
+  runtime_incarnation_id
+}
+
+RenewLeaseRequest {
+  request_id
+  lease_id
+  task_id
+  step_id
+  attempt_id
+  runtime_id
+  runtime_incarnation_id
+  epoch
+  expected_lease_version
+  credential: FencingCredential
+}
+
+LeaseRenewalResult {
+  lease: ExecutionLease
+  renewed: boolean
+}
+
+ReleaseLeaseRequest {
+  request_id
+  lease_id
+  runtime_id
+  runtime_incarnation_id
+  expected_lease_version
+  credential: FencingCredential
+}
+
+ExecutionLeaseGrant {
+  lease: ExecutionLease       # durable record contains credential digest only
+  credential: FencingCredential # ephemeral SecretBytes, returned only over authenticated Mesh
+}
+
+FencingCredential {
+  opaque_value: SecretBytes
+  issuer_key_version
+  workspace_id
+  lease_id
+  task_id
+  step_id
+  attempt_id
+  runtime_id
+  runtime_incarnation_id
+  epoch
+}
+```
+
+`CredentialIssuer` derives the opaque value with domain-separated HMAC-SHA-256 from a
+versioned issuer key and the immutable lease identity `(workspace_id, lease_id, task_id,
+step_id, attempt_id, runtime_id, runtime_incarnation_id, epoch)`. It serializes the domain
+tag, key version, and UTF-8 IDs with an unambiguous length-prefixed canonical encoding
+before HMAC. The issuer key is held in an
+OS keystore/HSM, never SQLite or Workspace backup. The lease stores `issuer_key_version`
+and `SHA-256(opaque_value)`, not the value. An issuer key version remains available until
+all leases and deduplication retries that reference it are terminal/expired. If the key is
+lost, fail closed: reconcile affected work, expire/revoke its leases, and issue new epochs;
+never reconstruct authority from a backup alone.
+
+Credential validity is checked against the authoritative lease's current state and
+`expires_at`; the opaque credential is stable within one lease epoch and does not embed an
+expiry. Renewal therefore extends the authoritative expiry without rotating the secret.
+The enforcing provider receives the renewed lease view over authenticated private control.
+If that response is lost, the provider keeps its last known earlier deadline and stops
+early; the Runtime retries the same `request_id` and reads the committed result. No work
+continues beyond the last confirmed expiry.
+
+Acquire, renew, and release are idempotent by RequestId scoped to the authenticated
+Runtime/incarnation. The same ID and request digest returns the original committed result;
+reuse with a different digest is a conflict. Deduplication retains the non-secret lease
+view only, long enough to cover the lease lifetime and retry horizon. A repeated acquire
+can re-derive and return the same ephemeral credential from its key version; raw values
+are never cached in `request_dedup`. Renewal returns only the lease view; the credential
+does not change within an epoch. Credentials are never included in a `DomainEvent` or
+projection, and are never delivered to an Agent. Provider adapters receive them through
+authenticated private control and redact them from diagnostics. Environment-control
+credentials follow the same derivation using the control-lease identity and owner epoch;
+takeover advances the epoch and derives a different credential. Operator clients use
+authenticated identity plus `expected_control_epoch` and see only an
+`EnvironmentControlLeaseView`.
+
 ## Event replication
 
 Replication unit is domain events, not database pages.
 
-Per origin runtime:
-- events have monotonic `origin_sequence`.
-- receiver stores `(origin_runtime_id, origin_sequence)` uniquely.
+Every DomainEvent carries `aggregate_state_ref` for the complete post-transition record
+at its mandatory `entity_revision`. For an eligible event, the Mesh authenticates and
+persists its envelope, then obtains and verifies the content-addressed state blob before
+aggregate application. The receiving Hub validates the blob digest, Workspace
+authorization, entity/revision/schema binding, and event authority before advancing that
+aggregate. If the blob is temporarily unavailable, the received event remains pending;
+it may not be applied from its partial payload. If policy excludes the event, the source
+sends only a `POLICY_OMITTED` receipt. This event-level state blob is distinct from
+periodic aggregate snapshots and Artifact content transfers.
+
+Per Workspace and origin Runtime:
+- events have a strictly increasing `origin_sequence` allocated within that Workspace.
+- receiver stores `(workspace_id, origin_runtime_id, origin_sequence)` uniquely.
 - duplicate batches are safe.
-- receiver ACKs highest contiguous sequence plus missing gaps.
+- receiver ACKs the highest contiguous **durably received transfer position** plus missing
+  gaps; this is not an aggregate-application cursor.
 - batches may be compressed.
 - backpressure is signaled explicitly.
 
+Each sequence is resolved by exactly one authenticated `ReplicationReceipt`:
+
+```text
+ReplicationReceipt {
+  workspace_id
+  receiver_runtime_id
+  origin_runtime_id
+  origin_sequence
+  disposition: EVENT_STORED | POLICY_OMITTED
+  event_id?                 # present only for EVENT_STORED
+  envelope_digest?          # present only for EVENT_STORED
+  policy_revision           # source policy used to make this disposition
+  omission_commitment?      # opaque keyed commitment; present only for POLICY_OMITTED
+  received_at
+}
+```
+
+`receiver_runtime_id` names the Runtime whose durable receipt/application state is
+represented; an origin may keep a copy of the acknowledgement for retention decisions.
+`origin_runtime_id` identifies the Runtime that originally allocated and authenticated the
+event, even when another Runtime relays it. An `EVENT_STORED` receipt means the
+authenticated envelope has been persisted and can be re-fetched; it does not claim that the aggregate projection was applied. A
+`POLICY_OMITTED` receipt contains no event type, entity ID, payload, or blob locator. It is
+authenticated by the origin Runtime and advances only the Workspace-scoped transfer
+cursor. The marker reveals that one sequence position was omitted; that count/timing side
+channel is an explicit residual metadata leak. Receipts are immutable and deduplicated by
+their full Workspace/receiver/origin/sequence key.
+
+Aggregate application is tracked separately by `(workspace, entity_type, entity_id)` and
+revision. A received event is applied only when its verified state blob and transition
+authority are valid and the aggregate revision is contiguous. A revision gap, including
+one caused by a policy omission or expired history, is stored as pending and marks that
+aggregate `SNAPSHOT_REQUIRED`; unrelated aggregates continue. The source can bootstrap an
+authorized aggregate snapshot at revision N, after which the receiver applies eligible
+events above N. If current policy does not authorize that snapshot, the aggregate remains
+unavailable on that peer. When policy later broadens, snapshot bootstrap establishes
+current state; retained authorized history may be backfilled separately for audit. A
+snapshot never authorizes replay of an Effect or command.
+
 ```text
 EventCursor {
+  workspace_id
   per_origin: Map<RuntimeId, Sequence>
 }
 ```
 
-Each origin allocates a strictly increasing sequence in the same commit that appends an
-event. Receivers deduplicate by `(origin_runtime_id, origin_sequence)` and acknowledge
-only the highest contiguous sequence; gaps remain explicit until retransmitted. Request
-IDs make retried commands idempotent independently of event-batch deduplication.
+Each origin allocates a strictly increasing sequence per Workspace in the same commit that
+appends an event. Receivers deduplicate by `(workspace_id, origin_runtime_id,
+origin_sequence)` and acknowledge only the highest contiguous receipt position; gaps
+remain explicit until the event or an authenticated policy-omission receipt arrives.
+Request IDs make retried commands idempotent independently of event-batch deduplication.
 
 HLC is `(physical_ms, logical_counter, runtime_id)`. On local event creation, advance
 the physical component to `max(local_wall_ms, last_physical_ms)` and increment the
@@ -154,12 +331,24 @@ author domain events.
 
 Entity-specific rules:
 
+- Workspace instruction revisions: Hub-authoritative append-only revisions. Updates use
+  Workspace `If-Match` and must parent the current head; stale offline/device writes are
+  retained as pending intents and rejected for explicit rebase/merge on reconnect. They
+  never replace the current pointer by HLC or last-writer-wins.
 - TaskSpecRevision: append-only. Concurrent revisions with same parent create siblings; hub chooses neither silently. UI/lead resolves by producing a new revision that names both parents in reconciliation metadata.
-- PlanRevision: append-only. A current authorized LEAD_PLANNING session or currently leased lead execution Attempt may propose a revision; TaskService alone validates and promotes it against the current TaskSpecRevision.
+- PlanRevision: append-only. A current authorized TASK_PLANNING session or currently leased lead execution Attempt may propose a revision; TaskService alone validates and promotes it against the current TaskSpecRevision.
 - ConversationMessage: append-only; ordering projection uses HLC + origin sequence.
 - ArtifactVersion: immutable and sequential per Artifact. Concurrent publishers use Artifact aggregate `version`; one commit wins, stale publishers must re-read and explicitly rebase or create a separate Artifact. There is no implicit branch or current-version promotion.
 - Approval resolution: first valid terminal resolution wins; later conflicting resolution rejected.
 - ExecutionLease: epoch/fencing is authoritative.
+- CapabilityInvocation: append-only request digest and provider lifecycle. Duplicate
+  replication is idempotent by InvocationId/provider sequence; conflicting terminal
+  provider observations are retained as evidence and escalated rather than last-writer-wins.
+- mutable aggregate commands created offline are pending intents, not shared committed
+  truth. On reconnect, stale expected versions are rejected and re-evaluated by their
+  owning service. TaskSpecRevision siblings are preserved for explicit resolution;
+  conflicting approval, lease, grant, policy, or Artifact publication commands never
+  resolve by wall-clock order.
 
 No generic last-writer-wins for consequential state.
 
@@ -168,15 +357,31 @@ No generic last-writer-wins for consequential state.
 Acquire:
 1. verify no unexpired ACTIVE lease for Step.
 2. increment epoch from max historical epoch.
-3. create cryptographically random fencing token.
-4. persist lease atomically with ownership projection.
+3. create a cryptographically pseudorandom, HMAC-derived fencing credential bound to the
+   exact Runtime incarnation, Attempt, Step, and epoch.
+4. persist the lease and only the credential digest atomically with ownership projection.
 5. emit `lease.acquired`.
 
-Renew requires same runtime, attempt, epoch and token.
+The credential is returned only over authenticated Mesh control transport to the owning
+Runtime. It is delivered to the in-process lease client/provider boundary through a
+private channel; the Agent, Operator, event payload, aggregate-state blob, logs, and
+Workspace backup never receive the raw credential. The lease record and replicated
+state contain only `fencing_token_digest`. Credential use also requires authenticated
+Runtime identity and an active lease check, so possession alone is not sufficient.
+
+Renew requires the same authenticated Runtime ID and current Runtime incarnation, Attempt,
+epoch, credential, request ID, and expected lease version. Renewal preserves the credential
+within the epoch and extends only authoritative lease expiry. A new daemon incarnation cannot renew a prior incarnation's lease;
+it waits for authoritative release/expiry and Effect reconciliation, then creates a fresh
+Attempt with a new lease epoch if continuation is eligible. An AgentSession may be
+replaced without replacing the Attempt only while remaining inside the same Runtime
+incarnation and retaining the same valid lease.
 
 A new lease after expiry always has a larger epoch. Every Core-mediated mutation that
 can conflict with another executor validates the active fence at the authority that
-commits the mutation.
+commits the mutation. The authority compares the credential digest and authenticated
+caller against the current lease; a stale incarnation or epoch is rejected even if an
+old credential remains in a provider process.
 
 ### Offline boundary
 
@@ -190,8 +395,9 @@ fencing or the operation has a stable idempotency/reconciliation contract.
 
 The Hub does not grant a replacement owner solely because a heartbeat expired. It waits
 for lease expiry plus the configured clock-skew safety margin, reconciles open Effects,
-and checks the FailoverClass. A cached token cannot authorize Hub-mediated writes after a
-higher epoch is committed.
+and checks the FailoverClass. A cached credential cannot authorize Hub-mediated writes
+after its lease expires, its Runtime incarnation is superseded, or a higher epoch is
+committed.
 
 ## Handoff
 
@@ -260,7 +466,26 @@ v1 has one logical authoritative Hub. If unavailable:
 
 Do not elect a new Hub automatically in v1.
 
-On reconnect, Runtimes exchange per-origin cursors, send missing immutable events and
-artifact manifests, and apply only events that pass current origin authorization,
+On reconnect, Runtimes exchange per-Workspace/per-origin receipt cursors, send missing
+immutable events or policy-omission receipts, and fetch any authorized state blobs needed
+for aggregate application. They apply only events that pass current origin authorization,
 revision, and fencing checks. Concurrent TaskSpec revisions remain siblings for explicit
 resolution; no last-writer-wins rule applies to consequential state.
+
+## Backup, restore, snapshot, and event retention
+
+A Workspace backup is a consistent recovery set containing the relational checkpoint,
+per-origin/per-Workspace event cursors and required event history, immutable blob manifest and referenced
+objects, schema version, encryption/key identifiers, and integrity digests. A v1 backup
+is a complete point-in-time set: the consistent database snapshot, included event history,
+and blob manifest share one barrier, and each cursor records the last included sequence
+for its origin Runtime. Changes after that barrier belong to a later full backup; v1 does
+not define incremental chains. Credentials, native agent state, and local OS secrets are
+excluded.
+
+Restore authenticates the manifest, verifies all digests and schema compatibility, restores
+the database and blobs to an isolated location, checks all referenced manifests and event
+cursors, then rebuilds projections before the Workspace is made writable. A restore to a
+new Runtime requires explicit identity re-pairing and new lease epochs; old fencing
+authority is never restored. Backup restore drills and recovery-point/recovery-time
+objectives are deployment requirements and are measured before hosted production.

@@ -4,7 +4,8 @@
 
 ```text
 apps/
-  desktop/                 # Tauri + React operator UI
+  litecoworkd/             # headless Runtime/service executable
+  operator-desktop/        # Tauri + React UI, tray, later Quick Entry
 
 crates/
   domain/
@@ -22,6 +23,9 @@ crates/
     task-service/
     planning-coordinator/
     agent-session-supervisor/
+    agent-host-supervisor/
+    lifecycle/
+    dependency-planner/
     scheduler/
     attempt-runner/
     completion/
@@ -57,6 +61,7 @@ crates/
   artifacts/
   trust/
   verification/
+  routines/
   automation/
   channels/
   events/
@@ -95,42 +100,103 @@ Forbidden dependencies:
 - AgentAdapter -> direct Task database mutation
 - capability adapter -> UI
 
-## Milestone 1 — durable local vertical slice
+## Stage 0 — contract repair
 
-Build only:
-- local `litecoworkd`
-- WorkspaceService with explicit replication policy and archive lifecycle
-- Task/Event/SQLite stores
-- Task-scoped LEAD_PLANNING session before Steps/Attempts
-- one ACP AgentAdapter
-- LiteCowork Gateway
-- LitePSM client
-- one MCP capability
-- Artifact/Effect/Evidence
-- one deterministic Verifier
-- minimal desktop Conversation/Task/Live Desk
+Before runtime implementation, validate the frozen `litecowork.*` Gateway namespace,
+Conversation AgentSession and retry contracts, Task pause/recovery semantics, canonical
+error registry, typed event payload schemas, verification-to-spec binding, external
+ArtifactContent union, ApprovalUse consumption, Resource identity/location split, and
+versioned Needs You item identity. Store AgentSession scope/Runtime provenance and
+CapabilityActivation scope in canonical records; keep native AgentSession and provider
+handles in Runtime-local immutable bindings, with derived host-use counts and settlement-
+gated release. Register RuntimeIncarnations before accepting records that reference them.
+Validate the persistent Environment preview/create digest contract against the OpenAPI
+request schemas before adding its Operator UI.
+The schema/API/event/storage validators must run in CI.
 
-Acceptance: create a local-only Workspace; create a Task; start an attempt-free lead planning session; promote its PlanRevision and materialize Steps; execute one Step; kill the worker and resume from portable Task state. Confirm no Live Desk lane appears before a Step Attempt exists.
+## Stage 1 — local substrate
 
-## Milestone 2 — heterogeneous agents
+Build separate Operator and `litecoworkd` executables with single-instance locking,
+incarnation recovery, startup policy, safe drain, sleep/wake coordination, Workspace, explicit Workspace instructions/roots, Resource and
+World Index, deterministic local resource search, Event/SQLite/Blob stores, Operator API,
+verified encrypted WorkspaceBackupManifest create/restore, and local-only UI. Restore
+into an empty installation must register a new Runtime identity and must not revive old
+leases. Whole-machine observation remains opt-in and separately isolated.
+Measure daemon startup/idle CPU/RAM, Task creation, resource search, event-to-UI latency,
+crash recovery, and CapabilityHost activation/binding overhead against a deterministic
+LitePSM adapter fixture. Record provider-start time separately so the fixture is not
+misreported as real provider startup. Freeze numeric Stage 1 targets from that measured
+baseline before Stage 1 exits; do not guess targets without measurements. Stage 3 then
+adds real LitePSM/MCP activation and provider-recovery latency without changing the
+control-plane measurements into an upstream service guarantee.
+
+Stage 1 also implements Workspace-persistent Environment preview/list/create/suspend/resume/
+destroy commands behind provider conformance, with explicit budget enforcement policy,
+preview digest revalidation, idempotent provisioning recovery, and safe provider-private
+locator handling. Operator UI surfaces the reviewed estimate, enforcement strength,
+retention and blockers. Needs You becomes a deduplicated query projection over canonical
+Approval, UserRequest and actionable Task blockers, with stable item IDs and owner-routed
+actions. No inbox aggregate command mutates its source record.
+
+## Stage 2 — first agent
+
+Build lazy AgentHost ensure/retain/release and idle shutdown, then Conversation-scoped chat and Task-scoped planning plus Attempt execution, one ACP
+AgentAdapter, Task/Event/SQLite stores, ResumePacket, and minimal desktop
+Conversation/Task/Live Desk.
+
+Acceptance: simple conversation has a Conversation AgentSession and no Task; a Task starts
+with an attempt-free planning session, promotes a PlanRevision, materializes Steps, and
+executes one Step; kill the worker and resume from portable Task state. Confirm no Live
+Desk lane appears before a Step Attempt exists.
+
+## Stage 3 — first capability
+
+Add the LiteCowork Gateway, CapabilityHostSupervisor and normalized host view, internal
+LitePSM client port, one MCP capability, CapabilityInvocation, Effect/Evidence,
+DependencyService, and a deterministic Verifier.
+LitePSM wire/API and package contracts remain intentionally out of scope until its
+service authority is available.
+
+Acceptance: both PACKAGE_COMPONENT and MCP_SKILL CapabilityRefs pass their normalized
+schemas; a Task pins the exact digest; read-only and asynchronous invocations recover
+after AgentSession loss; approval and Effect semantics remain independent; a changed
+input revision invalidates dependent outputs/evidence idempotently; provider failures
+respect call-admission circuits; package restart limits belong to LitePSM. Record local capability search/activation and
+invocation recovery baselines for the first provider. Prove that compatible scoped
+Activations share one safe host with a derived use count, while incompatible isolation
+contexts receive separate hosts and every call still enforces its own Grant/fence.
+
+## Stage 4 — heterogeneous agents
 
 Add host delegation, bounded TaskPacket/ResultEnvelope, child lifecycle, worktree isolation and independent verifier.
 
-## Milestone 3 — Runtime Mesh/cloud
+## Stage 5 — Runtime Mesh/cloud
 
-Add pairing, presence, replication, leases/fencing, blob replication, explicit handoff. Only then implement automatic safe failover.
+Add pairing, presence, replication, leases/fencing, blob replication, and explicit handoff.
+Before cloud GA, verify backup restore on a new Runtime, test Workspace event/blob
+recovery, and prove old lease epochs cannot return. Only then implement automatic safe
+failover.
 
-## Milestone 4 — remote channels
+## Stage 6 — channels and automation
 
 One ChannelAdapter (Telegram or Email) through same Conversation/Task store.
 
-## Milestone 5 — automation
+Add Routines and pinned RoutineRevisions, remote channels and notification preferences/
+delivery, then multi-trigger schedule/manual/webhook providers that create deduplicated
+ordinary Tasks. Verify stable cursors across edits, misfire behavior after sleep/restart,
+and Hub-triggered work waiting for local execution dependencies. Broader trigger variants
+remain disabled until their providers pass conformance.
 
-Schedule trigger -> deduplicated occurrence -> ordinary Task.
+## Stage 7 — richer surfaces
+
+Add the MCP Apps host, MCP Skills extension provider, user-reviewed SkillProposal draft /
+redaction flow with LitePSM publication only after its contract is available, richer
+Workbench providers, and optional isolated machine observation, browser, and computer-use
+integrations.
 
 ## Documentation and implementation gates
 
-Before a domain is implemented, its canonical schema, legal transitions/owner, command/event contract, authorization rule, failure/recovery behavior, UI projection, and compatibility policy must agree across its owner document and the shared schema/API/event/storage references. LitePSM package/API/manifest details remain intentionally deferred to the configured LitePSM service; LiteCowork specifies only its internal broker port and stable user-facing capability references.
+Before a domain is implemented, its canonical schema, legal transitions/owner, command/event contract, authorization rule, failure/recovery behavior, UI projection, and compatibility policy must agree across its owner document and the shared schema/API/event/storage references. LitePSM package/API/manifest details remain intentionally deferred to the configured LitePSM service; LiteCowork specifies its internal Broker/Supervisor ports, normalized Runtime-local host/readiness view, scoped activation references, and stable user-facing capability references without inventing LitePSM's wire contract.
 
 ## Definition of done for a domain feature
 
@@ -155,6 +221,6 @@ Version independently:
 - AgentAdapter contract
 - EnvironmentProvider contract
 - Capability Gateway contract
-- LitePSM client contract
+- LitePSM client wire/package contract
 
 Upgrade principle: in-progress Tasks remain pinned to immutable spec/plan/capability/artifact revisions; runtime upgrades must not silently mutate their semantics.

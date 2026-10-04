@@ -30,8 +30,9 @@ user's Task.
 2. **External agents own reasoning.** LiteCowork stores and presents plans, checks
    structure and policy, and coordinates execution. It does not provide a second
    reasoning loop, planner, or hidden Goal Keeper.
-3. **Keep identities distinct.** Task, Step, Attempt, Agent, AgentSession, Runtime,
-   Environment, Capability, Effect, Artifact, Evidence, and ExecutionLease are separate
+3. **Keep identities distinct.** Conversation, Task, Step, Attempt, Agent, AgentSession,
+   Runtime, Environment, CapabilityInvocation, Capability, Resource, DependencyEdge,
+   InvalidationRecord, Effect, Artifact, Evidence, and ExecutionLease are separate
    concepts with separate owners.
 4. **Govern only mediated effects.** Core Trust, authorization tickets, audit, and
    verification govern calls routed through LiteCowork. An agent's native tools and
@@ -49,8 +50,30 @@ user's Task.
    determined from required outputs, effect reconciliation, approvals, and acceptance
    evidence.
 9. **Direct attachment cannot bypass Core guarantees.** Use direct capability tools only
-   when the provider can enforce the required grant, Effect, idempotency, and fencing
-   contract. Otherwise route consequential calls through the LiteCowork Gateway.
+   when the provider can enforce the scoped grant and every control required by that
+   operation: Effect recording for consequential calls, idempotency where retry safety
+   depends on it, and fencing for mediated mutations. Read-only calls do not require an
+   Effect. Otherwise route calls through the LiteCowork Gateway.
+10. **Operator, Runtime, and workers have independent lifecycles.** The desktop/web/mobile
+    Operator can disappear without stopping `litecoworkd`; the Runtime can remain alive
+    while agents, local capability processes, Environments, and desktop applications are
+    stopped. Workers start only for admitted work or an explicitly configured shared
+    service. Installation or discovery never implies a running process.
+11. **Runtime recovery is incarnation-scoped.** A stable Runtime identity survives daemon
+    restarts, but every daemon start creates a new RuntimeIncarnation. Process handles,
+    provider handles, observations, and temporary Environments from an earlier incarnation
+    must be revalidated before reuse.
+12. **Triggers do not own execution.** An Automation TriggerHost records a durable
+    occurrence; ordinary Task admission independently chooses an eligible execution
+    Runtime. A due occurrence may wait for a local Runtime or another dependency.
+13. **Opaque provider continuation data stays Runtime-local.** MCP task IDs, provider
+    cursors, user-input request keys, and native session/process handles are stored only
+    in encrypted local bindings. Their ciphertext digests are local integrity values;
+    they are not provider-handle identifiers or recovery tokens. The shared
+    `AutomationCursor.cursor_digest` is the one explicit exception: it commits to the
+    encrypted cursor bytes for host-epoch consistency, but never reveals or recovers the
+    provider cursor. Domain events, Mesh replication, Operator projections, aggregate
+    snapshots, and Workspace backups never contain the opaque plaintext values.
 
 ## 3. Canonical concepts and ownership
 
@@ -58,6 +81,7 @@ user's Task.
 |---|---|
 | Workspace | User-owned durable boundary for Conversations, Tasks, policy, and replication scope. |
 | Conversation | User-visible exchange across surfaces. An ordinary question need not create a Task. |
+| AgentSession | Scoped external-agent interaction: conversation, task planning, or one Attempt. |
 | Task | Durable outcome the user wants, owned by the Task Runtime. |
 | TaskSpecRevision | Immutable revision of objective, constraints, outputs, criteria, approvals, and budget. |
 | PlanRevision | Agent-proposed, versioned plan stored by Core; Core validates shape and policy but does not invent strategy. Promotion and Step materialization commit atomically. |
@@ -66,9 +90,16 @@ user's Task.
 | AgentProfile / AgentBinding | Discovered agent and its negotiated host binding, owned by Agent Fabric. |
 | AgentSession | Agent-specific reasoning session; optional native session handles are optimizations, not Task truth. |
 | Runtime | A running `litecoworkd` instance, with identity, role, presence, and resource offers. |
+| RuntimeIncarnation | One daemon process lifetime under a persistent Runtime identity; process-bound state is scoped to it. |
+| AgentHostInstance | Runtime-operational endpoint/process attachment created or attached lazily for AgentSessions; it is not Task truth. |
 | Environment | The actual place an Attempt acts: local workspace, worktree, container, VM, browser, desktop, or remote sandbox. |
-| CapabilityRef | Reference to a capability package/service/version, resolved through the independent LitePSM ecosystem. |
-| CapabilityGrant | Task/Attempt-scoped authorization for an exact capability and operation. |
+| Routine / RoutineRevision | Immutable reusable work definition; a Routine run materializes an ordinary Task. |
+| TriggerHost | Runtime/provider placement that observes one Automation trigger and creates its occurrence; separate from Task execution placement. |
+| CapabilityRef | Internal normalized identity for a package component or MCP Skill, pinned by its exact content/manifest digest. |
+| CapabilityInvocation | Durable lifecycle for one capability operation; it may be read-only, asynchronous, or linked to an Effect. |
+| CapabilityGrant | Conversation, planning, or Attempt-scoped authorization for an exact capability and operation; Conversation/planning grants are read-only. |
+| Resource / ResourceLocation | Stable logical identity and one independently available location/revision observation. |
+| World Index | Facts-only index of explicitly selected Workspace resources, locations, relations, freshness, and deterministic search. |
 | ExecutionLease | Fenced authority for one Runtime to own an Attempt at a particular epoch. |
 | Effect | A proposed or executed real-world consequence with reconciliation state. |
 | Artifact / ArtifactVersion | Durable output identity, immutable content version, storage reference, and provenance. |
@@ -85,15 +116,16 @@ and environment snapshots may accelerate resume but are never required for corre
   Attempts, scheduling admission, budgets, cancellation, and ResumePackets.
 - Agent Fabric contracts and host-created delegation lifecycle, without taking over an
   agent's internal subagent system or reasoning.
-- LiteCowork Capability Gateway, CapabilityBroker, scoped grants, activations, and LitePSM
-  client integration.
+- LiteCowork Capability Gateway, CapabilityBroker, CapabilityHostSupervisor, scoped grants,
+  activations, local host bindings, and LitePSM client integration.
 - Runtime identity, pairing, presence, event/artifact replication, execution leases,
   fencing, handoff, and failover coordination.
 - EnvironmentProvider contract and Attempt placement, not domain-specific intelligence.
 - Trust decisions, approvals, secret references/leases, and audit for Core-mediated
   calls.
 - Durable event journal, Artifact/Effect/Evidence records, verification orchestration,
-  automation trigger-to-Task creation, and operator projections/API.
+  Routine/Automation trigger-to-Task creation, notifications, Runtime lifecycle/recovery,
+  dependency preparation, and operator projections/API.
 
 Workspace replication policy selects resources eligible for replication; it never grants capabilities or secrets. Policy changes affect future transfers and do not silently erase copies already present on another Runtime. Archived Workspaces are read-only: they retain authorized reads but reject domain mutations.
 
@@ -104,16 +136,21 @@ works.
 ### Capability/provider territory
 
 Office operations, browser automation, computer-use reasoning, coding intelligence,
-search/RAG, connectors, cognitive memory, model routing, workflow engines, machine-wide
-observation, and domain-specific research are not first-party Core domains. They may be
-provided by an external agent, MCP server, skill, plugin, connector, environment
-provider, or other compatible service. Removing one should remove that category of
-work, not break Task durability or runtime coordination.
+semantic RAG, connectors, cognitive memory, model routing, workflow engines, and
+domain-specific research are not first-party Core domains. They may be provided by an
+external agent, MCP server, skill, plugin, connector, environment provider, or other
+compatible service. The first-party World Index is a bounded factual substrate over
+explicit WorkspaceRoots: stable Resource identity, ResourceLocations, observed revisions,
+freshness, structural relationships, and deterministic metadata/text search. It does not
+scan the whole machine, infer semantic knowledge, or act as a reasoning model. Removing
+an external domain capability should remove that category of work, not break Task
+durability or runtime coordination.
 
 ### LitePSM is independent
 
-LitePSM owns package ecosystem truth and lifecycle. LiteCowork owns only task-specific
-references, grants, activations, and offers. A listing is not trusted code, an installed
+LitePSM owns package ecosystem truth and lifecycle. LiteCowork owns only session-scoped
+references, grants, activations, and offers (with Task capability locks for durable
+Tasks). A listing is not trusted code, an installed
 package, an account connection, or an authorization grant. The selected LitePSM service
 base URL is `https://litepsm.sarveshbh-2022.workers.dev/`. Its API, authentication,
 manifest, package taxonomy, and install/activation contract remain owned by LitePSM and
@@ -133,29 +170,92 @@ litecowork.artifacts.read / publish
 litecowork.user.ask
 ```
 
-Resolve an exact package version and digest through LitePSM, check binding compatibility,
-scope, policy, and budget, then create a task-scoped grant. Direct attachment is allowed
-only when the provider can enforce the required grant and Effect/fence contract. Route
-consequential calls through the Gateway when those guarantees cannot be enforced on the
-direct path. If attachment can change only at a session boundary, use the proxy for the
-current turn and attach natively at the next safe boundary. Never rewrite a discovered
-agent's private configuration or copy host skills into its native directories.
+Simple Conversation uses the same Agent Fabric through a `CONVERSATION`-scoped session.
+Its Gateway credential is short-lived and limited to that session, Conversation, and
+read-only methods. Task planning and Attempt execution use distinct session scopes and
+credentials. A Conversation-only session cannot mutate a Task or invoke a consequential
+capability.
 
-## 6. Agent, Runtime, and Environment fabrics
+Resolve package-component versions/digests through LitePSM; resolve MCP Skills by their
+authenticated server identity, exact `SKILL.md` URI, and manifest digest. Check binding
+compatibility, scope, policy, and budget, then create a grant matching the session scope.
+Direct attachment is allowed only when the provider can enforce the scoped grant and the
+controls required by that operation. Consequential calls require Effect recording;
+mutations require fencing; operations whose retry safety depends on it require
+idempotency. Read-only calls do not require an Effect. Route calls through the Gateway
+when required guarantees cannot be enforced on the direct path. If attachment can change
+only at a session boundary, use the proxy for the current turn and attach natively at the
+next safe boundary. Never rewrite a discovered agent's private configuration or copy host
+skills into its native directories.
+
+## 6. Operator, Runtime, worker, and Environment lifecycles
+
+The Operator, `litecoworkd`, and worker/service processes are independent lifecycle
+owners. A user may close the main window while the configured Runtime continues; the
+Runtime does not start all discovered agents, MCP servers, browsers, Office apps, or
+Environments at boot. Runtime boot performs storage/migration/journal recovery, lease and
+Effect reconciliation, scheduler/cursor recovery, watcher resumption, and offer refresh
+before it advertises readiness. OS service managers start a headless Runtime according to
+`MANUAL`, `LOGIN_BACKGROUND`, or `ALWAYS_ON_SERVICE`; they do not start user Automations.
+
+Every daemon restart creates a new RuntimeIncarnation. Offers and process-bound handles
+are incarnation-scoped and must be revalidated after restart or wake. Agent hosts start on
+the first admitted Conversation turn, planning session, or Attempt that needs them; a
+locally spawned host can stop after its references settle and its idle TTL expires.
+AgentSession stores only durable scope, selected endpoint, Runtime, incarnation, and
+lifecycle. A turn/assignment/session that settles or durably waits closes its session and
+releases the host-use reference; the next interaction uses a bounded projection from
+durable Conversation/Task state. Its native resume handle and host binding are Runtime-local
+and never travel in event state or Workspace backups; continuing on another Runtime creates
+a new session.
+Explicitly configured shared daemons are allowed, but no installed agent is kept hot by
+default. Model/agent selection changes affect future sessions or planning assignments;
+already admitted Attempts remain pinned. Apps launch only when a selected Environment
+requires them, and cleanup may close only an instance LiteCowork launched and owns.
+
+LitePSM owns package/provider process execution and lifecycle: launch/stop, provider-level
+isolation implementation, health/restart, and global process reference counting. LiteCowork
+owns a normalized Runtime-local `CapabilityHostInstance` view and derives use counts by
+joining local `CapabilityActivationHostBinding` records to durable scoped Activations. The
+binding and its opaque provider handle never enter replicated event state or Workspace
+backups. `CapabilityHostSupervisor` coordinates readiness and releases LiteCowork's use
+references through the future LitePSM adapter contract; it never controls package internals
+or duplicates the process supervisor.
+Sharing requires declared safe concurrency, a matching pinned capability/configuration,
+and the same Trust isolation partition. Each call retains its own grant/fence/effect checks.
+Persistent Environments may outlive Tasks only through an explicit Workspace-scoped
+lifetime and retention/cost/security policy. `ExecutionDependencyPlan` is a short-lived
+preparation projection, not an agent plan or workflow. Agent, provider, Environment, and
+application readiness are separate projections; an installed or configured dependency is
+not running.
+
+See [`docs/RUNTIME-LIFECYCLE.md`](docs/RUNTIME-LIFECYCLE.md) for boot, drain, sleep/wake,
+lazy hosts, and application ownership; [`docs/ROUTINES.md`](docs/ROUTINES.md) and
+[`docs/AUTOMATION.md`](docs/AUTOMATION.md) for reusable work and triggers; and
+[`docs/COMPETITIVE-RESEARCH.md`](docs/COMPETITIVE-RESEARCH.md) for the dated external
+product evidence behind these choices.
+
+## 7. Agent, Runtime, and Environment fabrics
 
 ### Agent Fabric
 
 Negotiate features per binding; never infer support from an agent's name. The adapter
 surface covers discovery/probe, authentication where supported, session start/resume,
 send/steer/interrupt/cancel, capability/context attachment, event streaming, optional
-snapshot, and close. Prefer ACP when supported, then A2A, native SDK/API, structured CLI,
-or terminal adaptation where qualified. These protocols serve different boundaries and
-none is universal.
+snapshot, and close. AgentProfile identifies agent software; one profile may expose
+multiple AgentEndpoints. Choose an endpoint by topology and required features: ACP for an
+interactive local/client-to-agent session, A2A for an independent remote agent system,
+vendor SDK/API for richer supported integration, and structured CLI/terminal only as a
+qualified fallback. Do not apply one global protocol ranking.
 
 The lead agent proposes decomposition and worker choice. Core checks eligibility,
 permissions, placement, isolation, budget, concurrency, depth, and deadline, then creates
 child Attempts. Native subagents stay agent-owned and are only observed when the agent
 reports them; host delegation creates durable LiteCowork Attempts.
+
+Simple chat has a Conversation-scoped AgentSession and no Task. Task planning sessions
+require a Task but no Attempt; execution sessions require the exact Attempt, active
+lease, Environment, and grants.
 
 ### LiteCowork Runtime and Mesh
 
@@ -179,15 +279,34 @@ provider candidates include local workspace, Git worktree, container, VM, remote
 cloud sandbox, browser, and desktop. Only qualified providers are advertised as
 available.
 
-## 7. Durable state, events, and replication
+## 8. Durable state, resources, events, and replication
+
+Workspace context includes immutable `WorkspaceInstructionRevision` records. Each Task
+pins the instruction revision used at creation; later instruction edits affect a Task
+only through an explicit TaskSpecRevision. WorkspaceRoots are persistent, user-selected
+resource relationships. A one-time folder attachment does not create a root or enable
+ongoing indexing.
+
+Resource identity is independent of location. The World Index stores stable Resources,
+revision observations, locations on local/cloud/connected providers, relationships, and
+freshness. First-party deterministic local-resource search consumes no model tokens and
+is limited to authorized roots. Semantic RAG, web search, and cross-document reasoning
+remain external capabilities. Resource resolution and inventory inform placement before
+cloud execution is considered. ArtifactVersion and VerificationRun input ResourceRefs pin
+the exact consumed revisions. Core maintains a rebuildable DependencyEdge reverse index
+and append-only InvalidationRecords so changed inputs mark dependent outputs/evidence stale
+without rewriting historical artifacts or verification results.
 
 The event journal is the durable change history for Workspaces, Conversations, Tasks, plans, Steps,
 Attempts, Effects, approvals, Artifacts, leases, and Runtime presence. Events carry a
-stable event ID, workspace/entity identity, origin Runtime and sequence, optional entity
-revision, logical timestamp, correlation/causation IDs, schema version, type, and payload.
-Use a Hybrid Logical Clock or equivalent ordering scheme across Runtimes.
+stable event ID, workspace/entity identity, origin Runtime and sequence, mandatory entity
+revision, logical timestamp, correlation/causation IDs, schema version, type, and typed
+payload. Each event also references an immutable content-addressed `AggregateStateRef`
+for the complete post-transition aggregate record at that revision. The referenced blob
+is transferred and verified before an event is applied or acknowledged. Use a Hybrid
+Logical Clock or equivalent ordering scheme across Runtimes.
 
-Replicate domain events, immutable artifacts, resource manifests, Task revisions,
+Replicate domain events, immutable artifacts, resource identity/location manifests, Task revisions,
 capability locks, and execution ownership. Do not replicate live database files. Local
 SQLite plus local content-addressed storage is suitable for a standalone Runtime; storage
 adapters can later use Postgres and S3-compatible blobs without changing domain
@@ -198,7 +317,7 @@ credentials, and agent memory are not synchronized by default.
 Frontend event streams are projections over domain truth, not the domain log. The UI
 protocol can be replaced independently of the durable event model.
 
-## 8. Continuation, leases, and effects
+## 9. Continuation, leases, and effects
 
 Cloud continuation is a property of the runtime model, not a special Environment Fabric
 feature. A live process normally cannot move between machines. When ownership changes,
@@ -214,11 +333,23 @@ and checkpoint. Every mediated mutation checks the current epoch. An old Runtime
 Core calls are rejected. A fence cannot stop an agent's own unfenced native tools, so
 automatic failover is allowed only when the Task's effects and environment make it safe.
 
-Each Effect records the operation/target, Attempt, idempotency identity where available,
+Each capability operation has a durable CapabilityInvocation, whether read-only,
+long-running, streaming, or consequential. An Invocation may reference a provider task
+through an encrypted Runtime-local provider binding and may reference an Effect when the
+operation has a real-world consequence. Shared Invocation state contains only normalized
+provider status and safe timing/digest/result-reference observations.
+MCP Tasks are provider-operation handles mapped to CapabilityInvocation; they are never
+LiteCowork Tasks. Each Effect records the operation/target, Attempt, idempotency identity where available,
 request digest, lifecycle state, result reference, observed post-state, and verification
 reference. States include proposed, started, acknowledged, observed, verified, failed,
 and ambiguous. After a crash, reconcile an ambiguous Effect before retrying; never repeat
 a non-idempotent action merely because its response was lost.
+
+A nonterminal CapabilityInvocation retains its scoped Activation/provider-host use after
+the AgentSession closes. Provider input responses use a Runtime-local exact-key outbox and
+are delivered only after the original ConversationTurn or current Task planner/Attempt
+reacquires valid authority. An Attempt-bound provider task never migrates to a replacement
+Attempt or Runtime; reconcile/cancel it before new work consumes the saved response.
 
 Continuation classes:
 
@@ -233,12 +364,14 @@ Continuation classes:
 Cloud eligibility also checks required inputs, agent and capability availability,
 secret placement, environment reproducibility, unresolved Effects, policy, and budget.
 
-## 9. Artifacts, evidence, and completion
+## 10. Artifacts, evidence, and completion
 
-Artifacts are first-party durable records. Each ArtifactVersion has a content digest,
-storage reference, creator Attempt, input references, provenance, verification references,
-and creation time. Providers create or edit content; Core owns version identity and
-provenance. Library is a user-facing projection, and saving or publishing is explicit.
+Artifacts are first-party durable records. Each ArtifactVersion pins either a managed blob
+(digest and BlobStore reference) or an external Resource/provider revision (optional
+observed digest, without a required local blob). It records creator Attempt, input
+references, provenance, verification references, and creation time. Providers create or
+edit content; Core owns version identity and provenance. Library is a user-facing
+projection, and saving or publishing is explicit.
 
 Evidence distinguishes:
 
@@ -253,7 +386,7 @@ outputs, active children, approvals, ambiguous Effects, and acceptance evidence 
 marking the Task complete. Other outcomes include verifying, needs-user, incomplete, and
 blocked.
 
-## 10. Protocol boundaries
+## 11. Protocol boundaries
 
 Keep these protocols separate:
 
@@ -269,62 +402,74 @@ Keep these protocols separate:
 Channel assurance determines whether an identity may view, steer, or approve sensitive
 work. A weakly authenticated channel cannot approve high-risk actions.
 
-## 11. User experience
+## 12. User experience
 
-Primary navigation is Home, Tasks, Library, Automations, and Discover. One composer
-handles quick questions and durable tasks; no Chat/Cowork/Agent mode switch is required.
-Advanced agent, model, budget, access, and placement controls are progressive disclosures.
+Primary navigation is Home, Needs You, Tasks, Automations, Library, and Discover, with
+recent Conversations in the persistent sidebar. One composer handles quick questions and
+durable tasks; no Chat/Cowork/Agent mode switch is required. Sending can explicitly
+materialize a Task, save a Routine, or schedule a Routine; durable Automation creation
+requires review/confirmation. Advanced Agent, Model, Run location, Tools, budget, and
+access controls are progressive disclosures. Runtime start/stop controls are separate
+from closing the Operator window.
 
 Live Desk shows actual Task/Step/Attempt state, real capability use, Runtime placement,
 artifacts, verification, and blocked/needs-user state. It must not invent agent activity,
 fake third-party interfaces, imply that a process teleported, or show verification before
 a verifier ran. Reduced-motion support preserves the same state transitions.
 
-## 12. Explicitly outside first-party Core
+## 13. Explicitly outside first-party Core
 
 Do not recreate first-party model routing, cognitive memory/vector retrieval, a universal
-World Model, Office implementation, browser/computer-use intelligence, code intelligence,
-search/research engine, connector marketplace, large workflow runtime, machine-wide
-observer, or a massive built-in skill catalog. Integrate these as external agents,
-capabilities, LitePSM packages, or EnvironmentProviders. Core stays capable by composing
-replaceable parts rather than implementing every domain.
+reasoning World Model, Office implementation, browser/computer-use intelligence, code
+intelligence, semantic/web research engine, connector marketplace, large workflow
+runtime, or a massive built-in skill catalog. Integrate these as external agents,
+capabilities, LitePSM packages, or EnvironmentProviders. The bounded factual World Index
+and deterministic search over selected Workspace resources remain first-party. Core stays
+capable by composing replaceable parts rather than implementing every domain.
 
-## 13. Build sequence
+## 14. Build sequence
 
-1. Local `litecoworkd`, Operator surface, durable Conversation/Task, and one qualified
-   external AgentAdapter.
+1. Local `litecoworkd` lifecycle/recovery, Operator surface, Workspace instructions/roots,
+   factual Resource registry and deterministic search, durable Conversation/Task, and one
+   lazily started qualified external AgentAdapter.
 2. LiteCowork Gateway, LitePSM client, one capability, scoped grant, Effect/Artifact record,
    and verifier; kill and replace the agent session from a portable ResumePacket.
 3. Heterogeneous host delegation with bounded TaskPacket and ResultEnvelope.
 4. Two Runtimes, event/artifact replication, execution leases, fencing, and explicit
    handoff; test failure during an ambiguous Effect before enabling automatic failover.
 5. One remote human channel on the same Conversation/Task.
-6. Automation that creates an ordinary Task.
+6. Routines, multi-trigger Automations, durable occurrences/cursors, and deferred local
+   execution that creates ordinary Tasks. Trigger hosting and execution placement are
+   tested independently.
 
 Do not build cloud continuation, messaging, broad domain providers, or elaborate
 Workbench before the preceding vertical slice proves its contracts.
 
-## 14. Contract map and authority
+## 15. Contract map and authority
 
 [`docs/COVERAGE-MATRIX.md`](docs/COVERAGE-MATRIX.md) indexes the complete HLD, LLD,
 API, persistence, security, UI, motion, operations, and acceptance contracts. Each
 concern has one normative document; other documents link to it. The source reconciliation
 and dispositions are recorded in [`docs/SOURCE-RECONCILIATION.md`](docs/SOURCE-RECONCILIATION.md).
 
-## 15. Initial implementation shape
+## 16. Initial implementation shape
 
-Start as one headless Runtime plus an Operator application and a small set of domain
-modules. A candidate source layout is:
+Ship two distinct local executables: the headless `litecoworkd` Runtime and the
+LiteCowork Operator desktop application. The Operator may launch/connect to the daemon,
+but it is not the service process. Start as one modular Runtime plus the Operator and a
+small set of domain modules. A candidate source layout is:
 
 ```text
-apps/desktop/
+apps/litecoworkd/                    # headless Runtime/service binary
+apps/operator-desktop/               # Tauri UI, tray, later Quick Entry
+apps/operator-web/                   # later Operator client
 crates/domain/{conversation,task,artifact,effect,evidence}/
-crates/runtime/{supervisor,attempt_runner}/
+crates/runtime/{lifecycle,supervisor,attempt_runner,dependency_planner}/
 crates/mesh/{identity,presence,replication,leases,transport}/
 crates/agents/{adapter,acp,a2a,cli}/
-crates/capabilities/{gateway,broker,litepsm}/
+crates/capabilities/{gateway,broker,host_supervisor,litepsm_adapter}/
 crates/environments/{local,worktree,container,remote}/
-crates/{trust,verification,automation,events,storage,operator-api}/
+crates/{trust,verification,routines,automation,events,storage,operator-api}/
 ```
 
 This is a starting boundary, not a requirement to create empty modules. Introduce a
