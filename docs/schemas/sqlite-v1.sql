@@ -77,7 +77,7 @@ CREATE TABLE provider_circuit_states (
   provider_ref TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('CLOSED', 'OPEN', 'HALF_OPEN')),
   failure_window_started_at TEXT,
-  consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+  consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0 AND consecutive_failures <= 4294967295),
   open_until TEXT,
   half_open_probe_id TEXT,
   updated_at TEXT NOT NULL,

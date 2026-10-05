@@ -2233,8 +2233,9 @@
             "format": "date-time"
           },
           "consecutive_failures": {
-            "type": "string",
-            "minLength": 1
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
           },
           "open_until": {
             "type": "string",
