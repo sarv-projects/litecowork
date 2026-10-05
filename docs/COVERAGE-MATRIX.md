@@ -59,6 +59,7 @@ decision.
 | Artifact, Effect, Evidence, verification | [`ARTIFACTS-EVIDENCE.md`](ARTIFACTS-EVIDENCE.md) |
 | Trigger, occurrence, duplicate and overlap semantics | [`AUTOMATION.md`](AUTOMATION.md) |
 | Human-facing messaging transports | [`CHANNELS.md`](CHANNELS.md) |
+| Channel host ownership, receipt claims, cursor continuity/replication barriers, ingress gaps, and Runtime-local reply targets | [`RUNTIME-MESH.md`](RUNTIME-MESH.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`CHANNELS.md`](CHANNELS.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), [`FLOWS.md`](FLOWS.md), [`API.md`](API.md), [`STORAGE.md`](STORAGE.md), [`TESTING.md`](TESTING.md), `schemas/sqlite-v1.sql`, `schemas/domain-event.schema.json` |
 | Durable event envelope, registry, evolution | [`EVENTS.md`](EVENTS.md), `schemas/domain-event.schema.json` |
 | Operator, Mesh, Agent, Capability, Environment boundaries | [`PROTOCOLS.md`](PROTOCOLS.md) |
 | User-facing request/response API | [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |

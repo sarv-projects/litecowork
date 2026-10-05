@@ -1,4 +1,4 @@
-# Competitive Product Research (Snapshot: 2026-10-04)
+# Competitive Product Research (Snapshot: 2026-10-05)
 
 This is dated product research, not a normative competitor dependency. Product behavior
 changes quickly; cited vendor pages are the evidence, while LiteCowork contracts are owned
@@ -10,7 +10,7 @@ by `ARCHITECTURE.md` and the domain documents.
 |---|---|---|
 | Claude Cowork | For Pro/Max, one Claude experience is rolling out; Team/Enterprise still retain separate chat and Cowork. A Scheduled page supports recurring and on-demand runs. Cloud work can continue while the computer is off, but work tied to local folders/apps runs locally and needs that computer; an active cloud session can reach local files/browser only through the connected Desktop app. Local MCP servers run in local desktop sessions, not cloud sessions. The Pro/Max move for new Cowork tasks is scheduled for 2026-10-06, two days after this snapshot. | Keep one composer; represent local-resource dependency separately from cloud continuation. Do not describe the announced migration as already complete or imply the local bridge is unnecessary. |
 | ChatGPT Work | Chat and Work remain selectable experiences; chats appear together in Recents, while Codex remains separate. Cloud Work syncs across surfaces. Scheduled work supports one-time/recurring runs, change monitoring, and event triggers; approval-required actions can pause a run. Opt-in local work sync permits following the same conversation from web/mobile, but local steps still require the computer online and an active local turn does not automatically switch to cloud. Shared Team tasks use team service-account connections, saved instructions, and permissions, not the creator's personal memory/context. | Keep LiteCowork's one-composer direction, while preserving explicit Task/Routine ownership and placement. Runtime loss never teleports an Attempt; a later turn or replacement Attempt needs fresh placement, authorization, and environment checks. |
-| OpenHands Agent Canvas | Browser client and execution backend are separate; backends include local, Docker, VM, Modal, and cloud. ACP agents can be spawned by the selected backend. Official material also documents GitHub Action issue/PR triggers and API conversation trigger types including Slack/Jira/Linear; this pass did not verify a general cron/polling automation service. | Keep Operator separate from daemon/backend and preserve agent ownership. Treat event automation as integration-specific unless a broader scheduler contract is documented. |
+| OpenHands Agent Canvas | Browser client and execution backend are separate; backends include local, Docker, VM, Modal, and cloud. A local npm/npx Canvas process stops when its terminal process closes; Docker, VM, and cloud backends continue until stopped. ACP agents can be spawned by the selected backend. Official material also documents GitHub Action issue/PR triggers and API conversation trigger types including Slack/Jira/Linear; this pass did not verify a general cron/polling automation service. | Keep Operator separate from daemon/backend and preserve agent ownership. Backend lifetime, not browser-window lifetime, determines whether work continues. Treat event automation as integration-specific unless a broader scheduler contract is documented. |
 | OpenClaw | Gateway owns durable schedules and run history; startup recovery applies explicit catch-up/defer rules, uses receipts, and avoids blindly replaying interrupted external delivery. OS service managers launch the Gateway. | Scheduler belongs to `litecoworkd`; OS manager starts the daemon. Misfire policy and Effect reconciliation must be explicit. |
 | Agent Zero | Projects group instructions, files, memory/secrets, and project-scoped scheduled tasks. | Workspace identity needs explicit instructions, persistent roots, and credential references; LiteCowork keeps secrets separately scoped. |
 | Manus Cloud Computer | A persistent cloud VM retains files, installed tools, and processes between sessions, distinct from a temporary task sandbox. | Environment lifetime can outlive a Task, but persistent compute must be explicit, costed, scoped, and reauthorized per Attempt. |
@@ -57,9 +57,11 @@ Task outcomes.
 - Zapier, [Schedule triggers](https://help.zapier.com/hc/en-us/articles/8496288648461-Schedule-Zaps-to-run-at-specific-intervals), [Human in the Loop approval](https://help.zapier.com/hc/en-us/articles/38731463206029-Request-approval-to-keep-your-workflow-running-with-Human-in-the-Loop), and [trigger deduplication](https://help.zapier.com/hc/en-us/articles/8496260269965-How-Zapier-handles-duplicate-data-in-Zap-workflows).
 - n8n, [Schedule Trigger](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.scheduletrigger/).
 
-Sources were checked on 2026-10-04. Rollouts, plans, and account/region availability are
-not generalized beyond what each cited source states. Third-party/community reports are
-not used as authoritative facts in this snapshot.
+Sources were checked on 2026-10-04 and selectively rechecked on 2026-10-05, including the
+current Agent Zero project/task guide, Cursor Automation triggers, OpenHands backend
+lifecycle, OpenClaw run recovery, and Manus Cloud Computer behavior. Rollouts, plans, and
+account/region availability are not generalized beyond what each cited source states.
+Third-party/community reports are not used as authoritative facts in this snapshot.
 
 ### Additional source checks
 

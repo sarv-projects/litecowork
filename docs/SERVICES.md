@@ -94,8 +94,8 @@ append-only, validated against the request schema, and cannot stand in for an Ap
 Only the trusted InvocationRunner may materialize `EXTERNAL_AUTHORIZATION` requests from
 supported provider URL elicitation. Agent Gateway `user.ask` can create only ordinary
 non-sensitive form requests. `open_external_handoff` verifies owner identity, pending
-request/version, the source Runtime binding, HTTPS and destination policy, then returns
-the confidential URL with no-store semantics for one explicit user action; it does not
+request/version, the source Runtime binding, HTTPS syntax and destination display policy,
+then returns the confidential URL with no-store semantics for one explicit user action; it does not
 write the URL to an event or projection. Ordinary response validation never accepts a
 credential as an authorized SecretStore write.
 For TASK_PLANNING or ATTEMPT_EXECUTION scope, response admission checks the parent Task is
@@ -270,7 +270,14 @@ recheck all hard constraints before the new Attempt commits.
 
 ### RuntimeMesh
 
-Defined in `RUNTIME-MESH.md`. Owns runtime identity/presence/replication/leases/handoff.
+Defined in `RUNTIME-MESH.md`. Owns runtime identity/presence/replication, execution and
+channel-host leases, channel-host assignment, and handoff.
+
+```text
+assign_channel_host(AssignChannelHostRequest) -> ChannelHostLeaseGrant
+renew_channel_host_lease(RenewChannelHostLeaseRequest) -> ChannelHostLeaseGrant
+release_channel_host_lease(ReleaseChannelHostLeaseRequest) -> ChannelHostAssignment
+```
 
 ### EnvironmentProvider
 
@@ -401,11 +408,26 @@ list_bindings(WorkspaceId, ChannelBindingQuery, Cursor?, Limit) -> Page<ChannelB
 get_binding(ChannelBindingId) -> ChannelBindingView
 update_allowed_actions(ChannelBindingId, expected_version, ChannelAction[]) -> ChannelBindingView
 revoke_binding(ChannelBindingId, expected_version) -> ChannelBindingView
+reassign_host(ChannelBindingId, ReassignChannelHostRequest, expected_assignment_version, RequestId) -> ChannelHostAssignment
+process_inbound(ChannelBindingId, InboundChannelEvent, AuthenticatedChannelHostContext) -> ChannelEventOutcome
+resolve_reply_target(ChannelBindingId, provider_message_ref) -> UserRequestId?
 ```
 
 Channel-provider setup creates the binding from authenticated provider identity; the
 owner then reviews its allowed actions. The provider, not the caller, supplies the
-authenticated identity and assurance level.
+authenticated identity and assurance level. RuntimeMesh assigns one current host lease
+and epoch per binding. `process_inbound` checks authenticated Runtime identity, current
+host epoch and lease expiry, exact sender Principal, binding version/status/actions,
+request expiry/status, and response schema. A successful targeted response is committed
+with the ChannelEventReceipt by the assigned Runtime's Store transaction; invalid replies
+leave the target active and do not fall through to generic Conversation steering. Host
+reassignment checks provider compatibility, SecretRef placement, cursor/replay continuity,
+source settlement or authoritative lease expiry, and any explicit gap confirmation; it
+fences the source epoch and never copies opaque reply-to references or cursor bytes. Receipt
+claims can be reclaimed only after expiry or authoritative fencing, under the new lease.
+If the source is unreachable, its target rows become non-authoritative through the epoch
+check and are cleaned on reconnect. ChannelService advances provider cursors only after
+receipt durability and required Hub replication acknowledgement.
 
 ## Internal application services
 
@@ -665,8 +687,14 @@ second Task executor.
 ### NotificationService
 
 Owns NotificationPreference, deduplicated NotificationDelivery, channel fallback, quiet
-hours, and bounded retry/backoff. `SENT` is transport acknowledgement only and never
-changes Task/Approval/Automation state.
+hours, and bounded retry/backoff. It does not retry an ambiguous send until reconciliation
+proves whether the provider accepted it. For a reply-capable adapter, a prompt for one pending
+FORM UserRequest may be marked reply-targetable. Each send attempt pins the assigned
+Runtime/host epoch before dispatch. After acknowledgement, ChannelService persists the
+provider message reference in its Runtime-local `ChannelReplyTarget` map only if that exact
+host still owns the current assignment and lease; failed/ambiguous delivery or an
+acknowledged send from a superseded host never creates an actionable target.
+`SENT` is transport acknowledgement only and never changes Task/Approval/Automation state.
 
 ### NeedsYouQueryService
 

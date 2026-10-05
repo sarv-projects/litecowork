@@ -131,6 +131,10 @@ interface RuntimeMesh {
   release_lease(ReleaseLeaseRequest) -> ExecutionLease
   validate_fence(FencingCredential, StepId, AuthenticatedRuntime) -> FenceDecision
 
+  assign_channel_host(AssignChannelHostRequest) -> ChannelHostLeaseGrant
+  renew_channel_host_lease(RenewChannelHostLeaseRequest) -> ChannelHostLeaseGrant
+  release_channel_host_lease(ReleaseChannelHostLeaseRequest) -> ChannelHostAssignment
+
   replicate_events(EventBatch) -> ReplicationAck
   fetch_events(EventCursor) -> EventBatch
 
@@ -308,6 +312,18 @@ origin_sequence)` and acknowledge only the highest contiguous receipt position; 
 remain explicit until the event or an authenticated policy-omission receipt arrives.
 Request IDs make retried commands idempotent independently of event-batch deduplication.
 
+### Runtime-private provider input and URL handoff
+
+Raw MCP input envelopes, provider task/input keys, and URL-mode sign-in URLs remain in the
+encrypted local binding on the Runtime that owns the Invocation. They are excluded from
+Workspace events, aggregate snapshots, replication queues, backups, and ordinary Operator
+projections. When an owner explicitly opens a pending URL-mode UserRequest from another
+device, the Hub forwards a live authenticated request to the source Runtime and relays the
+no-store response to that Operator over its authenticated transport. This relay is
+transient in memory: it is not queued for offline delivery, written to a Mesh receipt, or
+stored in an idempotency response. If the origin Runtime is unavailable, opening the
+handoff fails; the URL is never copied into shared state to make it available later.
+
 HLC is `(physical_ms, logical_counter, runtime_id)`. On local event creation, advance
 the physical component to `max(local_wall_ms, last_physical_ms)` and increment the
 logical counter if the physical component did not advance. On receipt, set physical to
@@ -382,6 +398,87 @@ can conflict with another executor validates the active fence at the authority t
 commits the mutation. The authority compares the credential digest and authenticated
 caller against the current lease; a stale incarnation or epoch is rejected even if an
 old credential remains in a provider process.
+
+## Channel host assignment and fencing
+
+RuntimeMesh assigns each active ChannelBinding to exactly one Runtime through a durable
+`ChannelHostAssignment`. The Workspace Hub is the assignment authority. Assignment
+records pin `runtime_id`, monotonically increasing `host_epoch`, status, ingress-continuity
+assessment, and aggregate version. A separate Runtime Mesh `ChannelHostLeaseRecord` holds the current opaque lease
+ID, bounded expiry, and fencing-credential digest. Lease renewals update this operational
+control record; they do not create assignment revisions or domain events. The raw
+credential is delivered only to the authenticated assigned Runtime and never enters
+events, state blobs, logs, Operator responses, or backups. ChannelBinding identity, action
+grants, and provider credentials are not changed by assignment.
+
+```text
+ChannelHostLeaseRecord { # Hub/control-plane metadata, separate from domain aggregate
+  channel_binding_id
+  runtime_id
+  host_epoch
+  lease_id
+  fencing_token_digest
+  expires_at
+  control_version
+}
+
+ChannelHostLeaseGrant { # private Mesh response; deliver only to authenticated owner Runtime
+  assignment: ChannelHostAssignment
+  lease_id
+  fencing_credential: FencingCredential
+  expires_at
+}
+
+AssignChannelHostRequest {
+  request_id
+  channel_binding_id
+  target_runtime_id
+  expected_assignment_version?
+  accept_ingress_gap: boolean # required true only when cursor transfer/replay cannot prove continuity
+}
+
+RenewChannelHostLeaseRequest {
+  request_id
+  channel_binding_id
+  runtime_id
+  host_epoch
+  expected_control_version
+  fencing_credential: FencingCredential
+}
+```
+
+The Runtime must hold an unexpired host lease to poll/receive provider events, claim or
+complete `ChannelEventReceipt`s, or dispatch outbound channel Effects. Renewal requires
+the same authenticated Runtime and current host epoch. The host checks expiry locally
+before an external dispatch; a disconnected Runtime cannot renew or begin new outbound
+mutations. In-flight sends at lease expiry become AMBIGUOUS and are reconciled before
+retry. Provider receipts are deduplicated by `(channel_binding_id, provider_event_id)`;
+claim epochs and host epochs both fence late workers. Per-host-epoch `ingress_sequence`
+orders receipts independently of provider timestamps. A receipt is committed to the
+Workspace event journal and acknowledged by Hub replication before the host advances its
+encrypted local provider cursor or acknowledges deferred provider ingress. A target host
+replays from the latest Hub-replicated receipt and deduplicates by provider event ID.
+
+Reassignment requires explicit RuntimeMesh admission, a compatible channel-provider offer,
+SecretRef availability, and safe source settlement or authoritative source-lease expiry
+plus clock-skew margin. The Hub increments `host_epoch` before admitting the new Runtime.
+`ingress_continuity = CONTINUOUS` requires a verified provider cursor transfer or replay
+that reaches the last Hub-replicated receipt within the provider's declared replay window.
+Otherwise, the Operator command must explicitly accept an observation gap; the assignment
+records `GAP_ACCEPTED` with its timestamp. The UI preserves that status, and no later scan
+can erase the historical uncertainty. New hosts do not poll until their Runtime-local,
+incarnation-scoped cursor binding is validated or rebuilt. Receipt claims may be reclaimed
+only after their bounded claim expires or the old host epoch has been committed as fenced;
+the current host lease is required in both cases.
+Old Runtime-local `ChannelReplyTarget`s become non-authoritative immediately because their
+host epoch no longer matches; if the old Runtime is reachable, it closes them as cleanup.
+Opaque provider message references are never copied to the new Runtime. A reply to an old
+prompt falls back to the Operator inbox. Reassignment does not resend an existing
+NotificationDelivery; any replacement prompt requires a new explicitly authorized
+delivery and reply target. If source send/receipt state is ambiguous, reconciliation gates
+handoff rather than risking a duplicate external message or accepted command. An unreplicated
+receipt or unknown cursor also blocks a continuity-safe move unless the owner explicitly
+accepts the recorded ingress gap.
 
 ### Offline boundary
 

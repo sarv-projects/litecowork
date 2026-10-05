@@ -229,8 +229,10 @@ def check_event_contract() -> None:
                 out.update(branch_sample)
                 break
             for branch in value_schema.get("allOf", []):
-                condition = branch.get("if", {}).get("properties", {})
-                matches = all(
+                condition_schema = branch.get("if", {})
+                condition = condition_schema.get("properties", {})
+                required_condition = set(condition_schema.get("required", []))
+                matches = required_condition <= set(out) and all(
                     out.get(name) == condition_schema["const"]
                     for name, condition_schema in condition.items()
                     if "const" in condition_schema
@@ -776,6 +778,11 @@ def check_async_capability_contract() -> None:
         fail("sqlite-v1.sql: missing encrypted local CapabilityInvocation provider binding")
     if not input_binding or "provider_input_key_ciphertext BLOB NOT NULL" not in input_binding.group(1) or "provider_input_payload_ciphertext BLOB NOT NULL" not in input_binding.group(1) or "UNIQUE(invocation_id, provider_input_key_tag)" not in input_binding.group(1) or "retry_safety_proof_digest TEXT" not in input_binding.group(1):
         fail("sqlite-v1.sql: encrypted provider input bindings must deduplicate within an Invocation")
+    input_identity_guard = re.search(
+        r"CREATE TRIGGER provider_input_binding_identity_immutable(.*?)(?=\nCREATE TABLE|\Z)", sql, re.S
+    )
+    if not input_identity_guard or "OLD.provider_input_payload_ciphertext <> NEW.provider_input_payload_ciphertext" not in input_identity_guard.group(1):
+        fail("sqlite-v1.sql: encrypted provider input payload and URL must remain immutable")
     for required_trigger in (
         "provider_input_binding_transition_guard",
         "provider_input_binding_response_immutable",
@@ -2611,6 +2618,164 @@ def check_runtime_routine_contract() -> None:
             fail(f"{name}: missing pinned Routine/trigger provenance")
 
 
+def check_channel_reply_contract() -> None:
+    """Keep channel replies exact-scoped and channel host ownership fenced end to end."""
+    schemas_text = (DOCS / "SCHEMAS.md").read_text(encoding="utf-8")
+    channels = (DOCS / "CHANNELS.md").read_text(encoding="utf-8")
+    model = (DOCS / "DATA-MODEL.md").read_text(encoding="utf-8")
+    services = (DOCS / "SERVICES.md").read_text(encoding="utf-8")
+    flows = (DOCS / "FLOWS.md").read_text(encoding="utf-8")
+    sql = (DOCS / "schemas" / "sqlite-v1.sql").read_text(encoding="utf-8")
+    api = yaml.load(
+        (DOCS / "schemas" / "operator-api.openapi.yaml").read_text(encoding="utf-8"),
+        Loader=UniqueKeyLoader,
+    )
+    api_schemas = api["components"]["schemas"]
+    actions_match = re.search(r"^ChannelAction = ([A-Z_| ]+)$", schemas_text, re.M)
+    if not actions_match:
+        fail("SCHEMAS.md: missing canonical ChannelAction")
+        return
+    canonical_actions = set(actions_match.group(1).replace(" ", "").split("|"))
+    expected_actions = {"VIEW", "STEER", "RESPOND", "APPROVE_SAFE", "APPROVE_SENSITIVE"}
+    if canonical_actions != expected_actions:
+        fail(f"ChannelAction mismatch: expected {sorted(expected_actions)}, got {sorted(canonical_actions)}")
+    for name in ("ChannelBinding", "UpdateChannelBindingActionsRequest"):
+        items = api_schemas.get(name, {}).get("properties", {}).get("allowed_actions", {}).get("items", {})
+        if set(items.get("enum", [])) != canonical_actions:
+            fail(f"OpenAPI {name}.allowed_actions differs from canonical ChannelAction")
+
+    event_schema = load_json(DOCS / "schemas" / "domain-event.schema.json")
+    event_payloads = event_schema.get("$defs", {}).get("payloads", {})
+    channel_actions = set(
+        event_payloads.get("channel_binding_changed", {})
+        .get("properties", {})
+        .get("allowed_actions", {})
+        .get("items", {})
+        .get("enum", [])
+    )
+    if channel_actions != canonical_actions:
+        fail("domain-event channel.binding.changed allowed_actions differs from canonical ChannelAction")
+
+    assignment_schema = api_schemas.get("ChannelHostAssignment", {})
+    if not {"runtime_id", "host_epoch", "lease_expires_at", "status"} <= set(assignment_schema.get("properties", {})):
+        fail("OpenAPI ChannelHostAssignment must expose current owner, epoch, lease expiry, and status")
+    if "post" not in api.get("paths", {}).get("/channel-bindings/{channelBindingId}/host-assignment", {}):
+        fail("OpenAPI must expose explicit ChannelHost reassignment")
+    assignment_sql_match = re.search(r"CREATE TABLE channel_host_assignments \((.*?)\n\);", sql, re.S)
+    lease_sql_match = re.search(r"CREATE TABLE channel_host_lease_records \((.*?)\n\);", sql, re.S)
+    if not assignment_sql_match or not lease_sql_match:
+        fail("sqlite-v1.sql: missing separate durable ChannelHostAssignment and renewable lease control record")
+    else:
+        assignment_sql = assignment_sql_match.group(1)
+        lease_sql = lease_sql_match.group(1)
+        if not {"channel_binding_id", "workspace_id", "runtime_id", "host_epoch", "status", "version"} <= set(re.findall(r"^\s{2}(\w+)\s+", assignment_sql, re.M)):
+            fail("sqlite-v1.sql channel_host_assignments lacks canonical ownership fields")
+        if "fencing_token_digest TEXT NOT NULL" not in lease_sql or "lease_expires_at TEXT NOT NULL" not in lease_sql:
+            fail("sqlite-v1.sql channel_host_lease_records must store only the digest and bounded expiry")
+        if "UNIQUE(channel_binding_id, workspace_id, runtime_id, host_epoch)" not in assignment_sql:
+            fail("sqlite-v1.sql channel_host_assignments must scope lease records to exact owner epoch")
+
+    target_sql_match = re.search(r"CREATE TABLE channel_reply_targets \((.*?)\n\);", sql, re.S)
+    delivery_sql_match = re.search(r"CREATE TABLE notification_deliveries \((.*?)\n\);", sql, re.S)
+    if not target_sql_match or "host_epoch INTEGER NOT NULL" not in target_sql_match.group(1):
+        fail("sqlite-v1.sql ChannelReplyTarget must pin host_epoch")
+    if not delivery_sql_match or not {"attempt_runtime_id", "attempt_host_epoch"} <= set(re.findall(r"^\s{2}(\w+)\s+", delivery_sql_match.group(1), re.M)):
+        fail("sqlite-v1.sql NotificationDelivery must pin each channel attempt's Runtime/host epoch")
+    if "d.attempt_runtime_id = NEW.runtime_id" not in sql or "d.attempt_host_epoch = NEW.host_epoch" not in sql:
+        fail("sqlite-v1.sql reply target guard must bind acknowledged send to the same Runtime/host epoch")
+    for payload_name, fields in (
+        ("channel_host_assignment_changed", {"runtime_id", "host_epoch"}),
+        ("channel_inbound_received", {"origin_runtime_id", "origin_host_epoch"}),
+        ("channel_receipt_changed", {"claim_runtime_id", "claim_host_epoch"}),
+        ("channel_outbound_settled", {"runtime_id", "host_epoch"}),
+    ):
+        required = set(event_payloads.get(payload_name, {}).get("required", []))
+        if not fields <= required:
+            fail(f"domain-event {payload_name} must preserve channel host provenance {sorted(fields)}")
+    notification_payload = event_payloads.get("notification_delivery_changed", {})
+    if notification_payload.get("dependentRequired", {}).get("attempt_runtime_id") != ["attempt_host_epoch"] or notification_payload.get("dependentRequired", {}).get("attempt_host_epoch") != ["attempt_runtime_id"]:
+        fail("notification.delivery.changed must require paired attempt Runtime/host epoch provenance")
+
+    status_match = re.search(r"^NotificationDeliveryStatus = ([A-Z_| ]+)$", schemas_text, re.M)
+    if not status_match:
+        fail("SCHEMAS.md: missing NotificationDeliveryStatus")
+    else:
+        expected_status = set(status_match.group(1).replace(" ", "").split("|"))
+        if "AMBIGUOUS" not in expected_status:
+            fail("NotificationDeliveryStatus must represent uncertain provider acceptance")
+        for location, values in (
+            ("OpenAPI Notification.status", set(api_schemas.get("Notification", {}).get("properties", {}).get("status", {}).get("enum", []))),
+            ("SQLite notification_deliveries.status", set(re.findall(r"'([A-Z_]+)'", re.search(r"CREATE TABLE notification_deliveries \((.*?)\n\);", sql, re.S).group(1)))),
+        ):
+            if values != expected_status:
+                fail(f"{location} differs from NotificationDeliveryStatus: missing={sorted(expected_status-values)}, extra={sorted(values-expected_status)}")
+
+    for source, text in (("CHANNELS.md", channels), ("DATA-MODEL.md", model), ("SERVICES.md", services), ("FLOWS.md", flows)):
+        if "ChannelReplyTarget" not in text:
+            fail(f"{source}: missing durable exact reply correlation contract")
+    for required in (
+        "CREATE TABLE channel_reply_targets",
+        "channel_reply_target_matches_delivery",
+        "user_request_channel_response_authorized",
+        "channel_reply_target_terminal",
+        "response_channel_binding_id",
+        "response_provider_event_id",
+    ):
+        if required not in sql:
+            fail(f"sqlite-v1.sql: missing channel reply integrity rule {required}")
+    channel_normalized = " ".join(channels.split())
+    if "never answers “the latest” pending request" not in channel_normalized or "Plain text without" not in flows:
+        fail("Channels/FLOWS: a plain message must never select an implicit pending UserRequest")
+    if "Approval decisions" not in channel_normalized or "EXTERNAL_URL" not in channel_normalized:
+        fail("CHANNELS.md: channel replies must exclude Approval and external sign-in paths")
+    response_ref = api_schemas.get("UserRequestResponse", {}).get("properties", {}).get("response_channel_ref", {})
+    if not response_ref.get("oneOf"):
+        fail("OpenAPI UserRequestResponse must expose channel provenance as a paired object")
+
+    validator = jsonschema.Draft202012Validator(event_schema)
+    resolved = event_schema.get("$defs", {}).get("payloads", {}).get("user_request_resolved", {})
+    if not {"channel_binding_id", "provider_event_id"} <= set(resolved.get("properties", {})):
+        fail("user.request.resolved.v1 must expose optional channel response provenance")
+    base_payload = {
+        "request_id": "request-1", "from": "PENDING", "to": "ANSWERED",
+        "resolved_by": {"kind": "USER", "principal_id": "owner-1"},
+        "response_digest": "sha256:" + "a" * 64, "aggregate_version": 2,
+    }
+    envelope = {
+        "event_id": "event-1", "workspace_id": "workspace-1", "entity_type": "USER_REQUEST",
+        "entity_id": "request-1", "origin_runtime_id": "runtime-1", "origin_sequence": 1,
+        "entity_revision": 2, "hlc_timestamp": "2026-10-05T00:00:00Z", "correlation_id": "corr-1",
+        "schema_version": 1, "type": "user.request.resolved.v1", "payload": base_payload,
+        "aggregate_state_ref": {"blob": {"digest": "sha256:" + "b" * 64, "size_bytes": 1,
+          "media_type": "application/vnd.litecowork.aggregate+json"}, "entity_revision": 2,
+          "record_schema_version": 1}, "recorded_at": "2026-10-05T00:00:00Z",
+        "payload_digest": "sha256:" + "c" * 64,
+    }
+    if list(validator.iter_errors(envelope)):
+        fail("user.request.resolved.v1: rejects a valid Operator response event")
+    paired = json.loads(json.dumps(envelope))
+    paired["payload"].update({"channel_binding_id": "channel-1", "provider_event_id": "event-42"})
+    if list(validator.iter_errors(paired)):
+        fail("user.request.resolved.v1: rejects a valid channel response event")
+    unpaired = json.loads(json.dumps(envelope))
+    unpaired["payload"]["channel_binding_id"] = "channel-1"
+    if not list(validator.iter_errors(unpaired)):
+        fail("user.request.resolved.v1: accepts incomplete channel response provenance")
+    unanswered = json.loads(json.dumps(envelope))
+    unanswered["payload"].pop("response_digest")
+    if not list(validator.iter_errors(unanswered)):
+        fail("user.request.resolved.v1: accepts ANSWERED without response_digest")
+    dismissed = json.loads(json.dumps(envelope))
+    dismissed["payload"]["to"] = "DISMISSED"
+    dismissed["payload"].pop("response_digest")
+    if list(validator.iter_errors(dismissed)):
+        fail("user.request.resolved.v1: rejects a valid DISMISSED event")
+    dismissed_with_answer = json.loads(json.dumps(dismissed))
+    dismissed_with_answer["payload"]["response_digest"] = "sha256:" + "a" * 64
+    if not list(validator.iter_errors(dismissed_with_answer)):
+        fail("user.request.resolved.v1: accepts response provenance on a non-answer resolution")
+
+
 def main() -> int:
     check_json_schemas()
     check_event_contract()
@@ -2625,6 +2790,7 @@ def main() -> int:
     check_replication_scope_contract()
     check_backup_contract()
     check_runtime_routine_contract()
+    check_channel_reply_contract()
     check_openapi()
     check_storage()
     check_attempt_lease_contract()

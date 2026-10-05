@@ -61,7 +61,12 @@ Lead agent delegates bounded child to different external agent; no shared full t
 Local Task replicates; explicit handoff creates higher-epoch cloud Attempt; reconnect shows same final state. Kill local runtime mid-effect and prove no duplicate external action.
 
 ### Gate 4 — channels
-Telegram/email creates/steers same Conversation/Task; sensitive approval is blocked on weak channel.
+Telegram/email creates/steers the same Conversation/Task; a reply to one delivered FORM
+UserRequest resolves only that exact request; sensitive approval and external sign-in stay
+on the stronger Operator surface. Reassign the ChannelBinding between Runtimes during a
+pending prompt and during an inbound claim; verify higher host epoch, no copied reply
+references, stale-owner rejection, ambiguous outbound reconciliation, and Operator inbox
+fallback for replies to old prompts.
 
 ### Gate 5 — automation
 Recurring trigger creates ordinary Task and deduplicates duplicate trigger delivery.
@@ -79,6 +84,13 @@ Recurring trigger creates ordinary Task and deduplicates duplicate trigger deliv
 - stale concurrent Artifact publication does not overwrite the winning version
 - archive replay does not append a second transition event
 - duplicate external channel event creates no duplicate message/task
+- exact channel reply-to correlation resolves only its one active UserRequest target; an ordinary message in the same thread never selects the latest open request
+- channel response rejects another sender, revoked/low-assurance binding, missing RESPOND action, expired/answered request, duplicate event, ambiguous/missing target, attachments, nested schema, and credential-like content without consuming a valid target
+- channel response records the exact provider event provenance, atomically accepts its receipt and consumes only the matched target; replay cannot answer a sibling request or resolve an Approval
+- channel host assignment is unique per binding; a new Runtime cannot claim/settle receipts or use reply targets at an old epoch, and no new host lease is granted before source settlement or authoritative expiry plus skew margin
+- a receipt is durably replicated before cursor/deferred-ack advancement; reclaim after expired/fenced claim increments claim_epoch, preserves origin provenance, and rejects a conflicting digest
+- host restart marks stale cursor incarnation for reconciliation; host move resumes after last Hub-replicated receipt, and a move without replay/transfer requires explicit gap acceptance that remains visible
+- provider-accepted notification timeout remains AMBIGUOUS and cannot create a reply target or retry until reconciliation
 - duplicate automation trigger creates no duplicate occurrence task
 - package update does not alter in-flight CapabilityLock
 - Conversation-scoped AgentSession works without Task/Attempt and has read-only grants

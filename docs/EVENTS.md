@@ -221,6 +221,7 @@ automation.occurrence.settled.v1
 
 connection.state.changed.v1
 channel.binding.changed.v1
+channel.host.assignment.changed.v1
 channel.inbound.received.v1
 channel.receipt.changed.v1
 channel.outbound.settled.v1
@@ -318,9 +319,9 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `approval.*` | `approval_id`, `task_id`, `action_digest`, `required_assurance`, `from?`, `to`, `resolved_by?` |
 | `approval.use.consumed` | `approval_use_id`, `approval_id`, `effect_id?`, `capability_grant_id?`, `request_digest`, `consumed_at` |
 | `user.request.created` | `request_id`, `workspace_id`, `conversation_id?`, `conversation_turn_id?`, `task_id?`, `attempt_id?`, `agent_session_id`, `invocation_id?`, `kind`, `interaction_mode`, `response_schema_digest?`, `expires_at?` |
-| `user.request.resolved` | `request_id`, `from`, `to`, `resolved_by`, `response_digest?`, `aggregate_version` |
+| `user.request.resolved` | `request_id`, `from`, `to`, `resolved_by`, `response_digest?`, `channel_binding_id?`, `provider_event_id?`, `aggregate_version` |
 | `notification.preference.changed` | `workspace_id`, `event_class`, `policy`, `preferred_channels[]`, `aggregate_version` |
-| `notification.delivery.changed` | `delivery_id`, `source_event_id`, `dedupe_key`, `from`, `to`, `channel_binding_id?`, `attempt_count`, `reason_code?` |
+| `notification.delivery.changed` | `delivery_id`, `source_event_id`, `dedupe_key`, `from`, `to`, `channel_binding_id?`, `attempt_runtime_id?`, `attempt_host_epoch?`, `attempt_count`, `reason_code?` |
 | `skill.proposal.created` | `skill_proposal_id`, `source_task_id`, `source_artifact_id`, `draft_resource_ref`, `draft_digest`, `aggregate_version` |
 | `skill.proposal.status.changed` | `skill_proposal_id`, `from`, `to`, `redaction_status`, `approved_by?`, `aggregate_version` |
 | `routine.created` | `routine_id`, `current_revision`, `status`, `aggregate_version` |
@@ -333,15 +334,27 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `automation.occurrence.*` | `occurrence_id`, `automation_id`, `automation_revision`, `routine_id`, `routine_revision`, `trigger_id`, `trigger_host_runtime_id`, `occurrence_key`, `claim_epoch`, `claim_expires_at?`, `trigger_input_ref?`, `trigger_payload_digest?`, `task_id?`, `from?`, `to` |
 | `connection.state.changed` | `connection_id`, `from`, `to`, `provider_ref` |
 | `channel.binding.changed` | `channel_binding_id`, `connection_id?`, `from`, `to`, `assurance_level`, `allowed_actions[]` |
-| `channel.inbound.received` | `channel_binding_id`, `provider_event_id`, `event_kind`, `payload_digest` |
-| `channel.receipt.changed` | `channel_binding_id`, `provider_event_id`, `from`, `to`, `claim_epoch`, `claim_expires_at?` |
-| `channel.outbound.settled` | `channel_binding_id`, `delivery_id`, `provider_event_id?`, `state`, `result_digest?` |
+| `channel.host.assignment.changed` | `channel_binding_id`, `from_runtime_id?`, `runtime_id`, `host_epoch`, `status`, `ingress_continuity`, `ingress_gap_since?`, `aggregate_version` |
+| `channel.inbound.received` | `channel_binding_id`, `provider_event_id`, `origin_runtime_id`, `origin_host_epoch`, `ingress_sequence`, `event_kind`, `payload_digest` |
+| `channel.receipt.changed` | `channel_binding_id`, `provider_event_id`, `claim_runtime_id`, `claim_host_epoch`, `from`, `to`, `claim_epoch`, `claim_expires_at?` |
+| `channel.outbound.settled` | `channel_binding_id`, `runtime_id`, `host_epoch`, `delivery_id`, `provider_event_id?`, `state`, `result_digest?` |
 | `handoff.*` | `handoff_id`, `task_id`, `step_id`, `source_attempt_id`, `source_runtime_id`, `target_runtime_id?`, `phase` |
 | `audit.record.created` | `audit_record_id`, `principal`, `action`, `decision`, `reason_code`, `payload_digest?` |
 
 Payloads never contain raw secret bytes, native hidden prompts, or unbounded terminal,
 video, or token streams. ResourceRef and digest carry large/sensitive payloads by
 reference.
+
+For `channel.inbound.received.v1`, `ingress_sequence` is monotonic within the binding and
+origin host epoch. For `channel.receipt.changed.v1`, `PROCESSING -> PROCESSING` means only
+that an expired or fenced claim was reclaimed with a larger claim epoch; a terminal
+transition clears `claim_expires_at`. Reusing a provider event ID with a different payload
+digest is a conflict and cannot overwrite the immutable origin event.
+
+`user.request.resolved.v1` includes `channel_binding_id` and `provider_event_id` together
+only when the response came from a channel. The provider event is the authenticated
+inbound response receipt; the opaque provider message reference used to correlate its
+reply-to target stays Runtime-local and is never replicated in the event journal.
 
 Every digest-valued field uses `Sha256Digest`: `sha256:` followed by 64 lowercase
 hexadecimal characters. Provider revision IDs and opaque resource locators are not digests.

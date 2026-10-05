@@ -89,6 +89,7 @@ capability_host_instances
 capability_locks
 connections
 channel_bindings
+channel_host_assignments # replicated Workspace routing aggregate; host credential excluded
 channel_thread_mappings
 channel_event_receipts
 
@@ -136,6 +137,9 @@ capability_host_instances              # local provider observations/use groups;
 capability_invocation_provider_bindings # encrypted provider task handles/cursors; local-only
 provider_input_bindings                 # encrypted MCP input envelope/keys and response outbox; local-only
 automation_trigger_bindings             # encrypted provider cursors; local-only, host-epoch scoped
+channel_ingress_cursor_bindings          # encrypted provider cursors; local-only, host-epoch/incarnation scoped
+channel_reply_targets                    # opaque provider message refs; local-only, excluded from backup/replication
+channel_host_lease_records               # Hub-only renewable control state; digest only, not Workspace backup
 routines
 routine_revisions
 automations
@@ -173,12 +177,17 @@ UNIQUE automation_revisions(automation_id, revision)
 UNIQUE routine_revisions(routine_id, revision)
 UNIQUE automation_occurrences(automation_id, trigger_id, occurrence_key)
 PRIMARY KEY automation_cursors(automation_id, trigger_id)
+UNIQUE channel_event_receipts(channel_binding_id, origin_host_epoch, ingress_sequence)
+PRIMARY KEY channel_ingress_cursor_bindings(channel_binding_id, host_epoch)
 FOREIGN KEY automation_cursors(automation_id,active_automation_revision) -> automation_revisions
 FOREIGN KEY runtime-bound handles(runtime_id,runtime_incarnation_id) -> runtime_incarnations
 RuntimeIncarnation catalog is authenticated Workspace Mesh metadata; persist it before accepting any aggregate that references the incarnation
 runtime_incarnation_local_observations is local-only and excluded from Workspace backups/replication
 environment_provider_bindings, environment_checkpoint_provider_bindings, agent_endpoint_bindings, resource_location_bindings, and file_identity_bindings are local-only, exact-incarnation bindings excluded from Workspace backups/replication
 capability_invocation_provider_bindings, provider_input_bindings, and automation_trigger_bindings are encrypted Runtime-local operational state and are excluded from Workspace backups/replication; restore marks them unavailable and requires provider reconciliation or a bounded rescan
+channel_reply_targets are Runtime-local message-correlation state and are excluded from Workspace backups/replication; restore cannot resolve replies to prior channel prompts, which remain actionable through the Operator inbox
+channel_ingress_cursor_bindings are encrypted Runtime-local operational state, excluded from Workspace backups/replication; their last-committed sequence must reference a durable ChannelEventReceipt
+channel_event_receipts keep immutable origin fields; only RECEIVED -> PROCESSING, fenced/expired PROCESSING -> PROCESSING reclaim, and current-lease PROCESSING -> terminal are legal
 the stable Runtime identity HMAC key used to pseudonymize file identity is stored in the OS keystore, never in SQLite or Workspace backup
 portable Environment checkpoint blobs are included only when `backup_policy = INCLUDE_CHECKPOINTS` and Workspace replication permits
 FOREIGN KEY capability_host_instances(runtime_id,runtime_incarnation_id) -> runtime_incarnations
@@ -298,6 +307,7 @@ Indexes required on:
 - ProviderCircuit by status/open_until
 - AutomationOccurrence by automation/status/created_at and claim expiry
 - ChannelEventReceipt by state/claim_expires_at
+- ChannelIngressCursorBinding by Runtime incarnation/channel binding/state; local-only and never exported
 - Resource by Workspace/display name and ResourceLocation by Resource/availability
 - ResourceRevision ancestry by child/parent and Resource heads by Resource
 - CapabilityInvocation by Workspace/status/updated_at; its encrypted Runtime-local provider binding is retrieved by Invocation ID, never by plaintext provider handle

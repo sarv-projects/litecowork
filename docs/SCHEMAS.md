@@ -80,6 +80,9 @@ CapabilityGrantScope = CapabilityScope
 CapabilityInvocationScope = CapabilityScope
 ChannelEventKind = INBOUND | EDIT | DELETE
 ChannelEventReceiptStatus = RECEIVED | PROCESSING | ACCEPTED | REJECTED | FAILED
+ChannelHostAssignmentStatus = ACTIVE | DRAINING
+ChannelIngressContinuity = CONTINUOUS | GAP_ACCEPTED
+ChannelIngressCursorBindingStatus = AVAILABLE | RECONCILIATION_REQUIRED | UNAVAILABLE
 ConversationTurnStatus = OPEN | RUNNING | WAITING_USER | WAITING_DEPENDENCY | COMPLETED | FAILED |
   CANCEL_REQUESTED | CANCELLED
 # FAILED -> RUNNING is permitted only through AgentTurnCoordinator.retry_turn;
@@ -140,7 +143,7 @@ UserRequestInteractionMode = FORM | EXTERNAL_URL
 UserRequestScope = CONVERSATION { conversation_id, conversation_turn_id }
   | TASK_PLANNING { task_id }
   | ATTEMPT_EXECUTION { task_id, attempt_id }
-NotificationDeliveryStatus = PENDING | SENDING | SENT | FAILED | SUPPRESSED
+NotificationDeliveryStatus = PENDING | SENDING | SENT | FAILED | AMBIGUOUS | SUPPRESSED
 SkillProposalStatus = DRAFT | REVIEW | APPROVED | REJECTED | PUBLISHED
 ResourceFreshness = CURRENT | STALE | CONFLICTED | UNKNOWN | UNAVAILABLE
 ResourceLocationFreshness = CURRENT | STALE | UNKNOWN | UNAVAILABLE
@@ -408,6 +411,19 @@ ProviderInputBinding { # Runtime-local encrypted provider state and response out
   version: u64
 }
 
+UserRequestResponse {
+  response_id: UserRequestResponseId
+  request_id: UserRequestId
+  response: JsonValue
+  response_digest: Sha256Digest
+  responded_by: PrincipalRef
+  response_channel_ref?: {
+    channel_binding_id: ChannelBindingId
+    provider_event_id: string
+  }
+  responded_at: Timestamp
+}
+
 Choice {
   choice_id: string
   label: string
@@ -455,6 +471,10 @@ Implementations enforce parser depth/size limits. `QuietHours` uses the local ca
 and IANA timezone; the start weekday owns an overnight interval. Equal start/end times
 mean no quiet interval for that day.
 
+`response_channel_ref` is present exactly for a channel-originated response; its provider
+event is the same authenticated event committed in the ChannelEventReceipt. The
+Runtime-local reply target consumed by that event is not part of the replicated response.
+
 ## Conversation content
 
 ```text
@@ -487,6 +507,20 @@ ServiceRef {
 ChannelThreadRef {
   channel_binding_id: ChannelBindingId
   provider_thread_id: string
+}
+
+ChannelReplyTarget {
+  runtime_id: RuntimeId
+  channel_binding_id: ChannelBindingId
+  host_epoch: u64
+  provider_message_ref: string # Runtime-local, never replicated or logged
+  delivery_id: DeliveryId
+  user_request_id: UserRequestId
+  status: ACTIVE | CONSUMED | CLOSED | EXPIRED
+  consumed_by_provider_event_id?: string
+  created_at: Timestamp
+  expires_at: Timestamp
+  closed_at?: Timestamp
 }
 
 BlobRef {
@@ -666,7 +700,7 @@ successful reconciliation is also required.
 ```text
 AssuranceLevel = VIEW_ONLY | STEER_SAFE | APPROVE_SAFE |
   APPROVE_SENSITIVE | LOCAL_STRONG
-ChannelAction = VIEW | STEER | APPROVE_SAFE | APPROVE_SENSITIVE
+ChannelAction = VIEW | STEER | RESPOND | APPROVE_SAFE | APPROVE_SENSITIVE
 ```
 
 Domain errors contain a typed code, safe message, retryability, correlation ID, and
@@ -694,6 +728,7 @@ USER_REQUEST_NOT_FOUND USER_REQUEST_EXPIRED
 APPROVAL_ALREADY_CONSUMED RESOURCE_STALE RESOURCE_LOCATION_UNAVAILABLE
 UPLOAD_OFFSET_CONFLICT UPLOAD_EXPIRED BUDGET_EXCEEDED
 TIMEOUT DEPENDENCY_UNAVAILABLE UNSUPPORTED_VERSION INTEGRITY_FAILURE INTERNAL
+CHANNEL_INGRESS_GAP_CONFIRMATION_REQUIRED
 ```
 
 The machine-readable registry at `schemas/error-codes.schema.json` is canonical for wire

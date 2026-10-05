@@ -95,6 +95,7 @@ user's Task.
 | Environment | The actual place an Attempt acts: local workspace, worktree, container, VM, browser, desktop, or remote sandbox. |
 | Routine / RoutineRevision | Immutable reusable work definition; a Routine run materializes an ordinary Task. |
 | TriggerHost | Runtime/provider placement that observes one Automation trigger and creates its occurrence; separate from Task execution placement. |
+| ChannelHostAssignment | One fenced Runtime assignment for a ChannelBinding's inbound processing and outbound delivery; RuntimeMesh owns its host epoch. |
 | CapabilityRef | Internal normalized identity for a package component or MCP Skill, pinned by its exact content/manifest digest. |
 | CapabilityInvocation | Durable lifecycle for one capability operation; it may be read-only, asynchronous, or linked to an Effect. |
 | CapabilityGrant | Conversation, planning, or Attempt-scoped authorization for an exact capability and operation; Conversation/planning grants are read-only. |
@@ -118,8 +119,8 @@ and environment snapshots may accelerate resume but are never required for corre
   agent's internal subagent system or reasoning.
 - LiteCowork Capability Gateway, CapabilityBroker, CapabilityHostSupervisor, scoped grants,
   activations, local host bindings, and LitePSM client integration.
-- Runtime identity, pairing, presence, event/artifact replication, execution leases,
-  fencing, handoff, and failover coordination.
+- Runtime identity, pairing, presence, event/artifact replication, execution and channel
+  host assignments/leases, fencing, handoff, and failover coordination.
 - EnvironmentProvider contract and Attempt placement, not domain-specific intelligence.
 - Trust decisions, approvals, secret references/leases, and audit for Core-mediated
   calls.
@@ -266,9 +267,12 @@ install combines the roles it needs. The Workspace Hub coordinates ownership and
 durable state; it is not an AI reasoning service and need not perform all execution.
 
 The Mesh provides runtime identity/pairing, presence, domain-event and artifact
-replication, inventory, leases/fencing, remote invocation, handoff/failover, and channel
-availability. One authoritative Hub is sufficient for an individual workspace in the
-initial system; do not build consensus/HA algorithms without a demonstrated need.
+replication, inventory, execution leases/fencing, channel-host assignments, remote
+invocation, handoff/failover, and channel availability. Each active ChannelBinding has one
+current ChannelHostAssignment; host epoch and bounded lease fence inbound event claims and
+outbound delivery. Runtime-local reply references are never copied during reassignment.
+One authoritative Hub is sufficient for an individual workspace in the initial system;
+do not build consensus/HA algorithms without a demonstrated need.
 
 ### Environment Fabric
 
@@ -397,7 +401,8 @@ Keep these protocols separate:
 5. **Environment:** Attempt to EnvironmentProvider.
 6. **Human channels:** Telegram, Slack, Discord, Teams, email, and webhook adapters feed
    authenticated messages into the same Conversation/Task model; they do not own a
-   separate bot task store.
+   separate bot task store. Each binding has one fenced ChannelHost Runtime; losing that
+   host blocks new channel work until a new lease/epoch is committed.
 
 Channel assurance determines whether an identity may view, steer, or approve sensitive
 work. A weakly authenticated channel cannot approve high-risk actions.

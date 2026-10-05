@@ -840,6 +840,18 @@ ChannelBinding {
   version: u64
 }
 
+ChannelHostAssignment {
+  channel_binding_id: ChannelBindingId
+  workspace_id: WorkspaceId
+  runtime_id: RuntimeId
+  host_epoch: u64
+  status: ACTIVE | DRAINING
+  ingress_continuity: CONTINUOUS | GAP_ACCEPTED
+  ingress_gap_since: Timestamp?
+  assigned_at: Timestamp
+  version: u64
+}
+
 ```
 
 Provider setup supplies the authenticated identity and assurance level. A newly created
@@ -1274,7 +1286,12 @@ Audit records are append-only and contain no secret bytes. Handoff phase semanti
 ChannelEventReceipt {
   channel_binding_id: ChannelBindingId
   provider_event_id: string
+  origin_runtime_id: RuntimeId
+  origin_host_epoch: u64
+  claim_runtime_id: RuntimeId?
+  claim_host_epoch: u64?
   event_kind: INBOUND | EDIT | DELETE
+  ingress_sequence: u64 # strictly increasing within channel_binding_id + origin_host_epoch
   payload_digest: Sha256Digest
   conversation_id: ConversationId?
   message_id: MessageId?
@@ -1288,6 +1305,58 @@ ChannelEventReceipt {
 Unique `(channel_binding_id, provider_event_id)` prevents duplicate materialization. Each PROCESSING claim increments `claim_epoch`; only the current claim epoch may accept/reject/fail the receipt, so a late worker cannot overwrite a reclaimed receipt.
 Raw provider payload is retained only when policy requires it and then as a bounded,
 access-controlled Artifact/Resource, not embedded in the event receipt.
+
+The origin Runtime/host epoch is immutable receipt provenance. Claim Runtime/host epoch is
+the current processor and may change only when the prior claim has expired or its host epoch
+has been authoritatively fenced by a committed ChannelHostAssignment, and only under the
+current assignment and unexpired lease. Reclaim increments `claim_epoch`; a claim may move
+from PROCESSING to PROCESSING only for this transition. An unclaimed RECEIVED row can be
+claimed by the current assigned host after lease validation. Re-delivery with the same
+provider event ID and a different payload digest is rejected as a conflict. A heartbeat
+loss alone never expires a lease or permits reclaim.
+
+```text
+ChannelIngressCursorBinding { # Runtime-local encrypted operational state
+  channel_binding_id: ChannelBindingId
+  runtime_id: RuntimeId
+  runtime_incarnation_id: RuntimeIncarnationId
+  host_epoch: u64
+  cursor_ciphertext: bytes
+  encryption_key_version: u32
+  cursor_digest: Sha256Digest # digest of ciphertext, never of the plaintext cursor
+  last_committed_origin_host_epoch: u64?
+  last_committed_ingress_sequence: u64?
+  state: AVAILABLE | RECONCILIATION_REQUIRED | UNAVAILABLE
+  updated_at: Timestamp
+  version: u64
+}
+```
+
+The cursor binding is keyed by `(channel_binding_id, host_epoch)` in the assigned
+Runtime's local store. It is never replicated, returned by Operator API, or included in a
+Workspace backup. A new Runtime obtains continuity through provider-owned opaque cursor
+transfer or by replaying from the last committed stable provider event ID; LiteCowork never
+copies cursor bytes between Runtime stores. A changed Runtime incarnation marks the binding
+`RECONCILIATION_REQUIRED` until the adapter validates it or performs a bounded replay. Cursor
+advancement is ordered after durable receipt commit. When the Runtime is a non-authoritative
+replica of a Workspace Hub, it also waits for the Hub's replication receipt before advancing
+the cursor or acknowledging deferred provider ingress. If that barrier is unavailable, the
+adapter is backpressured and the cursor remains unchanged.
+
+`ingress_sequence` is allocated transactionally by the current ChannelService host and is
+monotonic within `(channel_binding_id, origin_host_epoch)`. Host epochs provide the first
+sort key across reassignment. The successor resumes from the receipt with the greatest
+`(origin_host_epoch, ingress_sequence)` whose event is replicated to the Hub; that receipt's
+provider event ID is passed only to the authenticated adapter and is not returned by the
+Operator API.
+
+`ChannelHostAssignment.ingress_continuity` describes the current host boundary. It is
+`CONTINUOUS` after a verified cursor transfer or replay catch-up. If the owner explicitly
+confirms a move without either guarantee, it is `GAP_ACCEPTED` and `ingress_gap_since` is
+required; the UI must preserve that warning in channel history. A heartbeat, timeout, or
+best-effort rescan cannot silently change `GAP_ACCEPTED` back to `CONTINUOUS`. A later
+assignment may begin `CONTINUOUS` only after its own provider transfer/replay is verified;
+the prior gap remains in the immutable assignment event history.
 
 ## CapabilityInvocation
 
@@ -1465,12 +1534,18 @@ UserRequestResponse {
   response: JsonValue
   response_digest: Sha256Digest
   responded_by: PrincipalRef
+  response_channel_ref?: { channel_binding_id: ChannelBindingId, provider_event_id: string }
   responded_at: Timestamp
 }
 ```
 
 A free-text answer is not an Approval unless TrustService separately authorizes it as
 one.
+
+For a channel-originated answer, `response_channel_ref` is required and binds the response
+to the exact authenticated provider event. For an Operator-originated answer it is absent.
+The raw channel message is retained only as the validated bounded response value; it is
+not also appended as an ordinary ConversationMessage.
 
 ## Usage and budget
 
@@ -1537,7 +1612,9 @@ NotificationDelivery {
   dedupe_key: string
   source_event_id: EventId
   channel_binding_id: ChannelBindingId?
-  status: PENDING | SENDING | SENT | FAILED | SUPPRESSED
+  attempt_runtime_id?: RuntimeId
+  attempt_host_epoch?: u64
+  status: PENDING | SENDING | SENT | FAILED | AMBIGUOUS | SUPPRESSED
   attempt_count: u32
   next_attempt_at?: Timestamp
   last_error_code?: ErrorCode
@@ -1546,7 +1623,39 @@ NotificationDelivery {
 }
 ```
 
+`ChannelReplyTarget` is a Runtime-local, durable correlation row created only after an
+adapter acknowledges delivery of a reply-capable prompt for one exact FORM UserRequest.
+It is operational transport state, not authority; the channel permission, sender identity,
+request status, expiry, response schema, and sensitive-input checks are re-evaluated when
+the reply arrives.
+
+```text
+ChannelReplyTarget {
+  runtime_id: RuntimeId
+  channel_binding_id: ChannelBindingId
+  host_epoch: u64
+  provider_message_ref: string
+  delivery_id: DeliveryId
+  user_request_id: UserRequestId
+  status: ACTIVE | CONSUMED | CLOSED | EXPIRED
+  consumed_by_provider_event_id?: string # required exactly when CONSUMED; owner-local receipt
+  created_at: Timestamp
+  expires_at: Timestamp
+  closed_at?: Timestamp
+}
+```
+
+The provider message reference is opaque and scoped to its ChannelBinding. It is kept out
+of DomainEvents, logs, analytics, and cross-Runtime replication. The owning Runtime's
+durable store preserves it across process restarts. A binding cannot move to another
+Runtime while targets remain open; revocation, UserRequest resolution/expiry, or prompt
+invalidation closes the target. Restoring a Workspace without the original Runtime-private
+mapping disables replies to older prompts and routes the user to the Operator inbox.
+
 Sent means the channel acknowledged delivery; it never means the related Task completed.
+An adapter timeout after send may have reached the provider, so the state becomes
+`AMBIGUOUS` and is reconciled before retry. It remains ambiguous when delivery cannot be
+determined. Only acknowledged `SENT` delivery can create a ChannelReplyTarget.
 
 ## SkillProposal
 
@@ -1837,6 +1946,13 @@ form because provenance, verification, and staleness depend on an exact revision
 - FileIdentity tokens are keyed pseudonyms using a stable local Runtime identity key; raw platform filesystem/volume/file identifiers exist only in Runtime-local `FileIdentityBinding` rows. The key and raw identifiers never enter Workspace backups or replication. A Runtime key loss lowers identity confidence and triggers bounded re-indexing; content equality alone does not restore identity.
 - Every UserRequest scope tuple equals its originating AgentSession. When linked to a CapabilityInvocation, its Conversation/Task/Attempt parent scope matches and the Invocation references the exact originating AgentSession; the UserRequest's Conversation turn ID equals that session's bound turn. Provider input keys exist only in encrypted Runtime-local bindings and are unique within their Invocation.
 - Every Conversation-scoped UserRequest names exactly one ConversationTurn in the same Conversation, and that turn's current/most-recent AgentSession equals the request origin; only that turn may resume from its response.
+- Every channel-originated UserRequestResponse carries both its ChannelBinding and exact accepted provider event provenance; Operator responses carry neither. A response through a ChannelBinding requires a matching active, unexpired Runtime-local ChannelReplyTarget, current owner identity and `RESPOND` permission, and the ordinary UserRequest schema/sensitive-input checks.
+- Every active ChannelBinding has exactly one current ChannelHostAssignment. RuntimeMesh owns assignment and monotonically increasing host epochs; ChannelBinding remains provider identity/authorization metadata. Inbound receipt claims and outbound sends require the assigned Runtime's unexpired host lease and current epoch. A handoff fences the old host before the new host becomes active; an offline old host cannot accept work after its lease expires. An event receipt keeps immutable origin and separately tracks the fenced current claimant so an identical provider redelivery can be safely reclaimed after assignment transfer.
+- ChannelReplyTarget provider message references are scoped to one ChannelBinding and host epoch, Runtime-local, immutable except for one terminal close/consume transition, and excluded from events, logs, cross-Runtime replication, and Workspace backups. A response consumes only the target selected by its exact provider `reply_to` when its Runtime and host epoch still match the current assignment; a plain message never selects a pending request. Reassignment immediately makes old-host targets non-actionable, then closes them opportunistically when the old Runtime is reachable. The owner inbox remains the fallback.
+- NotificationDelivery pins each current attempt's Runtime and, for channel sends, host epoch as a pair. A SENT prompt can create a ChannelReplyTarget only on the same Runtime/epoch that received the provider acknowledgement; a send from a superseded host cannot be rebound to a new host.
+- `NotificationDelivery.attempt_runtime_id` and `attempt_host_epoch` are either both present or both absent. For channel sends, entering `SENDING` pins the exact current host pair; an acknowledged send can create a reply target only while that pair still owns the current assignment and lease.
+- `NotificationDelivery.attempt_runtime_id` and `attempt_host_epoch` are either both present or both absent. For channel sends, entering `SENDING` pins the exact current host pair; an acknowledged send can create a reply target only while that pair still owns the current assignment and lease.
+- NotificationDelivery in `AMBIGUOUS` cannot retry or create an actionable ChannelReplyTarget until provider reconciliation proves delivery or non-delivery.
 - Conversation- and Task-planning-scoped CapabilityInvocations are read-only and have no Effect; only an Attempt-scoped Invocation may represent a consequential operation.
 - Every VerificationRun pins the TaskSpec revision, criterion digest, verifier version, revision-pinned subject refs, and paired `ResourceInput` values; changed requirements or inputs require new verification.
 - Every DependencyEdge corresponds to exactly one revision-pinned input ref on its dependent ArtifactVersion or VerificationRun; the reverse index is rebuildable from aggregate state/events.

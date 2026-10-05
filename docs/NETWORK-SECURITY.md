@@ -101,13 +101,15 @@ out-of-band path: the URL and original provider input remain in the encrypted lo
 provider binding; the shared UserRequest exposes only a host-authored summary and
 interaction mode. The raw URL is fetched from the source Runtime only after explicit
 Operator authentication/action, sent with `Cache-Control: no-store`, and omitted from
-logs, events, projections, analytics, crash reports, and backups. Only HTTPS URLs without
-userinfo are accepted. Destination checks reject loopback, private, link-local,
-unspecified, multicast, and cloud-metadata addresses; the verified origin and capability
-publisher are shown before opening the system browser. LiteCowork does not embed the page,
-automate form entry, or follow its redirects. The user's credentials go directly to the
-provider-controlled HTTPS origin; the later MCP response contains only `accept`,
-`decline`, or `cancel`.
+logs, events, projections, analytics, crash reports, and backups. LiteCowork accepts only
+HTTPS URLs without userinfo or IP-literal hosts, shows the parsed destination origin and
+capability publisher, and opens the link in the system browser only after a user click.
+The handoff is not a Runtime egress request: LiteCowork does not fetch the URL, embed the
+page, automate form entry, or control the system browser's DNS resolution and redirects.
+Standard browser security and the user's browser/network policy apply. The UI makes clear
+that the external site receives anything entered there. The user's credentials go
+directly to that provider site; the later MCP response contains only `accept`, `decline`,
+or `cancel`.
 
 These checks cannot infer every secret from arbitrary natural language. UI copy must say
 not to enter credentials in an ordinary answer, and an input that the provider declares

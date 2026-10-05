@@ -79,8 +79,11 @@ Controls:
 ### Channel spoofing
 Controls:
 - ChannelBinding to authenticated external identity
+- map inbound sender to the bound Workspace owner Principal; reject unknown/mismatched senders
 - provider event dedupe
 - assurance levels
+- exact, one-use reply-to target for UserRequest responses; never select the latest open request
+- current `RESPOND` action and binding status are rechecked when each reply arrives
 - sensitive approval escalation to stronger surface
 
 ### Artifact poisoning/tampering

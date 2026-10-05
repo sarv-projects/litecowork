@@ -1001,8 +1001,58 @@ CREATE TABLE channel_bindings (
   status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'DEGRADED', 'REVOKED')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1
+  version INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(channel_binding_id, workspace_id)
 );
+
+-- Current durable channel owner. The append-only event journal preserves each
+-- reassignment; lease renewal is control-plane state and does not revise this aggregate.
+CREATE TABLE channel_host_assignments (
+  channel_binding_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  runtime_id TEXT NOT NULL,
+  host_epoch INTEGER NOT NULL CHECK (host_epoch > 0),
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'DRAINING')),
+  ingress_continuity TEXT NOT NULL DEFAULT 'CONTINUOUS' CHECK (ingress_continuity IN ('CONTINUOUS', 'GAP_ACCEPTED')),
+  ingress_gap_since TEXT,
+  assigned_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  CHECK ((ingress_continuity = 'GAP_ACCEPTED') = (ingress_gap_since IS NOT NULL)),
+  UNIQUE(channel_binding_id, host_epoch),
+  UNIQUE(channel_binding_id, workspace_id, runtime_id, host_epoch),
+  FOREIGN KEY(channel_binding_id, workspace_id) REFERENCES channel_bindings(channel_binding_id, workspace_id),
+  FOREIGN KEY(runtime_id, workspace_id) REFERENCES runtimes(runtime_id, workspace_id)
+);
+CREATE INDEX idx_channel_host_runtime ON channel_host_assignments(runtime_id, status);
+
+-- Hub/control-plane lease state. The assigned Runtime receives the raw credential over
+-- authenticated control transport; only the digest is stored here. Renewals do not emit
+-- DomainEvents or modify the ChannelHostAssignment aggregate.
+CREATE TABLE channel_host_lease_records (
+  channel_binding_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  runtime_id TEXT NOT NULL,
+  host_epoch INTEGER NOT NULL CHECK (host_epoch > 0),
+  lease_id TEXT NOT NULL,
+  fencing_token_digest TEXT NOT NULL CHECK (length(fencing_token_digest) = 71 AND substr(fencing_token_digest, 1, 7) = 'sha256:' AND substr(fencing_token_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  lease_expires_at TEXT NOT NULL,
+  control_version INTEGER NOT NULL DEFAULT 1,
+  FOREIGN KEY(channel_binding_id, workspace_id, runtime_id, host_epoch)
+    REFERENCES channel_host_assignments(channel_binding_id, workspace_id, runtime_id, host_epoch)
+    DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX idx_channel_host_lease_expiry ON channel_host_lease_records(lease_expires_at);
+
+CREATE TRIGGER channel_host_assignment_epoch_monotonic
+BEFORE UPDATE ON channel_host_assignments
+WHEN NEW.channel_binding_id IS NOT OLD.channel_binding_id
+  OR NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.host_epoch < OLD.host_epoch
+  OR (NEW.runtime_id IS NOT OLD.runtime_id AND NEW.host_epoch <= OLD.host_epoch)
+  OR NEW.version <> OLD.version + 1
+BEGIN
+  SELECT RAISE(ABORT, 'CHANNEL_HOST_ASSIGNMENT_EPOCH_STALE');
+END;
 
 CREATE TABLE channel_thread_mappings (
   channel_binding_id TEXT NOT NULL REFERENCES channel_bindings(channel_binding_id),
@@ -1015,7 +1065,12 @@ CREATE TABLE channel_thread_mappings (
 CREATE TABLE channel_event_receipts (
   channel_binding_id TEXT NOT NULL REFERENCES channel_bindings(channel_binding_id),
   provider_event_id TEXT NOT NULL,
+  origin_runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
+  origin_host_epoch INTEGER NOT NULL CHECK (origin_host_epoch > 0),
+  claim_runtime_id TEXT REFERENCES runtimes(runtime_id),
+  claim_host_epoch INTEGER CHECK (claim_host_epoch IS NULL OR claim_host_epoch > 0),
   event_kind TEXT NOT NULL CHECK (event_kind IN ('INBOUND', 'EDIT', 'DELETE')),
+  ingress_sequence INTEGER NOT NULL CHECK (ingress_sequence > 0),
   payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 71 AND substr(payload_digest, 1, 7) = 'sha256:' AND substr(payload_digest, 8) NOT GLOB '*[^0-9a-f]*'),
   conversation_id TEXT REFERENCES conversations(conversation_id),
   message_id TEXT REFERENCES conversation_messages(message_id),
@@ -1023,8 +1078,153 @@ CREATE TABLE channel_event_receipts (
   claim_epoch INTEGER NOT NULL DEFAULT 0,
   claim_expires_at TEXT,
   state TEXT NOT NULL CHECK (state IN ('RECEIVED', 'PROCESSING', 'ACCEPTED', 'REJECTED', 'FAILED')),
-  PRIMARY KEY(channel_binding_id, provider_event_id)
+  CHECK ((claim_runtime_id IS NULL) = (claim_host_epoch IS NULL)),
+  CHECK ((state = 'PROCESSING') = (claim_expires_at IS NOT NULL)),
+  CHECK ((state = 'RECEIVED' AND claim_epoch = 0 AND claim_runtime_id IS NULL AND claim_host_epoch IS NULL)
+    OR (state IN ('PROCESSING', 'ACCEPTED', 'REJECTED', 'FAILED') AND claim_epoch >= 1 AND claim_runtime_id IS NOT NULL AND claim_host_epoch IS NOT NULL)),
+  PRIMARY KEY(channel_binding_id, provider_event_id),
+  UNIQUE(channel_binding_id, origin_host_epoch, ingress_sequence)
 );
+
+CREATE TRIGGER channel_receipt_origin_immutable
+BEFORE UPDATE ON channel_event_receipts
+WHEN NEW.channel_binding_id IS NOT OLD.channel_binding_id
+  OR NEW.provider_event_id IS NOT OLD.provider_event_id
+  OR NEW.origin_runtime_id IS NOT OLD.origin_runtime_id
+  OR NEW.origin_host_epoch IS NOT OLD.origin_host_epoch
+  OR NEW.ingress_sequence IS NOT OLD.ingress_sequence
+  OR NEW.event_kind IS NOT OLD.event_kind
+  OR NEW.payload_digest IS NOT OLD.payload_digest
+  OR NEW.received_at IS NOT OLD.received_at
+BEGIN
+  SELECT RAISE(ABORT, 'CHANNEL_RECEIPT_ORIGIN_IMMUTABLE');
+END;
+
+CREATE TRIGGER channel_receipt_transition_guard
+BEFORE UPDATE ON channel_event_receipts
+WHEN NOT (
+  (OLD.state = 'RECEIVED' AND NEW.state = 'PROCESSING'
+    AND NEW.claim_epoch = 1
+    AND julianday(NEW.claim_expires_at) > julianday('now')
+    AND EXISTS (
+      SELECT 1 FROM channel_host_assignments a
+      JOIN channel_host_lease_records l ON l.channel_binding_id = a.channel_binding_id
+        AND l.workspace_id = a.workspace_id AND l.runtime_id = a.runtime_id AND l.host_epoch = a.host_epoch
+      WHERE a.channel_binding_id = NEW.channel_binding_id AND a.runtime_id = NEW.claim_runtime_id
+        AND a.host_epoch = NEW.claim_host_epoch AND a.status = 'ACTIVE'
+        AND julianday(l.lease_expires_at) > julianday('now')
+    ))
+  OR
+  (OLD.state = 'PROCESSING' AND NEW.state = 'PROCESSING'
+    AND NEW.claim_epoch = OLD.claim_epoch + 1
+    AND julianday(NEW.claim_expires_at) > julianday('now')
+    AND (julianday(OLD.claim_expires_at) <= julianday('now') OR NOT EXISTS (
+      SELECT 1 FROM channel_host_assignments a
+      JOIN channel_host_lease_records l ON l.channel_binding_id = a.channel_binding_id
+        AND l.workspace_id = a.workspace_id AND l.runtime_id = a.runtime_id AND l.host_epoch = a.host_epoch
+      WHERE a.channel_binding_id = OLD.channel_binding_id AND a.runtime_id = OLD.claim_runtime_id
+        AND a.host_epoch = OLD.claim_host_epoch AND a.status = 'ACTIVE'
+        AND julianday(l.lease_expires_at) > julianday('now')
+    ))
+    AND EXISTS (
+      SELECT 1 FROM channel_host_assignments a
+      JOIN channel_host_lease_records l ON l.channel_binding_id = a.channel_binding_id
+        AND l.workspace_id = a.workspace_id AND l.runtime_id = a.runtime_id AND l.host_epoch = a.host_epoch
+      WHERE a.channel_binding_id = NEW.channel_binding_id AND a.runtime_id = NEW.claim_runtime_id
+        AND a.host_epoch = NEW.claim_host_epoch AND a.status = 'ACTIVE'
+        AND julianday(l.lease_expires_at) > julianday('now')
+    ))
+  OR
+  (OLD.state = 'PROCESSING' AND NEW.state IN ('ACCEPTED', 'REJECTED', 'FAILED')
+    AND NEW.claim_epoch = OLD.claim_epoch
+    AND julianday(OLD.claim_expires_at) > julianday('now')
+    AND NEW.claim_runtime_id = OLD.claim_runtime_id
+    AND NEW.claim_host_epoch = OLD.claim_host_epoch
+    AND NEW.claim_expires_at IS NULL
+    AND EXISTS (
+      SELECT 1 FROM channel_host_assignments a
+      JOIN channel_host_lease_records l ON l.channel_binding_id = a.channel_binding_id
+        AND l.workspace_id = a.workspace_id AND l.runtime_id = a.runtime_id AND l.host_epoch = a.host_epoch
+      WHERE a.channel_binding_id = NEW.channel_binding_id AND a.runtime_id = NEW.claim_runtime_id
+        AND a.host_epoch = NEW.claim_host_epoch AND a.status = 'ACTIVE'
+        AND julianday(l.lease_expires_at) > julianday('now')
+    ))
+)
+BEGIN
+  SELECT RAISE(ABORT, 'INVALID_CHANNEL_RECEIPT_TRANSITION');
+END;
+
+-- Opaque cursors are per-Runtime encrypted operational state and never enter Mesh state,
+-- API projections, logs, or Workspace backups. The host epoch scopes each continuation.
+CREATE TABLE channel_ingress_cursor_bindings (
+  channel_binding_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
+  runtime_incarnation_id TEXT NOT NULL,
+  host_epoch INTEGER NOT NULL CHECK (host_epoch >= 1),
+  cursor_ciphertext BLOB NOT NULL CHECK (length(cursor_ciphertext) > 0),
+  encryption_key_version INTEGER NOT NULL CHECK (encryption_key_version >= 1),
+  cursor_digest TEXT NOT NULL CHECK (length(cursor_digest) = 71 AND substr(cursor_digest, 1, 7) = 'sha256:' AND substr(cursor_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  last_committed_origin_host_epoch INTEGER CHECK (last_committed_origin_host_epoch IS NULL OR last_committed_origin_host_epoch >= 1),
+  last_committed_ingress_sequence INTEGER CHECK (last_committed_ingress_sequence IS NULL OR last_committed_ingress_sequence >= 1),
+  state TEXT NOT NULL CHECK (state IN ('AVAILABLE', 'RECONCILIATION_REQUIRED', 'UNAVAILABLE')),
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+  PRIMARY KEY(channel_binding_id, host_epoch),
+  CHECK ((last_committed_origin_host_epoch IS NULL) = (last_committed_ingress_sequence IS NULL)),
+  FOREIGN KEY(channel_binding_id, workspace_id) REFERENCES channel_bindings(channel_binding_id, workspace_id),
+  FOREIGN KEY(runtime_id, runtime_incarnation_id) REFERENCES runtime_incarnations(runtime_id, runtime_incarnation_id),
+  FOREIGN KEY(channel_binding_id, last_committed_origin_host_epoch, last_committed_ingress_sequence)
+    REFERENCES channel_event_receipts(channel_binding_id, origin_host_epoch, ingress_sequence)
+);
+CREATE INDEX idx_channel_ingress_cursor_runtime ON channel_ingress_cursor_bindings(runtime_id, state, updated_at);
+
+CREATE TRIGGER channel_ingress_cursor_binding_insert_owner
+BEFORE INSERT ON channel_ingress_cursor_bindings
+WHEN NOT EXISTS (
+  SELECT 1 FROM channel_host_assignments a
+  JOIN channel_host_lease_records l ON l.channel_binding_id = a.channel_binding_id
+    AND l.workspace_id = a.workspace_id AND l.runtime_id = a.runtime_id AND l.host_epoch = a.host_epoch
+  JOIN runtimes r ON r.runtime_id = a.runtime_id
+  WHERE a.channel_binding_id = NEW.channel_binding_id AND a.workspace_id = NEW.workspace_id
+    AND a.runtime_id = NEW.runtime_id AND a.host_epoch = NEW.host_epoch AND a.status = 'ACTIVE'
+    AND r.current_incarnation_id = NEW.runtime_incarnation_id
+    AND julianday(l.lease_expires_at) > julianday('now')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'CHANNEL_INGRESS_CURSOR_OWNER_MISMATCH');
+END;
+
+CREATE TRIGGER channel_ingress_cursor_binding_update_guard
+BEFORE UPDATE ON channel_ingress_cursor_bindings
+WHEN NEW.channel_binding_id IS NOT OLD.channel_binding_id
+  OR NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.runtime_id IS NOT OLD.runtime_id
+  OR NEW.host_epoch IS NOT OLD.host_epoch
+  OR NEW.version <> OLD.version + 1
+  OR (NEW.state = 'AVAILABLE' AND NOT EXISTS (
+    SELECT 1 FROM channel_host_assignments a
+    JOIN channel_host_lease_records l ON l.channel_binding_id = a.channel_binding_id
+      AND l.workspace_id = a.workspace_id AND l.runtime_id = a.runtime_id AND l.host_epoch = a.host_epoch
+    JOIN runtimes r ON r.runtime_id = a.runtime_id
+    WHERE a.channel_binding_id = NEW.channel_binding_id AND a.workspace_id = NEW.workspace_id
+      AND a.runtime_id = NEW.runtime_id AND a.host_epoch = NEW.host_epoch AND a.status = 'ACTIVE'
+      AND r.current_incarnation_id = NEW.runtime_incarnation_id
+      AND julianday(l.lease_expires_at) > julianday('now')
+  ))
+BEGIN
+  SELECT RAISE(ABORT, 'INVALID_CHANNEL_INGRESS_CURSOR_BINDING_UPDATE');
+END;
+
+CREATE TRIGGER channel_ingress_cursor_binding_identity_immutable
+BEFORE UPDATE ON channel_ingress_cursor_bindings
+WHEN NEW.channel_binding_id IS NOT OLD.channel_binding_id
+  OR NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.runtime_id IS NOT OLD.runtime_id
+  OR NEW.host_epoch IS NOT OLD.host_epoch
+BEGIN
+  SELECT RAISE(ABORT, 'CHANNEL_INGRESS_CURSOR_BINDING_IDENTITY_IMMUTABLE');
+END;
 
 CREATE TABLE artifacts (
   artifact_id TEXT PRIMARY KEY,
@@ -2086,8 +2286,11 @@ CREATE TABLE user_request_responses (
   response_json TEXT NOT NULL CHECK (json_valid(response_json)),
   response_digest TEXT NOT NULL CHECK (length(response_digest) = 71 AND substr(response_digest, 1, 7) = 'sha256:' AND substr(response_digest, 8) NOT GLOB '*[^0-9a-f]*'),
   responded_by_json TEXT NOT NULL,
+  response_channel_binding_id TEXT,
+  response_provider_event_id TEXT,
   responded_at TEXT NOT NULL,
-  UNIQUE(request_id)
+  UNIQUE(request_id),
+  CHECK ((response_channel_binding_id IS NULL) = (response_provider_event_id IS NULL))
 );
 
 CREATE TRIGGER user_request_response_insert_pending
@@ -2110,8 +2313,9 @@ WHEN EXISTS (
     AND u.interaction_mode = 'EXTERNAL_URL'
 )
 AND (
-  json_type(NEW.response_json) <> 'object'
-  OR json_type(NEW.response_json, '$.action') <> 'text'
+  json_type(NEW.response_json) IS NOT 'object'
+  OR json_type(NEW.response_json, '$.action') IS NOT 'text'
+  OR json_extract(NEW.response_json, '$.action') IS NULL
   OR json_extract(NEW.response_json, '$.action') NOT IN ('accept', 'decline', 'cancel')
   OR (SELECT count(*) FROM json_each(NEW.response_json)) <> 1
 )
@@ -2216,6 +2420,8 @@ WHEN OLD.request_id <> NEW.request_id
   OR OLD.invocation_id <> NEW.invocation_id
   OR OLD.runtime_id <> NEW.runtime_id
   OR OLD.provider_input_key_ciphertext <> NEW.provider_input_key_ciphertext
+  OR OLD.provider_input_payload_ciphertext <> NEW.provider_input_payload_ciphertext
+  OR OLD.encryption_key_version <> NEW.encryption_key_version
   OR OLD.provider_input_key_tag <> NEW.provider_input_key_tag
   OR OLD.input_request_digest <> NEW.input_request_digest
 BEGIN
@@ -2469,15 +2675,148 @@ CREATE TABLE notification_deliveries (
   dedupe_key TEXT NOT NULL,
   source_event_id TEXT NOT NULL REFERENCES domain_events(event_id),
   channel_binding_id TEXT REFERENCES channel_bindings(channel_binding_id),
-  status TEXT NOT NULL CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED', 'SUPPRESSED')),
+  attempt_runtime_id TEXT REFERENCES runtimes(runtime_id),
+  attempt_host_epoch INTEGER CHECK (attempt_host_epoch IS NULL OR attempt_host_epoch > 0),
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED', 'AMBIGUOUS', 'SUPPRESSED')),
   attempt_count INTEGER NOT NULL DEFAULT 0,
   next_attempt_at TEXT,
   last_error_code TEXT,
   created_at TEXT NOT NULL,
   settled_at TEXT,
-  UNIQUE(workspace_id, dedupe_key)
+  UNIQUE(workspace_id, dedupe_key),
+  CHECK ((attempt_runtime_id IS NULL) = (attempt_host_epoch IS NULL))
 );
 CREATE INDEX idx_notification_due ON notification_deliveries(status, next_attempt_at);
+
+-- Exact reply correlation is Runtime-local operational state. Provider message refs are
+-- never included in DomainEvents or replicated to another Runtime.
+CREATE TABLE channel_reply_targets (
+  runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
+  channel_binding_id TEXT NOT NULL REFERENCES channel_bindings(channel_binding_id),
+  host_epoch INTEGER NOT NULL CHECK (host_epoch > 0),
+  provider_message_ref TEXT NOT NULL CHECK (length(provider_message_ref) BETWEEN 1 AND 512),
+  delivery_id TEXT NOT NULL REFERENCES notification_deliveries(delivery_id),
+  user_request_id TEXT NOT NULL REFERENCES user_requests(request_id),
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'CONSUMED', 'CLOSED', 'EXPIRED')),
+  consumed_by_provider_event_id TEXT,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  closed_at TEXT,
+  PRIMARY KEY(runtime_id, channel_binding_id, provider_message_ref),
+  CHECK ((status = 'ACTIVE') = (closed_at IS NULL)),
+  CHECK ((status = 'CONSUMED') = (consumed_by_provider_event_id IS NOT NULL)),
+  CHECK (expires_at > created_at),
+  FOREIGN KEY(channel_binding_id, consumed_by_provider_event_id)
+    REFERENCES channel_event_receipts(channel_binding_id, provider_event_id)
+);
+CREATE INDEX idx_channel_reply_targets_request ON channel_reply_targets(user_request_id, status);
+
+CREATE TRIGGER user_request_channel_response_authorized
+BEFORE INSERT ON user_request_responses
+WHEN NEW.response_channel_binding_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1
+  FROM channel_event_receipts r
+  JOIN channel_bindings b ON b.channel_binding_id = r.channel_binding_id
+  JOIN user_requests u ON u.request_id = NEW.request_id
+  JOIN channel_reply_targets t
+    ON t.channel_binding_id = r.channel_binding_id
+   AND t.user_request_id = u.request_id
+   AND t.status = 'ACTIVE'
+  WHERE r.channel_binding_id = NEW.response_channel_binding_id
+    AND r.provider_event_id = NEW.response_provider_event_id
+    AND r.claim_runtime_id = t.runtime_id
+    AND r.claim_host_epoch = t.host_epoch
+    AND r.state = 'PROCESSING'
+    AND EXISTS (
+      SELECT 1 FROM channel_host_assignments a
+      JOIN channel_host_lease_records l
+        ON l.channel_binding_id = a.channel_binding_id
+       AND l.workspace_id = a.workspace_id
+       AND l.runtime_id = a.runtime_id
+       AND l.host_epoch = a.host_epoch
+      WHERE a.channel_binding_id = t.channel_binding_id
+        AND a.runtime_id = t.runtime_id
+        AND a.host_epoch = t.host_epoch
+        AND a.status = 'ACTIVE'
+        AND julianday(l.lease_expires_at) > julianday('now')
+    )
+    AND b.status = 'ACTIVE'
+    AND b.workspace_id = u.workspace_id
+    AND EXISTS (SELECT 1 FROM json_each(b.allowed_actions_json) a WHERE a.value = 'RESPOND')
+    AND b.identity_ref_json = NEW.responded_by_json
+    AND u.status = 'PENDING'
+    AND u.interaction_mode = 'FORM'
+    AND u.kind <> 'EXTERNAL_AUTHORIZATION'
+    AND (u.expires_at IS NULL OR julianday(u.expires_at) > julianday('now'))
+    AND julianday(t.expires_at) > julianday('now')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'CHANNEL_USER_REQUEST_RESPONSE_NOT_AUTHORIZED');
+END;
+
+CREATE TRIGGER channel_reply_target_matches_delivery
+BEFORE INSERT ON channel_reply_targets
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM notification_deliveries d
+  JOIN domain_events e ON e.event_id = d.source_event_id
+  JOIN channel_bindings b ON b.channel_binding_id = d.channel_binding_id
+  JOIN channel_host_assignments a ON a.channel_binding_id = b.channel_binding_id
+  JOIN channel_host_lease_records l
+    ON l.channel_binding_id = a.channel_binding_id
+   AND l.workspace_id = a.workspace_id
+   AND l.runtime_id = a.runtime_id
+   AND l.host_epoch = a.host_epoch
+  JOIN user_requests u ON u.request_id = NEW.user_request_id
+  WHERE d.delivery_id = NEW.delivery_id
+    AND d.channel_binding_id = NEW.channel_binding_id
+    AND d.attempt_runtime_id = NEW.runtime_id
+    AND d.attempt_host_epoch = NEW.host_epoch
+    AND a.runtime_id = NEW.runtime_id
+    AND a.host_epoch = NEW.host_epoch
+    AND a.status = 'ACTIVE'
+    AND julianday(l.lease_expires_at) > julianday('now')
+    AND d.status = 'SENT'
+    AND e.type = 'user.request.created.v1'
+    AND json_extract(e.payload_json, '$.request_id') = NEW.user_request_id
+    AND b.status = 'ACTIVE'
+    AND EXISTS (SELECT 1 FROM json_each(b.allowed_actions_json) a WHERE a.value = 'RESPOND')
+    AND u.workspace_id = d.workspace_id
+    AND u.status = 'PENDING'
+    AND u.interaction_mode = 'FORM'
+    AND u.kind <> 'EXTERNAL_AUTHORIZATION'
+    AND (u.expires_at IS NULL OR julianday(u.expires_at) > julianday('now'))
+    AND (u.expires_at IS NULL OR NEW.expires_at <= u.expires_at)
+)
+BEGIN
+  SELECT RAISE(ABORT, 'CHANNEL_REPLY_TARGET_DELIVERY_MISMATCH');
+END;
+
+CREATE TRIGGER channel_reply_target_terminal
+BEFORE UPDATE ON channel_reply_targets
+WHEN OLD.status <> 'ACTIVE'
+  OR NEW.status = 'ACTIVE'
+  OR NEW.runtime_id IS NOT OLD.runtime_id
+  OR NEW.channel_binding_id IS NOT OLD.channel_binding_id
+  OR NEW.host_epoch IS NOT OLD.host_epoch
+  OR NEW.provider_message_ref IS NOT OLD.provider_message_ref
+  OR NEW.delivery_id IS NOT OLD.delivery_id
+  OR NEW.user_request_id IS NOT OLD.user_request_id
+  OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.expires_at IS NOT OLD.expires_at
+  OR (NEW.status = 'CONSUMED' AND NOT EXISTS (
+    SELECT 1 FROM channel_event_receipts r
+    JOIN user_request_responses ur
+      ON ur.request_id = NEW.user_request_id
+     AND ur.response_channel_binding_id = NEW.channel_binding_id
+     AND ur.response_provider_event_id = r.provider_event_id
+    WHERE r.channel_binding_id = NEW.channel_binding_id
+      AND r.provider_event_id = NEW.consumed_by_provider_event_id
+      AND r.state = 'PROCESSING'
+  ))
+BEGIN
+  SELECT RAISE(ABORT, 'INVALID_CHANNEL_REPLY_TARGET_TRANSITION');
+END;
 
 CREATE TABLE skill_proposals (
   skill_proposal_id TEXT PRIMARY KEY,

@@ -1725,24 +1725,63 @@
             "minLength": 1
           },
           "task_spec_revision": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1
           }
         },
         "allOf": [
           {
             "if": {
-              "properties": {"scope": {"properties": {"kind": {"const": "CONVERSATION"}}}},
-              "required": ["scope"]
+              "properties": {
+                "scope": {
+                  "properties": {
+                    "kind": {
+                      "const": "CONVERSATION"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "scope"
+              ]
             },
-            "then": {"properties": {"task_spec_revision": {"type": "null"}}}
+            "then": {
+              "properties": {
+                "task_spec_revision": {
+                  "type": "null"
+                }
+              }
+            }
           },
           {
             "if": {
-              "properties": {"scope": {"properties": {"kind": {"enum": ["TASK_PLANNING", "ATTEMPT_EXECUTION"]}}}},
-              "required": ["scope"]
+              "properties": {
+                "scope": {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "TASK_PLANNING",
+                        "ATTEMPT_EXECUTION"
+                      ]
+                    }
+                  }
+                }
+              },
+              "required": [
+                "scope"
+              ]
             },
-            "then": {"properties": {"task_spec_revision": {"type": "integer", "minimum": 1}}}
+            "then": {
+              "properties": {
+                "task_spec_revision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
           }
         ],
         "additionalProperties": false
@@ -1793,24 +1832,63 @@
             "minLength": 1
           },
           "task_spec_revision": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1
           }
         },
         "allOf": [
           {
             "if": {
-              "properties": {"scope": {"properties": {"kind": {"const": "CONVERSATION"}}}},
-              "required": ["scope"]
+              "properties": {
+                "scope": {
+                  "properties": {
+                    "kind": {
+                      "const": "CONVERSATION"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "scope"
+              ]
             },
-            "then": {"properties": {"task_spec_revision": {"type": "null"}}}
+            "then": {
+              "properties": {
+                "task_spec_revision": {
+                  "type": "null"
+                }
+              }
+            }
           },
           {
             "if": {
-              "properties": {"scope": {"properties": {"kind": {"enum": ["TASK_PLANNING", "ATTEMPT_EXECUTION"]}}}},
-              "required": ["scope"]
+              "properties": {
+                "scope": {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "TASK_PLANNING",
+                        "ATTEMPT_EXECUTION"
+                      ]
+                    }
+                  }
+                }
+              },
+              "required": [
+                "scope"
+              ]
             },
-            "then": {"properties": {"task_spec_revision": {"type": "integer", "minimum": 1}}}
+            "then": {
+              "properties": {
+                "task_spec_revision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
           }
         ],
         "additionalProperties": false
@@ -1861,24 +1939,63 @@
             "minLength": 1
           },
           "task_spec_revision": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1
           }
         },
         "allOf": [
           {
             "if": {
-              "properties": {"scope": {"properties": {"kind": {"const": "CONVERSATION"}}}},
-              "required": ["scope"]
+              "properties": {
+                "scope": {
+                  "properties": {
+                    "kind": {
+                      "const": "CONVERSATION"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "scope"
+              ]
             },
-            "then": {"properties": {"task_spec_revision": {"type": "null"}}}
+            "then": {
+              "properties": {
+                "task_spec_revision": {
+                  "type": "null"
+                }
+              }
+            }
           },
           {
             "if": {
-              "properties": {"scope": {"properties": {"kind": {"enum": ["TASK_PLANNING", "ATTEMPT_EXECUTION"]}}}},
-              "required": ["scope"]
+              "properties": {
+                "scope": {
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "TASK_PLANNING",
+                        "ATTEMPT_EXECUTION"
+                      ]
+                    }
+                  }
+                }
+              },
+              "required": [
+                "scope"
+              ]
             },
-            "then": {"properties": {"task_spec_revision": {"type": "integer", "minimum": 1}}}
+            "then": {
+              "properties": {
+                "task_spec_revision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
           }
         ],
         "additionalProperties": false
@@ -2579,7 +2696,14 @@
           },
           "provider_task_status": {
             "type": "string",
-            "enum": ["WORKING", "INPUT_REQUIRED", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]
+            "enum": [
+              "WORKING",
+              "INPUT_REQUIRED",
+              "COMPLETED",
+              "FAILED",
+              "CANCELLED",
+              "UNKNOWN"
+            ]
           },
           "provider_task_created_at": {
             "type": "string",
@@ -2623,7 +2747,14 @@
           },
           "provider_task_status": {
             "type": "string",
-            "enum": ["WORKING", "INPUT_REQUIRED", "COMPLETED", "FAILED", "CANCELLED", "UNKNOWN"]
+            "enum": [
+              "WORKING",
+              "INPUT_REQUIRED",
+              "COMPLETED",
+              "FAILED",
+              "CANCELLED",
+              "UNKNOWN"
+            ]
           },
           "provider_task_expires_at": {
             "type": "string",
@@ -2674,11 +2805,29 @@
           },
           "from": {
             "type": "string",
-            "enum": ["OPEN", "RUNNING", "WAITING_USER", "WAITING_DEPENDENCY", "COMPLETED", "FAILED", "CANCEL_REQUESTED", "CANCELLED"]
+            "enum": [
+              "OPEN",
+              "RUNNING",
+              "WAITING_USER",
+              "WAITING_DEPENDENCY",
+              "COMPLETED",
+              "FAILED",
+              "CANCEL_REQUESTED",
+              "CANCELLED"
+            ]
           },
           "to": {
             "type": "string",
-            "enum": ["OPEN", "RUNNING", "WAITING_USER", "WAITING_DEPENDENCY", "COMPLETED", "FAILED", "CANCEL_REQUESTED", "CANCELLED"]
+            "enum": [
+              "OPEN",
+              "RUNNING",
+              "WAITING_USER",
+              "WAITING_DEPENDENCY",
+              "COMPLETED",
+              "FAILED",
+              "CANCEL_REQUESTED",
+              "CANCELLED"
+            ]
           },
           "result_refs": {
             "type": "array",
@@ -3988,25 +4137,94 @@
         "type": "object",
         "oneOf": [
           {
-            "required": ["conversation_id", "conversation_turn_id"],
+            "required": [
+              "conversation_id",
+              "conversation_turn_id"
+            ],
             "properties": {
-              "conversation_id": {"type": "string", "minLength": 1},
-              "conversation_turn_id": {"type": "string", "minLength": 1}
+              "conversation_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "conversation_turn_id": {
+                "type": "string",
+                "minLength": 1
+              }
             },
-            "not": {"anyOf": [{"required": ["task_id"]}, {"required": ["attempt_id"]}]}
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "task_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "attempt_id"
+                  ]
+                }
+              ]
+            }
           },
           {
-            "required": ["task_id"],
-            "properties": {"task_id": {"type": "string", "minLength": 1}},
-            "not": {"anyOf": [{"required": ["conversation_id"]}, {"required": ["conversation_turn_id"]}, {"required": ["attempt_id"]}]}
+            "required": [
+              "task_id"
+            ],
+            "properties": {
+              "task_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "conversation_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "conversation_turn_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "attempt_id"
+                  ]
+                }
+              ]
+            }
           },
           {
-            "required": ["task_id", "attempt_id"],
+            "required": [
+              "task_id",
+              "attempt_id"
+            ],
             "properties": {
-              "task_id": {"type": "string", "minLength": 1},
-              "attempt_id": {"type": "string", "minLength": 1}
+              "task_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "attempt_id": {
+                "type": "string",
+                "minLength": 1
+              }
             },
-            "not": {"anyOf": [{"required": ["conversation_id"]}, {"required": ["conversation_turn_id"]}]}
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "conversation_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "conversation_turn_id"
+                  ]
+                }
+              ]
+            }
           }
         ],
         "required": [
@@ -4056,7 +4274,10 @@
           },
           "interaction_mode": {
             "type": "string",
-            "enum": ["FORM", "EXTERNAL_URL"]
+            "enum": [
+              "FORM",
+              "EXTERNAL_URL"
+            ]
           },
           "response_schema_digest": {
             "type": "string",
@@ -4074,15 +4295,47 @@
         },
         "allOf": [
           {
-            "if": {"properties": {"interaction_mode": {"const": "EXTERNAL_URL"}}, "required": ["interaction_mode"]},
+            "if": {
+              "properties": {
+                "interaction_mode": {
+                  "const": "EXTERNAL_URL"
+                }
+              },
+              "required": [
+                "interaction_mode"
+              ]
+            },
             "then": {
-              "properties": {"kind": {"const": "EXTERNAL_AUTHORIZATION"}},
-              "not": {"required": ["response_schema_digest"]}
+              "properties": {
+                "kind": {
+                  "const": "EXTERNAL_AUTHORIZATION"
+                }
+              },
+              "not": {
+                "required": [
+                  "response_schema_digest"
+                ]
+              }
             }
           },
           {
-            "if": {"properties": {"kind": {"const": "EXTERNAL_AUTHORIZATION"}}, "required": ["kind"]},
-            "then": {"properties": {"interaction_mode": {"const": "EXTERNAL_URL"}}}
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "EXTERNAL_AUTHORIZATION"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "interaction_mode": {
+                  "const": "EXTERNAL_URL"
+                }
+              }
+            }
           }
         ],
         "additionalProperties": false
@@ -4103,11 +4356,16 @@
           },
           "from": {
             "type": "string",
-            "minLength": 1
+            "const": "PENDING"
           },
           "to": {
             "type": "string",
-            "minLength": 1
+            "enum": [
+              "ANSWERED",
+              "DISMISSED",
+              "EXPIRED",
+              "CANCELLED"
+            ]
           },
           "resolved_by": {
             "$ref": "#/$defs/principal_ref"
@@ -4117,11 +4375,88 @@
             "minLength": 1,
             "pattern": "^sha256:[a-f0-9]{64}$"
           },
+          "channel_binding_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "provider_event_id": {
+            "type": "string",
+            "minLength": 1
+          },
           "aggregate_version": {
             "type": "integer",
             "minimum": 1
           }
         },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "to": {
+                  "const": "ANSWERED"
+                }
+              },
+              "required": [
+                "to"
+              ]
+            },
+            "then": {
+              "required": [
+                "response_digest"
+              ]
+            },
+            "else": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "response_digest"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "channel_binding_id"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "provider_event_id"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "channel_binding_id"
+              ]
+            },
+            "then": {
+              "required": [
+                "provider_event_id"
+              ],
+              "properties": {
+                "to": {
+                  "const": "ANSWERED"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "provider_event_id"
+              ]
+            },
+            "then": {
+              "required": [
+                "channel_binding_id"
+              ]
+            }
+          }
+        ],
         "additionalProperties": false
       },
       "notification_preference_changed": {
@@ -4208,9 +4543,25 @@
           "reason_code": {
             "type": "string",
             "minLength": 1
+          },
+          "attempt_runtime_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attempt_host_epoch": {
+            "type": "integer",
+            "minimum": 1
           }
         },
-        "additionalProperties": false
+        "additionalProperties": false,
+        "dependentRequired": {
+          "attempt_runtime_id": [
+            "attempt_host_epoch"
+          ],
+          "attempt_host_epoch": [
+            "attempt_runtime_id"
+          ]
+        }
       },
       "skill_proposal_created": {
         "type": "object",
@@ -4723,6 +5074,7 @@
               "enum": [
                 "VIEW",
                 "STEER",
+                "RESPOND",
                 "APPROVE_SAFE",
                 "APPROVE_SENSITIVE"
               ]
@@ -4735,9 +5087,12 @@
         "type": "object",
         "required": [
           "channel_binding_id",
+          "origin_runtime_id",
           "provider_event_id",
           "event_kind",
-          "payload_digest"
+          "payload_digest",
+          "origin_host_epoch",
+          "ingress_sequence"
         ],
         "properties": {
           "channel_binding_id": {
@@ -4760,6 +5115,18 @@
             "type": "string",
             "minLength": 1,
             "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "origin_runtime_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "origin_host_epoch": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "ingress_sequence": {
+            "type": "integer",
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -4768,10 +5135,12 @@
         "type": "object",
         "required": [
           "channel_binding_id",
+          "claim_runtime_id",
           "provider_event_id",
           "from",
           "to",
-          "claim_epoch"
+          "claim_epoch",
+          "claim_host_epoch"
         ],
         "properties": {
           "channel_binding_id": {
@@ -4784,19 +5153,27 @@
           },
           "from": {
             "type": "string",
-            "minLength": 1
+            "enum": ["RECEIVED", "PROCESSING"]
           },
           "to": {
             "type": "string",
-            "minLength": 1
+            "enum": ["PROCESSING", "ACCEPTED", "REJECTED", "FAILED"]
           },
           "claim_epoch": {
             "type": "integer",
-            "minimum": 0
+            "minimum": 1
           },
           "claim_expires_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "claim_runtime_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claim_host_epoch": {
+            "type": "integer",
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -4806,7 +5183,9 @@
         "required": [
           "channel_binding_id",
           "delivery_id",
-          "state"
+          "state",
+          "runtime_id",
+          "host_epoch"
         ],
         "properties": {
           "channel_binding_id": {
@@ -4829,6 +5208,14 @@
             "type": "string",
             "minLength": 1,
             "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "runtime_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "host_epoch": {
+            "type": "integer",
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -5320,6 +5707,7 @@
           "routine_id",
           "current_revision",
           "status",
+          "ingress_continuity",
           "aggregate_version"
         ],
         "properties": {
@@ -5556,6 +5944,74 @@
           }
         },
         "additionalProperties": false
+      },
+      "channel_host_assignment_changed": {
+        "type": "object",
+        "required": [
+          "channel_binding_id",
+          "runtime_id",
+          "host_epoch",
+          "status",
+          "ingress_continuity",
+          "aggregate_version"
+        ],
+        "properties": {
+          "channel_binding_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from_runtime_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtime_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "host_epoch": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DRAINING"
+            ]
+          },
+          "ingress_continuity": {
+            "type": "string",
+            "enum": [
+              "CONTINUOUS",
+              "GAP_ACCEPTED"
+            ]
+          },
+          "ingress_gap_since": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {"ingress_continuity": {"const": "GAP_ACCEPTED"}},
+              "required": ["ingress_continuity"]
+            },
+            "then": {"required": ["ingress_gap_since"]}
+          },
+          {
+            "if": {
+              "properties": {"ingress_continuity": {"const": "CONTINUOUS"}},
+              "required": ["ingress_continuity"]
+            },
+            "then": {"not": {"required": ["ingress_gap_since"]}}
+          }
+        ],
+        "additionalProperties": false
       }
     },
     "provenance_transformation": {
@@ -5721,6 +6177,8 @@
         "RATE_LIMITED",
         "INVOCATION_NOT_FOUND",
         "INVOCATION_AMBIGUOUS",
+        "PROVIDER_INPUT_UNSUPPORTED",
+        "SENSITIVE_INPUT_UNSUPPORTED",
         "USER_REQUEST_NOT_FOUND",
         "USER_REQUEST_EXPIRED",
         "APPROVAL_ALREADY_CONSUMED",
@@ -7522,6 +7980,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/channel_binding_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "channel.host.assignment.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/channel_host_assignment_changed"
           }
         }
       }

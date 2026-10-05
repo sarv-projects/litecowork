@@ -243,6 +243,14 @@ implement the removed experimental `tasks/result` API or infer an MCP task from 
 arbitrary provider job ID. The 2026-07-28 extension page is marked Draft at review time,
 so implementations must negotiate and version the adapter.
 
+The input mapping follows the published MCP contract: form elicitation is described as
+non-sensitive, URL elicitation is out-of-band, and a URL-mode response omits submitted
+content. MCP Tasks says embedded requests retain the same trust and user-facing semantics
+as their standalone equivalents. LiteCowork therefore does not treat all
+`input_required` payloads as interchangeable JSON questions. See the [2026-07-28 MCP
+schema](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2026-07-28/schema.json)
+and the [MCP Tasks extension specification](https://tasks.extensions.modelcontextprotocol.io/specification/draft/tasks).
+
 ### User input and credential boundary
 
 MCP form elicitation is for non-sensitive information. It may become a replicated,

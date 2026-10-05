@@ -107,6 +107,18 @@ below refer to that proposal; adoption is constrained by current domain contract
 | 43–44 | Control-plane framing adopted in ARCHITECTURE; “no competitor combines all” rejected as unproven. Supervisor ownership is refined to preserve LitePSM independence. |
 | 45 | Cross-contract coverage tracked in COVERAGE-MATRIX, typed schema candidates, flows and conformance scenarios; coverage is not a claim of implemented runtime behavior. |
 
+## Follow-on channel ingress audit
+
+A follow-on audit after the 45-item reconciliation found missing operational contracts
+around ChannelHost movement. The current docs now distinguish immutable receipt origin
+from reclaimable claim ownership, fence claims by host epoch, sequence provider ingress,
+keep opaque cursors Runtime-local and incarnation-scoped, require a durability/replication
+barrier before advancing them, and make a possible observation gap explicit and
+owner-confirmed. These additions are cross-referenced in `CHANNELS.md`, `DATA-MODEL.md`,
+`RUNTIME-LIFECYCLE.md`, `STATE-MACHINES.md`, `FLOWS.md`, `API.md`, `SERVICES.md`,
+`STORAGE.md`, `TESTING.md`, `EVENTS.md`, and the versioned schema candidates. This is a
+contract specification, not evidence that a runtime implementation exists.
+
 LitePSM integration is intentionally limited to its recorded selected service. Its MCP,
 plugin, package, authentication and supervision wire contracts remain deferred until the
 actual service contract is provided or independently verified with user authorization.

@@ -156,6 +156,13 @@ AssuranceLevel =
 
 A weak email identity may start low-risk Tasks and receive results but may not approve credential disclosure, destructive operations or external publication.
 
+Channel `RESPOND` requires an active, authenticated ChannelBinding with at least
+`STEER_SAFE` assurance and the owner-granted `RESPOND` action. It can submit only the
+bounded non-sensitive answer to one exact pending FORM UserRequest. It conveys no approval,
+Effect, capability-grant, or SecretLease authority. Channel sender identity must resolve to
+the Workspace owner Principal in v1; group/member delegation is not inferred from a
+provider account or thread.
+
 ## Package/capability trust
 
 Track:

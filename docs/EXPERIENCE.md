@@ -58,7 +58,7 @@ switches the AgentBinding or its model.
 - **Load a server Skill:** show the host-assigned server identity, exact Skill URI, manifest digest, and requested authority. Approval applies to that exact content set; a changed manifest pauses its use and requests approval again. A dynamic Skill is labeled unsupported in v1, and a nested Skill requires its own approval.
 - **Approve an action:** present exact action, target, scope, risk, and required assurance; stale/expired approvals require a fresh request rather than replaying approval.
 - **Answer a provider question:** render bounded non-sensitive form requests as ordinary UserRequests; clearly state that passwords, API keys, recovery codes, and tokens must not be entered. Suspicious credential fields are rejected with a provider-connection action.
-- **Continue provider sign-in:** show the capability publisher and verified HTTPS origin, open the provider page in the system browser only after a user click, then offer Done/Decline/Cancel. Never embed the page or display its state-bearing URL in history; the response sent back is action-only.
+- **Continue provider sign-in:** show the capability publisher and parsed HTTPS destination origin, explain that the external site receives anything entered there, open the provider page in the system browser only after a user click, then offer Done/Decline/Cancel. Never embed the page or store its state-bearing URL in LiteCowork history; the system browser may retain its normal browsing history. The response sent back is action-only.
 - **Change lead agent:** choose an eligible Workspace binding, submit a versioned request, show existing Attempts draining under their pinned identity, and show the new lead only after the assignment event.
 - **Create or edit an Automation:** choose an active Routine revision, preview every trigger/timezone, TriggerHost, overlap/retry behavior, execution placement, dependencies, and notifications; save edits as a new immutable revision. Each occurrence detail displays the Routine and Automation revisions it pinned.
 - **Pair a Runtime:** explain its role and advertised local resources, issue a short-lived one-use pairing action, and show it as available only after identity verification.
@@ -356,7 +356,7 @@ Provider `input_required` projection distinguishes a normal non-sensitive Form f
 External sign-in handoff. The Form UI shows a persistent “Do not enter passwords or
 credentials here” note. Sensitive-looking field definitions and unsupported embedded MCP
 methods stop with a typed blocker and a Connect/setup action. External sign-in displays
-publisher identity and verified origin before opening the system browser; after returning,
+publisher identity and parsed destination origin before opening the system browser; after returning,
 the user explicitly confirms completion. A successful click is not proof of authentication;
 the provider task must confirm it.
 
@@ -414,7 +414,7 @@ use `(task_id, blocker_id)`; resolving the underlying record removes its active 
 Counts include authorized unresolved items only, not notification-delivery retries or
 nonactionable progress. Runtime-offline items link to device/dependency status; they
 cannot imply that an approval wakes a machine. Cached counts are explicitly stale.
- UserRequests contain originating
+UserRequests contain originating
 Conversation/Task/Attempt/session/invocation provenance, typed response schema or choices,
 status, and expiry. A Task-originated request may have no Conversation and still appears
 in the persistent Home “Needs you” inbox and its Task detail. A UserRequest response never
@@ -422,6 +422,18 @@ resolves an Approval; approval goes through TrustService's explicit assurance an
 path. Notifications are preference-driven,
 deduplicated deliveries with bounded retries and channel fallback. A sent notification is
 only a transport acknowledgement and never a success/completion state.
+
+When a channel has owner-granted `RESPOND` and supports exact reply-to references, a single
+eligible FORM question may be answered by replying to its delivered prompt. Otherwise the
+notification links to the Operator inbox. The channel never answers an implicitly selected
+“latest” request, an Approval, or provider sign-in. Ambiguous delivery is shown as
+unconfirmed and is not resent until reconciled.
+
+Channel settings show the assigned Runtime and ingress status. During cursor recovery the
+status reads “Reconnecting; checking missed messages” and the channel does not process new
+ingress. A host move with confirmed replay/transfer shows continuous service; a move that
+the owner explicitly accepts without continuity shows a persistent “Possible message gap
+since [time]” history entry. A later rescan never changes that historical statement.
 
 ## Cross-device continuity
 

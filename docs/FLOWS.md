@@ -417,16 +417,20 @@ Actors: User, provider-owned setup surface/ChannelAdapter, ConnectionService, Ch
 3. ConnectionService records the Connection state. For a human-facing channel,
    ChannelService records the ChannelBinding using provider-attested identity and
    assurance with `allowed_actions = []`.
-4. The owner reviews the binding and explicitly sets allowed actions. TrustService
+4. RuntimeMesh assigns the binding to one eligible ChannelHost Runtime and issues a
+   bounded host lease. The selected host must have the channel adapter and authorized
+   SecretRef placement; the Operator sees the Runtime and availability.
+5. The owner reviews the binding and explicitly sets allowed actions. TrustService
    authorizes the change; an authority increase may require Approval. The versioned
    binding update and `channel.binding.changed.v1` event commit atomically.
-5. On disconnect, ConnectionService blocks new capability use through that Connection;
+6. On disconnect, ConnectionService blocks new capability use through that Connection;
    any linked ChannelBinding is non-authorizing even before its status projection
    updates. Binding revocation separately blocks inbound commands. Existing Conversations,
    Tasks, Artifacts, Effects, and audit history remain readable; no external account or
    credential is deleted.
 
-Events: `connection.state.changed.v1`, `channel.binding.changed.v1`.
+Events: `connection.state.changed.v1`, `channel.binding.changed.v1`,
+`channel.host.assignment.changed.v1`.
 
 UI: show provider status, authenticated identity, assurance level, and granted actions.
 Never show a binding as authorized while its allowed-action set is empty or its status
@@ -671,14 +675,17 @@ Actors: ProjectionService, NotificationService, ChannelAdapter, User.
 2. NotificationService creates one deduplicated NotificationDelivery with a stable key.
 3. ChannelAdapter attempts delivery under rate limit/backoff; retries reuse the same
    logical delivery identity where provider semantics allow.
-4. `SENT` means provider acknowledgement only. Task/Approval state is read independently
-   from the domain projection.
+4. A known failure may retry under the bounded policy. A timeout after possible provider
+   acceptance becomes `AMBIGUOUS`; NotificationService reconciles before retry and leaves
+   it open if delivery cannot be determined. `SENT` means provider acknowledgement only.
+   Task/Approval state is read independently from the domain projection.
 
 Events: `notification.preference.changed.v1`, `notification.delivery.changed.v1`, and
 the source domain event.
 
 Failure behavior: duplicate source events cannot create duplicate logical deliveries;
-delivery exhaustion becomes visible without altering Task completion.
+delivery exhaustion or unresolved ambiguity becomes visible without altering Task
+completion. Ambiguous notifications are not resent automatically.
 
 UI: distinguish “notification delivered” from “Task completed”; show mute/quiet-hours and
 channel fallback state.
@@ -759,6 +766,7 @@ UI: show last verified backup time, restore point, and any missing artifact/effe
 | F42 | Read-only preview, accepted drain and eventual stop observation | Closing UI differs from stopping daemon; acceptance differs from stopped |
 | F43 | Workspace-owned Environment lifecycle, budget and provider identity | Persistent compute remains visible/costed; every Task use gets fresh authority |
 | F44 | Deduplicated Needs You projection | Inbox actions remain on the owning record; delivery status is not Task status |
+| F45 | Exact channel reply to one pending FORM request | No implicit latest-request selection; no Approval or external-auth response through channel |
 
 
 ## F37 — Runtime boot and incarnation recovery
@@ -926,6 +934,87 @@ projections; authenticated owner of the selected Workspace.
 **Failure/UI/postcondition:** offline cached counts are labeled stale. A failed/retried
 notification does not duplicate an inbox item, and responding to a UserRequest never
 resolves an Approval.
+
+## F45 — Reply to one pending UserRequest from a channel
+
+**Actors/preconditions:** Authenticated ChannelAdapter and ChannelBinding, owner with
+`RESPOND`, NotificationService, ChannelService, ConversationService, and one pending,
+unexpired FORM UserRequest with a channel-compatible response schema.
+
+1. NotificationService sends one request-specific prompt through an adapter that
+   supports provider reply references, pinning the assigned Runtime and host epoch for
+   that attempt. After acknowledged delivery on the still-current assignment,
+   ChannelService stores
+   a Runtime-local `ChannelReplyTarget` mapping from
+   `(channel_binding_id, provider_message_ref)` to that exact
+   UserRequest. No target is created for a grouped inbox digest, Approval, EXTERNAL_URL,
+   unsupported schema, failed send, or ambiguous delivery.
+2. On inbound reply, ChannelService deduplicates and claims the ChannelEventReceipt. It
+   requires the authenticated sender Principal to match the binding identity, active
+   binding with current `RESPOND`, sufficient assurance, exact active `reply_to` target,
+   same Workspace, pending/unexpired request, and compatible schema. Plain text without
+   an exact reply-to does not select a request.
+3. For a bounded root string schema, use the bounded text as the string value. For a
+   choice request, require one unique exact choice ID or label and use its pinned value.
+   Reject attachments, nested/multi-field schemas, external sign-in, Approval actions,
+   invalid values, and suspicious credential-like content. Run the same schema and
+   sensitive-input checks as the Operator response path.
+4. In one owning-Store transaction, append immutable UserRequestResponse with channel
+   provenance, resolve the request, consume the matched target with this exact provider
+   event ID, close sibling targets, accept the ChannelEventReceipt, and append
+   `user.request.resolved.v1` with the channel source pair. Conversation/Task continuation
+   follows the normal response path and provider acceptance rules.
+5. An invalid response rejects the receipt but leaves the target and UserRequest pending
+   so a corrected reply can be sent. A response racing expiry, revocation, another
+   response, or Task cancellation loses the serialized state transition and cannot
+   continue work. A target mismatch never falls through to `STEER` in the same command.
+
+**Failure/UI/postcondition:** Show a safe, non-sensitive correction prompt for rejected
+schema input; do not reveal whether another Workspace has a matching target. External
+sign-in and Approval notices link to the authenticated Operator surface. A channel reply
+cannot create a grant, approve an Effect, or become a generic ConversationMessage.
+
+## F46 — Reassign a channel host Runtime
+
+**Actors/preconditions:** Workspace owner, ChannelService, RuntimeMesh, source and target
+Runtimes, channel provider; active ChannelBinding and eligible target offer.
+
+1. Show current Runtime, target adapter readiness, SecretRef availability, provider
+   connection state, and any open inbound claims, outbound Effects, or reply targets.
+   Preflight target credentials, provider compatibility, and whether ingress can resume
+   losslessly from the latest Hub-replicated receipt. The versioned request must set
+   `accept_ingress_gap = true` if provider cursor transfer/replay cannot prove continuity;
+   otherwise reject it before changing assignment.
+2. Put the source assignment into `DRAINING`: stop new receipt claims and outbound sends,
+   allow in-flight reads to settle, and reconcile outbound sends that may be ambiguous.
+3. Settle/flush source receipts to the Workspace Hub before releasing the lease, or wait
+   for authoritative expiry plus clock-skew margin if the source is unavailable. A heartbeat
+   loss alone never grants the target ownership. An unreplicated receipt prevents a
+   continuity-safe move unless the owner explicitly accepts a possible gap.
+4. RuntimeMesh atomically increments `host_epoch`, commits the target Runtime assignment,
+   issues a new bounded host lease over authenticated Mesh control, and appends
+   `channel.host.assignment.changed.v1`. The target starts/attaches only its channel
+   adapter when this assignment is active and its provider/secret checks pass.
+5. The target validates/imports its provider cursor or replays from the receipt with the
+   largest `(origin_host_epoch, ingress_sequence)` before it acknowledges or advances
+   provider ingress. Old receipt claims and ChannelReplyTargets fail the current epoch
+   check immediately.
+   An identical provider redelivery may be reclaimed by the new host with a larger claim
+   epoch; the immutable origin host remains in receipt history. The old Runtime closes
+   target rows when it reconnects. The target Runtime does not copy provider message
+   references or resend existing notifications; replies to old prompts route to the
+   Operator inbox.
+
+**Failure/UI/postcondition:** If source effects, receipt outcomes, replication receipts, or
+ingress cursor position remain ambiguous, reassignment waits for reconciliation or an owner
+decision. An adapter without stable event IDs and a resumable cursor/replay window cannot
+be moved automatically; explicit owner confirmation records `GAP_ACCEPTED`, and the UI
+identifies the potential observation gap. A target preflight failure leaves the old
+assignment unchanged. If a later failure occurs while draining, the source may
+resume only if its lease remains valid and no higher epoch has committed; otherwise the
+channel is visibly unavailable until another eligible host is assigned. Stale source events
+cannot create messages, answer UserRequests, or trigger Tasks. The UI shows the actual host
+and handoff state; changing host does not change binding permissions.
 
 ## Shared flow invariants
 

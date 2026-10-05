@@ -1438,6 +1438,29 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ChannelBinding'}
         default: {$ref: '#/components/responses/Error'}
+  /channel-bindings/{channelBindingId}/host-assignment:
+    post:
+      tags: [channels]
+      operationId: reassignChannelHost
+      parameters:
+      - name: channelBindingId
+        in: path
+        required: true
+        schema: {type: string}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReassignChannelHostRequest'}
+      responses:
+        '200':
+          description: Channel host moved after provider, credential-placement, lease, epoch, and ingress-continuity checks
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ChannelHostAssignment'}
+        default: {$ref: '#/components/responses/Error'}
   /discover/search:
     get:
       tags: [discover]
@@ -1836,11 +1859,10 @@ paths:
         in: path
         required: true
         schema: {type: string}
-      - {$ref: '#/components/parameters/IdempotencyKey'}
       - {$ref: '#/components/parameters/IfMatch'}
       responses:
         '200':
-          description: Confidential one-time browser handoff data
+          description: Confidential transient browser handoff data returned only for this explicit action
           headers:
             Cache-Control:
               required: true
@@ -2113,7 +2135,7 @@ paths:
       parameters:
       - name: status
         in: query
-        schema: {type: string, enum: [PENDING, SENDING, SENT, FAILED, SUPPRESSED]}
+        schema: {type: string, enum: [PENDING, SENDING, SENT, FAILED, AMBIGUOUS, SUPPRESSED]}
       - {$ref: '#/components/parameters/Cursor'}
       - {$ref: '#/components/parameters/Limit'}
       responses:
@@ -2732,7 +2754,7 @@ components:
         next_cursor: {type: [string, 'null']}
     ChannelBinding:
       type: object
-      required: [channel_binding_id, workspace_id, connection_id, provider_ref, external_account_ref, identity_ref, assurance_level, allowed_actions, status, created_at, updated_at, version]
+      required: [channel_binding_id, workspace_id, connection_id, provider_ref, external_account_ref, identity_ref, assurance_level, allowed_actions, status, host_assignment, created_at, updated_at, version]
       properties:
         channel_binding_id: {type: string}
         workspace_id: {type: string}
@@ -2744,11 +2766,51 @@ components:
         allowed_actions:
           type: array
           uniqueItems: true
-          items: {type: string, enum: [VIEW, STEER, APPROVE_SAFE, APPROVE_SENSITIVE]}
+          items: {type: string, enum: [VIEW, STEER, RESPOND, APPROVE_SAFE, APPROVE_SENSITIVE]}
         status: {type: string, enum: [ACTIVE, DEGRADED, REVOKED]}
+        host_assignment: {$ref: '#/components/schemas/ChannelHostAssignment'}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
+    ChannelHostAssignment:
+      type: object
+      required: [channel_binding_id, runtime_id, host_epoch, lease_expires_at, status, ingress_continuity, assigned_at, version]
+      properties:
+        channel_binding_id: {type: string}
+        runtime_id: {type: string}
+        host_epoch: {type: integer, minimum: 1}
+        lease_expires_at: {type: string, format: date-time}
+        status: {type: string, enum: [ACTIVE, DRAINING]}
+        ingress_continuity: {type: string, enum: [CONTINUOUS, GAP_ACCEPTED]}
+        ingress_gap_since: {type: [string, 'null'], format: date-time}
+        assigned_at: {type: string, format: date-time}
+        version: {type: integer, minimum: 1}
+      allOf:
+      - if:
+          properties:
+            ingress_continuity: {const: GAP_ACCEPTED}
+          required: [ingress_continuity]
+        then:
+          required: [ingress_gap_since]
+          properties:
+            ingress_gap_since: {type: string, format: date-time}
+      - if:
+          properties:
+            ingress_continuity: {const: CONTINUOUS}
+          required: [ingress_continuity]
+        then:
+          properties:
+            ingress_gap_since: {type: 'null'}
+    ReassignChannelHostRequest:
+      type: object
+      additionalProperties: false
+      required: [runtime_id]
+      properties:
+        runtime_id: {type: string}
+        accept_ingress_gap:
+          type: boolean
+          default: false
+          description: Required as true to confirm a host move when provider cursor transfer/replay cannot prove continuity.
     ChannelBindingPage:
       type: object
       required: [items]
@@ -2765,7 +2827,7 @@ components:
         allowed_actions:
           type: array
           uniqueItems: true
-          items: {type: string, enum: [VIEW, STEER, APPROVE_SAFE, APPROVE_SENSITIVE]}
+          items: {type: string, enum: [VIEW, STEER, RESPOND, APPROVE_SAFE, APPROVE_SENSITIVE]}
     JsonObject: {type: object, additionalProperties: true}
     PlacementPreference:
       oneOf:
@@ -4718,18 +4780,26 @@ components:
         request_id: {type: string}
         response_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
         responded_by: {$ref: '#/components/schemas/PrincipalRef'}
+        response_channel_ref:
+          oneOf:
+          - type: 'null'
+          - type: object
+            additionalProperties: false
+            required: [channel_binding_id, provider_event_id]
+            properties:
+              channel_binding_id: {type: string}
+              provider_event_id: {type: string, minLength: 1}
         responded_at: {type: string, format: date-time}
     ExternalAuthHandoff:
       type: object
       additionalProperties: false
-      required: [url, verified_origin, expires_at]
+      required: [url, display_origin]
       properties:
         url:
           type: string
           format: uri
           description: Confidential Runtime-private URL; clients must open externally and not persist or log it.
-        verified_origin: {type: string, format: uri}
-        expires_at: {type: string, format: date-time}
+        display_origin: {type: string, format: uri, description: Parsed destination origin; TLS identity is confirmed by the system browser.}
     EnvironmentControlLeaseView:
       type: object
       additionalProperties: false
@@ -4927,7 +4997,9 @@ components:
         dedupe_key: {type: string}
         source_event_id: {type: string}
         channel_binding_id: {type: [string, 'null']}
-        status: {type: string, enum: [PENDING, SENDING, SENT, FAILED, SUPPRESSED]}
+        attempt_runtime_id: {type: [string, 'null']}
+        attempt_host_epoch: {type: [integer, 'null'], minimum: 1}
+        status: {type: string, enum: [PENDING, SENDING, SENT, FAILED, AMBIGUOUS, SUPPRESSED]}
         attempt_count: {type: integer, minimum: 0}
         next_attempt_at: {type: [string, 'null'], format: date-time}
         last_error_code:

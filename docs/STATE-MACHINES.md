@@ -660,9 +660,16 @@ different request or resource revision.
 
 ```text
 UserRequest: PENDING -> ANSWERED | DISMISSED | EXPIRED | CANCELLED
-NotificationDelivery: PENDING -> SENDING -> SENT | FAILED | SUPPRESSED
+NotificationDelivery: PENDING -> SENDING -> SENT | FAILED | AMBIGUOUS | SUPPRESSED
 FAILED -> PENDING (bounded retry with backoff)
+AMBIGUOUS -> SENT | FAILED (only after provider reconciliation; otherwise remains AMBIGUOUS)
 ```
+
+Each `SENDING` attempt pins `attempt_runtime_id` and `attempt_host_epoch` when using a
+ChannelBinding. A host reassignment does not rewrite this provenance. A retry is admitted
+only after the prior attempt is definitively not delivered; it then pins the current host
+assignment. Only a `SENT` attempt whose Runtime/epoch still owns the current assignment
+may create a reply target.
 
 ConversationService owns UserRequest creation and resolution; an authenticated user
 response is append-only and is not an Approval unless TrustService separately validates
@@ -801,15 +808,40 @@ Connection: CONNECTING -> CONNECTED -> DEGRADED -> CONNECTED
   DISCONNECTED | REAUTH_REQUIRED -> CONNECTING
 
 ChannelBinding: ACTIVE -> DEGRADED -> ACTIVE; ACTIVE | DEGRADED -> REVOKED
+
+ChannelHostAssignment: ACTIVE -> DRAINING -> ACTIVE(new Runtime, higher host_epoch)
+  ACTIVE -> ACTIVE(same Runtime, renewed bounded lease)
+  DRAINING -> ACTIVE(same Runtime, same host_epoch) only if source lease remains valid
+    and target reassignment has not committed
+  ingress_continuity: CONTINUOUS -> GAP_ACCEPTED only with explicit owner confirmation;
+    GAP_ACCEPTED is historical for that assignment and never silently returns to CONTINUOUS
+  expired lease -> reassignment only after expiry + clock-skew safety margin
+
+ChannelReplyTarget: ACTIVE -> CONSUMED | CLOSED | EXPIRED
 ```
 
-RuntimeMesh owns Handoff coordination, ConnectionService owns account-connection
-metadata, and ChannelService owns channel identity/assurance binding. A handoff target
-cannot start before source lease release/expiry and eligibility checks pass.
-Connection status changes are provider-reported or owner-requested through
-ConnectionService. ChannelBinding allowed-action changes increment aggregate version
-without changing lifecycle status; TrustService authorizes any authority increase.
-New bindings have no allowed actions until the owner grants them. Revocation is terminal.
+ChannelService creates a target only after acknowledged, reply-capable delivery to a
+single pending FORM UserRequest. The immutable response commit and target consumption
+are atomic with the inbound ChannelEventReceipt acceptance. Invalid-schema replies do not
+consume the target. Binding revocation/authority loss, prompt invalidation, and request
+resolution/expiry close active targets; terminal targets never reopen. Provider message
+references stay Runtime-local. RuntimeMesh owns ChannelHostAssignment and its monotonic
+epoch/lease. A target pins its Runtime and host epoch; a reply is accepted only when these
+match the current unexpired assignment. Reassignment makes prior targets immediately
+non-authoritative, even if physical cleanup on an offline Runtime must wait. A late inbound
+receipt from an old host epoch cannot commit a message, UserRequestResponse, or Task command.
+
+RuntimeMesh owns Handoff and channel-host coordination, ConnectionService owns
+account-connection metadata, and ChannelService owns channel identity/assurance binding.
+A Task handoff target cannot start before source lease release/expiry and eligibility
+checks pass. Channel-host reassignment requires source settlement or authoritative lease
+expiry and clock-skew margin, a compatible provider offer, SecretRef placement, and a
+provider-supported ingress cursor transfer or stable-ID replay window. The Hub increments
+the host epoch before the target Runtime may receive work. Connection
+status changes are provider-reported or owner-requested through ConnectionService.
+ChannelBinding allowed-action changes increment aggregate version without changing
+lifecycle status; TrustService authorizes any authority increase. New bindings have no
+allowed actions until the owner grants them. Revocation is terminal.
 
 ## ChannelEventReceipt
 
@@ -817,7 +849,31 @@ New bindings have no allowed actions until the owner grants them. Revocation is 
 RECEIVED -> PROCESSING -> ACCEPTED | REJECTED | FAILED
 ```
 
-ChannelService claims a receipt by setting PROCESSING, incrementing `claim_epoch`, and setting a bounded claim expiry. A worker may reclaim an expired PROCESSING receipt without creating a second receipt. Every completion command must present the current epoch; late results from an expired claimant are rejected. ACCEPTED, REJECTED, and FAILED are terminal. Only INBOUND, EDIT, and DELETE provider events use this receipt; outbound delivery is tracked as a separate Effect/Evidence outcome.
+ChannelService claims a receipt by setting PROCESSING, incrementing `claim_epoch`, and
+setting a bounded claim expiry. Each committed receipt gets a per-binding sequence that
+increases within its origin host epoch. An unclaimed RECEIVED row may be claimed by the current
+assigned host after lease validation. The receipt's origin Runtime/host epoch is immutable;
+current claim Runtime/host epoch may change only after the old claim expires or its host
+epoch is authoritatively fenced by a committed assignment, and then only under the current
+assignment and valid host lease. This is the only PROCESSING -> PROCESSING transition and
+increments `claim_epoch`. A changed payload digest conflicts. Every completion command
+presents the current claim and host epochs; late results from an expired claimant or
+reassigned host are rejected. ACCEPTED, REJECTED, and FAILED are terminal. Only INBOUND,
+EDIT, and DELETE provider events use this receipt; outbound delivery is tracked as a
+separate Effect/Evidence outcome.
+
+For receipt updates, the only PROCESSING -> PROCESSING transition is an expired or fenced
+claim being reclaimed with `claim_epoch + 1`. Terminal settlement clears `claim_expires_at`
+but preserves claimant identity/epoch for audit. The provider cursor cannot move past an
+event until its receipt is durable and, for a non-authoritative Runtime, acknowledged by Hub
+replication. A changed payload digest for an existing provider event ID is a conflict, not
+a new receipt.
+
+The opaque ChannelIngressCursorBinding is Runtime-local and incarnation-scoped. After a
+restart it must be validated or marked RECONCILIATION_REQUIRED before polling resumes.
+Receipt persistence precedes cursor advancement; a non-authoritative Runtime also waits for
+the Hub replication receipt before acknowledging deferred provider ingress. If it cannot
+meet the durability barrier, it pauses ingress rather than advance the cursor.
 
 ## Transition ownership and event rule
 
@@ -858,6 +914,9 @@ ChannelService claims a receipt by setting PROCESSING, incrementing `claim_epoch
 | Handoff | RuntimeMesh |
 | Connection | ConnectionService |
 | ChannelBinding and ChannelEventReceipt | ChannelService |
+| ChannelHostAssignment | RuntimeMesh; lease/epoch, provider compatibility, and credential placement checks |
+| ChannelIngressCursorBinding | ChannelService on the assigned Runtime; encrypted operational state only |
+| ChannelReplyTarget | ChannelService; target is authorized only while its Runtime/host epoch remains current |
 | ConversationTurn | ConversationService and AgentTurnCoordinator |
 | CapabilityInvocation | InvocationRunner; Broker authorizes and creates |
 | ApprovalUse | TrustService, atomically with authorized admission |

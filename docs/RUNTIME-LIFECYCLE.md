@@ -129,8 +129,12 @@ STOPPED → STARTING → RECOVERING → READY | DEGRADED
    not immediately run all overdue work or launch the workers that might perform it.
 8. Resume authorized WorldIndex watchers. Mark observation gaps UNKNOWN/STALE and schedule
    bounded rescans before claiming current freshness.
-9. Refresh RuntimeOffers and probe non-running adapters without starting worker processes.
-10. Publish presence as ONLINE only after incarnation registration and when storage and
+9. Revalidate each ChannelIngressCursorBinding against the new incarnation and current
+   host epoch. Mark stale opaque cursors RECONCILIATION_REQUIRED; use provider replay from
+   the last committed event ID when supported. Do not start polling/acknowledging channel
+   ingress while continuity or receipt durability is unresolved.
+10. Refresh RuntimeOffers and probe non-running adapters without starting worker processes.
+11. Publish presence as ONLINE only after incarnation registration and when storage and
     required coordination are ready; use DEGRADED with explicit blockers when safe
     read-only operation is possible but a required subsystem is not ready.
 

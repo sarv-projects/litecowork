@@ -32,10 +32,11 @@ Operator API methods.
 - pagination uses opaque cursors bound to the query/filter; cursors are not offsets.
 
 Authentication is deployment-specific, but authorization is not: local OS identity or remote credentials resolve to a Principal, then TrustService authorizes each command. V1 Workspaces have one owner principal and no membership model; every Workspace-scoped call verifies that the authenticated Principal is that owner.
-Credential bytes are never accepted through ordinary Operator command bodies or
-UserRequest responses. Provider authentication uses an owning Connection/SecretStore flow
-or an explicitly supported out-of-band handoff; `SecretRef` values are opaque references,
-not credentials. Runtime pairing returns a short-lived bearer token once in the
+Ordinary Operator command bodies and UserRequest responses are not credential-entry
+channels; free-text schemas cannot prove arbitrary text contains no secret, so this is a
+contract backed by bounded sensitive-field checks and clear UI warnings. Provider
+authentication uses an owning Connection/SecretStore flow or an explicitly supported
+out-of-band handoff; `SecretRef` values are opaque references, not credentials. Runtime pairing returns a short-lived bearer token once in the
 `PairingToken` response; it is not exposed by list/read APIs or written to logs/events.
 
 ## Workspaces
@@ -378,6 +379,7 @@ GET   /v1/channel-bindings?status=&cursor=&limit=
 GET   /v1/channel-bindings/{id}
 PATCH /v1/channel-bindings/{id}
 POST  /v1/channel-bindings/{id}/revoke
+POST  /v1/channel-bindings/{id}/host-assignment
 ```
 
 These routes expose normalized connection/binding metadata and owner controls only.
@@ -388,6 +390,20 @@ provider callback flow. `PATCH` changes only the binding's allowed actions, uses
 a Connection or revoking a ChannelBinding blocks new use/inbound commands but preserves
 history and does not delete external accounts or credentials. Provider-specific setup
 and reauthentication contracts remain deferred with the relevant integration.
+`GET /channel-bindings/{id}` includes a redacted current host-assignment projection.
+The host-assignment command requests an explicit move to an eligible Runtime; the Hub
+checks provider compatibility, secret placement, source-lease settlement/expiry and
+clock-skew margin, then increments the host epoch. A continuity-safe move requires provider
+cursor transfer or replay from the last Hub-replicated receipt. If that is unavailable, the
+request must explicitly confirm `accept_ingress_gap`; the resulting assignment records
+`GAP_ACCEPTED` and a timestamp shown in channel history. The API never returns the fencing
+credential, cursor, or digest. A moved binding cannot use old Runtime-local reply references.
+
+`RESPOND` allows only a reply-to-message correlation for an exact delivered FORM
+UserRequest on that binding; it does not grant general Task steering or Approval
+authority. The response is checked against the pinned schema, sender identity, assurance,
+expiry, and current binding actions. External sign-in, Approval decisions, and unsupported
+structured schemas remain in the Operator's Needs You surface.
 
 ## Discover/capabilities
 
@@ -482,8 +498,9 @@ immutable records. Ordinary `FORM` answers are non-secret Workspace input and ca
 replicate under Workspace policy; credentials must never be entered there. `EXTERNAL_URL`
 requests return only `{action: "accept" | "decline" | "cancel"}` from the response route.
 The separate `external-handoff` command is available only for a pending external
-authorization request after explicit owner authentication/action; it returns the
-Runtime-private provider URL with `Cache-Control: no-store`. The URL is omitted from the
+authorization request after explicit owner authentication/action; the source Runtime
+returns the provider URL only for that request with `Cache-Control: no-store`, without
+storing it in an idempotency receipt. The URL is omitted from the
 ordinary UserRequest projection, event journal, logs, analytics, and backups. For a Task-scoped request, `PAUSE_REQUESTED` returns `CONFLICT` and
 leaves it pending; while the Task is `PAUSED`, a valid response is stored but provider-input
 delivery waits for explicit resume and fresh owner authorization. Task-planning continuation
@@ -509,8 +526,9 @@ deduplicated and transport acknowledgement is distinct from Task completion.
 `respond` returns `SENSITIVE_INPUT_UNSUPPORTED` for a sensitive-typed or suspicious
 credential request and `PROVIDER_INPUT_UNSUPPORTED` for an unsupported embedded provider
 method. It does not write a response or dispatch input in either case. The external
-handoff route rejects non-HTTPS URLs, URLs with userinfo, and unsafe network destinations;
-its one-time response is confidential even though no credential is posted to LiteCowork.
+handoff route rejects non-HTTPS URLs, URLs with userinfo, and IP-literal hosts. Its
+no-store response is confidential even though no credential is posted to LiteCowork;
+LiteCowork does not control system-browser DNS resolution or redirects.
 
 Human control routes require the current `expected_control_epoch`. Takeover atomically
 increments the epoch and fences queued or late agent input. Returning control requires a
