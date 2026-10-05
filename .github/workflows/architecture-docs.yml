@@ -15,3 +15,4 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install jsonschema PyYAML openapi-spec-validator
       - run: python scripts/validate_architecture.py
+      - run: python scripts/validate_implementation_plan.py

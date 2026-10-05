@@ -350,15 +350,15 @@ flowchart LR
     H3 <--> RD[Remote litecoworkd]
     RD --> RA[Remote agent hosts]
     RD --> RE[Remote workstation apps and Environments]
-    M[Mobile companion] --> H3
+    M[Future mobile companion] --> H3
 ```
 
 A remote workstation is an ordinary Runtime offering its local agents, applications,
-and Environments through the Mesh. The mobile Operator is a control client for
-Conversations, Needs You, Task steering, approvals, notifications, and Artifacts; heavy
-execution remains on a desktop, cloud, or remote Runtime. All four shapes use the same
-Task, Effect, Evidence, authorization, and fencing contracts. Offline clients show the
-last known state and queue only explicitly supported versioned user intents.
+and Environments through the Mesh. A mobile Operator can later be a control client for
+Conversations, Needs You, Task steering, approvals, notifications, and Artifacts; it is not part of the desktop-first V1
+release. Heavy execution remains on a desktop, cloud, or remote Runtime. All V1 shapes use
+the same Task, Effect, Evidence, authorization, and fencing contracts. Offline clients show
+the last known state and queue only explicitly supported versioned user intents.
 
 ### Environment Fabric
 
@@ -518,27 +518,73 @@ capabilities, LiteSPM packages, or EnvironmentProviders. The bounded factual Wor
 and deterministic search over selected Workspace resources remain first-party. Core stays
 capable by composing replaceable parts rather than implementing every domain.
 
-## 14. Build sequence
+## 14. Implementation and release sequence
 
-1. Local `litecoworkd` lifecycle/recovery, Operator surface, Workspace instructions/roots,
-   factual Resource registry and deterministic search, durable Conversation/Task, and one
-   lazily started qualified external AgentAdapter.
-2. LiteCowork Gateway, the selected LiteSPM adapter contract, one capability, scoped grant, Effect/Artifact record,
-   and verifier; kill and replace the agent session from a portable ResumePacket.
-3. Versioned DelegationProfiles, heterogeneous host delegation to accepted Steps, child-
-   scoped Trust, cost-aware ranking, and bounded verification escalation.
-4. Two Runtimes, event/artifact replication, execution leases, fencing, and explicit
-   handoff; test failure during an ambiguous Effect before enabling automatic failover.
-5. Multi-layer demand-start/prewarm policy, Environment sharing/control fencing, and
-   deadline-sensitive best-effort preflight.
-6. Coworker identity, Goals, provenance-backed Suggestions, and editable user context.
-7. One remote human channel on the same Conversation/Task.
-8. Routines, multi-trigger Automations, durable occurrences/cursors, and deferred local
-   execution that creates ordinary Tasks. Trigger hosting and execution placement are
-   tested independently.
+The release is delivered in this order: **local desktop → cloud continuation → remote
+Runtime**. This is a delivery order, not permission to omit the accepted contract surface.
+The first desktop alpha proves a useful local Task; V1 exit requires the finalized local
+feature coverage before progressing through cloud and remote gates.
 
-Do not build cloud continuation, messaging, broad domain providers, or elaborate
-Workbench before the preceding vertical slice proves its contracts.
+1. **Development foundation (G0):** verified toolchain, contract CI, storage/event
+   transactions, authenticated Operator boundary, separate Runtime lifecycle, test
+   harnesses and recorded language/database/transport qualification.
+2. **Local desktop substrate (G1):** Tauri Operator and `litecoworkd`; Workspace,
+   Resources/folders, deterministic search, Conversations, TaskSpec/attempt-free planning,
+   accepted PlanRevision/Steps, one full-fidelity native harness, Attempt/lease/resume,
+   real Trust/Gateway/Evidence/verification and a useful Artifact. Recover after app,
+   daemon and agent process interruption.
+3. **Complete local product (G2):** delegation profiles and multiple native/host workers,
+   cost-aware selection/escalation, file/folder/ZIP parsing and provider-backed RAG,
+   qualified local model path, office/data/research providers, browser/computer/control
+   leases, environments/warmth/deadline preflight, Coworker/Home/Goals/Suggestions,
+   editable context, rich Workbench, accessibility/motion, Routines/Automations,
+   Teach-a-task/skills and notification UX. The one qualified human channel is delivered
+   with the cloud gateway at G3. The complete finalized local coverage matrix and
+   real-user workflows pass before cloud GA work.
+4. **Cloud continuation (G3):** deploy the same `litecoworkd` domain contract, persistent
+   storage and blob replication, device pairing/revocation, placement/resource policy,
+   leases/fencing, portable Task handoff, remote approval/status, backup/restore, cloud
+   operations and cost/security recovery, including one qualified human channel gateway.
+   No database-file/native-agent-state sync and no live process teleport.
+5. **Remote Runtime (G4):** install/enroll the same headless Runtime on a remote host,
+   qualify capabilities and Resources, placement, OS service lifecycle, disconnection,
+   revocation and continuation against cloud fencing.
+6. **Production qualification (G5):** real installers and upgrades, restore/rollback,
+   full declared platform/adapter matrix, all Flows and Benchmarks, local/cloud/remote
+   fault injection, accessibility, privacy/security review, real-user corpus, measured
+   performance and owner-signed acceptance.
+
+Each numbered release gate is decomposed into one-owner-reviewable stories in
+[`implementation/ROADMAP.md`](implementation/ROADMAP.md) and
+[`implementation/backlog.json`](implementation/backlog.json). Plan assignments and test
+IDs are not implementation evidence. Existing Flow/Benchmark IDs and machine-contract
+inventories are linked from [`implementation/COVERAGE.md`](implementation/COVERAGE.md).
+A release gate remains open while a required provider/capability lacks real qualification;
+a fixture proves Core coordination only.
+
+### Recommended initial implementation shape
+
+Use Rust for the modular `litecoworkd` Runtime, domain/application services and native
+process/resource supervision; use Tauri 2 with React/strict TypeScript for the desktop
+Operator and generated typed API client. Keep the daemon independent from the window
+lifecycle. Start as a modular application and introduce crates at demonstrated ownership
+seams; do not create empty microservices or every planned crate at once.
+
+Start local persistence with SQLite WAL, foreign keys and the existing transactional
+contract, one bounded write executor and immutable local blobs; qualify the driver before
+freezing. FTS5 is a candidate for deterministic text search. Parsing/OCR and semantic
+retrieval are isolated provider capabilities (a Python parser such as Docling is a
+candidate), not Core-owned model/reasoning loops. Local inference uses a qualified native
+agent harness backed by an existing engine (Ollama, LM Studio or llama.cpp are candidates),
+not a raw completion endpoint presented as an agent. Cloud starts with the same daemon in
+a long-lived isolated Linux container/VM, durable volume and backups; add Postgres or
+managed orchestration only when measured deployment needs justify them. Pin exact
+libraries, versions, target OS matrix and numeric SLOs only after documented qualification
+spikes; recommendations and decisions are distinguished in the implementation plan.
+
+See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for dependency direction and
+module ownership, [`docs/TESTING.md`](docs/TESTING.md) for evidence levels, and
+[`implementation/STACK.md`](implementation/STACK.md) for stack qualification.
 
 ## 15. Contract map and authority
 
@@ -547,17 +593,19 @@ API, persistence, security, UI, motion, operations, and acceptance contracts. Ea
 concern has one normative document; other documents link to it. The source reconciliation
 and dispositions are recorded in [`docs/SOURCE-RECONCILIATION.md`](docs/SOURCE-RECONCILIATION.md).
 
-## 16. Initial implementation shape
+## 16. Initial implementation ownership map
 
-Ship two distinct local executables: the headless `litecoworkd` Runtime and the
-LiteCowork Operator desktop application. The Operator may launch/connect to the daemon,
+This is a candidate module layout, not a set of day-one crates or an additional stack
+decision. The desktop-first Runtime/UI stack and qualification rules are specified in
+section 14 and `implementation/STACK.md`. Ship two distinct local executables: the
+headless `litecoworkd` Runtime and the LiteCowork Operator desktop application. The Operator may launch/connect to the daemon,
 but it is not the service process. Start as one modular Runtime plus the Operator and a
 small set of domain modules. A candidate source layout is:
 
 ```text
 apps/litecoworkd/                    # headless Runtime/service binary
 apps/operator-desktop/               # Tauri UI, tray, later Quick Entry
-apps/operator-web/                   # later Operator client
+apps/operator-web/                   # future optional client; not V1
 crates/domain/{conversation,task,artifact,effect,evidence}/
 crates/runtime/{lifecycle,supervisor,attempt_runner,dependency_planner}/
 crates/mesh/{identity,presence,replication,leases,transport}/

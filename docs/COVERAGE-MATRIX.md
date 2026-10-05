@@ -87,6 +87,7 @@ decision.
 | Module layout, dependency direction, build stages | [`IMPLEMENTATION.md`](IMPLEMENTATION.md) |
 | Source-by-source comparison/disposition | [`SOURCE-RECONCILIATION.md`](SOURCE-RECONCILIATION.md) |
 | Decision rationale | [`adr/`](adr/) |
+| Implementation stories, Agile delivery, product research, RAG, real-user tests, sources, release gates | [`../implementation/README.md`](../implementation/README.md), [`../implementation/COVERAGE.md`](../implementation/COVERAGE.md) |
 
 ## Deliberately deferred decisions
 

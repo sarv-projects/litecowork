@@ -1,0 +1,865 @@
+kind,contract_or_scenario,primary_story,coverage_note
+AUTHORITY,ARCHITECTURE.md,E01-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,AGENTS.md,E01-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/COVERAGE-MATRIX.md,E01-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/IMPLEMENTATION.md,E01-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/TESTING.md,E13-S03,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/BENCHMARKS.md,E13-S03,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/COMPETITIVE-RESEARCH.md,E08-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/SOURCE-RECONCILIATION.md,E01-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/EXPERIENCE.md,E08-S04,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/DESIGN-SYSTEM.md,E08-S05,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/MOTION.md,E08-S05,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/PRODUCT.md,E08-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/RESPONSIBILITIES.md,E08-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/CONTEXT.md,E08-S03,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/ROUTINES.md,E09-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/AUTOMATION.md,E09-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/CHANNELS.md,E11-S04,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/TASK-RUNTIME.md,E03-S04,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/AGENT-FABRIC.md,E03-S05,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/DELEGATION.md,E05-S04,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/STATE-MACHINES.md,E01-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/DATA-MODEL.md,E01-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/SCHEMAS.md,E01-S04,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/API.md,E01-S04,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/EVENTS.md,E01-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/STORAGE.md,E01-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/SERVICES.md,E01-S04,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/PROTOCOLS.md,E01-S04,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/TRUST.md,E04-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/SECURITY.md,E04-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/NETWORK-SECURITY.md,E04-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/CAPABILITY-FABRIC.md,E04-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/CAPABILITY-INVOCATIONS.md,E04-S03,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/ARTIFACTS-EVIDENCE.md,E04-S05,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/WORLD-RESOURCES.md,E02-S03,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/ENVIRONMENTS.md,E07-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/RUNTIME-LIFECYCLE.md,E01-S03,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/RUNTIME-MESH.md,E11-S03,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/FAILURE-RECOVERY.md,E13-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/OBSERVABILITY.md,E13-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/schemas/delegation.schema.json,E05-S01,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/schemas/domain-event.schema.json,E01-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/schemas/error-codes.schema.json,E01-S04,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/schemas/operator-api.openapi.yaml,E01-S04,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,docs/schemas/sqlite-v1.sql,E01-S02,Primary owner mapping; re-read full owning concern before implementation.
+AUTHORITY,scripts/validate_architecture.py,E01-S01,Primary owner mapping; re-read full owning concern before implementation.
+SCHEMA_DEF,delegation.schema.json#acceptance_criterion,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#artifact_version_ref,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#blocker,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#bounded_decision,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#budget_spec,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#capability_requirement,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#delegate_request,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#digest,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#escalation_policy,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#id,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#output_requirement,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#pinned_resource_ref,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#placement_preference,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#resource_ref,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#resource_scope,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#result_envelope,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#service_ref,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#task_packet,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+SCHEMA_DEF,delegation.schema.json#timestamp,E01-S04,Cross-contract baseline inventory; domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#agent_session_scope,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#aggregate_state_ref,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#blob_ref,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#blocker,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#capability_grant_scope,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#capability_ref,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#error_code,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#payloads,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#pinned_resource_ref,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#principal_or_service_ref,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#principal_ref,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#provenance_record,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#provenance_transformation,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#resource_input,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#resource_ref,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#service_ref,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#task_pause_resume_status,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+EVENT_DEF,domain-event.schema.json#task_status,E01-S02,Cross-contract baseline inventory; event-owning domain story owns implementation.
+API_OPERATION,GET /workspaces,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /workspaces/{workspaceId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,PATCH /workspaces/{workspaceId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /workspaces/{workspaceId}/backups,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces/{workspaceId}/backups,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /workspaces/{workspaceId}/backups/{backupId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /recovery/backups/{backupId}/restore,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,PATCH /workspaces/{workspaceId}/default-agent-binding,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces/{workspaceId}/archive,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /conversations,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /conversations/{conversationId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /conversations/{conversationId}/messages,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /conversations/{conversationId}/messages,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /conversations/{conversationId}/tasks,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /conversations/{conversationId}/turns,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /conversations/{conversationId}/turns/{turnId}/retry,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /conversations/{conversationId}/turns/{turnId}/cancel,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /tasks,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/progress,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/steps/{stepId}/execution-dependencies,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /tasks/{taskId}/steer,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /tasks/{taskId}/lead-agent,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /tasks/{taskId}/cancel,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /tasks/{taskId}/pause,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /tasks/{taskId}/resume,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /tasks/{taskId}/steps/{stepId}/recover,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/spec-revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /tasks/{taskId}/spec-revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/plan-revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/steps,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/attempts,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/timeline,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/artifacts,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/effects,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /approvals,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /approvals/{approvalId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /approvals/{approvalId}/resolve,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /artifacts,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /artifacts/{artifactId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /artifacts/{artifactId}/versions/{version},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /artifacts/{artifactId}/versions/{version}/content,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /artifacts/{artifactId}/promote,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /artifacts/{artifactId}/archive,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /library,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /routines,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /routines,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /routines/{routineId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /routines/{routineId}/revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /routines/{routineId}/health,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /routines/{routineId}/health,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /routines/{routineId}/run,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /routines/{routineId}/archive,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /automations,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /automations,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /automations/{automationId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,PATCH /automations/{automationId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /automations/{automationId}/run,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /automations/{automationId}/revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /automations/{automationId}/occurrences,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /automations/{automationId}/pause,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /automations/{automationId}/resume,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /automations/{automationId}/disable,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /runtime-lifecycle,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,PATCH /runtime-lifecycle/startup-policy,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /runtime-lifecycle/stop-preview,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /runtime-lifecycle/stop,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /runtimes,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /runtimes/pair-token,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /runtimes/{runtimeId}/revoke,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /runtimes/{runtimeId}/incarnations,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /runtimes/{runtimeId}/offers,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /runtimes/{runtimeId}/capability-hosts,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /agent-profiles,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /agent-bindings,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /agent-bindings,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /agent-bindings/{agentBindingId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /agent-bindings/{agentBindingId}/enable,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /agent-bindings/{agentBindingId}/disable,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /agent-bindings/{agentBindingId}/session-options,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /agent-bindings/{agentBindingId}/harness-capabilities,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /agent-bindings/{agentBindingId}/quota-observation,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /delegation-profiles,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /delegation-profiles,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /delegation-profiles/{delegationProfileId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /delegation-profiles/{delegationProfileId}/duplicate,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /delegation-profiles/{delegationProfileId}/performance,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /delegation-profiles/{delegationProfileId}/revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /delegation-profiles/{delegationProfileId}/revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /delegation-profiles/{delegationProfileId}/status,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /coworkers,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /coworkers,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /coworkers/{coworkerId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /coworkers/{coworkerId}/presence,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /coworkers/{coworkerId}/revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /coworkers/{coworkerId}/status,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces/{workspaceId}/primary-coworker,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /goals,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /goals,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /goals/{goalId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /goals/{goalId}/revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /goals/{goalId}/status,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /suggestions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /suggestions/{suggestionId}/resolve,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /suggestions/{suggestionId}/snooze,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /workspaces/{workspaceId}/suggestion-preferences,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,PUT /workspaces/{workspaceId}/suggestion-preferences/{kind},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /demonstrations,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /demonstrations/{demonstrationId}/complete,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /demonstrations/{demonstrationId}/pause,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /demonstrations/{demonstrationId}/resume,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /demonstrations/{demonstrationId}/abort,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /connections,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /connections/{connectionId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /connections/{connectionId}/disconnect,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /channel-bindings,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /channel-bindings/{channelBindingId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,PATCH /channel-bindings/{channelBindingId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /channel-bindings/{channelBindingId}/revoke,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /channel-bindings/{channelBindingId}/host-assignment,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /discover/search,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /discover/items/{itemId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /capabilities/{capabilityId}/connect-or-install,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /capabilities/{capabilityId}/test,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /resources/uploads,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /resources/uploads/{uploadId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,PUT /resources/uploads/{uploadId}/chunks/{chunkIndex},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /resources/uploads/{uploadId}/commit,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /resources/{resourceId}/revision-uploads,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,PATCH /resources/{resourceId}/context-document/status,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /resources/{resourceId}/context-document/deletion,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /resources/search,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /resources/{resourceId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /resources/{resourceId}/locations,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /resources/{resourceId}/revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /workspace-roots,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspace-roots,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,PATCH /workspace-roots/{rootId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspace-roots/{rootId}/pause,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspace-roots/{rootId}/resume,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspace-roots/{rootId}/revoke,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /user-requests,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /user-requests/{requestId}/respond,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /user-requests/{requestId}/external-handoff,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /tasks/{taskId}/attempts/{attemptId}/take-control,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /tasks/{taskId}/attempts/{attemptId}/return-control,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /workspaces/{workspaceId}/instructions/revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces/{workspaceId}/instructions/revisions,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /workspaces/{workspaceId}/environments,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces/{workspaceId}/environments,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces/{workspaceId}/environments/provision-preview,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /workspaces/{workspaceId}/environments/{environmentId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces/{workspaceId}/environments/{environmentId}/suspend,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces/{workspaceId}/environments/{environmentId}/resume,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces/{workspaceId}/environments/{environmentId}/sharing-scope,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /workspaces/{workspaceId}/environments/{environmentId}/destroy,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /needs-you,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /user-requests/{requestId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /user-requests/{requestId}/dismiss,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /notifications,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /notification-preferences,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,PUT /notification-preferences/{eventClass},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /skill-proposals,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /skill-proposals,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /skill-proposals/{proposalId}/approve,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,POST /skill-proposals/{proposalId}/reject,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/invocations,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /capability-invocations/{invocationId},E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/usage,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /resources/{resourceId}/dependents,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /dependency-edges/{dependencyEdgeId}/invalidations,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+API_OPERATION,GET /tasks/{taskId}/verification-runs,E01-S04,OpenAPI inventory; domain story adds operation conformance.
+SQL_TABLE,workspaces,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,workspace_instruction_revisions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,conversations,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,conversation_messages,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,conversation_turns,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,provider_circuit_states,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,tasks,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,goals,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,goal_revisions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,goal_task_links,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,goal_routine_links,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,suggestions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,suggestion_preferences,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,demonstration_sessions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,task_spec_revisions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,plan_revisions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,steps,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,agent_profiles,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,agent_endpoints,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,agent_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,delegation_profiles,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,delegation_profile_revisions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,coworkers,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,coworker_revisions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,agent_host_instances,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,runtimes,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,runtime_incarnations,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,runtime_incarnation_local_observations,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,agent_endpoint_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,runtime_offers,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,pairing_tokens,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,environments,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,environment_provider_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,environment_provision_previews,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,environment_checkpoints,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,environment_checkpoint_provider_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,attempts,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,agent_sessions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,agent_session_host_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,execution_leases,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,capability_grants,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,secret_leases,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,capability_host_instances,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,capability_activations,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,capability_activation_host_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,capability_locks,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,connections,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,channel_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,channel_host_assignments,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,channel_host_lease_records,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,channel_thread_mappings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,channel_event_receipts,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,channel_ingress_cursor_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,artifacts,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,artifact_versions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,effects,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,evidence,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,audit_records,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,verification_runs,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,approvals,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,approval_uses,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,routines,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,routine_revisions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,automations,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,automation_revisions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,automation_occurrences,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,automation_cursors,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,automation_trigger_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,domain_events,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,request_dedup,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,replication_cursors,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,replication_receipts,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,replication_aggregate_positions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,pending_replication_events,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,resources,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,context_document_purge_plans,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,context_document_purge_receipts,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,resource_revisions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,resource_revision_parents,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,resource_locations,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,resource_location_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,file_identity_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,workspace_roots,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,workspace_replication_roots,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,resource_edges,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,dependency_edges,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,invalidation_records,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,capability_invocations,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,capability_invocation_provider_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,user_requests,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,user_request_responses,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,provider_input_bindings,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,usage_observations,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,budget_reservations,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,notification_preferences,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,notification_deliveries,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,channel_reply_targets,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,skill_proposals,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,environment_control_leases,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,resource_upload_sessions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,resource_upload_chunks,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,aggregate_snapshots,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,event_archive_segments,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,workspace_backup_manifests,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TABLE,handoffs,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,goal_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,goal_revision_immutable_update,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,goal_revision_immutable_delete,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,goal_task_link_current_revision_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,goal_task_link_immutable_update,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,goal_task_link_immutable_delete,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,goal_routine_link_current_revision_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,goal_routine_link_immutable_update,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,goal_routine_link_immutable_delete,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,suggestion_proposal_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,demonstration_capture_bounds_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,demonstration_session_transition_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,demonstration_capture_policy_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,task_spec_lead_failover_scope_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,task_spec_lead_failover_shape_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,workspace_default_agent_binding_insert_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,workspace_default_agent_binding_update_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,agent_binding_default_lead_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,delegation_profile_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,delegation_profile_revision_immutable_update,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,delegation_profile_revision_immutable_delete,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,delegation_profile_revision_head_name_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,delegation_profile_head_name_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,delegation_profile_options_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,delegation_profile_warm_policy_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,coworker_revision_worker_scope_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,coworker_revision_policy_shape_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,coworker_revision_immutable_update,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,coworker_revision_immutable_delete,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,coworker_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,workspace_primary_coworker_state_insert_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,workspace_primary_coworker_state_update_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,primary_coworker_archive_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,coworker_archive_work_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,task_coworker_origin_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,task_coworker_origin_not_archived,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,agent_endpoint_binding_matches_current_incarnation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,agent_endpoint_binding_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,agent_endpoint_binding_delete_requires_drained_host,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_provider_binding_matches_current_incarnation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_provider_binding_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_requires_issued_preview,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_preview_consumption_requires_environment,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_preview_transition_is_single_use,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_checkpoint_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_checkpoint_binding_matches_current_incarnation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_checkpoint_binding_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,attempt_delegation_profile_admission_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,attempt_environment_owner_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,attempt_execution_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,conversation_turn_agent_session_scope_guard_insert,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,conversation_turn_agent_session_scope_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,agent_session_host_binding_matches_origin,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,agent_session_host_binding_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,agent_session_host_binding_delete_requires_settlement,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,agent_session_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,plan_revision_agent_session_context_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,execution_lease_current_incarnation_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,execution_lease_current_incarnation_update_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,execution_lease_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,execution_lease_no_reactivation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_host_instance_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_activation_host_binding_matches_origin,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_activation_host_binding_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_activation_host_binding_delete_requires_settlement,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_activation_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,channel_host_assignment_epoch_monotonic,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,channel_receipt_origin_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,channel_receipt_transition_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,channel_ingress_cursor_binding_insert_owner,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,channel_ingress_cursor_binding_update_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,channel_ingress_cursor_binding_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,guard_artifact_update,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,guard_artifact_current_revision,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,guard_artifact_initial_revision,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,guard_artifact_version_insert,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,artifact_versions_no_update,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,artifact_versions_no_delete,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,task_automation_coworker_origin_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,automation_trigger_binding_matches_current_owner,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,automation_trigger_binding_update_matches_current_owner,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,automation_trigger_binding_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,context_document_purge_plan_shape_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,context_document_purge_plan_admission_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,context_document_purge_plan_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,context_document_purge_plan_no_delete,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,context_document_purge_receipt_admission_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,context_document_owner_scope_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,resource_context_document_transition_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,context_document_purge_receipt_transition_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,context_document_deleted_requires_purge_ack,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,resource_revision_context_status_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,resource_location_binding_matches_current_incarnation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,resource_location_binding_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,file_identity_binding_matches_current_incarnation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,dependency_edge_same_workspace,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,invalidation_observation_same_resource,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,action_batch_member_group_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,action_batch_complete_before_dispatch,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,action_batch_member_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,effect_invocation_scope_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,effect_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_invocation_effect_link_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_invocation_execution_method_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_invocation_provider_binding_matches_activation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_invocation_provider_binding_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_invocation_admission_matches_scope,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_invocation_first_dispatch_revalidates_owner,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,capability_invocation_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,user_request_admission_matches_scope,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,user_request_provenance_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,user_request_status_transition_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,user_request_answer_matches_response,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,user_request_response_insert_pending,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,user_request_external_response_shape,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,user_request_response_parent_eligible,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,user_request_response_immutable_update,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,user_request_response_immutable_delete,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,provider_input_binding_insert_is_awaiting,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,provider_input_binding_scope_matches_request,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,provider_input_binding_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,provider_input_binding_response_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,provider_input_binding_transition_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,provider_input_binding_dispatch_proof_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,provider_input_binding_dispatch_authority,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,user_request_channel_response_authorized,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,channel_reply_target_matches_delivery,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,channel_reply_target_terminal,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_control_lease_current_incarnation_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_control_lease_current_incarnation_update_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_control_lease_identity_immutable,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_control_lease_no_reactivation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_control_lease_owner_epoch_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,resource_revision_upload_create_version_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,resource_revision_upload_parent_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,resource_revision_upload_current_head_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,resource_revision_upload_version_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,immutable_workspace_backup_manifest_update,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_TRIGGER,environment_sharing_scope_change_guard,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_messages_conversation_time,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_conversation_turn_current_agent_session,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_provider_circuit_open_until,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_tasks_workspace_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_goals_workspace_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_goal_task_links_task,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_goal_routine_links_routine,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_suggestions_workspace_status_created,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_suggestions_open_dedupe,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_suggestions_dismissal_cooldown,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_demonstration_sessions_workspace_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_steps_task_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_delegation_profiles_workspace_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_delegation_profiles_binding_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_delegation_profiles_binding_name,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_coworkers_workspace_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_agent_host_instances_runtime_state,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_runtimes_workspace_availability,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_runtime_incarnations_runtime_started,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_agent_endpoint_bindings_runtime,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_runtime_offers_expiry,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_pairing_tokens_expiry,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_environment_provider_bindings_incarnation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_environment_provision_previews_expiry,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_environment_checkpoint_bindings_incarnation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_attempts_task_step_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_agent_sessions_runtime_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_active_task_planning_session,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_active_conversation_turn_session,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_conversation_sessions,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_agent_session_host_bindings_host,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_leases_step_state,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_active_lease_per_step,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_secret_leases_task_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_capability_host_instances_runtime_state,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_capability_activation_host_bindings_host,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_channel_host_runtime,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_channel_host_lease_expiry,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_channel_ingress_cursor_runtime,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_artifacts_task,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_artifact_digest,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_effects_task_state,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_effects_idempotency,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_audit_workspace_time,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_approvals_task_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_routines_workspace_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_automation_occurrences_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_automation_occurrences_claim,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_automation_trigger_bindings_runtime,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_channel_receipts_claim,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_events_workspace_hlc,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_events_entity,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_resources_workspace_name,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_resources_identity_digest,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_context_purge_pending,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_resource_revision_parents_parent,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_resource_locations_resource,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_resource_location_bindings_incarnation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_file_identity_bindings_incarnation,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_active_workspace_root_location,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_resource_edges_from,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_resource_edges_to,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_dependency_edges_source,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_dependency_edges_dependent,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_invalidations_observed_revision,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_invocations_workspace_status,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_action_batch_member_ordinal,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_action_batch_member_idempotency,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_user_requests_inbox,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_provider_input_delivery,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_usage_task_time,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_usage_environment_time,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_budget_reservations_workspace_scope,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_notification_due,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,idx_channel_reply_targets_request,E01-S02,DDL inventory; domain story adds behavior/migration case.
+SQL_INDEX,uq_active_environment_control,E01-S02,DDL inventory; domain story adds behavior/migration case.
+FLOW,"F00 Workspace creation, replication policy, and archive",E11-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,"F01 Simple conversation, no Task",E03-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F02 Conversation materializes a Task,E03-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F03 Local Task happy path,E03-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F04 Capability discovery and direct attachment,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F05 Capability proxy fallback,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F06 Approval-gated capability,E04-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F07 Host delegation,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F08 Child failure,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F09 Task steering during execution,E03-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F10 Cancellation,E03-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F11 Artifact production/revision,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F12 Completion verification,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F13 Graceful local -> cloud handoff,E11-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F14 Unexpected device loss,E11-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F15 Ambiguous external effect,E04-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F16 Offline Runtime reconnect,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F17 Runtime pairing,E11-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F18 Automation trigger and occurrence,E09-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F19 Conditional monitor with no change,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F20 Telegram/email Task,E03-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F21 Sensitive approval from weak channel,E11-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F22 Package update while Task running,E03-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F23 OAuth/secret expires mid-Task,E03-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F24 Parallel code workers,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F25 User changes lead agent,E05-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F26 Artifact Library archive,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,"F27 Connection and channel binding setup, permissions, and revocation",E11-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F28 Persistent WorkspaceRoot and deterministic search,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F29 Asynchronous MCP Task-backed capability call,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F30 Pause and resume a Task,E03-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F31 Human takes over Browser/Desktop control,E07-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F32 Workspace instruction revision and Task pinning,E03-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F33 Resource change invalidates derived outputs,E06-S01,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F34 Reusable Skill proposal,E10-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F35 Notification delivery after a Task event,E09-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F36 Workspace backup and restore,E13-S01,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F37 Runtime boot and incarnation recovery,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F38 Lazy agent admission and idle teardown,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,"F39 Save a Routine, run it, and schedule it",E09-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F40 Trigger fires while execution dependencies are offline,E09-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F41 Sleep/wake and schedule catch-up,E09-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F42 Explicit Runtime stop and safe drain,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F43 Provision and later reuse a persistent Environment,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F44 Needs You aggregation and deduplication,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F45 Reply to one pending UserRequest from a channel,E11-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F46 Reassign a channel host Runtime,E11-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F47 Enable an installed AgentBinding as a worker,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F48 Add a second worker profile for one installed agent,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F49 Lead delegates to a heterogeneous worker,E05-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F50 Verification failure escalates to another profile,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F51 Disable or revise a profile during an active child Attempt,E03-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F52 Observe low quota and prewarm a fallback,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F53 Lead quota exhaustion and lead change,E05-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F54 Native configuration changes while a host is warm,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F55 Create a Coworker and start its first Task,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F56 Accept a Suggestion into ordinary work,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F57 Link a Goal and show evidence-backed progress,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F58 Resolve a concurrent ContextDocument edit,E06-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F59 Deadline-sensitive preflight and execution,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F60 Shared browser profile and human takeover,E07-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F61 Demonstration becomes a reviewed SkillProposal,E10-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F62 Cost ceiling stops new delegation,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F63 Worker crashes with a potentially ambiguous Effect,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F64 Reuse a Coworker-private Environment,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F65 Change a persistent Environment sharing scope,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F66 Detect pinned Skill or Routine dependency drift,E09-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F67 Snooze a Suggestion,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F68 Mute a SuggestionKind,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F69 Reopen a completed Goal,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F70 Duplicate a DelegationProfile,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F71 Policy-based lead failover,E05-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F72 Coworker-owned Automation creates a Task,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F73 Bounded ActionBatch with partial failure,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F74 Concurrent Resource revision edit,E06-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F75 ContextDocument revocation and deletion,E06-S01,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F76 Suggestion producer admission and suppression,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F77 Bounded Teach-a-task capture,E10-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+FLOW,F78 Workspace worker enabled versus Coworker assignment,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B01 Persistent assistant,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B02 Local document research,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B03 Large data quality,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B04 Finance package,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B05 Sales meeting prep,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B06 Marketing operations,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B07 Browser fallback,E07-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B08 Files/BOM,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B09 Office artifact,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B10 Coding team,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B11 Heterogeneous research swarm,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B12 Weekly recurring research,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B13 Remote channel,E11-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B14 Cross-device continuation,E11-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B15 Failure recovery,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B16 Ambiguous side effect,E04-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B17 Capability discovery,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B18 Skill learning,E10-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B19 Human takeover,E07-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B20 Verification honesty,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B21 Persistent folder context,E06-S01,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B22 Pause versus cancel,E03-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B23 Asynchronous capability call,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B24 Requirement and evidence pinning,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B25 MCP Skill manifest and origin safety,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B26 One-time approval replay,E04-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B27 Notification is not completion,E09-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B28 Backup and restore,E13-S01,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B29 Pause/cancel during verification,E03-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B30 Persistent Environment provision and reuse,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B31 Needs You inbox consistency,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B32 Native Claude harness integrity,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B33 Native Codex harness integrity,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B34 Native OpenCode harness integrity,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,"B35 Same binding, premium lead and cheaper worker profile",E05-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B36 Heterogeneous lead-to-worker delegation,E05-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B37 Cost-first worker selection,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B38 Quality-first selection,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B39 Verification-triggered escalation,E09-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B40 Profile disabled during active child,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B41 Native configuration drift during warmth,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B42 Low quota fallback prewarm,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B43 Quota exhaustion lead handoff,E05-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B44 Warm host with fresh native session,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B45 Warm browser with fresh authority,E07-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B46 Parallel worktree isolation,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B47 Shared browser control fencing,E07-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B48 Deadline-sensitive preflight,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B49 Structured-to-browser fallback,E07-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B50 ActionBatch execution,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B51 Human final-authorization boundary,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B52 Credential invisibility,E04-S05,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B53 Coworker identity survives lead replacement,E05-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B54 Goal progress derives from verified outcomes,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B55 Suggestion cannot self-authorize,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B56 ContextDocument concurrent edit conflict,E06-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B57 Demonstration to SkillProposal,E10-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B58 Skill drift detection,E10-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B59 Routine health and dependency drift,E09-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B60 Premium-usage efficiency comparison,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B61 Suggestion snooze and expiry,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B62 Suggestion-kind mute and cooldown,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B63 Goal reopen,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B64 DelegationProfile duplicate and rename,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B65 Pinned Suggestion provenance,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B66 Semantic architecture-contract drift,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B67 Lead failover policy and race fencing,E05-S04,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B68 Coworker-pinned Automation admission,E05-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B69 ActionBatch partial settlement and per-member Effects,E07-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B70 Resource revision concurrency and explicit merge,E06-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B71 ContextDocument purge manifest completeness,E06-S01,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B72 Suggestion producer provenance and suppression,E08-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B73 Demonstration capture pause and hard bounds,E10-S02,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+BENCHMARK,B74 Execution-method provenance integrity,E13-S03,"Primary scenario mapping, heuristic for initial planning; reviewer confirms cross-domain cases."
+EVENT_TYPE,workspace.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,workspace.replication_policy.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,workspace.default_agent_binding.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,workspace.primary_coworker.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,workspace.archived.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,workspace.instructions.revision.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,workspace.root.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,workspace.root.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,resource.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,resource.revision.observed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,resource.context_document.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,resource.context_document.purge.acknowledged.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,resource.location.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,resource.edge.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,resource.invalidation.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,resource.upload.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,resource.upload.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,conversation.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,conversation.message.added.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,conversation.turn.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,conversation.turn.retried.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,conversation.turn.resumed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,conversation.turn.settled.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,task.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,task.spec.revised.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,task.plan.revised.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,task.lead_agent.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,task.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,task.pause.requested.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,task.paused.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,task.resumed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,task.coworker.origin.pinned.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,step.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,step.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,step.recovery.accepted.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,attempt.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,attempt.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,attempt.checkpointed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,attempt.failure.recorded.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,agent.session.started.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,agent.session.lost.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,agent.session.closed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,agent.binding.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,agent.binding.lead_eligibility.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,agent.session.harness_descriptor.pinned.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,delegation_profile.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,delegation_profile.revised.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,delegation_profile.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,delegation.admitted.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,coworker.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,coworker.revised.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,coworker.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,goal.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,goal.revised.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,goal.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,suggestion.proposed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,suggestion.resolved.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,suggestion.visibility.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,suggestion.preference.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,demonstration.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,runtime.paired.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,runtime.revoked.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,runtime.availability.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,runtime.offer.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,provider.circuit.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,lease.acquired.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,lease.renewed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,lease.released.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,lease.expired.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,capability.grant.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,capability.grant.revoked.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,capability.grant.expired.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,capability.activation.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,capability.activation.health.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,capability.invocation.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,capability.invocation.dispatched.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,capability.invocation.checkpointed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,capability.invocation.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,usage.observed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,budget.reservation.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,artifact.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,artifact.version.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,artifact.library.promoted.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,artifact.library.archived.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,effect.proposed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,effect.started.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,effect.acknowledged.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,effect.observed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,effect.verified.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,effect.failed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,effect.ambiguous.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,effect.reconciliation.started.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,effect.retry.authorized.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,evidence.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,verification.started.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,verification.completed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,approval.requested.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,approval.resolved.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,approval.use.consumed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,user.request.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,user.request.resolved.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,notification.preference.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,notification.delivery.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,skill.proposal.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,skill.proposal.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,routine.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,routine.revision.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,routine.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,automation.cursor.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,automation.occurrence.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,automation.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,automation.revision.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,automation.status.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,automation.occurrence.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,automation.occurrence.claimed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,automation.occurrence.settled.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,connection.state.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,channel.binding.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,channel.host.assignment.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,channel.inbound.received.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,channel.receipt.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,channel.outbound.settled.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,environment.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,environment.state.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,environment.checkpoint.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,environment.control.lease.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,environment.sharing_scope.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,capability.lock.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,secret.lease.issued.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,secret.lease.revoked.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,handoff.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,handoff.phase.changed.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.
+EVENT_TYPE,audit.record.created.v1,E01-S02,Typed event registry case; owning domain story implements its event+projection transaction and replay contract.

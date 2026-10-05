@@ -1,0 +1,1386 @@
+{
+  "delegation_schema_definitions": [
+    "acceptance_criterion",
+    "artifact_version_ref",
+    "blocker",
+    "bounded_decision",
+    "budget_spec",
+    "capability_requirement",
+    "delegate_request",
+    "digest",
+    "escalation_policy",
+    "id",
+    "output_requirement",
+    "pinned_resource_ref",
+    "placement_preference",
+    "resource_ref",
+    "resource_scope",
+    "result_envelope",
+    "service_ref",
+    "task_packet",
+    "timestamp"
+  ],
+  "error_schema_top_level": [
+    "$id",
+    "$schema",
+    "enum",
+    "title",
+    "type"
+  ],
+  "event_schema_definitions": [
+    "agent_session_scope",
+    "aggregate_state_ref",
+    "blob_ref",
+    "blocker",
+    "capability_grant_scope",
+    "capability_ref",
+    "error_code",
+    "payloads",
+    "pinned_resource_ref",
+    "principal_or_service_ref",
+    "principal_ref",
+    "provenance_record",
+    "provenance_transformation",
+    "resource_input",
+    "resource_ref",
+    "service_ref",
+    "task_pause_resume_status",
+    "task_status"
+  ],
+  "event_schema_type_values": [],
+  "event_type_count": 133,
+  "operator_operations": [
+    {
+      "method": "GET",
+      "path": "/workspaces",
+      "operationId": "listWorkspaces"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces",
+      "operationId": "createWorkspace"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}",
+      "operationId": "getWorkspace"
+    },
+    {
+      "method": "PATCH",
+      "path": "/workspaces/{workspaceId}",
+      "operationId": "updateWorkspacePolicy"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/backups",
+      "operationId": "listWorkspaceBackups"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/backups",
+      "operationId": "createWorkspaceBackup"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/backups/{backupId}",
+      "operationId": "getWorkspaceBackup"
+    },
+    {
+      "method": "POST",
+      "path": "/recovery/backups/{backupId}/restore",
+      "operationId": "restoreWorkspaceBackup"
+    },
+    {
+      "method": "PATCH",
+      "path": "/workspaces/{workspaceId}/default-agent-binding",
+      "operationId": "setWorkspaceDefaultAgentBinding"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/archive",
+      "operationId": "archiveWorkspace"
+    },
+    {
+      "method": "POST",
+      "path": "/conversations",
+      "operationId": "createConversation"
+    },
+    {
+      "method": "GET",
+      "path": "/conversations/{conversationId}",
+      "operationId": "getConversation"
+    },
+    {
+      "method": "GET",
+      "path": "/conversations/{conversationId}/messages",
+      "operationId": "listConversationMessages"
+    },
+    {
+      "method": "POST",
+      "path": "/conversations/{conversationId}/messages",
+      "operationId": "appendConversationMessage"
+    },
+    {
+      "method": "GET",
+      "path": "/conversations/{conversationId}/tasks",
+      "operationId": "listConversationTasks"
+    },
+    {
+      "method": "POST",
+      "path": "/conversations/{conversationId}/turns",
+      "operationId": "submitConversationTurn"
+    },
+    {
+      "method": "POST",
+      "path": "/conversations/{conversationId}/turns/{turnId}/retry",
+      "operationId": "retryConversationTurn"
+    },
+    {
+      "method": "POST",
+      "path": "/conversations/{conversationId}/turns/{turnId}/cancel",
+      "operationId": "cancelConversationTurn"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks",
+      "operationId": "listTasks"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks",
+      "operationId": "createTask"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}",
+      "operationId": "getTask"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/progress",
+      "operationId": "getTaskProgress"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/steps/{stepId}/execution-dependencies",
+      "operationId": "getStepExecutionDependencies"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/steer",
+      "operationId": "steerTask"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/lead-agent",
+      "operationId": "changeTaskLeadAgent"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/cancel",
+      "operationId": "cancelTask"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/pause",
+      "operationId": "pauseTask"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/resume",
+      "operationId": "resumeTask"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/steps/{stepId}/recover",
+      "operationId": "recoverTaskStep"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/spec-revisions",
+      "operationId": "listTaskSpecRevisions"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/spec-revisions",
+      "operationId": "reviseTaskSpec"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/plan-revisions",
+      "operationId": "listPlanRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/steps",
+      "operationId": "listTaskSteps"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/attempts",
+      "operationId": "listTaskAttempts"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/timeline",
+      "operationId": "getTaskTimeline"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/artifacts",
+      "operationId": "listTaskArtifacts"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/effects",
+      "operationId": "listTaskEffects"
+    },
+    {
+      "method": "GET",
+      "path": "/approvals",
+      "operationId": "listApprovals"
+    },
+    {
+      "method": "GET",
+      "path": "/approvals/{approvalId}",
+      "operationId": "getApproval"
+    },
+    {
+      "method": "POST",
+      "path": "/approvals/{approvalId}/resolve",
+      "operationId": "resolveApproval"
+    },
+    {
+      "method": "GET",
+      "path": "/artifacts",
+      "operationId": "listArtifacts"
+    },
+    {
+      "method": "GET",
+      "path": "/artifacts/{artifactId}",
+      "operationId": "getArtifact"
+    },
+    {
+      "method": "GET",
+      "path": "/artifacts/{artifactId}/versions/{version}",
+      "operationId": "getArtifactVersion"
+    },
+    {
+      "method": "GET",
+      "path": "/artifacts/{artifactId}/versions/{version}/content",
+      "operationId": "downloadArtifactVersion"
+    },
+    {
+      "method": "POST",
+      "path": "/artifacts/{artifactId}/promote",
+      "operationId": "promoteArtifact"
+    },
+    {
+      "method": "POST",
+      "path": "/artifacts/{artifactId}/archive",
+      "operationId": "archiveArtifact"
+    },
+    {
+      "method": "GET",
+      "path": "/library",
+      "operationId": "listLibrary"
+    },
+    {
+      "method": "GET",
+      "path": "/routines",
+      "operationId": "listRoutines"
+    },
+    {
+      "method": "POST",
+      "path": "/routines",
+      "operationId": "createRoutine"
+    },
+    {
+      "method": "GET",
+      "path": "/routines/{routineId}",
+      "operationId": "getRoutine"
+    },
+    {
+      "method": "GET",
+      "path": "/routines/{routineId}/revisions",
+      "operationId": "listRoutineRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/routines/{routineId}/health",
+      "operationId": "getRoutineHealth"
+    },
+    {
+      "method": "POST",
+      "path": "/routines/{routineId}/health",
+      "operationId": "reviseRoutine"
+    },
+    {
+      "method": "POST",
+      "path": "/routines/{routineId}/run",
+      "operationId": "runRoutine"
+    },
+    {
+      "method": "POST",
+      "path": "/routines/{routineId}/archive",
+      "operationId": "archiveRoutine"
+    },
+    {
+      "method": "GET",
+      "path": "/automations",
+      "operationId": "listAutomations"
+    },
+    {
+      "method": "POST",
+      "path": "/automations",
+      "operationId": "createAutomation"
+    },
+    {
+      "method": "GET",
+      "path": "/automations/{automationId}",
+      "operationId": "getAutomation"
+    },
+    {
+      "method": "PATCH",
+      "path": "/automations/{automationId}",
+      "operationId": "updateAutomation"
+    },
+    {
+      "method": "POST",
+      "path": "/automations/{automationId}/run",
+      "operationId": "runAutomationNow"
+    },
+    {
+      "method": "GET",
+      "path": "/automations/{automationId}/revisions",
+      "operationId": "listAutomationRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/automations/{automationId}/occurrences",
+      "operationId": "listAutomationOccurrences"
+    },
+    {
+      "method": "POST",
+      "path": "/automations/{automationId}/pause",
+      "operationId": "pauseAutomation"
+    },
+    {
+      "method": "POST",
+      "path": "/automations/{automationId}/resume",
+      "operationId": "resumeAutomation"
+    },
+    {
+      "method": "POST",
+      "path": "/automations/{automationId}/disable",
+      "operationId": "disableAutomation"
+    },
+    {
+      "method": "GET",
+      "path": "/runtime-lifecycle",
+      "operationId": "getLocalRuntimeLifecycle"
+    },
+    {
+      "method": "PATCH",
+      "path": "/runtime-lifecycle/startup-policy",
+      "operationId": "setLocalRuntimeStartupPolicy"
+    },
+    {
+      "method": "GET",
+      "path": "/runtime-lifecycle/stop-preview",
+      "operationId": "previewLocalRuntimeStop"
+    },
+    {
+      "method": "POST",
+      "path": "/runtime-lifecycle/stop",
+      "operationId": "requestLocalRuntimeStop"
+    },
+    {
+      "method": "GET",
+      "path": "/runtimes",
+      "operationId": "listRuntimes"
+    },
+    {
+      "method": "POST",
+      "path": "/runtimes/pair-token",
+      "operationId": "createRuntimePairToken"
+    },
+    {
+      "method": "POST",
+      "path": "/runtimes/{runtimeId}/revoke",
+      "operationId": "revokeRuntime"
+    },
+    {
+      "method": "GET",
+      "path": "/runtimes/{runtimeId}/incarnations",
+      "operationId": "listRuntimeIncarnations"
+    },
+    {
+      "method": "GET",
+      "path": "/runtimes/{runtimeId}/offers",
+      "operationId": "getRuntimeOffers"
+    },
+    {
+      "method": "GET",
+      "path": "/runtimes/{runtimeId}/capability-hosts",
+      "operationId": "listRuntimeCapabilityHosts"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-profiles",
+      "operationId": "listAgentProfiles"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-bindings",
+      "operationId": "listAgentBindings"
+    },
+    {
+      "method": "POST",
+      "path": "/agent-bindings",
+      "operationId": "createAgentBinding"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-bindings/{agentBindingId}",
+      "operationId": "getAgentBinding"
+    },
+    {
+      "method": "POST",
+      "path": "/agent-bindings/{agentBindingId}/enable",
+      "operationId": "enableAgentBinding"
+    },
+    {
+      "method": "POST",
+      "path": "/agent-bindings/{agentBindingId}/disable",
+      "operationId": "disableAgentBinding"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-bindings/{agentBindingId}/session-options",
+      "operationId": "getAgentSessionOptions"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-bindings/{agentBindingId}/harness-capabilities",
+      "operationId": "getAgentHarnessCapabilities"
+    },
+    {
+      "method": "GET",
+      "path": "/agent-bindings/{agentBindingId}/quota-observation",
+      "operationId": "getAgentQuotaObservation"
+    },
+    {
+      "method": "GET",
+      "path": "/delegation-profiles",
+      "operationId": "listDelegationProfiles"
+    },
+    {
+      "method": "POST",
+      "path": "/delegation-profiles",
+      "operationId": "createDelegationProfile"
+    },
+    {
+      "method": "GET",
+      "path": "/delegation-profiles/{delegationProfileId}",
+      "operationId": "getDelegationProfile"
+    },
+    {
+      "method": "POST",
+      "path": "/delegation-profiles/{delegationProfileId}/duplicate",
+      "operationId": "duplicateDelegationProfile"
+    },
+    {
+      "method": "GET",
+      "path": "/delegation-profiles/{delegationProfileId}/performance",
+      "operationId": "getDelegationProfilePerformance"
+    },
+    {
+      "method": "GET",
+      "path": "/delegation-profiles/{delegationProfileId}/revisions",
+      "operationId": "listDelegationProfileRevisions"
+    },
+    {
+      "method": "POST",
+      "path": "/delegation-profiles/{delegationProfileId}/revisions",
+      "operationId": "reviseDelegationProfile"
+    },
+    {
+      "method": "POST",
+      "path": "/delegation-profiles/{delegationProfileId}/status",
+      "operationId": "changeDelegationProfileStatus"
+    },
+    {
+      "method": "GET",
+      "path": "/coworkers",
+      "operationId": "listCoworkers"
+    },
+    {
+      "method": "POST",
+      "path": "/coworkers",
+      "operationId": "createCoworker"
+    },
+    {
+      "method": "GET",
+      "path": "/coworkers/{coworkerId}",
+      "operationId": "getCoworker"
+    },
+    {
+      "method": "GET",
+      "path": "/coworkers/{coworkerId}/presence",
+      "operationId": "getCoworkerPresence"
+    },
+    {
+      "method": "POST",
+      "path": "/coworkers/{coworkerId}/revisions",
+      "operationId": "reviseCoworker"
+    },
+    {
+      "method": "POST",
+      "path": "/coworkers/{coworkerId}/status",
+      "operationId": "changeCoworkerStatus"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/primary-coworker",
+      "operationId": "setPrimaryCoworker"
+    },
+    {
+      "method": "GET",
+      "path": "/goals",
+      "operationId": "listGoals"
+    },
+    {
+      "method": "POST",
+      "path": "/goals",
+      "operationId": "createGoal"
+    },
+    {
+      "method": "GET",
+      "path": "/goals/{goalId}",
+      "operationId": "getGoal"
+    },
+    {
+      "method": "POST",
+      "path": "/goals/{goalId}/revisions",
+      "operationId": "reviseGoal"
+    },
+    {
+      "method": "POST",
+      "path": "/goals/{goalId}/status",
+      "operationId": "changeGoalStatus"
+    },
+    {
+      "method": "GET",
+      "path": "/suggestions",
+      "operationId": "listSuggestions"
+    },
+    {
+      "method": "POST",
+      "path": "/suggestions/{suggestionId}/resolve",
+      "operationId": "resolveSuggestion"
+    },
+    {
+      "method": "POST",
+      "path": "/suggestions/{suggestionId}/snooze",
+      "operationId": "snoozeSuggestion"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/suggestion-preferences",
+      "operationId": "listSuggestionPreferences"
+    },
+    {
+      "method": "PUT",
+      "path": "/workspaces/{workspaceId}/suggestion-preferences/{kind}",
+      "operationId": "setSuggestionPreference"
+    },
+    {
+      "method": "POST",
+      "path": "/demonstrations",
+      "operationId": "startDemonstration"
+    },
+    {
+      "method": "POST",
+      "path": "/demonstrations/{demonstrationId}/complete",
+      "operationId": "completeDemonstration"
+    },
+    {
+      "method": "POST",
+      "path": "/demonstrations/{demonstrationId}/pause",
+      "operationId": "pauseDemonstration"
+    },
+    {
+      "method": "POST",
+      "path": "/demonstrations/{demonstrationId}/resume",
+      "operationId": "resumeDemonstration"
+    },
+    {
+      "method": "POST",
+      "path": "/demonstrations/{demonstrationId}/abort",
+      "operationId": "abortDemonstration"
+    },
+    {
+      "method": "GET",
+      "path": "/connections",
+      "operationId": "listConnections"
+    },
+    {
+      "method": "GET",
+      "path": "/connections/{connectionId}",
+      "operationId": "getConnection"
+    },
+    {
+      "method": "POST",
+      "path": "/connections/{connectionId}/disconnect",
+      "operationId": "disconnectConnection"
+    },
+    {
+      "method": "GET",
+      "path": "/channel-bindings",
+      "operationId": "listChannelBindings"
+    },
+    {
+      "method": "GET",
+      "path": "/channel-bindings/{channelBindingId}",
+      "operationId": "getChannelBinding"
+    },
+    {
+      "method": "PATCH",
+      "path": "/channel-bindings/{channelBindingId}",
+      "operationId": "updateChannelBindingActions"
+    },
+    {
+      "method": "POST",
+      "path": "/channel-bindings/{channelBindingId}/revoke",
+      "operationId": "revokeChannelBinding"
+    },
+    {
+      "method": "POST",
+      "path": "/channel-bindings/{channelBindingId}/host-assignment",
+      "operationId": "reassignChannelHost"
+    },
+    {
+      "method": "GET",
+      "path": "/discover/search",
+      "operationId": "searchDiscover"
+    },
+    {
+      "method": "GET",
+      "path": "/discover/items/{itemId}",
+      "operationId": "describeDiscoverItem"
+    },
+    {
+      "method": "POST",
+      "path": "/capabilities/{capabilityId}/connect-or-install",
+      "operationId": "connectOrInstallCapability"
+    },
+    {
+      "method": "POST",
+      "path": "/capabilities/{capabilityId}/test",
+      "operationId": "testCapabilityConnection"
+    },
+    {
+      "method": "POST",
+      "path": "/resources/uploads",
+      "operationId": "createResourceUpload"
+    },
+    {
+      "method": "GET",
+      "path": "/resources/uploads/{uploadId}",
+      "operationId": "getResourceUpload"
+    },
+    {
+      "method": "PUT",
+      "path": "/resources/uploads/{uploadId}/chunks/{chunkIndex}",
+      "operationId": "uploadResourceChunk"
+    },
+    {
+      "method": "POST",
+      "path": "/resources/uploads/{uploadId}/commit",
+      "operationId": "commitResourceUpload"
+    },
+    {
+      "method": "POST",
+      "path": "/resources/{resourceId}/revision-uploads",
+      "operationId": "createResourceRevisionUpload"
+    },
+    {
+      "method": "PATCH",
+      "path": "/resources/{resourceId}/context-document/status",
+      "operationId": "setContextDocumentStatus"
+    },
+    {
+      "method": "GET",
+      "path": "/resources/{resourceId}/context-document/deletion",
+      "operationId": "getContextDocumentDeletionStatus"
+    },
+    {
+      "method": "GET",
+      "path": "/resources/search",
+      "operationId": "searchResources"
+    },
+    {
+      "method": "GET",
+      "path": "/resources/{resourceId}",
+      "operationId": "getResource"
+    },
+    {
+      "method": "GET",
+      "path": "/resources/{resourceId}/locations",
+      "operationId": "listResourceLocations"
+    },
+    {
+      "method": "GET",
+      "path": "/resources/{resourceId}/revisions",
+      "operationId": "listResourceRevisions"
+    },
+    {
+      "method": "GET",
+      "path": "/workspace-roots",
+      "operationId": "listWorkspaceRoots"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace-roots",
+      "operationId": "addWorkspaceRoot"
+    },
+    {
+      "method": "PATCH",
+      "path": "/workspace-roots/{rootId}",
+      "operationId": "updateWorkspaceRoot"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace-roots/{rootId}/pause",
+      "operationId": "pauseWorkspaceRoot"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace-roots/{rootId}/resume",
+      "operationId": "resumeWorkspaceRoot"
+    },
+    {
+      "method": "POST",
+      "path": "/workspace-roots/{rootId}/revoke",
+      "operationId": "revokeWorkspaceRoot"
+    },
+    {
+      "method": "GET",
+      "path": "/user-requests",
+      "operationId": "listUserRequests"
+    },
+    {
+      "method": "POST",
+      "path": "/user-requests/{requestId}/respond",
+      "operationId": "respondToUserRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/user-requests/{requestId}/external-handoff",
+      "operationId": "openUserRequestExternalHandoff"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/attempts/{attemptId}/take-control",
+      "operationId": "takeEnvironmentControl"
+    },
+    {
+      "method": "POST",
+      "path": "/tasks/{taskId}/attempts/{attemptId}/return-control",
+      "operationId": "returnEnvironmentControl"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/instructions/revisions",
+      "operationId": "listWorkspaceInstructionRevisions"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/instructions/revisions",
+      "operationId": "createWorkspaceInstructionRevision"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/environments",
+      "operationId": "listWorkspaceEnvironments"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments",
+      "operationId": "createPersistentWorkspaceEnvironment"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments/provision-preview",
+      "operationId": "previewPersistentEnvironmentProvision"
+    },
+    {
+      "method": "GET",
+      "path": "/workspaces/{workspaceId}/environments/{environmentId}",
+      "operationId": "getWorkspaceEnvironment"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments/{environmentId}/suspend",
+      "operationId": "suspendWorkspaceEnvironment"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments/{environmentId}/resume",
+      "operationId": "resumeWorkspaceEnvironment"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments/{environmentId}/sharing-scope",
+      "operationId": "changeWorkspaceEnvironmentSharingScope"
+    },
+    {
+      "method": "POST",
+      "path": "/workspaces/{workspaceId}/environments/{environmentId}/destroy",
+      "operationId": "destroyWorkspaceEnvironment"
+    },
+    {
+      "method": "GET",
+      "path": "/needs-you",
+      "operationId": "listNeedsYou"
+    },
+    {
+      "method": "GET",
+      "path": "/user-requests/{requestId}",
+      "operationId": "getUserRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/user-requests/{requestId}/dismiss",
+      "operationId": "dismissUserRequest"
+    },
+    {
+      "method": "GET",
+      "path": "/notifications",
+      "operationId": "listNotifications"
+    },
+    {
+      "method": "GET",
+      "path": "/notification-preferences",
+      "operationId": "listNotificationPreferences"
+    },
+    {
+      "method": "PUT",
+      "path": "/notification-preferences/{eventClass}",
+      "operationId": "setNotificationPreference"
+    },
+    {
+      "method": "GET",
+      "path": "/skill-proposals",
+      "operationId": "listSkillProposals"
+    },
+    {
+      "method": "POST",
+      "path": "/skill-proposals",
+      "operationId": "createSkillProposal"
+    },
+    {
+      "method": "POST",
+      "path": "/skill-proposals/{proposalId}/approve",
+      "operationId": "approveSkillProposal"
+    },
+    {
+      "method": "POST",
+      "path": "/skill-proposals/{proposalId}/reject",
+      "operationId": "rejectSkillProposal"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/invocations",
+      "operationId": "listTaskCapabilityInvocations"
+    },
+    {
+      "method": "GET",
+      "path": "/capability-invocations/{invocationId}",
+      "operationId": "getCapabilityInvocation"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/usage",
+      "operationId": "listTaskUsage"
+    },
+    {
+      "method": "GET",
+      "path": "/resources/{resourceId}/dependents",
+      "operationId": "listResourceDependents"
+    },
+    {
+      "method": "GET",
+      "path": "/dependency-edges/{dependencyEdgeId}/invalidations",
+      "operationId": "listDependencyInvalidations"
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/{taskId}/verification-runs",
+      "operationId": "listTaskVerificationRuns"
+    }
+  ],
+  "sqlite_tables": [
+    "workspaces",
+    "workspace_instruction_revisions",
+    "conversations",
+    "conversation_messages",
+    "conversation_turns",
+    "provider_circuit_states",
+    "tasks",
+    "goals",
+    "goal_revisions",
+    "goal_task_links",
+    "goal_routine_links",
+    "suggestions",
+    "suggestion_preferences",
+    "demonstration_sessions",
+    "task_spec_revisions",
+    "plan_revisions",
+    "steps",
+    "agent_profiles",
+    "agent_endpoints",
+    "agent_bindings",
+    "delegation_profiles",
+    "delegation_profile_revisions",
+    "coworkers",
+    "coworker_revisions",
+    "agent_host_instances",
+    "runtimes",
+    "runtime_incarnations",
+    "runtime_incarnation_local_observations",
+    "agent_endpoint_bindings",
+    "runtime_offers",
+    "pairing_tokens",
+    "environments",
+    "environment_provider_bindings",
+    "environment_provision_previews",
+    "environment_checkpoints",
+    "environment_checkpoint_provider_bindings",
+    "attempts",
+    "agent_sessions",
+    "agent_session_host_bindings",
+    "execution_leases",
+    "capability_grants",
+    "secret_leases",
+    "capability_host_instances",
+    "capability_activations",
+    "capability_activation_host_bindings",
+    "capability_locks",
+    "connections",
+    "channel_bindings",
+    "channel_host_assignments",
+    "channel_host_lease_records",
+    "channel_thread_mappings",
+    "channel_event_receipts",
+    "channel_ingress_cursor_bindings",
+    "artifacts",
+    "artifact_versions",
+    "effects",
+    "evidence",
+    "audit_records",
+    "verification_runs",
+    "approvals",
+    "approval_uses",
+    "routines",
+    "routine_revisions",
+    "automations",
+    "automation_revisions",
+    "automation_occurrences",
+    "automation_cursors",
+    "automation_trigger_bindings",
+    "domain_events",
+    "request_dedup",
+    "replication_cursors",
+    "replication_receipts",
+    "replication_aggregate_positions",
+    "pending_replication_events",
+    "resources",
+    "context_document_purge_plans",
+    "context_document_purge_receipts",
+    "resource_revisions",
+    "resource_revision_parents",
+    "resource_locations",
+    "resource_location_bindings",
+    "file_identity_bindings",
+    "workspace_roots",
+    "workspace_replication_roots",
+    "resource_edges",
+    "dependency_edges",
+    "invalidation_records",
+    "capability_invocations",
+    "capability_invocation_provider_bindings",
+    "user_requests",
+    "user_request_responses",
+    "provider_input_bindings",
+    "usage_observations",
+    "budget_reservations",
+    "notification_preferences",
+    "notification_deliveries",
+    "channel_reply_targets",
+    "skill_proposals",
+    "environment_control_leases",
+    "resource_upload_sessions",
+    "resource_upload_chunks",
+    "aggregate_snapshots",
+    "event_archive_segments",
+    "workspace_backup_manifests",
+    "handoffs"
+  ],
+  "sqlite_triggers": [
+    "goal_identity_immutable",
+    "goal_revision_immutable_update",
+    "goal_revision_immutable_delete",
+    "goal_task_link_current_revision_guard",
+    "goal_task_link_immutable_update",
+    "goal_task_link_immutable_delete",
+    "goal_routine_link_current_revision_guard",
+    "goal_routine_link_immutable_update",
+    "goal_routine_link_immutable_delete",
+    "suggestion_proposal_immutable",
+    "demonstration_capture_bounds_guard",
+    "demonstration_session_transition_guard",
+    "demonstration_capture_policy_immutable",
+    "task_spec_lead_failover_scope_guard",
+    "task_spec_lead_failover_shape_guard",
+    "workspace_default_agent_binding_insert_guard",
+    "workspace_default_agent_binding_update_guard",
+    "agent_binding_default_lead_guard",
+    "delegation_profile_identity_immutable",
+    "delegation_profile_revision_immutable_update",
+    "delegation_profile_revision_immutable_delete",
+    "delegation_profile_revision_head_name_guard",
+    "delegation_profile_head_name_guard",
+    "delegation_profile_options_guard",
+    "delegation_profile_warm_policy_guard",
+    "coworker_revision_worker_scope_guard",
+    "coworker_revision_policy_shape_guard",
+    "coworker_revision_immutable_update",
+    "coworker_revision_immutable_delete",
+    "coworker_identity_immutable",
+    "workspace_primary_coworker_state_insert_guard",
+    "workspace_primary_coworker_state_update_guard",
+    "primary_coworker_archive_guard",
+    "coworker_archive_work_guard",
+    "task_coworker_origin_immutable",
+    "task_coworker_origin_not_archived",
+    "agent_endpoint_binding_matches_current_incarnation",
+    "agent_endpoint_binding_identity_immutable",
+    "agent_endpoint_binding_delete_requires_drained_host",
+    "environment_identity_immutable",
+    "environment_provider_binding_matches_current_incarnation",
+    "environment_provider_binding_identity_immutable",
+    "environment_requires_issued_preview",
+    "environment_preview_consumption_requires_environment",
+    "environment_preview_transition_is_single_use",
+    "environment_checkpoint_immutable",
+    "environment_checkpoint_binding_matches_current_incarnation",
+    "environment_checkpoint_binding_immutable",
+    "attempt_delegation_profile_admission_guard",
+    "attempt_environment_owner_guard",
+    "attempt_execution_identity_immutable",
+    "conversation_turn_agent_session_scope_guard_insert",
+    "conversation_turn_agent_session_scope_guard",
+    "agent_session_host_binding_matches_origin",
+    "agent_session_host_binding_immutable",
+    "agent_session_host_binding_delete_requires_settlement",
+    "agent_session_identity_immutable",
+    "plan_revision_agent_session_context_guard",
+    "execution_lease_current_incarnation_guard",
+    "execution_lease_current_incarnation_update_guard",
+    "execution_lease_identity_immutable",
+    "execution_lease_no_reactivation",
+    "capability_host_instance_identity_immutable",
+    "capability_activation_host_binding_matches_origin",
+    "capability_activation_host_binding_immutable",
+    "capability_activation_host_binding_delete_requires_settlement",
+    "capability_activation_identity_immutable",
+    "channel_host_assignment_epoch_monotonic",
+    "channel_receipt_origin_immutable",
+    "channel_receipt_transition_guard",
+    "channel_ingress_cursor_binding_insert_owner",
+    "channel_ingress_cursor_binding_update_guard",
+    "channel_ingress_cursor_binding_identity_immutable",
+    "guard_artifact_update",
+    "guard_artifact_current_revision",
+    "guard_artifact_initial_revision",
+    "guard_artifact_version_insert",
+    "artifact_versions_no_update",
+    "artifact_versions_no_delete",
+    "task_automation_coworker_origin_guard",
+    "automation_trigger_binding_matches_current_owner",
+    "automation_trigger_binding_update_matches_current_owner",
+    "automation_trigger_binding_identity_immutable",
+    "context_document_purge_plan_shape_guard",
+    "context_document_purge_plan_admission_guard",
+    "context_document_purge_plan_immutable",
+    "context_document_purge_plan_no_delete",
+    "context_document_purge_receipt_admission_guard",
+    "context_document_owner_scope_guard",
+    "resource_context_document_transition_guard",
+    "context_document_purge_receipt_transition_guard",
+    "context_document_deleted_requires_purge_ack",
+    "resource_revision_context_status_guard",
+    "resource_location_binding_matches_current_incarnation",
+    "resource_location_binding_identity_immutable",
+    "file_identity_binding_matches_current_incarnation",
+    "dependency_edge_same_workspace",
+    "invalidation_observation_same_resource",
+    "action_batch_member_group_guard",
+    "action_batch_complete_before_dispatch",
+    "action_batch_member_identity_immutable",
+    "effect_invocation_scope_guard",
+    "effect_identity_immutable",
+    "capability_invocation_effect_link_guard",
+    "capability_invocation_execution_method_guard",
+    "capability_invocation_provider_binding_matches_activation",
+    "capability_invocation_provider_binding_identity_immutable",
+    "capability_invocation_admission_matches_scope",
+    "capability_invocation_first_dispatch_revalidates_owner",
+    "capability_invocation_identity_immutable",
+    "user_request_admission_matches_scope",
+    "user_request_provenance_immutable",
+    "user_request_status_transition_guard",
+    "user_request_answer_matches_response",
+    "user_request_response_insert_pending",
+    "user_request_external_response_shape",
+    "user_request_response_parent_eligible",
+    "user_request_response_immutable_update",
+    "user_request_response_immutable_delete",
+    "provider_input_binding_insert_is_awaiting",
+    "provider_input_binding_scope_matches_request",
+    "provider_input_binding_identity_immutable",
+    "provider_input_binding_response_immutable",
+    "provider_input_binding_transition_guard",
+    "provider_input_binding_dispatch_proof_guard",
+    "provider_input_binding_dispatch_authority",
+    "user_request_channel_response_authorized",
+    "channel_reply_target_matches_delivery",
+    "channel_reply_target_terminal",
+    "environment_control_lease_current_incarnation_guard",
+    "environment_control_lease_current_incarnation_update_guard",
+    "environment_control_lease_identity_immutable",
+    "environment_control_lease_no_reactivation",
+    "environment_control_lease_owner_epoch_guard",
+    "resource_revision_upload_create_version_guard",
+    "resource_revision_upload_parent_guard",
+    "resource_revision_upload_current_head_guard",
+    "resource_revision_upload_version_guard",
+    "immutable_workspace_backup_manifest_update",
+    "environment_sharing_scope_change_guard"
+  ],
+  "sqlite_indexes": [
+    "idx_messages_conversation_time",
+    "uq_conversation_turn_current_agent_session",
+    "idx_provider_circuit_open_until",
+    "idx_tasks_workspace_status",
+    "idx_goals_workspace_status",
+    "idx_goal_task_links_task",
+    "idx_goal_routine_links_routine",
+    "idx_suggestions_workspace_status_created",
+    "uq_suggestions_open_dedupe",
+    "idx_suggestions_dismissal_cooldown",
+    "idx_demonstration_sessions_workspace_status",
+    "idx_steps_task_status",
+    "idx_delegation_profiles_workspace_status",
+    "idx_delegation_profiles_binding_status",
+    "uq_delegation_profiles_binding_name",
+    "idx_coworkers_workspace_status",
+    "idx_agent_host_instances_runtime_state",
+    "idx_runtimes_workspace_availability",
+    "idx_runtime_incarnations_runtime_started",
+    "idx_agent_endpoint_bindings_runtime",
+    "idx_runtime_offers_expiry",
+    "idx_pairing_tokens_expiry",
+    "idx_environment_provider_bindings_incarnation",
+    "idx_environment_provision_previews_expiry",
+    "idx_environment_checkpoint_bindings_incarnation",
+    "idx_attempts_task_step_status",
+    "idx_agent_sessions_runtime_status",
+    "uq_active_task_planning_session",
+    "uq_active_conversation_turn_session",
+    "idx_conversation_sessions",
+    "idx_agent_session_host_bindings_host",
+    "idx_leases_step_state",
+    "uq_active_lease_per_step",
+    "idx_secret_leases_task_status",
+    "idx_capability_host_instances_runtime_state",
+    "idx_capability_activation_host_bindings_host",
+    "idx_channel_host_runtime",
+    "idx_channel_host_lease_expiry",
+    "idx_channel_ingress_cursor_runtime",
+    "idx_artifacts_task",
+    "idx_artifact_digest",
+    "idx_effects_task_state",
+    "idx_effects_idempotency",
+    "idx_audit_workspace_time",
+    "idx_approvals_task_status",
+    "idx_routines_workspace_status",
+    "idx_automation_occurrences_status",
+    "idx_automation_occurrences_claim",
+    "idx_automation_trigger_bindings_runtime",
+    "idx_channel_receipts_claim",
+    "idx_events_workspace_hlc",
+    "idx_events_entity",
+    "idx_resources_workspace_name",
+    "uq_resources_identity_digest",
+    "idx_context_purge_pending",
+    "idx_resource_revision_parents_parent",
+    "idx_resource_locations_resource",
+    "idx_resource_location_bindings_incarnation",
+    "idx_file_identity_bindings_incarnation",
+    "uq_active_workspace_root_location",
+    "idx_resource_edges_from",
+    "idx_resource_edges_to",
+    "idx_dependency_edges_source",
+    "idx_dependency_edges_dependent",
+    "idx_invalidations_observed_revision",
+    "idx_invocations_workspace_status",
+    "uq_action_batch_member_ordinal",
+    "uq_action_batch_member_idempotency",
+    "idx_user_requests_inbox",
+    "idx_provider_input_delivery",
+    "idx_usage_task_time",
+    "idx_usage_environment_time",
+    "idx_budget_reservations_workspace_scope",
+    "idx_notification_due",
+    "idx_channel_reply_targets_request",
+    "uq_active_environment_control"
+  ],
+  "event_type_registry": [
+    "workspace.created.v1",
+    "workspace.replication_policy.changed.v1",
+    "workspace.default_agent_binding.changed.v1",
+    "workspace.primary_coworker.changed.v1",
+    "workspace.archived.v1",
+    "workspace.instructions.revision.created.v1",
+    "workspace.root.created.v1",
+    "workspace.root.status.changed.v1",
+    "resource.created.v1",
+    "resource.revision.observed.v1",
+    "resource.context_document.status.changed.v1",
+    "resource.context_document.purge.acknowledged.v1",
+    "resource.location.changed.v1",
+    "resource.edge.created.v1",
+    "resource.invalidation.created.v1",
+    "resource.upload.created.v1",
+    "resource.upload.status.changed.v1",
+    "conversation.created.v1",
+    "conversation.message.added.v1",
+    "conversation.turn.created.v1",
+    "conversation.turn.retried.v1",
+    "conversation.turn.resumed.v1",
+    "conversation.turn.settled.v1",
+    "task.created.v1",
+    "task.spec.revised.v1",
+    "task.plan.revised.v1",
+    "task.lead_agent.changed.v1",
+    "task.status.changed.v1",
+    "task.pause.requested.v1",
+    "task.paused.v1",
+    "task.resumed.v1",
+    "task.coworker.origin.pinned.v1",
+    "step.created.v1",
+    "step.status.changed.v1",
+    "step.recovery.accepted.v1",
+    "attempt.created.v1",
+    "attempt.status.changed.v1",
+    "attempt.checkpointed.v1",
+    "attempt.failure.recorded.v1",
+    "agent.session.started.v1",
+    "agent.session.lost.v1",
+    "agent.session.closed.v1",
+    "agent.binding.changed.v1",
+    "agent.binding.lead_eligibility.changed.v1",
+    "agent.session.harness_descriptor.pinned.v1",
+    "delegation_profile.created.v1",
+    "delegation_profile.revised.v1",
+    "delegation_profile.status.changed.v1",
+    "delegation.admitted.v1",
+    "coworker.created.v1",
+    "coworker.revised.v1",
+    "coworker.status.changed.v1",
+    "goal.created.v1",
+    "goal.revised.v1",
+    "goal.status.changed.v1",
+    "suggestion.proposed.v1",
+    "suggestion.resolved.v1",
+    "suggestion.visibility.changed.v1",
+    "suggestion.preference.changed.v1",
+    "demonstration.status.changed.v1",
+    "runtime.paired.v1",
+    "runtime.revoked.v1",
+    "runtime.availability.changed.v1",
+    "runtime.offer.changed.v1",
+    "provider.circuit.changed.v1",
+    "lease.acquired.v1",
+    "lease.renewed.v1",
+    "lease.released.v1",
+    "lease.expired.v1",
+    "capability.grant.created.v1",
+    "capability.grant.revoked.v1",
+    "capability.grant.expired.v1",
+    "capability.activation.status.changed.v1",
+    "capability.activation.health.changed.v1",
+    "capability.invocation.created.v1",
+    "capability.invocation.dispatched.v1",
+    "capability.invocation.checkpointed.v1",
+    "capability.invocation.status.changed.v1",
+    "usage.observed.v1",
+    "budget.reservation.changed.v1",
+    "artifact.created.v1",
+    "artifact.version.created.v1",
+    "artifact.library.promoted.v1",
+    "artifact.library.archived.v1",
+    "effect.proposed.v1",
+    "effect.started.v1",
+    "effect.acknowledged.v1",
+    "effect.observed.v1",
+    "effect.verified.v1",
+    "effect.failed.v1",
+    "effect.ambiguous.v1",
+    "effect.reconciliation.started.v1",
+    "effect.retry.authorized.v1",
+    "evidence.created.v1",
+    "verification.started.v1",
+    "verification.completed.v1",
+    "approval.requested.v1",
+    "approval.resolved.v1",
+    "approval.use.consumed.v1",
+    "user.request.created.v1",
+    "user.request.resolved.v1",
+    "notification.preference.changed.v1",
+    "notification.delivery.changed.v1",
+    "skill.proposal.created.v1",
+    "skill.proposal.status.changed.v1",
+    "routine.created.v1",
+    "routine.revision.created.v1",
+    "routine.status.changed.v1",
+    "automation.cursor.changed.v1",
+    "automation.occurrence.status.changed.v1",
+    "automation.created.v1",
+    "automation.revision.created.v1",
+    "automation.status.changed.v1",
+    "automation.occurrence.created.v1",
+    "automation.occurrence.claimed.v1",
+    "automation.occurrence.settled.v1",
+    "connection.state.changed.v1",
+    "channel.binding.changed.v1",
+    "channel.host.assignment.changed.v1",
+    "channel.inbound.received.v1",
+    "channel.receipt.changed.v1",
+    "channel.outbound.settled.v1",
+    "environment.created.v1",
+    "environment.state.changed.v1",
+    "environment.checkpoint.created.v1",
+    "environment.control.lease.changed.v1",
+    "environment.sharing_scope.changed.v1",
+    "capability.lock.created.v1",
+    "secret.lease.issued.v1",
+    "secret.lease.revoked.v1",
+    "handoff.created.v1",
+    "handoff.phase.changed.v1",
+    "audit.record.created.v1"
+  ]
+}

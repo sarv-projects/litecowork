@@ -1,0 +1,1713 @@
+{
+  "schema_version": 1,
+  "baseline": "8af59a5b9be0a00b12849caf40eac287527ac43e",
+  "stories": [
+    {
+      "id": "E01-S01",
+      "epic": "E01",
+      "title": "Contract/toolchain baseline",
+      "gate": "G0",
+      "status": "PLANNED",
+      "depends_on": [],
+      "authorities": [
+        "docs/IMPLEMENTATION.md",
+        "docs/STORAGE.md",
+        "docs/EVENTS.md",
+        "docs/PROTOCOLS.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Pin Rust/TS/Python toolchains and lockfiles; reproduce schema/API/SQL validator; create workspace build and lint CI without empty domain crates.",
+      "acceptance": "Clean checkout builds and validators pass; pipeline reports exact versions and skips no required contract check.",
+      "negative_cases": "Missing toolchain, malformed schema, stale generated client, unsupported license.",
+      "demo": "Reproduce build and contract checks in a disposable checkout.",
+      "tests": [
+        "E01-S01-CODE",
+        "E01-S01-SYSTEM",
+        "E01-S01-USER"
+      ],
+      "sources": [
+        "R-TAURI",
+        "R-SQLITE"
+      ]
+    },
+    {
+      "id": "E01-S02",
+      "epic": "E01",
+      "title": "Transactional persistence",
+      "gate": "G0",
+      "status": "PLANNED",
+      "depends_on": [
+        "E01-S01"
+      ],
+      "authorities": [
+        "docs/IMPLEMENTATION.md",
+        "docs/STORAGE.md",
+        "docs/EVENTS.md",
+        "docs/PROTOCOLS.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Implement domain/store ports and SQLite write executor, event+aggregate transactions, blobs/digests, migrations and projection replay; run SP02.",
+      "acceptance": "Concurrent expected-version writes have one winner; interrupted writes leave neither half-event nor partial head; projections rebuild identically.",
+      "negative_cases": "Disk full, busy timeout, missing FK/trigger, migration crash, corrupt blob.",
+      "demo": "Create a Workspace, restart storage, rebuild projections and compare digests.",
+      "tests": [
+        "E01-S02-CODE",
+        "E01-S02-SYSTEM",
+        "E01-S02-USER"
+      ],
+      "sources": [
+        "R-TAURI",
+        "R-SQLITE"
+      ]
+    },
+    {
+      "id": "E01-S03",
+      "epic": "E01",
+      "title": "Independent Runtime lifecycle",
+      "gate": "G0",
+      "status": "PLANNED",
+      "depends_on": [
+        "E01-S02"
+      ],
+      "authorities": [
+        "docs/IMPLEMENTATION.md",
+        "docs/STORAGE.md",
+        "docs/EVENTS.md",
+        "docs/PROTOCOLS.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Implement single-instance/incarnation boot, recovery, shutdown/drain, startup policy, sleep/wake and service packaging skeleton.",
+      "acceptance": "Closing Operator leaves daemon running; reboot changes incarnation; stale process cannot own a lease; workers lazy-start.",
+      "negative_cases": "Duplicate startup, SIGKILL, sleep during write, invalid state directory permissions.",
+      "demo": "Close app, reopen, kill daemon, recover same durable records.",
+      "tests": [
+        "E01-S03-CODE",
+        "E01-S03-SYSTEM",
+        "E01-S03-USER"
+      ],
+      "sources": [
+        "R-TAURI",
+        "R-SQLITE"
+      ]
+    },
+    {
+      "id": "E01-S04",
+      "epic": "E01",
+      "title": "Authenticated Operator boundary",
+      "gate": "G0",
+      "status": "PLANNED",
+      "depends_on": [
+        "E01-S03"
+      ],
+      "authorities": [
+        "docs/IMPLEMENTATION.md",
+        "docs/STORAGE.md",
+        "docs/EVENTS.md",
+        "docs/PROTOCOLS.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Implement scoped authenticated Operator API, RequestId dedupe, error envelopes, event subscription cursors/backpressure and generated TS client; run SP03.",
+      "acceptance": "Replay returns same command result; another origin/unauthenticated process denied; reconnect fills missed events before live updates.",
+      "negative_cases": "Malformed ID, cross-Workspace request, reused RequestId with changed payload, slow stream.",
+      "demo": "Use desktop client and adversarial HTTP client against same daemon.",
+      "tests": [
+        "E01-S04-CODE",
+        "E01-S04-SYSTEM",
+        "E01-S04-USER"
+      ],
+      "sources": [
+        "R-TAURI",
+        "R-SQLITE"
+      ]
+    },
+    {
+      "id": "E02-S01",
+      "epic": "E02",
+      "title": "Desktop shell/onboarding",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E01-S04"
+      ],
+      "authorities": [
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/WORLD-RESOURCES.md",
+        "docs/CONTEXT.md",
+        "docs/API.md"
+      ],
+      "implementation": "Tauri React shell, theme tokens, routes, keyboard navigation, primary empty states, daemon connection/tray; run SP01.",
+      "acceptance": "Fresh install creates local Workspace; no fake worker card; daemon offline is explicit; native shell survives reconnect.",
+      "negative_cases": "Webview missing, daemon unavailable, repeated submit, resize/200% zoom.",
+      "demo": "Install on reference OS, create Workspace and close/reopen Operator.",
+      "tests": [
+        "E02-S01-CODE",
+        "E02-S01-SYSTEM",
+        "E02-S01-USER"
+      ],
+      "sources": [
+        "R-TAURI"
+      ]
+    },
+    {
+      "id": "E02-S02",
+      "epic": "E02",
+      "title": "Workspace policy and instructions",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E02-S01"
+      ],
+      "authorities": [
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/WORLD-RESOURCES.md",
+        "docs/CONTEXT.md",
+        "docs/API.md"
+      ],
+      "implementation": "Implement Workspace create/revise/archive, replication policy, roots, versioned instructions and optimistic concurrency.",
+      "acceptance": "Tasks pin instructions; archive cannot strand active authority; local-only is default; stale editor gets conflict.",
+      "negative_cases": "Root escapes, overlapping roots, offline policy edit, archive with active Task.",
+      "demo": "Create two Workspaces and prove isolated instructions and search.",
+      "tests": [
+        "E02-S02-CODE",
+        "E02-S02-SYSTEM",
+        "E02-S02-USER"
+      ],
+      "sources": [
+        "R-TAURI"
+      ]
+    },
+    {
+      "id": "E02-S03",
+      "epic": "E02",
+      "title": "Resource intake and factual index",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E02-S02"
+      ],
+      "authorities": [
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/WORLD-RESOURCES.md",
+        "docs/CONTEXT.md",
+        "docs/API.md"
+      ],
+      "implementation": "Implement resumable uploads, file/folder selection, immutable revisions/ancestry, identity/freshness watchers and deterministic FTS search.",
+      "acceptance": "Cancel/restart upload resumes verified chunks; rename preserves correct identity; search metadata does not silently attach content.",
+      "negative_cases": "Symlink/TOCTOU, duplicate digest, deleted root, watcher overflow, unsupported encoding.",
+      "demo": "Import a project folder, rename/edit files, search and inspect exact revisions.",
+      "tests": [
+        "E02-S03-CODE",
+        "E02-S03-SYSTEM",
+        "E02-S03-USER"
+      ],
+      "sources": [
+        "R-TAURI"
+      ]
+    },
+    {
+      "id": "E02-S04",
+      "epic": "E02",
+      "title": "Needs You and truthful UI state",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E02-S03"
+      ],
+      "authorities": [
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/WORLD-RESOURCES.md",
+        "docs/CONTEXT.md",
+        "docs/API.md"
+      ],
+      "implementation": "Derived inbox for Approval/UserRequest/blockers, stable routing, stale action protection; implement motion after committed states only.",
+      "acceptance": "Resolving source removes one item; activity and verified Evidence labels differ; no token heartbeat implies completion.",
+      "negative_cases": "Duplicate event, already-resolved item, unauthorized notification click, reduced motion.",
+      "demo": "Create two blockers, resolve one, replay event and observe unchanged inbox.",
+      "tests": [
+        "E02-S04-CODE",
+        "E02-S04-SYSTEM",
+        "E02-S04-USER"
+      ],
+      "sources": [
+        "R-TAURI"
+      ]
+    },
+    {
+      "id": "E03-S01",
+      "epic": "E03",
+      "title": "Harness qualification and bindings",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E02-S04"
+      ],
+      "authorities": [
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/STATE-MACHINES.md",
+        "docs/CONTEXT.md",
+        "docs/DELEGATION.md"
+      ],
+      "implementation": "Run SP04; probe supported native descriptor/config digest/session options; implement discovery, auth readiness, enabled and lead_eligible.",
+      "acceptance": "Native config remains unchanged; unsupported overrides rejected; installed/connected/lead eligibility displayed independently.",
+      "negative_cases": "Missing binary, expired auth, config drift, unavailable model, plugin conflict.",
+      "demo": "Compare selected native agent with LiteCowork launched session using same config.",
+      "tests": [
+        "E03-S01-CODE",
+        "E03-S01-SYSTEM",
+        "E03-S01-USER"
+      ],
+      "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E03-S02",
+      "epic": "E03",
+      "title": "Conversation turns",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S01"
+      ],
+      "authorities": [
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/STATE-MACHINES.md",
+        "docs/CONTEXT.md",
+        "docs/DELEGATION.md"
+      ],
+      "implementation": "Implement visible messages/turns, input steering, provider UserRequests, scope-specific sessions and cancel/retry.",
+      "acceptance": "Ordinary chat creates no Task/Attempt; concurrent input lands at supported boundary; secrets never enter messages.",
+      "negative_cases": "Turn retry/replay, crash after output before settlement, oversized attachment.",
+      "demo": "Ask a quick question, interrupt, restart and inspect visible conversation.",
+      "tests": [
+        "E03-S02-CODE",
+        "E03-S02-SYSTEM",
+        "E03-S02-USER"
+      ],
+      "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E03-S03",
+      "epic": "E03",
+      "title": "Planning and atomic plan acceptance",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S02"
+      ],
+      "authorities": [
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/STATE-MACHINES.md",
+        "docs/CONTEXT.md",
+        "docs/DELEGATION.md"
+      ],
+      "implementation": "Implement TaskSpec revisions, attempt-free PlanningAssignment, accepted PlanRevision/Steps transaction and user steering.",
+      "acceptance": "No Attempt before accepted Step; stale plans refused; criteria and resources pinned; changed intent creates revision.",
+      "negative_cases": "Concurrent acceptance, invalid DAG, missing capability, stale TaskSpec, plan crash.",
+      "demo": "Request repo review, inspect durable plan and accepted Steps.",
+      "tests": [
+        "E03-S03-CODE",
+        "E03-S03-SYSTEM",
+        "E03-S03-USER"
+      ],
+      "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E03-S04",
+      "epic": "E03",
+      "title": "Attempt execution and recovery",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S03"
+      ],
+      "authorities": [
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/STATE-MACHINES.md",
+        "docs/CONTEXT.md",
+        "docs/DELEGATION.md"
+      ],
+      "implementation": "Implement scheduler/admission/lease, AttemptRunner, bounded TaskPacket/ResumePacket, checkpoint, pause/cancel and recovery ladder.",
+      "acceptance": "Worker kill creates replacement Attempt with same Task; unresolved Effects reconciled before retry; cancel prevents fresh admissions.",
+      "negative_cases": "Crash during checkpoint, stale epoch, pause during verification, lost environment.",
+      "demo": "Kill running worker, resume Task and compare completed/unresolved Steps.",
+      "tests": [
+        "E03-S04-CODE",
+        "E03-S04-SYSTEM",
+        "E03-S04-USER"
+      ],
+      "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E03-S05",
+      "epic": "E03",
+      "title": "Native feature conformance",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S04"
+      ],
+      "authorities": [
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/STATE-MACHINES.md",
+        "docs/CONTEXT.md",
+        "docs/DELEGATION.md"
+      ],
+      "implementation": "Qualify resume, native subagents, worktrees, MCP/skills/hooks/plugins/compaction per adapter; add adapter protocol recordings and real runs.",
+      "acceptance": "Native children stay harness-owned; feature matrix has proven/unsupported/provider-dependent cells; native private state not replicated.",
+      "negative_cases": "Background native child, handle expiry, option change, hook modifies output.",
+      "demo": "Run native-feature suite outside and inside host and report actual differences.",
+      "tests": [
+        "E03-S05-CODE",
+        "E03-S05-SYSTEM",
+        "E03-S05-USER"
+      ],
+      "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E04-S01",
+      "epic": "E04",
+      "title": "Trust evaluation and credential boundary",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S05"
+      ],
+      "authorities": [
+        "docs/TRUST.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/SECURITY.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Implement PolicyEngine/Approval/grants/SecretLease/credential/egress ports under TrustService; OS secret store integration.",
+      "acceptance": "Approval != grant; delegated authority cannot exceed parent; secrets injected only at authorized boundary; audit redacted.",
+      "negative_cases": "Approval replay, SSRF/DNS rebinding, expired SecretLease, malicious tool input.",
+      "demo": "Prepare a connector action, deny/approve it and inspect audit without secret bytes.",
+      "tests": [
+        "E04-S01-CODE",
+        "E04-S01-SYSTEM",
+        "E04-S01-USER"
+      ],
+      "sources": [
+        "R-MCP",
+        "R-MUSE-SAFETY"
+      ]
+    },
+    {
+      "id": "E04-S02",
+      "epic": "E04",
+      "title": "Gateway and progressive discovery",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E04-S01"
+      ],
+      "authorities": [
+        "docs/TRUST.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/SECURITY.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Implement authenticated litecowork gateway tools, scoped catalogue/activation, capability locks, host sharing/circuits and direct-path qualification.",
+      "acceptance": "Only enabled authorized capabilities discovered; every call checks grant/fence; unsafe direct path uses Gateway.",
+      "negative_cases": "Forged session, package metadata injection, host crash, circuit-open provider.",
+      "demo": "Discover and activate a deterministic read capability then revoke access.",
+      "tests": [
+        "E04-S02-CODE",
+        "E04-S02-SYSTEM",
+        "E04-S02-USER"
+      ],
+      "sources": [
+        "R-MCP",
+        "R-MUSE-SAFETY"
+      ]
+    },
+    {
+      "id": "E04-S03",
+      "epic": "E04",
+      "title": "Invocation/Effect reconciliation",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E04-S02"
+      ],
+      "authorities": [
+        "docs/TRUST.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/SECURITY.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Implement durable asynchronous Invocation state, provider input, per-action Effect/idempotency, reconciliation and execution-method provenance.",
+      "acceptance": "Lost reply never blindly duplicates mutation; ambiguous state blocks; method persisted honestly; await/cancel recover after session loss.",
+      "negative_cases": "Timeout after send, provider duplicate callback, stale fence, unsupported sensitive input.",
+      "demo": "Send to local test mailbox, drop response, reconcile exactly one external result.",
+      "tests": [
+        "E04-S03-CODE",
+        "E04-S03-SYSTEM",
+        "E04-S03-USER"
+      ],
+      "sources": [
+        "R-MCP",
+        "R-MUSE-SAFETY"
+      ]
+    },
+    {
+      "id": "E04-S04",
+      "epic": "E04",
+      "title": "Real LiteSPM and MCP conformance",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E04-S03"
+      ],
+      "authorities": [
+        "docs/TRUST.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/SECURITY.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Implement internal port with fixtures; obtain configured LiteSPM authority; qualify real package/component/MCP_SKILL activation/update/pin behavior.",
+      "acceptance": "Fixture and real results separate; exact package digest pinned; active Task survives update; no invented service endpoint/API.",
+      "negative_cases": "Unknown wire contract, incompatible manifest, untrusted package, package restart storm.",
+      "demo": "Use one real resolved package end to end or record integration BLOCKED.",
+      "tests": [
+        "E04-S04-CODE",
+        "E04-S04-SYSTEM",
+        "E04-S04-USER"
+      ],
+      "sources": [
+        "R-MCP",
+        "R-MUSE-SAFETY"
+      ]
+    },
+    {
+      "id": "E04-S05",
+      "epic": "E04",
+      "title": "Artifact/Evidence/verifier completion",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E04-S04"
+      ],
+      "authorities": [
+        "docs/TRUST.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/SECURITY.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Artifact versions/provenance, Evidence strength, VerificationRuns, dependency invalidation, CompletionEvaluator and budgeted verifier failures.",
+      "acceptance": "Agent said done cannot satisfy criterion; changed source invalidates evidence; verifier uses exact candidate version and independent oracle.",
+      "negative_cases": "Corrupt artifact, stale test output, malicious verifier hint, cancel during verify.",
+      "demo": "Produce diff/report, independently check it and show verified versus reported status.",
+      "tests": [
+        "E04-S05-CODE",
+        "E04-S05-SYSTEM",
+        "E04-S05-USER"
+      ],
+      "sources": [
+        "R-MCP",
+        "R-MUSE-SAFETY"
+      ]
+    },
+    {
+      "id": "E05-S01",
+      "epic": "E05",
+      "title": "DelegationProfile lifecycle and UI",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E04-S05"
+      ],
+      "authorities": [
+        "docs/DELEGATION.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/TRUST.md",
+        "docs/OBSERVABILITY.md"
+      ],
+      "implementation": "Versioned profile CRUD/duplicate/enable/archive, adapter option validation and Coworker assignment UI; same binding multiple profiles.",
+      "acceptance": "Disabled by default including lead; revision pin never mutates running child; enable starts no process.",
+      "negative_cases": "Enable disconnected agent, stale profile edit, archived binding, unsupported model.",
+      "demo": "Create fast and reviewer profiles on one installed harness.",
+      "tests": [
+        "E05-S01-CODE",
+        "E05-S01-SYSTEM",
+        "E05-S01-USER"
+      ],
+      "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE"
+      ]
+    },
+    {
+      "id": "E05-S02",
+      "epic": "E05",
+      "title": "Child admission and isolation",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E05-S01"
+      ],
+      "authorities": [
+        "docs/DELEGATION.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/TRUST.md",
+        "docs/OBSERVABILITY.md"
+      ],
+      "implementation": "Accepted-Step host delegation, parent-child provenance, depth/concurrency reservations, TaskPacket/ResultEnvelope validation, private worktrees.",
+      "acceptance": "No child Attempt for native children; host child has own lease/grants/budget; shared writers denied by default.",
+      "negative_cases": "Recursion, admission race, parent cancel, cross-Task packet, conflicting worktree diff.",
+      "demo": "Lead delegates repository scan/edit to second harness and same-harness worker.",
+      "tests": [
+        "E05-S02-CODE",
+        "E05-S02-SYSTEM",
+        "E05-S02-USER"
+      ],
+      "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE"
+      ]
+    },
+    {
+      "id": "E05-S03",
+      "epic": "E05",
+      "title": "Routing and measured cost",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E05-S02"
+      ],
+      "authorities": [
+        "docs/DELEGATION.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/TRUST.md",
+        "docs/OBSERVABILITY.md"
+      ],
+      "implementation": "Hard-filter then deterministic rank; unknown-cost semantics, BudgetReservations, quota observations, performance projection and explicit profile preference.",
+      "acceptance": "Unknown != zero; explicit profile never silently substitutes; quality floor constrains cheap-first; reproducible rank reasons.",
+      "negative_cases": "Cost estimate stale, quota unknown, exhausted account, tied candidates, budget reservation race.",
+      "demo": "Compare low-cost and quality-first choices on same bounded task.",
+      "tests": [
+        "E05-S03-CODE",
+        "E05-S03-SYSTEM",
+        "E05-S03-USER"
+      ],
+      "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE"
+      ]
+    },
+    {
+      "id": "E05-S04",
+      "epic": "E05",
+      "title": "Verification escalation and lead failover",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E05-S03"
+      ],
+      "authorities": [
+        "docs/DELEGATION.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/TRUST.md",
+        "docs/OBSERVABILITY.md"
+      ],
+      "implementation": "Bounded new-Attempt escalation; policy-pinned lead failover with fresh lead eligibility/Trust/auth checks and portable handoff.",
+      "acceptance": "Failed verifier creates new immutable Attempt; quota exhaustion triggers only allowed policy; active children remain coherently tracked.",
+      "negative_cases": "Failover race, unavailable fallback, infinite retry, TaskSpec changes during child result.",
+      "demo": "Inject failed cheap result then quota exhaustion; show bounded escalation/handoff.",
+      "tests": [
+        "E05-S04-CODE",
+        "E05-S04-SYSTEM",
+        "E05-S04-USER"
+      ],
+      "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE"
+      ]
+    },
+    {
+      "id": "E05-S05",
+      "epic": "E05",
+      "title": "Harness breadth and efficiency benchmark",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E05-S04"
+      ],
+      "authorities": [
+        "docs/DELEGATION.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/TRUST.md",
+        "docs/OBSERVABILITY.md"
+      ],
+      "implementation": "Qualify Codex/Claude/OpenCode/Cline adapters where real interfaces permit; measure premium-only vs cheap-workforce outcomes.",
+      "acceptance": "Supported profiles prove native strengths; publish usage/cost/retries/verified-success and human rescues, no invented multiplier.",
+      "negative_cases": "Unreported quota/cost, unsupported Cline host feature, provider rate-limit bursts.",
+      "demo": "Run same code task corpus with baseline and delegated policy.",
+      "tests": [
+        "E05-S05-CODE",
+        "E05-S05-SYSTEM",
+        "E05-S05-USER"
+      ],
+      "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE"
+      ]
+    },
+    {
+      "id": "E06-S01",
+      "epic": "E06",
+      "title": "Bounded archive and extraction provider",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E04-S05"
+      ],
+      "authorities": [
+        "docs/WORLD-RESOURCES.md",
+        "docs/CONTEXT.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/RESPONSIBILITIES.md"
+      ],
+      "implementation": "ZIP manifest preview and extraction limits; isolated type parsing/OCR provider; exact Resource revisions and parse provenance; run SP06.",
+      "acceptance": "Path traversal/symlinks/bombs refused; original immutable; PDF/page/table references retained; failures visible per file.",
+      "negative_cases": "Nested ZIP, encrypted ZIP, Unicode duplicate path, zip bomb, malformed PDF, OCR timeout.",
+      "demo": "Import mixed folder and ZIP without escape; inspect extraction report.",
+      "tests": [
+        "E06-S01-CODE",
+        "E06-S01-SYSTEM",
+        "E06-S01-USER"
+      ],
+      "sources": [
+        "R-ANYTHINGLLM",
+        "R-DOCLING",
+        "R-GPT4ALL",
+        "R-JAN",
+        "R-LMSTUDIO",
+        "R-OLLAMA"
+      ]
+    },
+    {
+      "id": "E06-S02",
+      "epic": "E06",
+      "title": "Hybrid retrieval and grounded attachments",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E06-S01"
+      ],
+      "authorities": [
+        "docs/WORLD-RESOURCES.md",
+        "docs/CONTEXT.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/RESPONSIBILITIES.md"
+      ],
+      "implementation": "Provider chunk/embedding/rerank index with ACL filters, revision/digest references, quotas, bounded query and citation resolution.",
+      "acceptance": "Only authorized current/pinned content attached; exact page/span citation opens; no evidence gives explicit insufficient answer.",
+      "negative_cases": "Prompt injection, poisoned chunks, no relevant hit, outdated vector model, cross-Workspace leak.",
+      "demo": "Answer gold questions across 20 PDFs and a code folder with checked citations.",
+      "tests": [
+        "E06-S02-CODE",
+        "E06-S02-SYSTEM",
+        "E06-S02-USER"
+      ],
+      "sources": [
+        "R-ANYTHINGLLM",
+        "R-DOCLING",
+        "R-GPT4ALL",
+        "R-JAN",
+        "R-LMSTUDIO",
+        "R-OLLAMA"
+      ]
+    },
+    {
+      "id": "E06-S03",
+      "epic": "E06",
+      "title": "Incremental update/delete recovery",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E06-S02"
+      ],
+      "authorities": [
+        "docs/WORLD-RESOURCES.md",
+        "docs/CONTEXT.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/RESPONSIBILITIES.md"
+      ],
+      "implementation": "Delta indexing/watch overflow reconciliation, source revision invalidation, provider-owned replica registration and purge receipts.",
+      "acceptance": "Changed file invalidates stale index; revoked source blocked immediately; DELETED waits exact receipt set; index rebuild from authorized sources.",
+      "negative_cases": "Offline provider, crash between chunk and index commit, deletion during query, renamed source.",
+      "demo": "Edit then revoke/delete source and prove absence in fresh query/context.",
+      "tests": [
+        "E06-S03-CODE",
+        "E06-S03-SYSTEM",
+        "E06-S03-USER"
+      ],
+      "sources": [
+        "R-ANYTHINGLLM",
+        "R-DOCLING",
+        "R-GPT4ALL",
+        "R-JAN",
+        "R-LMSTUDIO",
+        "R-OLLAMA"
+      ]
+    },
+    {
+      "id": "E06-S04",
+      "epic": "E06",
+      "title": "Local-model harness UX and performance",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E06-S03"
+      ],
+      "authorities": [
+        "docs/WORLD-RESOURCES.md",
+        "docs/CONTEXT.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/RESPONSIBILITIES.md"
+      ],
+      "implementation": "Run SP05; integrate qualified harness with local engine; endpoint/auth/model status, bounded context, tool tests, cancellation, warm hints and egress policy.",
+      "acceptance": "Airplane-mode test completes with local parsing/embedding/inference when configured; model limits explicit; Core never becomes reasoning loop.",
+      "negative_cases": "OOM, no GPU, cold load, context overflow, stalled stream, tool call unsupported.",
+      "demo": "Run cited document task and coding edit on two recorded hardware profiles.",
+      "tests": [
+        "E06-S04-CODE",
+        "E06-S04-SYSTEM",
+        "E06-S04-USER"
+      ],
+      "sources": [
+        "R-ANYTHINGLLM",
+        "R-DOCLING",
+        "R-GPT4ALL",
+        "R-JAN",
+        "R-LMSTUDIO",
+        "R-OLLAMA"
+      ]
+    },
+    {
+      "id": "E06-S05",
+      "epic": "E06",
+      "title": "Knowledge UI and placement",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E06-S04"
+      ],
+      "authorities": [
+        "docs/WORLD-RESOURCES.md",
+        "docs/CONTEXT.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/RESPONSIBILITIES.md"
+      ],
+      "implementation": "Upload/folder/ZIP progress, extraction errors, index ready/stale states, citation viewer, source scope, retention and local/cloud availability.",
+      "acceptance": "Uploading != searchable; embedding egress shown; local-only resource blocks cloud resolution; reindex/cancel retry are actionable.",
+      "negative_cases": "Partial folder permissions, removed drive, disconnected provider, repeated submit.",
+      "demo": "Drag a ZIP, inspect readiness and citation, attempt disallowed cloud task.",
+      "tests": [
+        "E06-S05-CODE",
+        "E06-S05-SYSTEM",
+        "E06-S05-USER"
+      ],
+      "sources": [
+        "R-ANYTHINGLLM",
+        "R-DOCLING",
+        "R-GPT4ALL",
+        "R-JAN",
+        "R-LMSTUDIO",
+        "R-OLLAMA"
+      ]
+    },
+    {
+      "id": "E07-S01",
+      "epic": "E07",
+      "title": "Persistent environment management",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E05-S05",
+        "E06-S05"
+      ],
+      "authorities": [
+        "docs/ENVIRONMENTS.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/DELEGATION.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Provider classes/lifetime/sharing, provisioning preview/idempotency/recovery, budgets, suspending/destroying and cleanup.",
+      "acceptance": "Private worktree vs retained browser semantics separate; no secret locator in events; persistent cost/ownership explicit.",
+      "negative_cases": "Provisioning response loss, unhealthy environment, archive with reference, budget exceed.",
+      "demo": "Prepare isolated checkout and retained container; restart and reuse safely.",
+      "tests": [
+        "E07-S01-CODE",
+        "E07-S01-SYSTEM",
+        "E07-S01-USER"
+      ],
+      "sources": [
+        "R-MUSE-SAFETY",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E07-S02",
+      "epic": "E07",
+      "title": "Structured browser and control leases",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E07-S01"
+      ],
+      "authorities": [
+        "docs/ENVIRONMENTS.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/DELEGATION.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Qualified API/DOM/accessibility/browser providers, browser auth separation, control epochs, observations and human takeover.",
+      "acceptance": "One input actor; queued stale actions discarded; returning to agent captures fresh state; exact execution method recorded.",
+      "negative_cases": "Control race, auth expiry, stale selector, malicious page, CAPTCHA, user edits form.",
+      "demo": "Fill a sandbox form, take over, change it and return with new epoch.",
+      "tests": [
+        "E07-S02-CODE",
+        "E07-S02-SYSTEM",
+        "E07-S02-USER"
+      ],
+      "sources": [
+        "R-MUSE-SAFETY",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E07-S03",
+      "epic": "E07",
+      "title": "ActionBatch/deadline/warm lifecycle",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E07-S02"
+      ],
+      "authorities": [
+        "docs/ENVIRONMENTS.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/DELEGATION.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Bounded per-member invocations/effects, preconditions/abort/fallback, deadline preflight; WarmHold TTL/pressure eviction/config recheck.",
+      "acceptance": "Batch not transaction; partial success reconciled; no hard realtime; prewarm no model call; warm state no authority.",
+      "negative_cases": "Operation 3 fails after 1 sends, preflight stale, hold expiry, provider config drift.",
+      "demo": "Prewarm, perform timed nonfinal form preparation, fail one member and reconcile.",
+      "tests": [
+        "E07-S03-CODE",
+        "E07-S03-SYSTEM",
+        "E07-S03-USER"
+      ],
+      "sources": [
+        "R-MUSE-SAFETY",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E07-S04",
+      "epic": "E07",
+      "title": "Office/data/research capability qualification",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E07-S03"
+      ],
+      "authorities": [
+        "docs/ENVIRONMENTS.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/DELEGATION.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Integrate external office/research/data providers: editable XLSX/DOCX/PPTX/PDF, tables/chart/reports, partitioned data analysis.",
+      "acceptance": "Formula and rendered-layout checks independent; source/provenance pinned; generated code/capability is reviewed draft only.",
+      "negative_cases": "Broken formula, truncated CSV, bad font/export, malicious macro, hallucinated source.",
+      "demo": "Receipts to workbook/PDF and forecast to slides with recalculation/render verification.",
+      "tests": [
+        "E07-S04-CODE",
+        "E07-S04-SYSTEM",
+        "E07-S04-USER"
+      ],
+      "sources": [
+        "R-MUSE-SAFETY",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E07-S05",
+      "epic": "E07",
+      "title": "Desktop computer use and optional observation",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E07-S04"
+      ],
+      "authorities": [
+        "docs/ENVIRONMENTS.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/DELEGATION.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "OS-specific qualified computer provider, isolated opt-in observation, screen capture permissions and privacy controls.",
+      "acceptance": "No screen capture on opening Quick Entry; observe only opted-in scope; unsupported OS/action surfaced, no bypass of site security.",
+      "negative_cases": "Screen lock, revoked permission, wrong window, sensitive region, action after takeover.",
+      "demo": "Operate permitted local app with keyboard takeover and recorded real activity.",
+      "tests": [
+        "E07-S05-CODE",
+        "E07-S05-SYSTEM",
+        "E07-S05-USER"
+      ],
+      "sources": [
+        "R-MUSE-SAFETY",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E08-S01",
+      "epic": "E08",
+      "title": "Coworker identity and Home",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E05-S05",
+        "E06-S05"
+      ],
+      "authorities": [
+        "docs/RESPONSIBILITIES.md",
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/CONTEXT.md",
+        "docs/API.md"
+      ],
+      "implementation": "Revisioned Coworker/default lead/interaction defaults/primary selection, presence, Home hierarchy and allowlist worker assignment.",
+      "acceptance": "Pause blocks new proactive work not existing Tasks; archive guards primary/responsibilities; named composer with advanced controls.",
+      "negative_cases": "Archived lead, multiple active Tasks, offline default path, stale assignment.",
+      "demo": "Create Alex, assign cheap workers, start two Tasks and inspect status.",
+      "tests": [
+        "E08-S01-CODE",
+        "E08-S01-SYSTEM",
+        "E08-S01-USER"
+      ],
+      "sources": [
+        "R-MUSE",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E08-S02",
+      "epic": "E08",
+      "title": "Goals and suggestion producers",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E08-S01"
+      ],
+      "authorities": [
+        "docs/RESPONSIBILITIES.md",
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/CONTEXT.md",
+        "docs/API.md"
+      ],
+      "implementation": "Passive Goal links/progress/reopen; bounded deterministic/provider producers with provenance, dedupe/cooldown/mute/snooze/expiry and accept flow.",
+      "acceptance": "Goal never executes; Suggestion accept makes reviewed Task/draft; max one prominent idea; producer cannot self-authorize.",
+      "negative_cases": "Duplicate proposal, stale source, snoozed/muted suggestion, goal archive race.",
+      "demo": "Link verified Tasks to goal, surface and accept/dismiss a provenance-backed idea.",
+      "tests": [
+        "E08-S02-CODE",
+        "E08-S02-SYSTEM",
+        "E08-S02-USER"
+      ],
+      "sources": [
+        "R-MUSE",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E08-S03",
+      "epic": "E08",
+      "title": "Editable context lifecycle",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E08-S02"
+      ],
+      "authorities": [
+        "docs/RESPONSIBILITIES.md",
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/CONTEXT.md",
+        "docs/API.md"
+      ],
+      "implementation": "ContextDocument editor, exact parent merge/conflict, revoke/delete tombstones/receipt saga; stop affected native sessions safely.",
+      "acceptance": "Lost edit not overwritten; revoked bytes not reattached; native history cannot be recalled and old session not reused.",
+      "negative_cases": "Two concurrent editors, purge target offline, revocation during context fetch, restore tombstone.",
+      "demo": "Edit profile twice concurrently, merge and delete with visible pending receipts.",
+      "tests": [
+        "E08-S03-CODE",
+        "E08-S03-SYSTEM",
+        "E08-S03-USER"
+      ],
+      "sources": [
+        "R-MUSE",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E08-S04",
+      "epic": "E08",
+      "title": "Live Desk/Workbench/Library/Inspector",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E08-S03"
+      ],
+      "authorities": [
+        "docs/RESPONSIBILITIES.md",
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/CONTEXT.md",
+        "docs/API.md"
+      ],
+      "implementation": "Outcome-first Work filters, actual worker tree/progress, rich artifact registry/sandboxed preview/edit versions, Library provenance, Inspector diagnostics.",
+      "acceptance": "Every lane/output tied to committed state/version; renderers isolated; dirty/version conflict explicit; advanced IDs not default flow.",
+      "negative_cases": "Late projection, malicious HTML preview, incompatible renderer, artifact edit conflict.",
+      "demo": "Open code diff, report and spreadsheet outputs; inspect evidence and worker tree.",
+      "tests": [
+        "E08-S04-CODE",
+        "E08-S04-SYSTEM",
+        "E08-S04-USER"
+      ],
+      "sources": [
+        "R-MUSE",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E08-S05",
+      "epic": "E08",
+      "title": "Interaction completeness and accessibility",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E08-S04"
+      ],
+      "authorities": [
+        "docs/RESPONSIBILITIES.md",
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/CONTEXT.md",
+        "docs/API.md"
+      ],
+      "implementation": "Every route empty/loading/offline/error/conflict/permission state; keyboard/search/Quick Entry; motion interruption/reduced motion/contrast/zoom.",
+      "acceptance": "All critical paths keyboard usable; live announcements throttled; no fake ETA/cost/progress; state transition only after actual event.",
+      "negative_cases": "Long text, 400% zoom, reduced motion, rapid state reversal, deep-link stale auth.",
+      "demo": "Owner completes task/approval/takeover solely by keyboard and reduced motion.",
+      "tests": [
+        "E08-S05-CODE",
+        "E08-S05-SYSTEM",
+        "E08-S05-USER"
+      ],
+      "sources": [
+        "R-MUSE",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E09-S01",
+      "epic": "E09",
+      "title": "Routine creation/revision and reusable work",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E07-S05",
+        "E08-S05"
+      ],
+      "authorities": [
+        "docs/ROUTINES.md",
+        "docs/AUTOMATION.md",
+        "docs/CHANNELS.md",
+        "docs/SERVICES.md",
+        "docs/STATE-MACHINES.md",
+        "docs/RUNTIME-LIFECYCLE.md"
+      ],
+      "implementation": "Create Routine from verified Task, typed inputs/criteria/pinned skills, revision lifecycle/health and reviewable extraction.",
+      "acceptance": "Incidental paths/secrets removed; Routine what differs from Skill how; dependencies/pins visible and edits future-only.",
+      "negative_cases": "Invalid input schema, drifted skill, unverified source task, archived routine.",
+      "demo": "Turn verified weekly research into parameterized Routine.",
+      "tests": [
+        "E09-S01-CODE",
+        "E09-S01-SYSTEM",
+        "E09-S01-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW",
+        "R-GOOSE"
+      ]
+    },
+    {
+      "id": "E09-S02",
+      "epic": "E09",
+      "title": "Automation and occurrences",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E09-S01"
+      ],
+      "authorities": [
+        "docs/ROUTINES.md",
+        "docs/AUTOMATION.md",
+        "docs/CHANNELS.md",
+        "docs/SERVICES.md",
+        "docs/STATE-MACHINES.md",
+        "docs/RUNTIME-LIFECYCLE.md"
+      ],
+      "implementation": "Pinned Routine/Coworker Automation revisions, schedule/manual/webhook/file/poll/provider trigger conformance, cursor/misfire/dedupe/concurrency.",
+      "acceptance": "Every occurrence ordinary Task; edit never resets logical cursor; current Coworker ACTIVE checked; local unavailable waits.",
+      "negative_cases": "DST gap/fold, restart catch-up, duplicate webhook, no-change poll, cursor race.",
+      "demo": "Weekly local report across daemon restart and schedule edit without duplicate run.",
+      "tests": [
+        "E09-S02-CODE",
+        "E09-S02-SYSTEM",
+        "E09-S02-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW",
+        "R-GOOSE"
+      ]
+    },
+    {
+      "id": "E09-S03",
+      "epic": "E09",
+      "title": "Automation test and health/drift UX",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E09-S02"
+      ],
+      "authorities": [
+        "docs/ROUTINES.md",
+        "docs/AUTOMATION.md",
+        "docs/CHANNELS.md",
+        "docs/SERVICES.md",
+        "docs/STATE-MACHINES.md",
+        "docs/RUNTIME-LIFECYCLE.md"
+      ],
+      "implementation": "Exact-revision test Task without real occurrence/cursor changes; create-preview-test-enable wizard, health projection and drift repair proposal.",
+      "acceptance": "Test can perform only authorized actions; no implicit dry-run fiction; enable separate; repair immutable draft revision.",
+      "negative_cases": "Failed test, stale revision on enable, broken source layout, auth revoked.",
+      "demo": "Test a saved routine, inspect health, simulate source drift and repair draft.",
+      "tests": [
+        "E09-S03-CODE",
+        "E09-S03-SYSTEM",
+        "E09-S03-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW",
+        "R-GOOSE"
+      ]
+    },
+    {
+      "id": "E09-S04",
+      "epic": "E09",
+      "title": "Notifications and settings",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E09-S03"
+      ],
+      "authorities": [
+        "docs/ROUTINES.md",
+        "docs/AUTOMATION.md",
+        "docs/CHANNELS.md",
+        "docs/SERVICES.md",
+        "docs/STATE-MACHINES.md",
+        "docs/RUNTIME-LIFECYCLE.md"
+      ],
+      "implementation": "Outcome/blocker notifications, category preferences/quiet time/dedupe/delivery attempts, deep-links and independent task settlement.",
+      "acceptance": "Delivery success != Task completion; no alert per worker token/Step; owner can retry failed channel setup.",
+      "negative_cases": "Notification duplicate, OS permission denied, late delivery, secret in preview.",
+      "demo": "Complete Task with app closed; reopen correct Artifact from notification.",
+      "tests": [
+        "E09-S04-CODE",
+        "E09-S04-SYSTEM",
+        "E09-S04-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW",
+        "R-GOOSE"
+      ]
+    },
+    {
+      "id": "E10-S01",
+      "epic": "E10",
+      "title": "MCP Apps/Skills and Discover",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E09-S04"
+      ],
+      "authorities": [
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/EXPERIENCE.md",
+        "docs/SECURITY.md",
+        "docs/RESPONSIBILITIES.md"
+      ],
+      "implementation": "Sandbox App frames/CSP/message bridge, MCP_SKILL manifest conformance, Discover status/grants/auth/install/version compatibility.",
+      "acceptance": "App cannot steal Operator credentials; exact-origin transport only; install metadata not authority; incompatible option disabled.",
+      "negative_cases": "Forged app message, CORS escape, hostile manifest, missing package service.",
+      "demo": "Render real compatible MCP App and deny out-of-scope tool action.",
+      "tests": [
+        "E10-S01-CODE",
+        "E10-S01-SYSTEM",
+        "E10-S01-USER"
+      ],
+      "sources": [
+        "R-MCP",
+        "R-OPENCLAW"
+      ]
+    },
+    {
+      "id": "E10-S02",
+      "epic": "E10",
+      "title": "Demonstration capture and SkillProposal",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E10-S01"
+      ],
+      "authorities": [
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/EXPERIENCE.md",
+        "docs/SECURITY.md",
+        "docs/RESPONSIBILITIES.md"
+      ],
+      "implementation": "Bounded semantic capture/pause/redaction, user review, typed placeholders, replay test/drift and explicit publication through real LiteSPM.",
+      "acceptance": "Secrets omitted; raw coordinates not sole authority; caps stop recording; draft cannot enable itself.",
+      "negative_cases": "2FA/private screen, timeout/trace bound, replay drift, missing publish contract.",
+      "demo": "Teach sandbox browser task, review/test draft, approve package publication when qualified.",
+      "tests": [
+        "E10-S02-CODE",
+        "E10-S02-SYSTEM",
+        "E10-S02-USER"
+      ],
+      "sources": [
+        "R-MCP",
+        "R-OPENCLAW"
+      ]
+    },
+    {
+      "id": "E11-S01",
+      "epic": "E11",
+      "title": "Cloud deployment and operations",
+      "gate": "G3",
+      "status": "PLANNED",
+      "depends_on": [
+        "E10-S02"
+      ],
+      "authorities": [
+        "docs/RUNTIME-MESH.md",
+        "docs/STORAGE.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/PROTOCOLS.md",
+        "docs/CHANNELS.md",
+        "docs/ENVIRONMENTS.md"
+      ],
+      "implementation": "Run SP07; deploy same daemon/container with persistent volume/health/resource limits/reverse proxy/TLS; use OpenClaw deployment references.",
+      "acceptance": "UI close does not stop cloud job; restart persists state; externally exposed control plane authenticated; cost caps documented.",
+      "negative_cases": "Container killed, volume loss, auth misconfig, disk full, sandbox escape.",
+      "demo": "Provision disposable server, run Task, restart and restore backup.",
+      "tests": [
+        "E11-S01-CODE",
+        "E11-S01-SYSTEM",
+        "E11-S01-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW",
+        "R-OPENHANDS"
+      ]
+    },
+    {
+      "id": "E11-S02",
+      "epic": "E11",
+      "title": "Pairing, sync and conflict authority",
+      "gate": "G3",
+      "status": "PLANNED",
+      "depends_on": [
+        "E11-S01"
+      ],
+      "authorities": [
+        "docs/RUNTIME-MESH.md",
+        "docs/STORAGE.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/PROTOCOLS.md",
+        "docs/CHANNELS.md",
+        "docs/ENVIRONMENTS.md"
+      ],
+      "implementation": "Device identity/trust/pairing/revocation, Hub-authoritative event sequence, bounded replication/artifact digests, scope/placement policy.",
+      "acceptance": "Only permitted domain events/blobs sync; no DB/native-private-state copy; revoked Runtime cannot reconnect/read new data.",
+      "negative_cases": "Out-of-order/duplicate event, corrupt blob, malicious device, offline intent conflict.",
+      "demo": "Pair laptop/cloud and replicate selected Task without local-only files.",
+      "tests": [
+        "E11-S02-CODE",
+        "E11-S02-SYSTEM",
+        "E11-S02-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW",
+        "R-OPENHANDS"
+      ]
+    },
+    {
+      "id": "E11-S03",
+      "epic": "E11",
+      "title": "Handoff, failure and fencing",
+      "gate": "G3",
+      "status": "PLANNED",
+      "depends_on": [
+        "E11-S02"
+      ],
+      "authorities": [
+        "docs/RUNTIME-MESH.md",
+        "docs/STORAGE.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/PROTOCOLS.md",
+        "docs/CHANNELS.md",
+        "docs/ENVIRONMENTS.md"
+      ],
+      "implementation": "Portable Task handoff/Effect reconcile/new Attempt/new epoch; explicit and policy-based failover; lease expiry and Hub-loss handling.",
+      "acceptance": "Partition never permits two consequential writers; ambiguous Effects reconciled first; local dependency waits honestly.",
+      "negative_cases": "Crash during handoff phases, stale epoch, Hub loss, sleep/clock skew, lost ACK.",
+      "demo": "Move eligible Task to cloud, kill link after mutation and recover without resend.",
+      "tests": [
+        "E11-S03-CODE",
+        "E11-S03-SYSTEM",
+        "E11-S03-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW",
+        "R-OPENHANDS"
+      ]
+    },
+    {
+      "id": "E11-S04",
+      "epic": "E11",
+      "title": "Human channel integration",
+      "gate": "G3",
+      "status": "PLANNED",
+      "depends_on": [
+        "E11-S03"
+      ],
+      "authorities": [
+        "docs/RUNTIME-MESH.md",
+        "docs/STORAGE.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/PROTOCOLS.md",
+        "docs/CHANNELS.md",
+        "docs/ENVIRONMENTS.md"
+      ],
+      "implementation": "One qualified Telegram/email adapter, identity/assurance/routing/binding, ingress receipts and outbound Effect delivery; OpenClaw patterns reference only.",
+      "acceptance": "Duplicate delivery idempotent; weak channel cannot authorize sensitive action; channel state not separate task DB.",
+      "negative_cases": "Spoofed identity, replayed reply, expired UserRequest, channel host failover.",
+      "demo": "Start/status/steer a Task from approved channel, finish Artifact on desktop.",
+      "tests": [
+        "E11-S04-CODE",
+        "E11-S04-SYSTEM",
+        "E11-S04-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW",
+        "R-OPENHANDS"
+      ]
+    },
+    {
+      "id": "E11-S05",
+      "epic": "E11",
+      "title": "Cloud capability and security qualification",
+      "gate": "G3",
+      "status": "PLANNED",
+      "depends_on": [
+        "E11-S04"
+      ],
+      "authorities": [
+        "docs/RUNTIME-MESH.md",
+        "docs/STORAGE.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/PROTOCOLS.md",
+        "docs/CHANNELS.md",
+        "docs/ENVIRONMENTS.md"
+      ],
+      "implementation": "Cloud/browser/secret injection/provider availability, resource staging, image updates/rollbacks, actual observability and multi-runtime backup drills.",
+      "acceptance": "Native sessions not teleported; portable resource manifest verified; costs/performance and provider restrictions published.",
+      "negative_cases": "Missing local app, no provider auth, revoke during upload, stale snapshot restore.",
+      "demo": "Close laptop for cloud-eligible work; local-app Task explicitly waits.",
+      "tests": [
+        "E11-S05-CODE",
+        "E11-S05-SYSTEM",
+        "E11-S05-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW",
+        "R-OPENHANDS"
+      ]
+    },
+    {
+      "id": "E12-S01",
+      "epic": "E12",
+      "title": "Remote installation and enrollment",
+      "gate": "G4",
+      "status": "PLANNED",
+      "depends_on": [
+        "E11-S05"
+      ],
+      "authorities": [
+        "docs/RUNTIME-MESH.md",
+        "docs/ENVIRONMENTS.md",
+        "docs/PROTOCOLS.md",
+        "docs/TRUST.md",
+        "docs/CHANNELS.md"
+      ],
+      "implementation": "Headless service package/bootstrap/health, pairing/grants/OS capability descriptor and revocation; no separate remote task engine.",
+      "acceptance": "Same API/domain semantics; remote files require explicit roots; service identity isolated; least-privilege enrollment documented.",
+      "negative_cases": "Unreachable host, wrong identity, outdated version, revoked principal.",
+      "demo": "Enroll second workstation/server and inspect its actual capabilities.",
+      "tests": [
+        "E12-S01-CODE",
+        "E12-S01-SYSTEM",
+        "E12-S01-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW"
+      ]
+    },
+    {
+      "id": "E12-S02",
+      "epic": "E12",
+      "title": "Remote placement/continuation tests",
+      "gate": "G4",
+      "status": "PLANNED",
+      "depends_on": [
+        "E12-S01"
+      ],
+      "authorities": [
+        "docs/RUNTIME-MESH.md",
+        "docs/ENVIRONMENTS.md",
+        "docs/PROTOCOLS.md",
+        "docs/TRUST.md",
+        "docs/CHANNELS.md"
+      ],
+      "implementation": "Resource freshness, environment/auth/dependency placement, remote leases and portable handoff with fencing.",
+      "acceptance": "Only eligible steps remote; results verified; local-only resources stay blocked; connectivity loss obeys recovery policy.",
+      "negative_cases": "Remote partition during Effect, host reboot, provider auth expires, worktree unavailable.",
+      "demo": "Execute code task remotely, disconnect mid-run and reconcile on reconnect.",
+      "tests": [
+        "E12-S02-CODE",
+        "E12-S02-SYSTEM",
+        "E12-S02-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW"
+      ]
+    },
+    {
+      "id": "E13-S01",
+      "epic": "E13",
+      "title": "Backup/restore and safe upgrades",
+      "gate": "G5",
+      "status": "PLANNED",
+      "depends_on": [
+        "E12-S02"
+      ],
+      "authorities": [
+        "docs/TESTING.md",
+        "docs/BENCHMARKS.md",
+        "docs/FAILURE-RECOVERY.md",
+        "docs/OBSERVABILITY.md",
+        "docs/STORAGE.md",
+        "docs/SECURITY.md"
+      ],
+      "implementation": "Encrypted manifest backup, migration/restore to fresh Runtime, tombstone/purge receipt preservation, upgrades/rollback and in-progress pins.",
+      "acceptance": "Restored Runtime new identity; no old authority resurrected; resource/artifact checksums verified; incompatible downgrade refused.",
+      "negative_cases": "Interrupted backup, corrupt manifest, wrong key, schema mismatch, offline purge targets.",
+      "demo": "Restore actual Workspace on clean install then resume eligible Task.",
+      "tests": [
+        "E13-S01-CODE",
+        "E13-S01-SYSTEM",
+        "E13-S01-USER"
+      ],
+      "sources": [
+        "R-TAURI",
+        "R-OPENCLAW"
+      ]
+    },
+    {
+      "id": "E13-S02",
+      "epic": "E13",
+      "title": "Performance/soak and resilience",
+      "gate": "G5",
+      "status": "PLANNED",
+      "depends_on": [
+        "E13-S01"
+      ],
+      "authorities": [
+        "docs/TESTING.md",
+        "docs/BENCHMARKS.md",
+        "docs/FAILURE-RECOVERY.md",
+        "docs/OBSERVABILITY.md",
+        "docs/STORAGE.md",
+        "docs/SECURITY.md"
+      ],
+      "implementation": "Measure idle/start/event/task/retrieval/provider latencies, memory/backpressure/load; freeze numeric SLOs from baseline then enforce regression.",
+      "acceptance": "No unbounded queues/process leak; long soak recovers injected faults; Core and provider latency separated.",
+      "negative_cases": "Many installed idle providers, million-row task, provider circuit storm, disk pressure.",
+      "demo": "Record desktop/cloud/remote benchmark and sustained-run report.",
+      "tests": [
+        "E13-S02-CODE",
+        "E13-S02-SYSTEM",
+        "E13-S02-USER"
+      ],
+      "sources": [
+        "R-TAURI",
+        "R-OPENCLAW"
+      ]
+    },
+    {
+      "id": "E13-S03",
+      "epic": "E13",
+      "title": "Real workflow and platform release suite",
+      "gate": "G5",
+      "status": "PLANNED",
+      "depends_on": [
+        "E13-S02"
+      ],
+      "authorities": [
+        "docs/TESTING.md",
+        "docs/BENCHMARKS.md",
+        "docs/FAILURE-RECOVERY.md",
+        "docs/OBSERVABILITY.md",
+        "docs/STORAGE.md",
+        "docs/SECURITY.md"
+      ],
+      "implementation": "Run full coverage and real-use corpus on declared OS/adapter matrices; owner evaluates output fidelity, permissions and practical replacement.",
+      "acceptance": "Every assigned flow/benchmark has PASS/BLOCKED/NOT_APPLICABLE decision with evidence; blockers cannot quietly count as pass.",
+      "negative_cases": "Unsupported OS capability, provider drift, flaky test, missing signing hardware/account.",
+      "demo": "Owner repeats representative tasks from clean installers, not dev server.",
+      "tests": [
+        "E13-S03-CODE",
+        "E13-S03-SYSTEM",
+        "E13-S03-USER"
+      ],
+      "sources": [
+        "R-TAURI",
+        "R-OPENCLAW"
+      ]
+    },
+    {
+      "id": "E13-S04",
+      "epic": "E13",
+      "title": "Packaging/security/runbooks and launch",
+      "gate": "G5",
+      "status": "PLANNED",
+      "depends_on": [
+        "E13-S03"
+      ],
+      "authorities": [
+        "docs/TESTING.md",
+        "docs/BENCHMARKS.md",
+        "docs/FAILURE-RECOVERY.md",
+        "docs/OBSERVABILITY.md",
+        "docs/STORAGE.md",
+        "docs/SECURITY.md"
+      ],
+      "implementation": "Signed supported installers, daemon service upgrades, SBOM/licenses/dependency scan, docs/privacy/support diagnostics/incident playbooks and release candidate.",
+      "acceptance": "Owner accepts G5; no open critical/high authority or data-loss issue; rollback and signing verified; claims match evidence.",
+      "negative_cases": "Tampered updater, unsigned artifact, private logs, broken uninstall retention choice.",
+      "demo": "Install/update/uninstall on supported OS and execute incident drill.",
+      "tests": [
+        "E13-S04-CODE",
+        "E13-S04-SYSTEM",
+        "E13-S04-USER"
+      ],
+      "sources": [
+        "R-TAURI",
+        "R-OPENCLAW"
+      ]
+    }
+  ]
+}

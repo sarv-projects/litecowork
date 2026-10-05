@@ -18,6 +18,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
+IMPLEMENTATION = ROOT / "implementation"
 ERRORS: list[str] = []
 SHA256_PATTERN = r"^sha256:[a-f0-9]{64}$"
 
@@ -2570,7 +2571,7 @@ def check_gateway_and_names() -> None:
 
 def check_markdown_links() -> None:
     pattern = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
-    for md in [*ROOT.glob("*.md"), *DOCS.rglob("*.md")]:
+    for md in [*ROOT.glob("*.md"), *DOCS.rglob("*.md"), *IMPLEMENTATION.rglob("*.md")]:
         text = md.read_text(encoding="utf-8")
         fence_char = None
         fence_length = 0

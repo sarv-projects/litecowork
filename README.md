@@ -1,36 +1,107 @@
 # LiteCowork
 
-> **In Progress**
+**Give your AI coworker a task. Keep your coding agents. Review the work.**
 
-LiteCowork is a durable execution workspace around replaceable external agents. It
-keeps user intent, Task state, artifacts, effects, evidence, and execution ownership
-durable while allowing agents, capabilities, Runtimes, and Environments to change.
+LiteCowork is a desktop-first workspace for getting useful work done with coding agents.
+Keep your preferred agent in the lead, assign bounded work to other eligible agents, and
+review the resulting changes, evidence and files in one place. A durable task keeps its
+history when an agent, process or computer needs to be replaced.
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) is the current HLD and ownership authority. The
-complete architecture document map is in [`docs/COVERAGE-MATRIX.md`](docs/COVERAGE-MATRIX.md);
-the product/UX contract is in [`docs/PRODUCT.md`](docs/PRODUCT.md) and
-[`docs/EXPERIENCE.md`](docs/EXPERIENCE.md). Decision rationale lives in
-[`docs/adr/`](docs/adr/).
+> **Release status:** LiteCowork is in pre-release development. This README describes the
+> intended product; a capability is available only after its release gate and provider
+> qualification are complete.
 
-## Product shape
+## What LiteCowork is for
 
-One Conversation supports both ordinary questions and durable work. A durable outcome
-is represented by a Task that survives agent-session, process, device, and Environment
-failure. External agents own reasoning; LiteCowork coordinates bounded Attempts,
-permissions, artifacts, Effects, evidence, Runtime ownership, and verification.
+Start with a repository, a folder of project files, or a plain-language request. LiteCowork
+organizes durable work around a Coworker you name and configure. Your selected coding
+agent remains itself, with its native harness and supported tools. When enabled and
+allowed, the lead can delegate bounded work to another coding agent, a lower-cost profile,
+or a deterministic capability. You can see who handled each part, inspect the diff and
+outputs, run verification, and decide what to accept.
 
-LiteSPM is the selected external package/capability ecosystem. Its configured service
-base URL is recorded in `docs/CAPABILITY-FABRIC.md`; its API and package contract are
-intentionally deferred to the LiteSPM authority.
+LiteCowork is designed to cover more of the work around software projects too: research
+and reports, local-file organization, spreadsheet and document workflows, recurring
+project reviews, browser preparation, and reusable procedures. External providers and
+the current machine determine which of these capabilities are available in a given setup.
 
-## Runtime and reusable work
+## The finished product
 
-The desktop Operator and headless `litecoworkd` have independent lifetimes. Background
-coordination, authorized resource observation and schedules run in the daemon; agents,
-capability providers and Environments are activated only when work requires them.
-See [Runtime lifecycle](docs/RUNTIME-LIFECYCLE.md).
+- **One desktop workspace.** A calm composer, active work, items needing your attention,
+  verified outputs and scheduled responsibilities. Detailed agent/runtime diagnostics stay
+  in the Inspector until you need them.
+- **A durable coworker.** Give a Coworker a name, role, instructions, source context and
+  allowed worker profiles. Its identity continues when you change the lead agent.
+- **Your coding agents remain native.** LiteCowork coordinates their work without
+  replacing their native configuration or claiming ownership of their internal subagents.
+  Host-delegated work gets a separate task attempt, scope, environment and result record.
+- **Reviewable work.** A Task survives agent and process changes. Attempts, changes,
+  artifacts and verification evidence remain inspectable. A worker report alone does not
+  mark work complete.
+- **More help when useful.** Select worker profiles for cost, quality or latency goals.
+  Verification can trigger a bounded retry or escalation. Usage that a provider does not
+  report stays unknown; LiteCowork does not invent savings or quota remaining.
+- **Files and knowledge.** Add files, folders and ZIPs, see what parsed and indexed, and
+  use source-linked retrieval. Resource scope, revision, provider placement and deletion
+  remain visible. Local files do not automatically become cloud inputs.
+- **Local work first.** The desktop Operator and the `litecoworkd` Runtime have separate
+  lifecycles. Start with local files and agents; keep durable work when the window closes.
+- **Cloud, then remote.** Cloud continuation starts a new Attempt from portable Task state
+  after effect reconciliation and lease fencing. A remote machine runs the same Runtime
+  contract. A live process or private agent session is never assumed to teleport.
+- **Human authority stays clear.** Browse, prepare, draft, review or verify according to
+  policy. Consequential changes can pause for approval or hand control to you. An agent
+  cannot grant itself authority.
+- **Useful artifacts, not just chat.** Review code changes and qualified documents,
+  spreadsheets, reports and other outputs with their revisions and provenance.
+- **Repeat work safely.** Turn reviewed work into a Routine; Automations schedule ordinary
+  Tasks. Test and review before enabling a recurring responsibility.
 
-A [Routine](docs/ROUTINES.md) defines reusable work; an
-[Automation](docs/AUTOMATION.md) defines when it runs; a Task records one execution.
-Trigger placement is separate from execution placement, so cloud schedules can wait
-explicitly for local resources.
+## How work is organized
+
+```text
+You
+└── Coworker
+    └── Conversation
+        └── Task                         durable intent and execution history
+            ├── Plan and Steps
+            ├── Lead agent session
+            ├── Delegated Attempts      bounded, replaceable workers
+            ├── Effects and Artifacts
+            └── Evidence and verification
+```
+
+A conversation can be an ordinary chat and does not create a Task unless work is made
+durable. Attempts, agent sessions, Runtimes and Environments can change while the Task
+remains the source of execution history. LiteCowork mediates shared effects and records
+what it can verify; external providers still control their own models, quotas, tools and
+native features.
+
+## Desktop-first delivery
+
+The product is built in release gates: local desktop work first, cloud continuation second,
+and remote Runtime third. The V1 goal is a complete, tested product for the finalized
+feature set, not a demo that substitutes mock workers for real provider integrations.
+
+The intended use is that coding agents implement bounded changes while you review them.
+The plan also tests real non-coding workflows so LiteCowork can grow into a useful laptop
+coworker: organizing files, working from local documents, preparing reports, and handling
+approved recurring project work. Provider account requirements, model quality, local
+hardware, site rules and operating-system support set practical limits; supported
+capabilities will be published against tested versions.
+
+## Architecture and development
+
+- [Product architecture](ARCHITECTURE.md)
+- [Implementation plan and release gates](implementation/README.md)
+- [Contract map](docs/COVERAGE-MATRIX.md)
+- [Product contract](docs/PRODUCT.md)
+- [User experience](docs/EXPERIENCE.md)
+- [Testing contract](docs/TESTING.md)
+- [Research sources and workflow comparisons](implementation/SOURCES.md)
+- [Decision records](docs/adr/)
+
+LiteSPM is the planned external package/capability ecosystem. It owns package discovery
+and lifecycle; LiteCowork owns Task-scoped use. Its selected service endpoint and the
+boundary are recorded in [Capability Fabric](docs/CAPABILITY-FABRIC.md). No package API
+or authentication behavior is assumed before its service contract is available.

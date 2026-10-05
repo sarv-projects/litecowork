@@ -23,6 +23,14 @@ verification requests. Advanced technical detail lives in Inspector/Settings/Dis
 details. A Workspace selector is available in the app shell when more than one Workspace
 exists.
 
+## V1 client scope
+
+V1 interaction implementation targets the desktop Operator. Responsive layouts inform
+future clients and constrain desktop accessibility, but native mobile/web clients are not
+release targets until after desktop, cloud Runtime, and remote Runtime qualification. Mobile
+flows in domain continuity tests use an available desktop Operator or qualified channel;
+they do not claim mobile rendering or app-store support.
+
 ## Workspace setup and selection
 
 Workspace creation is part of first-run setup and Settings. The user sees the replication scope in plain language before choosing a policy:

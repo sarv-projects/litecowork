@@ -67,3 +67,28 @@ tree unless the user explicitly asks to recover a named item. Do not add local c
 credentials, extracted reference archives, or generated output to Git. Stage intended
 paths explicitly, inspect the staged diff, and use a clear Conventional Commit message
 for a completed milestone.
+
+## Implementation delivery plan
+
+- [`implementation/README.md`](implementation/README.md) is the entry point for the
+  end-to-end V1 roadmap, detailed stories, test cases, research sources and release gates.
+- Deliver local desktop first, then cloud continuation, then remote Runtime. Preserve all
+  finalized local feature coverage while staging its increments; do not call a mock an
+  integrated provider or a screen an implemented feature.
+- Every story requires code-level tests, actual implementation/system tests and an owner
+  real-user acceptance case. Its review packet records exact commands, OS/provider versions,
+  data/expected outputs, failures, limitations and evidence. Architecture validators prove
+  contract syntax/consistency, not product correctness.
+- Reread the owning source contracts and machine definitions before each domain change.
+  A baseline audit or story assignment is navigation, not permission to skip detailed
+  contract review. Update story/flow/benchmark/API/event/schema coverage as it evolves.
+- Recommended technology is in `implementation/STACK.md`; qualification spikes decide
+  library/provider/OS details. Never silently change architecture authority to match a
+  convenient dependency. RAG parsing/semantic retrieval stays behind qualified provider
+  boundaries; Core owns Resource scope, revision, provenance, authorization and deletion.
+- Work is performed by coding agents and reviewed by the repository owner. Do not assume
+  other engineers/QA staff exist, and do not start parallel agents unless the owner
+  explicitly assigns them.
+- Required documentation checks: `python scripts/validate_architecture.py` and
+  `python scripts/validate_implementation_plan.py`; they validate contracts/backlog only,
+  not runtime behavior.
