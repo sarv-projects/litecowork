@@ -371,6 +371,40 @@ def check_event_contract() -> None:
                 break
 
 
+def check_provider_circuit_counter_contract() -> None:
+    """Keep the ProviderCircuit u32 counter aligned across the model, event, and SQL."""
+    model = (DOCS / "DATA-MODEL.md").read_text(encoding="utf-8")
+    if "consecutive_failures: u32" not in model:
+        fail("DATA-MODEL.md: ProviderCircuit.consecutive_failures must remain u32")
+
+    event = load_json(DOCS / "schemas" / "domain-event.schema.json")
+    counter = (
+        event.get("$defs", {})
+        .get("payloads", {})
+        .get("provider_circuit_changed", {})
+        .get("properties", {})
+        .get("consecutive_failures", {})
+    )
+    maximum = (1 << 32) - 1
+    if (
+        counter.get("type") != "integer"
+        or counter.get("minimum") != 0
+        or counter.get("maximum") != maximum
+    ):
+        fail(
+            "domain-event.schema.json: provider.circuit.changed.consecutive_failures "
+            "must match the unsigned 32-bit ProviderCircuit counter"
+        )
+
+    sql = (DOCS / "schemas" / "sqlite-v1.sql").read_text(encoding="utf-8")
+    sql_counter = "consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0 AND consecutive_failures <= 4294967295)"
+    if sql_counter not in sql:
+        fail(
+            "sqlite-v1.sql: provider_circuit_states.consecutive_failures must "
+            "enforce the unsigned 32-bit ProviderCircuit range"
+        )
+
+
 def check_error_registry() -> None:
     registry = load_json(DOCS / "schemas" / "error-codes.schema.json")
     machine_codes = set(registry.get("enum", []))
@@ -2614,6 +2648,7 @@ def check_runtime_routine_contract() -> None:
 def main() -> int:
     check_json_schemas()
     check_event_contract()
+    check_provider_circuit_counter_contract()
     check_error_registry()
     check_task_status_contract()
     check_task_lifecycle_contract()
