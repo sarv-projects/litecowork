@@ -346,6 +346,8 @@ reference.
 Every digest-valued field uses `Sha256Digest`: `sha256:` followed by 64 lowercase
 hexadecimal characters. Provider revision IDs and opaque resource locators are not digests.
 
+For `provider.circuit.changed`, `consecutive_failures` is an integer in the unsigned 32-bit range (0 through 4,294,967,295), matching `ProviderCircuit.consecutive_failures` in `DATA-MODEL.md`. The event schema and SQLite constraint enforce this bound.
+
 ## Example payloads
 
 ```text
