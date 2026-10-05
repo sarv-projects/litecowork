@@ -1,4 +1,4 @@
-# ADR-0003: Keep LitePSM Independent
+# ADR-0003: Keep LiteSPM Independent
 
 - **Status:** Accepted for vNext
 - **Date:** 2026-10-01
@@ -10,8 +10,8 @@ removal form a separate ecosystem lifecycle from task-specific authorization and
 
 ## Decision
 
-LitePSM owns package/ecosystem truth. LiteCowork owns CapabilityRefs, Offers, Grants,
-and Activations scoped to a Task/Attempt, and integrates through a LitePSM client.
+LiteSPM owns package/ecosystem truth. LiteCowork owns CapabilityRefs, Offers, Grants,
+and Activations scoped to a Task/Attempt, and integrates through a LiteSPM client.
 
 ## Consequences
 

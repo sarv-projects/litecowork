@@ -85,7 +85,7 @@ First-party durable context consists of Workspace instructions, Conversations, T
 Artifacts, user settings, Connections, approved Automations, and Resource metadata. A
 semantic profile, vector index, knowledge graph, long-term agent memory, or autonomous
 memory rewrite is an external capability. Saving reusable procedures follows the
-user-reviewed SkillProposal flow in `CAPABILITY-FABRIC.md` and publishes through LitePSM
+user-reviewed SkillProposal flow in `CAPABILITY-FABRIC.md` and publishes through LiteSPM
 only after approval.
 
 ## Personal context and user-editable documents

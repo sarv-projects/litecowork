@@ -942,7 +942,7 @@ def check_async_capability_contract() -> None:
 
 
 def check_provider_host_contract() -> None:
-    """Keep LiteCowork's provider-instance view distinct from LitePSM process ownership."""
+    """Keep LiteCowork's provider-instance view distinct from LiteSPM process ownership."""
     model = (DOCS / "DATA-MODEL.md").read_text(encoding="utf-8")
     fabric = (DOCS / "CAPABILITY-FABRIC.md").read_text(encoding="utf-8")
     lifecycle = (DOCS / "RUNTIME-LIFECYCLE.md").read_text(encoding="utf-8")
@@ -955,7 +955,7 @@ def check_provider_host_contract() -> None:
     if "CapabilityHostInstance {" not in model or "CapabilityActivationHostBinding {" not in model or "active_activation_count: u32 # derived view value" not in model:
         fail("DATA-MODEL.md: provider host view, local Activation binding, and derived use count are required")
     if "global process reference counting" not in fabric and "global process reference count" not in lifecycle:
-        fail("Capability ownership must distinguish LiteCowork use count from LitePSM global process references")
+        fail("Capability ownership must distinguish LiteCowork use count from LiteSPM global process references")
     if "CapabilityHostSupervisor" not in services or "release_activation" not in services:
         fail("SERVICES.md: CapabilityHostSupervisor readiness/use-reference contract is missing")
     if "active_activation_count" not in tests or "never shared" not in tests:
@@ -1028,7 +1028,7 @@ def check_provider_host_contract() -> None:
     host_view = api["components"]["schemas"].get("CapabilityHostInstanceView", {})
     properties = host_view.get("properties", {})
     if "provider_instance_ref" in properties or "provider_handle_ref" in properties:
-        fail("CapabilityHostInstanceView must keep LitePSM/provider handles Runtime-private")
+        fail("CapabilityHostInstanceView must keep LiteSPM/provider handles Runtime-private")
     if properties.get("active_activation_count", {}).get("minimum") != 0:
         fail("CapabilityHostInstanceView active_activation_count must be a nonnegative derived count")
 
@@ -1067,7 +1067,7 @@ def check_capability_ref_contract() -> None:
         valid_package = {
             "capability_id": "cap-package",
             "identity_kind": "PACKAGE_COMPONENT",
-            "source": "litepsm-source-1",
+            "source": "litespm-source-1",
             "package_version": "1.0.0",
             "digest": "sha256:" + "a" * 64,
         }
@@ -1303,7 +1303,7 @@ def check_openapi() -> None:
         if not {"host_instance_id", "runtime_incarnation_id", "capability_ref", "state", "health", "active_activation_count", "observed_at", "expires_at"} <= host_required:
             fail("CapabilityHostInstanceView must expose fresh normalized state and derived LiteCowork use count")
         if "provider_instance_ref" in host_view.get("properties", {}):
-            fail("CapabilityHostInstanceView must not expose Runtime-private LitePSM references")
+            fail("CapabilityHostInstanceView must not expose Runtime-private LiteSPM references")
     except (KeyError, TypeError) as exc:
         fail(f"Operator API placement/recovery contract comparison failed: {exc}")
     if any(route.endswith("/retry") and "/tasks/" in route for route in paths):
@@ -2531,6 +2531,41 @@ def check_gateway_and_names() -> None:
             match = stale_protocol.search(line)
             if match:
                 fail(f"{path.relative_to(ROOT)}:{line_number}: stale protocol namespace {match.group(0)}; use litecowork.*")
+
+    endpoint = "https://litepsm.sarveshbh-2022.workers.dev/"
+    endpoint_docs = {
+        ROOT / "ARCHITECTURE.md",
+        DOCS / "CAPABILITY-FABRIC.md",
+    }
+    for endpoint_doc in endpoint_docs:
+        if endpoint not in endpoint_doc.read_text(encoding="utf-8"):
+            fail(f"{endpoint_doc.relative_to(ROOT)}: selected LiteSPM endpoint changed without an explicit endpoint decision")
+
+    historical_source_path = "docs/adr/0002-litepsm-independent.md"
+    stale_product_name = re.compile(r"(?<![A-Za-z0-9_])(?:LitePSM|litepsm)(?![A-Za-z0-9_])")
+    excluded_dirs = {".git", "archive_code", "archives_docs", "ARCHIVE", "archives", "target", "node_modules", "__pycache__"}
+    text_suffixes = {".md", ".json", ".yaml", ".yml", ".sql", ".py", ".toml"}
+    naming_files = [
+        candidate for candidate in ROOT.rglob("*")
+        if candidate.is_file()
+        and candidate.suffix in text_suffixes
+        and not any(part in excluded_dirs for part in candidate.relative_to(ROOT).parts)
+    ]
+    for candidate in naming_files:
+        if candidate == Path(__file__).resolve():
+            continue  # This validator must contain the retired spelling to detect it.
+        content = candidate.read_text(encoding="utf-8")
+        if candidate in endpoint_docs:
+            content = content.replace(endpoint, "")
+        if candidate == DOCS / "SOURCE-RECONCILIATION.md":
+            content = content.replace(historical_source_path, "")
+        match = stale_product_name.search(content)
+        if match:
+            fail(f"{candidate.relative_to(ROOT)}: stale product spelling {match.group(0)}; use LiteSPM/litespm")
+
+    current_adr = DOCS / "adr" / "0003-litespm-is-independent.md"
+    if not current_adr.is_file():
+        fail("docs/adr: LiteSPM independence ADR must use the canonical litespm filename")
 
 
 def check_markdown_links() -> None:

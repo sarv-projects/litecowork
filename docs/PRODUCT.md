@@ -16,7 +16,7 @@ LiteCowork lets a user describe work once and have the Task survive agent replac
 8. Parallel/heterogeneous agents may collaborate but lead reasoning remains agent-owned.
 9. User can steer, pause/resume, cancel, and see what is blocked or waiting for them.
 10. Reusable work definitions are Routines; reusable agent procedure may separately be
-    proposed as Skills and then become LitePSM-managed packages.
+    proposed as Skills and then become LiteSPM-managed packages.
 11. Closing the Operator does not stop a background Runtime when its startup policy keeps
     it alive. Local work still requires the specific Runtime/resources to remain available;
     sleep/offline creates a visible wait or a safe new Attempt elsewhere.
@@ -114,7 +114,7 @@ Agents and local capability packages normally remain cold until admitted work ne
 
 ## Capability and trust expectations
 
-Discover is the user-facing path to compatible agents and external capabilities. LitePSM
+Discover is the user-facing path to compatible agents and external capabilities. LiteSPM
 is the selected external package ecosystem; LiteCowork adds scope-matched compatibility,
 grants, activation, effect handling, and verification. Conversation/planning grants are
 read-only; Attempt grants are tied to admitted work. The selected base URL and deferred

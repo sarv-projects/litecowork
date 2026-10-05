@@ -5,7 +5,7 @@ This is a logical API contract. Transport binding may be local IPC for desktop a
 The remote HTTP command representation is described by
 `schemas/operator-api.openapi.yaml`; the WebSocket stream contract is defined below.
 Local IPC maps to the same commands and schemas; it is not allowed to call storage or
-domain internals directly. Mesh, Agent, LitePSM, and Environment-provider methods are not
+domain internals directly. Mesh, Agent, LiteSPM, and Environment-provider methods are not
 Operator API methods.
 
 ## Conventions
@@ -386,8 +386,8 @@ The token can create one Runtime identity and is invalidated after successful pa
 
 `capability-hosts` returns normalized provider instance state, health freshness, and the
 count of active LiteCowork Activations using each instance. This count is derived from
-LiteCowork scope references; it is not LitePSM's process-wide client count. The response
-never exposes a LitePSM provider handle, process identity, credentials, or package-private
+LiteCowork scope references; it is not LiteSPM's process-wide client count. The response
+never exposes a LiteSPM provider handle, process identity, credentials, or package-private
 fields. Expired observations are returned as `UNKNOWN`/stale and cannot satisfy admission.
 
 ## Agents
@@ -579,9 +579,9 @@ POST /v1/capabilities/{id}/connect-or-install
 POST /v1/capabilities/{id}/test
 ```
 
-These are user-facing wrappers around LitePSM/CapabilityBroker; they do not expose package-manager internals by default.
-They never invoke LitePSM from the client directly. The API implementation calls
-CapabilityBroker; the detailed LitePSM wire contract remains deferred in
+These are user-facing wrappers around LiteSPM/CapabilityBroker; they do not expose package-manager internals by default.
+They never invoke LiteSPM from the client directly. The API implementation calls
+CapabilityBroker; the detailed LiteSPM wire contract remains deferred in
 `CAPABILITY-FABRIC.md`.
 
 ## Resource intake

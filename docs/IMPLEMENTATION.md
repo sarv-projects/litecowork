@@ -49,7 +49,7 @@ crates/
     core/
     gateway/
     broker/
-    litepsm/
+    litespm/
 
   environments/
     core/
@@ -85,7 +85,7 @@ apps/operator UI
 application/runtime services
       -> domain + ports
 
-adapters (ACP, LitePSM, SQLite, S3, channels)
+adapters (ACP, LiteSPM, SQLite, S3, channels)
       -> ports/domain types
 
 domain
@@ -95,7 +95,7 @@ domain
 Forbidden dependencies:
 - domain -> Tauri/React
 - task domain -> ACP/A2A implementation
-- task domain -> LitePSM implementation
+- task domain -> LiteSPM implementation
 - any domain -> SQLite/Postgres concrete driver
 - AgentAdapter -> direct Task database mutation
 - capability adapter -> UI
@@ -124,10 +124,10 @@ into an empty installation must register a new Runtime identity and must not rev
 leases. Whole-machine observation remains opt-in and separately isolated.
 Measure daemon startup/idle CPU/RAM, Task creation, resource search, event-to-UI latency,
 crash recovery, and CapabilityHost activation/binding overhead against a deterministic
-LitePSM adapter fixture. Record provider-start time separately so the fixture is not
+LiteSPM adapter fixture. Record provider-start time separately so the fixture is not
 misreported as real provider startup. Freeze numeric Stage 1 targets from that measured
 baseline before Stage 1 exits; do not guess targets without measurements. Stage 3 then
-adds real LitePSM/MCP activation and provider-recovery latency without changing the
+adds real LiteSPM/MCP activation and provider-recovery latency without changing the
 control-plane measurements into an upstream service guarantee.
 
 Stage 1 also implements Workspace-persistent Environment preview/list/create/suspend/resume/
@@ -152,16 +152,16 @@ Desk lane appears before a Step Attempt exists.
 ## Stage 3 — first capability
 
 Add the LiteCowork Gateway, CapabilityHostSupervisor and normalized host view, internal
-LitePSM client port, one MCP capability, CapabilityInvocation, Effect/Evidence,
+LiteSPM client port, one MCP capability, CapabilityInvocation, Effect/Evidence,
 DependencyService, and a deterministic Verifier.
-LitePSM wire/API and package contracts remain intentionally out of scope until its
+LiteSPM wire/API and package contracts remain intentionally out of scope until its
 service authority is available.
 
 Acceptance: both PACKAGE_COMPONENT and MCP_SKILL CapabilityRefs pass their normalized
 schemas; a Task pins the exact digest; read-only and asynchronous invocations recover
 after AgentSession loss; approval and Effect semantics remain independent; a changed
 input revision invalidates dependent outputs/evidence idempotently; provider failures
-respect call-admission circuits; package restart limits belong to LitePSM. Record local capability search/activation and
+respect call-admission circuits; package restart limits belong to LiteSPM. Record local capability search/activation and
 invocation recovery baselines for the first provider. Prove that compatible scoped
 Activations share one safe host with a derived use count, while incompatible isolation
 contexts receive separate hosts and every call still enforces its own Grant/fence.
@@ -225,13 +225,13 @@ remain disabled until their providers pass conformance.
 ## Stage 9 — richer surfaces and reusable work
 
 Add the MCP Apps host, MCP Skills extension provider, user-reviewed SkillProposal draft /
-redaction flow with LitePSM publication only after its contract is available, richer
+redaction flow with LiteSPM publication only after its contract is available, richer
 Workbench providers, and optional isolated machine observation, browser, and computer-use
 integrations.
 
 ## Documentation and implementation gates
 
-Before a domain is implemented, its canonical schema, legal transitions/owner, command/event contract, authorization rule, failure/recovery behavior, UI projection, and compatibility policy must agree across its owner document and the shared schema/API/event/storage references. LitePSM package/API/manifest details remain intentionally deferred to the configured LitePSM service; LiteCowork specifies its internal Broker/Supervisor ports, normalized Runtime-local host/readiness view, scoped activation references, and stable user-facing capability references without inventing LitePSM's wire contract.
+Before a domain is implemented, its canonical schema, legal transitions/owner, command/event contract, authorization rule, failure/recovery behavior, UI projection, and compatibility policy must agree across its owner document and the shared schema/API/event/storage references. LiteSPM package/API/manifest details remain intentionally deferred to the configured LiteSPM service; LiteCowork specifies its internal Broker/Supervisor ports, normalized Runtime-local host/readiness view, scoped activation references, and stable user-facing capability references without inventing LiteSPM's wire contract.
 
 ## Definition of done for a domain feature
 
@@ -256,6 +256,6 @@ Version independently:
 - AgentAdapter contract
 - EnvironmentProvider contract
 - Capability Gateway contract
-- LitePSM client wire/package contract
+- LiteSPM client wire/package contract
 
 Upgrade principle: in-progress Tasks remain pinned to immutable spec/plan/capability/artifact revisions; runtime upgrades must not silently mutate their semantics.

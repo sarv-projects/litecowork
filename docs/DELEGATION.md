@@ -160,7 +160,7 @@ current non-secret revision values, assigns a new name and revision 1, and copie
 Attempt, session, grant, lease, Environment, or runtime state. If the source options
 descriptor is stale, the duplicate remains disabled until an owner revises and validates
 it. Portable profile export/import is deferred: option compatibility is adapter-versioned,
-and Workspace policy must be reviewed at the destination. A future LitePSM template may
+and Workspace policy must be reviewed at the destination. A future LiteSPM template may
 provide an explicitly reviewed, non-secret portability contract.
 
 `GET /v1/delegation-profiles/{id}/revisions` returns immutable revision metadata and

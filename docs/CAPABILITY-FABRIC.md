@@ -5,22 +5,26 @@
 LiteCowork gives a Conversation, planning session, or Attempt progressive access to
 scope-appropriate capabilities. It owns the scoped reference, compatibility decision,
 authorization grant, activation record, invocation policy, provenance, and revocation
-edge. LitePSM owns the package ecosystem and package lifecycle. LiteCowork does not implement a registry, marketplace,
+edge. LiteSPM owns the package ecosystem and package lifecycle. LiteCowork does not implement a registry, marketplace,
 installer, package verifier, or plugin manager of its own.
 
-The selected LitePSM service base URL is:
+The selected LiteSPM service base URL is:
 
 ```text
 https://litepsm.sarveshbh-2022.workers.dev/
 ```
 
-This architecture records the service selection and system boundary only. The LitePSM
+This is the currently configured endpoint hostname. The product spelling update does not
+provide a replacement DNS name; change this URL only when the endpoint owner supplies and
+verifies a replacement.
+
+This architecture records the service selection and system boundary only. The LiteSPM
 API, authentication, manifests, package taxonomy, plugin composition, MCP discovery,
 installation, update, and upstream process/health operations are intentionally deferred
-to LitePSM's own authority. Do not infer or duplicate those wire contracts here. This
+to LiteSPM's own authority. Do not infer or duplicate those wire contracts here. This
 document does define LiteCowork's normalized per-Runtime provider-host view and scoped
 Activation-use accounting; the Broker/Supervisor will adapt these requirements to the
-contract LitePSM exposes.
+contract LiteSPM exposes.
 
 ## Capability records
 
@@ -86,7 +90,7 @@ only makes an implementation available. These states are not interchangeable.
 Installed, offered, startable, running, granted, activated, and attached remain distinct.
 LiteCowork creates an Activation only for a session/Attempt scope after authorization. A
 RuntimeOffer records expiring readiness such as `STARTABLE` or `READY`, but does not itself
-start a process. LitePSM owns package launch/stop, process isolation, provider health
+start a process. LiteSPM owns package launch/stop, process isolation, provider health
 probes/restarts, and its global idle shutdown. LiteCowork still needs a normalized,
 Runtime-local view of provider instances so placement and the Operator can see where a
 provider is running, whether its observation is fresh/healthy, and how many LiteCowork
@@ -95,7 +99,7 @@ Activations currently reference it.
 `CapabilityHostSupervisor` coordinates that view and the scoped use references; it is not
 a second process/package supervisor. Its `active_activation_count` is derived from
 nonterminal LiteCowork Activations that point to the host instance, not a claim about
-LitePSM's global client count. A host can be shared only when the provider declares
+LiteSPM's global client count. A host can be shared only when the provider declares
 compatible concurrency and isolation, the pinned capability/configuration digests match,
 and the activations occupy the same authorized isolation partition. Otherwise use an
 exclusive or Task-isolated instance. Unknown or stateful providers default to Task-isolated;
@@ -103,9 +107,9 @@ sharing requires an explicit provider compatibility declaration and Trust approv
 `EXCLUSIVE` uses a unique Activation partition; `TASK_ISOLATED` uses a Task partition;
 `TRUST_PARTITION_SHARED` accepts only a TrustService-issued partition. Each invocation
 still checks its own Grant, resource scope, lease, and Effect policy; sharing a process
-never merges authority. LitePSM's
+never merges authority. LiteSPM's
 provider-instance reference remains opaque, and all wire method names, payloads, and
-upstream reference-count semantics remain deferred until LitePSM defines them.
+upstream reference-count semantics remain deferred until LiteSPM defines them.
 
 The durable `CapabilityActivation` never embeds a Runtime-local host ID or opaque provider
 handle. It persists its exact scope and origin Runtime/incarnation so Invocation admission
@@ -118,7 +122,7 @@ over work. This prevents a remote Runtime from receiving a dangling local proces
 
 ## LiteCowork broker contract
 
-The stable internal port is owned by LiteCowork. Wire methods toward LitePSM are not
+The stable internal port is owned by LiteCowork. Wire methods toward LiteSPM are not
 specified until its API contract is available.
 
 ```text
@@ -140,19 +144,19 @@ use reference even after the originating AgentSession closes; release is allowed
 after the owning scope has settled and every linked Invocation is terminal or
 reconciled/cancelled. This is required for asynchronous `tasks/get`/`tasks/update` recovery.
 The host view reports normalized state/health and the derived LiteCowork Activation count; only the
-LitePSM adapter communicates with LitePSM. No client or domain service calls its service
+LiteSPM adapter communicates with LiteSPM. No client or domain service calls its service
 URL directly.
 
 The exact request/response schema for LiteCowork's internal methods is specified in
-`SERVICES.md` and shared value types in `SCHEMAS.md`. The LitePSM-side protocol remains
+`SERVICES.md` and shared value types in `SCHEMAS.md`. The LiteSPM-side protocol remains
 out of scope here.
 
 `CapabilityRef` is LiteCowork's internal normalization boundary: package references carry
-the LitePSM-normalized source, package version, and package digest; an MCP Skill carries
+the LiteSPM-normalized source, package version, and package digest; an MCP Skill carries
 the host-authenticated server identity in `source`, the exact advertised `SKILL.md` URI
 in `component`, and its manifest digest in `digest`, with no synthetic package version.
 The identity tuple is defined in `SCHEMAS.md`; `capability_id` and display-name behavior
-follow that canonical rule. This shape does not prescribe LitePSM's API or package model.
+follow that canonical rule. This shape does not prescribe LiteSPM's API or package model.
 
 Each mediated call creates a durable `CapabilityInvocation` before dispatch. Invocation
 tracks read-only work, streams, asynchronous provider tasks, cancellation, results, and
@@ -240,7 +244,7 @@ adds bounded procedural context using the agent's supported mechanism; otherwise
 content is a bounded Task attachment. Skill text cannot grant capabilities or secrets.
 LiteCowork never edits a worker's global configuration or copies a catalog into it.
 
-Plugins and other package forms are whatever LitePSM defines. LiteCowork does not infer
+Plugins and other package forms are whatever LiteSPM defines. LiteCowork does not infer
 their component structure. Each capability actually invoked still receives its own
 compatibility and authorization decision. Package installation or enabling is never a
 blanket Task permission.
@@ -260,7 +264,7 @@ base feature. MCP Skills server-published `SKILL.md` resources are another disco
 source, identified by the pair of server identity and exact skill URI. A skill is activated
 only through LiteCowork's skill-loading path after digest verification and authorization;
 merely reading an MCP resource does not activate it. This transport source can be
-normalized alongside LitePSM-managed packages without changing LitePSM package ownership.
+normalized alongside LiteSPM-managed packages without changing LiteSPM package ownership.
 MCP Apps are optional progressive Workbench views. They run in a sandboxed iframe, and
 all tool/resource calls return through the host for authorization, invocation/effect
 recording, and auditing. Apps degrade to ordinary tool results where the host does not

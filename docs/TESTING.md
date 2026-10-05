@@ -9,7 +9,7 @@ Pure domain invariants, schema validation, state transitions, conflict rules, po
 Generate legal/illegal sequences for Task, Attempt, Effect, Approval, Lease and AutomationOccurrence. Invariants must hold under arbitrary command ordering.
 
 ### Contract tests
-Every AgentAdapter, EnvironmentProvider, Capability/LitePSM adapter, StateStore, BlobStore and ChannelAdapter implementation runs a common conformance suite.
+Every AgentAdapter, EnvironmentProvider, Capability/LiteSPM adapter, StateStore, BlobStore and ChannelAdapter implementation runs a common conformance suite.
 
 ### Integration
 Task Runtime + storage + one agent adapter + one capability + one environment.
@@ -50,7 +50,7 @@ Long Tasks, many events, large artifacts, large file/data corpora, repeated reco
 ## Mandatory vertical slice gates
 
 ### Gate 1 — durable local Task
-Desktop -> local runtime -> external ACP agent -> LiteCowork Gateway -> LitePSM -> MCP -> Artifact/Effect -> Verifier.
+Desktop -> local runtime -> external ACP agent -> LiteCowork Gateway -> LiteSPM -> MCP -> Artifact/Effect -> Verifier.
 
 Kill worker mid-Task; replacement must continue from ResumePacket and complete.
 
@@ -224,7 +224,7 @@ Recurring trigger creates ordinary Task and deduplicates duplicate trigger deliv
 - A provider host with mismatched capability/configuration digests or Trust isolation
   partition is never shared. Invocation grants/fences remain independent on shared hosts.
 - Expired provider health is UNKNOWN and cannot satisfy placement; a re-probe is required.
-- LitePSM remains authoritative for provider process start/stop and global process counts;
+- LiteSPM remains authoritative for provider process start/stop and global process counts;
   LiteCowork releases its own host-use references and never terminates external services.
 - Replicating a durable CapabilityActivation never requires a remote Runtime to possess
   the source Runtime's HostBinding/provider handle; failover creates a new local Activation

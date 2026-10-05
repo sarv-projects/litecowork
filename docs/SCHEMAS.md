@@ -360,14 +360,14 @@ CapabilityRef {
 }
 ```
 
-`source` is the LitePSM-normalized source identity for `PACKAGE_COMPONENT` and the
+`source` is the LiteSPM-normalized source identity for `PACKAGE_COMPONENT` and the
 host-authenticated MCP server identity for `MCP_SKILL`. Package components require an
-opaque, non-empty `package_version` exactly as normalized by LitePSM; LiteCowork does not
+opaque, non-empty `package_version` exactly as normalized by LiteSPM; LiteCowork does not
 parse or order it. `component` is their provider component identifier when applicable.
 MCP Skills require `component` to be the exact advertised `SKILL.md` URI, omit
 `package_version`, and use the pinned manifest digest as `digest`. Their stable identity
 is server identity plus exact URI; display names are never identity. This is LiteCowork's
-internal normalized shape and does not define LitePSM's package/API contract.
+internal normalized shape and does not define LiteSPM's package/API contract.
 `capability_ref_key_digest` is SHA-256 over RFC 8785 canonical JSON of this complete
 normalized value; storage uses it only as a deterministic key, never as a replacement for
 the referenced content digest.

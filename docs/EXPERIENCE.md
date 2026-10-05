@@ -262,7 +262,7 @@ directly, without creating an AutomationOccurrence.
 
 ## Discover
 
-Embedded LitePSM-oriented experience with user categories:
+Embedded LiteSPM-oriented experience with user categories:
 
 ```text
 Apps
@@ -367,7 +367,7 @@ Every surface must define:
 | Workbench | Selected versioned Artifact or actual provider UI | View/edit through owning provider, publish a new version | Unsupported preview offers download; provider loss does not imply artifact loss; stale publication keeps the draft and requires explicit rebase |
 | Library | Saved/generated/uploaded/imported/linked resources | Search, open, promote, archive a linked reference, view archived resources | Empty state explains how to save/import; stale linked revisions are marked; archive removes the item from the default Library view without deleting its external source |
 | Automations | Routines, triggers, next run, policy, recent occurrences and Task outcomes | Save/revise/run Routine; create/edit/run manual trigger/pause/resume/disable Automation | Missed/failed occurrence is explicit; duplicate trigger is shown once logically |
-| Discover | LitePSM-backed user-facing offers and compatible agents | Inspect, connect/enable, grant required scope | LitePSM unavailable shows a dependency error; cached items are labeled stale |
+| Discover | LiteSPM-backed user-facing offers and compatible agents | Inspect, connect/enable, grant required scope | LiteSPM unavailable shows a dependency error; cached items are labeled stale |
 | Inspector | IDs, revisions, Agent/Runtime/Environment, locks, grants, Effects, Evidence, protocols | Copy diagnostics, inspect provenance | Redact credentials and secret values; unavailable details are marked unknown |
 | Settings | Workspace, Runtime/device, AgentBindings, connections, security, storage and preferences | Pair/revoke, enable/disable agents, configure, export/delete according to policy | Each setting shows whether it applies locally, to the Hub, or to the Workspace; profile availability may be stale when its Runtime is offline |
 

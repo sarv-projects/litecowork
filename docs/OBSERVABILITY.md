@@ -114,7 +114,7 @@ Worker quality/cost projections must suppress or mark insufficient samples; aggr
 monetary metrics are partitioned by currency and never combine by implicit FX.
 
 Process existence is measured separately from installed inventory. Provider process
-restart/idle policy remains LitePSM-owned; LiteCowork observes activation/invocation health.
+restart/idle policy remains LiteSPM-owned; LiteCowork observes activation/invocation health.
 Identifiers belong in logs/traces rather than unbounded metric labels.
 
 ## Tracing
@@ -153,10 +153,10 @@ Exact targets may be tuned after profiling, but tests/monitoring must cover:
 
 Before Stage 1 exits, record a reproducible baseline for daemon startup, idle CPU/RAM,
 Task creation, deterministic Resource search, event-to-UI propagation, local crash
-recovery, and CapabilityHost activation/binding overhead through a deterministic LitePSM
+recovery, and CapabilityHost activation/binding overhead through a deterministic LiteSPM
 adapter fixture. The activation measurement must report LiteCowork control-plane time
 separately from the fixture's provider-start time; it must not be presented as a real
 provider startup result. Freeze numeric Stage 1 targets from those measurements. Stage 3
-adds real LitePSM/MCP activation and provider recovery measurements, retaining the Stage 1
+adds real LiteSPM/MCP activation and provider recovery measurements, retaining the Stage 1
 control-plane budget and publishing provider-specific latency separately. Cross-Runtime
 recovery receives measured targets when Mesh exists; none are invented in advance.

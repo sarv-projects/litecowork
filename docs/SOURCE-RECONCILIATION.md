@@ -22,13 +22,13 @@ discarded; each entry's destination or disposition is listed below.
 |---|---|
 | `ARCHITECTURE.md` | Reconciled into root `ARCHITECTURE.md`; current LiteCowork name and direct-capability safety condition added. |
 | `MANIFEST.md` | Rebuilt as `docs/COVERAGE-MATRIX.md`, with the glossary and reconciliation record added. |
-| `README.md` | Reconciled into root `README.md`; product phase, authority links, and LitePSM deferral stated. |
+| `README.md` | Reconciled into root `README.md`; product phase, authority links, and LiteSPM deferral stated. |
 | `docs/AGENT-FABRIC.md` | Adopted as `docs/AGENT-FABRIC.md`; LiteCowork naming and capability boundary checked. |
 | `docs/API.md` | Adopted and expanded as `docs/API.md` plus `docs/schemas/operator-api.openapi.yaml`. |
 | `docs/ARTIFACTS-EVIDENCE.md` | Adopted as `docs/ARTIFACTS-EVIDENCE.md`; cross-linked to the data model and event rules. |
 | `docs/AUTOMATION.md` | Adopted as `docs/AUTOMATION.md`; occurrence idempotency and trigger semantics retained. |
 | `docs/BENCHMARKS.md` | Adopted as `docs/BENCHMARKS.md`; cases become the acceptance scenario catalog. |
-| `docs/CAPABILITY-FABRIC.md` | Reworked in place; selected LitePSM endpoint recorded while its wire/package contract stays deferred. Direct mutation rules were tightened. |
+| `docs/CAPABILITY-FABRIC.md` | Reworked in place; selected LiteSPM endpoint recorded while its wire/package contract stays deferred. Direct mutation rules were tightened. |
 | `docs/CHANNELS.md` | Adopted as `docs/CHANNELS.md`; channels remain human transports, not agent protocols or Task owners. |
 | `docs/COVERAGE-MATRIX.md` | Adopted and expanded to include every current contract and this reconciliation. |
 | `docs/DATA-MODEL.md` | Adopted and extended with missing connection, channel, handoff, audit, and secret-lease records and invariants. |
@@ -42,7 +42,7 @@ discarded; each entry's destination or disposition is listed below.
 | `docs/MOTION.md` | Adopted as `docs/MOTION.md`; timings and interrupted/reduced-motion behavior are specified. |
 | `docs/OBSERVABILITY.md` | Adopted as `docs/OBSERVABILITY.md`; domain, audit, logs, metrics, and traces stay distinct. |
 | `docs/PRODUCT.md` | Adopted and expanded as `docs/PRODUCT.md`; open user choices are separated from frozen product rules. |
-| `docs/PROTOCOLS.md` | Adopted and expanded as `docs/PROTOCOLS.md`; LitePSM's API remains outside this contract. |
+| `docs/PROTOCOLS.md` | Adopted and expanded as `docs/PROTOCOLS.md`; LiteSPM's API remains outside this contract. |
 | `docs/RUNTIME-MESH.md` | Adopted and tightened as `docs/RUNTIME-MESH.md`; offline execution cannot bypass fencing assumptions. |
 | `docs/SCHEMAS.md` | Adopted and expanded as `docs/SCHEMAS.md`; shared enums, errors, and versioning are centralized. |
 | `docs/SECURITY.md` | Adopted and expanded as `docs/SECURITY.md`; threat controls and residual boundaries are explicit. |
@@ -53,7 +53,7 @@ discarded; each entry's destination or disposition is listed below.
 | `docs/TESTING.md` | Adopted as `docs/TESTING.md`; conformance, fault, cross-Runtime, security, and E2E layers are covered. |
 | `docs/TRUST.md` | Adopted and extended as `docs/TRUST.md`; authorization order, assurance, secrets, and revocation are normative. |
 | `docs/adr/0001-thin-core.md` | Reconciled into existing `docs/adr/0001-durable-task-core.md`. |
-| `docs/adr/0002-litepsm-independent.md` | Reconciled into existing `docs/adr/0003-litepsm-is-independent.md`. |
+| `docs/adr/0002-litepsm-independent.md` | Reconciled into existing `docs/adr/0003-litespm-is-independent.md`. |
 | `docs/adr/0003-agents-own-reasoning.md` | Reconciled into existing `docs/adr/0001-durable-task-core.md` and `docs/AGENT-FABRIC.md`. |
 | `docs/adr/0004-task-not-transcript-is-truth.md` | Reconciled into existing `docs/adr/0002-task-and-attempt-identity.md`. |
 | `docs/adr/0005-one-runtime-anywhere.md` | Reconciled into existing `docs/adr/0004-runtime-and-environment-are-distinct.md`. |
@@ -71,7 +71,7 @@ discarded; each entry's destination or disposition is listed below.
 
 1. The current HLD and this focused LLD suite are normative. Reference wording is not
    copied blindly where it conflicts with explicit LiteCowork boundaries.
-2. LitePSM's selected base URL is recorded, but no LitePSM API, package, plugin, MCP,
+2. LiteSPM's selected base URL is recorded, but no LiteSPM API, package, plugin, MCP,
    authentication, or installation contract is invented here.
 3. LiteCowork-mediated consequential calls require an Effect record and current fence
    before dispatch. Direct attachment is not an exception to authorization or recovery.
@@ -93,7 +93,7 @@ below refer to that proposal; adoption is constrained by current domain contract
 | 8 | WakeProvider remains a later, best-effort Mesh provider; availability cannot assume successful wake or closed-lid support. |
 | 9 | Resume coordinator validates watchers, stale observations, Effects and deferred work before admission. |
 | 10–16 | AgentHostInstance, lazy single-flight admission, negotiated sharing/model changes, operation-scoped session close/replacement, and drain-safe lead replacement in AGENT-FABRIC and RUNTIME-LIFECYCLE. Durable AgentSession provenance is separated from Runtime-local host/native handles; prewarming is optional and existing Attempts remain pinned. |
-| 17–18 | Capability/app demand activation adopted; LitePSM owns provider process supervision. Only verified owned app instances may be automatically closed. |
+| 17–18 | Capability/app demand activation adopted; LiteSPM owns provider process supervision. Only verified owned app instances may be automatically closed. |
 | 19 | ExecutionDependencyPlan is an infrastructure readiness DAG, with cycle detection/idempotent prepare/reverse owned cleanup; no reasoning or general workflow engine. |
 | 20–25 | Broader typed triggers, separate placement, stable cursor identity, misfires and WAITING_DEPENDENCY adopted in AUTOMATION. Provider-specific triggers are enabled only after qualification. |
 | 26–28 | Routine/RoutineRevision added in ROUTINES; Automation pins a reviewed reusable work revision. Routines/Automations/Runs are separate views. |
@@ -102,9 +102,9 @@ below refer to that proposal; adoption is constrained by current domain contract
 | 35–37 | Two desktop executables, explicit stop preview/drain and advance dependency availability adopted in API, RUNTIME-LIFECYCLE and EXPERIENCE. Closing UI is distinct from stopping daemon. |
 | 38–39 | Offer readiness, lightweight authorized structural resource observation, and small local application inventory adopted; semantic indexing/LLM/OCR stays demand-driven external work. |
 | 40 | Human takeover uses separate EnvironmentControlLease epochs, fresh observation and rejected queued stale actions in ENVIRONMENTS and F31. |
-| 41 | LiteCowork owns a normalized per-Runtime ProviderHost view and derives its active Activation references; LitePSM owns package/process lifecycle and global process counts. Sharing, health freshness, and isolation are explicit in CAPABILITY-FABRIC, DATA-MODEL, SERVICES, RUNTIME-LIFECYCLE, and the Operator API. No second package/process supervisor is introduced. |
+| 41 | LiteCowork owns a normalized per-Runtime ProviderHost view and derives its active Activation references; LiteSPM owns package/process lifecycle and global process counts. Sharing, health freshness, and isolation are explicit in CAPABILITY-FABRIC, DATA-MODEL, SERVICES, RUNTIME-LIFECYCLE, and the Operator API. No second package/process supervisor is introduced. |
 | 42 | Native abstractions stop at Routine/Automation/Task; deterministic workflow engines remain external capabilities. |
-| 43–44 | Control-plane framing adopted in ARCHITECTURE; “no competitor combines all” rejected as unproven. Supervisor ownership is refined to preserve LitePSM independence. |
+| 43–44 | Control-plane framing adopted in ARCHITECTURE; “no competitor combines all” rejected as unproven. Supervisor ownership is refined to preserve LiteSPM independence. |
 | 45 | Cross-contract coverage tracked in COVERAGE-MATRIX, typed schema candidates, flows and conformance scenarios; coverage is not a claim of implemented runtime behavior. |
 
 ## Follow-on channel ingress audit
@@ -119,6 +119,6 @@ owner-confirmed. These additions are cross-referenced in `CHANNELS.md`, `DATA-MO
 `STORAGE.md`, `TESTING.md`, `EVENTS.md`, and the versioned schema candidates. This is a
 contract specification, not evidence that a runtime implementation exists.
 
-LitePSM integration is intentionally limited to its recorded selected service. Its MCP,
+LiteSPM integration is intentionally limited to its recorded selected service. Its MCP,
 plugin, package, authentication and supervision wire contracts remain deferred until the
 actual service contract is provided or independently verified with user authorization.

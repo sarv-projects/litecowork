@@ -48,11 +48,11 @@ Do not include volatile timestamps/random IDs.
 | Runtime | offline | presence + lease expiry | reconcile Effects; eligible failover only |
 | Environment | provisioning fail | provider error | alternate provider/runtime or fail Step |
 | Environment | corrupted/unhealthy | health/test | checkpoint if safe, recreate, new Attempt |
-| MCP/provider | process dies or becomes unhealthy | LitePSM/process-health result or invocation error | open LiteCowork call circuit; ask LitePSM/provider owner to recover process under its lifecycle policy; retry reads/idempotent operations only |
+| MCP/provider | process dies or becomes unhealthy | LiteSPM/process-health result or invocation error | open LiteCowork call circuit; ask LiteSPM/provider owner to recover process under its lifecycle policy; retry reads/idempotent operations only |
 | Async CapabilityInvocation | cancellation acknowledgement without terminal provider state | provider task remains working or unavailable | keep Task PAUSE_REQUESTED/CANCEL_REQUESTED; reconcile provider state; never claim stopped |
 | Async CapabilityInvocation | initial MCP task handle response lost after dispatch | transport timeout before the opaque handle is committed to its encrypted Runtime-local binding | keep Invocation AMBIGUOUS; recover only by provider lookup using a precommitted idempotency identity; never blindly redispatch a potentially effectful `tools/call` |
 | Provider input request | UserRequest expires before response delivery | expiry event while provider task may still be waiting | mark local input binding EXPIRED; cancel/reconcile provider task; keep ConversationTurn WAITING_DEPENDENCY until quiescent, then fail retryably; block only the affected Task Step |
-| LitePSM | unavailable | client error | existing locked activations continue; new discovery waits/fails clearly |
+| LiteSPM | unavailable | client error | existing locked activations continue; new discovery waits/fails clearly |
 | Secret/OAuth | revoked/expired | auth error | WAITING_RESOURCE; re-auth; new SecretLease |
 | BlobStore | unavailable | storage error | pause Artifact publication; retry; never create version referencing missing blob |
 | StateStore | unavailable | storage error | stop authoritative mutations; UI may show cached read-only state |
@@ -134,7 +134,7 @@ results remain readable. A fallback provider is used only when an explicit
 compatibility/permission decision selects it. Agent model failures use the AgentAdapter's
 own quota/backoff policy and do not share this provider circuit.
 
-This circuit is not a process supervisor and does not issue restart/stop commands. LitePSM
+This circuit is not a process supervisor and does not issue restart/stop commands. LiteSPM
 owns package/provider launch, sharing, health, restart, and idle-stop lifecycle under its
 future contract. Environment and Channel adapters are supervised by their owning Runtime
 services. LiteCowork may report observed provider health and stop sending calls while the

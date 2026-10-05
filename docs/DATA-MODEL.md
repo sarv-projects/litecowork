@@ -639,7 +639,7 @@ CapabilityHostInstance {
   isolation_partition_digest: Sha256Digest
   sharing_policy: EXCLUSIVE | TASK_ISOLATED | TRUST_PARTITION_SHARED
   hosting_mode: LOCAL_MANAGED | REMOTE_PROVIDER
-  provider_instance_ref: string? # opaque LitePSM/provider reference; Runtime-private
+  provider_instance_ref: string? # opaque LiteSPM/provider reference; Runtime-private
   state: STARTING | READY | BUSY | DEGRADED | STOPPING | STOPPED | FAILED
   health: HEALTHY | DEGRADED | UNHEALTHY | UNKNOWN
   active_activation_count: u32 # derived view value; never independently incremented
@@ -828,10 +828,10 @@ CapabilityActivation {
 offer record by kind; there is no second `CapabilityOffer` source of truth. Runtime offer
 compatibility is advisory and must be rechecked at admission.
 
-`CapabilityHostInstance` is a Runtime-local operational view, not a LitePSM package record
+`CapabilityHostInstance` is a Runtime-local operational view, not a LiteSPM package record
 or replicated Task aggregate. It reports normalized provider identity, isolation,
 readiness, health freshness, and LiteCowork use counts; process IDs, package internals,
-credentials, and LitePSM protocol fields remain private/opaque. Its active Activation
+credentials, and LiteSPM protocol fields remain private/opaque. Its active Activation
 count is derived from local `CapabilityActivationHostBinding` rows joined to nonterminal
 `CapabilityActivation` records (`STARTING`, `ACTIVE`, or `STOPPING`), never independently
 incremented. `CapabilityActivation.health` is the result of that Activation's readiness
@@ -848,7 +848,7 @@ for `TASK_ISOLATED`, it is unique to the Task; `TRUST_PARTITION_SHARED` uses onl
 TrustService-issued partition. Otherwise the Supervisor uses an exclusive or Task-isolated
 instance.
 
-The external package's component shape is not modeled here; LitePSM owns that contract.
+The external package's component shape is not modeled here; LiteSPM owns that contract.
 LiteCowork persists only normalized references and the digest/version used by a Task.
 
 ## Connections and human channels
@@ -910,7 +910,7 @@ ChannelThreadMapping {
 ```
 
 Connection and ChannelBinding store references and authority metadata, never credential
-bytes. LitePSM/provider-specific account schemas remain outside LiteCowork.
+bytes. LiteSPM/provider-specific account schemas remain outside LiteCowork.
 Their `external_provider_ref`, `provider_ref`, account, and thread identifiers are stable
 non-secret logical IDs. They must not encode access tokens, signed URLs, or private
 endpoint locators; provider adapters retain any such material in private storage.
@@ -931,7 +931,7 @@ ProviderCircuit {
 ```
 
 ProviderCircuit controls LiteCowork call admission after repeated failures. It is not a
-provider process supervisor and does not count or command process restarts. LitePSM owns
+provider process supervisor and does not count or command process restarts. LiteSPM owns
 package process lifecycle; Environment and Channel adapters use their owning lifecycle
 services. `provider_ref` is a normalized non-secret provider identity, never a process
 handle, URL credential, or upstream bearer token.
@@ -1745,7 +1745,7 @@ SkillProposal {
 ```
 
 LiteCowork owns draft creation, secret/task-specific data redaction, verification, and
-user approval. LitePSM owns publication/package lifecycle; its contract is intentionally
+user approval. LiteSPM owns publication/package lifecycle; its contract is intentionally
 not defined here.
 
 ## Resource identity and location

@@ -353,7 +353,7 @@ sequence/id.
 
 ## MCP Skills and Apps
 
-The broker may normalize Skills from LitePSM-managed packages or from an MCP Skills
+The broker may normalize Skills from LiteSPM-managed packages or from an MCP Skills
 extension server. The client uses `skills/list`/`skills/get` only after the server
 advertises the Skills extension and its required Resources capability; individual files
 are read with `resources/read`. A skill can also be named by an explicit URI in server
@@ -390,7 +390,7 @@ verified, and explicitly approved as its own Skill. Apply the standard per-Skill
 `allowed-tools` unless a separate explicit TrustService grant authorizes those tools, and
 require fresh consent for a nested Skill. A Skill cannot trigger host code execution
 without the ordinary per-skill/user approval for that execution authority. Reading a Skill
-file as an ordinary Resource does not activate it. This does not define LitePSM's package
+file as an ordinary Resource does not activate it. This does not define LiteSPM's package
 or API schema.
 
 MCP Apps are optional Workbench views. The client advertises App support during protocol

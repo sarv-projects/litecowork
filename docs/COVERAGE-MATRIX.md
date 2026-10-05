@@ -40,7 +40,7 @@ decision.
 | Coworker identity/presence, evidence-linked Goals, Suggestions, personal context, and user-authored ContextDocuments | [`RESPONSIBILITIES.md`](RESPONSIBILITIES.md), [`CONTEXT.md`](CONTEXT.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
 | Durable AgentSession provenance, operation-scoped lifetime, replacement, and Runtime-local native/session handles | [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), [`STORAGE.md`](STORAGE.md), [`EVENTS.md`](EVENTS.md) |
 | Discovered AgentProfiles, Workspace bindings, enablement | [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md) |
-| Capability use and LitePSM boundary | [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md) |
+| Capability use and LiteSPM boundary | [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md) |
 | Runtime-local provider instance readiness, health freshness, sharing isolation, and derived Activation-use count | [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
 | Durable capability operations and MCP Tasks mapping | [`CAPABILITY-INVOCATIONS.md`](CAPABILITY-INVOCATIONS.md), [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md), [`DATA-MODEL.md`](DATA-MODEL.md) |
 | Provider input outbox, pause/resume authority, exact-key retry, non-migrating provider handles, non-secret forms, and URL-mode credential handoff | [`CAPABILITY-INVOCATIONS.md`](CAPABILITY-INVOCATIONS.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), [`NETWORK-SECURITY.md`](NETWORK-SECURITY.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml`, `schemas/sqlite-v1.sql` |
@@ -92,9 +92,9 @@ decision.
 
 These are visible dependencies, not blanks to fill by guesswork:
 
-- LitePSM API version, authentication, package/plugin schema, MCP discovery, and
+- LiteSPM API version, authentication, package/plugin schema, MCP discovery, and
   install/activation lifecycle. The selected base URL is recorded in
-  [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md); LitePSM owns the contract.
+  [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md); LiteSPM owns the contract.
 - UI component-library choice and implementation-specific asset tooling. The v1 color,
   type, spacing, shape, layout, component-state, responsive, and accessibility contracts
   are fixed in [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md); an implementation may change them

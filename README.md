@@ -19,9 +19,9 @@ is represented by a Task that survives agent-session, process, device, and Envir
 failure. External agents own reasoning; LiteCowork coordinates bounded Attempts,
 permissions, artifacts, Effects, evidence, Runtime ownership, and verification.
 
-LitePSM is the selected external package/capability ecosystem. Its configured service
+LiteSPM is the selected external package/capability ecosystem. Its configured service
 base URL is recorded in `docs/CAPABILITY-FABRIC.md`; its API and package contract are
-intentionally deferred to the LitePSM authority.
+intentionally deferred to the LiteSPM authority.
 
 ## Runtime and reusable work
 

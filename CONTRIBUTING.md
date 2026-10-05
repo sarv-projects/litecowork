@@ -19,7 +19,7 @@ vertical workflow before adding broad providers or additional runtime roles.
    together.
 3. Preserve one normative definition for each entity, state machine, API, and event;
    other documents link to that definition.
-4. Keep LitePSM API/package details in LitePSM's authority. LiteCowork records only the
+4. Keep LiteSPM API/package details in LiteSPM's authority. LiteCowork records only the
    chosen endpoint and its integration boundary until that contract is supplied.
 5. Run Markdown link, schema, and diff checks appropriate to the edit.
 

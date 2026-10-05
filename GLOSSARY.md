@@ -151,7 +151,7 @@ A versioned operation or set of operations that an authorized Attempt can use th
 provider, agent-native integration, or LiteCowork Gateway.
 _Avoid_: Permission, package listing
 
-**LitePSM**:
+**LiteSPM**:
 The independent product that owns capability/package ecosystem discovery and lifecycle;
 LiteCowork consumes its contract without duplicating that system.
 _Avoid_: LiteCowork marketplace

@@ -107,7 +107,7 @@ before the user resubmits.
 
 1. worker needs operation not currently available.
 2. `litecowork.capabilities.search` -> CapabilityBroker.
-3. Broker searches LitePSM normalized catalog.
+3. Broker searches LiteSPM normalized catalog.
 4. worker calls describe/select.
 5. Broker resolves exact package version/digest.
 6. Trust evaluates grant/approval.
@@ -376,7 +376,7 @@ No separate bot Task store.
 
 ## F22 — Package update while Task running
 
-1. LitePSM reports a newer package through its separately defined contract.
+1. LiteSPM reports a newer package through its separately defined contract.
 2. running Attempt remains pinned to CapabilityLock digest/version.
 3. new Tasks may resolve newer version according to policy.
 4. upgrade never mutates an in-flight capability silently.
@@ -668,21 +668,21 @@ for stale inputs.
 
 ## F34 — Reusable Skill proposal
 
-Actors: User, SkillProposalService, redactor/validator, TrustService, LitePSM adapter.
+Actors: User, SkillProposalService, redactor/validator, TrustService, LiteSPM adapter.
 
 1. After successful work, the user or Agent explicitly requests a reusable Skill draft.
 2. SkillProposalService creates a `SKILL_DRAFT` Artifact from selected method/provenance,
    strips Task-specific data and secrets, and records redaction/validation results.
 3. User reviews exact content and approves or rejects the proposal. Approval is not
    inferred from a successful Task.
-4. On approval, LiteCowork hands the reviewed content/reference to LitePSM publication
-   once its contract is available; LitePSM owns package versioning/distribution.
+4. On approval, LiteCowork hands the reviewed content/reference to LiteSPM publication
+   once its contract is available; LiteSPM owns package versioning/distribution.
 
 Events: `skill.proposal.created.v1`, `skill.proposal.status.changed.v1`, Artifact and
 ApprovalUse events where applicable.
 
 Failure behavior: a redaction failure blocks publication; LiteCowork never stores a hidden
-autonomous memory rewrite or claims publication before LitePSM acknowledgement.
+autonomous memory rewrite or claims publication before LiteSPM acknowledgement.
 
 UI: show proposal state, redaction status, exact reviewable draft, and publication result.
 
@@ -775,7 +775,7 @@ UI: show last verified backup time, restore point, and any missing artifact/effe
 | F31 | EnvironmentControlLease owner/epoch transition and fresh observation | Show current human/Agent controller; reject stale queued input |
 | F32 | Workspace instruction revision and optional TaskSpecRevision pin update | Show exact revision used; active Task context does not silently change |
 | F33 | ResourceRevision and InvalidationRecords | Mark affected Artifact/Evidence stale while preserving immutable history |
-| F34 | SkillProposal review/redaction/publication state | Show exact draft; publication is not claimed before LitePSM confirms |
+| F34 | SkillProposal review/redaction/publication state | Show exact draft; publication is not claimed before LiteSPM confirms |
 | F35 | NotificationDelivery state | Show transport acknowledgement separately from Task status |
 | F36 | Verified backup manifest/restore checks/new Runtime identity | Show recoverability and blockers; never restore old lease authority |
 | F37 | Runtime incarnation readiness and recovery mutations | No installed worker launches solely from boot |
@@ -802,7 +802,7 @@ UI: show last verified backup time, restore point, and any missing artifact/effe
 | F58 | Concurrent ContextDocument Resource revisions | Preserve both changes and require explicit merge/rebase |
 | F59 | Deadline preflight and bounded ActionBatch | Fail before effects when prerequisites fail; reconcile partial Effects before fallback |
 | F60 | Shared browser profile takeover through control lease | One current controller; stale epoch input is discarded |
-| F61 | Demonstration trace converted to SkillProposal | Review/redaction required; no publication before approval and LitePSM confirmation |
+| F61 | Demonstration trace converted to SkillProposal | Review/redaction required; no publication before approval and LiteSPM confirmation |
 | F62 | Delegation budget threshold reached | Stop new admissions under policy; never kill an Attempt mid-Effect |
 | F63 | Child worker loss with potentially ambiguous Effect | Reconcile before retry/escalation; preserve independent children only when eligible |
 | F64 | Coworker-private Environment reused by future Task | Fresh Attempt authority and one current browser-control owner |
@@ -1310,7 +1310,7 @@ Environment with semantic observation and input fencing.
    outputs, and verification criteria.
 3. Conversion creates a draft SkillProposal through the existing test/review lifecycle;
    it is not installed or invoked automatically.
-4. LitePSM remains package discovery/lifecycle authority for a published package;
+4. LiteSPM remains package discovery/lifecycle authority for a published package;
    LiteCowork owns only Task-scoped activation/grants.
 
 **Failure/UI/postcondition:** Abort or secret detection follows retention policy and
@@ -1402,7 +1402,7 @@ Capability revisions.
    TaskSpec pin is rewritten.
 3. Needs You offers Review, disable the affected Automation, or prepare a repair. Repair
    creates a SkillProposal through the normal redaction/test/review path; publication
-   waits for explicit approval and LitePSM confirmation.
+   waits for explicit approval and LiteSPM confirmation.
 4. The owner explicitly revises the Routine and then any Automation revision that should
    adopt the new Skill. New Tasks pin new revisions; existing Attempts remain unchanged.
 
@@ -1655,7 +1655,7 @@ Browser/Desktop Environment; immutable policy pins caps and sensitive-region han
    offers review, continue-after-redaction where allowed, or abort.
 4. On completion, owner reviews the trace; conversion creates an ordinary SkillProposal
    draft with typed inputs and verification requirements. Publishing remains the existing
-   separate approval/LitePSM package flow.
+   separate approval/LiteSPM package flow.
 
 **Failure/UI/postcondition:** Expired Environment authority, cap exhaustion, trace write
 failure, or a Runtime-incarnation change pauses or aborts the capture. No partial trace is

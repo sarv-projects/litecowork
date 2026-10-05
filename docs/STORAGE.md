@@ -147,7 +147,7 @@ runtime_incarnation_local_observations # Runtime-local OS boot ID/diagnostic dat
 agent_host_instances                   # local operational records; not Task replication truth
 agent_session_host_bindings            # local opaque agent handles; excluded from backup/replication
 capability_activation_host_bindings    # local opaque provider handles; excluded from backup/replication
-capability_host_instances              # local provider observations/use groups; not LitePSM package truth
+capability_host_instances              # local provider observations/use groups; not LiteSPM package truth
 capability_invocation_provider_bindings # encrypted provider task handles/cursors; local-only
 provider_input_bindings                 # encrypted MCP input envelope/keys and response outbox; local-only
 automation_trigger_bindings             # encrypted provider cursors; local-only, host-epoch scoped

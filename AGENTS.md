@@ -28,8 +28,8 @@ LiteCowork owns durable Task coordination and Core-mediated shared effects.
 - A direct-attached capability must not bypass required authorization, effect recording,
   idempotency, or fencing. Use the LiteCowork Gateway when those guarantees cannot be
   enforced on the direct path.
-- LitePSM owns package discovery and lifecycle. LiteCowork owns Task-scoped use. The
-  selected LitePSM endpoint is recorded in `docs/CAPABILITY-FABRIC.md`; do not invent
+- LiteSPM owns package discovery and lifecycle. LiteCowork owns Task-scoped use. The
+  selected LiteSPM endpoint is recorded in `docs/CAPABILITY-FABRIC.md`; do not invent
   endpoints, methods, authentication, or package schemas for it.
 - Runtime is `litecoworkd`; Environment is where an Attempt acts.
 - Cloud continuation creates a new Attempt from portable Task state after effect

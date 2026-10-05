@@ -6,7 +6,7 @@
 2. Local LiteCowork Runtime
 3. Other paired runtimes/cloud Hub
 4. External agents
-5. LitePSM/package sources
+5. LiteSPM/package sources
 6. MCP/capability providers
 7. Environments/sandboxes
 8. External messaging channels
@@ -115,4 +115,4 @@ and Trust policy.
 
 ## Supply chain
 
-LitePSM package verification metadata should include source, publisher, digest/signature, permissions, compatibility and last verification. LiteCowork consumes normalized lock metadata and independently applies task policy.
+LiteSPM package verification metadata should include source, publisher, digest/signature, permissions, compatibility and last verification. LiteCowork consumes normalized lock metadata and independently applies task policy.

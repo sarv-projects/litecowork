@@ -630,12 +630,12 @@ READY | DEGRADED -> STOPPING -> STOPPED | FAILED
 ```
 
 CapabilityHostSupervisor owns LiteCowork's normalized observation and scoped use-reference
-view; LitePSM remains authoritative for package/provider process execution and its own
+view; LiteSPM remains authoritative for package/provider process execution and its own
 global process reference count. LiteCowork's activation count is derived by joining
 Runtime-local HostBinding rows to nonterminal Activation records. `BUSY` means provider capacity is currently exhausted,
 not that the provider is unhealthy. Expired health becomes `UNKNOWN` and is ineligible for
 new work until revalidated. A zero LiteCowork activation count releases LiteCowork's
-provider-use reference; it does not claim the process stopped if LitePSM or another client
+provider-use reference; it does not claim the process stopped if LiteSPM or another client
 still holds it. A later start creates a new LiteCowork host instance after reconciliation.
 
 CapabilityBroker and TrustService jointly authorize grant creation; TrustService owns
@@ -668,7 +668,7 @@ ProviderCircuitService owns a versioned call-admission circuit per Runtime/provi
 identity. A rolling-window threshold opens the circuit; `open_until` controls when one
 exclusive half-open probe may start. Probe success closes and resets the failure window;
 failure reopens with bounded backoff. OPEN rejects new calls but does not start, restart,
-or stop a process. LitePSM owns package/provider process lifecycle; Environment and Channel
+or stop a process. LiteSPM owns package/provider process lifecycle; Environment and Channel
 owners manage their own adapter lifecycle. Circuit transitions do not rewrite
 CapabilityActivation, Invocation, Task, or Effect history.
 
@@ -691,7 +691,7 @@ DRAFT -> REVIEW -> APPROVED -> PUBLISHED
 ```
 
 SkillProposalService owns draft/redaction/review state; TrustService authorizes approval;
-PUBLISHED is recorded only after LitePSM confirms publication. A failed redaction remains
+PUBLISHED is recorded only after LiteSPM confirms publication. A failed redaction remains
 in DRAFT with `redaction_status=FAILED` and cannot enter REVIEW. REJECTED and PUBLISHED
 are terminal; revisions create a new proposal/draft rather than rewriting reviewed text.
 

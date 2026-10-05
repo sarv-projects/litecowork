@@ -389,9 +389,9 @@ scope settlement and terminal/reconciled Invocations. It serializes concurrent r
 requests and permits sharing only
 when concurrency, pinned capability/configuration identity, and Trust isolation rules
 agree. Each Invocation still authorizes against its own Grant and fence. It does not
-install packages, spawn/kill provider processes, or invent LitePSM package behavior. It
-uses the internal LitePSM adapter boundary for opaque readiness/use-reference operations;
-exact LitePSM wire methods remain deferred. `provider_instance_ref` is Runtime-private and
+install packages, spawn/kill provider processes, or invent LiteSPM package behavior. It
+uses the internal LiteSPM adapter boundary for opaque readiness/use-reference operations;
+exact LiteSPM wire methods remain deferred. `provider_instance_ref` is Runtime-private and
 never exposed as a credential or public API locator. If an observation expires or the
 Runtime incarnation changes, the view is stale and the host must be revalidated before
 reuse.
@@ -400,7 +400,7 @@ reuse.
 
 Owns per-Runtime provider failure windows and `CLOSED/OPEN/HALF_OPEN` call-admission
 circuit transitions. It does not start, restart, stop, share, or remove provider processes;
-LitePSM owns package/provider process lifecycle, and Environment/Channel owners manage
+LiteSPM owns package/provider process lifecycle, and Environment/Channel owners manage
 their own adapters. Provider health observations feed the host view and may open this
 circuit, but a circuit state is not itself proof that a process stopped. The service does
 not choose a semantic fallback; CapabilityBroker or the owning provider service must
@@ -583,7 +583,7 @@ Defined in `CHANNELS.md`.
 
 Owns connection references and lifecycle metadata. It never stores provider credential
 bytes. Account-specific authorization and package behavior remain with the external
-provider/LitePSM contract. Provider-owned setup creates or updates the Connection after
+provider/LiteSPM contract. Provider-owned setup creates or updates the Connection after
 its authentication flow; Operator API exposes only normalized metadata, status, and
 disconnect. Provider-specific setup UI, callbacks, and credential exchange are outside
 the Operator API and remain deferred with the integration contract.
@@ -811,7 +811,7 @@ key only and conveys no authority.
 
 Owns durable CapabilityInvocation dispatch, asynchronous polling/resume, Runtime-local encrypted provider cursor binding,
 cancellation, bounded partial results, usage observations, and settlement. It calls a
-provider only after CapabilityBroker authorization and does not define LitePSM's wire
+provider only after CapabilityBroker authorization and does not define LiteSPM's wire
 contract. Provider task handles remain opaque values attached to the Invocation.
 
 ```text
@@ -918,7 +918,7 @@ or answer anything itself.
 
 Creates a proposed Skill draft from an explicit successful Task, scans/redacts
 Task-specific data and secrets, validates it, requests user approval, and hands the
-approved Artifact to LitePSM publication when its external contract is available. It does
+approved Artifact to LiteSPM publication when its external contract is available. It does
 not independently publish or version packages.
 
 ### AuditService
@@ -927,13 +927,13 @@ Appends authorization, approval, Runtime pairing/revocation, secret-lease, and s
 Effect records. It has no update API. Retention must preserve evidence needed for active
 Effect reconciliation and recovery.
 
-### LitePSM adapter boundary
+### LiteSPM adapter boundary
 
 CapabilityBroker and CapabilityHostSupervisor depend on one outbound adapter implementing
-the future LitePSM contract. The base URL is selected in `CAPABILITY-FABRIC.md`. Method names, payloads,
+the future LiteSPM contract. The base URL is selected in `CAPABILITY-FABRIC.md`. Method names, payloads,
 authentication, retries, version negotiation, package manifests, and activation details
-are deliberately unspecified until LitePSM's authoritative interface is supplied. No
-other LiteCowork service may call the LitePSM adapter directly; domain services use the
+are deliberately unspecified until LiteSPM's authoritative interface is supplied. No
+other LiteCowork service may call the LiteSPM adapter directly; domain services use the
 owning Broker or Supervisor port.
 
 ## Infrastructure ports
@@ -1018,8 +1018,8 @@ AttemptRunner -> AgentSessionSupervisor, ExecutionDependencyPlanner, CapabilityB
 PlacementService -> RuntimeMesh read models, Agent registry, Trust policy, Environment offers, WorldIndex
 ExecutionDependencyPlanner -> PlacementService, AgentHostSupervisor, CapabilityBroker, EnvironmentManager, WorldIndex, TrustService
 CapabilityBroker -> CapabilityHostSupervisor, TrustService, Runtime inventory
-CapabilityHostSupervisor -> LitePSM adapter (contract deferred), RuntimeLifecycleService, StateStore, Clock
-LitePSM adapter -> selected LitePSM service URL (wire contract deferred)
+CapabilityHostSupervisor -> LiteSPM adapter (contract deferred), RuntimeLifecycleService, StateStore, Clock
+LiteSPM adapter -> selected LiteSPM service URL (wire contract deferred)
 InvocationRunner -> CapabilityBroker, provider adapters, ArtifactStore, EffectService, BudgetService
 ProviderInputCoordinator -> EventBus, ConversationService continuation port, TaskService continuation port, InvocationRunner
 WorldIndexer/ResourceService -> root authorization, ResourceLocationProvider registry, DependencyIndexPort, EventStore, StateStore, local search index
@@ -1051,9 +1051,9 @@ Forbidden:
 - AgentAdapter mutating Task/Artifact/Effect DB directly
 - UI mutating StateStore directly
 - provider adapters emitting user-visible completion without domain service transition
-- LitePSM package metadata bypassing TrustService for activation
-- CapabilityHostSupervisor treating a shared process as shared authorization or exposing an opaque LitePSM handle
-- a second LiteCowork package/process supervisor competing with LitePSM's actual lifecycle
+- LiteSPM package metadata bypassing TrustService for activation
+- CapabilityHostSupervisor treating a shared process as shared authorization or exposing an opaque LiteSPM handle
+- a second LiteCowork package/process supervisor competing with LiteSPM's actual lifecycle
 - AgentAdapter or provider writing domain tables without the owning service
 - a replicated event bypassing origin authorization, revision, or fencing checks
 - a notification changing Task/Approval/Automation state

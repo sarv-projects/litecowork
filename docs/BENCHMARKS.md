@@ -53,10 +53,10 @@ Kill lead process, provider, Runtime and network at controlled phases. Verify re
 Send email/update CRM, cut connection after request leaves. Reconcile before retry and demonstrate no duplicate mutation.
 
 ### B17 Capability discovery
-Task requires capability unknown at start; agent searches LiteCowork Gateway, LitePSM resolves exact package, grant/approval occurs, provider activates, Task completes.
+Task requires capability unknown at start; agent searches LiteCowork Gateway, LiteSPM resolves exact package, grant/approval occurs, provider activates, Task completes.
 
 ### B18 Skill learning
-Successful repeated procedure -> draft SKILL.md -> remove task-specific secrets -> user review -> LitePSM-managed version -> next Task uses pinned skill.
+Successful repeated procedure -> draft SKILL.md -> remove task-specific secrets -> user review -> LiteSPM-managed version -> next Task uses pinned skill.
 
 ### B19 Human takeover
 Agent controls a browser/desktop Environment; user takes control with the current

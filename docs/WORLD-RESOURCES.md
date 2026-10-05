@@ -231,6 +231,6 @@ inside the Runtime/provider boundary that owns a current `ResourceLocationBindin
 ## Deferred boundaries
 
 This document does not define a semantic memory engine, embeddings service, general
-machine activity monitor, or LitePSM package contract. A separately isolated opt-in
+machine activity monitor, or LiteSPM package contract. A separately isolated opt-in
 Machine Observer may publish specific observations only after explicit user authorization;
 it is not required for World Index or Task placement.

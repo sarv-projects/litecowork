@@ -148,7 +148,7 @@ is freshness-qualified; absence is `UNKNOWN`, not Healthy.
 preflight or a verifier bound to the current RoutineRevision. A transient provider error
 or failed Task alone is `WARNING`. The Task receives `SKILL_DRIFT_DETECTED` and a Needs You
 item before unsafe replay. The user may request a repair proposal; SkillProposal review,
-redaction, and LitePSM publication rules still apply. Published Skill changes do not
+redaction, and LiteSPM publication rules still apply. Published Skill changes do not
 rewrite RoutineRevision or AutomationRevision pins: the owner reviews a new Routine
 revision and separately updates affected Automation pins. Repair never mutates a package
 or reruns the Task silently.

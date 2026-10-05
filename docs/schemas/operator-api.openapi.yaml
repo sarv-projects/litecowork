@@ -1,5 +1,5 @@
 openapi: 3.1.0
-info: {title: LiteCowork Operator API, version: 1.0.0, description: 'User-facing commands and projections. Local IPC maps to these logical contracts; this document does not define Mesh, Agent, Environment, or LitePSM APIs.'}
+info: {title: LiteCowork Operator API, version: 1.0.0, description: 'User-facing commands and projections. Local IPC maps to these logical contracts; this document does not define Mesh, Agent, Environment, or LiteSPM APIs.'}
 servers: [{url: 'https://localhost/v1'}]
 security: [{operatorAuth: [], workspaceContext: []}]
 tags:
@@ -2049,7 +2049,7 @@ paths:
         schema: {type: string, enum: [APP, CAPABILITY, SKILL, AGENT]}
       responses:
         '200':
-          description: Bounded user-facing candidates; package details remain LitePSM-owned
+          description: Bounded user-facing candidates; package details remain LiteSPM-owned
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DiscoverItemPage'}
@@ -2892,7 +2892,7 @@ paths:
       - {$ref: '#/components/parameters/IfMatch'}
       responses:
         '202':
-          description: User approval recorded; publication remains LitePSM-owned
+          description: User approval recorded; publication remains LiteSPM-owned
           content:
             application/json:
               schema: {$ref: '#/components/schemas/SkillProposal'}
@@ -4331,7 +4331,7 @@ components:
           capability_id: {type: string, minLength: 1}
           identity_kind: {const: PACKAGE_COMPONENT}
           source: {type: string, minLength: 1}
-          package_version: {type: string, minLength: 1, description: Exact opaque version label normalized from LitePSM}
+          package_version: {type: string, minLength: 1, description: Exact opaque version label normalized from LiteSPM}
           digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
           component: {type: string, minLength: 1}
       - type: object

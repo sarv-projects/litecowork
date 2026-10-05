@@ -156,7 +156,7 @@ and environment snapshots may accelerate resume but are never required for corre
 - Agent Fabric contracts and host-created delegation lifecycle, without taking over an
   agent's internal subagent system or reasoning.
 - LiteCowork Capability Gateway, CapabilityBroker, CapabilityHostSupervisor, scoped grants,
-  activations, local host bindings, and LitePSM client integration.
+  activations, local host bindings, and LiteSPM client integration.
 - Runtime identity, pairing, presence, event/artifact replication, execution and channel
   host assignments/leases, fencing, handoff, and failover coordination.
 - EnvironmentProvider contract and Attempt placement, not domain-specific intelligence.
@@ -185,14 +185,14 @@ scan the whole machine, infer semantic knowledge, or act as a reasoning model. R
 an external domain capability should remove that category of work, not break Task
 durability or runtime coordination.
 
-### LitePSM is independent
+### LiteSPM is independent
 
-LitePSM owns package ecosystem truth and lifecycle. LiteCowork owns only session-scoped
+LiteSPM owns package ecosystem truth and lifecycle. LiteCowork owns only session-scoped
 references, grants, activations, and offers (with Task capability locks for durable
 Tasks). A listing is not trusted code, an installed
-package, an account connection, or an authorization grant. The selected LitePSM service
+package, an account connection, or an authorization grant. The selected LiteSPM service
 base URL is `https://litepsm.sarveshbh-2022.workers.dev/`. Its API, authentication,
-manifest, package taxonomy, and install/activation contract remain owned by LitePSM and
+manifest, package taxonomy, and install/activation contract remain owned by LiteSPM and
 are deliberately not specified here.
 
 ## 5. LiteCowork Capability Gateway
@@ -215,7 +215,7 @@ read-only methods. Task planning and Attempt execution use distinct session scop
 credentials. A Conversation-only session cannot mutate a Task or invoke a consequential
 capability.
 
-Resolve package-component versions/digests through LitePSM; resolve MCP Skills by their
+Resolve package-component versions/digests through LiteSPM; resolve MCP Skills by their
 authenticated server identity, exact `SKILL.md` URI, and manifest digest. Check binding
 compatibility, scope, policy, and budget, then create a grant matching the session scope.
 Direct attachment is allowed only when the provider can enforce the scoped grant and the
@@ -252,13 +252,13 @@ default. Model/agent selection changes affect future sessions or planning assign
 already admitted Attempts remain pinned. Apps launch only when a selected Environment
 requires them, and cleanup may close only an instance LiteCowork launched and owns.
 
-LitePSM owns package/provider process execution and lifecycle: launch/stop, provider-level
+LiteSPM owns package/provider process execution and lifecycle: launch/stop, provider-level
 isolation implementation, health/restart, and global process reference counting. LiteCowork
 owns a normalized Runtime-local `CapabilityHostInstance` view and derives use counts by
 joining local `CapabilityActivationHostBinding` records to durable scoped Activations. The
 binding and its opaque provider handle never enter replicated event state or Workspace
 backups. `CapabilityHostSupervisor` coordinates readiness and releases LiteCowork's use
-references through the future LitePSM adapter contract; it never controls package internals
+references through the future LiteSPM adapter contract; it never controls package internals
 or duplicates the process supervisor.
 Sharing requires declared safe concurrency, a matching pinned capability/configuration,
 and the same Trust isolation partition. Each call retains its own grant/fence/effect checks.
@@ -483,7 +483,7 @@ Keep these protocols separate:
 1. **Operator:** desktop/web/mobile/CLI to `litecoworkd`.
 2. **Mesh:** Runtime to Runtime identity, sync, presence, leases, and remote invocation.
 3. **Agent:** Runtime to external agent over ACP, A2A, SDK/API, or CLI adapter.
-4. **Capability:** Agent to LiteCowork Gateway MCP, Broker, LitePSM, or provider.
+4. **Capability:** Agent to LiteCowork Gateway MCP, Broker, LiteSPM, or provider.
 5. **Environment:** Attempt to EnvironmentProvider.
 6. **Human channels:** Telegram, Slack, Discord, Teams, email, and webhook adapters feed
    authenticated messages into the same Conversation/Task model; they do not own a
@@ -514,7 +514,7 @@ Do not recreate first-party model routing, cognitive memory/vector retrieval, a 
 reasoning World Model, Office implementation, browser/computer-use intelligence, code
 intelligence, semantic/web research engine, connector marketplace, large workflow
 runtime, or a massive built-in skill catalog. Integrate these as external agents,
-capabilities, LitePSM packages, or EnvironmentProviders. The bounded factual World Index
+capabilities, LiteSPM packages, or EnvironmentProviders. The bounded factual World Index
 and deterministic search over selected Workspace resources remain first-party. Core stays
 capable by composing replaceable parts rather than implementing every domain.
 
@@ -523,7 +523,7 @@ capable by composing replaceable parts rather than implementing every domain.
 1. Local `litecoworkd` lifecycle/recovery, Operator surface, Workspace instructions/roots,
    factual Resource registry and deterministic search, durable Conversation/Task, and one
    lazily started qualified external AgentAdapter.
-2. LiteCowork Gateway, the selected LitePSM adapter contract, one capability, scoped grant, Effect/Artifact record,
+2. LiteCowork Gateway, the selected LiteSPM adapter contract, one capability, scoped grant, Effect/Artifact record,
    and verifier; kill and replace the agent session from a portable ResumePacket.
 3. Versioned DelegationProfiles, heterogeneous host delegation to accepted Steps, child-
    scoped Trust, cost-aware ranking, and bounded verification escalation.
@@ -562,7 +562,7 @@ crates/domain/{conversation,task,artifact,effect,evidence}/
 crates/runtime/{lifecycle,supervisor,attempt_runner,dependency_planner}/
 crates/mesh/{identity,presence,replication,leases,transport}/
 crates/agents/{adapter,acp,a2a,cli}/
-crates/capabilities/{gateway,broker,host_supervisor,litepsm_adapter}/
+crates/capabilities/{gateway,broker,host_supervisor,litespm_adapter}/
 crates/environments/{local,worktree,container,remote}/
 crates/{trust,verification,routines,automation,events,storage,operator-api}/
 ```

@@ -286,10 +286,10 @@ LiteCowork requests a scope-appropriate CapabilityActivation only after selectio
 grant. LiteCowork's CapabilityHostSupervisor keeps a Runtime-local view of each normalized
 provider instance, current health/readiness observation, and the number of LiteCowork
 Activations that reference it. The count is derived from Activation records and is not
-LitePSM's global process reference count. LitePSM remains authoritative for package
+LiteSPM's global process reference count. LiteSPM remains authoritative for package
 installation, provider process startup/stop, isolation implementation, provider-level
 health/restart, and process idle timeout. The Supervisor requests/relinquishes use
-references through the future LitePSM adapter contract; it never starts or kills the
+references through the future LiteSPM adapter contract; it never starts or kills the
 process itself. Sharing requires declared safe concurrency and a matching configuration
 and Trust isolation partition. Every invocation retains its own Grant and Effect checks.
 Remote MCP/connectors have a logical provider host view but need no local process. Stale or

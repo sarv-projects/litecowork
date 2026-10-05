@@ -91,7 +91,7 @@ Tasks, Apps, and Skills may be available or absent. MCP Task handles persist on
 CapabilityInvocation and are never confused with LiteCowork Task identity. MCP Apps
 execute in a sandboxed iframe and use host-mediated tool/resource access. MCP Skills may
 be server-published `SKILL.md` resources identified by server identity and URI. These
-protocol extensions do not define or replace LitePSM package contracts.
+protocol extensions do not define or replace LiteSPM package contracts.
 
 ## 5. Environment Provider Protocol
 
@@ -114,7 +114,7 @@ ProtocolHello {
 
 For LiteCowork-owned protocols, incompatible major versions fail explicitly and optional
 features are negotiated rather than inferred. This `ProtocolHello` shape is not imposed
-on third-party MCP, ACP, A2A, or LitePSM endpoints; their own version negotiation applies.
+on third-party MCP, ACP, A2A, or LiteSPM endpoints; their own version negotiation applies.
 
 ## Standards references
 
