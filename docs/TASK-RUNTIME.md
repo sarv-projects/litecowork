@@ -141,6 +141,16 @@ the exact Coworker origin revision. The selected lead AgentBinding is stored on 
 referenced by the initial spec as `preferred_lead_agent_binding_id`; the placement
 preference is pinned in that spec. A new Task enters planning without creating a Step,
 Attempt, ExecutionLease, or Environment.
+
+The initial TaskSpecRevision also pins the effective `LeadFailoverPolicy`: an explicit
+Task request wins, otherwise the selected Coworker revision's default applies, otherwise
+Core stores `DISABLED` with empty triggers/fallbacks and zero automatic changes. A TaskSpec
+revision inherits the prior policy unless the owner explicitly supplies a replacement.
+Failover candidates are ordered, same-Workspace, enabled, lead-eligible bindings and are
+rechecked for Runtime, endpoint, auth, Trust, input availability, and budget at each use.
+The policy can change the lead binding only; it does not copy grants, approvals, secrets,
+native session state, or Environment control. Every lead change gets a fresh planning
+AgentSession and bounded LeadHandoffPacket.
 There is no persisted Task `DRAFT` state in v1; incomplete/unsent composer content remains
 in the Operator until admission succeeds.
 The operator appends the originating ConversationMessage in the same command boundary
@@ -184,6 +194,17 @@ while they drain or are cancelled at a safe boundary. Planning replacement creat
 TASK_PLANNING session without an Attempt. A replacement execution Attempt may not acquire
 the Step until its prior lease is released, expired, or revoked and open Effects are reconciled. The Task and its history
 remain stable.
+
+`LeadFailoverService` handles only provider-confirmed unavailable/quota-exhausted/runtime-
+unavailable observations. `DISABLED` never changes the lead automatically. `ASK` adds a
+Needs You choice from its ordered fallback list. `ALLOW_LISTED` may change the lead only
+when the exact trigger is enabled by the pinned TaskSpecRevision policy, the fallback is
+listed, `max_lead_changes` remains, and all ordinary lead-admission checks pass. It first
+settles or safely checkpoints the prior planning session, reconciles Invocations/Effects,
+and preserves active Attempts under their original bindings/leases. The transaction emits
+`task.lead_agent.changed.v1` with cause `POLICY_FAILOVER` and the triggering observation;
+the user command uses cause `OWNER_REQUEST`. Ambiguous provider state, an active unsafe
+Effect, or missing fallback readiness blocks the change rather than bypassing recovery.
 
 ## Attempt creation
 

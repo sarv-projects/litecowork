@@ -8,9 +8,9 @@ Task, Effect, Artifact, Evidence, and Verification contracts remain authoritativ
 
 A Coworker is a user-facing identity and preference bundle within one Workspace. It may
 have a name, optional pinned avatar Resource revision, role description, default lead
-binding, delegation strategy, enabled worker-profile allowlist, context preferences, and
-notification preferences. It does not own an AgentSession, Runtime, Environment, Task
-state, grant, Effect, or native memory.
+binding, delegation strategy, enabled worker-profile allowlist, lead-failover defaults,
+interaction defaults, context preferences, and notification preferences. It does not own
+an AgentSession, Runtime, Environment, Task state, grant, Effect, or native memory.
 
 ```text
 Coworker {
@@ -33,6 +33,8 @@ CoworkerRevision {
   delegation_strategy: DelegationStrategy
   enabled_delegation_profile_ids: DelegationProfileId[]
   delegation_budget_policy?: DelegationBudgetPolicy
+  lead_failover_policy?: LeadFailoverPolicy
+  interaction_policy: CoworkerInteractionPolicy
   context_policy: CoworkerContextPolicy
   notification_policy: NotificationPolicy
   authored_by: PrincipalRef
@@ -44,6 +46,14 @@ CoworkerContextPolicy {
   max_retrieved_items: u32
   retain_task_summaries: bool
   require_user_confirmation_for_memory: true
+}
+
+CoworkerInteractionPolicy {
+  read_only_work: InteractionDefault
+  draft_creation: InteractionDefault
+  external_mutation: InteractionDefault
+  destructive_action: InteractionDefault
+  financial_commitment: InteractionDefault
 }
 ```
 
@@ -98,6 +108,14 @@ CoworkerPresenceProjection {
 }
 ```
 
+`runtime_status` describes only the Coworker's configured default lead path, evaluated
+across eligible Runtime/endpoint offers; it does not summarize every Runtime, delegated
+worker, or active Task. `AVAILABLE` means at least one eligible lead endpoint is currently
+available or startable with valid auth; `DEGRADED` means the path exists but needs a
+recoverable setup/health action; `OFFLINE` means no eligible path is currently reachable;
+`UNKNOWN` means the supporting observations are absent or stale. Task rows expose their own
+Runtime/location projection.
+
 The activity axis is derived from linked nonterminal Tasks, UserRequests, blockers, and
 active Attempts; `NEEDS_YOU` wins only for the activity label while counts preserve
 simultaneous work. Runtime availability is derived from fresh Runtime/endpoint offers;
@@ -105,6 +123,26 @@ stale offers become `UNKNOWN`. This projection is served by
 `GET /v1/coworkers/{id}/presence` and is not stored on Coworker or used for admission.
 The UI presents proactive status, activity status, and Runtime status as separate labels;
 it does not collapse them into one precedence-based state.
+
+`CoworkerInteractionPolicy` uses one default per narrow action class:
+
+```text
+CoworkerInteractionPolicy {
+  read_only_work: STANDARD_TRUST_POLICY | REQUIRE_OWNER_APPROVAL | HANDOFF_TO_OWNER
+  draft_creation: STANDARD_TRUST_POLICY | REQUIRE_OWNER_APPROVAL | HANDOFF_TO_OWNER
+  external_mutation: STANDARD_TRUST_POLICY | REQUIRE_OWNER_APPROVAL | HANDOFF_TO_OWNER
+  destructive_action: STANDARD_TRUST_POLICY | REQUIRE_OWNER_APPROVAL | HANDOFF_TO_OWNER
+  financial_commitment: STANDARD_TRUST_POLICY | REQUIRE_OWNER_APPROVAL | HANDOFF_TO_OWNER
+}
+```
+
+This is a user-facing interaction preference, not an authority grant.
+`STANDARD_TRUST_POLICY` leaves the existing Trust decision unchanged;
+`REQUIRE_OWNER_APPROVAL` forces a fresh exact-action Approval; `HANDOFF_TO_OWNER` stops
+before the operation and requires user takeover. No setting can reduce a Workspace or
+provider requirement, create a Grant, or authorize an Effect. Recommended defaults are
+ordinary Trust checks for read-only work and drafts, explicit Approval for external
+mutation, and handoff for destructive/financial actions.
 
 ## Goals
 
@@ -195,9 +233,10 @@ Suggestion {
   source_refs: PinnedResourceRef[]
   goal_refs: GoalRevisionRef[]
   proposed_action: TASK | OPEN_ROUTINE_EDITOR | OPEN_AUTOMATION_EDITOR
+  proposed_by: ServiceRef
   proposed_task_spec?: TaskSpecProposal
   estimated_cost?: UsageQuantity
-  estimated_duration_class?: STANDARD | INTERACTIVE | DEADLINE_SENSITIVE
+  latency_class_hint?: ExecutionLatencyClass
   status: PROPOSED | ACCEPTED | DISMISSED | EXPIRED
   created_at: Timestamp
   expires_at: Timestamp
@@ -272,7 +311,6 @@ PersonalContextProvider {
   get_profile(scope) -> ContextDocumentRef[]
   get_preferences(scope) -> ContextDocumentRef[]
   get_prior_task_context(scope, task_refs) -> ContextMatch[]
-  propose_memory(source_refs, bounded_content) -> ContextProposal
   revoke_memory(source_ref) -> Ack
   list_sources(scope) -> ContextSource[]
 }
@@ -297,9 +335,11 @@ Context precedence, highest first:
 
 Lower-priority context cannot override current instructions or policy. Contradictions
 that materially affect the Task become a clarification/blocker rather than an inferred
-merge. Memory proposals require explicit owner review; revocation/deletion is honored by
-Core across provider sources where supported, with an auditable incomplete-deletion state
-when an external provider cannot confirm removal.
+merge. V1 supports user-authored ContextDocument revisions and retrieval only; providers
+cannot propose newly extracted personal memory until a separate reviewable proposal
+lifecycle exists. Revocation/deletion is honored by Core across provider sources where
+supported, with an auditable incomplete-deletion state when an external provider cannot
+confirm removal.
 
 ## Operator API and services
 
@@ -323,6 +363,15 @@ source visibility, and open-key uniqueness in the same admission transaction. Su
 candidates create no durable Suggestion and retain no candidate text. List projections
 exclude snoozed proposals until their time and settle expired proposals before returning
 an actionable page.
+
+Suggestion candidates come only from registered `SuggestionProducer`s; no background
+agent polls or self-authorizes new work. A producer may be a deterministic event rule or a
+separately authorized read-only capability. Each candidate carries a non-secret
+`ServiceRef`, bounded trigger reason, exact source/Goal revisions, proposed action/task
+specification, and expiry. The producer cannot commit a Suggestion directly. SuggestionService
+validates the producer identity, source access, Workspace/Coworker scope, size limits,
+mute/cooldown/dedupe policy, and then records `proposed_by` provenance on an accepted
+Suggestion. Candidate text is discarded when suppressed.
 
 ## User-visible rules
 

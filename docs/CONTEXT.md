@@ -106,5 +106,38 @@ Context precedence is current user instruction and accepted TaskSpec, explicit c
 attachments, Workspace instructions, linked Goal context, Coworker instructions,
 user-confirmed ContextDocuments, then retrieved historical context. A lower-priority
 source cannot override a higher one. Material conflicts become a clarification or blocker.
-Memory extraction produces a proposal for owner review; revocation is honored by Core and
-is reported incomplete if an external provider cannot verify removal.
+V1 has no provider-generated memory proposal path. Owner-authored ContextDocuments may be
+revised, revoked, or deleted through ResourceService. Revocation removes a document from
+future context retrieval while retaining its bytes. Deletion blocks reads immediately,
+then purges content and derived indexes from Core-managed replicas; the tombstone and
+revision digests remain so historical Task provenance does not disappear. A provider-backed
+source is reported as deletion-incomplete until its provider confirms revocation/removal.
+
+Resource edits use `POST /resources/{resourceId}/revision-uploads`, an immutable parent
+revision set, digest-verified chunk upload, and atomic commit. `If-Match` pins the current
+Resource version when the upload session is created. A stale write returns
+`RESOURCE_CONFLICT` without accepting bytes; an explicit resolution names every intended
+parent revision. An unknown, cross-Resource, or duplicated parent returns
+`RESOURCE_REVISION_PARENT_MISMATCH`; a valid but stale parent-head set remains
+`RESOURCE_CONFLICT`. The head advances atomically and never uses last-writer-wins.
+
+`GET /resources/{resourceId}` remains available for tombstone metadata, but any content
+resolution checks `ContextDocumentStatus` at the last Core authorization boundary. A
+revocation fences new reads and TaskPacket/context attachment. Active sessions that were
+given the document are stopped at the next safe boundary and cannot resume with the stale
+attachment; native history already observed by an external agent cannot be recalled, so the
+old session is never reused. Existing Task/Evidence provenance retains the Resource ID,
+revision IDs, and digests without restoring revoked/deleted bytes.
+
+Deletion is a recoverable purge saga. Before `ACTIVE|REVOKED -> DELETION_PENDING`,
+ResourceService seals an immutable `ContextDocumentPurgePlan` over every registered,
+Core-owned blob/index replica and exact ResourceRevision set. It commits the plan, one
+pending receipt per target, and the Workspace-replicated tombstone atomically; a verified
+empty plan is explicit. The tombstone immediately blocks content reads. A Runtime receipt
+is accepted only for the current Runtime incarnation and exact plan target. `DELETED` is
+committed only when the receipt set exactly equals the sealed target set and every receipt
+is acknowledged; retryable purge failures keep the tombstone pending and never restore
+content. Receipts contain no bytes, locators, credentials, or provider continuation handles
+and remain available for recovery and backup audit. External semantic indexes are purge
+targets only when their provider adapter is registered as an owned replica; arbitrary
+retrieval providers cannot extend or override Resource deletion truth.

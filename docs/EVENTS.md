@@ -121,6 +121,8 @@ workspace.root.created.v1
 workspace.root.status.changed.v1
 resource.created.v1
 resource.revision.observed.v1
+resource.context_document.status.changed.v1
+resource.context_document.purge.acknowledged.v1
 resource.location.changed.v1
 resource.edge.created.v1
 resource.invalidation.created.v1
@@ -284,12 +286,14 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `workspace.instructions.revision.created` | `workspace_id`, `revision`, `parent_revisions[]`, `content_ref`, `content_digest`, `authored_by` |
 | `workspace.root.created` | `workspace_root_id`, `workspace_id`, `resource_id`, `location_id`, `added_by`, `aggregate_version` |
 | `workspace.root.status.changed` | `workspace_root_id`, `from`, `to`, `reason_code`, `aggregate_version` |
-| `resource.created` | `resource_id`, `workspace_id`, `kind`, `identity_digest?`, `provenance`, `aggregate_version` |
+| `resource.created` | `resource_id`, `workspace_id`, `kind`, `identity_digest?`, `provenance`, `context_document?` (safe kind/owner/status metadata only; new ContextDocuments start ACTIVE), `aggregate_version` |
 | `resource.revision.observed` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `provider_revision?`, `content_digest?`, `observed_at` |
+| `resource.context_document.status.changed` | `resource_id`, `from`, `to`, `changed_by`, `purge_manifest_digest?`, `purge_target_count?`, `aggregate_version`; manifest fields are required when status changes to DELETION_PENDING or DELETED |
+| `resource.context_document.purge.acknowledged` | `resource_id`, `replica_ref` (stable non-secret identity, never a locator), `replica_kind`, `runtime_id?`, `runtime_incarnation_id?`, `target_revision_ids[]`, `receipt_digest`, `acknowledged_at`, `aggregate_version` |
 | `resource.location.changed` | `location_id`, `resource_id`, `availability`, `observed_revision_id?`, `observed_at` |
 | `resource.edge.created` | `edge_id`, `from_resource_id`, `to_resource_id`, `relation`, `observed_at` |
 | `resource.invalidation.created` | `invalidation_record_id`, `dependency_edge_id`, `observed_revision_id`, `reason_code`, `created_at` |
-| `resource.upload.created` | `upload_id`, `workspace_id`, `expected_size_bytes`, `expected_digest?`, `chunk_size_bytes`, `expires_at`, `aggregate_version` |
+| `resource.upload.created` | `upload_id`, `workspace_id`, `expected_size_bytes`, `expected_digest?`, `chunk_size_bytes`, `expires_at`, `resource_id?`, `expected_resource_version?`, `parent_revision_ids[]?`, `aggregate_version` |
 | `resource.upload.status.changed` | `upload_id`, `from`, `to`, `resource_id?`, `reason_code?`, `aggregate_version` |
 | `conversation.created` | `conversation_id`, `created_by` |
 | `conversation.message.added` | `message_id`, `conversation_id`, `author`, `content_digest`, `resource_refs` |
@@ -300,7 +304,7 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `task.created` | `task_id`, `conversation_id?`, `initial_spec_revision`, `created_by` |
 | `task.spec.revised` | `task_id`, `revision`, `parent_revisions[]`, `spec_digest`, `authored_by` |
 | `task.plan.revised` | `task_id`, `revision`, `task_spec_revision`, `produced_by_agent_session_id`, `produced_by_attempt_id?`, `step_ids[]`, `aggregate_version` |
-| `task.lead_agent.changed` | `task_id`, `from_agent_binding_id?`, `to_agent_binding_id`, `aggregate_version`, `requested_by` |
+| `task.lead_agent.changed` | `task_id`, `from_agent_binding_id`, `to_agent_binding_id`, `cause`, `actor`, `task_spec_revision`, `trigger_observation?`, `aggregate_version`; policy failover requires a typed, fresh trigger observation |
 | `task.status.changed` | `task_id`, `from`, `to`, `reason_code`, `actor`, `blocking_conditions[]`, `aggregate_version` |
 | `task.pause.requested` | `task_id`, `resume_status`, `request_id`, `requested_by`, `aggregate_version` |
 | `task.paused` | `task_id`, `resume_packet_ref`, `resume_packet_digest`, `settled_attempt_ids[]`, `released_lease_ids[]`, `aggregate_version` |
@@ -308,7 +312,7 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `step.created` | `step_id`, `task_id`, `plan_revision`, `logical_key?`, `dependencies[]` |
 | `step.status.changed` | `step_id`, `task_id`, `from`, `to`, `reason_code`, `aggregate_version` |
 | `step.recovery.accepted` | `task_id`, `step_id`, `prior_attempt_id`, `new_attempt_id`, `retry_ordinal`, `recovery_reason`, `aggregate_version` |
-| `attempt.created` | `attempt_id`, `task_id`, `step_id`, `parent_attempt_id?`, `agent_binding_id`, `runtime_id`, `runtime_incarnation_id`, `environment_id`, `lease_id` |
+| `attempt.created` | `attempt_id`, `task_id`, `step_id`, `parent_attempt_id` (nullable), `agent_binding_id`, `delegation_profile_id` (nullable), `delegation_profile_revision` (nullable), `runtime_id`, `runtime_incarnation_id`, `environment_id`, `lease_id`; delegated attempts require the parent and pinned profile pair together |
 | `attempt.status.changed` | `attempt_id`, `from`, `to`, `reason_code`, `aggregate_version` |
 | `attempt.checkpointed` | `attempt_id`, `resume_packet_ref`, `digest`, `source_spec_revision` |
 | `attempt.failure.recorded` | `attempt_id`, `failure_code`, `failure_signature`, `retryable` |
@@ -324,10 +328,10 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `capability.grant.*` | `capability_grant_id`, `scope`, `capability_ref`, `scope_digest`, `expires_at?` |
 | `capability.activation.status.changed` | `activation_id`, `capability_ref`, `scope`, `runtime_id`, `runtime_incarnation_id`, `from`, `to`, `reason_code?`, `aggregate_version` |
 | `capability.activation.health.changed` | `activation_id`, `scope`, `runtime_id`, `runtime_incarnation_id`, `from`, `to`, `observed_at`, `reason_code?`, `aggregate_version` |
-| `capability.invocation.created` | `invocation_id`, `scope`, `agent_session_id`, `capability_grant_id`, `activation_id`, `operation`, `request_digest`, `aggregate_version` |
-| `capability.invocation.dispatched` | `invocation_id`, `dispatch_ordinal`, `provider_task_status?`, `provider_task_created_at?`, `provider_task_expires_at?`, `provider_task_ttl_ms?`, `provider_poll_after_ms?`, `dispatched_at`, `aggregate_version` |
+| `capability.invocation.created` | `invocation_id`, `scope`, `agent_session_id`, `capability_grant_id`, `activation_id`, `operation`, `request_digest`, `execution_method`, `action_batch?`, `aggregate_version` |
+| `capability.invocation.dispatched` | `invocation_id`, `dispatch_ordinal`, `execution_method`, `provider_task_status?`, `provider_task_created_at?`, `provider_task_expires_at?`, `provider_task_ttl_ms?`, `provider_poll_after_ms?`, `dispatched_at`, `aggregate_version` |
 | `capability.invocation.checkpointed` | `invocation_id`, `provider_task_status?`, `provider_task_expires_at?`, `provider_task_ttl_ms?`, `provider_updated_at?`, `provider_poll_after_ms?`, `partial_result_refs[]`, `observed_at`, `aggregate_version` |
-| `capability.invocation.status.changed` | `invocation_id`, `from`, `to`, `result_refs[]`, `effect_id?`, `failure_code?`, `aggregate_version` |
+| `capability.invocation.status.changed` | `invocation_id`, `from`, `to` (status values: CREATED, DISPATCHED, WAITING, INPUT_REQUIRED, CANCEL_REQUESTED, SUCCEEDED, FAILED, CANCELLED, AMBIGUOUS), `result_refs[]`, `effect_id?`, `failure_code?`, `aggregate_version` |
 | `usage.observed` | `usage_observation_id`, `task_id?`, `environment_id?`, `attempt_id?`, `invocation_id?`, `metric`, `quantity`, `unit`, `currency?`, `confidence`, `observed_at` (`quantity` is null only when `confidence` is UNKNOWN) |
 | `budget.reservation.changed` | `reservation_id`, `budget_scope`, `task_id?`, `environment_id?`, `attempt_id?`, `metric`, `quantity`, `unit`, `currency?`, `from?`, `to`, `aggregate_version` |
 | `capability.lock.created` | `task_id`, `capability_ref`, `aggregate_version` |
@@ -336,6 +340,7 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `artifact.version.created` | `artifact_id`, `resource_id`, `version`, `resource_revision_id`, `input_refs[]`, `content_kind`, `content_digest?`, `storage_ref?`, `resource_ref?`, `provider_revision?`, `created_by_attempt?`, `aggregate_version` |
 | `artifact.library.promoted` | `artifact_id`, `from`, `to`, `aggregate_version` |
 | `artifact.library.archived` | `artifact_id`, `from`, `to`, `aggregate_version` |
+| `effect.proposed` | `effect_id`, `task_id`, `attempt_id`, `capability_invocation_id`, `execution_method`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
 | `effect.*` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
 | `evidence.created` | `evidence_id`, `task_id`, `subject_ref`, `level`, `kind`, `producer`, `payload_digest?` |
 | `verification.started` | `verification_run_id`, `task_id`, `criterion_id`, `task_spec_revision`, `criterion_digest`, `verifier_kind`, `verifier_version`, `subject_refs[]`, `inputs[]`, `status`, `evidence_refs[]`, `aggregate_version` |
@@ -353,7 +358,7 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `routine.status.changed` | `routine_id`, `from`, `to`, `aggregate_version` |
 | `automation.cursor.changed` | `automation_id`, `trigger_id`, `active_automation_revision`, `trigger_host_runtime_id`, `host_epoch`, `cursor_digest`, `next_scheduled_at?`, `last_checked_at`, `observation_gap_since?`, `aggregate_version` |
 | `automation.created` | `automation_id`, `current_revision`, `status`, `aggregate_version` |
-| `automation.revision.created` | `automation_id`, `revision`, `definition_digest`, `authored_by` |
+| `automation.revision.created` | `automation_id`, `revision`, `definition_digest`, `authored_by`, `coworker_ref?` |
 | `automation.status.changed` | `automation_id`, `from`, `to`, `aggregate_version` |
 | `automation.occurrence.*` | `occurrence_id`, `automation_id`, `automation_revision`, `routine_id`, `routine_revision`, `trigger_id`, `trigger_host_runtime_id`, `occurrence_key`, `claim_epoch`, `claim_expires_at?`, `trigger_input_ref?`, `trigger_payload_digest?`, `task_id?`, `from?`, `to` |
 | `connection.state.changed` | `connection_id`, `from`, `to`, `provider_ref` |
@@ -379,15 +384,20 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `goal.created` | `goal_id`, `workspace_id`, `current_revision`, `status`, `aggregate_version` |
 | `goal.revised` | `goal_id`, `revision`, `revision_digest`, `authored_by`, `aggregate_version` |
 | `goal.status.changed` | `goal_id`, `from`, `to`, `aggregate_version` |
-| `suggestion.proposed` | `suggestion_id`, `workspace_id`, `coworker_id?`, `dedupe_key`, `kind`, `source_refs[]`, `goal_refs[]`, `proposed_action`, `proposal_digest`, `expires_at`, `aggregate_version` |
+| `suggestion.proposed` | `suggestion_id`, `workspace_id`, `coworker_id?`, `dedupe_key`, `kind`, `source_refs[]`, `goal_refs[]`, `proposed_action`, `proposed_by`, `latency_class_hint?`, `proposal_digest`, `expires_at`, `aggregate_version` |
 | `suggestion.resolved` | `suggestion_id`, `from`, `to`, `resolved_by`, `resolution_reason`, `result_task_id?`, `aggregate_version` |
 | `suggestion.visibility.changed` | `suggestion_id`, `from_snoozed_until`, `to_snoozed_until`, `changed_by`, `aggregate_version` |
-| `demonstration.status.changed` | `demonstration_session_id`, `environment_id`, `from`, `to`, `trace_resource_id?`, `skill_proposal_id?`, `aggregate_version` |
+| `demonstration.status.changed` | `demonstration_session_id`, `environment_id`, `from`, `to`, `capture_policy_digest`, `captured_action_count`, `captured_trace_bytes`, `trace_resource_id?`, `skill_proposal_id?`, `aggregate_version` |
 | `environment.sharing_scope.changed` | `environment_id`, `from`, `to`, `changed_by`, `aggregate_version` |
 
 For `suggestion.proposed.v1`, every `source_refs[]` entry is a `PinnedResourceRef` and
 every `goal_refs[]` entry is a `GoalRevisionRef`; both types pin exact same-Workspace
 revisions.
+
+`CapabilityInvocation.execution_method` is chosen by the adapter before Invocation
+creation; `capability.invocation.dispatched.v1` repeats the immutable value. A batch's
+members repeat the same route and ordered batch digest. `UNKNOWN` remains explicit when
+the provider cannot prove a more specific route; the UI must not infer one from agent text.
 
 ### Ownership and replication for responsibility/delegation events
 
@@ -405,6 +415,8 @@ revisions.
 | `suggestion.*.v1` | Suggestion / SuggestionService | Proposal digest, provenance refs, status, and result Task ref replicate; source content remains in Resources |
 | `suggestion.visibility.changed.v1` | Suggestion / SuggestionService | Visibility timestamps and owner identity only; snooze cannot extend past expiry, null clears a snooze |
 | `demonstration.status.changed.v1` | DemonstrationSession / DemonstrationSessionService | Status and trace Resource ID only; semantic trace Resource follows normal replication policy |
+| `resource.context_document.status.changed.v1` | Resource / ResourceService | Status tombstone and owner identity replicate; never includes document content |
+| `resource.context_document.purge.acknowledged.v1` | Resource / ContextDocumentPurgeReconciler | Replica identity, target revisions, Runtime incarnation (when applicable), and receipt digest only; no content or locator |
 | `environment.sharing_scope.changed.v1` | Environment / EnvironmentManager | Scope change requires expected-version and current-use check; provider locators remain local |
 
 `QuotaObservation`, candidate ranking detail, warm process state, WorkerPerformance,

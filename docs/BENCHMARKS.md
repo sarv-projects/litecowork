@@ -355,6 +355,82 @@ opens review/update, does not silently advance the ref, and leaves the Suggestio
 Suggestion or worker text. Revise a Coworker avatar Resource and verify the prior
 CoworkerRevision retains its pinned image revision.
 
+### B66 Semantic architecture-contract drift
+
+Mutate one contract at a time: remove an enum member, change a failover field, omit
+`lead_eligible`, detach a Coworker revision from an AutomationRevision, mismatch an
+Attempt's DelegationProfile ID/revision, change an ActionBatch digest field, omit
+`ExecutionMethod` provenance, remove a ContextDocument edit/delete route, or drop a state
+transition guard. Verify `validate_architecture.py` fails with a targeted cross-contract
+finding before architecture CI can pass. Restore each contract and verify the validator
+passes without relying on comments or filename-only checks.
+
+### B67 Lead failover policy and race fencing
+
+Exercise `DISABLED`, `ASK`, and `ALLOW_LISTED` with valid, stale, expired, unsupported,
+and wrong-trigger observations. Race TaskSpec revision, manual lead change, quota recovery,
+Runtime incarnation change, and fallback disablement against automatic admission. Verify
+only an eligible fresh fallback changes the lead; `ASK` and exhausted policy open Needs
+You; TaskService fences the old planning session at the expected Task version; the event
+pins cause/actor/spec/trigger; Attempts and grants remain with their original provenance.
+
+### B68 Coworker-pinned Automation admission
+
+Create an AutomationRevision that pins a Coworker revision and race a claimed occurrence
+against Coworker pause/archive and Automation disablement. Verify no new Task is
+materialized if pause/archive/disable wins, the occurrence remains deduplicated and
+truthfully blocked/skipped, and a winning Task create atomically pins the exact Coworker
+and Automation revisions into Task origin/spec provenance.
+
+### B69 ActionBatch partial settlement and per-member Effects
+
+Admit a batch with read-only and consequential members, then inject a precondition failure,
+provider timeout, abort condition, and late success. Verify all members were durably
+admitted before dispatch, share one method/digest/count, have independent idempotency and
+Effect links, and are fenced individually. Confirm undispatched members stop, earlier
+Effects reconcile, ambiguous members block unsafe retry, and no transaction-wide rollback
+or synthetic batch Effect is claimed.
+
+### B70 Resource revision concurrency and explicit merge
+
+Start two revision uploads from the same exact head set; commit one and then the other.
+Verify the stale commit returns `RESOURCE_CONFLICT`, does not append a ResourceRevision or
+advance the head, and cannot silently rebase. Merge only after the owner names all current
+heads; verify the resulting DAG, digest, event, and Task input all pin the intended
+revision.
+
+### B71 ContextDocument purge manifest completeness
+
+Delete a ContextDocument with multiple blob/index replicas, stale Runtime incarnation,
+retrying and duplicate acknowledgements, an unregistered provider, and an empty target set.
+Verify the immutable manifest pins ordered exact revision targets and count; no receipt
+outside the plan is accepted; `DELETED` is impossible before exact acknowledged set
+equality; stale incarnations cannot acknowledge; the verified empty plan can complete;
+backup restore preserves tombstones/receipts but does not restore acknowledged content.
+
+### B72 Suggestion producer provenance and suppression
+
+Run registered deterministic and read-only producers with current, stale, cross-Workspace,
+muted, duplicate, dismissed-cooldown, and expired candidates. Verify only validated
+candidates become durable Suggestions with `proposed_by`; suppressed source text is not
+stored or evented; accepting a Task creates ordinary Task state and cannot bypass Trust.
+
+### B73 Demonstration capture pause and hard bounds
+
+Exercise action, byte, and duration caps; sensitive-region detection under both policies;
+manual pause/resume; Environment lease loss; and Runtime restart. Verify counters never
+exceed the immutable capture policy, no secret fields enter trace Resources, pause requires
+fresh same-Environment authority, conversion creates only a SkillProposal, and published
+Skills still require their ordinary review/install lifecycle.
+
+### B74 Execution-method provenance integrity
+
+Create Invocations with each supported method and with `UNKNOWN`, exercise ActionBatch
+members, Effects, fallback, and forged agent-reported route text. Verify the adapter pins
+the method before Invocation creation, dispatch repeats it, SQLite rejects method mutation
+and cross-method Effect links, each batch shares one method, and the UI never upgrades
+`UNKNOWN` to an inferred API/browser claim.
+
 ## Failure/edge benchmark extensions
 
 - OAuth expires mid-Task

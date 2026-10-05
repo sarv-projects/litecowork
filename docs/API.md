@@ -210,6 +210,15 @@ GET  /v1/tasks/{id}/effects
 
 The lead-agent command body is `{ agent_binding_id}`. The response is accepted asynchronously; current Attempts remain pinned while work drains, and a replacement execution Attempt waits for old lease settlement and Effect reconciliation.
 
+TaskSpec creation accepts an optional non-null `lead_failover_policy`; omission resolves
+the selected CoworkerRevision default or an explicit `DISABLED` policy. A TaskSpec
+revision that omits it inherits the prior pinned policy. Automatic continuation is
+restricted to provider-confirmed triggers and ordered, currently eligible lead bindings.
+A `task.lead_agent.changed.v1` event records `cause=OWNER_REQUEST` or
+`cause=POLICY_FAILOVER`, the acting Principal/Service, the pinned TaskSpec revision, and
+the trigger observation when applicable. Lead failover never transfers a Grant, Approval,
+SecretLease, native session handle, or active Attempt.
+
 `POST /v1/conversations/{id}/turns` first resolves and checks the Conversation override or
 Workspace default AgentBinding/endpoint. If none is eligible, it returns
 `AGENT_UNAVAILABLE` and persists no message or turn. Otherwise it atomically appends the
@@ -324,6 +333,12 @@ only when that Automation has a ManualTrigger. Occurrences pin AutomationRevisio
 RoutineRevision, `trigger_id`, and TriggerHost. A due occurrence may already have a Task
 while that Task is waiting for a required local Runtime/resource; report it as
 `WAITING_DEPENDENCY`, separately from a not-yet-due occurrence.
+
+An AutomationRevision may pin a `coworker_ref` (Coworker ID and exact revision). The
+occurrence Task uses that revision's lead, worker allowlist, budget, context, and
+interaction defaults while admission separately requires the Coworker to remain `ACTIVE`.
+Pause/archive prevents new scheduled Task admission; already-admitted Tasks retain their
+TaskSpec/origin pins. Revise an Automation to adopt a later CoworkerRevision.
 
 Trigger placement (`HUB`, `SPECIFIC_RUNTIME`, `AUTO`) is independent of Task execution
 placement. `AUTO` resolves and persists one owner per trigger; changes require fenced cursor
@@ -480,6 +495,12 @@ proposed items of that kind and prevents new proposals; unmuting affects only fu
 proposals. Individual dismissal suppresses the same dedupe key for 30 days. Preference
 changes do not run or authorize work.
 
+Suggestion producers are registered deterministic rules or separately authorized
+read-only capabilities. SuggestionService records non-secret `proposed_by` provenance and
+validates exact same-Workspace source/Goal revisions, mute/cooldown/dedupe rules, and
+expiry. Producers cannot commit Suggestions or Tasks directly. V1 has no provider-generated
+memory-proposal path.
+
 ```text
 GET /v1/tasks/{id}/progress
 ```
@@ -496,8 +517,17 @@ free-text success criteria are satisfied.
 ```text
 POST /v1/demonstrations
 POST /v1/demonstrations/{id}/complete
+POST /v1/demonstrations/{id}/pause
+POST /v1/demonstrations/{id}/resume
 POST /v1/demonstrations/{id}/abort
 ```
+
+Capture requires explicit semantic consent, a supported Environment, and an immutable
+`DemonstrationCapturePolicy` (maximum duration, action count, trace bytes, Environment
+class, and sensitive-region behavior). Pause/resume is owner-controlled; detection of a
+sensitive region either pauses capture or omits sensitive fields according to the selected
+policy. Reaching a cap stops further observation. A completed trace creates a reviewable
+SkillProposal; it never installs or publishes a package.
 
 Capture requires an explicit user-controlled Environment and consent. The semantic trace
 is redacted and stored as a Resource. Completion creates a SkillProposal for review; it
@@ -594,6 +624,9 @@ GET    /v1/resources/search?q=&kind=&freshness=&cursor=
 GET    /v1/resources/{resource_id}
 GET    /v1/resources/{resource_id}/locations
 GET    /v1/resources/{resource_id}/revisions
+POST   /v1/resources/{resource_id}/revision-uploads
+PATCH  /v1/resources/{resource_id}/context-document/status
+GET    /v1/resources/{resource_id}/context-document/deletion
 POST   /v1/workspace-roots
 GET    /v1/workspace-roots?status=&cursor=
 PATCH  /v1/workspace-roots/{id}
@@ -615,6 +648,22 @@ The revision endpoint returns immutable revisions in ancestry order with parent 
 head markers. If multiple heads exist, the Resource projection has a null
 `current_revision_id`; clients must present a pinned ResourceRef or create a verified
 merge before an unpinned reference can resolve. Choosing a branch is not a merge.
+
+Revision upload creation pins `If-Match` and the exact current Resource head set before
+accepting bytes. Stale Resource versions/parents return `RESOURCE_CONFLICT`; commit
+verifies digest and atomically appends a ResourceRevision. ContextDocument creation always
+starts `ACTIVE`. Revocation fences future resolution and Task attachments; deletion writes
+a sealed, immutable purge target manifest and replicated tombstone in one transaction, then
+blocks reads immediately. The deletion-status response exposes the manifest digest and
+required/acknowledged target counts, not provider locators. A registered Core-owned
+replica receipt must match its exact plan target and Runtime incarnation. An explicit empty
+manifest proves there were no content/index replicas to purge. The Resource becomes
+`DELETED` only after the acknowledged receipt set exactly equals the manifest. Historical
+Task/Evidence IDs and digests remain without content bytes.
+
+An unknown, cross-Resource, or duplicated parent revision is malformed input and returns
+`RESOURCE_REVISION_PARENT_MISMATCH`; a valid but stale parent-head set or Resource version
+returns `RESOURCE_CONFLICT`.
 
 ## User requests and notifications
 

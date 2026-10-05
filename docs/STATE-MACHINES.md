@@ -176,6 +176,22 @@ An unresolved approval is represented by Task `WAITING_USER` or Attempt
 represented by Attempt `WAITING_RESOURCE`; the Task is `BLOCKED` only when no other
 required Step can proceed.
 
+The Task's `TaskSpecRevision` pins a `LeadFailoverPolicy`; omission on Task creation
+resolves and stores the Coworker default or an explicit `DISABLED` policy. A lead change is
+an ACTIVE -> ACTIVE Task aggregate update and is allowed only at a safe planning boundary.
+`ASK` creates a Needs You decision and does not change the lead. `ALLOW_LISTED` requires a
+fresh trigger observation matching the pinned policy, remaining `max_lead_changes`, and
+the next ordered fallback that passes current Workspace, lead eligibility, endpoint,
+Runtime/incarnation, authentication, Trust, resource, deadline, and budget checks. The
+TaskService transaction fences new work from the previous lead and appends
+`task.lead_agent.changed.v1` with `cause=POLICY_FAILOVER`, the producing service actor,
+the pinned TaskSpec revision, and trigger observation. An owner-initiated change records
+`cause=OWNER_REQUEST` and a principal actor. Both causes retain every admitted Attempt and
+its original binding; the new lead receives a bounded handoff projected from committed
+Task state. If no fallback qualifies or the policy's change limit is reached, the current
+lead remains pinned and TaskService opens a Needs You blocker. No event is emitted for a
+failed candidate.
+
 ## Step
 
 ```text
@@ -413,15 +429,20 @@ days; expiry and acceptance do not create a dismissal cooldown.
 ## DemonstrationSession
 
 ```text
-CREATED -> CAPTURING -> REVIEW -> CONVERTED
-    |          |          |
-    +----------+----------+-> ABORTED
+CREATED -> CAPTURING <-> PAUSED -> REVIEW -> CONVERTED
+    |          |          |         |
+    +----------+----------+---------+-> ABORTED
 ```
 
 DemonstrationSessionService records a bounded semantic interaction trace in a Resource.
 `CONVERTED` means a SkillProposal was created, not that a Skill was installed or
-published. `ABORTED` and `CONVERTED` are terminal. Raw screen/video data is not retained
-unless separately consented and classified under Resource retention policy.
+published. Capture policy is immutable and pins maximum duration (at most 30 minutes),
+actions (at most 1,000), trace bytes (at most 5 MiB), Environment class, and sensitive
+region behavior. At a cap, capture pauses or moves to review; it cannot silently discard
+the limit and continue. `PAUSED` preserves the trace and can resume only in the same
+authorized Environment after a fresh observation. `ABORTED` and `CONVERTED` are terminal.
+Raw screen/video data is not retained unless separately consented and classified under
+Resource retention policy.
 
 ## Runtime
 
@@ -837,7 +858,28 @@ means unknown; multiple heads mean conflicted. No timestamp or Runtime priority 
 the conflict. A pinned reference may select a branch; an unpinned reference returns
 `RESOURCE_CONFLICT`. A merge appends a revision whose parents include all merged heads.
 The append, parent edges, location observation, unique-head pointer update, invalidations,
-and `resource.revision.observed.v1` event commit atomically.
+and `resource.revision.observed.v1` event commit atomically. A revision-upload session
+pins the Resource version and exact current parent-head set before accepting content; its
+commit rechecks both and either appends one immutable revision or returns `RESOURCE_CONFLICT`.
+An explicit merge names every current head. No append operation chooses a branch implicitly.
+
+ContextDocument is a Resource classification with this state machine:
+
+```text
+ACTIVE <-> REVOKED
+ACTIVE | REVOKED -> DELETION_PENDING -> DELETED
+```
+
+ResourceService owns status transitions and event writes. Revocation immediately blocks
+future context resolution/attachment but retains the content. `DELETION_PENDING` is a
+replicated tombstone that blocks all content reads while Core-managed blobs/indexes are
+purged. The purge reconciler records one immutable receipt per required replica and exact
+revision set; only after all required acknowledgements (and any provider-backed deletion
+confirmation) may ResourceService commit `DELETED`. A ContextDocument with no purge targets
+can complete only after the reconciler verifies that the owned replica inventory is empty.
+Historical Task/Evidence references retain IDs and digests, not access to deleted bytes.
+Concurrent content edits use the same Resource revision DAG and expected-version rules;
+status changes and revision appends serialize on the Resource version.
 
 ## Automation and occurrence
 

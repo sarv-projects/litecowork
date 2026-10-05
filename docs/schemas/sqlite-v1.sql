@@ -261,9 +261,10 @@ CREATE TABLE suggestions (
   source_refs_json TEXT NOT NULL CHECK (json_valid(source_refs_json)),
   goal_refs_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(goal_refs_json)),
   proposed_action TEXT NOT NULL CHECK (proposed_action IN ('TASK', 'OPEN_ROUTINE_EDITOR', 'OPEN_AUTOMATION_EDITOR')),
+  proposed_by_json TEXT NOT NULL CHECK (json_valid(proposed_by_json)),
   proposed_task_spec_json TEXT CHECK (proposed_task_spec_json IS NULL OR json_valid(proposed_task_spec_json)),
   estimated_cost_json TEXT CHECK (estimated_cost_json IS NULL OR json_valid(estimated_cost_json)),
-  estimated_duration_class TEXT CHECK (estimated_duration_class IS NULL OR estimated_duration_class IN ('STANDARD', 'INTERACTIVE', 'DEADLINE_SENSITIVE')),
+  latency_class_hint TEXT CHECK (latency_class_hint IS NULL OR latency_class_hint IN ('STANDARD', 'INTERACTIVE', 'DEADLINE_SENSITIVE')),
   status TEXT NOT NULL CHECK (status IN ('PROPOSED', 'ACCEPTED', 'DISMISSED', 'EXPIRED')),
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
@@ -302,9 +303,10 @@ WHEN NEW.suggestion_id IS NOT OLD.suggestion_id
   OR NEW.source_refs_json IS NOT OLD.source_refs_json
   OR NEW.goal_refs_json IS NOT OLD.goal_refs_json
   OR NEW.proposed_action IS NOT OLD.proposed_action
+  OR NEW.proposed_by_json IS NOT OLD.proposed_by_json
   OR NEW.proposed_task_spec_json IS NOT OLD.proposed_task_spec_json
   OR NEW.estimated_cost_json IS NOT OLD.estimated_cost_json
-  OR NEW.estimated_duration_class IS NOT OLD.estimated_duration_class
+  OR NEW.latency_class_hint IS NOT OLD.latency_class_hint
   OR NEW.created_at IS NOT OLD.created_at
   OR NEW.expires_at IS NOT OLD.expires_at
 BEGIN
@@ -328,7 +330,10 @@ CREATE TABLE demonstration_sessions (
   demonstration_session_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
   environment_id TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('CREATED', 'CAPTURING', 'REVIEW', 'CONVERTED', 'ABORTED')),
+  status TEXT NOT NULL CHECK (status IN ('CREATED', 'CAPTURING', 'PAUSED', 'REVIEW', 'CONVERTED', 'ABORTED')),
+  capture_policy_json TEXT NOT NULL CHECK (json_valid(capture_policy_json)),
+  captured_action_count INTEGER NOT NULL DEFAULT 0 CHECK (captured_action_count >= 0),
+  captured_trace_bytes INTEGER NOT NULL DEFAULT 0 CHECK (captured_trace_bytes >= 0),
   started_at TEXT NOT NULL,
   completed_at TEXT,
   trace_resource_id TEXT,
@@ -337,9 +342,42 @@ CREATE TABLE demonstration_sessions (
   FOREIGN KEY(environment_id, workspace_id) REFERENCES environments(environment_id, owner_workspace_id),
   FOREIGN KEY(workspace_id, trace_resource_id) REFERENCES resources(workspace_id, resource_id),
   FOREIGN KEY(workspace_id, skill_proposal_id) REFERENCES skill_proposals(workspace_id, skill_proposal_id),
-  CHECK ((status = 'CONVERTED' AND skill_proposal_id IS NOT NULL) OR status <> 'CONVERTED')
+  CHECK ((status = 'CONVERTED' AND skill_proposal_id IS NOT NULL) OR status <> 'CONVERTED'),
+  CHECK (json_extract(capture_policy_json, '$.max_duration_ms') BETWEEN 1 AND 1800000),
+  CHECK (json_extract(capture_policy_json, '$.max_actions') BETWEEN 1 AND 1000),
+  CHECK (json_extract(capture_policy_json, '$.max_trace_bytes') BETWEEN 1 AND 5242880),
+  CHECK (json_extract(capture_policy_json, '$.allowed_environment_class') IN ('BROWSER', 'DESKTOP')),
+  CHECK (json_extract(capture_policy_json, '$.sensitive_region_policy') IN ('PAUSE_ON_DETECTION', 'OMIT_SENSITIVE_FIELDS'))
 );
 CREATE INDEX idx_demonstration_sessions_workspace_status ON demonstration_sessions(workspace_id, status, started_at DESC);
+
+CREATE TRIGGER demonstration_capture_bounds_guard
+BEFORE UPDATE OF captured_action_count, captured_trace_bytes ON demonstration_sessions
+WHEN NEW.captured_action_count > json_extract(NEW.capture_policy_json, '$.max_actions')
+  OR NEW.captured_trace_bytes > json_extract(NEW.capture_policy_json, '$.max_trace_bytes')
+BEGIN
+  SELECT RAISE(ABORT, 'DEMONSTRATION_CAPTURE_LIMIT_REACHED');
+END;
+
+CREATE TRIGGER demonstration_session_transition_guard
+BEFORE UPDATE OF status ON demonstration_sessions
+WHEN NOT (
+  (OLD.status = 'CREATED' AND NEW.status IN ('CAPTURING', 'ABORTED')) OR
+  (OLD.status = 'CAPTURING' AND NEW.status IN ('PAUSED', 'REVIEW', 'ABORTED')) OR
+  (OLD.status = 'PAUSED' AND NEW.status IN ('CAPTURING', 'REVIEW', 'ABORTED')) OR
+  (OLD.status = 'REVIEW' AND NEW.status IN ('CONVERTED', 'ABORTED')) OR
+  OLD.status = NEW.status
+)
+BEGIN
+  SELECT RAISE(ABORT, 'INVALID_DEMONSTRATION_SESSION_TRANSITION');
+END;
+
+CREATE TRIGGER demonstration_capture_policy_immutable
+BEFORE UPDATE OF capture_policy_json ON demonstration_sessions
+WHEN OLD.capture_policy_json <> NEW.capture_policy_json
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_DEMONSTRATION_CAPTURE_POLICY');
+END;
 
 CREATE TABLE task_spec_revisions (
   task_id TEXT NOT NULL REFERENCES tasks(task_id),
@@ -357,6 +395,7 @@ CREATE TABLE task_spec_revisions (
   approvals_required_json TEXT NOT NULL DEFAULT '[]',
   budget_json TEXT,
   delegation_budget_policy_json TEXT CHECK (delegation_budget_policy_json IS NULL OR json_valid(delegation_budget_policy_json)),
+  lead_failover_policy_json TEXT NOT NULL CHECK (json_valid(lead_failover_policy_json)),
   deadline TEXT,
   source_message_refs_json TEXT NOT NULL DEFAULT '[]',
   placement_preference TEXT NOT NULL,
@@ -368,6 +407,56 @@ CREATE TABLE task_spec_revisions (
   FOREIGN KEY(workspace_id, preferred_lead_agent_binding_id) REFERENCES agent_bindings(workspace_id, agent_binding_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY(workspace_id, workspace_instruction_revision) REFERENCES workspace_instruction_revisions(workspace_id, revision) DEFERRABLE INITIALLY DEFERRED
 );
+
+CREATE TRIGGER task_spec_lead_failover_scope_guard
+BEFORE INSERT ON task_spec_revisions
+WHEN EXISTS (
+  SELECT 1
+  FROM json_each(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids') selected
+  LEFT JOIN agent_bindings b
+    ON b.agent_binding_id = selected.value
+   AND b.workspace_id = NEW.workspace_id
+   AND b.enabled = 1
+   AND b.lead_eligible = 1
+  WHERE b.agent_binding_id IS NULL
+     OR selected.value = (SELECT lead_agent_binding_id FROM tasks WHERE task_id = NEW.task_id)
+)
+BEGIN
+  SELECT RAISE(ABORT, 'TASK_LEAD_FAILOVER_BINDING_INELIGIBLE');
+END;
+
+CREATE TRIGGER task_spec_lead_failover_shape_guard
+BEFORE INSERT ON task_spec_revisions
+WHEN COALESCE(json_extract(NEW.lead_failover_policy_json, '$.mode'), '') NOT IN ('DISABLED', 'ASK', 'ALLOW_LISTED')
+  OR COALESCE(json_type(NEW.lead_failover_policy_json, '$.triggers'), '') <> 'array'
+  OR COALESCE(json_type(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids'), '') <> 'array'
+  OR COALESCE(json_extract(NEW.lead_failover_policy_json, '$.max_lead_changes'), -1) NOT BETWEEN 0 AND 3
+  OR json_array_length(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids') > 3
+  OR EXISTS (
+    SELECT 1 FROM json_each(NEW.lead_failover_policy_json, '$.triggers') trigger_item
+    WHERE trigger_item.type <> 'text'
+      OR trigger_item.value NOT IN ('AGENT_UNAVAILABLE', 'QUOTA_EXHAUSTED', 'RUNTIME_UNAVAILABLE')
+  )
+  OR EXISTS (SELECT value FROM json_each(NEW.lead_failover_policy_json, '$.triggers') GROUP BY value HAVING COUNT(*) > 1)
+  OR EXISTS (SELECT value FROM json_each(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids') GROUP BY value HAVING COUNT(*) > 1)
+  OR (json_extract(NEW.lead_failover_policy_json, '$.mode') = 'DISABLED' AND (
+    json_array_length(NEW.lead_failover_policy_json, '$.triggers') <> 0 OR
+    json_array_length(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids') <> 0 OR
+    json_extract(NEW.lead_failover_policy_json, '$.max_lead_changes') <> 0
+  ))
+  OR (json_extract(NEW.lead_failover_policy_json, '$.mode') = 'ASK' AND (
+    json_array_length(NEW.lead_failover_policy_json, '$.triggers') = 0 OR
+    json_extract(NEW.lead_failover_policy_json, '$.max_lead_changes') <> 0
+  ))
+  OR (json_extract(NEW.lead_failover_policy_json, '$.mode') = 'ALLOW_LISTED' AND (
+    json_array_length(NEW.lead_failover_policy_json, '$.triggers') = 0 OR
+    json_array_length(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids') = 0 OR
+    json_extract(NEW.lead_failover_policy_json, '$.max_lead_changes') < 1 OR
+    json_extract(NEW.lead_failover_policy_json, '$.max_lead_changes') > json_array_length(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids')
+  ))
+BEGIN
+  SELECT RAISE(ABORT, 'INVALID_LEAD_FAILOVER_POLICY');
+END;
 
 CREATE TABLE plan_revisions (
   task_id TEXT NOT NULL REFERENCES tasks(task_id),
@@ -582,6 +671,47 @@ BEGIN
   SELECT RAISE(ABORT, 'DELEGATION_PROFILE_OPTIONS_INVALID');
 END;
 
+CREATE TRIGGER delegation_profile_warm_policy_guard
+BEFORE INSERT ON delegation_profile_revisions
+WHEN json_type(NEW.warm_policy_json) <> 'object'
+  OR COALESCE(json_extract(NEW.warm_policy_json, '$.host'), '') NOT IN ('COLD', 'TTL', 'PIN_WHILE_ACTIVE')
+  OR COALESCE(json_extract(NEW.warm_policy_json, '$.native_session'), '') NOT IN ('CLOSE_ON_SETTLE', 'REUSE_IF_SAFE')
+  OR COALESCE(json_extract(NEW.warm_policy_json, '$.capability_hosts'), '') NOT IN ('COLD', 'TTL')
+  OR COALESCE(json_extract(NEW.warm_policy_json, '$.browser_environment'), '') NOT IN ('COLD', 'TASK', 'WORKSPACE')
+  OR COALESCE(json_extract(NEW.warm_policy_json, '$.local_model'), '') NOT IN ('PROVIDER_DEFAULT', 'KEEP_RECENT_HINT')
+  OR COALESCE(json_type(NEW.warm_policy_json, '$.triggers'), '') <> 'array'
+  OR (json_type(NEW.warm_policy_json, '$.ttl_ms') IS NOT NULL AND json_type(NEW.warm_policy_json, '$.ttl_ms') NOT IN ('integer', 'null'))
+  OR (json_type(NEW.warm_policy_json, '$.max_memory_bytes') IS NOT NULL AND json_type(NEW.warm_policy_json, '$.max_memory_bytes') NOT IN ('integer', 'null'))
+  OR (json_type(NEW.warm_policy_json, '$.max_idle_cost') IS NOT NULL AND json_type(NEW.warm_policy_json, '$.max_idle_cost') NOT IN ('object', 'null'))
+  OR COALESCE(json_extract(NEW.warm_policy_json, '$.ttl_ms'), 0) < 0
+  OR COALESCE(json_extract(NEW.warm_policy_json, '$.max_memory_bytes'), 0) < 0
+  OR (json_type(NEW.warm_policy_json, '$.max_idle_cost') = 'object' AND (
+    json_type(NEW.warm_policy_json, '$.max_idle_cost.amount_minor_units') <> 'integer'
+    OR json_extract(NEW.warm_policy_json, '$.max_idle_cost.amount_minor_units') < 0
+    OR json_type(NEW.warm_policy_json, '$.max_idle_cost.currency') <> 'text'
+    OR length(json_extract(NEW.warm_policy_json, '$.max_idle_cost.currency')) <> 3
+    OR json_extract(NEW.warm_policy_json, '$.max_idle_cost.currency') GLOB '*[^A-Z]*'
+    OR EXISTS (
+      SELECT 1 FROM json_each(NEW.warm_policy_json, '$.max_idle_cost') property
+      WHERE property.key NOT IN ('amount_minor_units', 'currency')
+    )
+  ))
+  OR EXISTS (
+    SELECT 1 FROM json_each(NEW.warm_policy_json, '$.triggers') trigger
+    WHERE trigger.type <> 'text'
+      OR trigger.value NOT IN ('ACTIVE_TASK', 'RECENT_USE', 'USER_SELECTED', 'QUOTA_LOW', 'PREDICTED_FAILOVER', 'DEADLINE_APPROACHING')
+  )
+  OR EXISTS (
+    SELECT 1 FROM json_each(NEW.warm_policy_json, '$.triggers') GROUP BY value HAVING COUNT(*) > 1
+  )
+  OR EXISTS (
+    SELECT 1 FROM json_each(NEW.warm_policy_json) property
+    WHERE property.key NOT IN ('host', 'native_session', 'capability_hosts', 'browser_environment', 'local_model', 'ttl_ms', 'max_memory_bytes', 'max_idle_cost', 'triggers')
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'DELEGATION_PROFILE_WARM_POLICY_INVALID');
+END;
+
 CREATE TABLE coworkers (
   coworker_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
@@ -606,6 +736,8 @@ CREATE TABLE coworker_revisions (
   delegation_strategy TEXT NOT NULL CHECK (delegation_strategy IN ('NATIVE_DEFAULT', 'BALANCED', 'COST_SAVER', 'HOST_DELEGATION_ONLY')),
   enabled_delegation_profile_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(enabled_delegation_profile_ids_json)),
   delegation_budget_policy_json TEXT CHECK (delegation_budget_policy_json IS NULL OR json_valid(delegation_budget_policy_json)),
+  lead_failover_policy_json TEXT CHECK (lead_failover_policy_json IS NULL OR json_valid(lead_failover_policy_json)),
+  interaction_policy_json TEXT NOT NULL CHECK (json_valid(interaction_policy_json)),
   context_policy_json TEXT NOT NULL CHECK (json_valid(context_policy_json)),
   notification_policy_json TEXT NOT NULL CHECK (json_valid(notification_policy_json)),
   authored_by_json TEXT NOT NULL CHECK (json_valid(authored_by_json)),
@@ -635,8 +767,58 @@ WHEN
      AND p.status = 'ENABLED'
     WHERE p.delegation_profile_id IS NULL
   )
+  OR EXISTS (
+    SELECT 1
+    FROM json_each(COALESCE(NEW.lead_failover_policy_json, '{"fallback_agent_binding_ids":[]}'), '$.fallback_agent_binding_ids') selected
+    LEFT JOIN agent_bindings b
+      ON b.agent_binding_id = selected.value
+     AND b.workspace_id = NEW.workspace_id
+     AND b.enabled = 1
+     AND b.lead_eligible = 1
+    WHERE b.agent_binding_id IS NULL
+  )
 BEGIN
   SELECT RAISE(ABORT, 'COWORKER_REVISION_WORKER_SCOPE_MISMATCH');
+END;
+
+CREATE TRIGGER coworker_revision_policy_shape_guard
+BEFORE INSERT ON coworker_revisions
+WHEN (
+  NEW.lead_failover_policy_json IS NOT NULL AND (
+    COALESCE(json_extract(NEW.lead_failover_policy_json, '$.mode'), '') NOT IN ('DISABLED', 'ASK', 'ALLOW_LISTED')
+    OR COALESCE(json_type(NEW.lead_failover_policy_json, '$.triggers'), '') <> 'array'
+    OR COALESCE(json_type(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids'), '') <> 'array'
+    OR COALESCE(json_extract(NEW.lead_failover_policy_json, '$.max_lead_changes'), -1) NOT BETWEEN 0 AND 3
+    OR json_array_length(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids') > 3
+    OR EXISTS (
+      SELECT 1 FROM json_each(NEW.lead_failover_policy_json, '$.triggers') trigger_item
+      WHERE trigger_item.type <> 'text'
+        OR trigger_item.value NOT IN ('AGENT_UNAVAILABLE', 'QUOTA_EXHAUSTED', 'RUNTIME_UNAVAILABLE')
+    )
+    OR (json_extract(NEW.lead_failover_policy_json, '$.mode') = 'DISABLED' AND (
+      json_array_length(NEW.lead_failover_policy_json, '$.triggers') <> 0 OR
+      json_array_length(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids') <> 0 OR
+      json_extract(NEW.lead_failover_policy_json, '$.max_lead_changes') <> 0
+    ))
+    OR (json_extract(NEW.lead_failover_policy_json, '$.mode') = 'ASK' AND (
+      json_array_length(NEW.lead_failover_policy_json, '$.triggers') = 0 OR
+      json_extract(NEW.lead_failover_policy_json, '$.max_lead_changes') <> 0
+    ))
+    OR (json_extract(NEW.lead_failover_policy_json, '$.mode') = 'ALLOW_LISTED' AND (
+      json_array_length(NEW.lead_failover_policy_json, '$.triggers') = 0 OR
+      json_array_length(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids') = 0 OR
+      json_extract(NEW.lead_failover_policy_json, '$.max_lead_changes') < 1 OR
+      json_extract(NEW.lead_failover_policy_json, '$.max_lead_changes') > json_array_length(NEW.lead_failover_policy_json, '$.fallback_agent_binding_ids')
+    ))
+  )
+) OR
+  COALESCE(json_extract(NEW.interaction_policy_json, '$.read_only_work'), '') NOT IN ('STANDARD_TRUST_POLICY', 'REQUIRE_OWNER_APPROVAL', 'HANDOFF_TO_OWNER') OR
+  COALESCE(json_extract(NEW.interaction_policy_json, '$.draft_creation'), '') NOT IN ('STANDARD_TRUST_POLICY', 'REQUIRE_OWNER_APPROVAL', 'HANDOFF_TO_OWNER') OR
+  COALESCE(json_extract(NEW.interaction_policy_json, '$.external_mutation'), '') NOT IN ('STANDARD_TRUST_POLICY', 'REQUIRE_OWNER_APPROVAL', 'HANDOFF_TO_OWNER') OR
+  COALESCE(json_extract(NEW.interaction_policy_json, '$.destructive_action'), '') NOT IN ('STANDARD_TRUST_POLICY', 'REQUIRE_OWNER_APPROVAL', 'HANDOFF_TO_OWNER') OR
+  COALESCE(json_extract(NEW.interaction_policy_json, '$.financial_commitment'), '') NOT IN ('STANDARD_TRUST_POLICY', 'REQUIRE_OWNER_APPROVAL', 'HANDOFF_TO_OWNER')
+BEGIN
+  SELECT RAISE(ABORT, 'INVALID_COWORKER_INTERACTION_OR_FAILOVER_POLICY');
 END;
 
 CREATE TRIGGER coworker_revision_immutable_update
@@ -693,6 +875,38 @@ WHEN NEW.status = 'ARCHIVED' AND EXISTS (
 )
 BEGIN
   SELECT RAISE(ABORT, 'PRIMARY_COWORKER_MUST_BE_CLEARED');
+END;
+
+CREATE TRIGGER coworker_archive_work_guard
+BEFORE UPDATE OF status ON coworkers
+WHEN NEW.status = 'ARCHIVED' AND (
+  EXISTS (
+    SELECT 1 FROM automations a
+    JOIN automation_revisions ar ON ar.automation_id = a.automation_id AND ar.revision = a.current_revision
+    WHERE a.workspace_id = OLD.workspace_id
+      AND a.status <> 'DISABLED'
+      AND ar.coworker_id = OLD.coworker_id
+  )
+  OR EXISTS (
+    SELECT 1 FROM tasks t
+    WHERE t.workspace_id = OLD.workspace_id
+      AND t.origin_coworker_id = OLD.coworker_id
+      AND t.status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM automation_occurrences o
+    JOIN automation_revisions ar
+      ON ar.automation_id = o.automation_id
+     AND ar.revision = o.automation_revision
+     AND ar.workspace_id = o.workspace_id
+    WHERE ar.coworker_id = OLD.coworker_id
+      AND o.workspace_id = OLD.workspace_id
+      AND o.status NOT IN ('COMPLETED', 'SKIPPED', 'FAILED')
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'COWORKER_HAS_ACTIVE_WORK');
 END;
 
 CREATE TRIGGER task_coworker_origin_immutable
@@ -1934,6 +2148,8 @@ CREATE TABLE effects (
   idempotency_key TEXT,
   state TEXT NOT NULL CHECK (state IN ('PROPOSED', 'STARTED', 'ACKNOWLEDGED', 'RECONCILING', 'OBSERVED', 'VERIFIED', 'FAILED', 'AMBIGUOUS')),
   request_digest TEXT NOT NULL CHECK (length(request_digest) = 71 AND substr(request_digest, 1, 7) = 'sha256:' AND substr(request_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  capability_invocation_id TEXT NOT NULL UNIQUE REFERENCES capability_invocations(invocation_id) DEFERRABLE INITIALLY DEFERRED,
+  execution_method TEXT NOT NULL CHECK (execution_method IN ('STRUCTURED_API', 'STRUCTURED_BROWSER', 'ACCESSIBILITY_BROWSER', 'SCREEN_COMPUTER_USE', 'DETERMINISTIC_LOCAL', 'NATIVE_AGENT_TOOL', 'UNKNOWN')),
   result_ref_json TEXT,
   observed_state_json TEXT,
   verification_ref TEXT,
@@ -2077,6 +2293,8 @@ CREATE TABLE automation_revisions (
   revision INTEGER NOT NULL,
   routine_id TEXT NOT NULL,
   routine_revision INTEGER NOT NULL,
+  coworker_id TEXT,
+  coworker_revision INTEGER,
   triggers_json TEXT NOT NULL CHECK (json_valid(triggers_json)),
   execution_policy_json TEXT NOT NULL CHECK (json_valid(execution_policy_json)),
   authored_by_json TEXT NOT NULL,
@@ -2084,7 +2302,9 @@ CREATE TABLE automation_revisions (
   PRIMARY KEY(automation_id, revision),
   UNIQUE(automation_id, revision, workspace_id),
   FOREIGN KEY(automation_id, workspace_id) REFERENCES automations(automation_id, workspace_id),
-  FOREIGN KEY(routine_id, routine_revision, workspace_id) REFERENCES routine_revisions(routine_id, revision, workspace_id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY(routine_id, routine_revision, workspace_id) REFERENCES routine_revisions(routine_id, revision, workspace_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(coworker_id, coworker_revision, workspace_id) REFERENCES coworker_revisions(coworker_id, revision, workspace_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((coworker_id IS NULL AND coworker_revision IS NULL) OR (coworker_id IS NOT NULL AND coworker_revision IS NOT NULL))
 );
 
 CREATE TABLE automation_occurrences (
@@ -2116,6 +2336,28 @@ CREATE TABLE automation_occurrences (
   FOREIGN KEY(automation_id, automation_revision, workspace_id) REFERENCES automation_revisions(automation_id, revision, workspace_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY(routine_id, routine_revision, workspace_id) REFERENCES routine_revisions(routine_id, revision, workspace_id) DEFERRABLE INITIALLY DEFERRED
 );
+CREATE TRIGGER task_automation_coworker_origin_guard
+BEFORE INSERT ON tasks
+WHEN NEW.automation_occurrence_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1
+  FROM automation_occurrences o
+  JOIN automation_revisions ar
+    ON ar.automation_id = o.automation_id
+   AND ar.revision = o.automation_revision
+   AND ar.workspace_id = o.workspace_id
+  WHERE o.automation_id = NEW.automation_id
+    AND o.occurrence_id = NEW.automation_occurrence_id
+    AND o.workspace_id = NEW.workspace_id
+    AND (
+      (ar.coworker_id IS NULL AND NEW.origin_coworker_id IS NULL AND NEW.origin_coworker_revision IS NULL)
+      OR (ar.coworker_id = NEW.origin_coworker_id AND ar.coworker_revision = NEW.origin_coworker_revision
+        AND EXISTS (SELECT 1 FROM coworkers c WHERE c.workspace_id = ar.workspace_id
+          AND c.coworker_id = ar.coworker_id AND c.status = 'ACTIVE'))
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'AUTOMATION_COWORKER_ORIGIN_MISMATCH');
+END;
 CREATE INDEX idx_automation_occurrences_status ON automation_occurrences(automation_id, status, created_at);
 CREATE INDEX idx_automation_occurrences_claim ON automation_occurrences(status, claim_expires_at);
 
@@ -2303,7 +2545,23 @@ CREATE TABLE resources (
   display_name TEXT NOT NULL,
   current_revision_id TEXT,
   sensitivity TEXT NOT NULL,
-  context_document_json TEXT CHECK (context_document_json IS NULL OR json_valid(context_document_json)),
+  context_document_json TEXT CHECK (context_document_json IS NULL OR (
+    json_valid(context_document_json)
+    AND json_extract(context_document_json, '$.kind') IN ('PERSONAL_PROFILE', 'COWORKER_NOTES', 'WORKSPACE_NOTES', 'GOAL_NOTES')
+    AND json_extract(context_document_json, '$.status') IN ('ACTIVE', 'REVOKED', 'DELETION_PENDING', 'DELETED')
+    AND json_type(context_document_json, '$.owner_ref') = 'object'
+    AND (
+      (json_extract(context_document_json, '$.status') IN ('ACTIVE', 'REVOKED')
+        AND json_extract(context_document_json, '$.purge_manifest_digest') IS NULL
+        AND json_extract(context_document_json, '$.purge_target_count') IS NULL)
+      OR (json_extract(context_document_json, '$.status') IN ('DELETION_PENDING', 'DELETED')
+        AND length(json_extract(context_document_json, '$.purge_manifest_digest')) = 71
+        AND substr(json_extract(context_document_json, '$.purge_manifest_digest'), 1, 7) = 'sha256:'
+        AND substr(json_extract(context_document_json, '$.purge_manifest_digest'), 8) NOT GLOB '*[^0-9a-f]*'
+        AND json_type(context_document_json, '$.purge_target_count') = 'integer'
+        AND json_extract(context_document_json, '$.purge_target_count') >= 0)
+    )
+  )),
   provenance_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -2317,6 +2575,223 @@ CREATE INDEX idx_resources_workspace_name ON resources(workspace_id, display_nam
 CREATE UNIQUE INDEX uq_resources_identity_digest
   ON resources(workspace_id, identity_digest) WHERE identity_digest IS NOT NULL;
 
+CREATE TABLE context_document_purge_plans (
+  workspace_id TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  manifest_digest TEXT NOT NULL CHECK (length(manifest_digest) = 71 AND substr(manifest_digest, 1, 7) = 'sha256:' AND substr(manifest_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  target_count INTEGER NOT NULL CHECK (target_count >= 0),
+  targets_json TEXT NOT NULL CHECK (json_valid(targets_json) AND json_type(targets_json) = 'array' AND json_array_length(targets_json) = target_count),
+  sealed_at TEXT NOT NULL,
+  PRIMARY KEY(workspace_id, resource_id),
+  FOREIGN KEY(workspace_id, resource_id) REFERENCES resources(workspace_id, resource_id)
+);
+
+CREATE TRIGGER context_document_purge_plan_shape_guard
+BEFORE INSERT ON context_document_purge_plans
+WHEN EXISTS (
+  SELECT 1 FROM json_each(NEW.targets_json) target
+  WHERE json_type(target.value) <> 'object'
+    OR COALESCE(json_type(target.value, '$.replica_ref'), '') <> 'text'
+    OR length(json_extract(target.value, '$.replica_ref')) = 0
+    OR COALESCE(json_type(target.value, '$.replica_kind'), '') <> 'text'
+    OR json_extract(target.value, '$.replica_kind') NOT IN ('BLOB', 'DERIVED_INDEX')
+    OR COALESCE(json_type(target.value, '$.runtime_id'), '') NOT IN ('text', 'null')
+    OR COALESCE(json_type(target.value, '$.runtime_incarnation_id'), '') NOT IN ('text', 'null')
+    OR ((json_type(target.value, '$.runtime_id') = 'text') <> (json_type(target.value, '$.runtime_incarnation_id') = 'text'))
+    OR COALESCE(json_type(target.value, '$.target_revision_ids'), '') <> 'array'
+    OR EXISTS (
+      SELECT 1 FROM json_each(target.value, '$.target_revision_ids') revision
+      WHERE revision.type <> 'text' OR length(revision.value) = 0
+    )
+    OR EXISTS (
+      SELECT revision.value FROM json_each(target.value, '$.target_revision_ids') revision
+      GROUP BY revision.value HAVING COUNT(*) > 1
+    )
+)
+  OR EXISTS (
+    SELECT json_extract(target.value, '$.replica_ref'), json_extract(target.value, '$.replica_kind')
+    FROM json_each(NEW.targets_json) target
+    GROUP BY json_extract(target.value, '$.replica_ref'), json_extract(target.value, '$.replica_kind')
+    HAVING COUNT(*) > 1
+  )
+  OR EXISTS (
+    SELECT 1 FROM json_each(NEW.targets_json) target, json_each(target.value) property
+    WHERE property.key NOT IN ('replica_ref', 'replica_kind', 'runtime_id', 'runtime_incarnation_id', 'target_revision_ids')
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'INVALID_ARGUMENT');
+END;
+
+CREATE TRIGGER context_document_purge_plan_admission_guard
+BEFORE INSERT ON context_document_purge_plans
+WHEN NOT EXISTS (
+  SELECT 1 FROM resources r
+  WHERE r.workspace_id = NEW.workspace_id
+    AND r.resource_id = NEW.resource_id
+    AND json_extract(r.context_document_json, '$.status') IN ('ACTIVE', 'REVOKED')
+    AND NOT EXISTS (SELECT 1 FROM context_document_purge_plans p WHERE p.workspace_id = NEW.workspace_id AND p.resource_id = NEW.resource_id)
+)
+BEGIN
+  SELECT RAISE(ABORT, 'CONTEXT_PURGE_PLAN_NOT_ADMISSIBLE');
+END;
+
+CREATE TRIGGER context_document_purge_plan_immutable
+BEFORE UPDATE ON context_document_purge_plans
+BEGIN
+  SELECT RAISE(ABORT, 'CONTEXT_PURGE_PLAN_IMMUTABLE');
+END;
+
+CREATE TRIGGER context_document_purge_plan_no_delete
+BEFORE DELETE ON context_document_purge_plans
+BEGIN
+  SELECT RAISE(ABORT, 'CONTEXT_PURGE_PLAN_IMMUTABLE');
+END;
+
+CREATE TABLE context_document_purge_receipts (
+  workspace_id TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  replica_ref TEXT NOT NULL,
+  replica_kind TEXT NOT NULL CHECK (replica_kind IN ('BLOB', 'DERIVED_INDEX')),
+  runtime_id TEXT REFERENCES runtimes(runtime_id),
+  runtime_incarnation_id TEXT,
+  target_revision_ids_json TEXT NOT NULL CHECK (json_valid(target_revision_ids_json) AND json_type(target_revision_ids_json) = 'array'),
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'ACKNOWLEDGED')),
+  requested_at TEXT NOT NULL,
+  acknowledged_at TEXT,
+  receipt_digest TEXT CHECK (receipt_digest IS NULL OR (length(receipt_digest) = 71 AND substr(receipt_digest, 1, 7) = 'sha256:' AND substr(receipt_digest, 8) NOT GLOB '*[^0-9a-f]*')),
+  PRIMARY KEY(workspace_id, resource_id, replica_ref, replica_kind),
+  FOREIGN KEY(workspace_id, resource_id) REFERENCES resources(workspace_id, resource_id),
+  CHECK ((runtime_id IS NULL AND runtime_incarnation_id IS NULL) OR
+         (runtime_id IS NOT NULL AND runtime_incarnation_id IS NOT NULL)),
+  CHECK ((status = 'PENDING' AND acknowledged_at IS NULL AND receipt_digest IS NULL) OR
+         (status = 'ACKNOWLEDGED' AND acknowledged_at IS NOT NULL AND receipt_digest IS NOT NULL))
+);
+CREATE INDEX idx_context_purge_pending ON context_document_purge_receipts(workspace_id, resource_id, status);
+
+CREATE TRIGGER context_document_purge_receipt_admission_guard
+BEFORE INSERT ON context_document_purge_receipts
+WHEN NOT EXISTS (
+  SELECT 1 FROM resources r
+  JOIN context_document_purge_plans plan
+    ON plan.workspace_id = r.workspace_id AND plan.resource_id = r.resource_id
+  WHERE r.workspace_id = NEW.workspace_id
+    AND r.resource_id = NEW.resource_id
+    AND json_extract(r.context_document_json, '$.status') = 'DELETION_PENDING'
+    AND json_extract(r.context_document_json, '$.purge_manifest_digest') = plan.manifest_digest
+    AND json_extract(r.context_document_json, '$.purge_target_count') = plan.target_count
+    AND EXISTS (
+      SELECT 1 FROM json_each(plan.targets_json) target
+      WHERE json_extract(target.value, '$.replica_ref') = NEW.replica_ref
+        AND json_extract(target.value, '$.replica_kind') = NEW.replica_kind
+        AND json_extract(target.value, '$.runtime_id') IS NEW.runtime_id
+        AND json_extract(target.value, '$.runtime_incarnation_id') IS NEW.runtime_incarnation_id
+        AND json(json_extract(target.value, '$.target_revision_ids')) = json(NEW.target_revision_ids_json)
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'CONTEXT_DOCUMENT_NOT_PENDING_DELETION');
+END;
+
+CREATE TRIGGER context_document_owner_scope_guard
+BEFORE INSERT ON resources
+WHEN NEW.context_document_json IS NOT NULL AND COALESCE((
+  json_extract(NEW.context_document_json, '$.status') = 'ACTIVE' AND (
+  (json_extract(NEW.context_document_json, '$.kind') = 'PERSONAL_PROFILE'
+    AND json_extract(NEW.context_document_json, '$.owner_ref.kind') = 'USER'
+    AND json_extract(NEW.context_document_json, '$.owner_ref.principal_id') =
+      (SELECT owner_principal_id FROM workspaces WHERE workspace_id = NEW.workspace_id))
+  OR (json_extract(NEW.context_document_json, '$.kind') = 'WORKSPACE_NOTES'
+    AND json_extract(NEW.context_document_json, '$.owner_ref.kind') = 'WORKSPACE'
+    AND json_extract(NEW.context_document_json, '$.owner_ref.workspace_id') = NEW.workspace_id)
+  OR (json_extract(NEW.context_document_json, '$.kind') = 'COWORKER_NOTES'
+    AND json_extract(NEW.context_document_json, '$.owner_ref.kind') = 'COWORKER'
+    AND json_extract(NEW.context_document_json, '$.owner_ref.workspace_id') = NEW.workspace_id
+    AND EXISTS (SELECT 1 FROM coworkers c WHERE c.workspace_id = NEW.workspace_id
+      AND c.coworker_id = json_extract(NEW.context_document_json, '$.owner_ref.coworker_id')))
+  OR (json_extract(NEW.context_document_json, '$.kind') = 'GOAL_NOTES'
+    AND json_extract(NEW.context_document_json, '$.owner_ref.kind') = 'GOAL'
+    AND json_extract(NEW.context_document_json, '$.owner_ref.workspace_id') = NEW.workspace_id
+    AND EXISTS (SELECT 1 FROM goals g WHERE g.workspace_id = NEW.workspace_id
+      AND g.goal_id = json_extract(NEW.context_document_json, '$.owner_ref.goal_id')))
+  )
+), 0) = 0
+BEGIN
+  SELECT RAISE(ABORT, 'CONTEXT_DOCUMENT_OWNER_SCOPE_MISMATCH');
+END;
+
+CREATE TRIGGER resource_context_document_transition_guard
+BEFORE UPDATE OF context_document_json ON resources
+WHEN
+  (OLD.context_document_json IS NULL AND NEW.context_document_json IS NOT NULL
+    AND json_extract(NEW.context_document_json, '$.status') <> 'ACTIVE')
+  OR (OLD.context_document_json IS NOT NULL AND NEW.context_document_json IS NULL)
+  OR (OLD.context_document_json IS NOT NULL AND NEW.context_document_json IS NOT NULL AND (
+    NEW.version <> OLD.version + 1
+    OR NEW.updated_at <= OLD.updated_at
+    OR
+    json_extract(OLD.context_document_json, '$.kind') <> json_extract(NEW.context_document_json, '$.kind')
+    OR json_extract(OLD.context_document_json, '$.owner_ref.kind') <> json_extract(NEW.context_document_json, '$.owner_ref.kind')
+    OR json_extract(OLD.context_document_json, '$.owner_ref.principal_id') IS NOT json_extract(NEW.context_document_json, '$.owner_ref.principal_id')
+    OR json_extract(OLD.context_document_json, '$.owner_ref.workspace_id') IS NOT json_extract(NEW.context_document_json, '$.owner_ref.workspace_id')
+    OR json_extract(OLD.context_document_json, '$.owner_ref.coworker_id') IS NOT json_extract(NEW.context_document_json, '$.owner_ref.coworker_id')
+    OR json_extract(OLD.context_document_json, '$.owner_ref.goal_id') IS NOT json_extract(NEW.context_document_json, '$.owner_ref.goal_id')
+    OR NOT (
+      json_extract(OLD.context_document_json, '$.status') = json_extract(NEW.context_document_json, '$.status')
+      OR (json_extract(OLD.context_document_json, '$.status') = 'ACTIVE' AND json_extract(NEW.context_document_json, '$.status') IN ('REVOKED', 'DELETION_PENDING'))
+      OR (json_extract(OLD.context_document_json, '$.status') = 'REVOKED' AND json_extract(NEW.context_document_json, '$.status') IN ('ACTIVE', 'DELETION_PENDING'))
+      OR (json_extract(OLD.context_document_json, '$.status') = 'DELETION_PENDING' AND json_extract(NEW.context_document_json, '$.status') = 'DELETED')
+    )
+    OR (json_extract(NEW.context_document_json, '$.status') = 'DELETION_PENDING' AND NOT EXISTS (
+      SELECT 1 FROM context_document_purge_plans plan
+      WHERE plan.workspace_id = NEW.workspace_id AND plan.resource_id = NEW.resource_id
+        AND plan.manifest_digest = json_extract(NEW.context_document_json, '$.purge_manifest_digest')
+        AND plan.target_count = json_extract(NEW.context_document_json, '$.purge_target_count')
+    ))
+  ))
+BEGIN
+  SELECT RAISE(ABORT, 'INVALID_CONTEXT_DOCUMENT_STATUS_TRANSITION');
+END;
+
+CREATE TRIGGER context_document_purge_receipt_transition_guard
+BEFORE UPDATE ON context_document_purge_receipts
+WHEN NEW.workspace_id <> OLD.workspace_id
+  OR NEW.resource_id <> OLD.resource_id
+  OR NEW.replica_ref <> OLD.replica_ref
+  OR NEW.replica_kind <> OLD.replica_kind
+  OR NEW.runtime_id IS NOT OLD.runtime_id
+  OR NEW.runtime_incarnation_id IS NOT OLD.runtime_incarnation_id
+  OR NEW.target_revision_ids_json <> OLD.target_revision_ids_json
+  OR NEW.requested_at <> OLD.requested_at
+  OR OLD.status <> 'PENDING'
+  OR NEW.status <> 'ACKNOWLEDGED'
+BEGIN
+  SELECT RAISE(ABORT, 'CONTEXT_PURGE_RECEIPT_IDENTITY_IMMUTABLE');
+END;
+
+CREATE TRIGGER context_document_deleted_requires_purge_ack
+BEFORE UPDATE OF context_document_json ON resources
+WHEN json_extract(NEW.context_document_json, '$.status') = 'DELETED'
+  AND (
+    NOT EXISTS (
+      SELECT 1 FROM context_document_purge_plans plan
+      WHERE plan.workspace_id = NEW.workspace_id AND plan.resource_id = NEW.resource_id
+        AND plan.manifest_digest = json_extract(NEW.context_document_json, '$.purge_manifest_digest')
+        AND plan.target_count = json_extract(NEW.context_document_json, '$.purge_target_count')
+    )
+    OR (SELECT COUNT(*) FROM context_document_purge_receipts receipt
+        WHERE receipt.workspace_id = NEW.workspace_id AND receipt.resource_id = NEW.resource_id)
+       <> json_extract(NEW.context_document_json, '$.purge_target_count')
+    OR EXISTS (
+      SELECT 1 FROM context_document_purge_receipts receipt
+      WHERE receipt.workspace_id = NEW.workspace_id
+        AND receipt.resource_id = NEW.resource_id
+        AND receipt.status <> 'ACKNOWLEDGED'
+    )
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'CONTEXT_DOCUMENT_PURGE_INCOMPLETE');
+END;
+
 CREATE TABLE resource_revisions (
   resource_revision_id TEXT PRIMARY KEY,
   resource_id TEXT NOT NULL REFERENCES resources(resource_id),
@@ -2329,6 +2804,18 @@ CREATE TABLE resource_revisions (
   created_by_json TEXT NOT NULL,
   UNIQUE(resource_id, resource_revision_id)
 );
+
+CREATE TRIGGER resource_revision_context_status_guard
+BEFORE INSERT ON resource_revisions
+WHEN EXISTS (
+  SELECT 1 FROM resources r
+  WHERE r.resource_id = NEW.resource_id
+    AND r.context_document_json IS NOT NULL
+    AND json_extract(r.context_document_json, '$.status') <> 'ACTIVE'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'CONTEXT_DOCUMENT_NOT_ACTIVE');
+END;
 
 CREATE TABLE resource_revision_parents (
   resource_id TEXT NOT NULL,
@@ -2603,6 +3090,11 @@ CREATE TABLE capability_invocations (
   capability_ref_json TEXT NOT NULL,
   operation TEXT NOT NULL,
   request_digest TEXT NOT NULL CHECK (length(request_digest) = 71 AND substr(request_digest, 1, 7) = 'sha256:' AND substr(request_digest, 8) NOT GLOB '*[^0-9a-f]*'),
+  execution_method TEXT NOT NULL DEFAULT 'UNKNOWN' CHECK (execution_method IN ('STRUCTURED_API', 'STRUCTURED_BROWSER', 'ACCESSIBILITY_BROWSER', 'SCREEN_COMPUTER_USE', 'DETERMINISTIC_LOCAL', 'NATIVE_AGENT_TOOL', 'UNKNOWN')),
+  action_batch_id TEXT,
+  action_batch_ordinal INTEGER CHECK (action_batch_ordinal IS NULL OR action_batch_ordinal >= 0),
+  action_batch_operation_count INTEGER CHECK (action_batch_operation_count IS NULL OR action_batch_operation_count BETWEEN 1 AND 64),
+  action_batch_digest TEXT CHECK (action_batch_digest IS NULL OR (length(action_batch_digest) = 71 AND substr(action_batch_digest, 1, 7) = 'sha256:' AND substr(action_batch_digest, 8) NOT GLOB '*[^0-9a-f]*')),
   capability_grant_id TEXT NOT NULL REFERENCES capability_grants(capability_grant_id),
   idempotency_key TEXT,
   status TEXT NOT NULL CHECK (status IN ('CREATED', 'DISPATCHED', 'WAITING', 'INPUT_REQUIRED', 'CANCEL_REQUESTED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'AMBIGUOUS')),
@@ -2620,9 +3112,123 @@ CREATE TABLE capability_invocations (
   updated_at TEXT NOT NULL,
   completed_at TEXT,
   version INTEGER NOT NULL DEFAULT 1,
-  CHECK ((scope_kind = 'CONVERSATION' AND conversation_id IS NOT NULL AND task_id IS NULL AND attempt_id IS NULL AND effect_id IS NULL) OR (scope_kind = 'TASK_PLANNING' AND conversation_id IS NULL AND task_id IS NOT NULL AND attempt_id IS NULL AND effect_id IS NULL) OR (scope_kind = 'ATTEMPT_EXECUTION' AND conversation_id IS NULL AND task_id IS NOT NULL AND attempt_id IS NOT NULL))
+  CHECK ((scope_kind = 'CONVERSATION' AND conversation_id IS NOT NULL AND task_id IS NULL AND attempt_id IS NULL AND effect_id IS NULL) OR (scope_kind = 'TASK_PLANNING' AND conversation_id IS NULL AND task_id IS NOT NULL AND attempt_id IS NULL AND effect_id IS NULL) OR (scope_kind = 'ATTEMPT_EXECUTION' AND conversation_id IS NULL AND task_id IS NOT NULL AND attempt_id IS NOT NULL)),
+  CHECK ((action_batch_id IS NULL AND action_batch_ordinal IS NULL AND action_batch_operation_count IS NULL AND action_batch_digest IS NULL) OR
+    (action_batch_id IS NOT NULL AND action_batch_ordinal IS NOT NULL AND action_batch_operation_count IS NOT NULL AND action_batch_digest IS NOT NULL AND action_batch_ordinal < action_batch_operation_count))
 );
 CREATE INDEX idx_invocations_workspace_status ON capability_invocations(workspace_id, status, updated_at);
+CREATE UNIQUE INDEX uq_action_batch_member_ordinal
+  ON capability_invocations(workspace_id, action_batch_id, action_batch_ordinal)
+  WHERE action_batch_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_action_batch_member_idempotency
+  ON capability_invocations(action_batch_id, idempotency_key)
+  WHERE action_batch_id IS NOT NULL;
+
+CREATE TRIGGER action_batch_member_group_guard
+BEFORE INSERT ON capability_invocations
+WHEN NEW.action_batch_id IS NOT NULL AND (
+  NEW.idempotency_key IS NULL OR EXISTS (
+    SELECT 1 FROM capability_invocations sibling
+    WHERE sibling.workspace_id = NEW.workspace_id
+      AND sibling.action_batch_id = NEW.action_batch_id
+      AND (
+        sibling.scope_kind <> NEW.scope_kind OR
+        sibling.conversation_id IS NOT NEW.conversation_id OR
+        sibling.task_id IS NOT NEW.task_id OR
+        sibling.attempt_id IS NOT NEW.attempt_id OR
+        sibling.agent_session_id <> NEW.agent_session_id OR
+        sibling.capability_grant_id <> NEW.capability_grant_id OR
+        sibling.activation_id <> NEW.activation_id OR
+        sibling.capability_ref_json <> NEW.capability_ref_json OR
+        sibling.execution_method <> NEW.execution_method OR
+        sibling.action_batch_operation_count <> NEW.action_batch_operation_count OR
+        sibling.action_batch_digest <> NEW.action_batch_digest
+      )
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'ACTION_BATCH_MEMBER_SCOPE_MISMATCH');
+END;
+
+CREATE TRIGGER action_batch_complete_before_dispatch
+BEFORE UPDATE OF status ON capability_invocations
+WHEN NEW.status = 'DISPATCHED'
+  AND NEW.action_batch_id IS NOT NULL
+  AND (
+    (SELECT COUNT(*) FROM capability_invocations member
+      WHERE member.workspace_id = NEW.workspace_id AND member.action_batch_id = NEW.action_batch_id)
+      <> NEW.action_batch_operation_count
+    OR (SELECT MIN(action_batch_ordinal) FROM capability_invocations member
+      WHERE member.workspace_id = NEW.workspace_id AND member.action_batch_id = NEW.action_batch_id) <> 0
+    OR (SELECT MAX(action_batch_ordinal) FROM capability_invocations member
+      WHERE member.workspace_id = NEW.workspace_id AND member.action_batch_id = NEW.action_batch_id)
+      <> NEW.action_batch_operation_count - 1
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'ACTION_BATCH_ADMISSION_INCOMPLETE');
+END;
+
+CREATE TRIGGER action_batch_member_identity_immutable
+BEFORE UPDATE ON capability_invocations
+WHEN OLD.action_batch_id IS NOT NEW.action_batch_id
+  OR OLD.action_batch_ordinal IS NOT NEW.action_batch_ordinal
+  OR OLD.action_batch_operation_count IS NOT NEW.action_batch_operation_count
+  OR OLD.action_batch_digest IS NOT NEW.action_batch_digest
+BEGIN
+  SELECT RAISE(ABORT, 'ACTION_BATCH_MEMBER_IDENTITY_IMMUTABLE');
+END;
+
+CREATE TRIGGER effect_invocation_scope_guard
+BEFORE INSERT ON effects
+WHEN NOT EXISTS (
+  SELECT 1 FROM capability_invocations i
+  WHERE i.invocation_id = NEW.capability_invocation_id
+    AND i.scope_kind = 'ATTEMPT_EXECUTION'
+    AND i.task_id = NEW.task_id
+    AND i.attempt_id = NEW.attempt_id
+    AND i.request_digest = NEW.request_digest
+    AND i.execution_method = NEW.execution_method
+    AND i.operation = NEW.operation
+)
+BEGIN
+  SELECT RAISE(ABORT, 'EFFECT_INVOCATION_PROVENANCE_MISMATCH');
+END;
+
+CREATE TRIGGER effect_identity_immutable
+BEFORE UPDATE ON effects
+WHEN NEW.task_id IS NOT OLD.task_id
+  OR NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.capability_invocation_id IS NOT OLD.capability_invocation_id
+  OR NEW.execution_method IS NOT OLD.execution_method
+  OR NEW.request_digest IS NOT OLD.request_digest
+BEGIN
+  SELECT RAISE(ABORT, 'EFFECT_IDENTITY_IMMUTABLE');
+END;
+
+CREATE TRIGGER capability_invocation_effect_link_guard
+BEFORE UPDATE OF effect_id ON capability_invocations
+WHEN NEW.effect_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM effects e
+  WHERE e.effect_id = NEW.effect_id
+    AND e.capability_invocation_id = NEW.invocation_id
+    AND e.task_id = NEW.task_id
+    AND e.attempt_id = NEW.attempt_id
+    AND e.request_digest = NEW.request_digest
+    AND e.execution_method = NEW.execution_method
+)
+BEGIN
+  SELECT RAISE(ABORT, 'INVOCATION_EFFECT_PROVENANCE_MISMATCH');
+END;
+
+CREATE TRIGGER capability_invocation_execution_method_guard
+BEFORE UPDATE OF execution_method ON capability_invocations
+WHEN NEW.execution_method <> OLD.execution_method
+  OR (NEW.effect_id IS NOT NULL AND EXISTS (
+    SELECT 1 FROM effects e WHERE e.effect_id = NEW.effect_id AND e.execution_method <> NEW.execution_method
+  ))
+BEGIN
+  SELECT RAISE(ABORT, 'INVOCATION_EXECUTION_METHOD_IMMUTABLE');
+END;
 
 -- Runtime-local encrypted provider handles/cursors. Never include these values in
 -- DomainEvents, aggregate state blobs, Mesh replication, Operator API, or backups.
@@ -2751,6 +3357,7 @@ WHEN OLD.workspace_id <> NEW.workspace_id
   OR OLD.capability_ref_json <> NEW.capability_ref_json
   OR OLD.operation <> NEW.operation
   OR OLD.request_digest <> NEW.request_digest
+  OR OLD.idempotency_key IS NOT NEW.idempotency_key
 BEGIN
   SELECT RAISE(ABORT, 'INVOCATION_IDENTITY_IMMUTABLE');
 END;
@@ -3509,9 +4116,101 @@ CREATE TABLE resource_upload_sessions (
   state TEXT NOT NULL CHECK (state IN ('OPEN', 'CONTENT_RECEIVED', 'COMMITTED', 'FAILED', 'EXPIRED')),
   expires_at TEXT NOT NULL,
   resource_id TEXT REFERENCES resources(resource_id),
+  expected_resource_version INTEGER CHECK (expected_resource_version IS NULL OR expected_resource_version >= 1),
+  parent_revision_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(parent_revision_ids_json)),
   created_at TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1
+  version INTEGER NOT NULL DEFAULT 1,
+  CHECK (json_type(parent_revision_ids_json) = 'array'),
+  CHECK ((resource_id IS NULL AND expected_resource_version IS NULL AND json_array_length(parent_revision_ids_json) = 0) OR
+         (resource_id IS NOT NULL AND expected_resource_version IS NOT NULL AND context_document_json IS NULL AND json_array_length(parent_revision_ids_json) <= 16))
 );
+
+CREATE TRIGGER resource_revision_upload_create_version_guard
+BEFORE INSERT ON resource_upload_sessions
+WHEN NEW.resource_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM resources r
+  WHERE r.workspace_id = NEW.workspace_id
+    AND r.resource_id = NEW.resource_id
+    AND r.version = NEW.expected_resource_version
+    AND (r.context_document_json IS NULL OR json_extract(r.context_document_json, '$.status') = 'ACTIVE')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'RESOURCE_CONFLICT');
+END;
+
+CREATE TRIGGER resource_revision_upload_parent_guard
+BEFORE INSERT ON resource_upload_sessions
+WHEN NEW.resource_id IS NOT NULL AND (
+  EXISTS (
+    SELECT parent.value
+    FROM json_each(NEW.parent_revision_ids_json) parent
+    LEFT JOIN resource_revisions revision
+      ON revision.resource_id = NEW.resource_id
+     AND revision.resource_revision_id = parent.value
+    WHERE revision.resource_revision_id IS NULL
+  )
+  OR EXISTS (
+    SELECT value FROM json_each(NEW.parent_revision_ids_json) GROUP BY value HAVING COUNT(*) > 1
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'RESOURCE_REVISION_PARENT_MISMATCH');
+END;
+
+CREATE TRIGGER resource_revision_upload_current_head_guard
+BEFORE INSERT ON resource_upload_sessions
+WHEN NEW.resource_id IS NOT NULL AND (
+  json_array_length(NEW.parent_revision_ids_json) <> (
+    SELECT COUNT(*) FROM resource_revisions head
+    WHERE head.resource_id = NEW.resource_id
+      AND NOT EXISTS (
+        SELECT 1 FROM resource_revision_parents edge
+        WHERE edge.resource_id = head.resource_id AND edge.parent_revision_id = head.resource_revision_id
+      )
+  )
+  OR EXISTS (
+    SELECT 1 FROM resource_revisions head
+    WHERE head.resource_id = NEW.resource_id
+      AND NOT EXISTS (
+        SELECT 1 FROM resource_revision_parents edge
+        WHERE edge.resource_id = head.resource_id AND edge.parent_revision_id = head.resource_revision_id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(NEW.parent_revision_ids_json) parent
+        WHERE parent.value = head.resource_revision_id
+      )
+  )
+  OR EXISTS (
+    SELECT parent.value FROM json_each(NEW.parent_revision_ids_json) parent
+    WHERE NOT EXISTS (
+      SELECT 1 FROM resource_revisions head
+      WHERE head.resource_id = NEW.resource_id
+        AND head.resource_revision_id = parent.value
+        AND NOT EXISTS (
+          SELECT 1 FROM resource_revision_parents edge
+          WHERE edge.resource_id = head.resource_id AND edge.parent_revision_id = head.resource_revision_id
+        )
+    )
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'RESOURCE_CONFLICT');
+END;
+
+CREATE TRIGGER resource_revision_upload_version_guard
+BEFORE UPDATE OF state ON resource_upload_sessions
+WHEN NEW.state = 'COMMITTED'
+  AND NEW.resource_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM resources r
+    WHERE r.workspace_id = NEW.workspace_id
+      AND r.resource_id = NEW.resource_id
+      AND r.version = NEW.expected_resource_version
+      AND (r.context_document_json IS NULL OR json_extract(r.context_document_json, '$.status') = 'ACTIVE')
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'RESOURCE_CONFLICT');
+END;
 
 CREATE TABLE resource_upload_chunks (
   upload_id TEXT NOT NULL REFERENCES resource_upload_sessions(upload_id),

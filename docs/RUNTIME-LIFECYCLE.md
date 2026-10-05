@@ -254,6 +254,19 @@ Attempt dependency, an Effect-reconciliation dependency, or a human takeover Env
 Restart creates a new RuntimeIncarnation and invalidates all prior process/session
 readiness observations.
 
+A prewarm that starts/attaches a dependency acquires an ephemeral Runtime-local
+`WarmHold`; otherwise ordinary idle cleanup may tear it down before a fallback can use it.
+`WarmHold` contains a target, reason, priority, creation/expiry times, and is always
+evictable. The Runtime grants at most one five-minute hold per target/reason; refresh
+requires a fresh trigger observation and never extends past the policy deadline. A hold
+creates no AgentSession, Attempt, lease, grant, Approval, or model request. Releasing,
+expiry, Runtime restart, or memory pressure destroys the hold. Memory pressure evicts
+holds in ascending priority then oldest-first before touching ordinary idle resources.
+
+`PIN_WHILE_ACTIVE` means the host remains resident only while at least one active
+AgentSession or nonterminal Attempt currently depends on it. A listed lead fallback is
+held only through a bounded `WarmHold`; a Task being open/paused does not pin a process.
+
 Changing a Task lead binding affects future planning assignments. Existing Attempts stay
 pinned to their original binding, endpoint, Runtime, and Environment until they settle or
 are safely cancelled. The prior planning session drains/closes; the replacement host starts

@@ -270,6 +270,35 @@ Task from an ACTIVE or PAUSED Coworker; proactive and scheduled admission requir
 Archived Coworkers are rejected for new Task origin. Existing Tasks retain their pinned
 origin and are not stopped by pause/archive.
 
+`LeadFailoverService` watches only typed provider/Runtime observations and the current
+TaskSpecRevision. It admits no change under `DISABLED`; under `ASK` it opens a Needs You
+decision; under `ALLOW_LISTED` it tests ordered fallback bindings against current
+Workspace, lead eligibility, endpoint, Runtime/incarnation, auth, Trust, resource,
+deadline, and budget state. The service asks TaskService to fence new admissions from the
+old lead, settle old planning work, build a bounded handoff from durable Task state, and
+create a fresh planning AgentSession. Each successful lead change is a Task event with
+cause and trigger provenance. It never transfers Grants, Approvals, SecretLeases, native
+session handles, or existing Attempt ownership.
+
+```text
+evaluate(TaskId, LeadFailoverTriggerObservation) -> NO_ACTION | NEEDS_OWNER | Candidate
+request_owner_decision(TaskId, trigger, RequestId) -> UserRequest
+admit(TaskId, candidate_binding_id, expected_task_version) -> LeadChangeReceipt
+```
+
+```text
+interface SuggestionProducer {
+  service_ref() -> ServiceRef
+  evaluate(trigger: SuggestionTrigger, context: BoundedSuggestionContext) -> SuggestionCandidate[]
+}
+```
+
+Only registered producers may supply candidates. Producers are deterministic event rules
+or separately authorized read-only capabilities; they cannot commit Suggestions or Tasks.
+SuggestionService validates their identity, exact source revisions, visibility, scope,
+and admission policy, then records `proposed_by` on accepted proposals. Suppressed
+candidates retain no content.
+
 `ProjectionService` exposes `task_progress(TaskId)`,
 `coworker_presence(CoworkerId)`, `goal_progress(GoalId)`, and
 `worker_performance(DelegationProfileId, TaskCategory)`. Each is rebuilt from committed
@@ -291,6 +320,51 @@ PersonalContextService is a Core authorization/provenance adapter over user-auth
 ContextDocument Resources and optional PersonalContextProvider capabilities. Retrieval
 and indexing remain provider-owned; revocation, deletion, and source scope remain
 Core-owned.
+
+`PersonalContextProvider` v1 does not expose `propose_memory`; derived memory proposals
+remain deferred until Suggestion/Needs You review can pin content, sources, expiry,
+redaction, and owner resolution. `ResourceService.revise_context_document` uses the normal
+Resource revision DAG. `set_context_document_status` revokes or starts deletion; the purge
+worker first seals a `ContextDocumentPurgePlan` over the exact registered Core-managed
+blob/index replicas, then marks `DELETION_PENDING` and creates one pending receipt per
+target in the same transaction. It marks `DELETED` only after the acknowledged receipt set
+equals that plan, including a verified empty plan. A provider-backed replica remains
+pending until its registered adapter confirms removal; unrelated context providers do not
+become deletion authorities.
+
+```text
+ResourceService.create_revision_upload(ResourceId, parent_revision_ids, if_match, RequestId) -> ResourceUploadSession
+ResourceService.commit_revision_upload(ResourceUploadId, RequestId) -> ResourceRevision
+ResourceService.set_context_document_status(ResourceId, status, if_match, RequestId) -> Resource
+ContextDocumentPurgeReconciler.seal_plan(ResourceId, exact_targets, if_match, RequestId) -> ContextDocumentPurgePlan
+ContextDocumentPurgeReconciler.record_ack(ResourceId, replica_ref, RuntimeIncarnationId, receipt_digest) -> PurgeStatus
+ContextDocumentPurgeReconciler.complete(ResourceId, expected_version) -> Resource
+```
+
+Revision uploads enforce Workspace/Resource ownership, current version, exact parent
+revision ancestry, byte/digest integrity, and atomic head update. Content resolution rejects
+revoked or deletion-pending ContextDocuments. A status change invalidates active context
+attachments; the Session owner stops or replaces a session at a safe boundary and cannot
+reuse its old native history. Purge receipts are durable, non-secret recovery records.
+The purge plan is immutable, pins a canonical digest and target count, and lists exact
+revision IDs for each target. Receipt admission must match one plan target exactly, and a
+duplicate or extra acknowledgement is rejected. Only the reconciler can transition
+`DELETION_PENDING` to `DELETED`, after every required Core-managed replica has acknowledged
+the tombstone for the current Runtime incarnation.
+
+### WarmHoldService
+
+```text
+prewarm(target, reason, priority, ttl_ms) -> WarmHold
+release(warm_hold_id) -> Ack
+reconcile_runtime_incarnation(RuntimeIncarnationId) -> ReleaseResult
+```
+
+This is Runtime-local operational state. It asks the owning host/Environment supervisor to
+retain a readiness optimization until expiry; it does not launch model work or create
+Task/Attempt/session/Trust authority. Hold creation and release are not replicated domain
+events. The owner may refuse or evict a hold under resource pressure; callers then receive
+ordinary cold-start latency.
 
 ### CapabilityBroker
 

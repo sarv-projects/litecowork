@@ -233,9 +233,14 @@ def check_event_contract() -> None:
                 condition = condition_schema.get("properties", {})
                 required_condition = set(condition_schema.get("required", []))
                 matches = required_condition <= set(out) and all(
-                    out.get(name) == condition_schema["const"]
+                    (
+                        out.get(name) == condition_schema["const"]
+                        if "const" in condition_schema
+                        else out.get(name) in condition_schema["enum"]
+                        if "enum" in condition_schema
+                        else True
+                    )
                     for name, condition_schema in condition.items()
-                    if "const" in condition_schema
                 )
                 if not matches:
                     continue
@@ -2813,6 +2818,294 @@ def check_channel_reply_contract() -> None:
         fail("user.request.resolved.v1: accepts response provenance on a non-answer resolution")
 
 
+def check_vnext_responsibility_contract() -> None:
+    """Cross-check the new Coworker, delegation, provenance, and context contracts."""
+    schemas_text = (DOCS / "SCHEMAS.md").read_text(encoding="utf-8")
+    state_text = (DOCS / "STATE-MACHINES.md").read_text(encoding="utf-8")
+    api_text = (DOCS / "API.md").read_text(encoding="utf-8")
+    events_text = (DOCS / "EVENTS.md").read_text(encoding="utf-8")
+    context_text = (DOCS / "CONTEXT.md").read_text(encoding="utf-8")
+    services_text = (DOCS / "SERVICES.md").read_text(encoding="utf-8")
+    runtime_text = (DOCS / "RUNTIME-LIFECYCLE.md").read_text(encoding="utf-8")
+    responsibility_text = (DOCS / "RESPONSIBILITIES.md").read_text(encoding="utf-8")
+    experience_text = (DOCS / "EXPERIENCE.md").read_text(encoding="utf-8")
+    api = yaml.safe_load((DOCS / "schemas/operator-api.openapi.yaml").read_text(encoding="utf-8"))
+    api_schemas = api.get("components", {}).get("schemas", {})
+    paths = api.get("paths", {})
+    sql = (DOCS / "schemas/sqlite-v1.sql").read_text(encoding="utf-8")
+    event_schema = load_json(DOCS / "schemas/domain-event.schema.json")
+    payloads = event_schema.get("$defs", {}).get("payloads", {})
+    registry = set(re.findall(r"^[a-z][a-z0-9_.-]+\.v\d+$", events_text, re.M))
+    blocks = re.findall(r"```(?:text)?\s*(.*?)```", schemas_text, re.S)
+    schema_lines = [line for block in blocks for line in block.splitlines()]
+
+    def doc_enum(name: str) -> set[str]:
+        for i, line in enumerate(schema_lines):
+            prefix = f"{name} = "
+            if line.startswith(prefix):
+                value = line[len(prefix):].strip()
+                j = i + 1
+                while j < len(schema_lines) and schema_lines[j].startswith("  ") and "|" in schema_lines[j]:
+                    value += " | " + schema_lines[j].strip()
+                    j += 1
+                return {part.strip() for part in value.split("|") if re.fullmatch(r"[A-Z][A-Z0-9_]*", part.strip())}
+        fail(f"SCHEMAS.md: missing canonical {name}")
+        return set()
+
+    def api_enum(schema: str, prop: str, items: bool = False) -> set[str]:
+        value = api_schemas.get(schema, {}).get("properties", {}).get(prop, {})
+        if items:
+            value = value.get("items", {})
+        return {item for item in value.get("enum", []) if isinstance(item, str)}
+
+    def table(name: str) -> str:
+        match = re.search(rf"CREATE TABLE {re.escape(name)} \((.*?)\n\);", sql, re.S)
+        if not match:
+            fail(f"sqlite-v1.sql: missing table {name}")
+            return ""
+        return match.group(1)
+
+    def sql_enum(table_name: str, column: str) -> set[str]:
+        body = table(table_name)
+        match = re.search(rf"^\s{{2}}{re.escape(column)}\s+TEXT[^,\n]*CHECK\s*\(\s*{re.escape(column)}\s+IN\s*\(([^)]*)\)", body, re.M)
+        if not match:
+            fail(f"sqlite-v1.sql {table_name}.{column}: missing enum CHECK")
+            return set()
+        return set(re.findall(r"'([A-Z][A-Z0-9_]*)'", match.group(1)))
+
+    def event_enum(payload: str, prop: str) -> set[str]:
+        return set(payloads.get(payload, {}).get("properties", {}).get(prop, {}).get("enum", []))
+
+    def trigger_body(name: str) -> str:
+        start = sql.find(f"CREATE TRIGGER {name}")
+        end = sql.find("\nEND;", start) if start >= 0 else -1
+        if start < 0 or end < 0:
+            fail(f"sqlite-v1.sql: missing/invalid trigger {name}")
+            return ""
+        return sql[start:end]
+
+    api_surfaces = {
+        "DelegationProfileStatus": [("DelegationProfile", "status"), ("DelegationProfileStatusRequest", "status")],
+        "DelegationStrategy": [("CoworkerRevisionInput", "delegation_strategy")],
+        "OptimizationPreference": [("DelegationProfileRevisionInput", "optimization_preference")],
+        "ExecutionLatencyClass": [("DelegationProfileRevisionInput", "latency_class"), ("Suggestion", "latency_class_hint")],
+        "EnvironmentSharingScope": [("EnvironmentView", "sharing_scope")],
+        "CoworkerStatus": [("Coworker", "status"), ("CoworkerStatusRequest", "status")],
+        "GoalStatus": [("Goal", "status"), ("GoalStatusRequest", "status")],
+        "SuggestionStatus": [("Suggestion", "status")],
+        "ContextDocumentStatus": [("ContextDocumentMetadata", "status"), ("ContextDocumentDeletionStatus", "status")],
+        "ExecutionMethod": [("CapabilityInvocation", "execution_method"), ("Effect", "execution_method")],
+        "LeadFailoverMode": [("LeadFailoverPolicy", "mode")],
+        "LeadFailoverTrigger": [("LeadFailoverPolicy", "triggers", True)],
+        "InteractionDefault": [("CoworkerInteractionPolicy", field) for field in (
+            "read_only_work", "draft_creation", "external_mutation", "destructive_action", "financial_commitment")],
+        "DemonstrationSessionStatus": [("DemonstrationSession", "status")],
+        "QuotaState": [("QuotaObservation", "state")],
+        "WarmTrigger": [("WarmPolicy", "triggers", True)],
+    }
+    for enum_name, surfaces in api_surfaces.items():
+        expected = doc_enum(enum_name)
+        for surface in surfaces:
+            schema, prop = surface[:2]
+            actual = api_enum(schema, prop, len(surface) == 3 and surface[2])
+            if actual != expected:
+                fail(f"OpenAPI {schema}.{prop} differs from {enum_name}: missing={sorted(expected-actual)}, extra={sorted(actual-expected)}")
+
+    sql_surfaces = {
+        "DelegationProfileStatus": ("delegation_profiles", "status"),
+        "DelegationStrategy": ("coworker_revisions", "delegation_strategy"),
+        "OptimizationPreference": ("delegation_profile_revisions", "optimization_preference"),
+        "ExecutionLatencyClass": ("delegation_profile_revisions", "latency_class"),
+        "EnvironmentSharingScope": ("environments", "sharing_scope"),
+        "CoworkerStatus": ("coworkers", "status"),
+        "GoalStatus": ("goals", "status"),
+        "SuggestionStatus": ("suggestions", "status"),
+        "DemonstrationSessionStatus": ("demonstration_sessions", "status"),
+        "ExecutionMethod": ("capability_invocations", "execution_method"),
+    }
+    for enum_name, location in sql_surfaces.items():
+        expected = doc_enum(enum_name)
+        actual = sql_enum(*location)
+        if actual != expected:
+            fail(f"sqlite-v1.sql {location[0]}.{location[1]} differs from {enum_name}: missing={sorted(expected-actual)}, extra={sorted(actual-expected)}")
+    if sql_enum("effects", "execution_method") != doc_enum("ExecutionMethod"):
+        fail("sqlite-v1.sql effects.execution_method differs from ExecutionMethod")
+
+    event_surfaces = {
+        "DelegationProfileStatus": [("delegation_profile_status_changed", "from"), ("delegation_profile_status_changed", "to")],
+        "CoworkerStatus": [("coworker_status_changed", "from"), ("coworker_status_changed", "to")],
+        "GoalStatus": [("goal_status_changed", "from"), ("goal_status_changed", "to")],
+        "ContextDocumentStatus": [("resource_context_document_status_changed", "from"), ("resource_context_document_status_changed", "to")],
+        "DemonstrationSessionStatus": [("demonstration_status_changed", "from"), ("demonstration_status_changed", "to")],
+        "ExecutionMethod": [("capability_invocation_created", "execution_method"), ("effect_proposed", "execution_method")],
+    }
+    for enum_name, surfaces in event_surfaces.items():
+        expected = doc_enum(enum_name)
+        for payload, prop in surfaces:
+            actual = event_enum(payload, prop)
+            if actual != expected:
+                fail(f"domain-event {payload}.{prop} differs from {enum_name}")
+    if event_enum("suggestion_resolved", "from") | event_enum("suggestion_resolved", "to") != doc_enum("SuggestionStatus"):
+        fail("domain-event suggestion_resolved from/to values do not cover SuggestionStatus")
+
+    # JSON-backed policies still need database shape/value guards.
+    failover = doc_enum("LeadFailoverMode") | doc_enum("LeadFailoverTrigger")
+    for guard_name in ("task_spec_lead_failover_shape_guard", "coworker_revision_policy_shape_guard"):
+        guard = trigger_body(guard_name)
+        for value in failover:
+            if f"'{value}'" not in guard:
+                fail(f"sqlite-v1.sql {guard_name} omits {value}")
+        if "trigger_item.value NOT IN" not in guard or "fallback_agent_binding_ids') > 3" not in guard:
+            fail(f"sqlite-v1.sql {guard_name} must reject unknown triggers and cap fallback lists")
+    interaction_guard = trigger_body("coworker_revision_policy_shape_guard")
+    for value in doc_enum("InteractionDefault"):
+        if f"'{value}'" not in interaction_guard:
+            fail(f"sqlite-v1.sql Coworker interaction policy guard omits {value}")
+    warm_guard = sql[sql.find("CREATE TRIGGER delegation_profile_warm_policy_guard"):sql.find("CREATE TABLE coworkers")]
+    warm_schema = api_schemas.get("WarmPolicy", {})
+    if not warm_guard or warm_schema.get("additionalProperties") is not False:
+        fail("WarmPolicy must have a closed API shape and a SQLite value guard")
+    for value in doc_enum("WarmTrigger") | {"COLD", "TTL", "PIN_WHILE_ACTIVE", "CLOSE_ON_SETTLE", "REUSE_IF_SAFE", "TASK", "WORKSPACE", "PROVIDER_DEFAULT", "KEEP_RECENT_HINT"}:
+        if f"'{value}'" not in warm_guard:
+            fail(f"sqlite-v1.sql WarmPolicy guard omits {value}")
+    if "max_idle_cost.amount_minor_units" not in warm_guard or "max_idle_cost.currency" not in warm_guard or "COALESCE(json_extract(NEW.warm_policy_json, '$.ttl_ms'), 0) < 0" not in warm_guard:
+        fail("sqlite-v1.sql WarmPolicy guard must validate nonnegative limits and the CostLimit shape")
+
+    binding = api_schemas.get("AgentBinding", {})
+    if "lead_eligible" not in binding.get("required", []) or "lead_eligible" not in binding.get("properties", {}) or "lead_eligible INTEGER NOT NULL" not in table("agent_bindings"):
+        fail("AgentBinding lead_eligible must be explicit in OpenAPI and SQLite")
+
+    attempt = api_schemas.get("Attempt", {})
+    pair = {"delegation_profile_id", "delegation_profile_revision"}
+    if not pair <= set(attempt.get("required", [])) or not pair <= set(attempt.get("properties", {})):
+        fail("OpenAPI Attempt must expose its nullable pinned DelegationProfile ID/revision pair")
+    attempt_props = attempt.get("properties", {})
+    if "parent_attempt_id" not in attempt.get("required", []) or any(
+        "null" not in attempt_props.get(name, {}).get("type", [])
+        for name in ("parent_attempt_id", *pair)
+    ) or len(attempt.get("allOf", [])) < 4:
+        fail("OpenAPI Attempt must constrain the nullable parent/profile/revision tuple")
+    attempt_sql = table("attempts")
+    if not pair | {"parent_attempt_id"} <= set(re.findall(r"^\s{2}(\w+)\s+", attempt_sql, re.M)) or "parent_attempt_id IS NULL AND delegation_profile_id IS NULL AND delegation_profile_revision IS NULL" not in attempt_sql:
+        fail("SQLite Attempt must persist parent/profile/revision as an all-or-none tuple")
+    if not {"parent_attempt_id", *pair} <= set(payloads.get("attempt_created", {}).get("required", [])):
+        fail("attempt.created.v1 must carry nullable parent and pinned profile provenance")
+
+    origin = {"origin_coworker_id", "origin_coworker_revision"}
+    task_schema = api_schemas.get("Task", {})
+    if not origin <= set(task_schema.get("required", [])) or not origin <= set(task_schema.get("properties", {})):
+        fail("OpenAPI Task must expose nullable Coworker origin ID/revision provenance")
+    task_sql = table("tasks")
+    if not origin <= set(re.findall(r"^\s{2}(\w+)\s+", task_sql, re.M)) or "origin_coworker_id IS NULL AND origin_coworker_revision IS NULL" not in task_sql:
+        fail("SQLite Task must persist Coworker origin as an all-or-none pair")
+    if not {"task_id", "coworker_id", "coworker_revision"} <= set(payloads.get("task_coworker_origin_pinned", {}).get("required", [])):
+        fail("task.coworker.origin.pinned.v1 must preserve exact Coworker revision provenance")
+
+    automation_props = api_schemas.get("AutomationRevision", {}).get("properties", {})
+    automation_sql = table("automation_revisions")
+    if "coworker_ref" not in automation_props or not {"coworker_id", "coworker_revision"} <= set(re.findall(r"^\s{2}(\w+)\s+", automation_sql, re.M)):
+        fail("AutomationRevision must pin Coworker ID/revision in OpenAPI and SQLite")
+    if "FOREIGN KEY(coworker_id, coworker_revision, workspace_id)" not in automation_sql or "task_automation_coworker_origin_guard" not in sql:
+        fail("SQLite must scope Automation Coworker provenance and check occurrence Task admission")
+    if "coworker_ref" not in payloads.get("automation_revision_created", {}).get("properties", {}):
+        fail("automation.revision.created.v1 must expose optional Coworker revision provenance")
+
+    for name in ("goals", "goal_revisions", "goal_task_links", "goal_routine_links"):
+        table(name)
+    if "primary_coworker_archive_guard" not in sql:
+        fail("SQLite must prevent archiving the selected primary Coworker")
+
+    suggestion = api_schemas.get("Suggestion", {}).get("properties", {})
+    if not {"proposed_by", "latency_class_hint"} <= set(suggestion) or "estimated_duration_class" in suggestion:
+        fail("Suggestion must retain producer provenance and use latency_class_hint")
+    if "proposed_by" not in payloads.get("suggestion_proposed", {}).get("required", []):
+        fail("suggestion.proposed.v1 must preserve producer provenance")
+    if "proposed_by_json" not in table("suggestions") or "uq_suggestions_open_dedupe" not in sql or "suggestion_preferences" not in sql:
+        fail("SQLite Suggestion must preserve producer, open-item dedupe, and mute preference")
+    if "SuggestionProducer" not in services_text or "proposed_by" not in responsibility_text:
+        fail("Suggestion producer ownership/provenance must be defined")
+    if re.search(r"\bContextProposal\b|\bpropose_memory\b", context_text + schemas_text + api_text + sql + events_text):
+        fail("v1 must not expose the deferred ContextProposal/propose_memory contract")
+    if re.search(r"CREATE TABLE (?:agent_)?quota_observations\b", sql) or "quota.observation." in events_text:
+        fail("QuotaObservation is operational/transient and must not become replicated domain truth")
+    if "WarmHold" not in schemas_text or re.search(r"CREATE TABLE warm_holds\b|warm\.hold\..*\.v\d+", sql + events_text):
+        fail("WarmHold must remain Runtime-local operational state, not a durable aggregate/event")
+
+    invocation = api_schemas.get("CapabilityInvocation", {}).get("properties", {})
+    invocation_sql = table("capability_invocations")
+    batch = api_schemas.get("ActionBatchMemberRef", {}).get("properties", {})
+    if not {"action_batch_id", "ordinal", "operation_count", "batch_digest"} <= set(batch) or "action_batch" not in invocation:
+        fail("ActionBatch membership must pin ID, ordinal, count, digest on each Invocation")
+    if not {"action_batch_id", "action_batch_ordinal", "action_batch_operation_count", "action_batch_digest"} <= set(re.findall(r"^\s{2}(\w+)\s+", invocation_sql, re.M)):
+        fail("SQLite CapabilityInvocation must persist ActionBatch membership")
+    if "action_batch_complete_before_dispatch" not in sql or "action_batch_member_identity_immutable" not in sql or re.search(r"CREATE TABLE action_batches\b", sql):
+        fail("ActionBatch must be complete before dispatch, immutable per member, and non-aggregate")
+    if "action_batch" not in payloads.get("capability_invocation_created", {}).get("properties", {}):
+        fail("capability.invocation.created.v1 must carry optional ActionBatch membership")
+    if not {"execution_method"} <= set(invocation) or "execution_method" not in api_schemas.get("Effect", {}).get("properties", {}):
+        fail("CapabilityInvocation and Effect must expose execution-method provenance")
+    if "capability_invocation_execution_method_guard" not in sql or "effect_identity_immutable" not in sql or "effect_invocation_scope_guard" not in sql:
+        fail("SQLite must keep Invocation/Effect execution-method provenance immutable and matched")
+
+    if "post" not in paths.get("/resources/{resourceId}/revision-uploads", {}) or "get" not in paths.get("/resources/{resourceId}/revisions", {}):
+        fail("Resource edits must use immutable revision uploads and expose revision ancestry")
+    for guard in ("resource_revision_upload_create_version_guard", "resource_revision_upload_parent_guard", "resource_revision_upload_current_head_guard", "resource_revision_upload_version_guard"):
+        if guard not in sql:
+            fail(f"SQLite Resource revision uploads are missing precondition guard {guard}")
+    if "SELECT RAISE(ABORT, 'RESOURCE_REVISION_PARENT_MISMATCH')" not in trigger_body("resource_revision_upload_parent_guard") or "SELECT RAISE(ABORT, 'RESOURCE_CONFLICT')" not in trigger_body("resource_revision_upload_current_head_guard"):
+        fail("SQLite must distinguish malformed revision parents from stale head/version conflicts")
+    routes = {
+        ("/tasks/{taskId}/progress", "get"),
+        ("/delegation-profiles/{delegationProfileId}/revisions", "post"),
+        ("/coworkers/{coworkerId}/revisions", "post"),
+        ("/goals/{goalId}/revisions", "post"),
+        ("/resources/{resourceId}/context-document/status", "patch"),
+        ("/resources/{resourceId}/context-document/deletion", "get"),
+        ("/demonstrations/{demonstrationId}/pause", "post"),
+        ("/demonstrations/{demonstrationId}/resume", "post"),
+    }
+    for path, method in routes:
+        if method not in paths.get(path, {}):
+            fail(f"OpenAPI missing required vNext route: {method.upper()} {path}")
+    for route in (
+        "GET /v1/tasks/{id}/progress",
+        "GET    /v1/resources/{resource_id}/revisions",
+        "POST   /v1/resources/{resource_id}/revision-uploads",
+        "PATCH  /v1/resources/{resource_id}/context-document/status",
+        "GET    /v1/resources/{resource_id}/context-document/deletion",
+    ):
+        if route not in api_text:
+            fail(f"API.md missing required route inventory entry: {route}")
+
+    metadata = api_schemas.get("ContextDocumentMetadata", {}).get("properties", {})
+    purge_tables = set(re.findall(r"CREATE TABLE (\w+)", sql))
+    if not {"purge_manifest_digest", "purge_target_count"} <= set(metadata) or not {"context_document_purge_plans", "context_document_purge_receipts"} <= purge_tables:
+        fail("ContextDocument deletion must pin a sealed purge manifest and exact-target receipts")
+    for guard in ("context_document_purge_plan_immutable", "context_document_purge_receipt_admission_guard", "context_document_deleted_requires_purge_ack"):
+        if guard not in sql:
+            fail(f"SQLite missing ContextDocument deletion guard {guard}")
+    if "context_document_purge_plan_shape_guard" not in sql:
+        fail("SQLite ContextDocument purge plans must reject duplicate/malformed targets")
+    if "resource_context_document_purge_acknowledged" not in payloads or "resource.context_document.purge.acknowledged.v1" not in registry:
+        fail("ContextDocument purge acknowledgement must be a typed event")
+
+    capture_props = api_schemas.get("DemonstrationCapturePolicy", {}).get("properties", {})
+    if not {"max_duration_ms", "max_actions", "max_trace_bytes", "allowed_environment_class", "sensitive_region_policy"} <= set(capture_props):
+        fail("DemonstrationCapturePolicy must define finite bounds and sensitive-region behavior")
+    if "demonstration_capture_bounds_guard" not in sql or "capture_policy_digest" not in payloads.get("demonstration_status_changed", {}).get("required", []):
+        fail("DemonstrationSession must persist capture bounds and policy provenance")
+    if "DemonstrationSession" not in state_text or "PAUSED" not in state_text or "capture" not in runtime_text.lower():
+        fail("Demonstration transitions and capture ownership must be documented")
+    if "ContextDocumentPurgePlan" not in context_text or "SuggestionProducer" not in services_text:
+        fail("Context deletion and Suggestion producer ownership must be documented")
+    if "last verified activity" in experience_text.lower():
+        fail("Experience must distinguish observed activity from Evidence-backed verification")
+    if "### Lead changes and failover" not in experience_text or "ALLOW_LISTED" not in experience_text:
+        fail("Experience must specify ASK/ALLOW_LISTED lead failover timing and visibility")
+    if "What should we work on?" not in experience_text:
+        fail("Experience must define the Coworker-facing primary composer")
+
+
 def main() -> int:
     check_json_schemas()
     check_event_contract()
@@ -2829,6 +3122,7 @@ def main() -> int:
     check_backup_contract()
     check_runtime_routine_contract()
     check_channel_reply_contract()
+    check_vnext_responsibility_contract()
     check_openapi()
     check_storage()
     check_attempt_lease_contract()

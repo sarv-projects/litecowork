@@ -212,6 +212,7 @@ AutomationRevision {
   routine_revision
   triggers: TriggerSpec[]
   execution_policy
+  coworker_ref?: CoworkerRevisionRef
   authored_by
   created_at
 }
@@ -221,6 +222,14 @@ The selected RoutineRevision is immutable and pinned. Editing the Routine alone 
 change existing Automations. Each occurrence pins both AutomationRevision and the
 specific `trigger_id`; a Task stores the rendered TaskSpec plus Routine/Automation
 provenance. See `ROUTINES.md` for Routine lifecycle and user flows.
+
+When `coworker_ref` is present, it pins the Coworker revision whose lead, worker allowlist,
+delegation strategy, budget defaults, context policy, and interaction defaults are used to
+render each occurrence Task. The Coworker aggregate's current status is checked separately
+at occurrence admission; `PAUSED` or `ARCHIVED` blocks proactive scheduled materialization.
+Changing the Coworker does not rewrite an AutomationRevision. The owner must revise the
+Automation to adopt another Coworker revision. Historical Tasks retain the revision that
+their pinned AutomationRevision selected.
 
 ## Task inputs and trigger security
 

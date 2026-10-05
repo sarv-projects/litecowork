@@ -1500,6 +1500,185 @@ archived before commit returns `DELEGATION_PROFILE_ARCHIVED`; duplicate name ret
 `CONFLICT`. Any failure before commit creates no profile or event. The source profile and
 all its Attempts remain unchanged. Portable export/import is outside v1.
 
+## F71 — Policy-based lead failover
+
+**Actors/preconditions:** TaskService, LeadFailoverService, current lead adapter/Runtime
+observer; Task has a pinned `TaskSpecRevision` and `LeadFailoverPolicy`.
+
+1. An authenticated observer records a typed, expiring
+   `LeadFailoverTriggerObservation`. The observation identifies the affected binding,
+   source, source observation, and Runtime incarnation where relevant; it contains no
+   quota secret or provider handle.
+2. LeadFailoverService loads the current TaskSpecRevision. `DISABLED` yields no action;
+   `ASK` opens a Needs You decision without changing the Task lead. For
+   `ALLOW_LISTED`, the service checks the trigger and change budget, then considers
+   fallback bindings in their pinned order.
+3. Each candidate is revalidated for Workspace membership, binding enabled state,
+   `lead_eligible`, supported adapter options, endpoint, current Runtime/incarnation,
+   authentication, Trust, inputs, deadline, and remaining budget. No candidate receives
+   inherited grants, approvals, SecretLeases, native session IDs, or Attempt ownership.
+4. At a safe planning boundary, TaskService uses expected Task version to fence new work
+   from the old lead, settle/close its planning session, create a bounded handoff from
+   durable Task/Artifact/Evidence state, and append `task.lead_agent.changed.v1` with
+   `cause=POLICY_FAILOVER`, service actor, TaskSpec revision, and observation. A fresh
+   lead session is admitted only after ordinary checks pass.
+
+**Failure/UI/postcondition:** A stale observation, TaskSpec change, competing owner
+change, or stale Task version causes re-evaluation; it never overrides the user's newer
+choice. If no fallback is eligible or the change limit is reached, no lead-change event is
+written and Needs You explains the blocker. Existing Attempts remain pinned. A manual
+owner change uses `cause=OWNER_REQUEST` and a principal actor and follows the same fencing
+and handoff boundary.
+
+## F72 — Coworker-owned Automation creates a Task
+
+**Actors/preconditions:** AutomationService, TriggerCoordinator, CoworkerService,
+TaskService; the selected AutomationRevision pins a same-Workspace `CoworkerRevisionRef`.
+
+1. TriggerCoordinator claims the occurrence under its existing trigger-host epoch and
+   exact Automation/Routine revisions.
+2. Before materializing a Task, TaskService checks that the Automation is still enabled,
+   the current Coworker is `ACTIVE`, the pinned Coworker revision remains available, and
+   its lead/profile bindings are currently eligible. A paused or archived Coworker blocks
+   new Coworker-originated scheduled Tasks even if the occurrence was already claimed.
+3. In one transaction, TaskService creates the ordinary Task and initial TaskSpecRevision,
+   pins both Automation and Coworker provenance, advances the occurrence to STARTED, and
+   writes their events. The effective lead-failover policy and current Coworker options are
+   materialized in that Task's immutable TaskSpecRevision.
+4. Existing Tasks are unaffected by later Coworker pause/archive or Automation edits.
+
+**Failure/UI/postcondition:** A pause/archive racing Task creation serializes on the
+Coworker/occurrence admission boundary. If pause/archive wins, no Task is created and the
+occurrence remains blocked/skipped under its policy with an explanatory health signal. An
+explicit owner-submitted Task may still use a PAUSED Coworker as origin.
+
+## F73 — Bounded ActionBatch with partial failure
+
+**Actors/preconditions:** AgentSession, adapter, CapabilityBroker, InvocationRunner,
+EffectService; an Attempt-scoped grant covers each operation.
+
+1. The adapter produces an ordered ActionBatch with 1–64 operations, versioned
+   pre/postcondition refs, abort conditions, and a canonical digest. Core resolves one
+   exact execution method before member admission.
+2. CapabilityBroker admits every member as an ordinary CapabilityInvocation with the
+   shared batch ID/count/digest, contiguous zero-based ordinal, same execution method,
+   independent request digest/idempotency key, and its own authorization decision. The
+   batch is not dispatched unless all members have been admitted successfully.
+3. Immediately before each member dispatch, Core rechecks lease, grant, approval,
+   preconditions, and abort conditions. A consequential member receives its own Effect;
+   the Effect pins that Invocation and method.
+4. If a member fails or an abort condition becomes true, later undispatched members are
+   cancelled. Every earlier dispatched member and Effect is settled/reconciled separately
+   before fallback or continuation. A single provider transport call is allowed only if
+   it reports separately correlatable outcomes for every member.
+
+**Failure/UI/postcondition:** There is no transaction-wide rollback claim. The Task
+shows each member's actual status and any ambiguous Effect; Verification uses the
+individual Evidence/Effects. Replaying the whole batch under new idempotency identities is
+not an automatic recovery.
+
+## F74 — Concurrent Resource revision edit
+
+**Actors/preconditions:** ResourceService and two authenticated editors; both selected the
+same Resource head/version.
+
+1. Each editor creates a revision-upload session with `If-Match`, expected Resource
+version, and the exact observed head revision set before uploading chunks.
+2. The first valid commit verifies the digest, atomically appends the immutable
+   ResourceRevision and parent edges, advances the head/version, and emits
+   `resource.revision.observed.v1`.
+3. The second commit rechecks expected version and exact current head set. If stale, it
+   returns `RESOURCE_CONFLICT`, accepts no new revision, and preserves the uploaded bytes
+   only as an unreferenced temporary blob subject to bounded cleanup.
+4. The editor explicitly rebases or merges by naming every current head, then starts a new
+   upload session. No last-writer-wins promotion occurs.
+
+**Failure/UI/postcondition:** The UI identifies the changed heads and offers compare,
+rebase, or explicit merge. A branch choice alone does not create a merge.
+
+## F75 — ContextDocument revocation and deletion
+
+**Actors/preconditions:** ResourceService, PersonalContextService, registered replica
+providers, purge reconciler; owner supplies expected Resource version.
+
+1. Revocation changes `ACTIVE -> REVOKED`, emits the status event, and immediately fences
+   future ResourceResolver reads and new Task context attachment while retaining bytes.
+2. Deletion enumerates every registered Core-owned content/index replica and the exact
+   ResourceRevision IDs it stores, canonicalizes the ordered target list, computes the
+   manifest digest, and writes an immutable purge plan. In one Resource transaction it
+   creates one pending receipt per target, sets `DELETION_PENDING` with the digest/count,
+   appends the tombstone event, and makes all content reads fail.
+3. Each replica deletes the listed content and returns an idempotent acknowledgement bound
+   to its target identity, Runtime incarnation if applicable, and exact revision set.
+   Core records a receipt digest and `resource.context_document.purge.acknowledged.v1`.
+4. The reconciler sets `DELETED` only when acknowledged receipts exactly cover the sealed
+   plan. A zero-target plan is still sealed and verified. Provider-owned replicas remain
+   pending until their registered adapter confirms deletion.
+
+**Failure/UI/postcondition:** Retryable failures leave the Resource tombstoned and unreadable;
+they never restore content. Active agent sessions that already received the content are
+stopped/replaced at a safe boundary; native history cannot be recalled. Historical
+Task/Evidence IDs and digests remain, while deleted content bytes do not enter backup
+restore.
+
+## F76 — Suggestion producer admission and suppression
+
+**Actors/preconditions:** Registered `SuggestionProducer`, SuggestionService, Workspace
+owner; producer receives only a bounded, authorized context projection.
+
+1. A typed trigger invokes eligible producers; each returns ephemeral candidates with
+   `proposed_by`, exact source/Goal revision refs, reason, action, optional TaskSpec, and
+   expiry. A producer cannot write Suggestion or Task state.
+2. SuggestionService authenticates producer registration, validates provenance/scope and
+   expiry, derives the deterministic kind/dedupe key, checks mute preferences and the
+   dismissal cooldown, and limits candidate volume.
+3. Suppressed candidate text is discarded without a domain event. An accepted candidate
+   becomes an immutable Suggestion with `proposed_by`; owner acceptance creates an ordinary
+   Task/editor action through the normal service transaction.
+
+**Failure/UI/postcondition:** Invalid, stale, cross-Workspace, muted, duplicate, or expired
+candidates do not appear on Home. “Why this?” resolves only the safe pinned source refs
+that the owner is authorized to inspect.
+
+## F77 — Bounded Teach-a-task capture
+
+**Actors/preconditions:** Owner, DemonstrationSessionService, currently controlled
+Browser/Desktop Environment; immutable policy pins caps and sensitive-region handling.
+
+1. Owner starts capture. The session validates Environment class and pins maximum duration,
+   action count, trace bytes, and `PAUSE_ON_DETECTION` or `OMIT_SENSITIVE_FIELDS`.
+2. Semantic element/action observations append to a bounded Resource trace. Credentials,
+   passwords, one-time codes, and configured sensitive fields become placeholders or are
+   omitted; coordinate-only traces do not become replay authority.
+3. Owner may pause and resume capture in the same authorized Environment. Sensitive-region
+   detection or any configured cap pauses/stops capture; the UI explains the reason and
+   offers review, continue-after-redaction where allowed, or abort.
+4. On completion, owner reviews the trace; conversion creates an ordinary SkillProposal
+   draft with typed inputs and verification requirements. Publishing remains the existing
+   separate approval/LitePSM package flow.
+
+**Failure/UI/postcondition:** Expired Environment authority, cap exhaustion, trace write
+failure, or a Runtime-incarnation change pauses or aborts the capture. No partial trace is
+silently promoted into an enabled Skill.
+
+## F78 — Workspace worker enabled versus Coworker assignment
+
+**Actors/preconditions:** Owner, DelegationProfileService, CoworkerService; both profile
+and Coworker revisions use expected-version commands.
+
+1. The owner enables an installed AgentBinding as a DelegationProfile. This only makes the
+   profile Workspace-eligible; it does not start a process or grant it to any Coworker.
+2. The Subagents roster shows `Enabled · used by Alex` or `Enabled · not assigned`, and a
+   profile detail view lists Coworkers that currently allow it.
+3. To assign a profile, CoworkerService creates a new CoworkerRevision whose
+   `enabled_delegation_profile_ids` includes the enabled same-Workspace profile.
+4. At every child Attempt admission, profile status, Coworker allowlist, AgentBinding,
+   harness options, Trust, budget, Runtime, and Environment are revalidated.
+
+**Failure/UI/postcondition:** Disabling or archiving a profile blocks new admissions but
+does not rewrite/cancel Attempts that already pinned it. Removing a profile from a Coworker
+revision affects future Tasks/children only.
+
 ## Shared flow invariants
 
 - Every mutating command has an authenticated principal, RequestId, correlation ID, and

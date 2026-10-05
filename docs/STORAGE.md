@@ -117,6 +117,8 @@ approval_uses
 resources
 resource_revisions
 resource_revision_parents
+context_document_purge_plans             # Resource-owned immutable purge target manifest
+context_document_purge_receipts          # exact per-replica deletion acknowledgements
 resource_locations
 resource_location_bindings
 file_identity_bindings
@@ -456,6 +458,10 @@ upload chunks, active leases, and
 other Runtime-local process/provider handles. It includes durable Environment and
 checkpoint metadata only. Portable checkpoint blobs are selected only if both the
 Environment's `INCLUDE_CHECKPOINTS` policy and Workspace replication policy permit them.
+ContextDocument tombstones, sealed purge target manifests, and acknowledgement receipts
+are durable Resource recovery state and remain in backups. Content blobs whose purge was
+acknowledged are not reintroduced by restore; their Resource/revision identities and
+digests remain for historical Task/Evidence provenance.
 Restore registers a new Runtime identity and incarnation, drops all old local bindings,
 and requires provider reattachment before an Environment can be used.
 Backups are separate from Runtime Mesh replication and are not a substitute for it.

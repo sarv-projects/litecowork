@@ -203,6 +203,7 @@ TaskSpecRevision {
   workspace_instruction_revision: u64?
   budget: BudgetSpec?
   delegation_budget_policy: DelegationBudgetPolicy?
+  lead_failover_policy: LeadFailoverPolicy
   deadline: Timestamp?
   source_message_refs: MessageId[]
   placement_preference: PlacementPreference
@@ -217,6 +218,12 @@ Every parent revision belongs to the same Task and has a lower revision number. 
 initial revision has no parents. When concurrent revisions share one parent, the Task
 stays pointed at the last common revision and becomes `NEEDS_USER`; a resolution
 revision records all sibling parents before becoming current.
+
+`lead_failover_policy` is always materialized in the immutable TaskSpecRevision. Task
+creation resolves an explicit request first, then the selected CoworkerRevision default,
+then `DISABLED`. Omission during a later TaskSpec edit inherits the previous policy;
+disabling is an explicit `DISABLED` value. The policy only selects a replacement lead
+after a typed provider-confirmed trigger and never transfers authority.
 
 ### PlanRevision
 
@@ -1014,6 +1021,8 @@ Effect {
   idempotency_key: string?
   state: EffectState
   request_digest: Sha256Digest
+  capability_invocation_id: CapabilityInvocationId
+  execution_method: ExecutionMethod
   dispatch_ordinal: u32
   result_ref: ResourceRef?
   observed_state: JsonObject?
@@ -1035,6 +1044,12 @@ Evidence {
   created_at: Timestamp
 }
 ```
+
+Every Core-mediated consequential Effect points to exactly one Attempt-scoped
+CapabilityInvocation. Its `execution_method` is provenance for the route used by that
+Invocation, not agent-reported UI text. The Effect and Invocation must agree on Task,
+Attempt, request digest, operation, and method. `UNKNOWN` is retained when the adapter
+cannot prove the route; it is never displayed as a specific API/browser method.
 
 Each new observation is a new immutable Evidence row; an earlier `REPORTED` record is
 not upgraded in place to `OBSERVED` or `VERIFIED`.
@@ -1179,6 +1194,7 @@ AutomationRevision {
   routine_revision: u64
   triggers: TriggerSpec[]
   execution_policy: AutomationExecutionPolicy
+  coworker_ref?: CoworkerRevisionRef
   authored_by: PrincipalRef
   created_at: Timestamp
 }
@@ -1220,6 +1236,11 @@ AutomationCursor {
   version: u64
 }
 ```
+
+`coworker_ref`, when present, is a pinned `CoworkerRevisionRef`. An occurrence Task uses
+that exact revision for Coworker defaults while separately checking the Coworker
+aggregate is still `ACTIVE` at new Task admission. Pause/archive fences new scheduled
+materialization; already-created Tasks retain their TaskSpec and origin pins.
 
 Opaque provider cursors are not fields of the replicated AutomationCursor. They live in
 an encrypted Runtime-local `AutomationTriggerBinding`, keyed by the active host epoch;
@@ -1405,6 +1426,8 @@ CapabilityInvocation {
   capability_ref: CapabilityRef
   operation: string
   request_digest: Sha256Digest
+  execution_method: ExecutionMethod
+  action_batch?: ActionBatchMemberRef
   idempotency_key: string?
   status: CapabilityInvocationStatus
   provider_task_status: ProviderTaskStatus?
@@ -1423,6 +1446,16 @@ CapabilityInvocation {
   version: u64
 }
 ```
+
+`execution_method` is selected by the adapter before Invocation admission and is immutable
+from creation; `UNKNOWN` is valid only when the adapter/provider cannot prove a more
+specific route. Dispatch repeats the pinned method. A route fallback that changes the
+method creates a new Invocation so Effects and Evidence keep exact provenance.
+`action_batch` is optional
+membership in a bounded ActionBatch value, not a separate aggregate. Every member is an
+ordinary Invocation with its own request digest, idempotency key, status, result, and
+optional Effect, and members in one batch share the selected execution method. One
+ActionBatch is never an atomic transaction.
 
 Provider-specific task handles and cursors are not fields of this replicated aggregate.
 They are held only in encrypted Runtime-local `CapabilityInvocationProviderBinding`
@@ -1732,6 +1765,28 @@ Resource {
   created_at: Timestamp
   updated_at: Timestamp
   version: u64
+}
+
+ContextDocumentPurgePlan { # immutable Resource-owned subrecord
+  workspace_id: WorkspaceId
+  resource_id: ResourceId
+  manifest_digest: Sha256Digest
+  target_count: u32
+  targets: ContextDocumentPurgeTarget[]
+  sealed_at: Timestamp
+}
+
+ContextDocumentPurgeReceipt { # append-only acknowledgement of one exact plan target
+  workspace_id: WorkspaceId
+  resource_id: ResourceId
+  replica_ref: string # stable non-secret identity, never a storage locator
+  replica_kind: BLOB | DERIVED_INDEX
+  runtime_id: RuntimeId?
+  runtime_incarnation_id: RuntimeIncarnationId?
+  target_revision_ids: ResourceRevisionId[]
+  status: PENDING | ACKNOWLEDGED
+  receipt_digest: Sha256Digest?
+  acknowledged_at: Timestamp?
 }
 
 ProviderIdentity {

@@ -96,6 +96,18 @@ user's Task.
     user action before they create work or reusable definitions.
 20. **Unknown remains unknown.** Unknown cost, quota, progress, or provider readiness is
     never displayed or ranked as zero, exhausted, complete, or ready without evidence.
+21. **Lead failover is versioned Task policy.** A Coworker may supply a default, but each
+    TaskSpecRevision pins the effective policy. A lead change rechecks eligibility and
+    creates a fresh session/handoff; it never transfers authority or rewrites Attempts.
+22. **Coworker-owned schedules pin Coworker revisions.** AutomationRevision may identify
+    the Coworker defaults used to materialize an occurrence Task. Current Coworker status
+    still fences new scheduled admission.
+23. **Execution provenance is Core-recorded.** A consequential Effect links one exact
+    CapabilityInvocation and the method used. Unknown method remains explicit; ActionBatch
+    groups member Invocations but never makes their Effects transactional.
+24. **Personal context remains Resource-backed and revocable.** Core controls retrieval
+    eligibility and deletion of owned replicas. Provider-derived memory proposals are not
+    part of v1 until they have an owner-review lifecycle.
 
 ## 3. Canonical concepts and ownership
 

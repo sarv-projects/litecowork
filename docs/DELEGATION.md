@@ -348,6 +348,34 @@ when the adapter has made none. Expired observations are returned as `UNKNOWN` w
 original timestamps retained. The UI shows source and age and never draws a remaining
 quota meter unless the source supplies a quantified unit.
 
+## LeadFailoverPolicy
+
+`LeadFailoverPolicy` is Task-scoped continuation policy, not authority. `CoworkerRevision`
+may provide a default; Task creation resolves and pins the effective policy into
+`TaskSpecRevision`. Without a Coworker default the policy is explicitly `DISABLED`. Later
+Coworker edits do not alter existing Tasks. A TaskSpec revision inherits the previous
+policy unless the owner changes it.
+
+```text
+LeadFailoverPolicy {
+  mode: DISABLED | ASK | ALLOW_LISTED
+  triggers: (AGENT_UNAVAILABLE | QUOTA_EXHAUSTED | RUNTIME_UNAVAILABLE)[]
+  fallback_agent_binding_ids: AgentBindingId[] # ordered and unique; maximum 3
+  max_lead_changes: u32 # 0..3
+}
+```
+
+`DISABLED` requires empty triggers/fallbacks and zero changes. `ASK` requires at least one
+trigger and may list up to three suggested bindings, but automatic changes remain zero.
+`ALLOW_LISTED` requires at least one trigger and fallback and a positive change limit no
+greater than the fallback count. Only a provider-confirmed trigger can activate this
+policy. Each candidate is rechecked for Workspace scope, enabled/lead-eligible binding,
+endpoint, Runtime/incarnation, auth, policy, resources, Trust, budget, and deadline. The
+switch creates a fresh lead AgentSession and bounded handoff from durable Task state;
+grants, Approvals, SecretLeases, provider handles, and native transcripts never transfer.
+Existing Attempts retain their original binding and lease. User-requested lead changes
+remain available independently of automatic failover policy.
+
 `WorkerPerformanceProjection` is exposed by
 `GET /v1/delegation-profiles/{id}/performance?task_category=`. It is derived from
 terminal child Attempts and their VerificationRuns/UsageObservations in a rolling 90-day
@@ -577,11 +605,11 @@ bounded handoff projection from TaskSpec, Plan, Steps, decisions, Artifacts, Evi
 open Effects, blockers, remaining budget, and reason. It contains no hidden reasoning,
 full native transcript, or provider handle. It does not reparent active child Attempts.
 
-A low-quota or predicted-failure observation may prewarm an eligible fallback without
-invoking it. If the lead becomes unavailable, continue only when the Task/Coworker policy
-explicitly permits a lead change; otherwise present the fallback in Needs You. Every new
-lead gets a fresh AgentSession and bounded projection. A live process is never portrayed
-as having migrated.
+A low-quota or predicted-failure observation may prepare an eligible fallback host without
+invoking it. A Task may automatically change lead only under its pinned `ALLOW_LISTED`
+LeadFailoverPolicy; `ASK` presents choices in Needs You and `DISABLED` stops for the owner.
+Every new lead gets a fresh AgentSession and bounded projection. A live process is never
+portrayed as having migrated.
 
 ## Deadline-sensitive execution
 
@@ -598,8 +626,13 @@ use. A lower layer is selected only if it can faithfully perform the requested o
 and satisfy the same policy/evidence contract. There is no generic fallback that changes
 meaning. A provider may execute a bounded `ActionBatch` only when each consequential
 suboperation remains individually authorized, idempotent/reconcilable, and represented by
-its own Effect/Evidence. Final consequential actions may require explicit human takeover.
-An ActionBatch is not an atomic transaction: if a suboperation fails or an abort condition
+its own CapabilityInvocation, optional Effect, and Evidence. Each batch member has its own
+request digest, grant/policy check, idempotency key, and settlement. Members persist the
+same `action_batch_id` and digest with a zero-based ordinal and total operation count; the
+ActionBatch is a grouping value, not a transaction or aggregate. A provider may transport
+multiple operations in one request only when it returns per-member outcomes and preserves
+per-member idempotency and reconciliation. Final consequential actions may require explicit
+human takeover. An ActionBatch is not an atomic transaction: if a suboperation fails or an abort condition
 becomes true, the provider stops later operations and LiteCowork reconciles every
 dispatched Effect. Continue only from a fresh observation after reconciliation; changing
 execution method must not restart a possibly completed operation. Batch timeout, user

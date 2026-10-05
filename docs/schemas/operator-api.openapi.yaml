@@ -1843,6 +1843,36 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/DemonstrationSession'}
         default: {$ref: '#/components/responses/Error'}
+  /demonstrations/{demonstrationId}/pause:
+    post:
+      tags: [demonstrations]
+      operationId: pauseDemonstration
+      parameters:
+      - {name: demonstrationId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      responses:
+        '200':
+          description: Capture is paused; no further observations are appended until explicit resume.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DemonstrationSession'}
+        default: {$ref: '#/components/responses/Error'}
+  /demonstrations/{demonstrationId}/resume:
+    post:
+      tags: [demonstrations]
+      operationId: resumeDemonstration
+      parameters:
+      - {name: demonstrationId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      responses:
+        '200':
+          description: Capture resumes after consent, Environment, and remaining limits are revalidated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DemonstrationSession'}
+        default: {$ref: '#/components/responses/Error'}
   /demonstrations/{demonstrationId}/abort:
     post:
       tags: [demonstrations]
@@ -2164,6 +2194,73 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/CommittedResource'}
+        default: {$ref: '#/components/responses/Error'}
+  /resources/{resourceId}/revision-uploads:
+    post:
+      tags: [resources]
+      operationId: createResourceRevisionUpload
+      parameters:
+      - name: resourceId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateResourceRevisionUploadRequest'}
+      responses:
+        '201':
+          description: Bounded upload session for a new immutable revision; parent heads are checked before accepting chunks.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ResourceUploadSession'}
+        default: {$ref: '#/components/responses/Error'}
+  /resources/{resourceId}/context-document/status:
+    patch:
+      tags: [resources]
+      operationId: setContextDocumentStatus
+      parameters:
+      - name: resourceId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1}
+      - {$ref: '#/components/parameters/IfMatch'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetContextDocumentStatusRequest'}
+      responses:
+        '202':
+          description: Revocation or deletion accepted; DELETION_PENDING blocks content reads until Core-managed replicas acknowledge purge.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ContextDocumentDeletionStatus'}
+        '200':
+          description: ContextDocument status updated without a purge job.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Resource'}
+        default: {$ref: '#/components/responses/Error'}
+  /resources/{resourceId}/context-document/deletion:
+    get:
+      tags: [resources]
+      operationId: getContextDocumentDeletionStatus
+      parameters:
+      - name: resourceId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Current deletion/tombstone projection; content bytes and provider results are never included.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ContextDocumentDeletionStatus'}
         default: {$ref: '#/components/responses/Error'}
   /resources/search:
     get:
@@ -3881,13 +3978,15 @@ components:
         version: {type: integer, minimum: 1}
     Attempt:
       type: object
-      required: [attempt_id, task_id, step_id, agent_binding_id, runtime_id, runtime_incarnation_id, environment_id, capability_grant_ids, failover_class, status, created_at, version]
+      required: [attempt_id, task_id, step_id, parent_attempt_id, agent_binding_id, delegation_profile_id, delegation_profile_revision, runtime_id, runtime_incarnation_id, environment_id, capability_grant_ids, failover_class, status, created_at, version]
       properties:
         attempt_id: {type: string}
         task_id: {type: string}
         step_id: {type: string}
         parent_attempt_id: {type: [string, 'null']}
         agent_binding_id: {type: string}
+        delegation_profile_id: {type: [string, 'null']}
+        delegation_profile_revision: {type: [integer, 'null'], minimum: 1}
         agent_session_id: {type: [string, 'null']}
         runtime_id: {type: string}
         runtime_incarnation_id: {type: string}
@@ -3906,6 +4005,31 @@ components:
         settled_at: {type: [string, 'null'], format: date-time}
         created_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
+      allOf:
+      - if:
+          properties: {parent_attempt_id: {type: string}}
+          required: [parent_attempt_id]
+        then:
+          properties:
+            delegation_profile_id: {type: string, minLength: 1}
+            delegation_profile_revision: {type: integer, minimum: 1}
+      - if:
+          properties: {parent_attempt_id: {type: 'null'}}
+          required: [parent_attempt_id]
+        then:
+          properties:
+            delegation_profile_id: {type: 'null'}
+            delegation_profile_revision: {type: 'null'}
+      - if:
+          properties: {delegation_profile_id: {type: string}}
+          required: [delegation_profile_id]
+        then:
+          properties: {delegation_profile_revision: {type: integer, minimum: 1}}
+      - if:
+          properties: {delegation_profile_revision: {type: integer}}
+          required: [delegation_profile_revision]
+        then:
+          properties: {delegation_profile_id: {type: string, minLength: 1}}
     ExecutionDependencyPlan:
       type: object
       additionalProperties: false
@@ -3965,7 +4089,7 @@ components:
         blocker_code: {type: [string, 'null']}
     Effect:
       type: object
-      required: [effect_id, task_id, attempt_id, operation, target, state, request_digest, dispatch_ordinal, created_at, updated_at, version]
+      required: [effect_id, task_id, attempt_id, operation, target, state, request_digest, capability_invocation_id, execution_method, dispatch_ordinal, created_at, updated_at, version]
       properties:
         effect_id: {type: string}
         task_id: {type: string}
@@ -3978,6 +4102,8 @@ components:
         idempotency_key: {type: [string, 'null']}
         state: {type: string, enum: [PROPOSED, STARTED, ACKNOWLEDGED, RECONCILING, OBSERVED, VERIFIED, FAILED, AMBIGUOUS]}
         request_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        capability_invocation_id: {type: string, minLength: 1}
+        execution_method: {type: string, enum: [STRUCTURED_API, STRUCTURED_BROWSER, ACCESSIBILITY_BROWSER, SCREEN_COMPUTER_USE, DETERMINISTIC_LOCAL, NATIVE_AGENT_TOOL, UNKNOWN]}
         dispatch_ordinal: {type: integer, minimum: 0}
         result_ref:
           oneOf: [{$ref: '#/components/schemas/ResourceRef'}, {type: 'null'}]
@@ -4264,11 +4390,38 @@ components:
         media_type: {type: string}
         size_bytes: {type: integer, minimum: 0}
         expected_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
-        context_document: {$ref: '#/components/schemas/ContextDocumentMetadata'}
+        context_document: {$ref: '#/components/schemas/ContextDocumentCreateMetadata'}
+    CreateResourceRevisionUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [media_type, size_bytes, parent_revision_ids]
+      properties:
+        media_type: {type: string, minLength: 1}
+        size_bytes: {type: integer, minimum: 0}
+        expected_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        parent_revision_ids: {type: array, minItems: 0, maxItems: 16, uniqueItems: true, items: {type: string, minLength: 1}}
+    SetContextDocumentStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string, enum: [ACTIVE, REVOKED, DELETION_PENDING], description: DELETED is set only by the Core purge reconciler after every owned replica acknowledges deletion.}
+    ContextDocumentDeletionStatus:
+      type: object
+      additionalProperties: false
+      required: [resource_id, status, manifest_digest, required_replica_count, acknowledged_replica_count, pending_provider_sources, updated_at]
+      properties:
+        resource_id: {type: string}
+        status: {type: string, enum: [ACTIVE, REVOKED, DELETION_PENDING, DELETED]}
+        manifest_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        required_replica_count: {type: integer, minimum: 0}
+        acknowledged_replica_count: {type: integer, minimum: 0}
+        pending_provider_sources: {type: array, items: {type: string}}
+        updated_at: {type: string, format: date-time}
     ResourceUploadSession:
       type: object
       additionalProperties: false
-      required: [upload_id, workspace_id, display_name, media_type, expected_size_bytes, context_document, chunk_size_bytes, received_ranges, next_missing_offset, state, expires_at, created_at, version]
+      required: [upload_id, workspace_id, display_name, media_type, expected_size_bytes, context_document, resource_id, expected_resource_version, parent_revision_ids, chunk_size_bytes, received_ranges, next_missing_offset, state, expires_at, created_at, version]
       properties:
         upload_id: {type: string}
         workspace_id: {type: string}
@@ -4277,6 +4430,9 @@ components:
         expected_size_bytes: {type: integer, minimum: 0}
         expected_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
         context_document: {oneOf: [{$ref: '#/components/schemas/ContextDocumentMetadata'}, {type: 'null'}]}
+        resource_id: {type: [string, 'null']}
+        expected_resource_version: {type: [integer, 'null'], minimum: 1, description: Pinned from If-Match for a revision upload; null for an initial Resource upload.}
+        parent_revision_ids: {type: array, uniqueItems: true, items: {type: string}}
         chunk_size_bytes: {type: integer, minimum: 1}
         received_ranges:
           type: array
@@ -4291,7 +4447,6 @@ components:
         next_missing_offset: {type: integer, minimum: 0}
         state: {type: string, enum: [OPEN, CONTENT_RECEIVED, COMMITTED, FAILED, EXPIRED]}
         expires_at: {type: string, format: date-time}
-        resource_id: {type: [string, 'null']}
         created_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
     CreateConversationRequest:
@@ -4381,6 +4536,7 @@ components:
         budget:
           oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]
         delegation_budget_policy: {oneOf: [{$ref: '#/components/schemas/DelegationBudgetPolicy'}, {type: 'null'}]}
+        lead_failover_policy: {$ref: '#/components/schemas/LeadFailoverPolicy', description: Optional on create; omission resolves Coworker default or explicit DISABLED. Null is not accepted.}
         deadline: {type: [string, 'null'], format: date-time}
         placement_preference: {$ref: '#/components/schemas/PlacementPreference'}
         preferred_lead_agent_binding_id: {type: [string, 'null']}
@@ -4421,6 +4577,7 @@ components:
           items: {$ref: '#/components/schemas/ApprovalRequirement'}
         placement_preference: {$ref: '#/components/schemas/PlacementPreference'}
         preferred_lead_agent_binding_id: {type: [string, 'null']}
+        lead_failover_policy: {$ref: '#/components/schemas/LeadFailoverPolicy', description: Optional; omission inherits the current TaskSpec policy.}
     TaskSpecRevision:
       type: object
       required:
@@ -4435,6 +4592,7 @@ components:
       - approvals_required
       - input_refs
       - placement_preference
+      - lead_failover_policy
       - authored_by
       - created_at
       properties:
@@ -4473,11 +4631,12 @@ components:
           items: {type: string}
         placement_preference: {$ref: '#/components/schemas/PlacementPreference'}
         preferred_lead_agent_binding_id: {type: [string, 'null']}
+        lead_failover_policy: {$ref: '#/components/schemas/LeadFailoverPolicy'}
         authored_by: {$ref: '#/components/schemas/PrincipalRef'}
         created_at: {type: string, format: date-time}
     Task:
       type: object
-      required: [task_id, workspace_id, lead_agent_binding_id, blocking_conditions, priority, created_by, current_spec_revision, status, version, created_at, updated_at]
+      required: [task_id, workspace_id, origin_coworker_id, origin_coworker_revision, lead_agent_binding_id, blocking_conditions, priority, created_by, current_spec_revision, status, version, created_at, updated_at]
       properties:
         task_id: {type: string}
         workspace_id: {type: string}
@@ -5128,7 +5287,7 @@ components:
         updated_at: {type: string, format: date-time}
     AutomationRevision:
       type: object
-      required: [automation_id, revision, routine_id, routine_revision, triggers, execution_policy, authored_by, created_at]
+      required: [automation_id, revision, routine_id, routine_revision, triggers, execution_policy, coworker_ref, authored_by, created_at]
       properties:
         automation_id: {type: string}
         revision: {type: integer, minimum: 1}
@@ -5136,6 +5295,7 @@ components:
         routine_revision: {type: integer, minimum: 1}
         triggers: {type: array, minItems: 1, items: {$ref: '#/components/schemas/TriggerSpec'}}
         execution_policy: {$ref: '#/components/schemas/AutomationExecutionPolicy'}
+        coworker_ref: {oneOf: [{$ref: '#/components/schemas/CoworkerRevisionRef'}, {type: 'null'}]}
         authored_by: {$ref: '#/components/schemas/PrincipalRef'}
         created_at: {type: string, format: date-time}
     AutomationOccurrence:
@@ -5208,10 +5368,76 @@ components:
     ContextDocumentMetadata:
       type: object
       additionalProperties: false
+      required: [kind, owner_ref, status]
+      properties:
+        kind: {type: string, enum: [PERSONAL_PROFILE, COWORKER_NOTES, WORKSPACE_NOTES, GOAL_NOTES]}
+        owner_ref: {$ref: '#/components/schemas/ContextOwnerRef'}
+        status: {type: string, enum: [ACTIVE, REVOKED, DELETION_PENDING, DELETED], description: Only Core may set DELETED after all owned content/index replicas acknowledge purge.}
+        purge_manifest_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        purge_target_count: {type: integer, minimum: 0}
+      allOf:
+      - if:
+          properties: {status: {enum: [DELETION_PENDING, DELETED]}}
+          required: [status]
+        then:
+          required: [purge_manifest_digest, purge_target_count]
+      - if:
+          properties: {status: {enum: [ACTIVE, REVOKED]}}
+          required: [status]
+        then:
+          not:
+            anyOf:
+            - required: [purge_manifest_digest]
+            - required: [purge_target_count]
+    ContextDocumentPurgeTarget:
+      type: object
+      additionalProperties: false
+      required: [replica_ref, replica_kind, target_revision_ids]
+      properties:
+        replica_ref: {type: string, minLength: 1, description: Stable non-secret replica identity, never a storage locator.}
+        replica_kind: {type: string, enum: [BLOB, DERIVED_INDEX]}
+        runtime_id: {type: [string, 'null']}
+        runtime_incarnation_id: {type: [string, 'null']}
+        target_revision_ids: {type: array, uniqueItems: true, items: {type: string, minLength: 1}}
+      allOf:
+      - if:
+          properties: {runtime_id: {type: string}}
+          required: [runtime_id]
+        then:
+          properties: {runtime_incarnation_id: {type: string, minLength: 1}}
+          required: [runtime_incarnation_id]
+      - if:
+          properties: {runtime_incarnation_id: {type: string}}
+          required: [runtime_incarnation_id]
+        then:
+          properties: {runtime_id: {type: string, minLength: 1}}
+          required: [runtime_id]
+    ContextDocumentPurgePlan:
+      type: object
+      additionalProperties: false
+      required: [manifest_digest, target_count, targets, sealed_at]
+      properties:
+        manifest_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        target_count: {type: integer, minimum: 0}
+        targets: {type: array, items: {$ref: '#/components/schemas/ContextDocumentPurgeTarget'}}
+        sealed_at: {type: string, format: date-time}
+      x-invariants:
+        - target_count equals targets.length
+        - manifest_digest is the canonical digest of the exact ordered targets
+    ContextDocumentCreateMetadata:
+      type: object
+      additionalProperties: false
       required: [kind, owner_ref]
       properties:
         kind: {type: string, enum: [PERSONAL_PROFILE, COWORKER_NOTES, WORKSPACE_NOTES, GOAL_NOTES]}
         owner_ref: {$ref: '#/components/schemas/ContextOwnerRef'}
+    CoworkerRevisionRef:
+      type: object
+      additionalProperties: false
+      required: [coworker_id, revision]
+      properties:
+        coworker_id: {type: string, minLength: 1}
+        revision: {type: integer, minimum: 1}
     ResourceRef:
       type: object
       additionalProperties: false
@@ -5600,6 +5826,8 @@ components:
       - capability_ref
       - operation
       - request_digest
+      - execution_method
+      - action_batch
       - status
       - partial_result_refs
       - result_refs
@@ -5617,6 +5845,8 @@ components:
         capability_ref: {$ref: '#/components/schemas/CapabilityRef'}
         operation: {type: string}
         request_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        execution_method: {type: string, enum: [STRUCTURED_API, STRUCTURED_BROWSER, ACCESSIBILITY_BROWSER, SCREEN_COMPUTER_USE, DETERMINISTIC_LOCAL, NATIVE_AGENT_TOOL, UNKNOWN], description: Selected by the adapter before admission and immutable; UNKNOWN only when the exact route cannot be proven. Never accepted from the agent as evidence.}
+        action_batch: {oneOf: [{$ref: '#/components/schemas/ActionBatchMemberRef'}, {type: 'null'}]}
         idempotency_key: {type: [string, 'null']}
         status: {type: string, enum: [CREATED, DISPATCHED, WAITING, INPUT_REQUIRED, CANCEL_REQUESTED, SUCCEEDED, FAILED, CANCELLED, AMBIGUOUS]}
         provider_task_status: {type: [string, 'null'], enum: [WORKING, INPUT_REQUIRED, COMPLETED, FAILED, CANCELLED, UNKNOWN, null]}
@@ -5638,6 +5868,15 @@ components:
         updated_at: {type: string, format: date-time}
         completed_at: {type: [string, 'null'], format: date-time}
         version: {type: integer, minimum: 1}
+    ActionBatchMemberRef:
+      type: object
+      additionalProperties: false
+      required: [action_batch_id, ordinal, operation_count, batch_digest]
+      properties:
+        action_batch_id: {type: string, minLength: 1}
+        ordinal: {type: integer, minimum: 0, maximum: 63, description: Zero-based; must be less than operation_count.}
+        operation_count: {type: integer, minimum: 1, maximum: 64}
+        batch_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
     ConversationInvocationScope:
       type: object
       additionalProperties: false
@@ -6078,10 +6317,20 @@ components:
         max_retrieved_items: {type: integer, minimum: 0, maximum: 100}
         retain_task_summaries: {type: boolean}
         require_user_confirmation_for_memory: {const: true}
+    CoworkerInteractionPolicy:
+      type: object
+      additionalProperties: false
+      required: [read_only_work, draft_creation, external_mutation, destructive_action, financial_commitment]
+      properties:
+        read_only_work: {type: string, enum: [STANDARD_TRUST_POLICY, REQUIRE_OWNER_APPROVAL, HANDOFF_TO_OWNER]}
+        draft_creation: {type: string, enum: [STANDARD_TRUST_POLICY, REQUIRE_OWNER_APPROVAL, HANDOFF_TO_OWNER]}
+        external_mutation: {type: string, enum: [STANDARD_TRUST_POLICY, REQUIRE_OWNER_APPROVAL, HANDOFF_TO_OWNER]}
+        destructive_action: {type: string, enum: [STANDARD_TRUST_POLICY, REQUIRE_OWNER_APPROVAL, HANDOFF_TO_OWNER]}
+        financial_commitment: {type: string, enum: [STANDARD_TRUST_POLICY, REQUIRE_OWNER_APPROVAL, HANDOFF_TO_OWNER]}
     CoworkerRevisionInput:
       type: object
       additionalProperties: false
-      required: [name, role_description, delegation_strategy, enabled_delegation_profile_ids, context_policy, notification_policy]
+      required: [name, role_description, delegation_strategy, enabled_delegation_profile_ids, interaction_policy, context_policy, notification_policy]
       properties:
         name: {type: string, minLength: 1, maxLength: 120}
         avatar_ref: {oneOf: [{$ref: '#/components/schemas/PinnedResourceRef'}, {type: 'null'}]}
@@ -6090,6 +6339,8 @@ components:
         delegation_strategy: {type: string, enum: [NATIVE_DEFAULT, BALANCED, COST_SAVER, HOST_DELEGATION_ONLY]}
         enabled_delegation_profile_ids: {type: array, uniqueItems: true, items: {type: string}}
         delegation_budget_policy: {oneOf: [{$ref: '#/components/schemas/DelegationBudgetPolicy'}, {type: 'null'}]}
+        lead_failover_policy: {oneOf: [{$ref: '#/components/schemas/LeadFailoverPolicy'}, {type: 'null'}]}
+        interaction_policy: {$ref: '#/components/schemas/CoworkerInteractionPolicy'}
         context_policy: {$ref: '#/components/schemas/CoworkerContextPolicy'}
         notification_policy: {$ref: '#/components/schemas/NotificationPolicy'}
     CreateCoworkerRequest:
@@ -6134,7 +6385,7 @@ components:
         computed_at: {type: string, format: date-time}
         proactive_status: {type: string, enum: [ACTIVE, PAUSED, ARCHIVED]}
         activity_status: {type: string, enum: [AVAILABLE, PLANNING, WORKING, WAITING, NEEDS_YOU]}
-        runtime_status: {type: string, enum: [AVAILABLE, DEGRADED, OFFLINE, UNKNOWN]}
+        runtime_status: {type: string, enum: [AVAILABLE, DEGRADED, OFFLINE, UNKNOWN], description: Readiness of this Coworker's selected default lead path only; it does not summarize every worker, capability, or Runtime.}
         active_task_count: {type: integer, minimum: 0}
         waiting_task_count: {type: integer, minimum: 0}
         needs_you_count: {type: integer, minimum: 0}
@@ -6259,6 +6510,39 @@ components:
         max_per_task: {oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]}
         max_per_profile: {oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]}
         on_threshold: {type: string, enum: [WARN, REDUCE_CONCURRENCY, PREFER_CHEAPER, REQUIRE_APPROVAL, STOP_NEW_DELEGATION]}
+    LeadFailoverPolicy:
+      type: object
+      additionalProperties: false
+      required: [mode, triggers, fallback_agent_binding_ids, max_lead_changes]
+      properties:
+        mode: {type: string, enum: [DISABLED, ASK, ALLOW_LISTED]}
+        triggers: {type: array, uniqueItems: true, items: {type: string, enum: [AGENT_UNAVAILABLE, QUOTA_EXHAUSTED, RUNTIME_UNAVAILABLE]}}
+        fallback_agent_binding_ids: {type: array, uniqueItems: true, maxItems: 3, items: {type: string, minLength: 1}, description: Ordered same-Workspace lead-eligible bindings; revalidated on every use.}
+        max_lead_changes: {type: integer, minimum: 0, maximum: 3}
+      allOf:
+      - if:
+          properties: {mode: {const: DISABLED}}
+          required: [mode]
+        then:
+          properties:
+            triggers: {maxItems: 0}
+            fallback_agent_binding_ids: {maxItems: 0}
+            max_lead_changes: {const: 0}
+      - if:
+          properties: {mode: {const: ASK}}
+          required: [mode]
+        then:
+          properties:
+            triggers: {minItems: 1}
+            max_lead_changes: {const: 0}
+      - if:
+          properties: {mode: {const: ALLOW_LISTED}}
+          required: [mode]
+        then:
+          properties:
+            triggers: {minItems: 1}
+            fallback_agent_binding_ids: {minItems: 1}
+            max_lead_changes: {minimum: 1}
     TaskSpecProposal:
       type: object
       additionalProperties: false
@@ -6276,7 +6560,7 @@ components:
     Suggestion:
       type: object
       additionalProperties: false
-      required: [suggestion_id, workspace_id, coworker_id, dedupe_key, kind, reason, source_refs, goal_refs, proposed_action, proposed_task_spec, estimated_cost, estimated_duration_class, status, created_at, expires_at, snoozed_until, resolved_at, resolved_by, resolution_reason, result_task_id, version]
+      required: [suggestion_id, workspace_id, coworker_id, dedupe_key, kind, reason, source_refs, goal_refs, proposed_action, proposed_by, proposed_task_spec, estimated_cost, latency_class_hint, status, created_at, expires_at, snoozed_until, resolved_at, resolved_by, resolution_reason, result_task_id, version]
       properties:
         suggestion_id: {type: string}
         workspace_id: {type: string}
@@ -6295,9 +6579,10 @@ components:
               goal_id: {type: string}
               revision: {type: integer, minimum: 1}
         proposed_action: {type: string, enum: [TASK, OPEN_ROUTINE_EDITOR, OPEN_AUTOMATION_EDITOR]}
+        proposed_by: {$ref: '#/components/schemas/ServiceRef'}
         proposed_task_spec: {oneOf: [{$ref: '#/components/schemas/TaskSpecProposal'}, {type: 'null'}]}
         estimated_cost: {oneOf: [{$ref: '#/components/schemas/UsageQuantity'}, {type: 'null'}]}
-        estimated_duration_class: {type: [string, 'null'], enum: [STANDARD, INTERACTIVE, DEADLINE_SENSITIVE, null]}
+        latency_class_hint: {type: [string, 'null'], enum: [STANDARD, INTERACTIVE, DEADLINE_SENSITIVE, null], description: Execution urgency/latency class, not a duration or ETA.}
         status: {type: string, enum: [PROPOSED, ACCEPTED, DISMISSED, EXPIRED]}
         created_at: {type: string, format: date-time}
         expires_at: {type: string, format: date-time}
@@ -6376,20 +6661,34 @@ components:
     StartDemonstrationRequest:
       type: object
       additionalProperties: false
-      required: [workspace_id, environment_id, consent_semantic_capture]
+      required: [workspace_id, environment_id, consent_semantic_capture, capture_policy]
       properties:
         workspace_id: {type: string}
         environment_id: {type: string}
         consent_semantic_capture: {const: true}
+        capture_policy: {$ref: '#/components/schemas/DemonstrationCapturePolicy'}
+    DemonstrationCapturePolicy:
+      type: object
+      additionalProperties: false
+      required: [max_duration_ms, max_actions, max_trace_bytes, allowed_environment_class, sensitive_region_policy]
+      properties:
+        max_duration_ms: {type: integer, minimum: 1, maximum: 1800000}
+        max_actions: {type: integer, minimum: 1, maximum: 1000}
+        max_trace_bytes: {type: integer, minimum: 1, maximum: 5242880}
+        allowed_environment_class: {type: string, enum: [BROWSER, DESKTOP]}
+        sensitive_region_policy: {type: string, enum: [PAUSE_ON_DETECTION, OMIT_SENSITIVE_FIELDS]}
     DemonstrationSession:
       type: object
       additionalProperties: false
-      required: [demonstration_session_id, workspace_id, environment_id, status, started_at, completed_at, trace_resource_id, skill_proposal_id, version]
+      required: [demonstration_session_id, workspace_id, environment_id, status, capture_policy, captured_action_count, captured_trace_bytes, started_at, completed_at, trace_resource_id, skill_proposal_id, version]
       properties:
         demonstration_session_id: {type: string}
         workspace_id: {type: string}
         environment_id: {type: string}
-        status: {type: string, enum: [CREATED, CAPTURING, REVIEW, CONVERTED, ABORTED]}
+        status: {type: string, enum: [CREATED, CAPTURING, PAUSED, REVIEW, CONVERTED, ABORTED]}
+        capture_policy: {$ref: '#/components/schemas/DemonstrationCapturePolicy'}
+        captured_action_count: {type: integer, minimum: 0}
+        captured_trace_bytes: {type: integer, minimum: 0}
         started_at: {type: string, format: date-time}
         completed_at: {type: [string, 'null'], format: date-time}
         trace_resource_id: {type: [string, 'null']}

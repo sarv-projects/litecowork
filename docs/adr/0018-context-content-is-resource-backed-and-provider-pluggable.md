@@ -12,9 +12,10 @@ retrieval implementation and create an opaque second data store.
 ## Decision
 
 User-authored ContextDocuments are classified, versioned Resources. A
-`PersonalContextProvider` may retrieve or propose derived context, but Core owns scope,
-authorization, provenance, retention, and revocation. Retrieved context is untrusted and
-lower priority than current Task/user input. No first-party vector database is required.
+`PersonalContextProvider` may retrieve derived context, but Core owns scope,
+authorization, provenance, retention, and revocation. Provider-generated memory proposals
+are deferred until a complete owner-review lifecycle exists. Retrieved context is untrusted
+and lower priority than current Task/user input. No first-party vector database is required.
 
 ## Consequences
 

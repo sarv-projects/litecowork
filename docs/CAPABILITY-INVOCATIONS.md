@@ -8,6 +8,18 @@ long-running analysis, streams, asynchronous provider jobs, and MCP Tasks. `Effe
 remains the separate ledger for consequential external state changes. One Invocation may
 reference an Effect; many read-only Invocations have none.
 
+`execution_method` is execution provenance, not agent-reported UI text. The adapter selects
+the route before admitting the Invocation and records it on creation. `UNKNOWN` is valid
+only when the adapter/provider cannot prove a more specific route. The selected method is
+immutable, and the dispatch event repeats it. A fallback to a materially different route
+creates a new Invocation with its own request digest and idempotency identity. Effects
+retain the method of their exact source Invocation.
+
+`NATIVE_AGENT_TOOL` is permitted only when the call crosses the LiteCowork Gateway or a
+provider adapter enforces the equivalent authorization, idempotency, fencing, Effect, and
+Evidence contract. An arbitrary native tool call that bypasses that boundary is not
+represented as a Core-mediated Invocation or Effect.
+
 ## Canonical record
 
 ```text
@@ -21,6 +33,10 @@ CapabilityInvocation {
   capability_ref
   operation
   request_digest
+  execution_method: STRUCTURED_API | STRUCTURED_BROWSER | ACCESSIBILITY_BROWSER |
+                    SCREEN_COMPUTER_USE | DETERMINISTIC_LOCAL |
+                    NATIVE_AGENT_TOOL | UNKNOWN
+  action_batch?: ActionBatchMemberRef
   idempotency_key?
   status: CREATED | DISPATCHED | WAITING | INPUT_REQUIRED |
           CANCEL_REQUESTED | SUCCEEDED | FAILED | CANCELLED | AMBIGUOUS
@@ -61,6 +77,31 @@ Artifacts, mutate Tasks, or create Effects. Consequential operations require an
 Attempt-scoped Invocation and its normal grant, Approval, Effect, idempotency, and fencing
 checks. An Agent that asks for a write during simple conversation or planning must first
 materialize/execute a Task Step through ordinary product rules.
+
+## Bounded ActionBatch
+
+An ActionBatch groups 1–64 ordered operations for transport efficiency; it is a value
+carried by the invoking adapter, not a domain aggregate, transaction, or authority grant.
+Before provider dispatch, Core durably admits one ordinary CapabilityInvocation per
+member, each with a zero-based ordinal, shared batch ID/count/digest, independent member
+request digest, independent idempotency key, and the same selected execution method.
+Every member repeats the ordered-batch digest. A provider may receive one transport call
+only when it returns a separately correlatable outcome for each member; otherwise the
+adapter dispatches members separately.
+
+Each member rechecks its preconditions immediately before dispatch and evaluates its
+postconditions from returned or observed evidence. A consequential member has its own
+Attempt-scoped Invocation and at most one ordinary Effect. The batch does not make its
+Effects atomic: on failure, timeout, failed precondition, or abort condition, undispatched
+members are cancelled and every dispatched member is settled/reconciled independently
+before fallback or continuation. No later member runs after a failed abort condition.
+An ActionBatch cannot elevate Coworker interaction defaults, Trust decisions, Grants,
+Approvals, or lease scope.
+
+The batch is not a provider transaction. If a member fails after earlier members were
+dispatched, Core first settles or reconciles every earlier member and linked Effect. It
+then records the batch outcome as a projection of its member Invocations; no separate
+ActionBatch aggregate or synthetic all-or-nothing Effect exists.
 
 ## Lifecycle and ownership
 

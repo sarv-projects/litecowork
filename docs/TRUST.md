@@ -91,6 +91,20 @@ Invocation but never widened.
 
 Default is DENY when a required fact is unknown.
 
+## Coworker interaction defaults
+
+The pinned CoworkerRevision may provide narrow interaction defaults for read-only work,
+draft creation, external mutation, destructive action, and financial commitment.
+`STANDARD_TRUST_POLICY` leaves ordinary evaluation unchanged;
+`REQUIRE_OWNER_APPROVAL` adds an exact-action Approval requirement;
+`HANDOFF_TO_OWNER` stops before the operation and requires takeover. These defaults may
+add friction only. They cannot turn a DENY into ALLOW, satisfy an Approval, create a
+CapabilityGrant/SecretLease, widen a scope, or weaken provider/Workspace policy. A missing
+Coworker preference uses the platform's ordinary Trust policy, not an allow decision.
+
+ActionBatch members are evaluated independently under these same rules. A grouped
+transport cannot combine or reuse ApprovalUses across Effects.
+
 ## Delegated-worker authority
 
 A DelegationProfile is a restriction on eligible work, not authority. When a child Attempt

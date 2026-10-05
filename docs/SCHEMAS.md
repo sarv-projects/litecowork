@@ -33,7 +33,7 @@ VerificationRunId ApprovalId ApprovalUseId AutomationId OccurrenceId ExecutionLe
 HandoffId ConnectionId ChannelBindingId PrincipalId SecretRefId SecretLeaseId
 UserRequestId UserRequestResponseId UsageObservationId BudgetReservationId DeliveryId SkillProposalId
 RoutineId ExecutionDependencyPlanId DelegationProfileId CoworkerId GoalId SuggestionId
-DemonstrationSessionId
+DemonstrationSessionId WarmHoldId ActionBatchId
 ResourceId ResourceRevisionId ResourceLocationId WorkspaceRootId ResourceEdgeId DependencyEdgeId
 InvalidationRecordId ResourceUploadId BackupId AuditRecordId EventId RequestId CorrelationId ServiceId
 ```
@@ -52,6 +52,7 @@ DelegationStrategy = NATIVE_DEFAULT | BALANCED | COST_SAVER | HOST_DELEGATION_ON
 OptimizationPreference = QUALITY_FIRST | BALANCED | COST_FIRST | LATENCY_FIRST
 DelegationProfileSelection = AUTOMATIC | PREFER | REQUIRE
 ExecutionLatencyClass = STANDARD | INTERACTIVE | DEADLINE_SENSITIVE
+WarmTrigger = ACTIVE_TASK | RECENT_USE | USER_SELECTED | QUOTA_LOW | PREDICTED_FAILOVER | DEADLINE_APPROACHING
 TaskCategory = SOFTWARE_ENGINEERING | RESEARCH | WRITING | DATA_ANALYSIS | OFFICE | BROWSER | PERSONAL_ADMIN | OTHER
 EnvironmentSharingScope = ATTEMPT_PRIVATE | TASK_SHARED | COWORKER_PRIVATE | WORKSPACE_SHARED | USER_SHARED
 CoworkerStatus = ACTIVE | PAUSED | ARCHIVED
@@ -59,10 +60,18 @@ GoalStatus = ACTIVE | PAUSED | COMPLETED | ARCHIVED
 SuggestionStatus = PROPOSED | ACCEPTED | DISMISSED | EXPIRED
 SuggestionAction = TASK | OPEN_ROUTINE_EDITOR | OPEN_AUTOMATION_EDITOR
 SuggestionKind = TASK_OPPORTUNITY | ROUTINE_OPPORTUNITY | AUTOMATION_OPPORTUNITY
+SuggestionTrigger = TASK_OUTCOME_COMMITTED | ROUTINE_HEALTH_CHANGED | AUTHORIZED_RESOURCE_CHANGE | OWNER_CONFIGURED_CHECK
 ContextDocumentKind = PERSONAL_PROFILE | COWORKER_NOTES | WORKSPACE_NOTES | GOAL_NOTES
+ContextDocumentStatus = ACTIVE | REVOKED | DELETION_PENDING | DELETED
+ExecutionMethod = STRUCTURED_API | STRUCTURED_BROWSER | ACCESSIBILITY_BROWSER |
+  SCREEN_COMPUTER_USE | DETERMINISTIC_LOCAL | NATIVE_AGENT_TOOL | UNKNOWN
+DemonstrationSensitiveRegionPolicy = PAUSE_ON_DETECTION | OMIT_SENSITIVE_FIELDS
+LeadFailoverMode = DISABLED | ASK | ALLOW_LISTED
+LeadFailoverTrigger = AGENT_UNAVAILABLE | QUOTA_EXHAUSTED | RUNTIME_UNAVAILABLE
+InteractionDefault = STANDARD_TRUST_POLICY | REQUIRE_OWNER_APPROVAL | HANDOFF_TO_OWNER
 ContextOwnerRef = USER(PrincipalId) | WORKSPACE(WorkspaceId) | COWORKER(WorkspaceId, CoworkerId) | GOAL(WorkspaceId, GoalId)
 BudgetThresholdAction = WARN | REDUCE_CONCURRENCY | PREFER_CHEAPER | REQUIRE_APPROVAL | STOP_NEW_DELEGATION
-DemonstrationSessionStatus = CREATED | CAPTURING | REVIEW | CONVERTED | ABORTED
+DemonstrationSessionStatus = CREATED | CAPTURING | PAUSED | REVIEW | CONVERTED | ABORTED
 AgentFeature = session.resume | session.steer | session.interrupt | session.cancel | session.fork |
   input.text | input.image | input.file | input.resources | extension.mcp_stdio |
   extension.mcp_http | extension.skills | extension.plugins | extension.dynamic_attach |
@@ -123,6 +132,7 @@ RoutineStatus = ACTIVE | ARCHIVED
 AutomationOccurrenceStatus = PENDING | CLAIMED | WAITING_DEPENDENCY | STARTED | COMPLETED | SKIPPED | FAILED
 RoutineRevisionRef = { routine_id: RoutineId, revision: u64 }
 GoalRevisionRef = { goal_id: GoalId, revision: u64 }
+CoworkerRevisionRef = { coworker_id: CoworkerId, revision: u64 }
 RuntimeAvailability = PAIRING | STARTING | RECOVERING | ONLINE | DEGRADED | DRAINING | OFFLINE | REVOKED
 RuntimeStartupPolicy = MANUAL | LOGIN_BACKGROUND | ALWAYS_ON_SERVICE
 RuntimeIncarnationState = STARTING | RECOVERING | READY | DEGRADED | DRAINING | STOPPING | STOPPED
@@ -734,7 +744,96 @@ WarmPolicy {
   ttl_ms?: u64
   max_memory_bytes?: u64
   max_idle_cost?: CostLimit
-  triggers: (ACTIVE_TASK | RECENT_USE | USER_SELECTED | QUOTA_LOW | PREDICTED_FAILOVER | DEADLINE_APPROACHING)[]
+  triggers: WarmTrigger[]
+}
+
+WarmHold {
+  warm_hold_id: WarmHoldId
+  target: AgentBindingId | DelegationProfileId | CapabilityRef | EnvironmentId
+  reason: ACTIVE_TASK | USER_SELECTED | QUOTA_LOW | PREDICTED_FAILOVER | DEADLINE_APPROACHING
+  priority: u8
+  created_at: Timestamp
+  expires_at: Timestamp
+  evictable: true
+}
+
+LeadFailoverPolicy {
+  mode: LeadFailoverMode
+  triggers: LeadFailoverTrigger[]
+  fallback_agent_binding_ids: AgentBindingId[] # ordered, unique
+  max_lead_changes: u32 # 0..3
+}
+
+LeadFailoverTriggerObservation {
+  trigger: LeadFailoverTrigger
+  affected_agent_binding_id: AgentBindingId
+  source: ServiceRef # adapter, quota observer, or Runtime observer
+  source_observation_ref: string # non-secret stable observation identity
+  runtime_incarnation_id?: RuntimeIncarnationId
+  observed_at: Timestamp
+  expires_at: Timestamp
+}
+
+CoworkerInteractionPolicy {
+  read_only_work: InteractionDefault
+  draft_creation: InteractionDefault
+  external_mutation: InteractionDefault
+  destructive_action: InteractionDefault
+  financial_commitment: InteractionDefault
+}
+
+ActionBatchMemberRef {
+  action_batch_id: ActionBatchId
+  ordinal: u32 # zero-based, unique and strictly less than operation_count
+  operation_count: u32 # 1..64, repeated identically on every member
+  batch_digest: Sha256Digest # repeated ordered ActionBatch digest
+}
+
+ActionBatch {
+  action_batch_id: ActionBatchId
+  operations: ActionBatchOperation[] # 1..64, ordered
+  abort_conditions: PredicateRef[]
+  max_duration_ms?: u64
+  digest: Sha256Digest # canonical digest of ordered operation envelopes and conditions
+}
+
+ActionBatchOperation {
+  operation: string
+  request: JsonObject
+  preconditions: PredicateRef[]
+  postconditions: PredicateRef[]
+  idempotency_key: string
+}
+
+DemonstrationCapturePolicy {
+  max_duration_ms: u64
+  max_actions: u32
+  max_trace_bytes: u64
+  allowed_environment_class: BROWSER | DESKTOP
+  sensitive_region_policy: DemonstrationSensitiveRegionPolicy
+}
+
+PredicateRef = string # bounded, versioned capability/provider predicate; never executable source
+
+SuggestionCandidate { # ephemeral producer output, not durable until accepted by SuggestionService
+  proposed_by: ServiceRef
+  trigger: SuggestionTrigger
+  coworker_id?: CoworkerId
+  reason: string
+  source_refs: PinnedResourceRef[]
+  goal_refs: GoalRevisionRef[]
+  proposed_action: SuggestionAction
+  proposed_task_spec?: TaskSpecProposal
+  expires_at: Timestamp
+}
+
+BoundedSuggestionContext {
+  workspace_id: WorkspaceId
+  coworker_revision_ref?: CoworkerRevisionRef
+  source_refs: PinnedResourceRef[]
+  goal_refs: GoalRevisionRef[]
+  task_refs: TaskId[]
+  context_digest: Sha256Digest
 }
 
 DelegatedWorkerPolicy {
@@ -756,10 +855,12 @@ QuotaObservation {
   source: string
   observed_at: Timestamp
   expires_at?: Timestamp
-  state: NORMAL | LOW | EXHAUSTED | UNKNOWN
+  state: QuotaState
   remaining_hint?: UsageQuantity
   reset_at?: Timestamp
 }
+
+QuotaState = NORMAL | LOW | EXHAUSTED | UNKNOWN
 
 WorkerPerformanceProjection {
   delegation_profile_id: DelegationProfileId
@@ -784,14 +885,50 @@ CoworkerContextPolicy {
 ContextDocumentMetadata {
   kind: ContextDocumentKind
   owner_ref: ContextOwnerRef
+  status: ContextDocumentStatus
+  purge_manifest_digest?: Sha256Digest
+  purge_target_count?: u32
+}
+
+ContextDocumentPurgeTarget {
+  replica_ref: string # stable, non-secret replica identity; never a locator
+  replica_kind: BLOB | DERIVED_INDEX
+  runtime_id?: RuntimeId
+  runtime_incarnation_id?: RuntimeIncarnationId
+  target_revision_ids: ResourceRevisionId[]
+}
+
+ContextDocumentPurgePlan { # immutable Resource-owned subrecord, not a separate aggregate
+  manifest_digest: Sha256Digest
+  target_count: u32
+  targets: ContextDocumentPurgeTarget[]
+  sealed_at: Timestamp
 }
 ```
 
 `ContextDocumentMetadata` classifies a versioned Resource; it does not create another
-content store or version chain. `PERSONAL_PROFILE`, `COWORKER_NOTES`, `WORKSPACE_NOTES`,
+content store or version chain. New documents start `ACTIVE`. `REVOKED` documents are
+excluded from future context retrieval while their content remains retained. `DELETION_PENDING`
+blocks new reads and waits for all owned blob/index replicas to confirm purge. `DELETED`
+retains only Resource/revision identity, digests, provenance, and the tombstone needed by
+historical Task references; content bytes and derived provider indexes are unavailable.
+`PERSONAL_PROFILE`, `COWORKER_NOTES`, `WORKSPACE_NOTES`,
 and `GOAL_NOTES` require USER, COWORKER, WORKSPACE, and GOAL owner refs respectively.
 Owner IDs must resolve in the Resource's Workspace (USER must be that Workspace's
 authenticated owner). Content edits create ordinary ResourceRevisions.
+
+Only Core ResourceService changes ContextDocument status. Revocation blocks future
+retrieval but retains content. Deletion first seals an immutable `ContextDocumentPurgePlan`
+over every Core-owned blob/index replica and exact revision set (including a verified empty
+set), then commits `DELETION_PENDING` with the manifest digest/count, replicates the
+tombstone, and blocks all content reads. Non-secret receipts are retained per plan target;
+an acknowledgement must match its exact replica, incarnation, and revisions. `DELETED` is
+committed only when receipt count equals the sealed target count and every receipt is
+acknowledged; provider-backed sources remain pending until their adapter confirms
+deletion. Tombstones, the sealed target manifest, and purge receipts replicate under
+Workspace policy. A `replica_ref` is a stable non-secret identity, never a storage locator.
+The tombstone retains Resource/revision identity, ancestry, digests, provenance, and
+historical Task references without retaining content bytes.
 
 `TaskCategory` is a bounded, owner/lead-proposed routing/evaluation label. If no explicit
 category is available, use `OTHER`; Core does not infer it from private Task text. It may
@@ -870,12 +1007,14 @@ resource existence.
 AGENT_UNAVAILABLE
 AGENT_NOT_LEAD_ELIGIBLE
 AGENT_SESSION_OVERRIDE_UNSUPPORTED AGENT_NATIVE_CONFIG_CHANGED AGENT_QUOTA_EXHAUSTED
+LEAD_FAILOVER_POLICY_INVALID
 NOT_FOUND UNAUTHORIZED FORBIDDEN POLICY_DENIED APPROVAL_REQUIRED
 WORKSPACE_ARCHIVED WORKSPACE_NOT_QUIESCENT STALE_WORKSPACE_VERSION
 INVALID_ARGUMENT INVALID_TRANSITION STALE_VERSION STALE_TASK_VERSION STALE_SPEC_REVISION CONFLICT
 ARTIFACT_ARCHIVED INVALID_ARTIFACT_TRANSITION
 TASK_NOT_FOUND TASK_TERMINAL INVALID_PLAN PLAN_CYCLE STEP_NOT_READY LEASE_CONFLICT STALE_FENCE
-INVALID_RESOURCE_REF RESOURCE_CONFLICT TASK_PAUSE_UNSAFE TASK_ALREADY_PAUSED RECOVERY_EXHAUSTED
+INVALID_RESOURCE_REF RESOURCE_CONFLICT RESOURCE_REVISION_PARENT_MISMATCH TASK_PAUSE_UNSAFE TASK_ALREADY_PAUSED RECOVERY_EXHAUSTED
+CONTEXT_DOCUMENT_NOT_ACTIVE CONTEXT_DOCUMENT_OWNER_SCOPE_MISMATCH
 DELEGATION_PROFILE_DISABLED DELEGATION_PROFILE_ARCHIVED DELEGATION_PROFILE_INCOMPATIBLE
 DELEGATION_PROFILE_OPTIONS_INVALID
 DELEGATION_DEPTH_EXCEEDED DELEGATION_CONCURRENCY_EXCEEDED
@@ -892,7 +1031,8 @@ USER_REQUEST_NOT_FOUND USER_REQUEST_EXPIRED
 APPROVAL_ALREADY_CONSUMED RESOURCE_STALE RESOURCE_LOCATION_UNAVAILABLE
 UPLOAD_OFFSET_CONFLICT UPLOAD_EXPIRED BUDGET_EXCEEDED
 WORKER_QUALITY_FLOOR_UNMET WORKER_BUDGET_EXCEEDED
-DEADLINE_EXECUTION_PRECONDITION_FAILED COWORKER_PAUSED COWORKER_ARCHIVED GOAL_ARCHIVED SUGGESTION_EXPIRED
+DEADLINE_EXECUTION_PRECONDITION_FAILED COWORKER_PAUSED COWORKER_ARCHIVED COWORKER_HAS_ACTIVE_WORK GOAL_ARCHIVED SUGGESTION_EXPIRED
+DEMONSTRATION_CAPTURE_LIMIT_REACHED
 TIMEOUT DEPENDENCY_UNAVAILABLE UNSUPPORTED_VERSION INTEGRITY_FAILURE INTERNAL
 CHANNEL_INGRESS_GAP_CONFIRMATION_REQUIRED
 ```

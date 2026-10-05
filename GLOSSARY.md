@@ -53,6 +53,31 @@ A versioned, user-enabled configuration for one AgentBinding to receive bounded 
 delegated work.
 _Avoid_: Installed agent, model alias
 
+**Lead failover policy**:
+A Task-pinned rule that may permit a bounded lead-agent change when a listed condition is
+observed; it does not inherit grants or approval and always starts a fresh AgentSession.
+_Avoid_: Silent model fallback
+
+**ActionBatch**:
+A bounded grouping of independently admitted capability operations. Each member retains
+its own Invocation, idempotency key, optional Effect, and Evidence.
+_Avoid_: Transaction, atomic macro
+
+**Execution method**:
+The normalized path a mediated capability operation actually used, recorded as observed
+provenance rather than inferred from the requested capability.
+_Avoid_: UI animation, agent claim
+
+**WarmHold**:
+A short-lived Runtime-local operational request to keep an eligible execution dependency
+ready before admission; it carries no Task authority and may be evicted.
+_Avoid_: AgentSession, ExecutionLease
+
+**Coworker interaction policy**:
+Narrow defaults that preserve or add confirmation/handoff friction around existing Trust
+decisions; they never grant authority or reduce mandatory checks.
+_Avoid_: Autonomy grant, authority ceiling
+
 **Native subagent**:
 A child worker created and governed inside an external agent's native harness.
 _Avoid_: LiteCowork Attempt
@@ -72,7 +97,8 @@ A user-authored desired outcome whose progress is projected from verified work.
 _Avoid_: Scheduler, background planner
 
 **Suggestion**:
-An expiring, provenance-backed proposal that requires an explicit user action.
+An expiring, provenance-backed proposal from a registered producer that requires an
+explicit user action.
 _Avoid_: Approval, automatic Task
 
 **Environment sharing scope**:

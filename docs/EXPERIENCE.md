@@ -85,18 +85,27 @@ as the first-class Needs You destination.
 Composer:
 
 ```text
-[ + ] Ask something or describe work... [Agent: Auto ▾] [Run: Auto ▾] [Tools: Auto ▾] [▶]
+[Alex ▾] What should we work on?                         [ + ] [Send →]
 ```
 
-`Agent: Auto` means the active Conversation override or Workspace default AgentBinding; it
-does not invoke a model router or silently select different agent software. `Run: Auto`
-lets placement select only among eligible Runtimes for that binding. `Tools: Auto` allows
-progressive discovery, but does not skip grants, approvals, or capability availability
-checks. Controls are compact progressive disclosures; placement labels include `This
-computer`, `Cloud`, and a named Runtime. Selecting an Agent does not start its host.
-The host starts when the user submits a turn or an Attempt is admitted; optional prewarming
-is an explicit latency optimization. Changing an Agent during active work changes future
-planning assignments only; existing Attempts remain pinned and visibly drain.
+The default composer addresses the selected Coworker (normally the Workspace primary) and
+keeps agent/runtime controls out of the first interaction. A Coworker selector is shown
+only when the Workspace has more than one active Coworker. `Advanced` exposes Lead Agent,
+Model/Reasoning when adapter-supported, Run location, Tools, Budget, and Access. The
+selected Coworker's default lead and enabled worker allowlist are pinned into Task origin
+and TaskSpec at admission; changing them affects future Tasks. A direct lead override is
+explicit and does not mutate Coworker settings. It does not invoke a model router or
+silently select different agent software. Run placement selects only among eligible
+Runtimes for that binding. Tool discovery never skips grants, approvals, or capability
+availability checks. Selecting an Agent does not start its host. The host starts when the
+user submits a turn or an Attempt is admitted; optional prewarming is an explicit latency
+optimization. Changing an Agent during active work changes future planning assignments
+only; existing Attempts remain pinned and visibly drain.
+
+Home's normative content order is Composer; Needs You when non-empty; Being handled (at
+most four Tasks); Coming up (at most three responsibilities); one prominent Idea; Recent
+outputs (at most four); then Recent Conversations. A section may be hidden when it has no
+useful content; Home never expands into an operations dashboard.
 
 `+` menu:
 - Add files
@@ -497,8 +506,9 @@ status (`ACTIVE`/`PAUSED`), activity (`AVAILABLE`, `PLANNING`, `WORKING`, `WAITI
 it is not a social simulation.
 
 Create/edit fields are Coworker name, optional pinned avatar Resource revision, role
-description, default lead binding, delegation strategy, enabled worker-profile allowlist, context
-policy, and notification policy. Save uses expected version and creates an immutable
+description, default lead binding, delegation strategy, enabled worker-profile allowlist,
+lead-failover default, narrow interaction defaults, context policy, and notification
+policy. Save uses expected version and creates an immutable
 revision. Archive explains why active Coworker Automations/Tasks block it and retains
 linked history. Pausing stops proactive/new scheduled admission only; the UI says active
 Tasks continue under their own policy.
@@ -509,7 +519,12 @@ Tasks continue under their own policy.
 discovered profile/binding connectivity and staleness. Main selects only enabled,
 lead-eligible bindings. Subagents lists every installed/bound agent, including the lead,
 and one or more profiles under each binding. New profiles are disabled until explicitly
-enabled; enabling a profile never starts its process.
+enabled; enabling a profile never starts its process. Enabling a profile makes it eligible
+at Workspace scope only. Each Coworker separately allowlists which enabled profiles it may
+use. Profile rows show `Available to: Alex, Researcher` or `Not assigned`; editing that
+assignment creates a new CoworkerRevision. The enable flow asks whether to make a profile
+available to the selected Coworker, so users can distinguish installed, enabled, and
+Coworker-allowed states.
 
 The profile editor has sections for: status/name; short “When to use” description;
 adapter-discovered model/reasoning/session options; worker instructions; capability
@@ -524,10 +539,15 @@ Prompt guidance is labeled `Instructions`; actual enforced restrictions are labe
 silently replaced. Advanced controls collapse by default. A profile's revision history
 is inspectable, and changes affect future admissions only.
 
+Coworker autonomy summaries use the narrow interaction defaults `Research`, `Create
+drafts`, `External changes`, `Destructive actions`, and `Financial commitments`. They
+explain `Standard Trust checks`, `Ask first`, or `Hand off`; they never present a numeric
+autonomy level or imply that a preference is a Grant or approval.
+
 ### Work / Live Desk
 
 Work filters are Active, Waiting, Scheduled, Done, and All. Each row shows outcome title,
-plain-language state, last verified activity time, current blocker, newest Artifact, and
+plain-language state, `Last activity` from the observed-activity projection, current blocker, newest Artifact, and
 number of active workstreams only when real child Attempts exist. Task detail defaults to
 steps/outcomes and outputs. `Details` exposes the delegation tree and Inspector fields.
 Lead, delegated worker, native-reported worker, capability, and verifier rows use distinct
@@ -537,7 +557,21 @@ Task detail states include Planning, Preparing worker, Working, Checking the res
 Waiting for you/service/device, Needs your decision, Completed, Not finished, Failed,
 Stopping, and Cancelled. Do not render numeric completion percentages or predicted ETAs
 unless a measured and qualified projection contract is added. “No new activity for …”
-is based on event/projection timestamps and names the last verified action.
+is based on observed-activity timestamps. `Last verified evidence` is shown separately and
+only when an Evidence record supports the label; an Invocation heartbeat is not described
+as a verified action.
+
+### Lead changes and failover
+
+When the lead is unavailable, `DISABLED` stops and explains the blocker. `ASK` creates a
+Needs You item with the affected lead, observed trigger, eligible alternatives, and the
+remaining Task state; no lead changes before the owner chooses. `ALLOW_LISTED` may select
+only a listed binding after the trigger observation is fresh and all current binding,
+endpoint, Runtime, auth, Trust, resource, budget, and deadline checks pass. The activity
+timeline explains the committed change and its reason (for example, “Claude usage limit
+reported”); it does not show the replacement as lead before `task.lead_agent.changed` and
+new lead-session admission commit. Existing Attempts keep their original agent/profile and
+lease provenance. If no listed lead qualifies, the Task remains blocked for the owner.
 
 ### Goals and Suggestions
 
