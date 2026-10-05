@@ -156,6 +156,205 @@ an independent actionable blocker. Confirm the inbox shows three stable source i
 not five rows. Retry/fail notifications without changing counts. Resolve each underlying
 record and confirm stale cached counts are marked stale and refreshed on reconnect.
 
+### B32 Native Claude harness integrity
+
+Run the supported Claude path with native user configuration, skills, hooks, MCP,
+permissions and subagents. Verify LiteCowork adds only the negotiated bridge and records
+no private prompt, handle, or config bytes.
+
+### B33 Native Codex harness integrity
+
+Run the qualified Codex harness path with native configuration, tools, sandbox and
+approval behavior. Verify integration does not flatten or silently replace supported
+native semantics.
+
+### B34 Native OpenCode harness integrity
+
+Preserve OpenCode agents, permissions, skills, MCP and subagents through the adapter.
+Change normalized config while warm and verify re-probe/fail-closed behavior.
+
+### B35 Same binding, premium lead and cheaper worker profile
+
+Use one AgentBinding with separate supported lead and worker session options. Verify
+separate AgentSessions/Attempts and explicit failure for an unsupported model override.
+
+### B36 Heterogeneous lead-to-worker delegation
+
+Run a premium lead with a different eligible worker. Verify accepted-Plan Step admission,
+child grant isolation, bounded TaskPacket, new lease, and result verification.
+
+### B37 Cost-first worker selection
+
+Provide deterministic, local, cheap external, and unknown-cost candidates. Verify hard
+filters precede ranking, unknown cost is not zero, and quality floors remain satisfied.
+
+### B38 Quality-first selection
+
+Provide workers with different verifier pass rates and costs. Verify quality-first ranks
+only eligible candidates and low-confidence samples do not overrule explicit choice.
+
+### B39 Verification-triggered escalation
+
+Fail a cheap worker's verifier, reconcile Effects, and admit a stronger profile as a new
+Attempt. Verify bounded escalation, preserved provenance, and no in-place worker change.
+
+### B40 Profile disabled during active child
+
+Disable/revise a profile while a child runs. Verify no later admission uses it, the
+current child retains its pinned revision, and explicit cancellation settles safely.
+
+### B41 Native configuration drift during warmth
+
+Change agent configuration while a host is warm. Verify descriptor refresh,
+`AGENT_NATIVE_CONFIG_CHANGED` for stale admission, and no native file rewrite.
+
+### B42 Low quota fallback prewarm
+
+Report a source-backed LOW observation. Verify fallback host/auth/config/Environment can
+be prepared without model invocation, Attempt, grant, or lead change; evict it and prove
+Task correctness is unaffected.
+
+### B43 Quota exhaustion lead handoff
+
+Compare provider-confirmed EXHAUSTED with unavailable/UNKNOWN. Verify only explicit policy
+or owner action changes lead and the fresh session receives a bounded durable handoff.
+
+### B44 Warm host with fresh native session
+
+Keep a host warm after one Task settles and start another. Verify fresh session,
+config/auth, no cross-Task native history, and no inherited grants or leases.
+
+### B45 Warm browser with fresh authority
+
+Reuse a Coworker-private browser Environment for a later Task. Verify provider state is
+revalidated while Task/Attempt grants, approvals, Effect policy, and input control lease
+are fresh.
+
+### B46 Parallel worktree isolation
+
+Run Claude/Codex/OpenCode writers concurrently against one source tree. Verify isolated
+worktrees/overlays, deterministic merge/conflict handling, and no lost updates.
+
+### B47 Shared browser control fencing
+
+Race two workers and a human takeover against one EnvironmentControlLease. Verify only the
+current owner/epoch can act, queued old input is dropped, and control differs from
+ExecutionLease.
+
+### B48 Deadline-sensitive preflight
+
+Vary Runtime, auth, page freshness, approval, budget, capability, and fallback readiness.
+Verify precondition failures happen before Effects and no hard realtime promise/ETA is
+shown.
+
+### B49 Structured-to-browser fallback
+
+Remove a structured operation while preserving an equivalent browser path. Verify method
+change is authorized and recorded; reject fallbacks that change target/effect meaning.
+
+### B50 ActionBatch execution
+
+Execute a bounded batch with preconditions, postconditions, and abort guards. Verify each
+consequential suboperation keeps its own Effect/idempotency/reconciliation/Evidence.
+
+### B51 Human final-authorization boundary
+
+Prepare a consequential operation through preflight, then require takeover before final
+submit. Verify no queued action proceeds before the new control/approval epoch.
+
+### B52 Credential invisibility
+
+Use a credential broker for an authorized operation. Inspect agent context, TaskPacket,
+logs, events, Resource output, and backups; secret bytes never enter agent-visible or
+replicated data.
+
+### B53 Coworker identity survives lead replacement
+
+Change a Task lead and replace a worker while retaining Coworker identity, history,
+preferences, and Task continuity. Verify Coworker never becomes an Attempt owner.
+
+### B54 Goal progress derives from verified outcomes
+
+Link completed, active, failed, stale-input, and conflicting Tasks. Verify progress cites
+Evidence, stale/conflicted work is marked, and only the owner completes the Goal.
+
+### B55 Suggestion cannot self-authorize
+
+Accept Task, Routine-editor, and Automation-editor suggestions. Verify normal admission or
+explicit editor save and no automatic grant, install, send, or schedule.
+
+### B56 ContextDocument concurrent edit conflict
+
+Edit one user-authored Resource from two devices. Verify both branches remain, stale head
+returns conflict, and retrieval cannot silently select a branch.
+
+### B57 Demonstration to SkillProposal
+
+Capture semantic browser actions with typed inputs and secret placeholders. Verify trace
+review/test gates and no package install/invocation before review.
+
+### B58 Skill drift detection
+
+Change a saved semantic target/site state. Verify drift blocks unsafe replay and creates a
+reviewed proposal revision instead of silently mutating the published Skill.
+
+### B59 Routine health and dependency drift
+
+Run a pinned Routine across success/failure/unavailable/changed-dependency conditions.
+Verify health is a projection and repair creates a reviewed revision without rewriting
+prior occurrences.
+
+### B60 Premium-usage efficiency comparison
+
+Compare (A) premium lead plus premium/native subagents with (B) premium lead plus
+qualified cheaper workers and deterministic capabilities. Measure verified completion,
+premium usage, total known cost by currency, elapsed time, retries, output quality and
+human rescues. Report unknown-cost coverage/confidence; make no “5×” claim without
+reproducible results.
+
+### B61 Suggestion snooze and expiry
+
+Snooze a live Suggestion to each supported preset, race a stale-version update, and
+advance the service Clock through snooze and expiry. Verify the proposal stays
+`PROPOSED` while snoozed, visibility follows persisted time, expiry wins, and no task is
+created by snoozing.
+
+### B62 Suggestion-kind mute and cooldown
+
+Mute a kind with multiple open Suggestions and race new proposals. Verify one atomic
+preference update resolves current rows with `MUTED_KIND`, suppresses concurrent/future
+proposals without storing their source text, and unmute does not revive prior rows. Verify
+owner dismissal cools down only the identical dedupe key for 30 days.
+
+### B63 Goal reopen
+
+Complete and reopen a Goal across concurrent version updates. Verify the owner command
+appends a status event, retains the earlier completion and progress evidence, leaves
+linked Tasks/Routines untouched, and cannot reopen an archived Goal.
+
+### B64 DelegationProfile duplicate and rename
+
+Duplicate a non-archived profile while racing a source revision, profile archive, and a
+same-name request. Verify `If-Match` pins the source revision, same-key retries replay the
+committed result, conflicting key reuse fails, normalized names are unique per binding,
+and the new profile is revision 1 and disabled. Verify it copies only the exact current
+non-secret revision, retains the adapter-option descriptor digest for revalidation, and
+copies no execution, auth, grants, budget reservations, Environment, or performance state.
+Rename through a new immutable revision and confirm prior Attempt provenance retains the
+prior name and revision. A stale/archived source, stale descriptor at enablement, and
+name collision must not start a worker or alter the source profile.
+
+### B65 Pinned Suggestion provenance
+
+Create a Suggestion from a specific Resource revision and Goal revision, then advance one
+source and make another conflicted/unavailable. Verify the Suggestion and event keep the
+original pinned references. Acceptance of the unaffected proposal creates an ordinary
+Task with the same input revisions; acceptance of a stale/conflicted required source
+opens review/update, does not silently advance the ref, and leaves the Suggestion
+`PROPOSED`. Confirm Goal progress still cites Task/Evidence and cannot be inferred from
+Suggestion or worker text. Revise a Coworker avatar Resource and verify the prior
+CoworkerRevision retains its pinned image revision.
+
 ## Failure/edge benchmark extensions
 
 - OAuth expires mid-Task

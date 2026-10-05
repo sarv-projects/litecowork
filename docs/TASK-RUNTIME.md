@@ -47,6 +47,46 @@ PlanAcceptance {
 }
 ```
 
+## TaskProgressProjection
+
+`TaskProgressProjection` is a rebuildable read model returned by
+`GET /v1/tasks/{id}/progress`. It contains:
+
+```text
+TaskProgressProjection {
+  task_id: TaskId
+  computed_at: Timestamp
+  last_activity_at?: Timestamp
+  last_activity_source?: TASK_EVENT | STEP_EVENT | ATTEMPT_EVENT | CAPABILITY_INVOCATION | PROVIDER_PROGRESS | ENVIRONMENT_OBSERVATION
+  last_evidence_at?: Timestamp
+  activity_summary?: string
+  active_workstreams: TaskWorkstreamProjection[]
+  blockers: Blocker[]
+  newest_artifact?: ArtifactVersionRef
+}
+
+TaskWorkstreamProjection {
+  step_id: StepId
+  title: string
+  step_status: StepStatus
+  active_attempt_ids: AttemptId[]
+  worker_labels: string[]
+  last_activity_at?: Timestamp
+}
+```
+
+`last_activity_at` comes from a committed Task/Step/Attempt event, a stateful
+CapabilityInvocation transition, or a fresh substantive provider/Environment progress
+observation. Heartbeats, token deltas, process liveness, and “still running” status do not
+count as activity. `last_activity_source` identifies the source class. `last_evidence_at`
+is populated only from committed Evidence/Verification state; it is not interchangeable
+with activity.
+Worker labels include only admitted host workers or native children the harness reports.
+`active_workstreams` require a nonterminal Attempt for the Step. `activity_summary` is a
+short safe projection of observed state, not an unbounded transcript or an assertion that
+work continues. Missing/stale observations produce null timestamps/summary. The projection
+contains no percentage or ETA and never changes Task truth/version.
+
 `PlanningAssignment` is an internal, transient dispatch envelope, not a persisted domain
 entity or lifecycle. It contains the Task ID, expected Task version, pinned TaskSpec
 revision, current lead AgentBinding, idempotency RequestId, and immutable planning-context
@@ -71,20 +111,36 @@ Replacing a planner creates a new envelope and AgentSession while retaining the 
   approvals_required[]
   budget?
   deadline?
+  coworker_id?: CoworkerId
+  expected_coworker_version?: u64
   preferred_lead_agent_binding_id?
   placement_preference?
 }
 ```
 
-Creation resolves the lead binding from an explicit `preferred_lead_agent_binding_id`,
-otherwise the Workspace default. The binding must belong to the Workspace, be enabled,
-and have a currently eligible endpoint. If no eligible binding exists, creation returns
-`AGENT_UNAVAILABLE`, creates no Task/turn, and preserves the unsent composer draft so
-setup can finish first. Creation is atomic: Task + TaskSpecRevision(1) + `task.created`
-event. The selected lead AgentBinding is stored on Task and referenced by the initial
-spec as `preferred_lead_agent_binding_id`; the placement preference is pinned in that
-spec. A new Task enters planning without creating a Step, Attempt, ExecutionLease, or
-Environment.
+`coworker_id` is an explicit origin selection. The Operator may prefill it from the
+Workspace's `primary_coworker_id`, but sends the selected ID so a concurrent primary
+change cannot silently switch this Task to another Coworker. Omitting it creates work
+without Coworker origin. When supplied, TaskService reads the current Coworker head and
+pins its ID/revision to Task in the creation transaction; `expected_coworker_version`,
+when supplied, rejects a stale editor with `CONFLICT`. The caller never supplies a
+Coworker revision as authority. A paused Coworker is allowed only for an explicit
+owner-submitted Task; proactive/scheduled admission requires ACTIVE. An archived Coworker
+is rejected.
+
+Lead selection uses the first configured value in this order: explicit
+`preferred_lead_agent_binding_id`, the selected Coworker revision's
+`default_lead_agent_binding_id`, then Workspace `default_agent_binding_id`. Once a value
+is selected, it must belong to this Workspace, remain enabled and lead-eligible, and have
+a currently eligible endpoint. An unavailable explicit/Coworker/Workspace selection
+fails with `AGENT_UNAVAILABLE`; Core does not skip it and silently substitute a lower
+precedence binding. If no binding is configured, creation returns `AGENT_UNAVAILABLE`,
+creates no Task/turn, and preserves the unsent composer draft so setup can finish first.
+Creation atomically stores Task + TaskSpecRevision(1) + `task.created` and, when present,
+the exact Coworker origin revision. The selected lead AgentBinding is stored on Task and
+referenced by the initial spec as `preferred_lead_agent_binding_id`; the placement
+preference is pinned in that spec. A new Task enters planning without creating a Step,
+Attempt, ExecutionLease, or Environment.
 There is no persisted Task `DRAFT` state in v1; incomplete/unsent composer content remains
 in the Operator until admission succeeds.
 The operator appends the originating ConversationMessage in the same command boundary
@@ -410,6 +466,7 @@ list; prior event/state snapshots remain immutable.
 
 ## Errors
 
+
 ```text
 TASK_NOT_FOUND
 AGENT_UNAVAILABLE
@@ -430,3 +487,38 @@ STALE_FENCE
 INVALID_RESOURCE_REF
 CONFLICT
 ```
+
+## Host delegation admission
+
+Host delegation uses the `DelegateRequest` contract in [`DELEGATION.md`](DELEGATION.md).
+TaskService accepts a request only from the current RUNNING parent Attempt's active
+AgentSession and current lease. `step_id` must identify a READY Step in the Task's current
+accepted PlanRevision, with all dependencies complete and no active Attempt. The requested
+objective, inputs, outputs, and acceptance criteria may narrow that Step; they cannot
+expand it or change the pinned TaskSpec.
+
+If the plan has no suitable Step, the lead submits a PlanRevision proposal and TaskService
+accepts it through the existing plan-revision path. Delegation never creates an
+unplanned Step or edits a PlanRevision. This keeps every child result attached to an
+accepted requirement and makes later verification/recovery reproducible.
+
+Admission checks current profile and binding versions, descriptor freshness, Task and
+profile budgets, Task-wide/parent/profile concurrency, depth, deadline, Runtime and
+Environment compatibility, input revision/freshness, Trust policy, and child-scoped
+grants. Attempt, Step binding, ExecutionLease, budget reservation, and the delegation
+admission event commit atomically. AgentSession startup follows the normal Attempt
+`CREATED -> PREPARING -> RUNNING` lifecycle. A pre-commit rejection creates no Attempt or
+lease; a post-commit startup failure is an ordinary failed Attempt with preserved
+provenance.
+
+The TaskSpec `max_child_attempts` and `max_concurrency` ceilings always apply. A
+DelegationProfile may impose lower limits but cannot raise Task limits. Depth is computed
+from immutable `parent_attempt_id` links and checked again in the admission transaction.
+The active-child count is derived from current nonterminal Attempts, not cached state.
+Retry/escalation creates another Attempt for the same recoverable Step and consumes the
+same Task recovery budget.
+
+Lead handoff, delegated work, and worker replacement remain distinct commands. A lead
+change closes/drains the planning session and produces a bounded handoff projection; it
+does not change active Attempt identity, profile pinning, or parent links. A replacement
+worker is a new Attempt admitted only after the prior Attempt and its Effects are settled.

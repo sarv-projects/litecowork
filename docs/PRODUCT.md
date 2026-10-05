@@ -22,13 +22,23 @@ LiteCowork lets a user describe work once and have the Task survive agent replac
     sleep/offline creates a visible wait or a safe new Attempt elsewhere.
 12. Installed Agents, MCP servers, and desktop applications are cold by default and start
     only when admitted work needs them, except explicitly configured shared services.
+13. A named Coworker can keep user-facing preferences and responsibilities across lead
+    agent changes; Coworker state never replaces Task truth.
+14. A lead can use native subagents or explicitly enabled LiteCowork worker profiles.
+    Host-delegated work is bounded by accepted plan Steps, child-scoped authority, budget,
+    isolation, and verification.
+15. Cost, quota, progress, and warm readiness are shown only at the confidence supported
+    by their source. Unknown values remain unknown.
+16. Goals are passive user intent and Suggestions are proposals. Neither can authorize or
+    start work without the normal user and Task admission path.
 
 ## Primary navigation
 
 ```text
 Home
 Needs You
-Tasks
+Coworkers
+Work
 Automations
 Library
 Discover
@@ -38,7 +48,9 @@ Recent Conversations remain visible in the persistent sidebar. Technical surface
 Agents, MCP, Providers, Environments, Runtime details and protocols live under
 Settings/Inspector/Discover details.
 
-First use connects/enables an external AgentBinding and selects a Workspace default.
+First use creates or selects a Coworker, connects/enables an external AgentBinding, and
+selects a Workspace default. Optional worker profiles stay disabled until the owner
+reviews and enables them.
 Conversations may override that selection. If the selected binding is unavailable,
 LiteCowork preserves the unsent draft and requests agent setup; admission does not create
 a partial ConversationTurn or Task. If an assigned binding becomes unavailable after a

@@ -64,6 +64,18 @@ plan_revisions
 steps
 attempts
 
+delegation_profiles
+delegation_profile_revisions
+coworkers
+coworker_revisions
+goals
+goal_revisions
+goal_task_links
+goal_routine_links
+suggestions
+suggestion_preferences
+demonstration_sessions
+
 agent_profiles
 agent_endpoints
 agent_endpoint_bindings
@@ -175,7 +187,15 @@ UNIQUE domain_events(workspace_id, origin_runtime_id, origin_sequence)
 UNIQUE replication_receipts(workspace_id, receiver_runtime_id, origin_runtime_id, origin_sequence)
 UNIQUE automation_revisions(automation_id, revision)
 UNIQUE routine_revisions(routine_id, revision)
+UNIQUE delegation_profile_revisions(delegation_profile_id, revision)
+UNIQUE non-archived delegation profile name_key(workspace_id, agent_binding_id)
+UNIQUE coworker_revisions(coworker_id, revision)
+UNIQUE goal_revisions(goal_id, revision)
+UNIQUE goal_task_links(goal_id, revision, task_id)
+UNIQUE goal_routine_links(goal_id, revision, routine_id, routine_revision)
 UNIQUE automation_occurrences(automation_id, trigger_id, occurrence_key)
+UNIQUE INDEX uq_suggestions_open_dedupe(workspace_id, dedupe_key) WHERE status = 'PROPOSED'
+INDEX suggestions(workspace_id, dedupe_key, resolved_at DESC) WHERE status = 'DISMISSED' # 30-day exact-key cooldown lookup
 PRIMARY KEY automation_cursors(automation_id, trigger_id)
 UNIQUE channel_event_receipts(channel_binding_id, origin_host_epoch, ingress_sequence)
 PRIMARY KEY channel_ingress_cursor_bindings(channel_binding_id, host_epoch)
@@ -218,6 +238,32 @@ FOREIGN KEY capability_activation_host_bindings(activation_id) -> capability_act
 FOREIGN KEY capability_activation_host_bindings(host_instance_id) -> capability_host_instances
 CapabilityActivationHostBinding must match the exact normalized CapabilityRef, Runtime, and incarnation of both joined records
 CapabilityActivationHostBinding deletion is allowed only after Activation is FAILED or STOPPED
+
+delegation profile, coworker, goal, suggestion, and demonstration aggregates replicate as
+Workspace domain state; immutable revisions remain available to Tasks that pinned them
+Task origin Coworker revision and child Attempt DelegationProfile revision are immutable
+provenance references; insert guards enforce the Workspace, AgentBinding, enabled-profile,
+and pinned Coworker allowlist relationship
+DelegationProfile current name/name_key is a projection of its exact current revision; a
+partial unique index on `(workspace_id, agent_binding_id, name_key)` applies only to
+non-archived profiles, and revision rows reject update/delete
+Workspace primary_coworker_id must reference an ACTIVE or PAUSED Coworker in the same Workspace; clearing it is explicit
+Goal related Task/Routine references are same-Workspace and revision-pinned; they are stored on GoalRevision and do not own or mutate linked records
+Suggestion deduplication applies only while PROPOSED; resolved suggestions remain in history
+CoworkerRevision and GoalRevision rows reject update/delete; GoalService inserts a new revision, advances its head, then inserts that revision's same-Workspace immutable link rows in one transaction
+Goal link rows may be inserted only for the current non-archived revision and reject update/delete
+Suggestion proposal content/provenance is immutable after creation; only snooze and terminal resolution fields may change under SuggestionService version checks
+suggestion_preferences stores only explicit Workspace kind settings; absent rows project as unmuted/version 0
+Suggestion snooze is versioned and bounded by expiry; dismissed-key cooldown uses `resolved_at` and `DISMISSED_BY_OWNER` only
+DemonstrationSession Environment, trace Resource, and SkillProposal references must all
+belong to its Workspace; it records semantic trace ResourceRefs, never raw credential
+values or unbounded screen recordings in relational rows
+AgentHarnessDescriptor and QuotaObservation are time-bounded observations; only non-secret descriptor digests may be pinned to AgentSession/event history, and provider-private handles are excluded from backup/replication
+WorkerPerformance, GoalProgress, TaskProgress, RoutineHealth, and Coworker presence are rebuildable projections, not canonical backup aggregates
+ContextDocuments are versioned Resources and follow the Workspace Resource backup/replication policy; provider embeddings/indexes are rebuildable and never authoritative
+Coworker revisions may name only same-Workspace enabled worker profiles and an enabled,
+lead-eligible default binding at revision creation; future disablement is rechecked at
+admission
 LiteCowork active_activation_count -> derived COUNT of nonterminal Activations joined through local host bindings; never stored as an independent counter
 AgentHostInstance.active_session_count -> derived COUNT of nonterminal AgentSessions joined through local host bindings; never stored as an independent counter
 UNIQUE request_dedup(principal_id, request_id)

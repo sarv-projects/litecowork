@@ -107,3 +107,48 @@ schedule” means no future occurrences, not that every produced Task succeeded.
 Routines can be run, edited as a new revision, duplicated, archived, or used to create an
 Automation. Advanced protocol/package details stay in Inspector/Discover. See
 `EXPERIENCE.md`, `AUTOMATION.md`, `API.md`, and `FLOWS.md`.
+
+## RoutineHealth projection
+
+Routine health is a read-only ProjectionService view, never a persisted aggregate or
+execution authority:
+
+```text
+RoutineHealth {
+  routine_id: RoutineId
+  current_revision: u64
+  last_run_at?: Timestamp
+  last_success_at?: Timestamp
+  recent_success_rate?: number
+  sample_size: u32
+  average_duration_ms?: u64
+  observed_costs: UsageQuantity[] # separate units/currencies; no conversion
+  required_dependency_health: DependencyHealth[]
+  drift_state: HEALTHY | WARNING | DRIFTED | UNKNOWN
+  drift_evidence_refs: EvidenceId[]
+}
+
+DependencyHealth {
+  subject_ref: ResourceRef | CapabilityRef
+  state: HEALTHY | DEGRADED | UNHEALTHY | UNKNOWN
+  observed_at?: Timestamp
+  reason_code?: string
+}
+```
+
+The rate is calculated from the ten most recent terminal Tasks created from the current
+RoutineRevision; terminal COMPLETED counts as success, FAILED/INCOMPLETE as unsuccessful,
+and CANCELLED/SKIPPED/nonterminal runs are excluded. Fewer than three eligible Tasks is
+shown as “Not enough runs yet” instead of a percent. Duration covers Task admission to
+terminal settlement. Cost is grouped by comparable unit/currency and remains Unknown when
+source observations are absent, stale, or incomparable. The latest dependency observation
+is freshness-qualified; absence is `UNKNOWN`, not Healthy.
+
+`DRIFTED` requires explicit incompatibility evidence from a pinned Skill/capability
+preflight or a verifier bound to the current RoutineRevision. A transient provider error
+or failed Task alone is `WARNING`. The Task receives `SKILL_DRIFT_DETECTED` and a Needs You
+item before unsafe replay. The user may request a repair proposal; SkillProposal review,
+redaction, and LitePSM publication rules still apply. Published Skill changes do not
+rewrite RoutineRevision or AutomationRevision pins: the owner reviews a new Routine
+revision and separately updates affected Automation pins. Repair never mutates a package
+or reruns the Task silently.

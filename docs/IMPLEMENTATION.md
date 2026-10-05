@@ -166,18 +166,53 @@ invocation recovery baselines for the first provider. Prove that compatible scop
 Activations share one safe host with a derived use count, while incompatible isolation
 contexts receive separate hosts and every call still enforces its own Grant/fence.
 
-## Stage 4 — heterogeneous agents
+## Stage 4 — delegated worker profiles
 
-Add host delegation, bounded TaskPacket/ResultEnvelope, child lifecycle, worktree isolation and independent verifier.
+Add versioned DelegationProfiles, adapter-negotiated session options, native versus
+host-delegation reporting, accepted-Plan Step admission, bounded TaskPacket and
+ResultEnvelope, child-scoped grants/leases/budgets, isolated worktrees, and independent
+verification. Support at least two qualified harnesses and multiple profiles for one
+AgentBinding before making heterogeneous routing claims. Add deterministic selection,
+cost/latency/quality preferences, bounded retries, verification-based escalation, and
+explicit profile selection with no silent fallback.
 
-## Stage 5 — Runtime Mesh/cloud
+Acceptance: a lead can delegate a READY Step to another harness and to a second profile
+of the same harness; each child has independent provenance and authority; profile edits
+affect only future Attempts; worker output cannot complete a Step without its configured
+verification; failed verification creates a new bounded Attempt; native children are not
+misrepresented as LiteCowork Attempts. Measure verified outcomes, premium usage, total
+known cost, latency, retries, and user rescues against an all-premium baseline.
+
+## Stage 5 — Runtime Mesh and continuation
 
 Add pairing, presence, replication, leases/fencing, blob replication, and explicit handoff.
 Before cloud GA, verify backup restore on a new Runtime, test Workspace event/blob
 recovery, and prove old lease epochs cannot return. Only then implement automatic safe
 failover.
 
-## Stage 6 — channels and automation
+## Stage 6 — warmth, shared Environments, and deadline-sensitive execution
+
+Implement independently owned host/session/capability/Environment warm policies, bounded
+prewarming without model invocation, pressure-based eviction, Environment sharing scopes,
+private worktree defaults, and browser Environment control leases. Add deadline-sensitive
+preflight as best-effort scheduling, a semantics-preserving execution ladder from
+structured APIs through browser/computer use, bounded ActionBatch operations, and human
+takeover for actions requiring user authority. No hard real-time guarantee is made.
+
+Acceptance: warm resources never bypass fresh auth, Trust, lease, config, or Environment
+checks; one browser control lease fences concurrent actors; critical work fails before
+the time window when a required precondition is unavailable; fallback preserves
+Effect/Evidence and approval semantics.
+
+## Stage 7 — Coworker and responsibility surfaces
+
+Add Coworker identity/revisions, one explicitly selected primary Coworker, passive Goals,
+provenance-backed Suggestions, Resource-backed editable context, Home/Coworker/Work/
+Needs You/Subagents surfaces, responsive layouts, reduced-motion behavior, and outcome-
+based progress projections. Suggestions require user action; Goal progress derives from
+verified Task outcomes; context edits use Resource revision conflict handling.
+
+## Stage 8 — channels and automation
 
 One ChannelAdapter (Telegram or Email) through same Conversation/Task store.
 
@@ -187,7 +222,7 @@ ordinary Tasks. Verify stable cursors across edits, misfire behavior after sleep
 and Hub-triggered work waiting for local execution dependencies. Broader trigger variants
 remain disabled until their providers pass conformance.
 
-## Stage 7 — richer surfaces
+## Stage 9 — richer surfaces and reusable work
 
 Add the MCP Apps host, MCP Skills extension provider, user-reviewed SkillProposal draft /
 redaction flow with LitePSM publication only after its contract is available, richer

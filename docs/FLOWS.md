@@ -68,9 +68,10 @@ only when the user opens advanced details.
 ## F02 — Conversation materializes a Task
 
 Precondition: Task admission resolves an enabled, eligible AgentBinding from an explicit
-request or the Workspace default. If none is available, return `AGENT_UNAVAILABLE`, keep
-the composer draft, and create no Task or ConversationTurn; first-use setup runs before
-the user resubmits.
+request, selected Coworker default, or Workspace default in that precedence order. The
+first configured choice is authoritative; if unavailable, return `AGENT_UNAVAILABLE`,
+keep the composer draft, and create no Task or ConversationTurn. First-use setup runs
+before the user resubmits.
 
 1. User asks for outcome-oriented work or explicitly creates a Task from a message.
 2. ConversationService persists the ConversationMessage.
@@ -148,16 +149,35 @@ Denied/expired approval produces policy failure or revised plan; no effect is ex
 
 ## F07 — Host delegation
 
-1. lead calls `litecowork.agents.delegate` with DelegateRequest.
-2. Core validates depth, budget, capabilities, runtime/environment and isolation.
-3. child Step/Attempt created.
-4. bounded TaskPacket delivered to child AgentSession.
-5. child runs independently.
-6. child returns ResultEnvelope + refs.
-7. parent is notified.
-8. lead integrates/rejects/retries.
+**Actors/preconditions:** Lead AgentSession, DelegationCoordinator, TaskService,
+WorkerSelectionService, AgentSessionSupervisor, TrustService; Task is RUNNING under the
+current parent Attempt/ExecutionLease. The request names a READY Step in the current
+accepted PlanRevision. If there is no suitable Step, the lead proposes a PlanRevision
+through TaskService; delegation cannot add a Step directly.
 
-No parent full transcript is copied by default.
+1. Lead submits `DelegateRequest` with objective, referenced inputs/Artifacts,
+   acceptance criteria, required capabilities, optimization policy, isolation, budget,
+   deadline, and optional preferred DelegationProfile ID.
+2. Core verifies the active parent lease/fence, accepted PlanRevision and Step readiness,
+   TaskSpec revision, ancestry/depth, Task/profile concurrency, Workspace policy, and
+   remaining recovery/budget limits. It filters profiles by binding/profile status,
+   adapter descriptor freshness, negotiated option support, Runtime/Environment/auth,
+   Trust, and required features before ranking eligible candidates.
+3. In one owning transaction, TaskService rechecks all mutable versions, reserves the
+   child budget, issues only child-scoped grants under current policy, records the child
+   Attempt pinned to the profile revision, and appends `delegation.admitted.v1`. It never
+   copies parent Approvals or SecretLeases. Provider/process startup happens after commit.
+4. Core builds a bounded TaskPacket from pinned Task/Plan/Workspace revisions, explicit
+   input refs, decisions, child grants, and acceptance criteria. The selected adapter
+   starts an independent AgentSession and Environment under a new ExecutionLease.
+5. The child reports a ResultEnvelope and referenced output/Artifact/Evidence records.
+   TaskService checks revision applicability, reconciles Effects, and runs the configured
+   verifier. The lead receives the result with its source revision and verification state.
+6. The lead may integrate, reject, or request a bounded new Attempt. A new worker/profile
+   is a new Attempt; no existing Attempt changes agent identity in place.
+
+No parent full transcript is copied by default. Native subagents reported by the lead
+remain harness-owned and do not create host-delegated child Attempts.
 
 ## F08 — Child failure
 
@@ -767,6 +787,31 @@ UI: show last verified backup time, restore point, and any missing artifact/effe
 | F43 | Workspace-owned Environment lifecycle, budget and provider identity | Persistent compute remains visible/costed; every Task use gets fresh authority |
 | F44 | Deduplicated Needs You projection | Inbox actions remain on the owning record; delivery status is not Task status |
 | F45 | Exact channel reply to one pending FORM request | No implicit latest-request selection; no Approval or external-auth response through channel |
+| F46 | New channel host assignment with fenced receipt/cursor continuity | Reject stale host input; require owner decision when ingress continuity cannot be proven |
+| F47 | DelegationProfile created disabled then explicitly enabled | No process starts and no profile enters lead discovery before enable commit |
+| F48 | Second revisioned worker profile on one AgentBinding | Preserve one installed harness identity and future-only profile revisions |
+| F49 | Child Attempt, lease, grants, budget, and ResultEnvelope | Show child only after admission; worker output remains unverified until verifier pass |
+| F50 | Failed child Attempt followed by bounded new-profile Attempt | Preserve failed Attempt/Evidence; stop escalation on ambiguity or exhausted budget |
+| F51 | Active child remains pinned after profile disable/revision | Block future admissions; explicit cancel uses ordinary reconciliation |
+| F52 | Quota-low observation and speculative prewarm | Never invoke fallback model or display prewarm as work |
+| F53 | Confirmed lead quota exhaustion and policy-governed handoff | No silent lead switch; new lead gets a fresh session and bounded handoff packet |
+| F54 | Changed native configuration digest and re-probe | Preserve user config; reject unsupported/stale overrides |
+| F55 | Coworker created, selected primary, then first Task | Identity persists across lead changes; Task pins Coworker revision |
+| F56 | Suggestion acceptance creates ordinary Task or opens editor | No direct execution, scheduling, or authority grant |
+| F57 | Goal links verified Task outcomes and Evidence | Progress remains derived; only owner changes Goal completion status |
+| F58 | Concurrent ContextDocument Resource revisions | Preserve both changes and require explicit merge/rebase |
+| F59 | Deadline preflight and bounded ActionBatch | Fail before effects when prerequisites fail; reconcile partial Effects before fallback |
+| F60 | Shared browser profile takeover through control lease | One current controller; stale epoch input is discarded |
+| F61 | Demonstration trace converted to SkillProposal | Review/redaction required; no publication before approval and LitePSM confirmation |
+| F62 | Delegation budget threshold reached | Stop new admissions under policy; never kill an Attempt mid-Effect |
+| F63 | Child worker loss with potentially ambiguous Effect | Reconcile before retry/escalation; preserve independent children only when eligible |
+| F64 | Coworker-private Environment reused by future Task | Fresh Attempt authority and one current browser-control owner |
+| F65 | Suspended persistent Environment changes sharing scope | Reject active/ambiguous use; atomically commit owner/scope before later placement |
+| F66 | Pinned Skill/Routine dependency drifts | Block unsafe replay, expose evidence, and create only an owner-reviewed repair proposal |
+| F67 | Owner snoozes a Suggestion | Keep it proposed, hide until the bounded time or expiry, and preserve versioned history |
+| F68 | Owner mutes a SuggestionKind | Atomically persist Workspace preference and dismiss current proposals of that kind |
+| F69 | Owner reopens a completed Goal | Change Goal status only; retain prior completion, Tasks, and Evidence |
+| F70 | Duplicate a DelegationProfile | Create revision 1 disabled under the same binding; preserve no authority or execution state |
 
 
 ## F37 — Runtime boot and incarnation recovery
@@ -1015,6 +1060,445 @@ resume only if its lease remains valid and no higher epoch has committed; otherw
 channel is visibly unavailable until another eligible host is assigned. Stale source events
 cannot create messages, answer UserRequests, or trigger Tasks. The UI shows the actual host
 and handoff state; changing host does not change binding permissions.
+
+## F47 — Enable an installed AgentBinding as a worker
+
+**Actors/preconditions:** Workspace owner, AgentBindingService, AgentAdapter, TrustService;
+the Runtime has discovered the AgentProfile and the owner enabled its Workspace binding.
+
+1. Settings → Agents → Subagents lists every bound/discovered agent, including the current
+   lead. Inventory presence does not make a profile eligible.
+2. Owner selects Enable; UI queries the adapter's current option schema and
+   AgentHarnessDescriptor and shows supported session options and required policy.
+3. Owner enters a short routing description, instructions, session options, worker limits,
+   Environment policy, and optimization preference. Save creates a disabled profile at
+   revision 1; a separate action enables that revision.
+4. ProfileService rechecks binding, Trust, feature compatibility, and option validity,
+   then commits status.
+
+**Failure/UI/postcondition:** No worker process or model call starts. Missing auth routes
+to setup; stale/unsupported options block enablement with the field identified. Only
+enabled profiles enter the lead's worker catalogue.
+
+## F48 — Add a second worker profile for one installed agent
+
+**Actors/preconditions:** Workspace owner, enabled AgentBinding, adapter option schema.
+
+1. From AgentBinding details, choose Add profile; duplicate settings or start empty. This
+   creates a distinct DelegationProfile, not a second installation.
+2. Configure a supported session option and a separate routing description, policy
+   ceiling, Environment, budget, and concurrency.
+3. Save as an immutable revision, preview compatibility, then explicitly enable.
+
+**Failure/UI/postcondition:** Adapter validates opaque model names; a rejected option does
+not fall back to the lead model. Profiles keep separate identities and can be independently
+selected, disabled, archived, measured, and budgeted.
+
+## F49 — Lead delegates to a heterogeneous worker
+
+**Actors/preconditions:** Active lead Attempt, accepted PlanRevision with a READY target
+Step, eligible worker profile, current parent lease/fence.
+
+1. Lead submits a bounded DelegateRequest naming the Step and required capabilities.
+2. WorkerSelectionService filters by binding/profile state, descriptor freshness, option
+   support, Runtime/Environment/auth, Trust, budget, concurrency/depth, isolation, and
+   deadline before policy ranking. `PREFER` may fall back only when the request/policy
+   permits; `REQUIRE` fails rather than substituting.
+3. TaskService commits child Attempt/profile revision/admission provenance, a distinct
+   lease, budget reservation, and child-scoped grants. AgentSession starts after commit.
+4. UI adds a worker branch after child Attempt creation and labels it Working only after
+   the AgentSession is active.
+5. Outputs return by refs and are checked against pinned TaskSpec/Plan revisions before
+   the lead integrates them.
+
+**Failure/UI/postcondition:** Admission failure has no child Attempt or model call. A
+missing Step requires plan revision through TaskService; no dynamic Step is inserted.
+
+## F50 — Verification failure escalates to another profile
+
+**Actors/preconditions:** Child result and pinned acceptance criteria; bounded escalation
+policy and verifier are available.
+
+1. Verifier evaluates exact input/criterion revisions; worker self-report is not Evidence
+   of success.
+2. On recoverable failure, TaskService records result and checks retry count, budget,
+   deadline, and remaining eligible candidates.
+3. Each escalation creates a new Attempt on the still-READY Step or an explicitly revised
+   successor Step, with fresh session/lease/grants and VerificationRun.
+4. Stop on pass, exhausted budget/attempts, no eligible worker, or nonrecoverable failure.
+
+**Failure/UI/postcondition:** Attempt identity never changes and escalation never loops
+without bound. Show unmet criteria and evidence; inconclusive is not a success checkmark.
+
+## F51 — Disable or revise a profile during an active child Attempt
+
+**Actors/preconditions:** Owner command races with admitted child Attempts.
+
+1. ProfileService serializes status/revision changes using expected version.
+2. Disable blocks new admission after commit; revision changes future Attempts only.
+   Current children retain pinned profile revision/session options and continue only while
+   binding, grants, lease, and parent Task remain valid.
+3. Explicit cancellation follows safe-stop and Effect reconciliation.
+
+**Failure/UI/postcondition:** If disable commits first, stale admission fails with no
+fallback. If admission commits first, provenance remains. UI distinguishes “Disabled for
+new work” from “Stopping current work”.
+
+## F52 — Observe low quota and prewarm a fallback
+
+**Actors/preconditions:** Active Task, quota observation from adapter/provider, eligible
+fallback profile.
+
+1. Adapter reports NORMAL, LOW, EXHAUSTED, or UNKNOWN with source/time; missing data is
+   UNKNOWN.
+2. On LOW, policy may prewarm through the relevant host owner: start/attach host, validate
+   auth/config, resolve Runtime/Environment, and prepare bounded handoff context.
+3. Prewarm creates no Attempt/session/model invocation, execution authority, or lead
+   switch, and may be evicted under resource pressure.
+4. Only a later authorized handoff/admission can start fallback work.
+
+**Failure/UI/postcondition:** Show readiness only from current observations. Do not invent
+quota percentages or imply a provider cache will be preserved.
+
+## F53 — Lead quota exhaustion and lead change
+
+**Actors/preconditions:** Current lead cannot continue; an eligible lead binding exists or
+the owner can choose one.
+
+1. Record EXHAUSTED only when definitively reported; otherwise classify unavailable quota
+   as UNKNOWN. Stop new children from the old lead and reconcile existing children/Effects.
+2. Build a LeadHandoffPacket from durable Task/Plan/Step/Artifact/Evidence/Effect state,
+   remaining budget, and unresolved questions. Exclude transcripts, hidden reasoning,
+   session handles, and secrets.
+3. User selects the new lead or explicit Task/Coworker policy authorizes an eligible
+   fallback. TaskService commits the lead change; a fresh AgentSession resumes from the
+   packet under current Trust and lease rules.
+
+**Failure/UI/postcondition:** Lead change differs from delegation and worker replacement.
+Without authorization or viable lead, show a blocker; no silent model/binding switch.
+
+## F54 — Native configuration changes while a host is warm
+
+**Actors/preconditions:** AgentHostSupervisor has a warm host; adapter observes a change
+to normalized non-secret effective configuration.
+
+1. Before new admission, re-probe descriptor and option compatibility.
+2. Existing sessions finish only if the adapter guarantees configuration is frozen and
+   isolated; otherwise settle at a safe boundary and reconcile.
+3. New admission requires the updated descriptor and explicit review of changed supported
+   options/policy. LiteCowork never rewrites native config.
+
+**Failure/UI/postcondition:** Return `AGENT_NATIVE_CONFIG_CHANGED` or
+`AGENT_SESSION_OVERRIDE_UNSUPPORTED`; offer Review changes/Revalidate. Never restore old
+configuration or silently select another model.
+
+## F55 — Create a Coworker and start its first Task
+
+**Actors/preconditions:** Workspace owner; agent setup may be complete or deferred.
+
+1. First-run setup asks for name/role and optional context, notification, and worker
+   preferences; avatar is optional. Primary Coworker is a separate Workspace setting.
+2. CoworkerService creates the identity and revision; it provisions no host and creates
+   no background work.
+3. The Operator sends the selected Coworker ID (normally prefilled from Workspace primary)
+   and optional expected Coworker version with the ordinary Task request. TaskService
+   snapshots the current Coworker revision in the same transaction as TaskSpec and source
+   message creation. The client cannot submit a historical revision as current authority.
+4. Lead binding resolution is explicit Task choice, then Coworker revision default, then
+   Workspace default. The first configured choice must be usable; an unavailable choice
+   fails without silent fallback. Lead eligibility, enabled profiles, context/resource
+   permissions, budget, and Trust are rechecked before Attempt admission.
+
+**Failure/UI/postcondition:** Missing eligible lead preserves the draft and opens setup.
+A paused Coworker blocks proactive/scheduled admission but does not cancel existing Tasks;
+an explicit owner-submitted Task may still name it and follows normal lead/Trust checks.
+An archived Coworker cannot be selected as a new Task origin.
+
+## F56 — Accept a Suggestion into ordinary work
+
+**Actors/preconditions:** Owner sees a non-expired PROPOSED Suggestion with source
+provenance and a valid TaskSpecProposal.
+
+1. “Why this?” shows sources, intended action, expected authority, estimate confidence,
+   and what acceptance creates.
+2. SuggestionService rechecks expiry/status, proposal digest, exact pinned Resource and
+   Goal revisions, source visibility/freshness, current lead/budget/Trust, and idempotency.
+3. For TASK, one transaction creates an ordinary Task and resolves Suggestion with its
+   Task ID. Execution continues only through ordinary Task admission.
+4. Routine/Automation proposals open their editor and are not resolved as accepted until
+   the owner saves through that owning service.
+
+**Failure/UI/postcondition:** A race, stale/conflicted source, expiry, or invalid authority
+leaves the proposal unaccepted. A stale source opens Review/update and cannot silently
+advance to its latest revision. Accepting never grants permissions, installs packages,
+sends, or schedules work by itself.
+
+## F57 — Link a Goal and show evidence-backed progress
+
+**Actors/preconditions:** Owner creates/revises Goal and references same-Workspace Tasks and
+Routine revisions.
+
+1. GoalService validates references and writes an immutable revision; links are
+   provenance/context only.
+2. GoalProgressProjection reads Task outcomes and pinned Evidence and reports completed,
+   active, blocked, conflicting, or stale contributions with source links.
+3. Worker reports can suggest progress but cannot complete the Goal. Only owner command
+   changes Goal status to COMPLETED.
+
+**Failure/UI/postcondition:** Missing/stale/conflicted sources stay visible and do not
+count as verified progress. Goal status never mutates linked Tasks or Routines.
+
+## F58 — Resolve a concurrent ContextDocument edit
+
+**Actors/preconditions:** Two devices read one Resource revision and submit edits.
+
+1. Each edit proposes a new immutable ResourceRevision with parent and expected head.
+2. First commit advances the Resource head; stale second edit returns conflict while both
+   revisions remain available.
+3. Owner compares, selects, or writes an explicit merged revision. A context provider
+   indexes only committed revisions permitted by policy.
+
+**Failure/UI/postcondition:** No last-writer-wins. Current TaskSpec/user input outranks
+Workspace/Goal/Coworker documents and retrieved historical context; retrieval ranking
+cannot silently resolve a content conflict.
+
+## F59 — Deadline-sensitive preflight and execution
+
+**Actors/preconditions:** Task requests `DEADLINE_SENSITIVE`, with bounded deadline,
+authority, and a supported provider path.
+
+1. Before the critical window, preflight checks Runtime/lease, lead/options, auth,
+   Environment, input freshness, capability, budget, approval readiness, and fallback.
+2. Any required failure is reported before execution; no unsafe partial sequence starts.
+3. Execute through the fastest semantically equivalent authorized method:
+   structured API, structured browser, accessibility browser, then computer use. Record
+   the method and re-authorize a changed fallback.
+4. ActionBatch runs bounded operations with per-operation pre/postconditions and abort
+   checks. Consequential suboperations still have their own Effect/Evidence and
+   reconciliation records.
+5. At a human authorization boundary, stop before the consequence and transfer control
+   through EnvironmentControlLease.
+
+**Failure/UI/postcondition:** Stale page/input, unsupported fallback, missed deadline,
+approval gap, or uncertain Effect stops safely and yields Needs You. Show observed checks
+and elapsed time only; no realtime promise or fake ETA.
+
+## F60 — Shared browser profile and human takeover
+
+**Actors/preconditions:** Persistent browser Environment has explicit sharing scope and a
+current Agent or Human EnvironmentControlLease.
+
+1. EnvironmentManager verifies Workspace/Coworker ownership, health, and current epoch.
+2. An action is accepted only from the lease owner/epoch. Another worker waits; it cannot
+   concurrently type/click in the same shared profile.
+3. Human takeover increments control epoch, discards queued stale agent input, and exposes
+   controls only after HUMAN ownership commits.
+4. Returning control requires fresh page observation, Resource/Effect reconciliation, and
+   a new Agent control epoch.
+
+**Failure/UI/postcondition:** A lease conflict queues no input. UI labels the current
+controller and states that the control lease is separate from the Task ExecutionLease.
+
+## F61 — Demonstration becomes a reviewed SkillProposal
+
+**Actors/preconditions:** Owner explicitly starts a DemonstrationSession in a supported
+Environment with semantic observation and input fencing.
+
+1. Capture bounded semantic targets, page/resource state, and action intent while the
+   owner operates; redact secrets to named placeholders.
+2. On Finish, persist trace as a Resource and enter REVIEW. Owner edits steps, typed inputs,
+   outputs, and verification criteria.
+3. Conversion creates a draft SkillProposal through the existing test/review lifecycle;
+   it is not installed or invoked automatically.
+4. LitePSM remains package discovery/lifecycle authority for a published package;
+   LiteCowork owns only Task-scoped activation/grants.
+
+**Failure/UI/postcondition:** Abort or secret detection follows retention policy and
+settles the session; coordinate-only raw replay is never published as a Skill.
+
+## F62 — Cost ceiling stops new delegation
+
+**Actors/preconditions:** Task/profile BudgetSpec and Usage/BudgetReservations; a child is
+active or requested.
+
+1. BudgetService reconciles usage by unit, currency, source, and confidence. Unknown spend
+   remains unknown, never zero.
+2. At threshold, apply the pinned response: warn, reduce concurrency, prefer cheaper
+   eligible profiles, require approval, or stop new delegation.
+3. Existing Attempts settle/reconcile under their own grants/Effects; the ceiling does not
+   kill a worker mid-effect or rewrite its model/profile.
+4. Resume new admissions only after explicit budget/approval update under versioned policy.
+
+**Failure/UI/postcondition:** Show observed provider units and known estimates with source,
+confidence, and time; label unknown spend. Never show fabricated `$0.00` or silently
+switch workers.
+
+## F63 — Worker crashes with a potentially ambiguous Effect
+
+**Actors/preconditions:** Child Attempt loses process/session during or after a
+Core-mediated consequential operation.
+
+1. Mark session/Attempt lost, retain relevant Effect/lease history, and prevent new
+admission that could repeat unresolved external work.
+2. EffectReconciler checks the idempotency identity and authoritative provider result.
+   Never redispatch an uncertain operation blindly.
+3. After reconciliation, settle the lost Attempt and evaluate retry/escalation. Any
+   replacement is a new Attempt with new session/grants/lease and pinned source refs.
+4. Notify the parent lead with reconciled outcome, Evidence, and unresolved blockers.
+
+**Failure/UI/postcondition:** Ambiguity remains blocked or enters Needs You. Independent
+children may continue only if their dependencies and parent authority remain valid. A
+worker report never becomes verified completion by itself.
+
+## F64 — Reuse a Coworker-private Environment
+
+**Actors/preconditions:** Environment has `COWORKER_PRIVATE` sharing, explicit lifetime,
+healthy provider observation, and a future Task from that Coworker.
+
+1. EnvironmentManager verifies same Workspace/Coworker, classification, freshness,
+   Runtime incarnation/provider binding, no conflicting active writer, and budget/retention.
+2. Reuse creates a new Environment use reference, not an old Attempt lease, grant, browser
+   control lease, or native session.
+3. Concurrent code writers receive private worktrees/overlays; shared browser input has
+   one current EnvironmentControlLease owner.
+4. On settlement, release current use reference and retain/destroy only under explicit
+   lifetime policy and verified provider result.
+
+**Failure/UI/postcondition:** Missing provider handle, stale auth, conflict, or unhealthy
+Environment makes it unavailable pending reconciliation/reprovision. UI separates “saved
+for this Coworker” from “currently in use”.
+
+## F65 — Change a persistent Environment sharing scope
+
+**Actors/preconditions:** Workspace owner, EnvironmentManager, TrustService; a persistent
+Environment is `SUSPENDED`, current-versioned, and has no active Attempt, Invocation,
+control lease, unresolved Effect, or checkpoint hold.
+
+1. The owner chooses between `COWORKER_PRIVATE` and `WORKSPACE_SHARED`. Confirmation names
+   the current and proposed reuse boundaries and eligible Task set.
+2. A Coworker-private target must name an active/paused same-Workspace Coworker; a
+   Workspace-shared target clears the Coworker owner. `USER_SHARED` is unavailable.
+3. EnvironmentManager rechecks expected version, suspension, holds, owner, and policy in
+   one mutation transaction. It changes scope/owner and appends
+   `environment.sharing_scope.changed.v1` atomically.
+4. The Environment remains suspended. Later Tasks pass fresh placement, health, resource,
+   Trust, and lease checks; no grant or control lease transfers.
+
+**Failure/UI/postcondition:** A stale version returns conflict. Active use, unresolved
+Effects, or checkpoint holds reject the command and retain the prior scope. The UI updates
+only after commit and makes no claim that data was copied or a Task started.
+
+## F66 — Detect pinned Skill or Routine dependency drift
+
+**Actors/preconditions:** Routine-created Task, Skill/Capability adapter, verifier,
+ProjectionService, TaskService, owner. The Task pins immutable Routine/Automation and
+Capability revisions.
+
+1. Before replay or a consequential operation, the adapter performs semantic preflight or
+   the verifier checks the output against the pinned criteria. A transient outage is
+   `WARNING`; only explicit incompatibility evidence is `DRIFTED`.
+2. Persist blocker `SKILL_DRIFT_DETECTED` and its Evidence/observation reference.
+   RoutineHealth becomes `DRIFTED`; no Skill, RoutineRevision, AutomationRevision, or
+   TaskSpec pin is rewritten.
+3. Needs You offers Review, disable the affected Automation, or prepare a repair. Repair
+   creates a SkillProposal through the normal redaction/test/review path; publication
+   waits for explicit approval and LitePSM confirmation.
+4. The owner explicitly revises the Routine and then any Automation revision that should
+   adopt the new Skill. New Tasks pin new revisions; existing Attempts remain unchanged.
+
+**Failure/UI/postcondition:** Unknown compatibility remains `UNKNOWN` and blocks unsafe
+replay when required by policy. Failed repair leaves existing pins intact. The UI names
+the evidence and affected revisions; it never claims automatic repair or silently reruns
+an external Effect.
+
+## F67 — Snooze a Suggestion
+
+**Actors/preconditions:** Workspace owner, SuggestionService, current `PROPOSED`
+Suggestion; owner supplies an expected version and one of the UI presets Later today,
+Tomorrow, or Next week.
+
+1. Resolve the preset against the service Clock. Require `now < snoozed_until <= expires_at`;
+   presets later than expiry are unavailable and the card explains that the suggestion
+   expires sooner. The API never silently clamps a timestamp.
+2. In one optimistic mutation, persist `snoozed_until`, increment Suggestion version,
+   and append `suggestion.visibility.changed.v1`. Status remains `PROPOSED`. A “Show now”
+   action sets `snoozed_until=null` through the same command.
+3. ProjectionService excludes it from Home/Ideas until that time. The Snoozed Ideas view
+   can still list it and offers “Show now.” Expiration processing may settle it sooner; a
+   snoozed record is never resurrected after terminal resolution.
+
+**Failure/UI/postcondition:** Stale version returns conflict. An already expired or
+resolved Suggestion returns `SUGGESTION_EXPIRED` or `CONFLICT` as appropriate and is not
+made visible again. A worker or generated suggestion cannot snooze itself.
+
+## F68 — Mute a SuggestionKind
+
+**Actors/preconditions:** Workspace owner, SuggestionService; preference
+version is current (missing preference means unmuted version zero).
+
+1. The owner chooses “Don't suggest this type” for the card's deterministic kind or
+   changes the kind in Settings. UI states that existing proposals of this kind will be
+   cleared and future ones suppressed.
+2. SuggestionService checks `If-Match` and authorization. In one transaction, it updates
+   the preference and resolves every currently `PROPOSED` Suggestion of that kind as
+   `DISMISSED` with reason `MUTED_KIND`, appending their resolution events and
+   `suggestion.preference.changed.v1`.
+3. SuggestionService checks the current preference and the exact-key 30-day dismissal
+   cooldown on every new proposal. Muted proposals create no Suggestion or domain event;
+   a metric may record suppression without source content.
+4. Unmuting changes the preference for future proposals only; it does not reopen
+   Suggestions cleared by the mute.
+
+**Failure/UI/postcondition:** Version conflict changes nothing. The card set and Settings
+label update only after commit. Preference state replicates with Workspace events; source
+content, ranking scores, and suppressed proposal text do not.
+
+## F69 — Reopen a completed Goal
+
+**Actors/preconditions:** Goal owner, GoalService; Goal is `COMPLETED` and current version
+is supplied.
+
+1. Owner explicitly selects Reopen. GoalService applies the expected-version check, sets
+   status to `ACTIVE`, increments the aggregate version, and appends
+   `goal.status.changed.v1`.
+2. GoalProgressProjection continues to show the existing linked Task/Evidence history and
+   current progress. Reopening does not reset evidence, reopen Tasks, revise Routines, or
+   create a Task.
+
+**Failure/UI/postcondition:** A stale version returns `CONFLICT`; an `ARCHIVED` Goal
+returns `GOAL_ARCHIVED`. The UI labels Goal status separately from derived progress.
+
+## F70 — Duplicate a DelegationProfile
+
+**Actors/preconditions:** Workspace owner and DelegationProfileService; source profile is
+non-archived, its current version is known, and its AgentBinding remains in the Workspace.
+
+1. Owner chooses Duplicate. UI shows the source's pinned current revision, adapter-option
+   descriptor digest, and the settings that will be copied; it asks for a new profile
+   name. It explains that the new profile starts disabled and has no authentication or
+   execution history.
+2. Operator sends `POST /v1/delegation-profiles/{id}/duplicate` with `If-Match`, a fresh
+   `Idempotency-Key`, and the new name. DelegationProfileService resolves and authorizes
+   the source in the selected Workspace, verifies the source version, normalizes the name
+   (trim + Unicode NFC) and computes its Unicode case-folded key.
+3. In one transaction, service allocates a new DelegationProfile on the source's same
+   AgentBinding, checks the name-key uniqueness index, copies the exact current non-secret
+   revision values as new revision 1 with the new name and current author/time, sets
+   status `DISABLED`, and appends `delegation_profile.created.v1` with its canonical
+   state blob. It copies no Attempts, AgentSessions, native handles, grants, Approvals,
+   SecretLeases, budgets/reservations, Environments, Runtime placement, or performance
+   projection. It never starts a process or invokes a model.
+4. On response, UI shows the new disabled profile. If the pinned option descriptor is no
+   longer current, it marks the profile “Needs review”; the owner must revise/revalidate
+   it before enablement. Enabling is a separate command and rechecks binding, adapter
+   options, Trust policy, Environment policy, and current descriptor.
+
+**Failure/UI/postcondition:** Repeating the same idempotency key and normalized request
+returns the same created profile before re-evaluating the old `If-Match`; using the same
+key with different input conflicts. A stale source version returns `CONFLICT`; a source
+archived before commit returns `DELEGATION_PROFILE_ARCHIVED`; duplicate name returns
+`CONFLICT`. Any failure before commit creates no profile or event. The source profile and
+all its Attempts remain unchanged. Portable export/import is outside v1.
 
 ## Shared flow invariants
 

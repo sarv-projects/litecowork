@@ -6013,6 +6013,27 @@
         ],
         "additionalProperties": false
       }
+    ,
+      "workspace_primary_coworker_changed": {"type":"object","required":["workspace_id","from_coworker_id","to_coworker_id","changed_by","aggregate_version"],"properties":{"workspace_id":{"type":"string","minLength":1},"from_coworker_id":{"type":["string","null"]},"to_coworker_id":{"type":["string","null"]},"changed_by":{"$ref":"#/$defs/principal_ref"},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "suggestion_preference_changed": {"type":"object","required":["workspace_id","kind","from_muted","to_muted","changed_by","aggregate_version"],"properties":{"workspace_id":{"type":"string","minLength":1},"kind":{"type":"string","enum":["TASK_OPPORTUNITY","ROUTINE_OPPORTUNITY","AUTOMATION_OPPORTUNITY"]},"from_muted":{"type":"boolean"},"to_muted":{"type":"boolean"},"changed_by":{"$ref":"#/$defs/principal_ref"},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "task_coworker_origin_pinned": {"type":"object","required":["task_id","coworker_id","coworker_revision","aggregate_version"],"properties":{"task_id":{"type":"string","minLength":1},"coworker_id":{"type":"string","minLength":1},"coworker_revision":{"type":"integer","minimum":1},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "agent_binding_lead_eligibility_changed": {"type":"object","required":["agent_binding_id","workspace_id","from","to","aggregate_version","requested_by"],"properties":{"agent_binding_id":{"type":"string","minLength":1},"workspace_id":{"type":"string","minLength":1},"from":{"type":"boolean"},"to":{"type":"boolean"},"aggregate_version":{"type":"integer","minimum":1},"requested_by":{"$ref":"#/$defs/principal_ref"}},"additionalProperties":false},
+      "agent_session_harness_descriptor_pinned": {"type":"object","required":["agent_session_id","scope","task_spec_revision","descriptor_digest","features_digest","observed_at"],"properties":{"agent_session_id":{"type":"string","minLength":1},"descriptor_digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"features_digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"effective_config_digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"observed_at":{"type":"string","format":"date-time"},"scope":{"$ref":"#/$defs/agent_session_scope"},"task_spec_revision":{"type":["integer","null"],"minimum":1}},"additionalProperties":false},
+      "delegation_profile_created": {"type":"object","required":["delegation_profile_id","workspace_id","agent_binding_id","current_revision","status","aggregate_version"],"properties":{"delegation_profile_id":{"type":"string","minLength":1},"workspace_id":{"type":"string","minLength":1},"agent_binding_id":{"type":"string","minLength":1},"current_revision":{"type":"integer","minimum":1},"status":{"type":"string","minLength":1},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "delegation_profile_revised": {"type":"object","required":["delegation_profile_id","revision","revision_digest","authored_by","aggregate_version"],"properties":{"delegation_profile_id":{"type":"string","minLength":1},"revision":{"type":"integer","minimum":1},"revision_digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"authored_by":{"$ref":"#/$defs/principal_ref"},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "delegation_profile_status_changed": {"type":"object","required":["delegation_profile_id","from","to","aggregate_version"],"properties":{"delegation_profile_id":{"type":"string","minLength":1},"from":{"type":"string","minLength":1},"to":{"type":"string","minLength":1},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "delegation_admitted": {"type":"object","required":["parent_attempt_id","child_attempt_id","step_id","delegation_profile_id","delegation_profile_revision","agent_binding_id","endpoint_id","runtime_id","runtime_incarnation_id","environment_id","descriptor_digest","selection_policy","eligible_candidate_count","candidate_set_digest","selection_policy_version","budget_reservation_ids","capability_grant_ids","aggregate_version"],"properties":{"parent_attempt_id":{"type":"string","minLength":1},"child_attempt_id":{"type":"string","minLength":1},"step_id":{"type":"string","minLength":1},"delegation_profile_id":{"type":"string","minLength":1},"delegation_profile_revision":{"type":"integer","minimum":1},"agent_binding_id":{"type":"string","minLength":1},"endpoint_id":{"type":"string","minLength":1},"runtime_id":{"type":"string","minLength":1},"runtime_incarnation_id":{"type":"string","minLength":1},"environment_id":{"type":"string","minLength":1},"descriptor_digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"selection_policy":{"type":"string","enum":["QUALITY_FIRST","BALANCED","COST_FIRST","LATENCY_FIRST"]},"eligible_candidate_count":{"type":"integer","minimum":0},"candidate_set_digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"selection_policy_version":{"type":"string","minLength":1},"budget_reservation_ids":{"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1}},"capability_grant_ids":{"type":"array","uniqueItems":true,"items":{"type":"string","minLength":1}},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "coworker_created": {"type":"object","required":["coworker_id","workspace_id","current_revision","status","aggregate_version"],"properties":{"coworker_id":{"type":"string","minLength":1},"workspace_id":{"type":"string","minLength":1},"current_revision":{"type":"integer","minimum":1},"status":{"type":"string","minLength":1},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "coworker_revised": {"type":"object","required":["coworker_id","revision","revision_digest","authored_by","aggregate_version"],"properties":{"coworker_id":{"type":"string","minLength":1},"revision":{"type":"integer","minimum":1},"revision_digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"authored_by":{"$ref":"#/$defs/principal_ref"},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "coworker_status_changed": {"type":"object","required":["coworker_id","from","to","aggregate_version"],"properties":{"coworker_id":{"type":"string","minLength":1},"from":{"type":"string","minLength":1},"to":{"type":"string","minLength":1},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "goal_created": {"type":"object","required":["goal_id","workspace_id","current_revision","status","aggregate_version"],"properties":{"goal_id":{"type":"string","minLength":1},"workspace_id":{"type":"string","minLength":1},"current_revision":{"type":"integer","minimum":1},"status":{"type":"string","minLength":1},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "goal_revised": {"type":"object","required":["goal_id","revision","revision_digest","authored_by","aggregate_version"],"properties":{"goal_id":{"type":"string","minLength":1},"revision":{"type":"integer","minimum":1},"revision_digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"authored_by":{"$ref":"#/$defs/principal_ref"},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "goal_status_changed": {"type":"object","required":["goal_id","from","to","aggregate_version"],"properties":{"goal_id":{"type":"string","minLength":1},"from":{"type":"string","minLength":1},"to":{"type":"string","minLength":1},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "suggestion_proposed": {"type":"object","required":["suggestion_id","workspace_id","dedupe_key","kind","source_refs","goal_refs","proposed_action","proposal_digest","expires_at","aggregate_version"],"properties":{"suggestion_id":{"type":"string","minLength":1},"workspace_id":{"type":"string","minLength":1},"coworker_id":{"type":"string","minLength":1},"dedupe_key":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"kind":{"type":"string","enum":["TASK_OPPORTUNITY","ROUTINE_OPPORTUNITY","AUTOMATION_OPPORTUNITY"]},"source_refs":{"type":"array","items":{"$ref":"#/$defs/pinned_resource_ref"}},"goal_refs":{"type":"array","uniqueItems":true,"items":{"type":"object","required":["goal_id","revision"],"properties":{"goal_id":{"type":"string","minLength":1},"revision":{"type":"integer","minimum":1}},"additionalProperties":false}},"proposed_action":{"type":"string","enum":["TASK","OPEN_ROUTINE_EDITOR","OPEN_AUTOMATION_EDITOR"]},"proposal_digest":{"type":"string","pattern":"^sha256:[a-f0-9]{64}$"},"expires_at":{"type":"string","format":"date-time"},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "suggestion_resolved": {"type":"object","required":["suggestion_id","from","to","resolved_by","resolution_reason","aggregate_version"],"properties":{"suggestion_id":{"type":"string","minLength":1},"from":{"type":"string","minLength":1},"to":{"type":"string","minLength":1},"resolved_by":{"$ref":"#/$defs/principal_ref"},"resolution_reason":{"type":"string","enum":["ACCEPTED_BY_OWNER","DISMISSED_BY_OWNER","MUTED_KIND","SYSTEM_EXPIRY"]},"result_task_id":{"type":"string","minLength":1},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "suggestion_visibility_changed": {"type":"object","required":["suggestion_id","from_snoozed_until","to_snoozed_until","changed_by","aggregate_version"],"properties":{"suggestion_id":{"type":"string","minLength":1},"from_snoozed_until":{"type":["string","null"],"format":"date-time"},"to_snoozed_until":{"type":["string","null"],"format":"date-time"},"changed_by":{"$ref":"#/$defs/principal_ref"},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "demonstration_status_changed": {"type":"object","required":["demonstration_session_id","environment_id","from","to","aggregate_version"],"properties":{"demonstration_session_id":{"type":"string","minLength":1},"environment_id":{"type":"string","minLength":1},"from":{"type":"string","minLength":1},"to":{"type":"string","minLength":1},"trace_resource_id":{"type":"string","minLength":1},"skill_proposal_id":{"type":"string","minLength":1},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false},
+      "environment_sharing_scope_changed": {"type":"object","required":["environment_id","from","to","changed_by","aggregate_version"],"properties":{"environment_id":{"type":"string","minLength":1},"from":{"type":"string","minLength":1},"to":{"type":"string","minLength":1},"changed_by":{"$ref":"#/$defs/principal_ref"},"aggregate_version":{"type":"integer","minimum":1}},"additionalProperties":false}
     },
     "provenance_transformation": {
       "type": "object",
@@ -6132,6 +6153,23 @@
         "INVALID_TRANSITION",
         "STALE_VERSION",
         "AGENT_UNAVAILABLE",
+        "AGENT_NOT_LEAD_ELIGIBLE",
+        "AGENT_SESSION_OVERRIDE_UNSUPPORTED",
+        "AGENT_NATIVE_CONFIG_CHANGED",
+        "AGENT_QUOTA_EXHAUSTED",
+        "DELEGATION_PROFILE_DISABLED",
+        "DELEGATION_PROFILE_ARCHIVED",
+        "DELEGATION_PROFILE_INCOMPATIBLE",
+        "DELEGATION_PROFILE_OPTIONS_INVALID",
+        "DELEGATION_DEPTH_EXCEEDED",
+        "DELEGATION_CONCURRENCY_EXCEEDED",
+        "WORKER_QUALITY_FLOOR_UNMET",
+        "WORKER_BUDGET_EXCEEDED",
+        "DEADLINE_EXECUTION_PRECONDITION_FAILED",
+        "COWORKER_PAUSED",
+        "COWORKER_ARCHIVED",
+        "GOAL_ARCHIVED",
+        "SUGGESTION_EXPIRED",
         "STALE_TASK_VERSION",
         "STALE_SPEC_REVISION",
         "CONFLICT",
@@ -8342,6 +8380,387 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/automation_occurrence_status_changed"
+          }
+        }
+      }
+    }
+  ,
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "workspace.primary_coworker.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/workspace_primary_coworker_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "suggestion.preference.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/suggestion_preference_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "task.coworker.origin.pinned.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/task_coworker_origin_pinned"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "agent.binding.lead_eligibility.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/agent_binding_lead_eligibility_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "agent.session.harness_descriptor.pinned.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/agent_session_harness_descriptor_pinned"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "delegation_profile.created.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/delegation_profile_created"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "delegation_profile.revised.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/delegation_profile_revised"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "delegation_profile.status.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/delegation_profile_status_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "delegation.admitted.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/delegation_admitted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "coworker.created.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/coworker_created"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "coworker.revised.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/coworker_revised"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "coworker.status.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/coworker_status_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "goal.created.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/goal_created"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "goal.revised.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/goal_revised"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "goal.status.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/goal_status_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "suggestion.proposed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/suggestion_proposed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "suggestion.resolved.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/suggestion_resolved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "suggestion.visibility.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/suggestion_visibility_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "demonstration.status.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/demonstration_status_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "environment.sharing_scope.changed.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/environment_sharing_scope_changed"
           }
         }
       }

@@ -91,6 +91,26 @@ Invocation but never widened.
 
 Default is DENY when a required fact is unknown.
 
+## Delegated-worker authority
+
+A DelegationProfile is a restriction on eligible work, not authority. When a child Attempt
+is admitted, TrustService independently evaluates each required capability and issues new
+grants scoped to that exact Task/Attempt, Runtime, Environment, operation, and expiry.
+Parent Attempt grants, Approval decisions, ApprovalUses, SecretLeases, and native harness
+credentials never flow to a child. A child may use only the grant references in its
+TaskPacket, and those references resolve only to its own active scopes.
+
+If a required child grant needs escalation, Approval binds to the exact child Attempt and
+requested action; approving the parent or profile cannot approve it. Revoking the parent
+does not silently cancel an independently authorized child, but Task cancellation,
+Workspace archive, profile disable policy, or explicit Trust revocation applies through
+the owning service and fences new child admission. Direct native agent effects remain
+outside Core receipts unless the provider enforces an equivalent contract.
+
+For deadline-sensitive work, authorization and required approvals may be checked during
+preflight. Preflight does not pre-authorize a future target/action whose digest is not yet
+known. A consequential action still requires the exact effect-bound decision at execution.
+
 ## Approval model
 
 Approval request includes:

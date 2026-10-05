@@ -114,6 +114,7 @@ Minimum v1 registry:
 workspace.created.v1
 workspace.replication_policy.changed.v1
 workspace.default_agent_binding.changed.v1
+workspace.primary_coworker.changed.v1
 workspace.archived.v1
 workspace.instructions.revision.created.v1
 workspace.root.created.v1
@@ -140,6 +141,7 @@ task.status.changed.v1
 task.pause.requested.v1
 task.paused.v1
 task.resumed.v1
+task.coworker.origin.pinned.v1
 
 step.created.v1
 step.status.changed.v1
@@ -154,6 +156,27 @@ agent.session.started.v1
 agent.session.lost.v1
 agent.session.closed.v1
 agent.binding.changed.v1
+agent.binding.lead_eligibility.changed.v1
+agent.session.harness_descriptor.pinned.v1
+
+delegation_profile.created.v1
+delegation_profile.revised.v1
+delegation_profile.status.changed.v1
+delegation.admitted.v1
+
+coworker.created.v1
+coworker.revised.v1
+coworker.status.changed.v1
+
+goal.created.v1
+goal.revised.v1
+goal.status.changed.v1
+
+suggestion.proposed.v1
+suggestion.resolved.v1
+suggestion.visibility.changed.v1
+suggestion.preference.changed.v1
+demonstration.status.changed.v1
 
 runtime.paired.v1
 runtime.revoked.v1
@@ -230,6 +253,7 @@ environment.created.v1
 environment.state.changed.v1
 environment.checkpoint.created.v1
 environment.control.lease.changed.v1
+environment.sharing_scope.changed.v1
 
 capability.lock.created.v1
 secret.lease.issued.v1
@@ -340,6 +364,55 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `channel.outbound.settled` | `channel_binding_id`, `runtime_id`, `host_epoch`, `delivery_id`, `provider_event_id?`, `state`, `result_digest?` |
 | `handoff.*` | `handoff_id`, `task_id`, `step_id`, `source_attempt_id`, `source_runtime_id`, `target_runtime_id?`, `phase` |
 | `audit.record.created` | `audit_record_id`, `principal`, `action`, `decision`, `reason_code`, `payload_digest?` |
+| `workspace.primary_coworker.changed` | `workspace_id`, `from_coworker_id`, `to_coworker_id`, `changed_by`, `aggregate_version` |
+| `suggestion.preference.changed` | `workspace_id`, `kind`, `from_muted`, `to_muted`, `changed_by`, `aggregate_version` |
+| `task.coworker.origin.pinned` | `task_id`, `coworker_id`, `coworker_revision`, `aggregate_version` |
+| `agent.binding.lead_eligibility.changed` | `agent_binding_id`, `workspace_id`, `from`, `to`, `aggregate_version`, `requested_by` |
+| `agent.session.harness_descriptor.pinned` | `agent_session_id`, `scope`, `task_spec_revision` (nullable for conversation scope), `descriptor_digest`, `features_digest`, `effective_config_digest?`, `observed_at` |
+| `delegation_profile.created` | `delegation_profile_id`, `workspace_id`, `agent_binding_id`, `current_revision`, `status`, `aggregate_version` |
+| `delegation_profile.revised` | `delegation_profile_id`, `revision`, `revision_digest`, `authored_by`, `aggregate_version` |
+| `delegation_profile.status.changed` | `delegation_profile_id`, `from`, `to`, `aggregate_version` |
+| `delegation.admitted` | `parent_attempt_id`, `child_attempt_id`, `step_id`, `delegation_profile_id`, `delegation_profile_revision`, `agent_binding_id`, `endpoint_id`, `runtime_id`, `runtime_incarnation_id`, `environment_id`, `descriptor_digest`, `selection_policy`, `eligible_candidate_count`, `candidate_set_digest`, `selection_policy_version`, `budget_reservation_ids[]`, `capability_grant_ids[]`, `aggregate_version` |
+| `coworker.created` | `coworker_id`, `workspace_id`, `current_revision`, `status`, `aggregate_version` |
+| `coworker.revised` | `coworker_id`, `revision`, `revision_digest`, `authored_by`, `aggregate_version` |
+| `coworker.status.changed` | `coworker_id`, `from`, `to`, `aggregate_version` |
+| `goal.created` | `goal_id`, `workspace_id`, `current_revision`, `status`, `aggregate_version` |
+| `goal.revised` | `goal_id`, `revision`, `revision_digest`, `authored_by`, `aggregate_version` |
+| `goal.status.changed` | `goal_id`, `from`, `to`, `aggregate_version` |
+| `suggestion.proposed` | `suggestion_id`, `workspace_id`, `coworker_id?`, `dedupe_key`, `kind`, `source_refs[]`, `goal_refs[]`, `proposed_action`, `proposal_digest`, `expires_at`, `aggregate_version` |
+| `suggestion.resolved` | `suggestion_id`, `from`, `to`, `resolved_by`, `resolution_reason`, `result_task_id?`, `aggregate_version` |
+| `suggestion.visibility.changed` | `suggestion_id`, `from_snoozed_until`, `to_snoozed_until`, `changed_by`, `aggregate_version` |
+| `demonstration.status.changed` | `demonstration_session_id`, `environment_id`, `from`, `to`, `trace_resource_id?`, `skill_proposal_id?`, `aggregate_version` |
+| `environment.sharing_scope.changed` | `environment_id`, `from`, `to`, `changed_by`, `aggregate_version` |
+
+For `suggestion.proposed.v1`, every `source_refs[]` entry is a `PinnedResourceRef` and
+every `goal_refs[]` entry is a `GoalRevisionRef`; both types pin exact same-Workspace
+revisions.
+
+### Ownership and replication for responsibility/delegation events
+
+| Event | Owning aggregate / transition owner | Replication rule |
+|---|---|---|
+| `workspace.primary_coworker.changed.v1` | Workspace / WorkspaceService | Workspace state; Coworker must be same Workspace and ACTIVE or PAUSED |
+| `suggestion.preference.changed.v1` | SuggestionPreference / SuggestionService | Workspace-scoped preference replicates; muting also resolves currently proposed items of that kind in the same transaction |
+| `task.coworker.origin.pinned.v1` | Task / TaskService | Immutable Task origin provenance; Coworker revision is pinned |
+| `agent.binding.lead_eligibility.changed.v1` | AgentBinding / AgentBindingService | Workspace authorization state; no endpoint locator or credentials |
+| `agent.session.harness_descriptor.pinned.v1` | AgentSession / AgentSessionSupervisor | Non-secret descriptor/feature/config digests and session scope only; no descriptor contents or handles |
+| `delegation_profile.*.v1` | DelegationProfile / DelegationProfileService | Profile revisions/status replicate; provider-native option values remain opaque, non-secret adapter-owned values |
+| `delegation.admitted.v1` | Task / TaskService admission transaction | Attempt/profile/revision/grant/reservation identity is durable; candidate digest contains no prompts or secret config |
+| `coworker.*.v1` | Coworker / CoworkerService | Identity and immutable preferences replicate under Workspace policy; no agent session state |
+| `goal.*.v1` | Goal / GoalService | Immutable Goal revision/status and same-Workspace references replicate |
+| `suggestion.*.v1` | Suggestion / SuggestionService | Proposal digest, provenance refs, status, and result Task ref replicate; source content remains in Resources |
+| `suggestion.visibility.changed.v1` | Suggestion / SuggestionService | Visibility timestamps and owner identity only; snooze cannot extend past expiry, null clears a snooze |
+| `demonstration.status.changed.v1` | DemonstrationSession / DemonstrationSessionService | Status and trace Resource ID only; semantic trace Resource follows normal replication policy |
+| `environment.sharing_scope.changed.v1` | Environment / EnvironmentManager | Scope change requires expected-version and current-use check; provider locators remain local |
+
+`QuotaObservation`, candidate ranking detail, warm process state, WorkerPerformance,
+TaskProgress, GoalProgress, RoutineHealth, and Coworker presence are operational or
+rebuildable projections, not new replicated domain events. Usage/budget records continue
+to use their existing event family. Do not encode per-token streams, temporary worker
+messages, native session IDs, process IDs, secret bytes, or cost values that the provider
+did not report.
 
 Payloads never contain raw secret bytes, native hidden prompts, or unbounded terminal,
 video, or token streams. ResourceRef and digest carry large/sensitive payloads by

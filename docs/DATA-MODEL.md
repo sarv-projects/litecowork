@@ -13,6 +13,7 @@ Workspace {
   replication_scope_root_ids: WorkspaceRootId[]
   current_instruction_revision: u64?
   default_agent_binding_id: AgentBindingId?
+  primary_coworker_id: CoworkerId?
   hub_runtime_id: RuntimeId?
   status: ACTIVE | ARCHIVED
   created_at: Timestamp
@@ -28,6 +29,9 @@ ReplicationPolicy = LOCAL_ONLY | METADATA_ONLY | ACTIVE_TASK_INPUTS |
 `workspace_replication_roots` rows. Workspace creation starts with an empty selection;
 `SELECTED_FOLDERS` is set only after roots have been created and selected in a separate
 versioned policy update.
+`primary_coworker_id` selects the default Coworker shown for new work; setting it requires
+an ACTIVE or PAUSED Coworker in this Workspace and emits `workspace.primary_coworker.changed.v1`.
+Clearing it is explicit. It never changes a Task's origin Coworker or lead binding.
 
 ### WorkspaceInstructionRevision
 
@@ -157,6 +161,8 @@ Task {
   routine_revision: u64?
   automation_id: AutomationId?
   automation_occurrence_id: OccurrenceId?
+  origin_coworker_id: CoworkerId?
+  origin_coworker_revision: u64?
   lead_agent_binding_id: AgentBindingId
   blocking_conditions: Blocker[]
   priority: LOW | NORMAL | HIGH
@@ -173,6 +179,9 @@ historical/imported records that predate a binding; v1 creation rejects a missin
 disabled binding. `blocking_conditions` is the current actionable explanation for a
 BLOCKED/NEEDS_USER projection. Each change is evented; resolving a condition removes it
 from the current projection without deleting its historical event.
+`origin_coworker_id` and `origin_coworker_revision` are both absent or both present;
+when present they are immutable origin provenance. Coworker edits never revise or
+reassign an existing Task.
 
 ### TaskSpecRevision
 
@@ -184,6 +193,7 @@ TaskSpecRevision {
   revision: u64
   parent_revisions: u64[]
   objective: string
+  task_category: TaskCategory?
   constraints: string[]
   non_goals: string[]
   required_outputs: OutputRequirement[]
@@ -192,6 +202,7 @@ TaskSpecRevision {
   input_refs: PinnedResourceRef[]
   workspace_instruction_revision: u64?
   budget: BudgetSpec?
+  delegation_budget_policy: DelegationBudgetPolicy?
   deadline: Timestamp?
   source_message_refs: MessageId[]
   placement_preference: PlacementPreference
@@ -273,6 +284,8 @@ Attempt {
   step_id: StepId
   parent_attempt_id: AttemptId?
   agent_binding_id: AgentBindingId
+  delegation_profile_id: DelegationProfileId?
+  delegation_profile_revision: u64?
   agent_session_id: AgentSessionId?
   runtime_id: RuntimeId
   runtime_incarnation_id: RuntimeIncarnationId
@@ -290,7 +303,8 @@ Attempt {
 }
 ```
 
-The Attempt's `agent_session_id` points to its current/most recent execution session and
+The profile ID and revision are both present only for a LiteCowork-hosted child Attempt
+and are pinned at admission. The Attempt's `agent_session_id` points to its current/most recent execution session and
 may be updated by an audited same-Attempt session replacement. Each AgentSession remains
 an immutable historical record tied to the Attempt; replacing the pointer does not change
 the Attempt's pinned AgentBinding, Runtime/incarnation, Environment, or lease identity.
@@ -340,6 +354,7 @@ AgentBinding {
   auth_ref: SecretRef? # reference only; never auth bytes
   configuration: JsonObject # non-secret options only
   enabled: bool
+  lead_eligible: bool
   created_at: Timestamp
   version: u64
 }
@@ -353,6 +368,7 @@ AgentSession {
   runtime_id: RuntimeId
   runtime_incarnation_id: RuntimeIncarnationId
   configuration_digest: Sha256Digest?
+  harness_descriptor_digest: Sha256Digest?
   status: AgentSessionStatus
   started_at: Timestamp
   last_event_at: Timestamp?
@@ -385,6 +401,11 @@ is a historical selection identity and need not resolve to a live `AgentEndpoint
 another peer. The optional `AgentSessionHostBinding` is Runtime-local, must match that
 Runtime/incarnation and the selected endpoint, and is removed when the session settles; a
 replacement Runtime never receives it.
+
+The AgentSession role is fixed at creation. A delegated session is linked through its
+Attempt's pinned DelegationProfile revision. `harness_descriptor_digest` identifies the
+adapter capability/configuration observation used for admission; the descriptor contains
+only normalized non-secret metadata and is not a copy of native configuration.
 
 `PlanningAssignment` is an internal transient admission envelope, not a durable entity.
 The Task and its `TASK_PLANNING` AgentSession are the records of truth; at most one active
@@ -502,8 +523,11 @@ Environment {
   provider_kind: string
   class: LOCAL_WORKSPACE | GIT_WORKTREE | CONTAINER | VM | CLOUD_SANDBOX | REMOTE_MACHINE | BROWSER | DESKTOP
   lifetime: ATTEMPT | TASK_RETAINED | WORKSPACE_PERSISTENT
+  sharing_scope: ATTEMPT_PRIVATE | TASK_SHARED | COWORKER_PRIVATE | WORKSPACE_SHARED | USER_SHARED
   owner_workspace_id: WorkspaceId
   owner_task_id: TaskId?
+  owner_attempt_id: AttemptId?
+  owner_coworker_id: CoworkerId?
   status: EnvironmentStatus
   health: HEALTHY | DEGRADED | UNHEALTHY | UNKNOWN
   name: string
@@ -552,6 +576,16 @@ EnvironmentProvisionPreviewRecord {
   created_at: Timestamp
 }
 ```
+
+Lifetime and sharing answer different questions. `owner_attempt_id`, `owner_task_id`,
+`owner_coworker_id`, or Workspace ownership identify the matching reuse scope. For
+`ATTEMPT_PRIVATE`, `owner_attempt_id` is required and no other Attempt may attach;
+`TASK_SHARED` requires `owner_task_id`; `COWORKER_PRIVATE` requires
+`owner_coworker_id`; `WORKSPACE_SHARED` is available to authorized Tasks in
+`owner_workspace_id`. `USER_SHARED` denotes an explicitly attached user-owned profile
+across Workspaces; v1 does not mount it across Workspace security boundaries and rejects
+such admission until a user-level Environment owner/attachment contract is implemented.
+Every reuse still creates fresh Attempt/lease/grant/session authority.
 
 `EnvironmentProvisionPreviewRecord` is short-lived admission state, not a replicated
 Workspace fact. It contains no provider locator, credentials, or raw secret material.
@@ -1693,6 +1727,7 @@ Resource {
   display_name: string
   current_revision_id: ResourceRevisionId?
   sensitivity: SensitivityClass
+  context_document: ContextDocumentMetadata? # classification/owner only; content is a ResourceRevision
   provenance: ProvenanceRecord
   created_at: Timestamp
   updated_at: Timestamp
@@ -1986,3 +2021,43 @@ form because provenance, verification, and staleness depend on an exact revision
   separate from each later Task/Attempt's use authority. A BudgetReservation has exactly
   one budget owner; one use may create independent Task and Environment
   reservations, never a combined reservation with ambiguous enforcement.
+
+## New responsibility and delegation records
+
+The exact `Coworker`, `Goal`, `Suggestion`, `DelegationProfile`, and revision fields are
+owned by [`RESPONSIBILITIES.md`](RESPONSIBILITIES.md) and
+[`DELEGATION.md`](DELEGATION.md). Their relational representation is in
+`schemas/sqlite-v1.sql`; every mutable head uses `version`, and every editable definition
+has immutable revision rows. A Suggestion is a one-way proposal and is not a runnable
+record.
+
+Additional cross-entity constraints:
+
+- Task Coworker origin ID/revision are both null or both present and reference the same
+  Workspace; they are immutable after Task creation.
+- A Goal may reference only Tasks and Routine revisions in its Workspace. Goal links are
+  historical grouping; they do not affect Task status or authority.
+- Coworker avatar, Suggestion source, and Suggestion Goal references pin exact revisions
+  that exist in the same Workspace; they never mean “whatever is current when read.”
+- A DelegationProfile references an AgentBinding in the same Workspace. Profile revisions
+  are unique by `(delegation_profile_id, revision)` and Attempt profile references are
+  immutable and all-or-none.
+- A DelegationProfile head's `name` and internal `name_key` must match its current
+  immutable revision. Names are trimmed using Unicode whitespace rules, NFC-normalized
+and case-folded by the owning service using `NFC(NFC(trim(name)).casefold())`; the database
+  enforces uniqueness of the stored key per Workspace and
+  AgentBinding among non-archived profiles. A name change is a revision, so Attempts
+  retain the exact name/config revision they used.
+- A child Attempt has a parent Attempt and a pinned DelegationProfile revision. A root
+  Attempt has neither. Both Attempts belong to the same Task and Workspace.
+- AgentBinding enablement/lead eligibility and DelegationProfile enablement are
+  independent checks; all are revalidated for new admission.
+- Environment lifetime and sharing scope are independent. `ATTEMPT_PRIVATE` is the
+  default; shared writable access additionally requires provider-enforced isolation or
+  control fencing.
+- Suggestion resolution and Task creation are atomic for a Task action. Goal progress,
+  Coworker presence, worker performance, quota, and Routine health are projections, not
+  canonical records.
+- Suggestion kind is a deterministic mapping from proposed action; snooze changes only
+  visibility. A kind mute and resolution of current proposals commit atomically; only an
+  owner dismissal of the identical dedupe key creates the 30-day cooldown.

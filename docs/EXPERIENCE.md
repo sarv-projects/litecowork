@@ -7,14 +7,17 @@ Primary navigation:
 ```text
 Home
 Needs You
-Tasks
+Coworkers
+Work
 Automations
 Library
 Discover
 ```
 
-The desktop sidebar also contains search and a persistent Recent Conversations list. Needs
-You is a first-class destination with a pending count for approvals, expired logins,
+The desktop sidebar also contains search and a persistent Recent Conversations list. Work
+is the user-facing label for durable Tasks and contains Active, Waiting, Scheduled, Done,
+and All filters. Coworkers is an identity/context surface, not an execution container.
+Needs You is a first-class destination with a pending count for approvals, expired logins,
 required local Runtimes, ambiguous Effects, TaskSpec conflicts, user choices, and
 verification requests. Advanced technical detail lives in Inspector/Settings/Discover
 details. A Workspace selector is available in the app shell when more than one Workspace
@@ -235,6 +238,13 @@ history; occurrence COMPLETED requires the linked Task to be COMPLETED. A schedu
 no future runs does not imply all of its Tasks succeeded. Due work that cannot
 run is visibly `Waiting for dependency`, not silently skipped or left indistinguishable
 from a future schedule.
+
+Routine cards include revision-specific health, recent terminal-run outcomes, observed
+duration/cost confidence, dependency freshness, and drift state. New or insufficiently
+sampled definitions say “Not enough runs yet”. A drifted dependency names its evidence and
+offers Review, Let worker prepare a repair proposal, or Disable; it never repairs or
+publishes a Skill automatically. Updating a Skill or Routine requires the existing review
+and revision flow.
 
 Each Automation run creates an ordinary Task from the pinned RoutineRevision. Users must
 confirm schedule creation and material updates. `Run now` is shown for an Automation only
@@ -473,3 +483,132 @@ While the lead planning session is active, show “Planning” with session stat
 - artifact appears only after ArtifactVersion exists.
 - verification checkmark appears only after verifier pass.
 - cloud location changes only after new authoritative lease/Attempt exists.
+
+## Coworkers, Work, and responsibility surfaces
+
+### Coworker page
+
+The page answers “who is helping, what is it responsible for, and what does it know?”
+Its default order is identity/presence, Active/Scheduled/Done work, linked Goals,
+user-editable context, connected access, autonomy summaries, and lead/worker setup.
+Presence is derived from real Task/session/Runtime state and shows separate proactive
+status (`ACTIVE`/`PAUSED`), activity (`AVAILABLE`, `PLANNING`, `WORKING`, `WAITING`,
+`NEEDS_YOU`), and Runtime availability (`AVAILABLE`, `DEGRADED`, `OFFLINE`, `UNKNOWN`);
+it is not a social simulation.
+
+Create/edit fields are Coworker name, optional pinned avatar Resource revision, role
+description, default lead binding, delegation strategy, enabled worker-profile allowlist, context
+policy, and notification policy. Save uses expected version and creates an immutable
+revision. Archive explains why active Coworker Automations/Tasks block it and retains
+linked history. Pausing stops proactive/new scheduled admission only; the UI says active
+Tasks continue under their own policy.
+
+### Worker settings
+
+`Settings → Agents` has `Main`, `Subagents`, and `Installed` views. Installed shows
+discovered profile/binding connectivity and staleness. Main selects only enabled,
+lead-eligible bindings. Subagents lists every installed/bound agent, including the lead,
+and one or more profiles under each binding. New profiles are disabled until explicitly
+enabled; enabling a profile never starts its process.
+
+The profile editor has sections for: status/name; short “When to use” description;
+adapter-discovered model/reasoning/session options; worker instructions; capability
+requirements; enforced security/limits; filesystem isolation; native delegation policy;
+concurrency/depth; optimization/quality floor; budget; latency and warm preferences.
+Renaming saves a new revision and shows the changed name in profile history. “Duplicate”
+asks for a new name, previews copied settings, and creates a disabled profile; it never
+copies execution history, grants, Environment state, or authentication. Portable export
+and import are not available in v1.
+Prompt guidance is labeled `Instructions`; actual enforced restrictions are labeled
+`Security & limits`. Unsupported options are unavailable with an explanation, never
+silently replaced. Advanced controls collapse by default. A profile's revision history
+is inspectable, and changes affect future admissions only.
+
+### Work / Live Desk
+
+Work filters are Active, Waiting, Scheduled, Done, and All. Each row shows outcome title,
+plain-language state, last verified activity time, current blocker, newest Artifact, and
+number of active workstreams only when real child Attempts exist. Task detail defaults to
+steps/outcomes and outputs. `Details` exposes the delegation tree and Inspector fields.
+Lead, delegated worker, native-reported worker, capability, and verifier rows use distinct
+labels so the product does not imply Core ownership of native subagents.
+
+Task detail states include Planning, Preparing worker, Working, Checking the result,
+Waiting for you/service/device, Needs your decision, Completed, Not finished, Failed,
+Stopping, and Cancelled. Do not render numeric completion percentages or predicted ETAs
+unless a measured and qualified projection contract is added. “No new activity for …”
+is based on event/projection timestamps and names the last verified action.
+
+### Goals and Suggestions
+
+Goals show the owner's objective, success criteria, horizon, linked active/completed Tasks,
+linked Routine revisions, and evidence-backed contributions. Conflicting or stale source
+records have explicit badges and do not count as verified progress. Only the owner can
+complete or reopen a Goal.
+
+At most one prominent Idea appears on Home and at most three in the Ideas drawer. Similar
+open suggestions deduplicate. Each card offers Prepare/Accept, Remind me, Dismiss, and Why
+this? as applicable. Remind me offers Later today, Tomorrow, and Next week, bounded by
+`expires_at`; choosing one persists `snoozed_until`. The overflow menu offers “Don't
+suggest this type,” which mutes the Workspace preference for its `SuggestionKind` and
+clears currently proposed records of that kind as dismissed. The preference can be
+reversed in Settings. Individual dismissal suppresses only the same `dedupe_key` for 30
+days. `Why this?` lists source references and explains what will be created and what
+authority may be requested. Acceptance always opens ordinary Task/Routine/Automation
+flows. A suggestion is never a notification disguised as authorization.
+
+The Ideas drawer has `For you` and `Snoozed` filters. A snoozed card can be restored with
+“Show now”; it remains out of Home until its saved time or expiry. If it expires first,
+it leaves the actionable list with its terminal history retained.
+
+### Onboarding
+
+First run is a short sequence with Skip/Back and no mandatory avatar/personalization:
+
+1. Welcome and a one-sentence explanation that work can continue across enabled agents
+   and devices.
+2. Create/select Workspace; default is “This computer only”. Cloud/replication details
+   are a separate explicit choice.
+3. Discover/connect an agent, create its disabled binding, authenticate if needed, enable
+   it, then choose a lead-eligible binding. Preserve drafts when setup is incomplete.
+4. Name the first Coworker and choose a role; configuration can be revisited later.
+5. Offer optional worker setup (“Use lower-cost workers for suitable work”) with per-
+   profile descriptions, provider usage caveat, and no automatic enablement.
+6. Suggest one concrete first Task from the available Workspace resources; do not auto-
+   attach folders or grant app access.
+
+After the first verified output, explain the visible delegation and verification result,
+then offer “Make this reusable” through SkillProposal review. Avoid a setup tour of IDs,
+protocols, tools, Runtime internals, or every setting.
+
+## Cost, quota, offline, and error presentation
+
+Money appears only when the provider reports or a named estimator produces a value with
+currency, unit, confidence, and observation time. Native plan usage may be shown as
+provider units with unknown monetary cost. Unknown is a first-class visual state, never
+`$0.00`. Quota shows Normal/Low/Exhausted/Unavailable only at its observed freshness;
+do not fabricate a remaining-use meter. An exhausted lead offers Continue with an
+explicit eligible worker, Choose a lead, or Wait. Automatic handoff appears only when the
+Task/Coworker policy explicitly allows it.
+
+Offline surfaces show the last-known timestamp and disable actions that require authority
+or unavailable Runtime state with a reason. Local work may continue under valid local
+authority. Configuration drift offers Review changes/Revalidate; worker failures expose
+recovery and evidence; ambiguous Effects expose Reconcile/Wait/Ask rather than Retry.
+Unknown cost, quota, provider state, or page freshness remains textually Unknown.
+
+## Responsive and accessible responsibility UI
+
+On mobile, bottom navigation is Home, Work, Needs You, Library, More. More contains
+Coworkers, Automations, Discover, and Settings. Mobile prioritizes steering, approving,
+answering, pausing/cancelling, and opening Artifacts. The delegation tree becomes an
+accessible nested list; the full Inspector is a separate diagnostics route. Browser
+takeover is offered only when the device can own that EnvironmentControlLease; otherwise
+the UI explains where takeover is available.
+
+All worker/profile trees expose hierarchical list semantics, labels for verification and
+authority, and keyboard-operable expansion. Live announcements are throttled to meaningful
+state changes, especially worker start/settle, verification, and control ownership.
+At 200% zoom content reflows; at 400% single-column surfaces remain usable. Touch targets
+remain at least 44px. Reduced motion removes spatial expansion, pulse, and fades without
+removing status, focus, or owner labels.

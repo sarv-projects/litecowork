@@ -32,6 +32,9 @@ EnvironmentSpec {
   lifetime: ATTEMPT | TASK_RETAINED | WORKSPACE_PERSISTENT
   owner_task_id?       # required for ATTEMPT / TASK_RETAINED
   attempt_id?         # required for ATTEMPT once bound
+  owner_coworker_id?  # required for COWORKER_PRIVATE
+  owner_principal_id? # required for USER_SHARED
+  sharing_scope: ATTEMPT_PRIVATE | TASK_SHARED | COWORKER_PRIVATE | WORKSPACE_SHARED | USER_SHARED
   isolation
   resource_limits
   budget_ceiling
@@ -44,6 +47,25 @@ EnvironmentSpec {
   cleanup_policy
 }
 ```
+
+`lifetime` controls how long the substrate may exist; `sharing_scope` controls who may
+reuse it. Admission enforces these owner bindings:
+
+| Sharing scope | Required owner | Reuse boundary |
+|---|---|---|
+| `ATTEMPT_PRIVATE` | Task + exact Attempt | That Attempt only; never reused by replacement Attempt |
+| `TASK_SHARED` | Task | Attempts within that Task, subject to write/control fencing |
+| `COWORKER_PRIVATE` | Same-Workspace Coworker | Tasks pinned to that Coworker; workspace-persistent retention only |
+| `WORKSPACE_SHARED` | Workspace | Eligible Tasks in that Workspace |
+| `USER_SHARED` | Principal | Reserved for a user-level owner/attachment contract; provision and cross-Workspace mounting are unavailable in v1 |
+
+Share scope is not an authorization grant. Every new Attempt receives current capability
+grants, Effect policy, budget admission, and an Environment attachment. A browser's
+persisted authentication does not transfer input control: one `EnvironmentControlLease`
+owner acts at a time. Parallel code writers default to private worktrees/overlays. A
+shared writable base requires an explicit provider write lease or deterministic merge
+workflow. A stale/missing provider handle, Runtime incarnation, auth state, or freshness
+observation prevents reuse until revalidated.
 
 Creation requires a provider request ID and explicit Workspace authorization. ATTEMPT
 and TASK_RETAINED require an owner Task in the same Workspace; WORKSPACE_PERSISTENT has
@@ -134,6 +156,25 @@ ATTEMPT
 TASK_RETAINED
 WORKSPACE_PERSISTENT
 ```
+
+Lifetime and sharing scope are independent. Lifetime states how long a provider may
+retain an Environment; sharing scope states which principals/tasks may request reuse.
+Both are checked during placement. Missing sharing scope defaults to `ATTEMPT_PRIVATE`.
+`USER_SHARED` and `WORKSPACE_SHARED` never imply shared write access or authority.
+Reuse requires a fresh authorization and current Environment health check.
+
+## Changing persistent Environment sharing
+
+V1 permits an owner to change a `WORKSPACE_PERSISTENT` Environment between
+`COWORKER_PRIVATE` and `WORKSPACE_SHARED` through an explicit versioned command. The
+Environment must be `SUSPENDED`; there may be no active Attempt, CapabilityInvocation,
+EnvironmentControlLease, unresolved Effect, or checkpoint hold. The command does not
+resume, copy, clone, or attach the substrate. Changing to `COWORKER_PRIVATE` requires an
+active or paused same-Workspace Coworker; changing to `WORKSPACE_SHARED` clears the
+Coworker owner. `USER_SHARED` remains unavailable. The mutation and
+`environment.sharing_scope.changed.v1` event commit together. Every later attachment
+still checks current Environment health, resource freshness, Workspace policy, Trust,
+budget, and fresh Attempt authority.
 
 `ATTEMPT` is the default and is eligible for cleanup after that Attempt settles and all
 checkpoint/effect-reconciliation holds clear. `TASK_RETAINED` may be reused only within
@@ -228,6 +269,14 @@ lease/fence, input references, and reconciled Effect state.
 Providers are qualified with conformance tests for isolation, stale-fence rejection,
 resource exposure, cleanup, crash recovery, and output integrity before their offers are
 advertised as eligible.
+
+Parallel coding workers use distinct Git worktrees or private overlays by default. Shared
+writes require an explicit provider lock/lease or an ordered merge protocol. Browser and
+desktop Environments may persist under an explicit scope, but exactly one current
+`EnvironmentControlLease` owns user input at a time. A provider unable to prove that
+fence is not eligible for concurrent agent/human control. Environment reuse never carries
+ExecutionLeases, CapabilityGrants, Approvals, SecretLeases, or control ownership between
+Attempts.
 
 ## Workspace archive
 

@@ -2,7 +2,10 @@
 
 ## Purpose
 
-Agent Fabric normalizes external agents without taking ownership of their internal reasoning, model choice, prompts or native subagent implementation.
+Agent Fabric normalizes external agents without taking ownership of their internal
+reasoning, model choice, prompts, or native subagent implementation. Host delegation,
+worker profiles, selection, cost policy, and warmth are specified in
+[`DELEGATION.md`](DELEGATION.md).
 
 ## AgentAdapter
 
@@ -102,11 +105,14 @@ Session admission rules:
   AgentBinding override when set, otherwise the Workspace default AgentBinding. If
   neither is enabled, no session starts and the Operator returns `AGENT_UNAVAILABLE`
   without losing the message draft. A disabled explicit override does not silently fall
-  back. Changing the Workspace default affects new turns only. It has no Task mutation,
-  plan submission, Artifact publication, or
-  consequential capability authority. It may issue read-only CapabilityInvocations
-  scoped to that Conversation. `context_packet_ref` is absent; the adapter receives a
-  bounded Conversation projection and selected ResourceRefs from ContextService.
+  back. An enabled binding with `lead_eligible=false` returns
+  `AGENT_NOT_LEAD_ELIGIBLE` for a lead selection. Only enabled, lead-eligible bindings
+  may be Workspace defaults or explicit Conversation/Task leads. Changing the Workspace
+  default affects new turns only; it has no Task mutation, plan submission, Artifact
+  publication, or consequential capability authority. It may issue read-only
+  CapabilityInvocations scoped to that Conversation. `context_packet_ref` is absent; the
+  adapter receives a bounded Conversation projection and selected ResourceRefs from
+  ContextService.
 - `TASK_PLANNING {task_id}` is authorized by a transient PlanningAssignment envelope,
   bound to the current lead AgentBinding and TaskSpecRevision, and has no Attempt or
   Environment write access. The envelope is not durable; the AgentSession and Task state
@@ -207,79 +213,20 @@ Only selected events become durable domain events. Token deltas remain ephemeral
 
 ## Delegation
 
-Host delegation is explicit and separate from native subagents.
-
-```text
-DelegateRequest {
-  parent_attempt_id
-  objective
-  input_refs[]
-  required_capabilities[]
-  acceptance_criteria[]
-  preferred_agent?
-  placement_preference?
-  isolation
-  budget
-  deadline?
-  return_schema
-}
-```
-
-Child receives a bounded TaskPacket for its own admitted Attempt (not the parent's
-authority or complete transcript):
-
-```text
-TaskPacket {
-  task_id
-  step_id
-  parent_attempt_id
-  task_spec_revision
-  workspace_instruction_revision?
-  plan_revision
-  objective
-  constraints[]
-  input_refs[]
-  artifact_refs[]
-  relevant_decisions[]
-  required_output
-  acceptance_criteria[]
-  capability_grant_refs[]
-}
-```
-
-Child returns:
-
-```text
-ResultEnvelope {
-  child_attempt_id
-  status
-  summary
-  output_refs[]
-  artifact_refs[]
-  evidence_refs[]
-  unresolved[]
-  blockers[]
-  usage?
-  confidence?
-}
-```
+Host delegation is admitted only for a READY Step in the current accepted PlanRevision.
+The canonical `DelegateRequest`, TaskPacket, ResultEnvelope, profile pinning, child
+Attempt admission, and result applicability rules are defined in
+[`DELEGATION.md`](DELEGATION.md). No arbitrary child Step is appended during execution.
 
 ## Delegation limits
 
-Core enforces, without deciding strategy:
-- max depth
-- max active children per Attempt
-- max Task-wide active Attempts
-- budget inheritance ceiling
-- deadline inheritance
-- environment write isolation
-- required capability availability
-- runtime eligibility
+Core enforces the profile and Task limits in `DELEGATION.md`, without deciding the lead's
+reasoning strategy. Every child receives new Attempt-scoped grants; parent authority is
+never inherited. Bounded retries create new Attempts and retain the failed try's history.
 
-Default behavior when TaskSpec changes during child execution:
-1. mark child result `revision_at_start`.
-2. if new revision invalidates its objective, cancel at safe boundary.
-3. otherwise allow completion but require parent to validate applicability before integration.
+When the TaskSpec head changes during child execution, mark the result with its
+`revision_at_start`; cancel only if the change invalidates the Step at a safe boundary.
+Otherwise let it settle and require current-lead applicability review before integration.
 
 ## Protocol preference
 

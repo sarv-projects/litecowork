@@ -15,11 +15,21 @@ WorkspaceService alone archives a Workspace. Archive is allowed only when every 
 
 `default_agent_binding_id` changes are ACTIVE -> ACTIVE Workspace aggregate updates.
 WorkspaceService validates that the selected binding exists in the same Workspace and is
-enabled, applies the expected Workspace version, then emits
+enabled and lead-eligible, applies the expected Workspace version, then emits
 `workspace.default_agent_binding.changed.v1`. Clearing the default is explicit and emits
 the same event with `to_agent_binding_id: null`. A no-op change emits no event. The
 binding's runtime/endpoint availability is checked again at each new turn/Task admission;
 an unavailable default is never silently replaced.
+
+`lead_eligible` is a separate versioned AgentBinding boolean and emits
+`agent.binding.lead_eligibility.changed.v1`. A Workspace default cannot point to a
+disabled or non-lead-eligible binding. Making the current default worker-only first
+requires an explicit Workspace default change; already admitted Tasks remain pinned.
+
+`primary_coworker_id` is another ACTIVE -> ACTIVE Workspace update. WorkspaceService
+requires an active or paused same-Workspace Coworker, applies the expected Workspace version, and
+emits `workspace.primary_coworker.changed.v1`; null explicitly clears the selection.
+Changing it does not rewrite existing Task origin or lead provenance.
 
 `SELECTED_FOLDERS` can be selected only by a versioned policy update that supplies at
 least one active WorkspaceRoot owned by this Workspace. WorkspaceService commits the
@@ -323,9 +333,95 @@ AgentBindingService owns enablement and version checks. A new binding is DISABLE
 Disabling immediately prevents new planning/Attempt admission; sessions already admitted
 remain pinned and settle under their current lifecycle, lease, and Effect rules. A
 disabled binding can be enabled again after TrustService and runtime eligibility checks.
-The service rejects disabling the current Workspace default until the owner explicitly
-clears or changes the Workspace default; these remain separate versioned aggregate
-commands and events.
+The service rejects disabling the current Workspace default or removing its lead
+eligibility until the owner explicitly clears or changes the Workspace default; these
+remain separate versioned aggregate commands and events. Changing `lead_eligible` to
+false blocks new lead selection but leaves already admitted Tasks and sessions pinned;
+delegated worker eligibility is independent.
+
+## DelegationProfile
+
+```text
+ENABLED <-> DISABLED
+ENABLED | DISABLED -> ARCHIVED
+```
+
+DelegationProfileService owns status and immutable revision creation. An edit creates a
+new revision and advances the current head with expected-version checking. `ARCHIVED` is
+terminal. Disable/archive blocks new admissions immediately after commit; it does not
+rewrite or cancel child Attempts that already pinned a revision. An Attempt must retain
+its profile revision provenance even after the profile is archived. A name change creates
+a revision, and normalized names are unique per AgentBinding among non-archived profiles.
+Duplication requires a non-archived source and creates revision 1 of a new disabled
+profile on the same AgentBinding; it copies no execution or authority state. Export/import
+is not supported in v1.
+
+## Coworker
+
+```text
+ACTIVE <-> PAUSED
+ACTIVE | PAUSED -> ARCHIVED
+```
+
+CoworkerService owns revisions and status. Pause blocks proactive and scheduled
+Coworker-originated Task admission, but an explicit owner-submitted Task may still name a
+PAUSED Coworker and follows ordinary Task/Trust admission. Pause does not pause or cancel
+existing Tasks. Resume revalidates eligible lead/profile bindings and trigger dependencies.
+An ARCHIVED Coworker cannot be selected for new Task origin. Archive requires
+no active Coworker-owned Automation and no nonterminal Coworker-originated Task; archived
+identity, revisions, Tasks, and Artifacts remain readable. Coworker revision updates
+affect future admission only. A primary Coworker must be explicitly cleared or changed
+by WorkspaceService before archive; archive never silently rewrites Workspace.primary.
+
+## Goal
+
+```text
+ACTIVE <-> PAUSED
+ACTIVE | PAUSED -> COMPLETED
+COMPLETED -> ACTIVE
+ACTIVE | PAUSED | COMPLETED -> ARCHIVED
+```
+
+GoalService owns revisions/status. Only an authenticated owner command completes a Goal;
+verified Task outcomes update a derived progress projection and may offer a completion
+Suggestion. An owner may reopen a completed Goal with a versioned status command;
+reopening does not reverse Task outcomes or prior completion history. Completion and
+reopening do not change linked Tasks or Routines. Archive is terminal and preserves
+history.
+
+## Suggestion
+
+```text
+PROPOSED -> ACCEPTED | DISMISSED | EXPIRED
+```
+
+SuggestionService resolves once using expected version and current expiry. Acceptance of
+a Task action creates the ordinary Task and resolves the Suggestion in one transaction.
+Opening a Routine/Automation editor can resolve the Suggestion as accepted, but saving
+remains an explicit command to the owning service. Dismissal and expiry are terminal;
+late acceptance returns `SUGGESTION_EXPIRED` and creates no work.
+
+Snoozing is a versioned visibility update on a `PROPOSED` Suggestion, not a status
+transition. `snoozed_until` must be in the future and no later than `expires_at`; the
+event is committed before the card is hidden. Expiry wins over a later snooze. Workspace
+SuggestionKind preferences default to unmuted. Muting atomically updates the preference
+and resolves all currently proposed Suggestions of that kind as `DISMISSED` with reason
+`MUTED_KIND`; future proposals of that kind are suppressed until unmuted. Unmuting never
+revives old Suggestions. An owner dismissal suppresses only the same dedupe key for 30
+days; expiry and acceptance do not create a dismissal cooldown.
+
+## DemonstrationSession
+
+```text
+CREATED -> CAPTURING -> REVIEW -> CONVERTED
+    |          |          |
+    +----------+----------+-> ABORTED
+```
+
+DemonstrationSessionService records a bounded semantic interaction trace in a Resource.
+`CONVERTED` means a SkillProposal was created, not that a Skill was installed or
+published. `ABORTED` and `CONVERTED` are terminal. Raw screen/video data is not retained
+unless separately consented and classified under Resource retention policy.
 
 ## Runtime
 
@@ -381,6 +477,15 @@ placement. `DESTROYING` is allowed only when no authoritative Attempt needs the 
 and required checkpoints/artifacts/effect reconciliation are preserved. Destruction
 failure remains visible and retry reconciles provider identity before repeating. `DESTROYED`
 is terminal; its metadata/provenance remain readable.
+
+`lifetime`, Workspace owner, Runtime/provider identity, source/resource/network/budget
+configuration, and provision digest are immutable. An owner may change a persistent
+Environment's sharing scope only between `COWORKER_PRIVATE` and `WORKSPACE_SHARED`, while
+it is `SUSPENDED` and has no active Attempt, Invocation, control lease, unresolved Effect,
+or checkpoint hold. The change updates the matching owner field, increments Environment
+version, and emits `environment.sharing_scope.changed.v1` atomically. `USER_SHARED` is not
+admitted in v1. The command never resumes or attaches the Environment; later use receives
+fresh placement and authority checks.
 
 EnvironmentProvisionPreviewRecord follows `ISSUED -> CONSUMED | EXPIRED`. Issuance is
 short-lived and read-only with respect to providers. Exactly one create command may
@@ -888,6 +993,11 @@ meet the durability barrier, it pauses ingress rather than advance the cursor.
 | AutomationRevision | AutomationService (append-only creation) |
 | Attempt | AttemptRunner |
 | AgentSession | AgentSessionSupervisor |
+| DelegationProfile | DelegationProfileService |
+| Coworker | CoworkerService |
+| Goal | GoalService |
+| Suggestion | SuggestionService |
+| DemonstrationSession | DemonstrationSessionService |
 | AgentBinding | AgentBindingService |
 | Runtime and RuntimeOffer | RuntimeMesh |
 | RuntimeIncarnation | RuntimeLifecycleService; RuntimeMesh publishes availability projection |

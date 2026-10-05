@@ -17,12 +17,16 @@ get(WorkspaceId) -> Workspace
 list(WorkspaceQuery) -> Page<WorkspaceSummary>
 update_replication_policy(UpdateWorkspacePolicyRequest) -> Workspace
 set_default_agent_binding(WorkspaceId, AgentBindingId?, expected_version, RequestId) -> Workspace
+set_primary_coworker(WorkspaceId, CoworkerId?, expected_version, RequestId) -> Workspace
 archive(ArchiveWorkspaceRequest) -> Workspace
 ```
 
-The selected default must be a binding in the same Workspace. Setting it requires an
-enabled binding; clearing it is explicit. Binding/endpoint availability is rechecked for
+The selected default must be a binding in the same Workspace with both `enabled=true`
+and `lead_eligible=true`; clearing it is explicit. Binding/endpoint availability is rechecked for
 each new turn or Task admission, and no alternate binding is selected silently.
+The primary Coworker must belong to the Workspace and may be ACTIVE or PAUSED; this is a
+UX/context default only and does not select an AgentBinding or confer authority. The
+Workspace default binding and primary Coworker are independent settings.
 
 The authenticated owner is the only Workspace principal in v1. Policy updates are prospective; they do not erase already replicated data. Archive requires all Tasks to be terminal and all Automations disabled, then makes the Workspace read-only. Quiescence also requires Conversation turns and scoped Invocations to be settled, no active grants/SecretLeases/control leases, and persistent Environments with no live workload. Authorized watchers/triggers stop before the read-only transition. Retained Environment state may remain suspended under storage/backup policy; archive never silently destroys it. Unknown provider quiescence blocks archive with `WORKSPACE_NOT_QUIESCENT`. The service rejects every domain mutation for archived Workspaces, including Task changes, capability grants/activation, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel work. Authorized reads and Artifact/Resource downloads remain available.
 
@@ -155,6 +159,7 @@ get_binding(AgentBindingId) -> AgentBindingView
 create_binding(CreateAgentBindingRequest) -> AgentBinding
 enable_binding(AgentBindingId, expected_version) -> AgentBinding
 disable_binding(AgentBindingId, expected_version) -> AgentBinding
+set_lead_eligibility(AgentBindingId, bool, expected_version) -> AgentBinding
 ```
 
 Profiles are Runtime-discovered inventory; bindings are durable Workspace authorization
@@ -164,10 +169,128 @@ rewriting already admitted Attempts or sessions.
 Creation persists an `EndpointSelectionPolicy`; omission selects `AUTO_COMPATIBLE` with
 no required features or topology preference. A pinned endpoint must belong to the profile,
 remain unexpired, and satisfy all required features when a session starts.
-Disabling a binding that is currently the Workspace default is rejected with `CONFLICT`
-until the owner explicitly clears or changes that default. The default is therefore never
-left pointing at a disabled binding. Runtime or endpoint unavailability does not disable
+Disabling a binding or removing its lead eligibility while it is currently the Workspace
+default is rejected with `CONFLICT` until the owner explicitly clears or changes that
+default. The default is therefore never left pointing at a non-lead or disabled binding.
+Runtime or endpoint unavailability does not disable
 the binding, but admission rechecks availability and returns `AGENT_UNAVAILABLE`.
+
+### DelegationProfileService
+
+```text
+list_profiles(WorkspaceId, AgentBindingId?) -> Page<DelegationProfileView>
+get_profile(DelegationProfileId) -> DelegationProfileView
+list_revisions(DelegationProfileId, Cursor?, Limit) -> Page<DelegationProfileRevisionView>
+create_profile(CreateDelegationProfileRequest) -> DelegationProfile
+revise_profile(ReviseDelegationProfileRequest) -> DelegationProfile
+duplicate_profile(source_id, new_name, expected_version, RequestId, Principal) -> DelegationProfile
+set_profile_status(SetDelegationProfileStatusRequest) -> DelegationProfile
+```
+
+Owns worker profiles and immutable revisions. Creation requires an enabled same-Workspace
+AgentBinding, a valid adapter-discovered option schema, and a disabled initial status.
+It trims and NFC-normalizes names, derives a Unicode case-folded uniqueness key, and
+rejects duplicate non-archived names within the binding with `CONFLICT`.
+Enablement rechecks the binding, required features, enforced policy, and current revision.
+Revision creation atomically updates the head name and current revision. Names are
+trimmed using Unicode whitespace rules, normalized with v1 key algorithm
+`NFC(NFC(trim(name)).casefold())`, and stored on head/revision.
+Name uniqueness is per binding for every non-archived profile.
+Duplication requires a non-archived source and a matching `If-Match`, then copies its
+current non-secret revision into revision 1 of a new disabled profile on the same binding.
+Idempotency lookup for the same principal/RequestId/request digest precedes rechecking the
+source `expected_version`, so a retry returns the committed result. It copies no runtime
+or authority state. Revising appends a revision; active Attempts keep their pinned revision. Disabling or
+archiving prevents future admission and does not cancel already admitted children.
+Archive is terminal. This service never starts a host or invokes a model.
+
+### DelegationCoordinator and WorkerSelectionService
+
+```text
+delegate(DelegateRequest) -> ChildAttemptRef
+eligible_candidates(WorkerRequirement) -> CandidateSet
+```
+
+These are internal Task Runtime collaborators, not separately deployed microservices.
+WorkerSelectionService filters by hard eligibility first, then deterministically ranks
+the eligible candidates using the requested optimization policy and recorded
+observations. It preserves the candidate-set digest for audit without including prompts
+or provider secrets. DelegationCoordinator asks TaskService to admit a child only for a
+READY Step in the current accepted PlanRevision, then obtains a new AgentSession,
+child-scoped grants, budget reservation, Environment, and lease. TaskService commits the
+Attempt and admission provenance only after mutable versions and fences are rechecked;
+adapter/provider calls happen after commit. If the selected profile becomes ineligible,
+admission returns a typed error. It never silently substitutes another profile.
+
+The coordinator enforces profile concurrency, Task fanout, ancestry depth, budget
+ceilings, isolation, and bounded escalation. A fallback creates a new Step Attempt via
+the same admission path. It cannot create arbitrary Steps, inherit parent grants,
+Approvals, or SecretLeases, mark verification passed, or mutate an accepted PlanRevision.
+A lead proposes plan changes only through TaskService.
+
+### Warm lifecycle ownership
+
+There is no cross-domain WarmthManager. AgentHostSupervisor owns agent-process reuse;
+AgentSessionSupervisor owns native-session reuse; CapabilityHostSupervisor owns
+capability-host use; EnvironmentManager owns Environment retention; the local model
+backend owns model memory. Each owner interprets its axis of `WarmPolicy`, reports
+observed readiness, and may reject prewarm under resource pressure. Warm state is never
+sufficient for admission without fresh auth, configuration, Runtime-incarnation,
+Environment, Trust, and lease checks.
+
+### CoworkerService, GoalService, and SuggestionService
+
+```text
+CoworkerService.create/revise/set_status -> Coworker state
+WorkspaceService.set_primary_coworker -> Workspace state
+GoalService.create/revise/set_status/link -> Goal revisions and status
+SuggestionService.propose/accept/dismiss/snooze/expire -> Suggestion lifecycle
+SuggestionService.set_kind_preference -> Workspace-scoped preference and atomic mute cleanup
+```
+
+These services own only their aggregates and projections. WorkspaceService owns the
+primary Coworker reference and clears/changes it before the target Coworker can archive.
+CoworkerService pins Coworker
+revision provenance during Task creation but does not own Task execution. GoalService
+links same-Workspace Tasks and Routine revisions and derives progress from Task outcomes
+and Evidence; only an owner command changes Goal completion status. Mutating an archived
+Goal returns `GOAL_ARCHIVED`. SuggestionService validates exact same-Workspace pinned
+Resource/Goal provenance, deduplicates open suggestions, enforces muted kinds and 30-day exact-key
+dismissal cooldown, expires by injected Clock, and atomically converts an accepted Task
+proposal into an ordinary Task. Snooze is an optimistic, expiry-bounded visibility update.
+Muting a kind atomically updates Workspace preference and dismisses current proposals of
+that kind with `MUTED_KIND`. It never issues authority or bypasses Task admission and
+Trust. A Routine/Automation proposal opens its existing editor; the owner must save there.
+Proposal admission returns `SUPPRESSED_MUTED` or `SUPPRESSED_COOLDOWN` without persisting
+candidate content or a Suggestion event; Settings can explain the active kind preference.
+
+TaskService accepts a Coworker origin only from the same Workspace and pins the selected
+CoworkerRevision atomically with Task creation. An explicit owner command may originate a
+Task from an ACTIVE or PAUSED Coworker; proactive and scheduled admission requires ACTIVE.
+Archived Coworkers are rejected for new Task origin. Existing Tasks retain their pinned
+origin and are not stopped by pause/archive.
+
+`ProjectionService` exposes `task_progress(TaskId)`,
+`coworker_presence(CoworkerId)`, `goal_progress(GoalId)`, and
+`worker_performance(DelegationProfileId, TaskCategory)`. Each is rebuilt from committed
+domain state and eligible fresh observations, reports its computation time, and exposes
+source references where needed. A stale/missing observation remains unknown. Projection
+updates do not append domain events or change aggregate versions.
+
+`AgentHostSupervisor.quota_observation(AgentBindingId)` returns a time-bounded
+adapter/provider observation or no observation. Expired values project as `UNKNOWN`; this
+read path does not probe by spending model tokens. Quota remains a routing hint and never
+authorizes a lead switch.
+
+### DemonstrationSessionService and PersonalContextService
+
+DemonstrationSessionService captures bounded semantic observations in an Environment and
+persists the trace as a Resource; conversion creates a SkillProposal through the existing
+proposal/review path. It stores neither raw credentials nor coordinate-only authority.
+PersonalContextService is a Core authorization/provenance adapter over user-authored
+ContextDocument Resources and optional PersonalContextProvider capabilities. Retrieval
+and indexing remain provider-owned; revocation, deletion, and source scope remain
+Core-owned.
 
 ### CapabilityBroker
 
@@ -234,7 +357,7 @@ only a local authenticated Operator may request it.
 ensure_ready(AgentHostRequest) -> AgentHostInstance
 retain_session(AgentHostInstanceId, AgentSessionId) -> HostUseRef
 release_session(AgentHostInstanceId, AgentSessionId) -> HostUseRef
-set_warm_policy(UpdateAgentWarmPolicyRequest) -> AgentWarmPolicy
+set_warm_policy(UpdateWarmPolicyRequest) -> WarmPolicy
 reconcile_incarnation(RuntimeIncarnationId) -> ReconciliationResult
 ```
 
@@ -574,6 +697,7 @@ list_workspace(WorkspaceId, EnvironmentQuery, Cursor?, Limit) -> Page<Environmen
 get_workspace(WorkspaceId, EnvironmentId) -> EnvironmentView
 suspend(WorkspaceId, EnvironmentId, expected_version, RequestId) -> EnvironmentView
 resume(WorkspaceId, EnvironmentId, expected_version, RequestId) -> EnvironmentView
+change_sharing_scope(EnvironmentId, target_scope, target_coworker_id?, confirm, expected_version, RequestId) -> EnvironmentView
 request_destroy(WorkspaceId, EnvironmentId, DestroyEnvironmentRequest, expected_version, RequestId) -> EnvironmentView
 take_control(TakeEnvironmentControlRequest) -> EnvironmentControlLeaseView
 return_control(ReturnEnvironmentControlRequest) -> EnvironmentControlLeaseView
@@ -656,7 +780,11 @@ Environment after in-flight Effects and Invocations are reconciled.
 
 ### ProjectionService
 
-Consumes domain events and builds Task/Conversation/LiveDesk/Notification projections. Projection failure never mutates domain truth.
+Consumes domain events and builds Task/Conversation/LiveDesk/Notification, GoalProgress,
+RoutineHealth, WorkerPerformance, and Coworker-presence projections. `routine_health(RoutineId)`
+is derived from the current immutable RoutineRevision's terminal Tasks, UsageObservations,
+dependency health observations, and drift Evidence; it does not write Routine state.
+Projection failure never mutates domain truth.
 
 ### TriggerCoordinator
 
@@ -801,6 +929,14 @@ WorkspaceService -> StateStore, EventStore, TrustService
 BackupService -> WorkspaceSnapshotPort, EventStore, BlobStore, BackupKeyProvider, RuntimeMesh, AuditService
 TaskService -> StateStore, EventStore, TrustService, PlacementService, ExecutionDependencyPlanner, CompletionEvaluator, PlanningCoordinator
 AgentBindingService -> RuntimeMesh read models, AgentAdapter discovery, TrustService, StateStore, EventStore
+DelegationProfileService -> AgentBindingService read port, AgentAdapter option negotiation, TrustService, StateStore, EventStore
+WorkerSelectionService -> AgentHarnessDescriptor observations, BudgetService, RuntimeMesh, EnvironmentManager offer read ports, Trust policy
+DelegationCoordinator -> TaskService, WorkerSelectionService, DelegationProfileService, AgentSessionSupervisor, AttemptRunner, BudgetService, TrustService
+CoworkerService -> WorkspaceService read port, AgentBindingService read port, DelegationProfileService read port, TaskService admission port, StateStore, EventStore
+GoalService -> TaskService read port, RoutineService read port, EvidenceService read port, StateStore, EventStore
+SuggestionService -> TaskService, RoutineService/AutomationService editor/read ports, Clock, StateStore, EventStore
+DemonstrationSessionService -> EnvironmentManager, TrustService, ResourceService, SkillProposalService, StateStore, EventStore
+PersonalContextService -> ResourceService, TrustService, PersonalContextProvider adapters
 PlanningCoordinator -> AgentSessionSupervisor, AgentAdapter, TaskService-issued PlanningAssignment envelope
 AgentSessionSupervisor -> AgentHostSupervisor, AgentAdapter, StateStore, EventStore
 AgentHostSupervisor -> AgentEndpoint registry/binding, RuntimeMesh offer view, RuntimeLifecycleService, local process identity adapter
@@ -829,6 +965,7 @@ NeedsYouQueryService -> Approval/UserRequest/Task projections
 ChannelService -> TrustService, ConversationService, TaskService, NotificationService
 ConnectionService -> TrustService, SecretStorePort, external provider adapter
 AuditService -> StateStore, EventStore
+ProjectionService -> event stream + Coworker/Goal/Suggestion/WorkerPerformance/TaskProgress projection reducers
 ```
 
 `ResourceAggregatePort` and `ResourceLocationProvider` are Resource-domain ports. The
@@ -846,6 +983,10 @@ Forbidden:
 - AgentAdapter or provider writing domain tables without the owning service
 - a replicated event bypassing origin authorization, revision, or fencing checks
 - a notification changing Task/Approval/Automation state
+- Coworker, Goal, Suggestion, WorkerPerformance, or warm-state projections becoming alternate Task/Effect/authority truth
+- DelegationCoordinator creating Steps outside the accepted PlanRevision or issuing child authority by copying a parent's grants/Approvals/SecretLeases
+- WorkerSelectionService substituting a profile after explicit user selection or treating unknown cost/quota as zero/available
+- any warm manager starting a model request or bypassing admission checks during prewarm
 - any service holding a storage transaction open during a network/provider call
 
 ## Error and idempotency contract

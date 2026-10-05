@@ -138,6 +138,47 @@ Recurring trigger creates ordinary Task and deduplicates duplicate trigger deliv
 - native agent reported action never becomes VERIFIED without verifier evidence
 - SQLite databases are never synchronized across runtimes
 
+### Delegation, responsibility, and context invariants
+
+- native harness files/options remain intact; unsupported overrides fail before invocation
+- multiple DelegationProfiles on one AgentBinding have independent immutable revisions and
+  selection constraints
+- a host delegation admission targets only a READY Step in the current accepted
+  PlanRevision under the current parent Attempt session/lease; no runtime-created Step
+- child Attempt grants are freshly evaluated and scoped; parent grants, ApprovalUses,
+  SecretLeases, and native credentials are never inherited
+- profile REQUIRE selection never substitutes; PREFER may substitute only under the
+  request's explicit selection semantics and policy
+- a disabled/revised profile blocks future admission while existing children retain their
+  pinned revision; explicit cancellation follows Effect reconciliation
+- unknown cost/quota/readiness never becomes zero/available/exhausted; unknown native cost
+  cannot satisfy an unenforced hard monetary ceiling
+- prewarm creates no Attempt, AgentSession, model invocation, grant, lease, or lead change
+- every escalation is a new Attempt with bounded recovery and a new VerificationRun
+- DelegateRequest, TaskPacket, and ResultEnvelope reject unpinned Resource/Artifact
+  references, oversized envelopes, extra fields, invalid profile-selection combinations,
+  and fallback lists exceeding their attempt budget
+- Coworker pause blocks proactive/scheduled admission but leaves existing Tasks governed
+  by their own state/policy; archived Coworkers cannot remain Workspace primary
+- Goal progress references accepted Task outcomes/Evidence; worker summaries cannot
+  complete Goals; Suggestions cannot execute or authorize their own proposal
+- Reopening a completed Goal preserves prior status events, Task state, Evidence, and
+  derived progress; an archived Goal remains terminal
+- Suggestion snooze respects version and expiry; mute atomically dismisses open items of
+  the kind, prevents future proposals, and unmute does not revive dismissed items
+- Suggestion dismissal suppresses only the exact dedupe key for 30 days; expiry and
+  acceptance do not create a dismissal cooldown
+- ContextDocument kind/owner pairs are validated, Resources are revisioned, and concurrent
+  edits never last-write-wins
+- Environment sharing scope/owner/lifetime constraints reject cross-scope attachments;
+  USER_SHARED does not cross Workspace boundary in v1
+- EnvironmentControlLease admits one input owner/epoch at a time and never substitutes
+  for the Task ExecutionLease
+- deadline preflight runs before Effects; fallback preserves operation semantics/authority;
+  ActionBatch suboperations preserve individual Effect/Evidence identity
+- DemonstrationSession traces are semantic, bounded, secret-redacted, and convert only to
+  a reviewable SkillProposal
+
 ## Runtime, Routine and trigger conformance
 
 - Cold boot starts authorized metadata observation and scheduler duties without launching

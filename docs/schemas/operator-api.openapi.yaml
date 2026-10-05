@@ -15,6 +15,11 @@ tags:
 - {name: needs-you}
 - {name: runtimes}
 - {name: agents}
+- {name: delegation}
+- {name: coworkers}
+- {name: goals}
+- {name: suggestions}
+- {name: demonstrations}
 - {name: connections}
 - {name: channels}
 - {name: discover}
@@ -343,6 +348,18 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Task'}
+        default: {$ref: '#/components/responses/Error'}
+  /tasks/{taskId}/progress:
+    get:
+      tags: [tasks]
+      operationId: getTaskProgress
+      parameters: [{$ref: '#/components/parameters/TaskId'}]
+      responses:
+        '200':
+          description: Rebuildable factual progress projection; no synthetic percentage or ETA
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskProgressProjection'}
         default: {$ref: '#/components/responses/Error'}
   /tasks/{taskId}/steps/{stepId}/execution-dependencies:
     get:
@@ -810,6 +827,22 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/RoutineRevisionPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /routines/{routineId}/health:
+    get:
+      tags: [automations]
+      operationId: getRoutineHealth
+      parameters:
+      - name: routineId
+        in: path
+        required: true
+        schema: {type: string}
+      responses:
+        '200':
+          description: Rebuildable health projection for the current immutable RoutineRevision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RoutineHealth'}
         default: {$ref: '#/components/responses/Error'}
     post:
       tags: [routines]
@@ -1313,6 +1346,517 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AgentBinding'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-bindings/{agentBindingId}/session-options:
+    get:
+      tags: [agents]
+      operationId: getAgentSessionOptions
+      parameters:
+      - {name: agentBindingId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Fresh adapter-negotiated option descriptors; no native configuration or locators
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentSessionOptions'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-bindings/{agentBindingId}/harness-capabilities:
+    get:
+      tags: [agents]
+      operationId: getAgentHarnessCapabilities
+      parameters:
+      - {name: agentBindingId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Current negotiated, time-bounded harness feature descriptor
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentHarnessCapabilities'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-bindings/{agentBindingId}/quota-observation:
+    get:
+      tags: [agents]
+      operationId: getAgentQuotaObservation
+      parameters:
+      - {name: agentBindingId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Latest time-bounded adapter/provider observation; null means no observation was made
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - {$ref: '#/components/schemas/QuotaObservation'}
+                - {type: 'null'}
+        default: {$ref: '#/components/responses/Error'}
+  /delegation-profiles:
+    get:
+      tags: [delegation]
+      operationId: listDelegationProfiles
+      parameters:
+      - {name: agent_binding_id, in: query, schema: {type: string}}
+      - {name: status, in: query, schema: {type: string, enum: [ENABLED, DISABLED, ARCHIVED]}}
+      - {$ref: '#/components/parameters/Cursor'}
+      - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Workspace worker profiles; only enabled profiles are eligible for selection
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DelegationProfilePage'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      tags: [delegation]
+      operationId: createDelegationProfile
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDelegationProfileRequest'}
+      responses:
+        '201':
+          description: Disabled profile and immutable revision 1 created; no agent host started
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DelegationProfile'}
+        default: {$ref: '#/components/responses/Error'}
+  /delegation-profiles/{delegationProfileId}:
+    get:
+      tags: [delegation]
+      operationId: getDelegationProfile
+      parameters:
+      - {name: delegationProfileId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Profile head and pinned current revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DelegationProfile'}
+        default: {$ref: '#/components/responses/Error'}
+  /delegation-profiles/{delegationProfileId}/duplicate:
+    post:
+      tags: [delegation]
+      operationId: duplicateDelegationProfile
+      parameters:
+      - {name: delegationProfileId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DuplicateDelegationProfileRequest'}
+      responses:
+        '201':
+          description: Disabled profile created from the source's current revision; no execution or authority state is copied
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DelegationProfile'}
+        default: {$ref: '#/components/responses/Error'}
+  /delegation-profiles/{delegationProfileId}/performance:
+    get:
+      tags: [delegation]
+      operationId: getDelegationProfilePerformance
+      parameters:
+      - {name: delegationProfileId, in: path, required: true, schema: {type: string}}
+      - {name: task_category, in: query, schema: {type: string, enum: [SOFTWARE_ENGINEERING, RESEARCH, WRITING, DATA_ANALYSIS, OFFICE, BROWSER, PERSONAL_ADMIN, OTHER]}}
+      responses:
+        '200':
+          description: Rebuildable verified outcome projection; small samples are explicitly low confidence
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkerPerformanceProjection'}
+        default: {$ref: '#/components/responses/Error'}
+  /delegation-profiles/{delegationProfileId}/revisions:
+    get:
+      tags: [delegation]
+      operationId: listDelegationProfileRevisions
+      parameters:
+      - {name: delegationProfileId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/Cursor'}
+      - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Immutable revisions in descending revision order, including author and creation time
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DelegationProfileRevisionPage'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      tags: [delegation]
+      operationId: reviseDelegationProfile
+      parameters:
+      - {name: delegationProfileId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DelegationProfileRevisionInput'}
+      responses:
+        '201':
+          description: Immutable profile revision created and made current
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DelegationProfile'}
+        default: {$ref: '#/components/responses/Error'}
+  /delegation-profiles/{delegationProfileId}/status:
+    post:
+      tags: [delegation]
+      operationId: changeDelegationProfileStatus
+      parameters:
+      - {name: delegationProfileId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DelegationProfileStatusRequest'}
+      responses:
+        '200':
+          description: New admissions use the committed status; admitted Attempts remain pinned
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DelegationProfile'}
+        default: {$ref: '#/components/responses/Error'}
+  /coworkers:
+    get:
+      tags: [coworkers]
+      operationId: listCoworkers
+      parameters:
+      - {name: status, in: query, schema: {type: string, enum: [ACTIVE, PAUSED, ARCHIVED]}}
+      - {$ref: '#/components/parameters/Cursor'}
+      - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Coworkers with current Workspace primary marker
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CoworkerPage'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      tags: [coworkers]
+      operationId: createCoworker
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateCoworkerRequest'}
+      responses:
+        '201':
+          description: Coworker and immutable revision 1 created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Coworker'}
+        default: {$ref: '#/components/responses/Error'}
+  /coworkers/{coworkerId}:
+    get:
+      tags: [coworkers]
+      operationId: getCoworker
+      parameters:
+      - {name: coworkerId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Coworker current view
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Coworker'}
+        default: {$ref: '#/components/responses/Error'}
+  /coworkers/{coworkerId}/presence:
+    get:
+      tags: [coworkers]
+      operationId: getCoworkerPresence
+      parameters:
+      - {name: coworkerId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Rebuildable activity, proactive-status, and Runtime-availability projection
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CoworkerPresenceProjection'}
+        default: {$ref: '#/components/responses/Error'}
+  /coworkers/{coworkerId}/revisions:
+    post:
+      tags: [coworkers]
+      operationId: reviseCoworker
+      parameters:
+      - {name: coworkerId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CoworkerRevisionInput'}
+      responses:
+        '201':
+          description: Immutable revision created and made current
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Coworker'}
+        default: {$ref: '#/components/responses/Error'}
+  /coworkers/{coworkerId}/status:
+    post:
+      tags: [coworkers]
+      operationId: changeCoworkerStatus
+      parameters:
+      - {name: coworkerId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CoworkerStatusRequest'}
+      responses:
+        '200':
+          description: Status transition committed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Coworker'}
+        default: {$ref: '#/components/responses/Error'}
+  /workspaces/{workspaceId}/primary-coworker:
+    post:
+      tags: [coworkers]
+      operationId: setPrimaryCoworker
+      parameters: [{$ref: '#/components/parameters/WorkspaceId'}, {$ref: '#/components/parameters/IdempotencyKey'}, {$ref: '#/components/parameters/IfMatch'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetPrimaryCoworkerRequest'}
+      responses:
+        '200':
+          description: Workspace primary Coworker changed or explicitly cleared
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Workspace'}
+        default: {$ref: '#/components/responses/Error'}
+  /goals:
+    get:
+      tags: [goals]
+      operationId: listGoals
+      parameters:
+      - {name: coworker_id, in: query, schema: {type: string}}
+      - {name: status, in: query, schema: {type: string, enum: [ACTIVE, PAUSED, COMPLETED, ARCHIVED]}}
+      - {$ref: '#/components/parameters/Cursor'}
+      - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Goal heads and evidence-derived progress projections
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GoalPage'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      tags: [goals]
+      operationId: createGoal
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateGoalRequest'}
+      responses:
+        '201':
+          description: Goal and immutable revision 1 created; no Task started
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Goal'}
+        default: {$ref: '#/components/responses/Error'}
+  /goals/{goalId}:
+    get:
+      tags: [goals]
+      operationId: getGoal
+      parameters:
+      - {name: goalId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Goal and progress projection
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Goal'}
+        default: {$ref: '#/components/responses/Error'}
+  /goals/{goalId}/revisions:
+    post:
+      tags: [goals]
+      operationId: reviseGoal
+      parameters:
+      - {name: goalId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GoalRevisionInput'}
+      responses:
+        '201':
+          description: Immutable Goal revision created and made current
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Goal'}
+        default: {$ref: '#/components/responses/Error'}
+  /goals/{goalId}/status:
+    post:
+      tags: [goals]
+      operationId: changeGoalStatus
+      parameters:
+      - {name: goalId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GoalStatusRequest'}
+      responses:
+        '200':
+          description: Owner-requested Goal state transition
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Goal'}
+        default: {$ref: '#/components/responses/Error'}
+  /suggestions:
+    get:
+      tags: [suggestions]
+      operationId: listSuggestions
+      parameters:
+      - {name: status, in: query, schema: {type: string, enum: [PROPOSED, ACCEPTED, DISMISSED, EXPIRED], default: PROPOSED}}
+      - {name: visibility, in: query, description: Applies to PROPOSED items; other statuses are history, schema: {type: string, enum: [VISIBLE, SNOOZED, ALL], default: VISIBLE}}
+      - {$ref: '#/components/parameters/Cursor'}
+      - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Snoozed proposals remain addressable through visibility=SNOOZED or ALL; no action is run by listing
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuggestionPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /suggestions/{suggestionId}/resolve:
+    post:
+      tags: [suggestions]
+      operationId: resolveSuggestion
+      parameters:
+      - {name: suggestionId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ResolveSuggestionRequest'}
+      responses:
+        '200':
+          description: Accepted Task action commits with the created Task; dismiss creates no work
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Suggestion'}
+        default: {$ref: '#/components/responses/Error'}
+  /suggestions/{suggestionId}/snooze:
+    post:
+      tags: [suggestions]
+      operationId: snoozeSuggestion
+      parameters:
+      - {name: suggestionId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SnoozeSuggestionRequest'}
+      responses:
+        '200':
+          description: Suggestion remains proposed; a timestamp snoozes it until then or expiry and null clears snooze
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Suggestion'}
+        default: {$ref: '#/components/responses/Error'}
+  /workspaces/{workspaceId}/suggestion-preferences:
+    get:
+      tags: [suggestions]
+      operationId: listSuggestionPreferences
+      parameters:
+      - {name: workspaceId, in: path, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Workspace-scoped suggestion-kind mute preferences
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuggestionPreferencePage'}
+        default: {$ref: '#/components/responses/Error'}
+  /workspaces/{workspaceId}/suggestion-preferences/{kind}:
+    put:
+      tags: [suggestions]
+      operationId: setSuggestionPreference
+      parameters:
+      - {name: workspaceId, in: path, required: true, schema: {type: string}}
+      - {name: kind, in: path, required: true, schema: {type: string, enum: [TASK_OPPORTUNITY, ROUTINE_OPPORTUNITY, AUTOMATION_OPPORTUNITY]}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetSuggestionPreferenceRequest'}
+      responses:
+        '200':
+          description: Preference updated; muting resolves open suggestions of this kind
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SuggestionPreference'}
+        default: {$ref: '#/components/responses/Error'}
+  /demonstrations:
+    post:
+      tags: [demonstrations]
+      operationId: startDemonstration
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/StartDemonstrationRequest'}
+      responses:
+        '201':
+          description: User-consented semantic capture started in the selected Environment
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DemonstrationSession'}
+        default: {$ref: '#/components/responses/Error'}
+  /demonstrations/{demonstrationId}/complete:
+    post:
+      tags: [demonstrations]
+      operationId: completeDemonstration
+      parameters:
+      - {name: demonstrationId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      responses:
+        '200':
+          description: Capture finalized and converted to a reviewable SkillProposal
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DemonstrationSession'}
+        default: {$ref: '#/components/responses/Error'}
+  /demonstrations/{demonstrationId}/abort:
+    post:
+      tags: [demonstrations]
+      operationId: abortDemonstration
+      parameters:
+      - {name: demonstrationId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      responses:
+        '200':
+          description: Capture stopped; partial trace follows Resource retention policy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DemonstrationSession'}
         default: {$ref: '#/components/responses/Error'}
   /connections:
     get:
@@ -2047,6 +2591,30 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/EnvironmentView'}
         default: {$ref: '#/components/responses/Error'}
+  /workspaces/{workspaceId}/environments/{environmentId}/sharing-scope:
+    post:
+      tags: [environments]
+      operationId: changeWorkspaceEnvironmentSharingScope
+      parameters:
+      - {$ref: '#/components/parameters/WorkspaceId'}
+      - name: environmentId
+        in: path
+        required: true
+        schema: {type: string}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChangeEnvironmentSharingScopeRequest'}
+      responses:
+        '200':
+          description: Suspended persistent Environment scope changed after use/Effect reconciliation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnvironmentView'}
+        default: {$ref: '#/components/responses/Error'}
   /workspaces/{workspaceId}/environments/{environmentId}/destroy:
     post:
       tags: [environments]
@@ -2415,7 +2983,7 @@ components:
     EnvironmentProvisionPreviewRequest:
       type: object
       additionalProperties: false
-      required: [name, environment_class, runtime_preference, source_resources, resource_limits, network_policy, retention_policy, budget_ceiling, budget_enforcement_policy]
+      required: [name, environment_class, runtime_preference, source_resources, resource_limits, network_policy, retention_policy, budget_ceiling, budget_enforcement_policy, sharing_scope, owner_coworker_id]
       properties:
         name: {type: string, minLength: 1, maxLength: 120}
         environment_class: {type: string, enum: [CONTAINER, VM, CLOUD_SANDBOX, REMOTE_MACHINE]}
@@ -2444,10 +3012,20 @@ components:
                 max_cost_minor_units: {type: integer, minimum: 1}
                 currency: {type: string, pattern: '^[A-Z]{3}$'}
         budget_enforcement_policy: {type: string, enum: [REQUIRE_PROVIDER_ENFORCED, ALLOW_HOST_MONITORED]}
+        sharing_scope: {type: string, enum: [COWORKER_PRIVATE, WORKSPACE_SHARED]}
+        owner_coworker_id: {type: [string, 'null'], description: Required for COWORKER_PRIVATE; null for WORKSPACE_SHARED.}
+      allOf:
+      - if:
+          properties: {sharing_scope: {const: COWORKER_PRIVATE}}
+          required: [sharing_scope]
+        then:
+          properties: {owner_coworker_id: {type: string, minLength: 1}}
+        else:
+          properties: {owner_coworker_id: {type: 'null'}}
     CreatePersistentEnvironmentRequest:
       type: object
       additionalProperties: false
-      required: [name, environment_class, runtime_preference, source_resources, resource_limits, network_policy, retention_policy, budget_ceiling, budget_enforcement_policy, preview_digest]
+      required: [name, environment_class, runtime_preference, source_resources, resource_limits, network_policy, retention_policy, budget_ceiling, budget_enforcement_policy, sharing_scope, owner_coworker_id, preview_digest]
       properties:
         name: {type: string, minLength: 1, maxLength: 120}
         environment_class: {type: string, enum: [CONTAINER, VM, CLOUD_SANDBOX, REMOTE_MACHINE]}
@@ -2476,17 +3054,43 @@ components:
                 max_cost_minor_units: {type: integer, minimum: 1}
                 currency: {type: string, pattern: '^[A-Z]{3}$'}
         budget_enforcement_policy: {type: string, enum: [REQUIRE_PROVIDER_ENFORCED, ALLOW_HOST_MONITORED]}
+        sharing_scope: {type: string, enum: [COWORKER_PRIVATE, WORKSPACE_SHARED]}
+        owner_coworker_id: {type: [string, 'null'], description: Required for COWORKER_PRIVATE; null for WORKSPACE_SHARED.}
         preview_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+      allOf:
+      - if:
+          properties: {sharing_scope: {const: COWORKER_PRIVATE}}
+          required: [sharing_scope]
+        then:
+          properties: {owner_coworker_id: {type: string, minLength: 1}}
+        else:
+          properties: {owner_coworker_id: {type: 'null'}}
     DestroyEnvironmentRequest:
       type: object
       additionalProperties: false
       required: [confirm_destroy]
       properties:
         confirm_destroy: {const: true}
+    ChangeEnvironmentSharingScopeRequest:
+      type: object
+      additionalProperties: false
+      required: [sharing_scope, owner_coworker_id, confirm_no_active_use]
+      properties:
+        sharing_scope: {type: string, enum: [COWORKER_PRIVATE, WORKSPACE_SHARED]}
+        owner_coworker_id: {type: [string, 'null']}
+        confirm_no_active_use: {const: true}
+      allOf:
+      - if:
+          properties: {sharing_scope: {const: COWORKER_PRIVATE}}
+          required: [sharing_scope]
+        then:
+          properties: {owner_coworker_id: {type: string, minLength: 1}}
+        else:
+          properties: {owner_coworker_id: {type: 'null'}}
     EnvironmentView:
       type: object
       additionalProperties: false
-      required: [environment_id, workspace_id, name, runtime_id, environment_class, lifetime, status, health, source_resources, resource_limits, network_policy, active_attempt_count, retention_policy, backup_policy, budget_ceiling, budget_enforcement_policy, budget_enforcement, budget_usage, provision_preview_digest, version, created_at, updated_at, blockers]
+      required: [environment_id, workspace_id, name, runtime_id, environment_class, lifetime, sharing_scope, owner_task_id, owner_attempt_id, owner_coworker_id, owner_principal_id, status, health, source_resources, resource_limits, network_policy, active_attempt_count, retention_policy, backup_policy, budget_ceiling, budget_enforcement_policy, budget_enforcement, budget_usage, provision_preview_digest, version, created_at, updated_at, blockers]
       properties:
         environment_id: {type: string}
         workspace_id: {type: string}
@@ -2494,6 +3098,11 @@ components:
         runtime_id: {type: string}
         environment_class: {type: string, enum: [LOCAL_WORKSPACE, GIT_WORKTREE, CONTAINER, VM, CLOUD_SANDBOX, REMOTE_MACHINE, BROWSER, DESKTOP]}
         lifetime: {const: WORKSPACE_PERSISTENT}
+        sharing_scope: {type: string, enum: [ATTEMPT_PRIVATE, TASK_SHARED, COWORKER_PRIVATE, WORKSPACE_SHARED, USER_SHARED], description: USER_SHARED is reserved and cannot be provisioned or admitted in v1.}
+        owner_task_id: {type: [string, 'null']}
+        owner_attempt_id: {type: [string, 'null']}
+        owner_coworker_id: {type: [string, 'null']}
+        owner_principal_id: {type: [string, 'null']}
         status: {type: string, enum: [NEW, PROVISIONING, READY, BUSY, CHECKPOINTING, SUSPENDED, FAILED, DESTROYING, DESTROYED]}
         health: {type: string, enum: [HEALTHY, DEGRADED, UNHEALTHY, UNKNOWN]}
         source_resources: {type: array, items: {$ref: '#/components/schemas/PinnedResourceRef'}}
@@ -2512,7 +3121,7 @@ components:
         budget_enforcement: {type: string, enum: [PROVIDER_ENFORCED, HOST_MONITORED, UNAVAILABLE]}
         budget_usage: {$ref: '#/components/schemas/EnvironmentBudgetUsage'}
         provision_preview_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
-        version: {type: integer, minimum: 1}
+        version: {type: integer, minimum: 0}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         blockers: {type: array, items: {$ref: '#/components/schemas/Blocker'}}
@@ -2652,7 +3261,7 @@ components:
         agent_binding_id: {type: [string, 'null'], description: Null clears the default binding.}
     Workspace:
       type: object
-      required: [workspace_id, name, owner_principal_id, replication_policy, replication_scope_root_ids, current_instruction_revision, default_agent_binding_id, hub_runtime_id, status, version, created_at, updated_at]
+      required: [workspace_id, name, owner_principal_id, replication_policy, replication_scope_root_ids, current_instruction_revision, default_agent_binding_id, primary_coworker_id, hub_runtime_id, status, version, created_at, updated_at]
       properties:
         workspace_id: {type: string}
         name: {type: string}
@@ -2663,6 +3272,7 @@ components:
           items: {type: string, minLength: 1}
         current_instruction_revision: {type: [integer, 'null'], minimum: 1}
         default_agent_binding_id: {type: [string, 'null']}
+        primary_coworker_id: {type: [string, 'null']}
         hub_runtime_id: {type: [string, 'null']}
         status: {type: string, enum: [ACTIVE, ARCHIVED]}
         version: {type: integer, minimum: 1}
@@ -2972,7 +3582,7 @@ components:
         offer_expires_at: {type: string, format: date-time}
     AgentBinding:
       type: object
-      required: [agent_binding_id, workspace_id, agent_profile_id, runtime_id, endpoint_selection_policy, auth_ref, configuration, enabled, created_at, version]
+      required: [agent_binding_id, workspace_id, agent_profile_id, runtime_id, endpoint_selection_policy, auth_ref, configuration, enabled, lead_eligible, created_at, version]
       properties:
         agent_binding_id: {type: string}
         workspace_id: {type: string}
@@ -2983,6 +3593,7 @@ components:
           oneOf: [{$ref: '#/components/schemas/SecretRef'}, {type: 'null'}]
         configuration: {$ref: '#/components/schemas/JsonObject'}
         enabled: {type: boolean}
+        lead_eligible: {type: boolean}
         created_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
     AgentBindingPage:
@@ -2996,10 +3607,11 @@ components:
     CreateAgentBindingRequest:
       type: object
       additionalProperties: false
-      required: [workspace_id, agent_profile_id]
+      required: [workspace_id, agent_profile_id, lead_eligible]
       properties:
         workspace_id: {type: string}
         agent_profile_id: {type: string}
+        lead_eligible: {type: boolean}
         runtime_id: {type: [string, 'null']}
         endpoint_selection_policy:
           allOf: [{$ref: '#/components/schemas/EndpointSelectionPolicy'}]
@@ -3652,10 +4264,11 @@ components:
         media_type: {type: string}
         size_bytes: {type: integer, minimum: 0}
         expected_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        context_document: {$ref: '#/components/schemas/ContextDocumentMetadata'}
     ResourceUploadSession:
       type: object
       additionalProperties: false
-      required: [upload_id, workspace_id, display_name, media_type, expected_size_bytes, chunk_size_bytes, received_ranges, next_missing_offset, state, expires_at, created_at, version]
+      required: [upload_id, workspace_id, display_name, media_type, expected_size_bytes, context_document, chunk_size_bytes, received_ranges, next_missing_offset, state, expires_at, created_at, version]
       properties:
         upload_id: {type: string}
         workspace_id: {type: string}
@@ -3663,6 +4276,7 @@ components:
         media_type: {type: string}
         expected_size_bytes: {type: integer, minimum: 0}
         expected_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        context_document: {oneOf: [{$ref: '#/components/schemas/ContextDocumentMetadata'}, {type: 'null'}]}
         chunk_size_bytes: {type: integer, minimum: 1}
         received_ranges:
           type: array
@@ -3745,6 +4359,7 @@ components:
           type: array
           items: {type: string}
         objective: {type: string, minLength: 1}
+        task_category: {type: [string, 'null'], enum: [SOFTWARE_ENGINEERING, RESEARCH, WRITING, DATA_ANALYSIS, OFFICE, BROWSER, PERSONAL_ADMIN, OTHER, null]}
         constraints:
           type: array
           items: {type: string}
@@ -3765,9 +4380,17 @@ components:
           items: {$ref: '#/components/schemas/ApprovalRequirement'}
         budget:
           oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]
+        delegation_budget_policy: {oneOf: [{$ref: '#/components/schemas/DelegationBudgetPolicy'}, {type: 'null'}]}
         deadline: {type: [string, 'null'], format: date-time}
         placement_preference: {$ref: '#/components/schemas/PlacementPreference'}
         preferred_lead_agent_binding_id: {type: [string, 'null']}
+        coworker_id: {type: [string, 'null'], description: Explicit Task origin selection; if omitted, no Coworker origin is used. The Operator may prefill the Workspace primary Coworker ID.}
+        expected_coworker_version: {type: [integer, 'null'], minimum: 1, description: Optional optimistic check for the selected Coworker head; the service pins its current revision.}
+      allOf:
+      - if:
+          properties: {expected_coworker_version: {type: integer}}
+          required: [expected_coworker_version]
+        then: {properties: {coworker_id: {type: string, minLength: 1}}}
     ReviseTaskSpecRequest:
       type: object
       additionalProperties: false
@@ -3821,6 +4444,7 @@ components:
           type: array
           items: {type: integer, minimum: 1}
         objective: {type: string}
+        task_category: {type: [string, 'null'], enum: [SOFTWARE_ENGINEERING, RESEARCH, WRITING, DATA_ANALYSIS, OFFICE, BROWSER, PERSONAL_ADMIN, OTHER, null]}
         constraints:
           type: array
           items: {type: string}
@@ -3842,6 +4466,7 @@ components:
         workspace_instruction_revision: {type: [integer, 'null'], minimum: 1}
         budget:
           oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]
+        delegation_budget_policy: {oneOf: [{$ref: '#/components/schemas/DelegationBudgetPolicy'}, {type: 'null'}]}
         deadline: {type: [string, 'null'], format: date-time}
         source_message_refs:
           type: array
@@ -3861,6 +4486,8 @@ components:
         routine_revision: {type: [integer, 'null'], minimum: 1}
         automation_id: {type: [string, 'null']}
         automation_occurrence_id: {type: [string, 'null']}
+        origin_coworker_id: {type: [string, 'null']}
+        origin_coworker_revision: {type: [integer, 'null'], minimum: 1}
         lead_agent_binding_id: {type: string, minLength: 1}
         blocking_conditions:
           type: array
@@ -3890,6 +4517,15 @@ components:
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         completed_at: {type: [string, 'null'], format: date-time}
+      allOf:
+      - if:
+          properties: {origin_coworker_id: {type: string}}
+          required: [origin_coworker_id]
+        then: {properties: {origin_coworker_revision: {type: integer, minimum: 1}}}
+      - if:
+          properties: {origin_coworker_revision: {type: integer}}
+          required: [origin_coworker_revision]
+        then: {properties: {origin_coworker_id: {type: string, minLength: 1}}}
     TaskSummary:
       type: object
       required: [task_id, status]
@@ -3897,6 +4533,31 @@ components:
         task_id: {type: string}
         status: {type: string}
         objective: {type: [string, 'null']}
+    TaskWorkstreamProjection:
+      type: object
+      additionalProperties: false
+      required: [step_id, title, step_status, active_attempt_ids, worker_labels, last_activity_at]
+      properties:
+        step_id: {type: string}
+        title: {type: string}
+        step_status: {type: string, enum: [PENDING, READY, RUNNING, WAITING_USER, BLOCKED, VERIFYING, COMPLETED, FAILED, CANCEL_REQUESTED, CANCELLED, SUPERSEDED]}
+        active_attempt_ids: {type: array, uniqueItems: true, items: {type: string}}
+        worker_labels: {type: array, items: {type: string}}
+        last_activity_at: {type: [string, 'null'], format: date-time}
+    TaskProgressProjection:
+      type: object
+      additionalProperties: false
+      required: [task_id, computed_at, last_activity_at, last_activity_source, last_evidence_at, activity_summary, active_workstreams, blockers, newest_artifact]
+      properties:
+        task_id: {type: string}
+        computed_at: {type: string, format: date-time}
+        last_activity_at: {type: [string, 'null'], format: date-time}
+        last_activity_source: {type: [string, 'null'], enum: [TASK_EVENT, STEP_EVENT, ATTEMPT_EVENT, CAPABILITY_INVOCATION, PROVIDER_PROGRESS, ENVIRONMENT_OBSERVATION, null]}
+        last_evidence_at: {type: [string, 'null'], format: date-time}
+        activity_summary: {type: [string, 'null'], maxLength: 500}
+        active_workstreams: {type: array, items: {$ref: '#/components/schemas/TaskWorkstreamProjection'}}
+        blockers: {type: array, items: {$ref: '#/components/schemas/Blocker'}}
+        newest_artifact: {oneOf: [{$ref: '#/components/schemas/ArtifactVersionRef'}, {type: 'null'}]}
     TaskPage:
       type: object
       required: [items]
@@ -4043,6 +4704,14 @@ components:
           type: array
           items: {type: string}
         created_at: {type: string, format: date-time}
+    ArtifactVersionRef:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, artifact_id, version]
+      properties:
+        workspace_id: {type: string, minLength: 1}
+        artifact_id: {type: string, minLength: 1}
+        version: {type: integer, minimum: 1}
     ArtifactContent:
       oneOf: [{$ref: '#/components/schemas/ManagedBlobContent'}, {$ref: '#/components/schemas/ExternalResourceContent'}]
     ManagedBlobContent:
@@ -4145,6 +4814,32 @@ components:
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/Routine'}}
         next_cursor: {type: [string, 'null']}
+    DependencyHealth:
+      type: object
+      additionalProperties: false
+      required: [subject_ref, state, observed_at, reason_code]
+      properties:
+        subject_ref:
+          oneOf: [{$ref: '#/components/schemas/ResourceRef'}, {$ref: '#/components/schemas/CapabilityRef'}]
+        state: {type: string, enum: [HEALTHY, DEGRADED, UNHEALTHY, UNKNOWN]}
+        observed_at: {type: [string, 'null'], format: date-time}
+        reason_code: {type: [string, 'null']}
+    RoutineHealth:
+      type: object
+      additionalProperties: false
+      required: [routine_id, current_revision, last_run_at, last_success_at, recent_success_rate, sample_size, average_duration_ms, observed_costs, required_dependency_health, drift_state, drift_evidence_refs]
+      properties:
+        routine_id: {type: string}
+        current_revision: {type: integer, minimum: 1}
+        last_run_at: {type: [string, 'null'], format: date-time}
+        last_success_at: {type: [string, 'null'], format: date-time}
+        recent_success_rate: {type: [number, 'null'], minimum: 0, maximum: 1}
+        sample_size: {type: integer, minimum: 0}
+        average_duration_ms: {type: [integer, 'null'], minimum: 0}
+        observed_costs: {type: array, items: {$ref: '#/components/schemas/UsageQuantity'}}
+        required_dependency_health: {type: array, items: {$ref: '#/components/schemas/DependencyHealth'}}
+        drift_state: {type: string, enum: [HEALTHY, WARNING, DRIFTED, UNKNOWN]}
+        drift_evidence_refs: {type: array, items: {type: string}}
     RoutineRevision:
       type: object
       required: [routine_id, revision, objective_template, instructions, input_schema, constraints, non_goals, required_outputs, acceptance_criteria, approvals_required, input_bindings, required_capabilities, placement_preference, verification_policy, authored_by, created_at]
@@ -4482,6 +5177,41 @@ components:
         digest: {type: string, minLength: 1, pattern: '^sha256:[a-f0-9]{64}$'}
         size_bytes: {type: integer, minimum: 0}
         media_type: {type: string}
+    ContextOwnerRef:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        required: [kind, principal_id]
+        properties:
+          kind: {const: USER}
+          principal_id: {type: string, minLength: 1}
+      - type: object
+        additionalProperties: false
+        required: [kind, workspace_id]
+        properties:
+          kind: {const: WORKSPACE}
+          workspace_id: {type: string, minLength: 1}
+      - type: object
+        additionalProperties: false
+        required: [kind, workspace_id, coworker_id]
+        properties:
+          kind: {const: COWORKER}
+          workspace_id: {type: string, minLength: 1}
+          coworker_id: {type: string, minLength: 1}
+      - type: object
+        additionalProperties: false
+        required: [kind, workspace_id, goal_id]
+        properties:
+          kind: {const: GOAL}
+          workspace_id: {type: string, minLength: 1}
+          goal_id: {type: string, minLength: 1}
+    ContextDocumentMetadata:
+      type: object
+      additionalProperties: false
+      required: [kind, owner_ref]
+      properties:
+        kind: {type: string, enum: [PERSONAL_PROFILE, COWORKER_NOTES, WORKSPACE_NOTES, GOAL_NOTES]}
+        owner_ref: {$ref: '#/components/schemas/ContextOwnerRef'}
     ResourceRef:
       type: object
       additionalProperties: false
@@ -4514,7 +5244,7 @@ components:
         resource_ref: {$ref: '#/components/schemas/ResourceRef'}
     Resource:
       type: object
-      required: [resource_id, workspace_id, kind, provider_identity, display_name, sensitivity, provenance, created_at, updated_at, version]
+      required: [resource_id, workspace_id, kind, provider_identity, display_name, sensitivity, context_document, provenance, created_at, updated_at, version]
       allOf:
       - if:
           properties:
@@ -4544,6 +5274,7 @@ components:
         display_name: {type: string}
         current_revision_id: {type: [string, 'null']}
         sensitivity: {type: string, enum: [PUBLIC, PERSONAL, CONFIDENTIAL, RESTRICTED]}
+        context_document: {oneOf: [{$ref: '#/components/schemas/ContextDocumentMetadata'}, {type: 'null'}]}
         provenance: {$ref: '#/components/schemas/ProvenanceRecord'}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
@@ -5129,6 +5860,541 @@ components:
           type: array
           items: {$ref: '#/components/schemas/VerificationRun'}
         next_cursor: {type: [string, 'null']}
+    AgentSessionOptions:
+      type: object
+      additionalProperties: false
+      required: [agent_binding_id, descriptor_digest, observed_at, expires_at, options]
+      properties:
+        agent_binding_id: {type: string}
+        descriptor_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        observed_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        options:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [option_id, value_schema, mutable_scope]
+            properties:
+              option_id: {type: string, minLength: 1}
+              value_schema: {$ref: '#/components/schemas/JsonSchema'}
+              mutable_scope: {type: string, enum: [LIVE_SESSION, NEW_SESSION, UNSUPPORTED]}
+    AgentHarnessCapabilities:
+      type: object
+      additionalProperties: false
+      required: [agent_binding_id, endpoint_id, harness_version, descriptor_digest, features, observed_at, expires_at]
+      properties:
+        agent_binding_id: {type: string}
+        endpoint_id: {type: string}
+        harness_version: {type: [string, 'null']}
+        protocol_version: {type: [string, 'null']}
+        descriptor_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        effective_config_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        features: {type: object, additionalProperties: true}
+        observed_at: {type: string, format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+    DelegatedWorkerPolicy:
+      type: object
+      additionalProperties: false
+      required: [capability_allowlist, maximum_effect_risk, filesystem_write_scope, external_effects, secret_access]
+      properties:
+        capability_allowlist: {type: array, items: {$ref: '#/components/schemas/CapabilityRef'}}
+        maximum_effect_risk: {type: string, enum: [SAFE, SENSITIVE, HIGH_IMPACT]}
+        filesystem_write_scope: {type: string, enum: [WORKTREE_ONLY, ATTEMPT_PRIVATE, EXPLICIT_SHARED]}
+        external_effects: {type: string, enum: [DENY, REQUIRE_EXISTING_POLICY]}
+        secret_access: {type: string, enum: [NONE, TASK_SCOPED_GRANTS_ONLY]}
+    DelegatedEnvironmentPolicy:
+      type: object
+      additionalProperties: false
+      required: [placement_preference, isolation, sharing_scope]
+      properties:
+        placement_preference: {$ref: '#/components/schemas/PlacementPreference'}
+        isolation: {type: string, enum: [REQUIRED, PREFERRED]}
+        sharing_scope: {type: string, enum: [ATTEMPT_PRIVATE, TASK_SHARED, COWORKER_PRIVATE, WORKSPACE_SHARED]}
+    WarmPolicy:
+      type: object
+      additionalProperties: false
+      required: [host, native_session, capability_hosts, browser_environment, local_model, triggers]
+      properties:
+        host: {type: string, enum: [COLD, TTL, PIN_WHILE_ACTIVE]}
+        native_session: {type: string, enum: [CLOSE_ON_SETTLE, REUSE_IF_SAFE]}
+        capability_hosts: {type: string, enum: [COLD, TTL]}
+        browser_environment: {type: string, enum: [COLD, TASK, WORKSPACE]}
+        local_model: {type: string, enum: [PROVIDER_DEFAULT, KEEP_RECENT_HINT]}
+        ttl_ms: {type: [integer, 'null'], minimum: 0}
+        max_memory_bytes: {type: [integer, 'null'], minimum: 0}
+        max_idle_cost: {oneOf: [{$ref: '#/components/schemas/CostLimit'}, {type: 'null'}]}
+        triggers:
+          type: array
+          uniqueItems: true
+          items: {type: string, enum: [ACTIVE_TASK, RECENT_USE, USER_SELECTED, QUOTA_LOW, PREDICTED_FAILOVER, DEADLINE_APPROACHING]}
+    DelegationProfileRevisionInput:
+      type: object
+      additionalProperties: false
+      required: [name, routing_description, session_options, session_options_descriptor_digest, required_features, preferred_features, enforced_policy, optimization_preference, max_concurrency, max_host_delegation_depth, latency_class, environment_policy, native_delegation_policy, warm_policy]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120, description: Trimmed and NFC-normalized; compared by Unicode case-folding within the AgentBinding.}
+        routing_description: {type: string, minLength: 1, maxLength: 240}
+        instructions: {type: [string, 'null'], maxLength: 12000}
+        session_options: {type: object, maxProperties: 64, additionalProperties: true, description: Adapter-negotiated non-secret values only; canonical JSON is at most 64 KiB.}
+        session_options_descriptor_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$', description: Required when session_options is nonempty; pins its adapter-negotiated schema.}
+        required_features: {type: array, uniqueItems: true, items: {$ref: '#/components/schemas/AgentFeature'}}
+        preferred_features: {type: array, uniqueItems: true, items: {$ref: '#/components/schemas/AgentFeature'}}
+        enforced_policy: {$ref: '#/components/schemas/DelegatedWorkerPolicy'}
+        optimization_preference: {type: string, enum: [QUALITY_FIRST, BALANCED, COST_FIRST, LATENCY_FIRST]}
+        quality_floor: {type: [array, 'null'], items: {$ref: '#/components/schemas/AcceptanceCriterion'}}
+        max_concurrency: {type: integer, minimum: 1, maximum: 8}
+        max_host_delegation_depth: {type: integer, minimum: 0, maximum: 2}
+        budget_ceiling: {oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]}
+        latency_class: {type: string, enum: [STANDARD, INTERACTIVE, DEADLINE_SENSITIVE]}
+        environment_policy: {$ref: '#/components/schemas/DelegatedEnvironmentPolicy'}
+        native_delegation_policy: {type: string, enum: [INHERIT, ALLOW, DENY_IF_SUPPORTED]}
+        warm_policy: {$ref: '#/components/schemas/WarmPolicy'}
+      allOf:
+      - if:
+          properties: {session_options: {minProperties: 1}}
+          required: [session_options]
+        then:
+          properties: {session_options_descriptor_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}}
+      - if:
+          properties: {session_options: {maxProperties: 0}}
+          required: [session_options]
+        then:
+          properties: {session_options_descriptor_digest: {type: 'null'}}
+    DelegationProfileRevisionView:
+      type: object
+      additionalProperties: false
+      required: [delegation_profile_id, revision, workspace_id, name, routing_description, session_options, session_options_descriptor_digest, required_features, preferred_features, enforced_policy, optimization_preference, max_concurrency, max_host_delegation_depth, latency_class, environment_policy, native_delegation_policy, warm_policy, authored_by, created_at]
+      properties:
+        delegation_profile_id: {type: string}
+        revision: {type: integer, minimum: 1}
+        workspace_id: {type: string}
+        name: {type: string, minLength: 1, maxLength: 120}
+        routing_description: {type: string, minLength: 1, maxLength: 240}
+        instructions: {type: [string, 'null'], maxLength: 12000}
+        session_options: {type: object, maxProperties: 64, additionalProperties: true}
+        session_options_descriptor_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        required_features: {type: array, uniqueItems: true, items: {$ref: '#/components/schemas/AgentFeature'}}
+        preferred_features: {type: array, uniqueItems: true, items: {$ref: '#/components/schemas/AgentFeature'}}
+        enforced_policy: {$ref: '#/components/schemas/DelegatedWorkerPolicy'}
+        optimization_preference: {type: string, enum: [QUALITY_FIRST, BALANCED, COST_FIRST, LATENCY_FIRST]}
+        quality_floor: {type: [array, 'null'], items: {$ref: '#/components/schemas/AcceptanceCriterion'}}
+        max_concurrency: {type: integer, minimum: 1, maximum: 8}
+        max_host_delegation_depth: {type: integer, minimum: 0, maximum: 2}
+        budget_ceiling: {oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]}
+        latency_class: {type: string, enum: [STANDARD, INTERACTIVE, DEADLINE_SENSITIVE]}
+        environment_policy: {$ref: '#/components/schemas/DelegatedEnvironmentPolicy'}
+        native_delegation_policy: {type: string, enum: [INHERIT, ALLOW, DENY_IF_SUPPORTED]}
+        warm_policy: {$ref: '#/components/schemas/WarmPolicy'}
+        authored_by: {$ref: '#/components/schemas/PrincipalRef'}
+        created_at: {type: string, format: date-time}
+      allOf:
+      - if:
+          properties: {session_options: {minProperties: 1}}
+          required: [session_options]
+        then:
+          properties: {session_options_descriptor_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}}
+      - if:
+          properties: {session_options: {maxProperties: 0}}
+          required: [session_options]
+        then:
+          properties: {session_options_descriptor_digest: {type: 'null'}}
+    CreateDelegationProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, agent_binding_id, revision]
+      properties:
+        workspace_id: {type: string}
+        agent_binding_id: {type: string}
+        revision: {$ref: '#/components/schemas/DelegationProfileRevisionInput'}
+    DuplicateDelegationProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120, description: New profile name; normalized and uniqueness-checked by DelegationProfileService.}
+    DelegationProfileStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string, enum: [ENABLED, DISABLED, ARCHIVED]}
+    DelegationProfile:
+      type: object
+      additionalProperties: false
+      required: [delegation_profile_id, workspace_id, agent_binding_id, name, current_revision, revision, status, created_at, updated_at, version]
+      properties:
+        delegation_profile_id: {type: string}
+        workspace_id: {type: string}
+        agent_binding_id: {type: string}
+        name: {type: string}
+        current_revision: {type: integer, minimum: 1}
+        revision: {$ref: '#/components/schemas/DelegationProfileRevisionView'}
+        status: {type: string, enum: [ENABLED, DISABLED, ARCHIVED]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        version: {type: integer, minimum: 1}
+    WorkerPerformanceProjection:
+      type: object
+      additionalProperties: false
+      required: [delegation_profile_id, task_category, sample_count, verifier_pass_rate, median_latency_ms, median_observed_cost, retry_rate, human_intervention_rate, failure_categories, confidence]
+      properties:
+        delegation_profile_id: {type: string}
+        task_category: {type: string, enum: [SOFTWARE_ENGINEERING, RESEARCH, WRITING, DATA_ANALYSIS, OFFICE, BROWSER, PERSONAL_ADMIN, OTHER]}
+        sample_count: {type: integer, minimum: 0}
+        verifier_pass_rate: {type: [number, 'null'], minimum: 0, maximum: 1}
+        median_latency_ms: {type: [integer, 'null'], minimum: 0}
+        median_observed_cost: {oneOf: [{$ref: '#/components/schemas/UsageQuantity'}, {type: 'null'}]}
+        retry_rate: {type: [number, 'null'], minimum: 0, maximum: 1}
+        human_intervention_rate: {type: [number, 'null'], minimum: 0, maximum: 1}
+        failure_categories: {type: array, uniqueItems: true, items: {type: string}}
+        confidence: {type: string, enum: [LOW, MEDIUM, HIGH]}
+    DelegationProfilePage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/DelegationProfile'}}
+        next_cursor: {type: [string, 'null']}
+    DelegationProfileRevisionPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/DelegationProfileRevisionView'}}
+        next_cursor: {type: [string, 'null']}
+    NotificationPolicy:
+      type: object
+      additionalProperties: false
+      required: [blockers, completion, failures]
+      properties:
+        blockers: {type: string, enum: [ALWAYS, SILENT]}
+        completion: {type: string, enum: [ALWAYS, ON_SUCCESS, SILENT]}
+        failures: {type: string, enum: [ALWAYS, SILENT]}
+    CoworkerContextPolicy:
+      type: object
+      additionalProperties: false
+      required: [allowed_context_kinds, max_retrieved_items, retain_task_summaries, require_user_confirmation_for_memory]
+      properties:
+        allowed_context_kinds: {type: array, uniqueItems: true, items: {type: string, enum: [PERSONAL_PROFILE, COWORKER_NOTES, WORKSPACE_NOTES, GOAL_NOTES]}}
+        max_retrieved_items: {type: integer, minimum: 0, maximum: 100}
+        retain_task_summaries: {type: boolean}
+        require_user_confirmation_for_memory: {const: true}
+    CoworkerRevisionInput:
+      type: object
+      additionalProperties: false
+      required: [name, role_description, delegation_strategy, enabled_delegation_profile_ids, context_policy, notification_policy]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 120}
+        avatar_ref: {oneOf: [{$ref: '#/components/schemas/PinnedResourceRef'}, {type: 'null'}]}
+        role_description: {type: string, maxLength: 2000}
+        default_lead_agent_binding_id: {type: [string, 'null']}
+        delegation_strategy: {type: string, enum: [NATIVE_DEFAULT, BALANCED, COST_SAVER, HOST_DELEGATION_ONLY]}
+        enabled_delegation_profile_ids: {type: array, uniqueItems: true, items: {type: string}}
+        delegation_budget_policy: {oneOf: [{$ref: '#/components/schemas/DelegationBudgetPolicy'}, {type: 'null'}]}
+        context_policy: {$ref: '#/components/schemas/CoworkerContextPolicy'}
+        notification_policy: {$ref: '#/components/schemas/NotificationPolicy'}
+    CreateCoworkerRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, revision]
+      properties:
+        workspace_id: {type: string}
+        revision: {$ref: '#/components/schemas/CoworkerRevisionInput'}
+    CoworkerStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string, enum: [ACTIVE, PAUSED, ARCHIVED]}
+    SetPrimaryCoworkerRequest:
+      type: object
+      additionalProperties: false
+      required: [coworker_id]
+      properties:
+        coworker_id: {type: [string, 'null']}
+    Coworker:
+      type: object
+      additionalProperties: false
+      required: [coworker_id, workspace_id, current_revision, revision, status, is_primary, created_at, updated_at, version]
+      properties:
+        coworker_id: {type: string}
+        workspace_id: {type: string}
+        current_revision: {type: integer, minimum: 1}
+        revision: {$ref: '#/components/schemas/CoworkerRevisionInput'}
+        status: {type: string, enum: [ACTIVE, PAUSED, ARCHIVED]}
+        is_primary: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        version: {type: integer, minimum: 1}
+    CoworkerPresenceProjection:
+      type: object
+      additionalProperties: false
+      required: [coworker_id, computed_at, proactive_status, activity_status, runtime_status, active_task_count, waiting_task_count, needs_you_count, last_task_activity_at]
+      properties:
+        coworker_id: {type: string}
+        computed_at: {type: string, format: date-time}
+        proactive_status: {type: string, enum: [ACTIVE, PAUSED, ARCHIVED]}
+        activity_status: {type: string, enum: [AVAILABLE, PLANNING, WORKING, WAITING, NEEDS_YOU]}
+        runtime_status: {type: string, enum: [AVAILABLE, DEGRADED, OFFLINE, UNKNOWN]}
+        active_task_count: {type: integer, minimum: 0}
+        waiting_task_count: {type: integer, minimum: 0}
+        needs_you_count: {type: integer, minimum: 0}
+        last_task_activity_at: {type: [string, 'null'], format: date-time}
+    CoworkerPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Coworker'}}
+        next_cursor: {type: [string, 'null']}
+    GoalRevisionInput:
+      type: object
+      additionalProperties: false
+      required: [objective, success_criteria, constraints, related_task_ids, related_routine_refs]
+      properties:
+        objective: {type: string, minLength: 1, maxLength: 4000}
+        success_criteria: {type: array, items: {type: string, minLength: 1}}
+        constraints: {type: array, items: {type: string}}
+        horizon: {type: [string, 'null'], format: date-time}
+        related_task_ids: {type: array, uniqueItems: true, items: {type: string}}
+        related_routine_refs:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [routine_id, revision]
+            properties:
+              routine_id: {type: string}
+              revision: {type: integer, minimum: 1}
+    CreateGoalRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, revision]
+      properties:
+        workspace_id: {type: string}
+        coworker_id: {type: [string, 'null']}
+        revision: {$ref: '#/components/schemas/GoalRevisionInput'}
+    GoalStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string, enum: [ACTIVE, PAUSED, COMPLETED, ARCHIVED]}
+    Goal:
+      type: object
+      additionalProperties: false
+      required: [goal_id, workspace_id, coworker_id, current_revision, revision, status, progress, created_at, updated_at, version]
+      properties:
+        goal_id: {type: string}
+        workspace_id: {type: string}
+        coworker_id: {type: [string, 'null']}
+        current_revision: {type: integer, minimum: 1}
+        revision: {$ref: '#/components/schemas/GoalRevisionInput'}
+        status: {type: string, enum: [ACTIVE, PAUSED, COMPLETED, ARCHIVED]}
+        progress: {$ref: '#/components/schemas/GoalProgressProjection'}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        version: {type: integer, minimum: 1}
+    GoalPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Goal'}}
+        next_cursor: {type: [string, 'null']}
+    GoalTaskContribution:
+      type: object
+      additionalProperties: false
+      required: [task_id, task_status, outcome_state, evidence_refs]
+      properties:
+        task_id: {type: string}
+        task_status: {type: string, enum: [READY, RUNNING, WAITING_USER, BLOCKED, VERIFYING, NEEDS_USER, INCOMPLETE, PAUSE_REQUESTED, PAUSED, COMPLETED, FAILED, CANCEL_REQUESTED, CANCELLED]}
+        outcome_state: {type: string, enum: [VERIFIED, INCOMPLETE, UNVERIFIED, STALE, CONFLICTED]}
+        evidence_refs: {type: array, uniqueItems: true, items: {type: string}}
+    GoalProgressProjection:
+      type: object
+      additionalProperties: false
+      required: [computed_at, verified_task_count, linked_task_count, stale_source_count, conflicted_source_count, contributions, summary]
+      properties:
+        computed_at: {type: string, format: date-time}
+        verified_task_count: {type: integer, minimum: 0}
+        linked_task_count: {type: integer, minimum: 0}
+        stale_source_count: {type: integer, minimum: 0}
+        conflicted_source_count: {type: integer, minimum: 0}
+        contributions: {type: array, items: {$ref: '#/components/schemas/GoalTaskContribution'}}
+        summary: {type: string, maxLength: 500}
+    UsageQuantity:
+      type: object
+      additionalProperties: false
+      required: [quantity, unit, confidence]
+      properties:
+        quantity: {type: number}
+        unit: {type: string, minLength: 1}
+        currency: {type: [string, 'null'], pattern: '^[A-Z]{3}$'}
+        confidence: {type: string, enum: [EXACT, ESTIMATED]}
+    CostLimit:
+      type: object
+      additionalProperties: false
+      required: [amount_minor_units, currency]
+      properties:
+        amount_minor_units: {type: integer, minimum: 0}
+        currency: {type: string, pattern: '^[A-Z]{3}$'}
+    QuotaObservation:
+      type: object
+      additionalProperties: false
+      required: [agent_binding_id, source, observed_at, expires_at, state, remaining_hint, reset_at]
+      properties:
+        agent_binding_id: {type: string}
+        source: {type: string, minLength: 1}
+        observed_at: {type: string, format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        state: {type: string, enum: [NORMAL, LOW, EXHAUSTED, UNKNOWN]}
+        remaining_hint: {oneOf: [{$ref: '#/components/schemas/UsageQuantity'}, {type: 'null'}]}
+        reset_at: {type: [string, 'null'], format: date-time}
+    DelegationBudgetPolicy:
+      type: object
+      additionalProperties: false
+      required: [on_threshold]
+      properties:
+        max_concurrent_children: {type: [integer, 'null'], minimum: 1, maximum: 8}
+        max_host_delegation_depth: {type: [integer, 'null'], minimum: 0, maximum: 2}
+        max_per_attempt: {oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]}
+        max_per_task: {oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]}
+        max_per_profile: {oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]}
+        on_threshold: {type: string, enum: [WARN, REDUCE_CONCURRENCY, PREFER_CHEAPER, REQUIRE_APPROVAL, STOP_NEW_DELEGATION]}
+    TaskSpecProposal:
+      type: object
+      additionalProperties: false
+      required: [objective, constraints, input_refs, required_outputs, acceptance_criteria]
+      properties:
+        objective: {type: string, minLength: 1}
+        task_category: {type: [string, 'null'], enum: [SOFTWARE_ENGINEERING, RESEARCH, WRITING, DATA_ANALYSIS, OFFICE, BROWSER, PERSONAL_ADMIN, OTHER, null]}
+        constraints: {type: array, items: {type: string}}
+        input_refs: {type: array, items: {$ref: '#/components/schemas/PinnedResourceRef'}}
+        required_outputs: {type: array, items: {$ref: '#/components/schemas/OutputRequirement'}}
+        acceptance_criteria: {type: array, items: {$ref: '#/components/schemas/AcceptanceCriterion'}}
+        budget: {oneOf: [{$ref: '#/components/schemas/BudgetSpec'}, {type: 'null'}]}
+        delegation_budget_policy: {oneOf: [{$ref: '#/components/schemas/DelegationBudgetPolicy'}, {type: 'null'}]}
+        deadline: {type: [string, 'null'], format: date-time}
+    Suggestion:
+      type: object
+      additionalProperties: false
+      required: [suggestion_id, workspace_id, coworker_id, dedupe_key, kind, reason, source_refs, goal_refs, proposed_action, proposed_task_spec, estimated_cost, estimated_duration_class, status, created_at, expires_at, snoozed_until, resolved_at, resolved_by, resolution_reason, result_task_id, version]
+      properties:
+        suggestion_id: {type: string}
+        workspace_id: {type: string}
+        coworker_id: {type: [string, 'null']}
+        dedupe_key: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        kind: {type: string, enum: [TASK_OPPORTUNITY, ROUTINE_OPPORTUNITY, AUTOMATION_OPPORTUNITY]}
+        reason: {type: string}
+        source_refs: {type: array, items: {$ref: '#/components/schemas/PinnedResourceRef'}}
+        goal_refs:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [goal_id, revision]
+            properties:
+              goal_id: {type: string}
+              revision: {type: integer, minimum: 1}
+        proposed_action: {type: string, enum: [TASK, OPEN_ROUTINE_EDITOR, OPEN_AUTOMATION_EDITOR]}
+        proposed_task_spec: {oneOf: [{$ref: '#/components/schemas/TaskSpecProposal'}, {type: 'null'}]}
+        estimated_cost: {oneOf: [{$ref: '#/components/schemas/UsageQuantity'}, {type: 'null'}]}
+        estimated_duration_class: {type: [string, 'null'], enum: [STANDARD, INTERACTIVE, DEADLINE_SENSITIVE, null]}
+        status: {type: string, enum: [PROPOSED, ACCEPTED, DISMISSED, EXPIRED]}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        snoozed_until: {type: [string, 'null'], format: date-time}
+        resolved_at: {type: [string, 'null'], format: date-time}
+        resolved_by: {oneOf: [{$ref: '#/components/schemas/PrincipalRef'}, {type: 'null'}]}
+        resolution_reason: {type: [string, 'null'], enum: [ACCEPTED_BY_OWNER, DISMISSED_BY_OWNER, MUTED_KIND, SYSTEM_EXPIRY, null]}
+        result_task_id: {type: [string, 'null']}
+        version: {type: integer, minimum: 1}
+      allOf:
+      - if:
+          properties: {status: {const: PROPOSED}}
+          required: [status]
+        then:
+          properties:
+            resolved_at: {type: 'null'}
+            resolved_by: {type: 'null'}
+            resolution_reason: {type: 'null'}
+            result_task_id: {type: 'null'}
+      - if:
+          properties: {status: {enum: [ACCEPTED, DISMISSED, EXPIRED]}}
+          required: [status]
+        then:
+          properties:
+            resolved_at: {type: string, format: date-time}
+            resolved_by: {$ref: '#/components/schemas/PrincipalRef'}
+            resolution_reason: {type: string, enum: [ACCEPTED_BY_OWNER, DISMISSED_BY_OWNER, MUTED_KIND, SYSTEM_EXPIRY]}
+            snoozed_until: {type: 'null'}
+      - if:
+          properties:
+            status: {const: ACCEPTED}
+            proposed_action: {const: TASK}
+          required: [status, proposed_action]
+        then:
+          properties: {result_task_id: {type: string, minLength: 1}}
+    ResolveSuggestionRequest:
+      type: object
+      additionalProperties: false
+      required: [resolution]
+      properties:
+        resolution: {type: string, enum: [ACCEPTED, DISMISSED]}
+    SnoozeSuggestionRequest:
+      type: object
+      additionalProperties: false
+      required: [snoozed_until]
+      properties:
+        snoozed_until: {type: [string, 'null'], format: date-time}
+    SuggestionPreference:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, kind, muted, updated_at, version]
+      properties:
+        workspace_id: {type: string}
+        kind: {type: string, enum: [TASK_OPPORTUNITY, ROUTINE_OPPORTUNITY, AUTOMATION_OPPORTUNITY]}
+        muted: {type: boolean}
+        updated_at: {type: string, format: date-time}
+        version: {type: integer, minimum: 0}
+    SuggestionPreferencePage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/SuggestionPreference'}}
+    SetSuggestionPreferenceRequest:
+      type: object
+      additionalProperties: false
+      required: [muted]
+      properties:
+        muted: {type: boolean}
+    SuggestionPage:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Suggestion'}}
+        next_cursor: {type: [string, 'null']}
+    StartDemonstrationRequest:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, environment_id, consent_semantic_capture]
+      properties:
+        workspace_id: {type: string}
+        environment_id: {type: string}
+        consent_semantic_capture: {const: true}
+    DemonstrationSession:
+      type: object
+      additionalProperties: false
+      required: [demonstration_session_id, workspace_id, environment_id, status, started_at, completed_at, trace_resource_id, skill_proposal_id, version]
+      properties:
+        demonstration_session_id: {type: string}
+        workspace_id: {type: string}
+        environment_id: {type: string}
+        status: {type: string, enum: [CREATED, CAPTURING, REVIEW, CONVERTED, ABORTED]}
+        started_at: {type: string, format: date-time}
+        completed_at: {type: [string, 'null'], format: date-time}
+        trace_resource_id: {type: [string, 'null']}
+        skill_proposal_id: {type: [string, 'null']}
+        version: {type: integer, minimum: 1}
     ApiError:
       type: object
       required: [code, message, retryable, correlation_id]

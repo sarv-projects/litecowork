@@ -32,7 +32,8 @@ CapabilityActivationId CapabilityInvocationId ArtifactId EffectId EvidenceId
 VerificationRunId ApprovalId ApprovalUseId AutomationId OccurrenceId ExecutionLeaseId
 HandoffId ConnectionId ChannelBindingId PrincipalId SecretRefId SecretLeaseId
 UserRequestId UserRequestResponseId UsageObservationId BudgetReservationId DeliveryId SkillProposalId
-RoutineId ExecutionDependencyPlanId
+RoutineId ExecutionDependencyPlanId DelegationProfileId CoworkerId GoalId SuggestionId
+DemonstrationSessionId
 ResourceId ResourceRevisionId ResourceLocationId WorkspaceRootId ResourceEdgeId DependencyEdgeId
 InvalidationRecordId ResourceUploadId BackupId AuditRecordId EventId RequestId CorrelationId ServiceId
 ```
@@ -44,6 +45,24 @@ WorkspaceStatus = ACTIVE | ARCHIVED
 AgentProtocol = ACP | A2A | SDK | API | CLI | TERMINAL
 AgentEndpointTopology = LOCAL_INTERACTIVE | REMOTE_AGENT_SERVICE | VENDOR_SERVICE | PROCESS_ADAPTER
 EndpointSelectionMode = AUTO_COMPATIBLE | PINNED_ENDPOINT
+NativeHarnessIntegrityMode = NATIVE_UNMODIFIED | NATIVE_PLUS_BRIDGE
+AgentDelegationMode = NATIVE_INTERNAL | HOST_DELEGATED | CAPABILITY_EXECUTOR
+DelegationProfileStatus = ENABLED | DISABLED | ARCHIVED
+DelegationStrategy = NATIVE_DEFAULT | BALANCED | COST_SAVER | HOST_DELEGATION_ONLY
+OptimizationPreference = QUALITY_FIRST | BALANCED | COST_FIRST | LATENCY_FIRST
+DelegationProfileSelection = AUTOMATIC | PREFER | REQUIRE
+ExecutionLatencyClass = STANDARD | INTERACTIVE | DEADLINE_SENSITIVE
+TaskCategory = SOFTWARE_ENGINEERING | RESEARCH | WRITING | DATA_ANALYSIS | OFFICE | BROWSER | PERSONAL_ADMIN | OTHER
+EnvironmentSharingScope = ATTEMPT_PRIVATE | TASK_SHARED | COWORKER_PRIVATE | WORKSPACE_SHARED | USER_SHARED
+CoworkerStatus = ACTIVE | PAUSED | ARCHIVED
+GoalStatus = ACTIVE | PAUSED | COMPLETED | ARCHIVED
+SuggestionStatus = PROPOSED | ACCEPTED | DISMISSED | EXPIRED
+SuggestionAction = TASK | OPEN_ROUTINE_EDITOR | OPEN_AUTOMATION_EDITOR
+SuggestionKind = TASK_OPPORTUNITY | ROUTINE_OPPORTUNITY | AUTOMATION_OPPORTUNITY
+ContextDocumentKind = PERSONAL_PROFILE | COWORKER_NOTES | WORKSPACE_NOTES | GOAL_NOTES
+ContextOwnerRef = USER(PrincipalId) | WORKSPACE(WorkspaceId) | COWORKER(WorkspaceId, CoworkerId) | GOAL(WorkspaceId, GoalId)
+BudgetThresholdAction = WARN | REDUCE_CONCURRENCY | PREFER_CHEAPER | REQUIRE_APPROVAL | STOP_NEW_DELEGATION
+DemonstrationSessionStatus = CREATED | CAPTURING | REVIEW | CONVERTED | ABORTED
 AgentFeature = session.resume | session.steer | session.interrupt | session.cancel | session.fork |
   input.text | input.image | input.file | input.resources | extension.mcp_stdio |
   extension.mcp_http | extension.skills | extension.plugins | extension.dynamic_attach |
@@ -103,6 +122,7 @@ AgentSessionStatus = STARTING | ACTIVE | INTERRUPTING | CLOSING | CLOSED | LOST
 RoutineStatus = ACTIVE | ARCHIVED
 AutomationOccurrenceStatus = PENDING | CLAIMED | WAITING_DEPENDENCY | STARTED | COMPLETED | SKIPPED | FAILED
 RoutineRevisionRef = { routine_id: RoutineId, revision: u64 }
+GoalRevisionRef = { goal_id: GoalId, revision: u64 }
 RuntimeAvailability = PAIRING | STARTING | RECOVERING | ONLINE | DEGRADED | DRAINING | OFFLINE | REVOKED
 RuntimeStartupPolicy = MANUAL | LOGIN_BACKGROUND | ALWAYS_ON_SERVICE
 RuntimeIncarnationState = STARTING | RECOVERING | READY | DEGRADED | DRAINING | STOPPING | STOPPED
@@ -215,6 +235,18 @@ HandoffPhase = REQUESTED | DRAINING_SOURCE | CHECKPOINTING | REPLICATING |
   COMPLETED | FAILED
 ```
 
+`NATIVE_DEFAULT` preserves harness policy and offers no host-delegation preference;
+`BALANCED` presents enabled host profiles alongside native capability; `COST_SAVER` guides
+the lead toward lower known-cost eligible workers subject to quality/verification policy;
+`HOST_DELEGATION_ONLY` is available only when the selected adapter can explicitly enforce
+the restriction without rewriting native configuration. Unsupported restrictions fail
+configuration validation.
+
+`EscalationPolicy.max_worker_attempts` is 1..8 including the first child Attempt;
+fallback profile IDs are ordered, unique, and cannot exceed the remaining attempt count.
+Each fallback is revalidated at admission, and every admitted retry records a new Attempt
+and profile revision.
+
 `ResourceCapacity` is an approximate, timestamped placement hint. It is not an
 authorization decision or a reservation; admission rechecks current capacity. A
 `TrustZone` names the administrative boundary hosting a Runtime. It does not replace
@@ -283,6 +315,12 @@ ResourceRef {
 
 ```text
 PinnedResourceRef = ResourceRef with revision_id required
+
+ArtifactVersionRef {
+  workspace_id: WorkspaceId
+  artifact_id: ArtifactId
+  version: u64
+}
 
 ResourceInput {
   resource_ref: PinnedResourceRef
@@ -619,6 +657,17 @@ AcceptanceCriterion {
   mandatory: boolean
 }
 
+BoundedDecision {
+  source_event_id: EventId
+  summary: string
+}
+
+EscalationPolicy {
+  max_worker_attempts: u32 # 1..8; includes the first child Attempt and is budget-capped
+  fallback_profile_ids: DelegationProfileId[] # tried in this order after recoverable failure
+  on_exhaustion: RETURN_TO_LEAD | NEEDS_YOU
+}
+
 OutputRequirement {
   output_id: string
   description: string
@@ -636,7 +685,117 @@ BudgetSpec {
   max_child_attempts?: u32
   max_concurrency?: u32
 }
+
+UsageQuantity {
+  quantity: decimal
+  unit: string
+  currency?: string
+  confidence: EXACT | ESTIMATED
+}
+
+CostLimit {
+  amount_minor_units: u64
+  currency: ISO4217Currency
+}
+
+TaskSpecProposal {
+  objective: string
+  task_category?: TaskCategory
+  constraints: string[]
+  input_refs: PinnedResourceRef[]
+  required_outputs: OutputRequirement[]
+  acceptance_criteria: AcceptanceCriterion[]
+  budget?: BudgetSpec
+  delegation_budget_policy?: DelegationBudgetPolicy
+  deadline?: Timestamp
+}
+
+DelegationBudgetPolicy {
+  max_concurrent_children?: u32 # 1..8; can only lower platform limit
+  max_host_delegation_depth?: u32 # 0..2; can only lower platform limit
+  max_per_attempt?: BudgetSpec
+  max_per_task?: BudgetSpec
+  max_per_profile?: BudgetSpec
+  on_threshold: BudgetThresholdAction
+}
+
+NotificationPolicy {
+  blockers: ALWAYS | SILENT
+  completion: ALWAYS | ON_SUCCESS | SILENT
+  failures: ALWAYS | SILENT
+}
+
+WarmPolicy {
+  host: COLD | TTL | PIN_WHILE_ACTIVE
+  native_session: CLOSE_ON_SETTLE | REUSE_IF_SAFE
+  capability_hosts: COLD | TTL
+  browser_environment: COLD | TASK | WORKSPACE
+  local_model: PROVIDER_DEFAULT | KEEP_RECENT_HINT
+  ttl_ms?: u64
+  max_memory_bytes?: u64
+  max_idle_cost?: CostLimit
+  triggers: (ACTIVE_TASK | RECENT_USE | USER_SELECTED | QUOTA_LOW | PREDICTED_FAILOVER | DEADLINE_APPROACHING)[]
+}
+
+DelegatedWorkerPolicy {
+  capability_allowlist: CapabilityRef[]
+  maximum_effect_risk: SAFE | SENSITIVE | HIGH_IMPACT
+  filesystem_write_scope: WORKTREE_ONLY | ATTEMPT_PRIVATE | EXPLICIT_SHARED
+  external_effects: DENY | REQUIRE_EXISTING_POLICY
+  secret_access: NONE | TASK_SCOPED_GRANTS_ONLY
+}
+
+DelegatedEnvironmentPolicy {
+  placement_preference: PlacementPreference
+  isolation: REQUIRED | PREFERRED
+  sharing_scope: EnvironmentSharingScope
+}
+
+QuotaObservation {
+  agent_binding_id: AgentBindingId
+  source: string
+  observed_at: Timestamp
+  expires_at?: Timestamp
+  state: NORMAL | LOW | EXHAUSTED | UNKNOWN
+  remaining_hint?: UsageQuantity
+  reset_at?: Timestamp
+}
+
+WorkerPerformanceProjection {
+  delegation_profile_id: DelegationProfileId
+  task_category: TaskCategory
+  sample_count: u64
+  verifier_pass_rate?: number
+  median_latency_ms?: u64
+  median_observed_cost?: UsageQuantity
+  retry_rate?: number
+  human_intervention_rate?: number
+  failure_categories: string[]
+  confidence: LOW | MEDIUM | HIGH
+}
+
+CoworkerContextPolicy {
+  allowed_context_kinds: ContextDocumentKind[]
+  max_retrieved_items: u32
+  retain_task_summaries: bool
+  require_user_confirmation_for_memory: true
+}
+
+ContextDocumentMetadata {
+  kind: ContextDocumentKind
+  owner_ref: ContextOwnerRef
+}
 ```
+
+`ContextDocumentMetadata` classifies a versioned Resource; it does not create another
+content store or version chain. `PERSONAL_PROFILE`, `COWORKER_NOTES`, `WORKSPACE_NOTES`,
+and `GOAL_NOTES` require USER, COWORKER, WORKSPACE, and GOAL owner refs respectively.
+Owner IDs must resolve in the Resource's Workspace (USER must be that Workspace's
+authenticated owner). Content edits create ordinary ResourceRevisions.
+
+`TaskCategory` is a bounded, owner/lead-proposed routing/evaluation label. If no explicit
+category is available, use `OTHER`; Core does not infer it from private Task text. It may
+be revised only through a TaskSpecRevision.
 
 LiteCowork enforces only quantities it can observe. Unknown native-agent spend is
 reported as unknown, not zero. A currency is required when a monetary ceiling exists.
@@ -709,12 +868,17 @@ resource existence.
 
 ```text
 AGENT_UNAVAILABLE
+AGENT_NOT_LEAD_ELIGIBLE
+AGENT_SESSION_OVERRIDE_UNSUPPORTED AGENT_NATIVE_CONFIG_CHANGED AGENT_QUOTA_EXHAUSTED
 NOT_FOUND UNAUTHORIZED FORBIDDEN POLICY_DENIED APPROVAL_REQUIRED
 WORKSPACE_ARCHIVED WORKSPACE_NOT_QUIESCENT STALE_WORKSPACE_VERSION
 INVALID_ARGUMENT INVALID_TRANSITION STALE_VERSION STALE_TASK_VERSION STALE_SPEC_REVISION CONFLICT
 ARTIFACT_ARCHIVED INVALID_ARTIFACT_TRANSITION
 TASK_NOT_FOUND TASK_TERMINAL INVALID_PLAN PLAN_CYCLE STEP_NOT_READY LEASE_CONFLICT STALE_FENCE
 INVALID_RESOURCE_REF RESOURCE_CONFLICT TASK_PAUSE_UNSAFE TASK_ALREADY_PAUSED RECOVERY_EXHAUSTED
+DELEGATION_PROFILE_DISABLED DELEGATION_PROFILE_ARCHIVED DELEGATION_PROFILE_INCOMPATIBLE
+DELEGATION_PROFILE_OPTIONS_INVALID
+DELEGATION_DEPTH_EXCEEDED DELEGATION_CONCURRENCY_EXCEEDED
 PLACEMENT_UNAVAILABLE RUNTIME_UNAVAILABLE ENVIRONMENT_UNAVAILABLE
 CAPABILITY_UNAVAILABLE CAPABILITY_UNHEALTHY SECRET_UNAVAILABLE RESOURCE_UNAVAILABLE
 AUTOMATION_NOT_FOUND AUTOMATION_REVISION_NOT_FOUND AUTOMATION_DISABLED INVALID_TRIGGER
@@ -727,6 +891,8 @@ INVOCATION_NOT_FOUND INVOCATION_AMBIGUOUS PROVIDER_INPUT_UNSUPPORTED SENSITIVE_I
 USER_REQUEST_NOT_FOUND USER_REQUEST_EXPIRED
 APPROVAL_ALREADY_CONSUMED RESOURCE_STALE RESOURCE_LOCATION_UNAVAILABLE
 UPLOAD_OFFSET_CONFLICT UPLOAD_EXPIRED BUDGET_EXCEEDED
+WORKER_QUALITY_FLOOR_UNMET WORKER_BUDGET_EXCEEDED
+DEADLINE_EXECUTION_PRECONDITION_FAILED COWORKER_PAUSED COWORKER_ARCHIVED GOAL_ARCHIVED SUGGESTION_EXPIRED
 TIMEOUT DEPENDENCY_UNAVAILABLE UNSUPPORTED_VERSION INTEGRITY_FAILURE INTERNAL
 CHANNEL_INGRESS_GAP_CONFIRMATION_REQUIRED
 ```

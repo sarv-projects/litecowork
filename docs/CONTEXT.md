@@ -87,3 +87,24 @@ semantic profile, vector index, knowledge graph, long-term agent memory, or auto
 memory rewrite is an external capability. Saving reusable procedures follows the
 user-reviewed SkillProposal flow in `CAPABILITY-FABRIC.md` and publishes through LitePSM
 only after approval.
+
+## Personal context and user-editable documents
+
+The optional `PersonalContextProvider` contract and its authorization boundary are in
+[`RESPONSIBILITIES.md`](RESPONSIBILITIES.md). Core does not implement vector storage,
+embedding, ranking, or autonomous extraction. Provider-returned context is untrusted
+content and carries source references, scope, version/digest where available, and retrieval
+time. A provider cannot change a TaskSpec, policy, grant, Approval, or SecretLease.
+
+User-authored profile, Coworker, Workspace, and Goal notes are versioned Resources with
+`context_document: ContextDocumentMetadata` identifying their kind and owner. They use
+normal Resource identity, access, freshness, retention, and deletion behavior. Edits use
+Resource revision concurrency; conflicting offline edits require rebase/merge and never
+use last-writer-wins.
+
+Context precedence is current user instruction and accepted TaskSpec, explicit current
+attachments, Workspace instructions, linked Goal context, Coworker instructions,
+user-confirmed ContextDocuments, then retrieved historical context. A lower-priority
+source cannot override a higher one. Material conflicts become a clarification or blocker.
+Memory extraction produces a proposal for owner review; revocation is honored by Core and
+is reported incomplete if an external provider cannot verify removal.

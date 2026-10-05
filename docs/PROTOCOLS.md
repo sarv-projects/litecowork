@@ -58,6 +58,23 @@ This is not a universal ranking. AgentProfile may expose multiple AgentEndpoints
 
 AgentAdapter normalizes protocol differences; domain code depends only on normalized contracts.
 
+Host delegation is an explicit LiteCowork Gateway surface, separate from native
+subagents. The canonical internal tool is `litecowork.agents.delegate(DelegateRequest)`;
+status/result/steer/cancel commands address the returned `ChildAttemptRef` and validate
+the current Task/profile versions and Attempt authority. The complete request, admission,
+TaskPacket, ResultEnvelope, and failure rules are in `DELEGATION.md` and their canonical
+envelope schemas are in `schemas/delegation.schema.json`. Agent-native tools
+that spawn native subagents remain harness-owned and are not intercepted or represented as
+LiteCowork Attempts unless a qualified adapter explicitly reports them.
+
+Delegated communication has two planes. Durable control changes (admission, user
+steering, cancellation, result settlement, Effect, Artifact, Evidence, lease) use domain
+commands/events. Streaming text, heartbeats, short worker messages, and browser
+observations use an authenticated, bounded ephemeral channel and can be dropped/replayed
+from the last durable checkpoint. Ephemeral messages cannot change Task status or grant
+authority. Session and channel credentials are scoped to the current Attempt/Runtime
+incarnation and are not replicated.
+
 ## 4. Capability Protocol
 
 Purpose: worker discovers/uses external capabilities through LiteCowork Gateway and CapabilityBroker.

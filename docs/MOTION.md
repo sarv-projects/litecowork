@@ -45,6 +45,22 @@ an accessible busy state, not a decorative animation.
 | Task lane fails | affected lane projects failure | Border/status update 180ms; no screen-wide flash |
 | Handoff phase/location changes | each Handoff phase committed; target lease required for final location | Current phase label 180ms; “Saving progress…” only during checkpoint/transfer, target only after lease acquisition |
 | Archived Workspace banner appears | `workspace.archived.v1` projection | Banner fade 180ms; persistent read-only state |
+| Primary Coworker label changes | `workspace.primary_coworker.changed.v1` projection | Text/icon 120ms; no execution identity animation |
+| Coworker is created or revised | committed `coworker.created.v1` / `coworker.revised.v1` | Card fade 180ms; revision history appears only after commit |
+| Coworker pauses/resumes | `coworker.status.changed.v1` projection | Presence/status text 120ms; current Tasks do not disappear |
+| Worker profile enabled/disabled | `delegation_profile.status.changed.v1` projection | Toggle label 120ms; never animate a host/session starting |
+| Worker preparing | committed `delegation.admitted.v1` and child Attempt projection | Add branch at 180ms with “Preparing”; no activity spinner before session state |
+| Worker becomes active | AgentSession ACTIVE observation/event | Change “Preparing” to “Working” at 120ms |
+| Verification escalation | next Attempt committed after failed VerificationRun | Prior lane settles; new lane enters at 180ms; do not morph one worker into another |
+| Goal evidence contribution changes | verified Task/Evidence projection update | Text/check state 120ms; no animated percentage unless a true quantitative definition exists |
+| Goal status changes | `goal.status.changed.v1` | Status label 120ms; linked Task lanes do not transition |
+| Suggestion proposed/resolved | `suggestion.proposed.v1` / `suggestion.resolved.v1` | Fade 180ms in; fade 120ms out after resolution commit |
+| Suggestion snoozed/shown now | `suggestion.visibility.changed.v1` | Fade 120ms after the event commits; it may re-enter only when the persisted time arrives or owner clears snooze |
+| Suggestion kind muted | `suggestion.preference.changed.v1` plus resolution events | Remove matching cards after the preference and dismissals commit; Settings label updates at 120ms |
+| Warm preflight succeeds/fails | operational readiness observation | No prominent motion; concise static readiness label |
+| Cost ceiling blocks new admission | committed Task/profile blocker projection | One 280ms border emphasis, then static blocker |
+| Deadline preflight advances | actual check result | Update one check row at 120ms; never animate a made-up countdown/percent |
+| Environment control changes | committed `EnvironmentControlLease` owner/epoch | Existing owner badge changes at 120ms after the epoch commits |
 
 Historical hydration, cursor resync, and initial page load render the current state without
 replaying transitions. An animation is never queued from an earlier event after the latest
@@ -128,6 +144,45 @@ Cloud
 
 when handoff phases actually progress. Never depict process teleportation.
 
+### Worker/profile transitions
+
+Enabling a DelegationProfile means “eligible for future selection”, not “running”. The
+profile toggle changes after its committed status event without creating a branch. A
+branch enters only after TaskService commits child Attempt admission; its initial text is
+“Preparing worker”. Change to “Working” only after AgentSession ACTIVE is observed. If
+startup fails, transition that branch to its typed failed/blocked state; do not show an
+intermediate success pulse. A native subagent appears only as a reported child when its
+harness emits that information, and is visually marked as harness-owned.
+
+A profile rename updates the visible name only after its revision commits. A duplicate
+profile card appears only after `delegation_profile.created.v1` is projected and carries
+the committed `DISABLED` state; the card entrance never implies that a worker started.
+
+When verification fails and policy admits another profile, preserve the failed Attempt in
+history and add a separate next-Attempt lane. Do not animate the old card changing name,
+model, or vendor. Quota-low prewarm and idle eviction are operational optimizations and
+do not animate in the task canvas. Cost policy changes appear as a blocker/admission state
+only when the Task/profile projection records that impact.
+
+### Coworker, Goal, and Suggestion transitions
+
+Coworker avatar/name setup may fade in after `coworker.created.v1`; presence is a quiet
+text/icon update from current underlying Task/Runtime state. A paused Coworker does not
+visually pause/cancel already running Task cards. Goal progress changes only after
+accepted Task outcome/Evidence projections update; show a changed source count or
+criterion state rather than interpolating a synthetic percentage. `goal.status.changed.v1`
+updates the owner-controlled badge. Suggestion entry/removal follows committed proposal
+and resolution events; accepting it transitions the proposal card to its resulting Task
+card only after both states commit.
+
+### Deadline preflight and control transfer
+
+Deadline preflight checks appear as a short textual list whose items change only when a
+check result is observed. Do not animate a countdown as proof that a site/action remains
+available. For computer handoff, disable the outgoing controller until the control epoch
+commits, then enable the new owner; returning to the agent includes a static “Checking
+what changed” state until fresh observation and reconciliation complete.
+
 ## Runtime, Routine, and trigger presentation
 
 Runtime recovery, AgentHost startup, and dependency waiting update static labels from
@@ -137,6 +192,13 @@ draft does not create a running lane. A due occurrence waiting for a laptop show
 actual dependency blocker. Reconnecting or waking refreshes current state without replaying
 missed worker animations. Quick Entry opens with a 120ms fade, with immediate display under
 reduced motion; opening it never sends or captures context automatically.
+
+RoutineHealth updates only after a terminal Task outcome, fresh dependency observation, or
+drift Evidence is committed/projected. Change the outcome summary and state label directly;
+never animate a synthetic health score. A `DRIFTED` badge appears with its blocker and
+evidence link. Environment sharing-scope labels change only after
+`environment.sharing_scope.changed.v1`; the Environment remains visibly SUSPENDED and does
+not animate into use.
 
 ## Interrupted animations
 

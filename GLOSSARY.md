@@ -48,6 +48,43 @@ _Avoid_: Attempt
 One worker's bounded execution try for a Step.
 _Avoid_: Task run, agent session
 
+**DelegationProfile**:
+A versioned, user-enabled configuration for one AgentBinding to receive bounded host-
+delegated work.
+_Avoid_: Installed agent, model alias
+
+**Native subagent**:
+A child worker created and governed inside an external agent's native harness.
+_Avoid_: LiteCowork Attempt
+
+**Host-delegated worker**:
+An external agent started by LiteCowork for a bounded Step under a child Attempt,
+separate lease, grants, Environment, and verification.
+_Avoid_: Native subagent
+
+**Coworker**:
+A user-facing identity and preference bundle that organizes Tasks and context without
+owning execution or authority.
+_Avoid_: AgentSession, autonomous Task owner
+
+**Goal**:
+A user-authored desired outcome whose progress is projected from verified work.
+_Avoid_: Scheduler, background planner
+
+**Suggestion**:
+An expiring, provenance-backed proposal that requires an explicit user action.
+_Avoid_: Approval, automatic Task
+
+**Environment sharing scope**:
+The set of eligible Tasks/Attempts allowed to reuse an Environment, independent of how
+long that Environment may exist.
+_Avoid_: CapabilityGrant, Task lease
+
+**AgentHarnessDescriptor**:
+A time-bounded, non-secret observation of one adapter's supported harness features and
+session options.
+_Avoid_: Native configuration copy
+
 ## Workers and execution places
 
 **Agent**:

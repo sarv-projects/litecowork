@@ -86,6 +86,7 @@ POST /v1/workspaces/{workspace_id}/environments
 GET  /v1/workspaces/{workspace_id}/environments/{environment_id}
 POST /v1/workspaces/{workspace_id}/environments/{environment_id}/suspend
 POST /v1/workspaces/{workspace_id}/environments/{environment_id}/resume
+POST /v1/workspaces/{workspace_id}/environments/{environment_id}/sharing-scope
 POST /v1/workspaces/{workspace_id}/environments/{environment_id}/destroy
 ```
 
@@ -122,6 +123,21 @@ another eligible Environment or provision a replacement using the ordinary previ
 confirmation routes. Replacement creates a new Environment and Attempt; it never silently
 clones private provider state or changes an existing Attempt's binding.
 
+`EnvironmentSpec` includes `sharing_scope`, independent of lifetime. New Environments
+default to `ATTEMPT_PRIVATE`; persistent Environment preview/create requests explicitly
+name the desired scope. V1 provision requests support `COWORKER_PRIVATE` and
+`WORKSPACE_SHARED`; `USER_SHARED` remains reserved and is rejected until its user-level
+ownership and cross-Workspace attachment contract is defined. The view reports sharing
+scope without provider identifiers.
+
+Changing a persistent Environment between `COWORKER_PRIVATE` and `WORKSPACE_SHARED`
+requires explicit owner confirmation, `If-Match`, and an idempotency key. The Environment
+must be suspended and have no active Attempts, Invocations, control leases, or unresolved
+Effects. A Coworker-private target must name an active or paused Coworker in this
+Workspace; a Workspace-shared target must clear the Coworker owner. The command changes
+reuse eligibility only: it does not copy provider data, change grants, resume the
+Environment, or attach it to a Task. `USER_SHARED` cannot be selected.
+
 Restore verifies the key and every required object before making the Workspace writable,
 restores the exact snapshot/event history through its recorded cursors, rebuilds projections,
 and creates a new Runtime identity. Missing secrets require reauthentication; secret bytes
@@ -132,14 +148,25 @@ and must match the path ID. This lets the same authenticated API surface reject 
 scope before invoking a Workspace command.
 
 Agent selection is explicit and Workspace-scoped. The user enables a discovered
-AgentBinding, then sets it as the Workspace default. A Conversation may select an
-enabled binding override; when absent, new Conversation turns use the Workspace default.
+AgentBinding, then sets an enabled, lead-eligible binding as the Workspace default. A
+Conversation may select an enabled, lead-eligible binding override; when absent, new
+Conversation turns use the Workspace default.
 An invalid/disabled explicit override does not silently fall back. Changing or clearing
-the default affects newly admitted turns and Tasks only; existing sessions and Attempts
-remain pinned. Without an eligible binding, chat/Task admission returns
+the default affects newly admitted Conversation turns and Tasks that have no higher-
+precedence Task or Coworker selection; existing sessions and Attempts remain pinned.
+Without an eligible binding, chat/Task admission returns
 `AGENT_UNAVAILABLE` and creates no partial turn or Task. The composer retains the unsent
 draft while first-use setup selects and enables an AgentBinding. Other resource/runtime
 blockers after Task creation are represented by `Task.blocking_conditions[]`.
+
+Task creation may include a selected `coworker_id`; the Operator normally prefills the
+Workspace primary Coworker in the composer and sends that exact ID. The service pins the
+Coworker's current revision atomically with Task creation. Lead precedence for a Task is
+explicit Task lead, selected Coworker revision default, then Workspace default. The first
+configured binding is validated and never skipped in favor of a lower-precedence binding.
+Omitting `coworker_id` creates a Task without Coworker origin; the client does not submit
+an origin revision. Conversation turns remain governed by Conversation override and
+Workspace default, independently of Coworker Task defaults.
 
 Create defaults to `LOCAL_ONLY`; `SELECTED_FOLDERS` is unavailable in the create request because roots are Workspace-owned records created afterward. A client may send another supported policy only after the user explicitly selects it; enabling cloud defaults the UI to `ACTIVE_TASK_INPUTS`. The user adds persistent roots, then updates policy with one or more active same-Workspace `replication_scope_root_ids`. Root IDs follow each selected folder's future observed revisions; they do not pin one content snapshot. Root-level replication settings intersect with Workspace policy and cannot broaden it. A replication-policy update applies to future transfers and never silently deletes content already replicated to another Runtime. Archive is accepted only after every Task is terminal and every Automation is disabled. Quiescence also requires Conversation turns and scoped Invocations to be settled, no active grants/SecretLeases/control leases, and persistent Environments with no live workload. Authorized watchers/triggers stop before the read-only transition. Retained Environment state may remain suspended under storage/backup policy; archive never silently destroys it. Unknown provider quiescence blocks archive with `WORKSPACE_NOT_QUIESCENT`. Archived Workspaces remain readable and preserve existing authorized Artifact/Resource downloads, but reject all domain mutations, including Task mutations, capability activation/grants, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel work.
 
@@ -274,6 +301,7 @@ GET  /v1/routines/{id}/revisions?cursor=
 POST /v1/routines/{id}/revisions
 POST /v1/routines/{id}/run
 POST /v1/routines/{id}/archive
+GET  /v1/routines/{id}/health
 
 POST /v1/automations
 GET  /v1/automations?cursor=&limit=
@@ -356,6 +384,9 @@ POST /v1/agent-bindings
 GET  /v1/agent-bindings/{id}
 POST /v1/agent-bindings/{id}/enable
 POST /v1/agent-bindings/{id}/disable
+GET  /v1/agent-bindings/{id}/session-options
+GET  /v1/agent-bindings/{id}/harness-capabilities
+GET  /v1/agent-bindings/{id}/quota-observation
 ```
 
 AgentProfile and AgentEndpoint are stable identities; the profile response joins them to
@@ -367,6 +398,110 @@ configuration. Enable/disable are versioned and idempotent. Disabling blocks new
 admission immediately while already admitted sessions remain pinned and settle safely.
 Creation may pin an exact discovered endpoint or save required features and preferred
 topologies for later compatible selection; protocol choice is not a universal ranking.
+`lead_eligible` is distinct from `enabled`: a worker-only binding cannot be selected as a
+lead and returns `AGENT_NOT_LEAD_ELIGIBLE` when explicitly selected. Session-option and harness-capability routes return fresh adapter-negotiated
+metadata only; they never return native configuration files, credentials, or local
+endpoint locators.
+
+Quota observation returns the latest source-named observation, including `UNKNOWN` and
+its expiry, or JSON `null` when no observation exists. An expired observation is
+projected as `UNKNOWN`; clients must not display stale `LOW`/`EXHAUSTED` as current state.
+
+## Delegation profiles
+
+```text
+GET    /v1/delegation-profiles?agent_binding_id=&status=&cursor=&limit=
+POST   /v1/delegation-profiles
+GET    /v1/delegation-profiles/{id}
+POST   /v1/delegation-profiles/{id}/duplicate
+GET    /v1/delegation-profiles/{id}/revisions?cursor=&limit=
+POST   /v1/delegation-profiles/{id}/revisions
+POST   /v1/delegation-profiles/{id}/status # ENABLED | DISABLED | ARCHIVED
+GET    /v1/delegation-profiles/{id}/performance?task_category=
+```
+
+Create binds a profile to an enabled same-Workspace AgentBinding and current descriptor,
+then creates revision 1 disabled. The name is part of the immutable revision; a rename
+therefore creates a revision. Names are trimmed, NFC-normalized, and Unicode case-folded
+for uniqueness within one binding among non-archived profiles. Duplicate requires the
+source version in `If-Match`, copies its current non-secret revision into revision 1 of a
+new disabled profile on the same binding, and copies no runtime or authority state. Its
+idempotency key makes retries return the same created profile. Export/import is deferred;
+future portable templates must define destination compatibility and owner review.
+Enablement validates session options, required features, Environment policy, and Trust
+ceiling; it does not start an agent host. Revisions are immutable and use `If-Match` on
+the profile version. Existing Attempts keep
+their pinned revision. Delegation selection is `AUTOMATIC`, `PREFER`, or `REQUIRE`:
+`AUTOMATIC` ranks eligible profiles; `PREFER` ranks the named profile first and may use
+another profile only when Workspace policy allows fallback; `REQUIRE` fails without
+substitution. A user explicitly choosing a profile uses `REQUIRE`. Delegation targets a
+READY Step in the accepted PlanRevision and requires the current parent
+Attempt/session/lease. See `DELEGATION.md` for the exact data and admission algorithm.
+
+`performance` is a rebuildable projection by bounded TaskCategory; it reports sample
+count and confidence and never includes prompt/output content. Small samples cannot
+override an explicit profile choice. Cost fields retain compatible provider units and
+confidence; the underlying Task Usage route remains the source-attributed record.
+
+## Coworkers, Goals, and Suggestions
+
+```text
+GET    /v1/coworkers?status=&cursor=&limit=
+POST   /v1/coworkers
+GET    /v1/coworkers/{id}
+GET    /v1/coworkers/{id}/presence
+POST   /v1/coworkers/{id}/revisions
+POST   /v1/coworkers/{id}/status     # ACTIVE | PAUSED | ARCHIVED
+POST   /v1/workspaces/{workspace_id}/primary-coworker
+
+GET    /v1/goals?status=&coworker_id=&cursor=&limit=
+POST   /v1/goals
+GET    /v1/goals/{id}
+POST   /v1/goals/{id}/revisions
+POST   /v1/goals/{id}/status        # ACTIVE | PAUSED | COMPLETED | ARCHIVED
+
+GET    /v1/suggestions?status=PROPOSED&cursor=&limit=
+POST   /v1/suggestions/{id}/resolve # ACCEPTED | DISMISSED
+POST   /v1/suggestions/{id}/snooze
+GET    /v1/workspaces/{workspace_id}/suggestion-preferences
+PUT    /v1/workspaces/{workspace_id}/suggestion-preferences/{kind}
+```
+
+All routes require Workspace context and owner authorization. Create/revision commands
+are idempotent; status commands use `If-Match`. Primary Coworker selection is a versioned
+Workspace command and accepts `coworker_id: null` to clear it. Goal completion is always
+owner-authorized. Suggestion acceptance either creates an ordinary Task atomically or
+opens the existing Routine/Automation editor; saving reusable work remains a separate
+explicit command. Suggestions cannot grant authority or run work.
+Snooze is an idempotent owner command with a requested `snoozed_until` no later than the
+Suggestion's expiry; it changes visibility while the Suggestion remains `PROPOSED`.
+Workspace preferences mute one `SuggestionKind`. Muting atomically dismisses currently
+proposed items of that kind and prevents new proposals; unmuting affects only future
+proposals. Individual dismissal suppresses the same dedupe key for 30 days. Preference
+changes do not run or authorize work.
+
+```text
+GET /v1/tasks/{id}/progress
+```
+
+Coworker presence, Task progress, Goal contributions, and worker performance are
+read-only rebuildable projections. Presence keeps proactive status, current Task activity,
+and Runtime availability as separate axes. Task progress distinguishes latest observed
+activity from latest Evidence and contains no synthetic percentage or ETA. Goal
+contributions identify linked Task outcomes and Evidence; they do not infer that a Goal's
+free-text success criteria are satisfied.
+
+## Demonstrations
+
+```text
+POST /v1/demonstrations
+POST /v1/demonstrations/{id}/complete
+POST /v1/demonstrations/{id}/abort
+```
+
+Capture requires an explicit user-controlled Environment and consent. The semantic trace
+is redacted and stored as a Resource. Completion creates a SkillProposal for review; it
+never installs or publishes a package.
 
 ## Connections and channel bindings
 
@@ -434,6 +569,11 @@ Artifact's `workspace_id` to reuse the exact immutable output as a later Task in
 External ArtifactContent still retains its separate pinned source ResourceRef.
 
 Create supplies the declared full byte size, media type, and optional expected SHA-256.
+First-party user-authored context documents may additionally supply typed
+`context_document` metadata; ResourceService validates that the metadata kind matches its
+USER/Workspace/Coworker/Goal owner and that the owner belongs to the selected Workspace.
+The upload session pins this metadata and applies it to the Resource created at commit.
+Omitting the field creates an ordinary Resource.
 The returned session is size-limited and expires and includes a fixed chunk size. The
 client uploads indexed chunks with `Content-Range`, per-chunk SHA-256, and idempotent
 chunk identity. The server reports the committed offset/ranges; an identical retry is
@@ -442,9 +582,9 @@ HTTP `Content-Range` end offsets are inclusive. Persisted `ResourceUploadChunk`
 `end_offset_exclusive` and response `UploadRange.end_offset_inclusive` make the conversion
 explicit. `chunk_index` determines the only accepted start offset; all non-final chunks
 have the negotiated chunk size. `GET` returns the current session and derived ranges.
-Commit verifies complete coverage, total size, media policy, and full-content digest,
-then creates a stable Resource and committed ResourceRevision and returns a pinned
-ResourceRef. Uncommitted/expired uploads cannot be referenced by a Task. ArtifactVersion
+Commit verifies complete coverage, total size, media policy, full-content digest, and any
+pinned context owner, then creates a stable Resource and committed ResourceRevision and
+returns a pinned ResourceRef. Uncommitted/expired uploads cannot be referenced by a Task. ArtifactVersion
 creation is a separate ArtifactStore operation.
 
 ## Workspace roots and deterministic resource search

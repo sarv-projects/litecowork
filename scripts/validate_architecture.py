@@ -1478,10 +1478,13 @@ def check_attempt_lease_contract() -> None:
             "INSERT INTO tasks(task_id,workspace_id,current_spec_revision,status,lead_agent_binding_id,priority,created_by_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
             ("task", "ws", 1, "READY", "binding", "NORMAL", "{}", now, now),
         )
-        for environment_id in ("env-attempt", "env-other"):
+        for environment_id, sharing_scope, owner_attempt_id in (
+            ("env-attempt", "ATTEMPT_PRIVATE", "attempt"),
+            ("env-other", "TASK_SHARED", None),
+        ):
             db.execute(
-                "INSERT INTO environments(environment_id,runtime_id,provider_kind,class,lifetime,owner_workspace_id,owner_task_id,name,status,health,budget_enforcement_policy,budget_enforcement,resource_limits_json,network_policy_json,budget_ceiling_json,backup_policy,isolation_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (environment_id, "rt", "fixture", "CONTAINER", "ATTEMPT", "ws", "task", environment_id, "READY", "HEALTHY", "ALLOW_HOST_MONITORED", "HOST_MONITORED", "{}", "{}", "{}", "EXCLUDED", "{}", now, now),
+                "INSERT INTO environments(environment_id,runtime_id,provider_kind,class,lifetime,owner_workspace_id,owner_task_id,owner_attempt_id,sharing_scope,name,status,health,budget_enforcement_policy,budget_enforcement,resource_limits_json,network_policy_json,budget_ceiling_json,backup_policy,isolation_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (environment_id, "rt", "fixture", "CONTAINER", "ATTEMPT", "ws", "task", owner_attempt_id, sharing_scope, environment_id, "READY", "HEALTHY", "ALLOW_HOST_MONITORED", "HOST_MONITORED", "{}", "{}", "{}", "EXCLUDED", "{}", now, now),
             )
         db.execute(
             "INSERT INTO attempts(attempt_id,task_id,step_id,agent_binding_id,runtime_id,runtime_incarnation_id,environment_id,failover_class,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -1644,8 +1647,8 @@ def check_storage_constraints(path: Path) -> None:
             ("agent-host", "runtime", "incarnation", "profile", "endpoint", "LOCAL_PER_SESSION", "READY", "LITECOWORK", now, now),
         )
         environment_bindings.execute(
-            "INSERT INTO environments(environment_id,runtime_id,provider_kind,class,lifetime,owner_workspace_id,owner_task_id,name,status,health,budget_enforcement_policy,budget_enforcement,resource_limits_json,network_policy_json,budget_ceiling_json,backup_policy,isolation_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("environment", "runtime", "container-provider", "CONTAINER", "ATTEMPT", "ws", "task", "Test", "READY", "HEALTHY", "ALLOW_HOST_MONITORED", "HOST_MONITORED", "{}", "{}", "{}", "INCLUDE_CHECKPOINTS", "{}", now, now),
+            "INSERT INTO environments(environment_id,runtime_id,provider_kind,class,lifetime,owner_workspace_id,owner_task_id,sharing_scope,name,status,health,budget_enforcement_policy,budget_enforcement,resource_limits_json,network_policy_json,budget_ceiling_json,backup_policy,isolation_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("environment", "runtime", "container-provider", "CONTAINER", "ATTEMPT", "ws", "task", "TASK_SHARED", "Test", "READY", "HEALTHY", "ALLOW_HOST_MONITORED", "HOST_MONITORED", "{}", "{}", "{}", "INCLUDE_CHECKPOINTS", "{}", now, now),
         )
         environment_bindings.execute(
             "INSERT INTO environment_provider_bindings(environment_id,runtime_id,runtime_incarnation_id,provider_kind,opaque_locator_ref,observed_at) VALUES(?,?,?,?,?,?)",
@@ -2217,8 +2220,8 @@ def check_storage_constraints(path: Path) -> None:
             ("execution-step", "execution-task", 1, "Execute", "Execute", "READY", now, now),
         )
         invocation_db.execute(
-            "INSERT INTO environments(environment_id,runtime_id,provider_kind,class,lifetime,owner_workspace_id,owner_task_id,name,status,health,budget_enforcement_policy,budget_enforcement,resource_limits_json,network_policy_json,budget_ceiling_json,backup_policy,isolation_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("execution-environment", "runtime", "fixture", "CONTAINER", "ATTEMPT", "ws", "execution-task", "Execution", "READY", "HEALTHY", "ALLOW_HOST_MONITORED", "HOST_MONITORED", "{}", "{}", "{}", "EXCLUDED", "{}", now, now),
+            "INSERT INTO environments(environment_id,runtime_id,provider_kind,class,lifetime,owner_workspace_id,owner_task_id,owner_attempt_id,sharing_scope,name,status,health,budget_enforcement_policy,budget_enforcement,resource_limits_json,network_policy_json,budget_ceiling_json,backup_policy,isolation_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("execution-environment", "runtime", "fixture", "CONTAINER", "ATTEMPT", "ws", "execution-task", "execution-attempt", "ATTEMPT_PRIVATE", "Execution", "READY", "HEALTHY", "ALLOW_HOST_MONITORED", "HOST_MONITORED", "{}", "{}", "{}", "EXCLUDED", "{}", now, now),
         )
         invocation_db.execute(
             "INSERT INTO attempts(attempt_id,task_id,step_id,agent_binding_id,runtime_id,runtime_incarnation_id,environment_id,execution_lease_id,failover_class,status,started_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",

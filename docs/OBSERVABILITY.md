@@ -91,6 +91,28 @@ Never log raw secrets, tokens, cookies or unredacted provider credentials.
 - due occurrences waiting for Runtime/resources and wait duration
 - Routine materialization failures and pinned-revision conflicts
 
+### Delegation, budget, and prewarm
+
+- delegation_admission_total by bounded outcome/error class and selection mode
+- delegation_candidates_count and admission rejection reasons
+- delegated_worker_start_latency and child_attempt_duration by bounded TaskCategory
+- worker_verification_pass/fail/inconclusive and escalation_attempt_count
+- delegation_budget_threshold_total by action; reservation/observed-usage mismatch
+- cost_observation_coverage by source/confidence/currency; cost_per_verified_task only
+  when units are comparable
+- quota_observation_total by NORMAL/LOW/EXHAUSTED/UNKNOWN and observation age bucket
+- host/session/environment prewarm attempts, hit rate, failures, and eviction reason
+- lead_change_total and handoff duration by bounded reason class
+- deadline_preflight_failure_total and actual execution-method fallback counts
+- suggestion proposed/accepted/dismissed/expired and duplicate-suppression counts
+- Coworker-paused admission blocks and ContextDocument conflict resolutions
+
+Use no Task title, objective, prompt, Artifact name, ContextDocument text, profile name,
+worker message, raw provider model string, or arbitrary Resource ID as a metric label.
+Binding/profile IDs belong in access-controlled trace/log fields with bounded retention.
+Worker quality/cost projections must suppress or mark insufficient samples; aggregate
+monetary metrics are partitioned by currency and never combine by implicit FX.
+
 Process existence is measured separately from installed inventory. Provider process
 restart/idle policy remains LitePSM-owned; LiteCowork observes activation/invocation health.
 Identifiers belong in logs/traces rather than unbounded metric labels.

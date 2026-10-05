@@ -238,9 +238,21 @@ only after adapter validation in the same Runtime incarnation. When the referenc
 reaches zero, a locally spawned host is stopped after its host-specific idle TTL (initial
 default 10 minutes for interactive CLI adapters; providers may set another bounded policy).
 Shared/external processes are never killed unless LiteCowork started and owns them and the
-configured cleanup policy permits it. `AgentWarmPolicy` is an optional latency
-optimization (`COLD`, `KEEP_DEFAULT_WARM`, `KEEP_RECENT_WARM`); default is `COLD`, and
-prewarming never starts every installed agent.
+configured cleanup policy permits it. Replace the coarse `AgentWarmPolicy` values with
+the multidimensional `WarmPolicy` in [`DELEGATION.md`](DELEGATION.md). AgentHostSupervisor
+owns only host and native-session warmth. CapabilityHostSupervisor, EnvironmentManager,
+browser providers, and local model backends own their respective lifecycle. Default is
+cold/demand-start. A warm observation never proves current authorization, session
+continuity, browser authentication, or provider cache retention.
+
+Prewarm triggers are bounded hints (`ACTIVE_TASK`, `RECENT_USE`, `USER_SELECTED`,
+`QUOTA_LOW`, `PREDICTED_FAILOVER`, `DEADLINE_APPROACHING`). Prewarm may prepare a host,
+validate auth/config, or prepare an Environment and bounded handoff packet; it does not
+invoke a model solely for warmup. Under resource pressure, drop speculative prewarms and
+expire idle sessions/hosts before optional persistent Environments. Never evict a live
+Attempt dependency, an Effect-reconciliation dependency, or a human takeover Environment.
+Restart creates a new RuntimeIncarnation and invalidates all prior process/session
+readiness observations.
 
 Changing a Task lead binding affects future planning assignments. Existing Attempts stay
 pinned to their original binding, endpoint, Runtime, and Environment until they settle or

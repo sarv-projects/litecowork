@@ -32,8 +32,11 @@ decision.
 | Legal lifecycle transitions and transition owners | [`STATE-MACHINES.md`](STATE-MACHINES.md) |
 | Service methods, dependencies, forbidden edges | [`SERVICES.md`](SERVICES.md) and owning domain contracts |
 | Task, plan, Attempt, checkpoint semantics | [`TASK-RUNTIME.md`](TASK-RUNTIME.md) |
+| Truthful Task progress, active workstreams, activity/evidence freshness | [`TASK-RUNTIME.md`](TASK-RUNTIME.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
 | Step placement preview, candidate selection, and recovery version checks | [`TASK-RUNTIME.md`](TASK-RUNTIME.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
 | Agent sessions, adapters, delegation | [`AGENT-FABRIC.md`](AGENT-FABRIC.md) |
+| Native harness integrity, DelegationProfiles, host/native/capability worker classes, selection, escalation, cost, quotas, warmth, and handoff | [`DELEGATION.md`](DELEGATION.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`API.md`](API.md), `schemas/delegation.schema.json`, `schemas/operator-api.openapi.yaml` |
+| Coworker identity/presence, evidence-linked Goals, Suggestions, personal context, and user-authored ContextDocuments | [`RESPONSIBILITIES.md`](RESPONSIBILITIES.md), [`CONTEXT.md`](CONTEXT.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
 | Durable AgentSession provenance, operation-scoped lifetime, replacement, and Runtime-local native/session handles | [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), [`STORAGE.md`](STORAGE.md), [`EVENTS.md`](EVENTS.md) |
 | Discovered AgentProfiles, Workspace bindings, enablement | [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md) |
 | Capability use and LitePSM boundary | [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md) |
@@ -47,6 +50,7 @@ decision.
 | Operator/daemon/worker lifecycles, startup, incarnations, lazy hosts, sleep/resume, drain | [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), [`SERVICES.md`](SERVICES.md) |
 | Lightweight application inventory, launch/attach ownership, and local process identity | [`WORLD-RESOURCES.md`](WORLD-RESOURCES.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`TESTING.md`](TESTING.md) |
 | Workspace-persistent Environment provision, budget, retention and reuse | [`ENVIRONMENTS.md`](ENVIRONMENTS.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
+| Environment lifetime, sharing scope, owner binding, worktree isolation, browser control lease | [`ENVIRONMENTS.md`](ENVIRONMENTS.md), [`DELEGATION.md`](DELEGATION.md), [`DATA-MODEL.md`](DATA-MODEL.md), `schemas/sqlite-v1.sql` |
 | Reusable work and revision pinning | [`ROUTINES.md`](ROUTINES.md), [`DATA-MODEL.md`](DATA-MODEL.md) |
 | Dated competitor evidence and adoption decisions | [`COMPETITIVE-RESEARCH.md`](COMPETITIVE-RESEARCH.md), [`SOURCE-RECONCILIATION.md`](SOURCE-RECONCILIATION.md) |
 | Runtime identity, replication, conflict, leases, handoff | [`RUNTIME-MESH.md`](RUNTIME-MESH.md) |
@@ -58,6 +62,7 @@ decision.
 | Principals, policy, approval, secrets, grants | [`TRUST.md`](TRUST.md), [`SECURITY.md`](SECURITY.md) |
 | Artifact, Effect, Evidence, verification | [`ARTIFACTS-EVIDENCE.md`](ARTIFACTS-EVIDENCE.md) |
 | Trigger, occurrence, duplicate and overlap semantics | [`AUTOMATION.md`](AUTOMATION.md) |
+| Routine health, recent outcomes, dependency freshness, and reviewed drift repair | [`ROUTINES.md`](ROUTINES.md), [`EXPERIENCE.md`](EXPERIENCE.md), [`SERVICES.md`](SERVICES.md) |
 | Human-facing messaging transports | [`CHANNELS.md`](CHANNELS.md) |
 | Channel host ownership, receipt claims, cursor continuity/replication barriers, ingress gaps, and Runtime-local reply targets | [`RUNTIME-MESH.md`](RUNTIME-MESH.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`CHANNELS.md`](CHANNELS.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), [`FLOWS.md`](FLOWS.md), [`API.md`](API.md), [`STORAGE.md`](STORAGE.md), [`TESTING.md`](TESTING.md), `schemas/sqlite-v1.sql`, `schemas/domain-event.schema.json` |
 | Durable event envelope, registry, evolution | [`EVENTS.md`](EVENTS.md), `schemas/domain-event.schema.json` |
@@ -68,9 +73,11 @@ decision.
 | Actor-by-actor end-to-end sequences | [`FLOWS.md`](FLOWS.md) |
 | Failure matrix, retry, reconcile, failover | [`FAILURE-RECOVERY.md`](FAILURE-RECOVERY.md) |
 | Navigation, screens, interaction and UI states | [`EXPERIENCE.md`](EXPERIENCE.md) |
+| Coworker/Home/Work/Subagents onboarding and cost/quota/error/mobile projection | [`EXPERIENCE.md`](EXPERIENCE.md), [`RESPONSIBILITIES.md`](RESPONSIBILITIES.md) |
 | Deduplicated Needs You inbox projection and actions | [`EXPERIENCE.md`](EXPERIENCE.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md) |
 | Component anatomy, tokens and accessibility | [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md) |
 | Semantic motion and timing | [`MOTION.md`](MOTION.md) |
+| Worker/profile/Goal/Suggestion/takeover motion triggers | [`MOTION.md`](MOTION.md), [`EVENTS.md`](EVENTS.md), [`STATE-MACHINES.md`](STATE-MACHINES.md) |
 | Logs, metrics, traces, audit and SLO categories | [`OBSERVABILITY.md`](OBSERVABILITY.md) |
 | Threat model and mandatory controls | [`SECURITY.md`](SECURITY.md) |
 | Egress/SSRF, Gateway authentication, IPC, file identity, archive and MCP App isolation | [`NETWORK-SECURITY.md`](NETWORK-SECURITY.md), [`SECURITY.md`](SECURITY.md) |

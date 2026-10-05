@@ -183,6 +183,15 @@ semantic tokens but may not introduce hard-coded hex values in component styles.
 | Status badge | 12px label + icon; 20–24px high | Text always names status; no color-only badge |
 | Dialog/sheet | Title, short consequence, scrollable body, explicit footer | Focus trap, Escape behavior appropriate to action, initial focus, return focus, destructive confirm |
 | Timeline row | Timestamp, actor/source, event text, optional linked resource | History order follows projection cursor; old events do not replay animations |
+| Coworker card | Identity/name, derived presence, active work count, one next useful action | Presence comes from real state; paused/offline are explicit; no avatar activity theater |
+| Worker profile card | Profile name, parent AgentBinding, short routing description, readiness, cost/quality freshness | Enabled means eligible for future selection only; current Attempt status is separate |
+| Delegation tree | Nested accessible list of lead, host children, reported native children, and capabilities | Child exists only after Attempt creation; each row opens pinned profile/Attempt details |
+| Cost indicator | Value + unit/currency + source + confidence + observed time | Exact/estimated/unknown states; never render unknown as zero |
+| Quota indicator | NORMAL/LOW/EXHAUSTED/UNKNOWN label and observation age | No percent gauge unless provider supplies a valid quantified observation |
+| Goal card | Objective, owner-authored status, linked verified outcomes, stale/conflict count | Progress links to Task/Evidence; worker summaries cannot complete Goal |
+| Suggestion card | Reason, source refs, intended result, authority preview, expiry, actions | Accept is an explicit proposal transition and never grants authority |
+| Control owner badge | Agent/Human owner, Environment name, input-control epoch status | Separate from ExecutionLease; stale owner actions are disabled with reason |
+| Profile editor group | Routing, native options, instructions, enforced limits, budget, environment | Guidance and enforceable policy have separate headings and validation states |
 
 Button state priority is disabled, loading, pressed, focus, hover, default. Hover and
 pressed change surface shade/border only; do not move important content. Focus uses a
@@ -244,6 +253,10 @@ in EXPERIENCE. UserRequest answers and sensitive approvals remain distinct contr
 claiming a run is active. `AutomationTriggerList` separates TriggerHost from execution
 placement and presents each enabled trigger's timezone/misfire behavior. `OccurrenceRow`
 shows due/waiting/started/settled status alongside the actual linked Task outcome.
+`RoutineHealthIndicator` shows the current RoutineRevision sample count, terminal outcome
+summary, observation-qualified dependencies, and `HEALTHY`/`WARNING`/`DRIFTED`/`UNKNOWN`
+with text and icon. Fewer than three eligible runs is “Not enough runs yet”; no colored
+success percentage is shown without that minimum sample.
 
 `RuntimeStopDialog` renders a read-only dependency preview and explicit choices; after
 confirmation, display accepted drain separately from observed process stop. Changed
@@ -260,3 +273,40 @@ never a zero value. Provision
 confirmation blocks on missing required budgets; a monitored cap is labeled best-effort.
 Suspend/resume/destroy controls expose active-use blockers and never suggest the data is
 gone until provider destruction is confirmed.
+
+## Coworker and delegation components
+
+`CoworkerCard` leads with name/role and derived presence, then one-line active work and a
+single useful action. Avatar is optional and never communicates status alone. `WorkerProfileCard`
+is nested under its installed AgentBinding so multiple configurations for one harness do
+not look like separate products. It shows Enabled/Disabled for new work separately from
+current active Attempt count and observed availability.
+
+`DelegationTree` is collapsed to a short summary in normal Task detail (“2 workers
+helping”). Expanded rows identify Lead, LiteCowork worker, native-reported worker,
+Capability, and Verifier distinctly. Selecting a row opens a side panel with profile and
+revision, harness descriptor digest, AgentSession/Attempt, Runtime/Environment, current
+usage confidence, Artifacts, Evidence, and blockers. Private native handles, raw prompts,
+secrets, and process IDs never appear. On narrow screens it is a nested list route, not a
+scaled desktop tree.
+
+`CostIndicator` always carries a unit and source; currency is shown only for monetary
+values. An unknown native-plan charge is rendered as “Provider usage; exact cost
+unavailable”. `QuotaIndicator` becomes stale after its observation expiry and then reads
+“Usage unavailable”, not the previous LOW/EXHAUSTED state as current truth. These controls
+use existing semantic status tokens and textual labels; they introduce no vendor color.
+
+`GoalCard` distinguishes owner-set status from derived contribution summary and gives a
+direct link to each Task/Evidence source. `SuggestionCard` exposes Why this?, source list,
+expected result, authority preview, expiry, and clear Prepare/Accept and Dismiss actions.
+Its overflow menu offers Remind me (Later today, Tomorrow, Next week) and “Don't suggest
+this type.” Muted-kind settings are editable in Settings; snoozed and expired dates are
+textual. The acceptance button does not use approval styling because a Suggestion is not
+an Approval.
+`EnvironmentControlBadge`/`ControlOwnerBadge` shows only the active input controller and
+does not share the Task lease visual treatment.
+
+The global visual hierarchy remains outcome → workstreams → machinery. Home emphasizes
+Needs You, work being handled, upcoming work, one Idea, and recent Artifacts. Agent
+configuration and Inspector use the same component tokens at a denser layout; no new
+palette, font family, or decorative animation is introduced for the delegation feature.

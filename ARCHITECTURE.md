@@ -74,6 +74,28 @@ user's Task.
     encrypted cursor bytes for host-epoch consistency, but never reveals or recovers the
     provider cursor. Domain events, Mesh replication, Operator projections, aggregate
     snapshots, and Workspace backups never contain the opaque plaintext values.
+14. **Native agents remain themselves.** LiteCowork does not rewrite a harness's native
+    configuration or claim ownership of its private subagents, prompts, memory, tools, or
+    effects. Unsupported session options fail explicitly; they are never silently
+    replaced.
+15. **Host delegation is a Core-owned Attempt.** A delegated child targets a Step in an
+    already accepted immutable PlanRevision. Every child receives a new AgentSession,
+    lease, child-scoped grant evaluation, budget admission, and verification path, plus an
+    Environment attachment admitted under its sharing and isolation policy.
+16. **Worker eligibility is explicit.** Discovery, binding authorization, lead eligibility,
+    and enabled DelegationProfiles are separate. No installed agent is silently exposed
+    to a lead or selected as a fallback.
+17. **Authority does not flow down the delegation tree.** A child receives newly checked
+    Attempt-scoped grants. Parent grants, approvals, SecretLeases, and native tool access
+    are never inherited.
+18. **Warmth is operational only.** Warm processes, sessions, Environments, browsers,
+    capabilities, and local model backends have separate owners and lifetimes. Warmth
+    never stands in for Task state, authorization, fencing, or provider cache guarantees.
+19. **Coworker identity and Goals organize work.** They may supply defaults and context,
+    but they do not own execution or issue authority. Suggestions require an explicit
+    user action before they create work or reusable definitions.
+20. **Unknown remains unknown.** Unknown cost, quota, progress, or provider readiness is
+    never displayed or ranked as zero, exhausted, complete, or ready without evidence.
 
 ## 3. Canonical concepts and ownership
 
@@ -88,6 +110,10 @@ user's Task.
 | Step | Semantic unit from the current plan. |
 | Attempt | One worker's execution of one Step, admitted and tracked by the Task Runtime. |
 | AgentProfile / AgentBinding | Discovered agent and its negotiated host binding, owned by Agent Fabric. |
+| DelegationProfile / revision | User-enabled worker configuration pinned by a host-delegated Attempt. |
+| Coworker / revision | User-facing identity and operating preferences; it does not own Task execution. |
+| Goal / revision | User-authored desired outcome; progress is a projection over verified work. |
+| Suggestion | Expiring proposal with provenance; it cannot execute or authorize itself. |
 | AgentSession | Agent-specific reasoning session; optional native session handles are optimizations, not Task truth. |
 | Runtime | A running `litecoworkd` instance, with identity, role, presence, and resource offers. |
 | RuntimeIncarnation | One daemon process lifetime under a persistent Runtime identity; process-bound state is scoped to it. |
@@ -249,10 +275,12 @@ interactive local/client-to-agent session, A2A for an independent remote agent s
 vendor SDK/API for richer supported integration, and structured CLI/terminal only as a
 qualified fallback. Do not apply one global protocol ranking.
 
-The lead agent proposes decomposition and worker choice. Core checks eligibility,
-permissions, placement, isolation, budget, concurrency, depth, and deadline, then creates
-child Attempts. Native subagents stay agent-owned and are only observed when the agent
-reports them; host delegation creates durable LiteCowork Attempts.
+The lead agent proposes decomposition and worker choice. It first creates or revises an
+ordinary PlanRevision. Core accepts that plan, then checks worker eligibility, permissions,
+placement, isolation, budget, concurrency, depth, and deadline for a READY Step before
+creating a child Attempt. Native subagents stay agent-owned and are only observed when
+the agent reports them; host delegation creates durable LiteCowork Attempts. See
+[`docs/DELEGATION.md`](docs/DELEGATION.md).
 
 Simple chat has a Conversation-scoped AgentSession and no Task. Task planning sessions
 require a Task but no Attempt; execution sessions require the exact Attempt, active
@@ -273,6 +301,52 @@ current ChannelHostAssignment; host epoch and bounded lease fence inbound event 
 outbound delivery. Runtime-local reply references are never copied during reassignment.
 One authoritative Hub is sufficient for an individual workspace in the initial system;
 do not build consensus/HA algorithms without a demonstrated need.
+
+### Supported deployment shapes
+
+```mermaid
+flowchart LR
+    subgraph LocalOnly[Local-only Workspace]
+      O1[Operator] --> D1[litecoworkd]
+      D1 --> S1[(SQLite + local event/blob store)]
+      D1 --> A1[Local agent hosts]
+      D1 --> C1[Capabilities and Environments]
+    end
+```
+
+Local-only is the first supported shape. It needs no cloud account or replication and
+keeps selected resources on the local Runtime according to Workspace policy.
+
+```mermaid
+flowchart LR
+    O2[Operator] --> LR[Local Runtime]
+    LR <--> H[Workspace Hub]
+    H <--> CR[Cloud Runtime]
+    LR --> LE[Local Environment]
+    CR --> CE[Cloud Environment]
+    H --> DS[Replicated events and immutable artifacts]
+```
+
+Local-plus-cloud replication transfers only policy-eligible domain events, Resources,
+Artifacts, and portable checkpoint content. Continuation reconciles Effects and fences
+the old lease before admitting a new Attempt and AgentSession on another Runtime. A live
+process, native session, or provider handle never migrates.
+
+```mermaid
+flowchart LR
+    O3[Operator] --> H3[Workspace Hub]
+    H3 <--> RD[Remote litecoworkd]
+    RD --> RA[Remote agent hosts]
+    RD --> RE[Remote workstation apps and Environments]
+    M[Mobile companion] --> H3
+```
+
+A remote workstation is an ordinary Runtime offering its local agents, applications,
+and Environments through the Mesh. The mobile Operator is a control client for
+Conversations, Needs You, Task steering, approvals, notifications, and Artifacts; heavy
+execution remains on a desktop, cloud, or remote Runtime. All four shapes use the same
+Task, Effect, Evidence, authorization, and fencing contracts. Offline clients show the
+last known state and queue only explicitly supported versioned user intents.
 
 ### Environment Fabric
 
@@ -409,7 +483,7 @@ work. A weakly authenticated channel cannot approve high-risk actions.
 
 ## 12. User experience
 
-Primary navigation is Home, Needs You, Tasks, Automations, Library, and Discover, with
+Primary navigation is Home, Needs You, Coworkers, Work, Automations, Library, and Discover, with
 recent Conversations in the persistent sidebar. One composer handles quick questions and
 durable tasks; no Chat/Cowork/Agent mode switch is required. Sending can explicitly
 materialize a Task, save a Routine, or schedule a Routine; durable Automation creation
@@ -437,13 +511,17 @@ capable by composing replaceable parts rather than implementing every domain.
 1. Local `litecoworkd` lifecycle/recovery, Operator surface, Workspace instructions/roots,
    factual Resource registry and deterministic search, durable Conversation/Task, and one
    lazily started qualified external AgentAdapter.
-2. LiteCowork Gateway, LitePSM client, one capability, scoped grant, Effect/Artifact record,
+2. LiteCowork Gateway, the selected LitePSM adapter contract, one capability, scoped grant, Effect/Artifact record,
    and verifier; kill and replace the agent session from a portable ResumePacket.
-3. Heterogeneous host delegation with bounded TaskPacket and ResultEnvelope.
+3. Versioned DelegationProfiles, heterogeneous host delegation to accepted Steps, child-
+   scoped Trust, cost-aware ranking, and bounded verification escalation.
 4. Two Runtimes, event/artifact replication, execution leases, fencing, and explicit
    handoff; test failure during an ambiguous Effect before enabling automatic failover.
-5. One remote human channel on the same Conversation/Task.
-6. Routines, multi-trigger Automations, durable occurrences/cursors, and deferred local
+5. Multi-layer demand-start/prewarm policy, Environment sharing/control fencing, and
+   deadline-sensitive best-effort preflight.
+6. Coworker identity, Goals, provenance-backed Suggestions, and editable user context.
+7. One remote human channel on the same Conversation/Task.
+8. Routines, multi-trigger Automations, durable occurrences/cursors, and deferred local
    execution that creates ordinary Tasks. Trigger hosting and execution placement are
    tested independently.
 

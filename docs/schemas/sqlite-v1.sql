@@ -7,13 +7,15 @@ CREATE TABLE workspaces (
   replication_policy TEXT NOT NULL CHECK (replication_policy IN ('LOCAL_ONLY', 'METADATA_ONLY', 'ACTIVE_TASK_INPUTS', 'SELECTED_FOLDERS', 'FULL_WORKSPACE')),
   current_instruction_revision INTEGER,
   default_agent_binding_id TEXT,
+  primary_coworker_id TEXT,
   hub_runtime_id TEXT,
   status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'ARCHIVED')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY(workspace_id, current_instruction_revision) REFERENCES workspace_instruction_revisions(workspace_id, revision) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY(workspace_id, default_agent_binding_id) REFERENCES agent_bindings(workspace_id, agent_binding_id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY(workspace_id, default_agent_binding_id) REFERENCES agent_bindings(workspace_id, agent_binding_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(workspace_id, primary_coworker_id) REFERENCES coworkers(workspace_id, coworker_id) DEFERRABLE INITIALLY DEFERRED
 );
 
 CREATE TABLE workspace_instruction_revisions (
@@ -96,6 +98,8 @@ CREATE TABLE tasks (
   routine_revision INTEGER,
   automation_id TEXT,
   automation_occurrence_id TEXT,
+  origin_coworker_id TEXT,
+  origin_coworker_revision INTEGER,
   current_spec_revision INTEGER NOT NULL,
   current_plan_revision INTEGER,
   resume_status TEXT CHECK (resume_status IS NULL OR resume_status IN ('READY', 'RUNNING', 'WAITING_USER', 'BLOCKED', 'VERIFYING')),
@@ -110,14 +114,232 @@ CREATE TABLE tasks (
   version INTEGER NOT NULL DEFAULT 1,
   UNIQUE(task_id, workspace_id),
   FOREIGN KEY(workspace_id, lead_agent_binding_id) REFERENCES agent_bindings(workspace_id, agent_binding_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(workspace_id, origin_coworker_id) REFERENCES coworkers(workspace_id, coworker_id),
+  FOREIGN KEY(origin_coworker_id, origin_coworker_revision, workspace_id) REFERENCES coworker_revisions(coworker_id, revision, workspace_id),
   FOREIGN KEY(task_id, current_spec_revision) REFERENCES task_spec_revisions(task_id, revision) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY(task_id, current_plan_revision) REFERENCES plan_revisions(task_id, revision) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY(routine_id, routine_revision, workspace_id) REFERENCES routine_revisions(routine_id, revision, workspace_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY(automation_id, automation_occurrence_id, workspace_id) REFERENCES automation_occurrences(automation_id, occurrence_id, workspace_id) DEFERRABLE INITIALLY DEFERRED,
   CHECK ((routine_id IS NULL AND routine_revision IS NULL) OR (routine_id IS NOT NULL AND routine_revision IS NOT NULL)),
-  CHECK ((automation_id IS NULL AND automation_occurrence_id IS NULL) OR (automation_id IS NOT NULL AND automation_occurrence_id IS NOT NULL))
+  CHECK ((automation_id IS NULL AND automation_occurrence_id IS NULL) OR (automation_id IS NOT NULL AND automation_occurrence_id IS NOT NULL)),
+  CHECK ((origin_coworker_id IS NULL AND origin_coworker_revision IS NULL) OR (origin_coworker_id IS NOT NULL AND origin_coworker_revision IS NOT NULL))
 );
 CREATE INDEX idx_tasks_workspace_status ON tasks(workspace_id, status, updated_at DESC);
+
+CREATE TABLE goals (
+  goal_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  coworker_id TEXT,
+  current_revision INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'PAUSED', 'COMPLETED', 'ARCHIVED')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(workspace_id, goal_id),
+  FOREIGN KEY(workspace_id, coworker_id) REFERENCES coworkers(workspace_id, coworker_id),
+  FOREIGN KEY(goal_id, current_revision) REFERENCES goal_revisions(goal_id, revision) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX idx_goals_workspace_status ON goals(workspace_id, status, updated_at DESC);
+
+CREATE TRIGGER goal_identity_immutable
+BEFORE UPDATE ON goals
+WHEN NEW.goal_id IS NOT OLD.goal_id
+  OR NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.coworker_id IS NOT OLD.coworker_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN
+  SELECT RAISE(ABORT, 'GOAL_IDENTITY_IMMUTABLE');
+END;
+
+CREATE TABLE goal_revisions (
+  goal_id TEXT NOT NULL REFERENCES goals(goal_id),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  objective TEXT NOT NULL,
+  success_criteria_json TEXT NOT NULL CHECK (json_valid(success_criteria_json)),
+  constraints_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(constraints_json)),
+  horizon TEXT,
+  authored_by_json TEXT NOT NULL CHECK (json_valid(authored_by_json)),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(goal_id, revision),
+  UNIQUE(goal_id, revision, workspace_id),
+  FOREIGN KEY(workspace_id, goal_id) REFERENCES goals(workspace_id, goal_id)
+);
+
+CREATE TABLE goal_task_links (
+  goal_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  workspace_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  PRIMARY KEY(goal_id, revision, task_id),
+  FOREIGN KEY(goal_id, revision, workspace_id) REFERENCES goal_revisions(goal_id, revision, workspace_id),
+  FOREIGN KEY(task_id, workspace_id) REFERENCES tasks(task_id, workspace_id)
+);
+CREATE INDEX idx_goal_task_links_task ON goal_task_links(task_id, goal_id, revision);
+
+CREATE TRIGGER goal_revision_immutable_update
+BEFORE UPDATE ON goal_revisions
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_GOAL_REVISION');
+END;
+
+CREATE TRIGGER goal_revision_immutable_delete
+BEFORE DELETE ON goal_revisions
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_GOAL_REVISION');
+END;
+
+CREATE TRIGGER goal_task_link_current_revision_guard
+BEFORE INSERT ON goal_task_links
+WHEN NOT EXISTS (
+  SELECT 1 FROM goals g
+  WHERE g.goal_id = NEW.goal_id
+    AND g.workspace_id = NEW.workspace_id
+    AND g.current_revision = NEW.revision
+    AND g.status <> 'ARCHIVED'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'GOAL_REVISION_LINKS_IMMUTABLE');
+END;
+
+CREATE TRIGGER goal_task_link_immutable_update
+BEFORE UPDATE ON goal_task_links
+BEGIN
+  SELECT RAISE(ABORT, 'GOAL_REVISION_LINKS_IMMUTABLE');
+END;
+
+CREATE TRIGGER goal_task_link_immutable_delete
+BEFORE DELETE ON goal_task_links
+BEGIN
+  SELECT RAISE(ABORT, 'GOAL_REVISION_LINKS_IMMUTABLE');
+END;
+
+CREATE TABLE goal_routine_links (
+  goal_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  workspace_id TEXT NOT NULL,
+  routine_id TEXT NOT NULL,
+  routine_revision INTEGER NOT NULL,
+  PRIMARY KEY(goal_id, revision, routine_id, routine_revision),
+  FOREIGN KEY(goal_id, revision, workspace_id) REFERENCES goal_revisions(goal_id, revision, workspace_id),
+  FOREIGN KEY(routine_id, routine_revision, workspace_id) REFERENCES routine_revisions(routine_id, revision, workspace_id)
+);
+CREATE INDEX idx_goal_routine_links_routine ON goal_routine_links(routine_id, routine_revision, goal_id, revision);
+
+CREATE TRIGGER goal_routine_link_current_revision_guard
+BEFORE INSERT ON goal_routine_links
+WHEN NOT EXISTS (
+  SELECT 1 FROM goals g
+  WHERE g.goal_id = NEW.goal_id
+    AND g.workspace_id = NEW.workspace_id
+    AND g.current_revision = NEW.revision
+    AND g.status <> 'ARCHIVED'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'GOAL_REVISION_LINKS_IMMUTABLE');
+END;
+
+CREATE TRIGGER goal_routine_link_immutable_update
+BEFORE UPDATE ON goal_routine_links
+BEGIN
+  SELECT RAISE(ABORT, 'GOAL_REVISION_LINKS_IMMUTABLE');
+END;
+
+CREATE TRIGGER goal_routine_link_immutable_delete
+BEFORE DELETE ON goal_routine_links
+BEGIN
+  SELECT RAISE(ABORT, 'GOAL_REVISION_LINKS_IMMUTABLE');
+END;
+
+CREATE TABLE suggestions (
+  suggestion_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  coworker_id TEXT,
+  dedupe_key TEXT NOT NULL CHECK (length(dedupe_key) = 71 AND substr(dedupe_key, 1, 7) = 'sha256:' AND substr(dedupe_key, 8) NOT GLOB '*[^0-9a-f]*'),
+  kind TEXT NOT NULL CHECK (kind IN ('TASK_OPPORTUNITY', 'ROUTINE_OPPORTUNITY', 'AUTOMATION_OPPORTUNITY')),
+  reason TEXT NOT NULL,
+  source_refs_json TEXT NOT NULL CHECK (json_valid(source_refs_json)),
+  goal_refs_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(goal_refs_json)),
+  proposed_action TEXT NOT NULL CHECK (proposed_action IN ('TASK', 'OPEN_ROUTINE_EDITOR', 'OPEN_AUTOMATION_EDITOR')),
+  proposed_task_spec_json TEXT CHECK (proposed_task_spec_json IS NULL OR json_valid(proposed_task_spec_json)),
+  estimated_cost_json TEXT CHECK (estimated_cost_json IS NULL OR json_valid(estimated_cost_json)),
+  estimated_duration_class TEXT CHECK (estimated_duration_class IS NULL OR estimated_duration_class IN ('STANDARD', 'INTERACTIVE', 'DEADLINE_SENSITIVE')),
+  status TEXT NOT NULL CHECK (status IN ('PROPOSED', 'ACCEPTED', 'DISMISSED', 'EXPIRED')),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  snoozed_until TEXT,
+  resolved_at TEXT,
+  resolved_by_json TEXT CHECK (resolved_by_json IS NULL OR json_valid(resolved_by_json)),
+  resolution_reason TEXT CHECK (resolution_reason IS NULL OR resolution_reason IN ('ACCEPTED_BY_OWNER', 'DISMISSED_BY_OWNER', 'MUTED_KIND', 'SYSTEM_EXPIRY')),
+  result_task_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  FOREIGN KEY(workspace_id, coworker_id) REFERENCES coworkers(workspace_id, coworker_id),
+  FOREIGN KEY(result_task_id, workspace_id) REFERENCES tasks(task_id, workspace_id),
+  CHECK ((proposed_action = 'TASK' AND kind = 'TASK_OPPORTUNITY') OR
+         (proposed_action = 'OPEN_ROUTINE_EDITOR' AND kind = 'ROUTINE_OPPORTUNITY') OR
+         (proposed_action = 'OPEN_AUTOMATION_EDITOR' AND kind = 'AUTOMATION_OPPORTUNITY')),
+  CHECK (created_at < expires_at),
+  CHECK ((status = 'PROPOSED' AND resolved_at IS NULL AND resolved_by_json IS NULL AND resolution_reason IS NULL) OR
+         (status <> 'PROPOSED' AND resolved_at IS NOT NULL AND resolved_by_json IS NOT NULL AND resolution_reason IS NOT NULL)),
+  CHECK ((status = 'PROPOSED') OR
+         (status = 'ACCEPTED' AND resolution_reason = 'ACCEPTED_BY_OWNER') OR
+         (status = 'DISMISSED' AND resolution_reason IN ('DISMISSED_BY_OWNER', 'MUTED_KIND')) OR
+         (status = 'EXPIRED' AND resolution_reason = 'SYSTEM_EXPIRY')),
+  CHECK (snoozed_until IS NULL OR (status = 'PROPOSED' AND snoozed_until <= expires_at)),
+  CHECK ((proposed_action = 'TASK' AND proposed_task_spec_json IS NOT NULL) OR (proposed_action <> 'TASK' AND proposed_task_spec_json IS NULL)),
+  CHECK ((result_task_id IS NULL OR (proposed_action = 'TASK' AND status = 'ACCEPTED')) AND
+         (status <> 'ACCEPTED' OR proposed_action <> 'TASK' OR result_task_id IS NOT NULL))
+);
+
+CREATE TRIGGER suggestion_proposal_immutable
+BEFORE UPDATE ON suggestions
+WHEN NEW.suggestion_id IS NOT OLD.suggestion_id
+  OR NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.coworker_id IS NOT OLD.coworker_id
+  OR NEW.dedupe_key IS NOT OLD.dedupe_key
+  OR NEW.kind IS NOT OLD.kind
+  OR NEW.reason IS NOT OLD.reason
+  OR NEW.source_refs_json IS NOT OLD.source_refs_json
+  OR NEW.goal_refs_json IS NOT OLD.goal_refs_json
+  OR NEW.proposed_action IS NOT OLD.proposed_action
+  OR NEW.proposed_task_spec_json IS NOT OLD.proposed_task_spec_json
+  OR NEW.estimated_cost_json IS NOT OLD.estimated_cost_json
+  OR NEW.estimated_duration_class IS NOT OLD.estimated_duration_class
+  OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.expires_at IS NOT OLD.expires_at
+BEGIN
+  SELECT RAISE(ABORT, 'SUGGESTION_PROPOSAL_IMMUTABLE');
+END;
+CREATE INDEX idx_suggestions_workspace_status_created ON suggestions(workspace_id, status, created_at DESC);
+CREATE UNIQUE INDEX uq_suggestions_open_dedupe ON suggestions(workspace_id, dedupe_key) WHERE status = 'PROPOSED';
+CREATE INDEX idx_suggestions_dismissal_cooldown ON suggestions(workspace_id, dedupe_key, resolved_at DESC) WHERE status = 'DISMISSED';
+
+CREATE TABLE suggestion_preferences (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  kind TEXT NOT NULL CHECK (kind IN ('TASK_OPPORTUNITY', 'ROUTINE_OPPORTUNITY', 'AUTOMATION_OPPORTUNITY')),
+  muted INTEGER NOT NULL CHECK (muted IN (0, 1)),
+  updated_by_json TEXT NOT NULL CHECK (json_valid(updated_by_json)),
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version > 0),
+  PRIMARY KEY(workspace_id, kind)
+);
+
+CREATE TABLE demonstration_sessions (
+  demonstration_session_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  environment_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('CREATED', 'CAPTURING', 'REVIEW', 'CONVERTED', 'ABORTED')),
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  trace_resource_id TEXT,
+  skill_proposal_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  FOREIGN KEY(environment_id, workspace_id) REFERENCES environments(environment_id, owner_workspace_id),
+  FOREIGN KEY(workspace_id, trace_resource_id) REFERENCES resources(workspace_id, resource_id),
+  FOREIGN KEY(workspace_id, skill_proposal_id) REFERENCES skill_proposals(workspace_id, skill_proposal_id),
+  CHECK ((status = 'CONVERTED' AND skill_proposal_id IS NOT NULL) OR status <> 'CONVERTED')
+);
+CREATE INDEX idx_demonstration_sessions_workspace_status ON demonstration_sessions(workspace_id, status, started_at DESC);
 
 CREATE TABLE task_spec_revisions (
   task_id TEXT NOT NULL REFERENCES tasks(task_id),
@@ -125,6 +347,7 @@ CREATE TABLE task_spec_revisions (
   revision INTEGER NOT NULL,
   parent_revisions_json TEXT NOT NULL DEFAULT '[]',
   objective TEXT NOT NULL,
+  task_category TEXT CHECK (task_category IS NULL OR task_category IN ('SOFTWARE_ENGINEERING', 'RESEARCH', 'WRITING', 'DATA_ANALYSIS', 'OFFICE', 'BROWSER', 'PERSONAL_ADMIN', 'OTHER')),
   constraints_json TEXT NOT NULL DEFAULT '[]',
   non_goals_json TEXT NOT NULL DEFAULT '[]',
   input_refs_json TEXT NOT NULL DEFAULT '[]',
@@ -133,6 +356,7 @@ CREATE TABLE task_spec_revisions (
   acceptance_criteria_json TEXT NOT NULL DEFAULT '[]',
   approvals_required_json TEXT NOT NULL DEFAULT '[]',
   budget_json TEXT,
+  delegation_budget_policy_json TEXT CHECK (delegation_budget_policy_json IS NULL OR json_valid(delegation_budget_policy_json)),
   deadline TEXT,
   source_message_refs_json TEXT NOT NULL DEFAULT '[]',
   placement_preference TEXT NOT NULL,
@@ -207,10 +431,289 @@ CREATE TABLE agent_bindings (
   auth_ref TEXT,
   configuration_json TEXT NOT NULL DEFAULT '{}',
   enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  lead_eligible INTEGER NOT NULL DEFAULT 1 CHECK (lead_eligible IN (0, 1)),
   created_at TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1,
   UNIQUE(workspace_id, agent_binding_id)
 );
+
+CREATE TRIGGER workspace_default_agent_binding_insert_guard
+BEFORE INSERT ON workspaces
+WHEN NEW.default_agent_binding_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM agent_bindings b
+  WHERE b.workspace_id = NEW.workspace_id
+    AND b.agent_binding_id = NEW.default_agent_binding_id
+    AND b.enabled = 1
+    AND b.lead_eligible = 1
+)
+BEGIN
+  SELECT RAISE(ABORT, 'DEFAULT_AGENT_BINDING_NOT_LEAD_ELIGIBLE');
+END;
+
+CREATE TRIGGER workspace_default_agent_binding_update_guard
+BEFORE UPDATE OF default_agent_binding_id, workspace_id ON workspaces
+WHEN NEW.default_agent_binding_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM agent_bindings b
+  WHERE b.workspace_id = NEW.workspace_id
+    AND b.agent_binding_id = NEW.default_agent_binding_id
+    AND b.enabled = 1
+    AND b.lead_eligible = 1
+)
+BEGIN
+  SELECT RAISE(ABORT, 'DEFAULT_AGENT_BINDING_NOT_LEAD_ELIGIBLE');
+END;
+
+CREATE TRIGGER agent_binding_default_lead_guard
+BEFORE UPDATE OF enabled, lead_eligible ON agent_bindings
+WHEN (NEW.enabled = 0 OR NEW.lead_eligible = 0) AND EXISTS (
+  SELECT 1 FROM workspaces w
+  WHERE w.workspace_id = OLD.workspace_id
+    AND w.default_agent_binding_id = OLD.agent_binding_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'DEFAULT_AGENT_BINDING_MUST_BE_CHANGED');
+END;
+
+CREATE TABLE delegation_profiles (
+  delegation_profile_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  agent_binding_id TEXT NOT NULL,
+  name TEXT NOT NULL CHECK (name = trim(name) AND length(name) BETWEEN 1 AND 120),
+  name_key TEXT NOT NULL CHECK (length(name_key) > 0),
+  current_revision INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ENABLED', 'DISABLED', 'ARCHIVED')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(workspace_id, delegation_profile_id),
+  FOREIGN KEY(workspace_id, agent_binding_id) REFERENCES agent_bindings(workspace_id, agent_binding_id),
+  FOREIGN KEY(delegation_profile_id, current_revision) REFERENCES delegation_profile_revisions(delegation_profile_id, revision) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX idx_delegation_profiles_workspace_status ON delegation_profiles(workspace_id, status);
+CREATE INDEX idx_delegation_profiles_binding_status ON delegation_profiles(agent_binding_id, status);
+CREATE UNIQUE INDEX uq_delegation_profiles_binding_name ON delegation_profiles(workspace_id, agent_binding_id, name_key) WHERE status <> 'ARCHIVED';
+
+CREATE TRIGGER delegation_profile_identity_immutable
+BEFORE UPDATE ON delegation_profiles
+WHEN NEW.delegation_profile_id IS NOT OLD.delegation_profile_id
+  OR NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.agent_binding_id IS NOT OLD.agent_binding_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN
+  SELECT RAISE(ABORT, 'DELEGATION_PROFILE_IDENTITY_IMMUTABLE');
+END;
+
+CREATE TABLE delegation_profile_revisions (
+  delegation_profile_id TEXT NOT NULL REFERENCES delegation_profiles(delegation_profile_id),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  name TEXT NOT NULL CHECK (name = trim(name) AND length(name) BETWEEN 1 AND 120),
+  name_key TEXT NOT NULL CHECK (length(name_key) > 0),
+  routing_description TEXT NOT NULL CHECK (length(routing_description) BETWEEN 1 AND 240),
+  instructions TEXT,
+  session_options_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(session_options_json)),
+  session_options_descriptor_digest TEXT CHECK (session_options_descriptor_digest IS NULL OR (length(session_options_descriptor_digest) = 71 AND substr(session_options_descriptor_digest, 1, 7) = 'sha256:' AND substr(session_options_descriptor_digest, 8) NOT GLOB '*[^0-9a-f]*')),
+  required_features_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(required_features_json)),
+  preferred_features_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(preferred_features_json)),
+  enforced_policy_json TEXT NOT NULL CHECK (json_valid(enforced_policy_json)),
+  optimization_preference TEXT NOT NULL CHECK (optimization_preference IN ('QUALITY_FIRST', 'BALANCED', 'COST_FIRST', 'LATENCY_FIRST')),
+  quality_floor_json TEXT CHECK (quality_floor_json IS NULL OR json_valid(quality_floor_json)),
+  max_concurrency INTEGER NOT NULL CHECK (max_concurrency BETWEEN 1 AND 8),
+  max_host_delegation_depth INTEGER NOT NULL CHECK (max_host_delegation_depth BETWEEN 0 AND 2),
+  budget_ceiling_json TEXT CHECK (budget_ceiling_json IS NULL OR json_valid(budget_ceiling_json)),
+  latency_class TEXT NOT NULL CHECK (latency_class IN ('STANDARD', 'INTERACTIVE', 'DEADLINE_SENSITIVE')),
+  environment_policy_json TEXT NOT NULL CHECK (json_valid(environment_policy_json)),
+  native_delegation_policy TEXT NOT NULL CHECK (native_delegation_policy IN ('INHERIT', 'ALLOW', 'DENY_IF_SUPPORTED')),
+  warm_policy_json TEXT NOT NULL CHECK (json_valid(warm_policy_json)),
+  authored_by_json TEXT NOT NULL CHECK (json_valid(authored_by_json)),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(delegation_profile_id, revision),
+  UNIQUE(delegation_profile_id, revision, workspace_id),
+  FOREIGN KEY(workspace_id, delegation_profile_id) REFERENCES delegation_profiles(workspace_id, delegation_profile_id)
+);
+
+CREATE TRIGGER delegation_profile_revision_immutable_update
+BEFORE UPDATE ON delegation_profile_revisions
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_DELEGATION_PROFILE_REVISION');
+END;
+
+CREATE TRIGGER delegation_profile_revision_immutable_delete
+BEFORE DELETE ON delegation_profile_revisions
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_DELEGATION_PROFILE_REVISION');
+END;
+
+CREATE TRIGGER delegation_profile_revision_head_name_guard
+AFTER INSERT ON delegation_profile_revisions
+WHEN EXISTS (
+  SELECT 1 FROM delegation_profiles p
+  WHERE p.delegation_profile_id = NEW.delegation_profile_id
+    AND p.current_revision = NEW.revision
+    AND (p.name <> NEW.name OR p.name_key <> NEW.name_key)
+)
+BEGIN
+  SELECT RAISE(ABORT, 'INTEGRITY_FAILURE');
+END;
+
+CREATE TRIGGER delegation_profile_head_name_guard
+BEFORE UPDATE OF current_revision, name, name_key ON delegation_profiles
+WHEN NOT EXISTS (
+  SELECT 1 FROM delegation_profile_revisions r
+  WHERE r.delegation_profile_id = NEW.delegation_profile_id
+    AND r.revision = NEW.current_revision
+    AND r.name = NEW.name
+    AND r.name_key = NEW.name_key
+)
+BEGIN
+  SELECT RAISE(ABORT, 'INTEGRITY_FAILURE');
+END;
+
+CREATE TRIGGER delegation_profile_options_guard
+BEFORE INSERT ON delegation_profile_revisions
+WHEN json_type(NEW.session_options_json) <> 'object'
+  OR length(CAST(NEW.session_options_json AS BLOB)) > 65536
+  OR (SELECT COUNT(*) FROM json_each(NEW.session_options_json)) > 64
+  OR ((SELECT COUNT(*) FROM json_each(NEW.session_options_json)) = 0
+      AND NEW.session_options_descriptor_digest IS NOT NULL)
+  OR ((SELECT COUNT(*) FROM json_each(NEW.session_options_json)) > 0
+      AND NEW.session_options_descriptor_digest IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'DELEGATION_PROFILE_OPTIONS_INVALID');
+END;
+
+CREATE TABLE coworkers (
+  coworker_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  current_revision INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'PAUSED', 'ARCHIVED')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(workspace_id, coworker_id),
+  FOREIGN KEY(coworker_id, current_revision) REFERENCES coworker_revisions(coworker_id, revision) DEFERRABLE INITIALLY DEFERRED
+);
+CREATE INDEX idx_coworkers_workspace_status ON coworkers(workspace_id, status, updated_at DESC);
+
+CREATE TABLE coworker_revisions (
+  coworker_id TEXT NOT NULL REFERENCES coworkers(coworker_id),
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
+  avatar_ref_json TEXT CHECK (avatar_ref_json IS NULL OR json_valid(avatar_ref_json)),
+  role_description TEXT NOT NULL,
+  default_lead_agent_binding_id TEXT,
+  delegation_strategy TEXT NOT NULL CHECK (delegation_strategy IN ('NATIVE_DEFAULT', 'BALANCED', 'COST_SAVER', 'HOST_DELEGATION_ONLY')),
+  enabled_delegation_profile_ids_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(enabled_delegation_profile_ids_json)),
+  delegation_budget_policy_json TEXT CHECK (delegation_budget_policy_json IS NULL OR json_valid(delegation_budget_policy_json)),
+  context_policy_json TEXT NOT NULL CHECK (json_valid(context_policy_json)),
+  notification_policy_json TEXT NOT NULL CHECK (json_valid(notification_policy_json)),
+  authored_by_json TEXT NOT NULL CHECK (json_valid(authored_by_json)),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(coworker_id, revision),
+  UNIQUE(coworker_id, revision, workspace_id),
+  FOREIGN KEY(workspace_id, coworker_id) REFERENCES coworkers(workspace_id, coworker_id),
+  FOREIGN KEY(workspace_id, default_lead_agent_binding_id) REFERENCES agent_bindings(workspace_id, agent_binding_id)
+);
+
+CREATE TRIGGER coworker_revision_worker_scope_guard
+BEFORE INSERT ON coworker_revisions
+WHEN
+  (NEW.default_lead_agent_binding_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM agent_bindings b
+    WHERE b.workspace_id = NEW.workspace_id
+      AND b.agent_binding_id = NEW.default_lead_agent_binding_id
+      AND b.enabled = 1
+      AND b.lead_eligible = 1
+  ))
+  OR EXISTS (
+    SELECT 1
+    FROM json_each(NEW.enabled_delegation_profile_ids_json) selected
+    LEFT JOIN delegation_profiles p
+      ON p.delegation_profile_id = selected.value
+     AND p.workspace_id = NEW.workspace_id
+     AND p.status = 'ENABLED'
+    WHERE p.delegation_profile_id IS NULL
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'COWORKER_REVISION_WORKER_SCOPE_MISMATCH');
+END;
+
+CREATE TRIGGER coworker_revision_immutable_update
+BEFORE UPDATE ON coworker_revisions
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_COWORKER_REVISION');
+END;
+
+CREATE TRIGGER coworker_revision_immutable_delete
+BEFORE DELETE ON coworker_revisions
+BEGIN
+  SELECT RAISE(ABORT, 'IMMUTABLE_COWORKER_REVISION');
+END;
+
+CREATE TRIGGER coworker_identity_immutable
+BEFORE UPDATE ON coworkers
+WHEN NEW.coworker_id IS NOT OLD.coworker_id
+  OR NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN
+  SELECT RAISE(ABORT, 'COWORKER_IDENTITY_IMMUTABLE');
+END;
+
+CREATE TRIGGER workspace_primary_coworker_state_insert_guard
+BEFORE INSERT ON workspaces
+WHEN NEW.primary_coworker_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM coworkers c
+  WHERE c.workspace_id = NEW.workspace_id
+    AND c.coworker_id = NEW.primary_coworker_id
+    AND c.status IN ('ACTIVE', 'PAUSED')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'PRIMARY_COWORKER_NOT_SELECTABLE');
+END;
+
+CREATE TRIGGER workspace_primary_coworker_state_update_guard
+BEFORE UPDATE OF primary_coworker_id, workspace_id ON workspaces
+WHEN NEW.primary_coworker_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM coworkers c
+  WHERE c.workspace_id = NEW.workspace_id
+    AND c.coworker_id = NEW.primary_coworker_id
+    AND c.status IN ('ACTIVE', 'PAUSED')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'PRIMARY_COWORKER_NOT_SELECTABLE');
+END;
+
+CREATE TRIGGER primary_coworker_archive_guard
+BEFORE UPDATE OF status ON coworkers
+WHEN NEW.status = 'ARCHIVED' AND EXISTS (
+  SELECT 1 FROM workspaces w
+  WHERE w.workspace_id = OLD.workspace_id
+    AND w.primary_coworker_id = OLD.coworker_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'PRIMARY_COWORKER_MUST_BE_CLEARED');
+END;
+
+CREATE TRIGGER task_coworker_origin_immutable
+BEFORE UPDATE OF origin_coworker_id, origin_coworker_revision ON tasks
+WHEN OLD.origin_coworker_id IS NOT NEW.origin_coworker_id
+  OR OLD.origin_coworker_revision IS NOT NEW.origin_coworker_revision
+BEGIN
+  SELECT RAISE(ABORT, 'TASK_COWORKER_ORIGIN_IMMUTABLE');
+END;
+
+CREATE TRIGGER task_coworker_origin_not_archived
+BEFORE INSERT ON tasks
+WHEN NEW.origin_coworker_id IS NOT NULL AND EXISTS (
+  SELECT 1 FROM coworkers c
+  WHERE c.workspace_id = NEW.workspace_id
+    AND c.coworker_id = NEW.origin_coworker_id
+    AND c.status = 'ARCHIVED'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'COWORKER_ARCHIVED');
+END;
 
 CREATE TABLE agent_host_instances (
   host_instance_id TEXT PRIMARY KEY,
@@ -352,6 +855,10 @@ CREATE TABLE environments (
   lifetime TEXT NOT NULL CHECK (lifetime IN ('ATTEMPT', 'TASK_RETAINED', 'WORKSPACE_PERSISTENT')),
   owner_workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
   owner_task_id TEXT REFERENCES tasks(task_id),
+  owner_attempt_id TEXT,
+  owner_coworker_id TEXT,
+  owner_principal_id TEXT,
+  sharing_scope TEXT NOT NULL DEFAULT 'ATTEMPT_PRIVATE' CHECK (sharing_scope IN ('ATTEMPT_PRIVATE', 'TASK_SHARED', 'COWORKER_PRIVATE', 'WORKSPACE_SHARED', 'USER_SHARED')),
   name TEXT NOT NULL,
   created_by_incarnation_id TEXT,
   status TEXT NOT NULL CHECK (status IN ('NEW', 'PROVISIONING', 'READY', 'BUSY', 'CHECKPOINTING', 'SUSPENDED', 'FAILED', 'DESTROYING', 'DESTROYED')),
@@ -372,15 +879,50 @@ CREATE TABLE environments (
   FOREIGN KEY(runtime_id, created_by_incarnation_id) REFERENCES runtime_incarnations(runtime_id, runtime_incarnation_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY(runtime_id, owner_workspace_id) REFERENCES runtimes(runtime_id, workspace_id),
   FOREIGN KEY(owner_task_id, owner_workspace_id) REFERENCES tasks(task_id, workspace_id),
+  FOREIGN KEY(owner_task_id, owner_attempt_id) REFERENCES attempts(task_id, attempt_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(owner_workspace_id, owner_coworker_id) REFERENCES coworkers(workspace_id, coworker_id),
   UNIQUE(provision_preview_digest),
   UNIQUE(environment_id, owner_workspace_id),
   UNIQUE(environment_id, runtime_id),
   UNIQUE(environment_id, runtime_id, provider_kind),
   CHECK ((lifetime IN ('ATTEMPT', 'TASK_RETAINED') AND owner_task_id IS NOT NULL) OR
          (lifetime = 'WORKSPACE_PERSISTENT' AND owner_task_id IS NULL)),
+  CHECK (
+    (sharing_scope = 'ATTEMPT_PRIVATE' AND owner_task_id IS NOT NULL AND owner_attempt_id IS NOT NULL AND owner_coworker_id IS NULL AND owner_principal_id IS NULL) OR
+    (sharing_scope = 'TASK_SHARED' AND owner_task_id IS NOT NULL AND owner_attempt_id IS NULL AND owner_coworker_id IS NULL AND owner_principal_id IS NULL) OR
+    (sharing_scope = 'COWORKER_PRIVATE' AND owner_task_id IS NULL AND owner_attempt_id IS NULL AND owner_coworker_id IS NOT NULL AND owner_principal_id IS NULL) OR
+    (sharing_scope = 'WORKSPACE_SHARED' AND owner_task_id IS NULL AND owner_attempt_id IS NULL AND owner_coworker_id IS NULL AND owner_principal_id IS NULL) OR
+    (sharing_scope = 'USER_SHARED' AND owner_attempt_id IS NULL AND owner_task_id IS NULL AND owner_coworker_id IS NULL AND owner_principal_id IS NOT NULL)
+  ),
   CHECK ((lifetime = 'WORKSPACE_PERSISTENT' AND provision_preview_digest IS NOT NULL) OR
          (lifetime <> 'WORKSPACE_PERSISTENT' AND provision_preview_digest IS NULL))
 );
+
+CREATE TRIGGER environment_identity_immutable
+BEFORE UPDATE ON environments
+WHEN NEW.environment_id IS NOT OLD.environment_id
+  OR NEW.runtime_id IS NOT OLD.runtime_id
+  OR NEW.provider_kind IS NOT OLD.provider_kind
+  OR NEW.class IS NOT OLD.class
+  OR NEW.lifetime IS NOT OLD.lifetime
+  OR NEW.owner_workspace_id IS NOT OLD.owner_workspace_id
+  OR NEW.owner_task_id IS NOT OLD.owner_task_id
+  OR NEW.owner_attempt_id IS NOT OLD.owner_attempt_id
+  OR NEW.name IS NOT OLD.name
+  OR NEW.created_by_incarnation_id IS NOT OLD.created_by_incarnation_id
+  OR NEW.budget_enforcement_policy IS NOT OLD.budget_enforcement_policy
+  OR NEW.source_resources_json IS NOT OLD.source_resources_json
+  OR NEW.resource_limits_json IS NOT OLD.resource_limits_json
+  OR NEW.network_policy_json IS NOT OLD.network_policy_json
+  OR NEW.budget_ceiling_json IS NOT OLD.budget_ceiling_json
+  OR NEW.provision_preview_digest IS NOT OLD.provision_preview_digest
+  OR NEW.retention_expires_at IS NOT OLD.retention_expires_at
+  OR NEW.backup_policy IS NOT OLD.backup_policy
+  OR NEW.isolation_json IS NOT OLD.isolation_json
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN
+  SELECT RAISE(ABORT, 'ENVIRONMENT_IDENTITY_IMMUTABLE');
+END;
 
 -- Provider locators are Runtime-local and incarnation-scoped. The Environment's
 -- durable row contains identity/configuration only, never a provider-native handle.
@@ -534,6 +1076,8 @@ CREATE TABLE attempts (
   step_id TEXT NOT NULL,
   parent_attempt_id TEXT,
   agent_binding_id TEXT NOT NULL REFERENCES agent_bindings(agent_binding_id),
+  delegation_profile_id TEXT,
+  delegation_profile_revision INTEGER,
   agent_session_id TEXT,
   runtime_id TEXT NOT NULL REFERENCES runtimes(runtime_id),
   runtime_incarnation_id TEXT NOT NULL,
@@ -550,6 +1094,7 @@ CREATE TABLE attempts (
   version INTEGER NOT NULL DEFAULT 1,
   UNIQUE(task_id, attempt_id),
   FOREIGN KEY(task_id, parent_attempt_id) REFERENCES attempts(task_id, attempt_id) DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY(delegation_profile_id, delegation_profile_revision) REFERENCES delegation_profile_revisions(delegation_profile_id, revision) DEFERRABLE INITIALLY DEFERRED,
   UNIQUE(attempt_id, runtime_id, runtime_incarnation_id),
   UNIQUE(task_id, attempt_id, runtime_id, runtime_incarnation_id),
   UNIQUE(task_id, step_id, attempt_id, runtime_id, runtime_incarnation_id),
@@ -557,9 +1102,41 @@ CREATE TABLE attempts (
   FOREIGN KEY(task_id, step_id) REFERENCES steps(task_id, step_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY(task_id, attempt_id, agent_session_id, runtime_id, runtime_incarnation_id, agent_binding_id) REFERENCES agent_sessions(task_id, attempt_id, agent_session_id, runtime_id, runtime_incarnation_id, agent_binding_id) DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY(runtime_id, runtime_incarnation_id) REFERENCES runtime_incarnations(runtime_id, runtime_incarnation_id) DEFERRABLE INITIALLY DEFERRED,
-  FOREIGN KEY(environment_id, runtime_id) REFERENCES environments(environment_id, runtime_id) DEFERRABLE INITIALLY DEFERRED
+  FOREIGN KEY(environment_id, runtime_id) REFERENCES environments(environment_id, runtime_id) DEFERRABLE INITIALLY DEFERRED,
+  CHECK ((parent_attempt_id IS NULL AND delegation_profile_id IS NULL AND delegation_profile_revision IS NULL) OR
+         (parent_attempt_id IS NOT NULL AND delegation_profile_id IS NOT NULL AND delegation_profile_revision IS NOT NULL))
 );
 CREATE INDEX idx_attempts_task_step_status ON attempts(task_id, step_id, status);
+
+CREATE TRIGGER attempt_delegation_profile_admission_guard
+BEFORE INSERT ON attempts
+WHEN NEW.parent_attempt_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1
+  FROM tasks t
+  JOIN delegation_profiles p
+    ON p.delegation_profile_id = NEW.delegation_profile_id
+   AND p.workspace_id = t.workspace_id
+   AND p.agent_binding_id = NEW.agent_binding_id
+   AND p.status = 'ENABLED'
+  JOIN delegation_profile_revisions pr
+    ON pr.delegation_profile_id = p.delegation_profile_id
+   AND pr.revision = NEW.delegation_profile_revision
+   AND pr.workspace_id = t.workspace_id
+  WHERE t.task_id = NEW.task_id
+    AND (
+      t.origin_coworker_id IS NULL OR EXISTS (
+        SELECT 1
+        FROM coworker_revisions cr, json_each(cr.enabled_delegation_profile_ids_json) selected
+        WHERE cr.coworker_id = t.origin_coworker_id
+          AND cr.revision = t.origin_coworker_revision
+          AND cr.workspace_id = t.workspace_id
+          AND selected.value = NEW.delegation_profile_id
+      )
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'ATTEMPT_DELEGATION_PROFILE_INELIGIBLE');
+END;
 
 CREATE TRIGGER attempt_environment_owner_guard
 BEFORE INSERT ON attempts
@@ -573,6 +1150,9 @@ WHEN NOT EXISTS (
     AND e.runtime_id = NEW.runtime_id
     AND e.owner_workspace_id = t.workspace_id
     AND (e.owner_task_id IS NULL OR e.owner_task_id = t.task_id)
+    AND (e.sharing_scope <> 'ATTEMPT_PRIVATE' OR e.owner_attempt_id = NEW.attempt_id)
+    AND (e.sharing_scope <> 'TASK_SHARED' OR e.owner_task_id = t.task_id)
+    AND (e.sharing_scope <> 'COWORKER_PRIVATE' OR e.owner_coworker_id = t.origin_coworker_id)
     AND b.workspace_id = t.workspace_id
     AND r.workspace_id = t.workspace_id
     AND r.current_incarnation_id = NEW.runtime_incarnation_id
@@ -582,11 +1162,13 @@ BEGIN
 END;
 
 CREATE TRIGGER attempt_execution_identity_immutable
-BEFORE UPDATE OF task_id, step_id, parent_attempt_id, agent_binding_id, runtime_id, runtime_incarnation_id, environment_id ON attempts
+BEFORE UPDATE OF task_id, step_id, parent_attempt_id, agent_binding_id, delegation_profile_id, delegation_profile_revision, runtime_id, runtime_incarnation_id, environment_id ON attempts
 WHEN OLD.task_id <> NEW.task_id
   OR OLD.step_id <> NEW.step_id
   OR OLD.parent_attempt_id IS NOT NEW.parent_attempt_id
   OR OLD.agent_binding_id <> NEW.agent_binding_id
+  OR OLD.delegation_profile_id IS NOT NEW.delegation_profile_id
+  OR OLD.delegation_profile_revision IS NOT NEW.delegation_profile_revision
   OR OLD.runtime_id <> NEW.runtime_id
   OR OLD.runtime_incarnation_id <> NEW.runtime_incarnation_id
   OR OLD.environment_id <> NEW.environment_id
@@ -608,6 +1190,7 @@ CREATE TABLE agent_sessions (
   runtime_id TEXT NOT NULL,
   runtime_incarnation_id TEXT NOT NULL,
   configuration_digest TEXT CHECK (configuration_digest IS NULL OR (length(configuration_digest) = 71 AND substr(configuration_digest, 1, 7) = 'sha256:' AND substr(configuration_digest, 8) NOT GLOB '*[^0-9a-f]*')),
+  harness_descriptor_digest TEXT CHECK (harness_descriptor_digest IS NULL OR (length(harness_descriptor_digest) = 71 AND substr(harness_descriptor_digest, 1, 7) = 'sha256:' AND substr(harness_descriptor_digest, 8) NOT GLOB '*[^0-9a-f]*')),
   status TEXT NOT NULL CHECK (status IN ('STARTING', 'ACTIVE', 'INTERRUPTING', 'CLOSING', 'CLOSED', 'LOST')),
   started_at TEXT NOT NULL,
   last_event_at TEXT,
@@ -1720,6 +2303,7 @@ CREATE TABLE resources (
   display_name TEXT NOT NULL,
   current_revision_id TEXT,
   sensitivity TEXT NOT NULL,
+  context_document_json TEXT CHECK (context_document_json IS NULL OR json_valid(context_document_json)),
   provenance_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -2831,7 +3415,8 @@ CREATE TABLE skill_proposals (
   published_capability_ref_json TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 1
+  version INTEGER NOT NULL DEFAULT 1,
+  UNIQUE(workspace_id, skill_proposal_id)
 );
 
 CREATE TABLE environment_control_leases (
@@ -2919,6 +3504,7 @@ CREATE TABLE resource_upload_sessions (
   media_type TEXT NOT NULL,
   expected_size_bytes INTEGER NOT NULL CHECK (expected_size_bytes >= 0),
   expected_digest TEXT CHECK (expected_digest IS NULL OR (length(expected_digest) = 71 AND substr(expected_digest, 1, 7) = 'sha256:' AND substr(expected_digest, 8) NOT GLOB '*[^0-9a-f]*')),
+  context_document_json TEXT CHECK (context_document_json IS NULL OR json_valid(context_document_json)),
   chunk_size_bytes INTEGER NOT NULL CHECK (chunk_size_bytes > 0),
   state TEXT NOT NULL CHECK (state IN ('OPEN', 'CONTENT_RECEIVED', 'COMMITTED', 'FAILED', 'EXPIRED')),
   expires_at TEXT NOT NULL,
@@ -2982,6 +3568,61 @@ CREATE TRIGGER immutable_workspace_backup_manifest_update
 BEFORE UPDATE ON workspace_backup_manifests
 BEGIN
   SELECT RAISE(ABORT, 'IMMUTABLE_WORKSPACE_BACKUP_MANIFEST');
+END;
+
+CREATE TRIGGER environment_sharing_scope_change_guard
+BEFORE UPDATE OF sharing_scope, owner_coworker_id, owner_principal_id ON environments
+WHEN (NEW.sharing_scope IS NOT OLD.sharing_scope
+   OR NEW.owner_coworker_id IS NOT OLD.owner_coworker_id
+   OR NEW.owner_principal_id IS NOT OLD.owner_principal_id)
+  AND NOT (
+    OLD.lifetime = 'WORKSPACE_PERSISTENT'
+    AND NEW.lifetime = 'WORKSPACE_PERSISTENT'
+    AND OLD.status = 'SUSPENDED'
+    AND NEW.status = 'SUSPENDED'
+    AND OLD.owner_workspace_id = NEW.owner_workspace_id
+    AND NEW.owner_task_id IS NULL
+    AND NEW.owner_attempt_id IS NULL
+    AND NEW.owner_principal_id IS NULL
+    AND OLD.owner_principal_id IS NULL
+    AND OLD.sharing_scope IN ('COWORKER_PRIVATE', 'WORKSPACE_SHARED')
+    AND NEW.sharing_scope IN ('COWORKER_PRIVATE', 'WORKSPACE_SHARED')
+    AND (
+      (NEW.sharing_scope = 'WORKSPACE_SHARED' AND NEW.owner_coworker_id IS NULL)
+      OR
+      (NEW.sharing_scope = 'COWORKER_PRIVATE' AND NEW.owner_coworker_id IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM coworkers c
+          WHERE c.workspace_id = NEW.owner_workspace_id
+            AND c.coworker_id = NEW.owner_coworker_id
+            AND c.status IN ('ACTIVE', 'PAUSED')
+        ))
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM attempts a
+      WHERE a.environment_id = OLD.environment_id
+        AND a.status NOT IN ('COMPLETED', 'FAILED', 'ABANDONED', 'CANCELLED')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM environment_control_leases c
+      WHERE c.environment_id = OLD.environment_id
+        AND c.state IN ('ACTIVE', 'RELEASING')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM effects e
+      JOIN attempts a ON a.task_id = e.task_id AND a.attempt_id = e.attempt_id
+      WHERE a.environment_id = OLD.environment_id
+        AND e.state IN ('PROPOSED', 'STARTED', 'ACKNOWLEDGED', 'RECONCILING', 'AMBIGUOUS')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM capability_invocations i
+      JOIN attempts a ON a.attempt_id = i.attempt_id
+      WHERE a.environment_id = OLD.environment_id
+        AND i.status NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED')
+    )
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'ENVIRONMENT_SHARING_SCOPE_CHANGE_UNSAFE');
 END;
 
 CREATE TABLE handoffs (

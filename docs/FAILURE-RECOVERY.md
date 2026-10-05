@@ -64,6 +64,22 @@ Do not include volatile timestamps/random IDs.
 | Verification during pause/cancel | run does not settle | bounded run deadline | keep PAUSE_REQUESTED/CANCEL_REQUESTED; settle as INCONCLUSIVE on timeout; late evidence cannot complete a fenced Task |
 | Approval channel | unavailable | delivery error | approval stays PENDING; use another eligible surface |
 | Capability update | incompatible | health/resolve | in-flight lock remains; rollback/choose old version for new activation if available |
+| DelegationProfile | disabled/archived before admission | profile version check | reject new child with typed error; never substitute unless selection mode/policy permits |
+| DelegationProfile | disabled/revised after admission | pinned revision on Attempt | current child keeps its pin; explicit stop uses ordinary safe cancellation |
+| Worker option | model/reasoning override unsupported | adapter schema validation | fail before model invocation; no silent default |
+| Agent harness | normalized native config digest changed | descriptor reprobe | revalidate new admissions; active session finishes only if adapter proves frozen config |
+| Quota | no provider observation | adapter returns UNKNOWN/expiry | show unavailable/unknown; do not estimate remaining quota or claim exhaustion |
+| Prewarm | host/auth/config/environment becomes unavailable | fresh admission probe | discard warm hint and run ordinary admission or show blocker; Task state is unchanged |
+| Worker cost | monetary usage unknown under hard ceiling | BudgetService comparison | reject candidate unless provider/host enforces the cap; never treat unknown as zero |
+| Escalation | quality floor fails after bounded candidates | verifier + policy limit | stop, preserve Attempts/Evidence, return unmet criteria to lead/Needs You |
+| Shared Environment | sharing owner/scope mismatch | EnvironmentManager owner check | reject attachment before session start; do not fall back to broader scope |
+| Browser/computer | another actor owns EnvironmentControlLease | epoch check | reject/queue no input and show current controller; never replay stale commands |
+| Coworker | paused/archived at admission | Coworker revision/status check | block new proactive/scheduled work; existing Tasks continue by their own policy |
+| Goal/Suggestion source | stale/conflicted or expired | Resource/Goal/Suggestion version check | preserve proposal/history; no acceptance/task creation from stale state |
+| ContextDocument | concurrent ResourceRevision edit | expected Resource head | keep both branches and request explicit rebase/merge; no last-writer-wins |
+| Demonstration | secret detected or capture interrupted | redaction/Environment observation | abort or remove unsafe content under retention policy; no SkillProposal publication |
+| Pinned Skill or Routine dependency | explicit semantic incompatibility | provider preflight or verifier evidence against the pinned revision | set `DRIFTED`, block unsafe replay with `SKILL_DRIFT_DETECTED`, and offer a reviewed repair proposal; never rewrite published Skill/Routine/Automation revisions |
+| Environment sharing change | live Attempt, Invocation, control lease, or unresolved Effect | EnvironmentManager and storage guard | reject while retaining the old scope; suspend and reconcile before an explicit retry |
 
 ## Retry classes
 
