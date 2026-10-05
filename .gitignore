@@ -4,6 +4,7 @@ archives_docs/
 ARCHIVE/
 archives/
 archive/
+.code-intelligence/
 
 # Local/editor output
 .DS_Store

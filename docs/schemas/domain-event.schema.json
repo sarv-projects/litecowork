@@ -5708,7 +5708,6 @@
           "routine_id",
           "current_revision",
           "status",
-          "ingress_continuity",
           "aggregate_version"
         ],
         "properties": {
@@ -6163,6 +6162,7 @@
         "INVALID_TRIGGER",
         "TRIGGER_UNSUPPORTED",
         "TRIGGER_HOST_UNAVAILABLE",
+        "CHANNEL_INGRESS_GAP_CONFIRMATION_REQUIRED",
         "ROUTINE_NOT_FOUND",
         "ROUTINE_REVISION_NOT_FOUND",
         "ROUTINE_ARCHIVED",
