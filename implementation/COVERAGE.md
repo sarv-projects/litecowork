@@ -1,5 +1,24 @@
 # Coverage map
 
-Baseline 731 concrete concerns/cases are listed in `coverage.csv`: 46 authority docs, 174 OpenAPI operations, 18 event schema definitions and 133 registered typed event values, 105 SQL tables, 140 SQL triggers, 76 SQL indexes, 19 delegation schema definitions, plus all existing numbered Flows/Benchmarks. Entries map to a primary guardian/story for planning; this does not mean the story alone implements unrelated domain changes. Domain story owners update the contracts and tests.
+The generated [architecture and contract coverage audit](ARCHITECTURE-COVERAGE.md) is the
+human-readable report. The [coverage CSV](coverage.csv) maps every tracked architecture
+Markdown file and heading, every ADR, every numbered flow and benchmark, all backlog stories,
+and enumerated machine-contract objects to a primary implementation guardian.
 
-Read by current authority in the [audit inventory](audit-inventory.csv). Baseline line count and SHA-256 make later drift visible. Large contracts received structural enumeration and architecture CI validation; a development agent must inspect exact affected definitions and linked transitions. After changing any flow, benchmark, operation, event, enum, table, trigger or index, update this map and rerun the plan checker. A new contract concern without a story fails validation.
+The [machine inventory](machine-inventory.json) and
+[`validate_implementation_coverage.py`](../scripts/validate_implementation_coverage.py)
+enumerate and digest-pin the current OpenAPI operations/components, shared schema names,
+error codes, event types/payloads, and SQLite objects/fields/constraints. The checker also
+compares the prose API route inventory with OpenAPI and confirms that public schemas are
+reachable from an operation.
+
+Run `python3 scripts/validate_implementation_plan.py`; it runs the coverage checker too.
+The explicit checker command is
+`python3 scripts/validate_implementation_coverage.py`. After reviewing an architecture
+change, regenerate with `python3 scripts/validate_implementation_coverage.py --write` and
+review the generated diff.
+
+These checks prove traceability and contract inventory consistency. They do not prove that
+features work. Each planned story still requires its CODE, SYSTEM, and owner USER case to be
+implemented and pass with real providers and target environments where applicable. See
+[what remains uncovered](ARCHITECTURE-COVERAGE.md#not-covered-by-this-plan-yet).

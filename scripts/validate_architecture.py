@@ -753,10 +753,12 @@ def check_async_capability_contract() -> None:
         handoff = api.get("paths", {}).get("/user-requests/{requestId}/external-handoff", {}).get("post", {})
         if not handoff or "no-store" not in str(handoff):
             fail("OpenAPI must define an explicit no-store external-auth handoff route")
-        for turn_schema_name in ("ConversationTurn", "ConversationTurnReceipt"):
+        # ConversationTurn is a Core-owned aggregate and is not directly returned by the
+        # Operator API. The API exposes an acceptance/settlement receipt instead.
+        for turn_schema_name in ("ConversationTurnReceipt",):
             turn_status = schemas[turn_schema_name].get("properties", {}).get("status", {}).get("enum", [])
             if "WAITING_DEPENDENCY" not in turn_status:
-                fail(f"OpenAPI {turn_schema_name} must expose ConversationTurn WAITING_DEPENDENCY")
+                fail(f"OpenAPI {turn_schema_name} must expose WAITING_DEPENDENCY")
         if set(request.get("properties", {}).get("kind", {}).get("enum", [])) != {
             "QUESTION", "DECISION", "RESOURCE_SELECTION", "EXTERNAL_AUTHORIZATION"
         }:

@@ -828,22 +828,6 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/RoutineRevisionPage'}
         default: {$ref: '#/components/responses/Error'}
-  /routines/{routineId}/health:
-    get:
-      tags: [automations]
-      operationId: getRoutineHealth
-      parameters:
-      - name: routineId
-        in: path
-        required: true
-        schema: {type: string}
-      responses:
-        '200':
-          description: Rebuildable health projection for the current immutable RoutineRevision
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/RoutineHealth'}
-        default: {$ref: '#/components/responses/Error'}
     post:
       tags: [routines]
       operationId: reviseRoutine
@@ -865,6 +849,22 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/RoutineRevision'}
+        default: {$ref: '#/components/responses/Error'}
+  /routines/{routineId}/health:
+    get:
+      tags: [automations]
+      operationId: getRoutineHealth
+      parameters:
+      - name: routineId
+        in: path
+        required: true
+        schema: {type: string}
+      responses:
+        '200':
+          description: Rebuildable health projection for the current immutable RoutineRevision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RoutineHealth'}
         default: {$ref: '#/components/responses/Error'}
   /routines/{routineId}/run:
     post:
@@ -3783,13 +3783,6 @@ components:
       required: [service_id]
       properties:
         service_id: {type: string, minLength: 1}
-    ChannelThreadRef:
-      type: object
-      additionalProperties: false
-      required: [channel_binding_id, provider_thread_id]
-      properties:
-        channel_binding_id: {type: string}
-        provider_thread_id: {type: string, minLength: 1}
     MessageContentBlock:
       oneOf:
       - type: object
@@ -5389,41 +5382,6 @@ components:
             anyOf:
             - required: [purge_manifest_digest]
             - required: [purge_target_count]
-    ContextDocumentPurgeTarget:
-      type: object
-      additionalProperties: false
-      required: [replica_ref, replica_kind, target_revision_ids]
-      properties:
-        replica_ref: {type: string, minLength: 1, description: Stable non-secret replica identity, never a storage locator.}
-        replica_kind: {type: string, enum: [BLOB, DERIVED_INDEX]}
-        runtime_id: {type: [string, 'null']}
-        runtime_incarnation_id: {type: [string, 'null']}
-        target_revision_ids: {type: array, uniqueItems: true, items: {type: string, minLength: 1}}
-      allOf:
-      - if:
-          properties: {runtime_id: {type: string}}
-          required: [runtime_id]
-        then:
-          properties: {runtime_incarnation_id: {type: string, minLength: 1}}
-          required: [runtime_incarnation_id]
-      - if:
-          properties: {runtime_incarnation_id: {type: string}}
-          required: [runtime_incarnation_id]
-        then:
-          properties: {runtime_id: {type: string, minLength: 1}}
-          required: [runtime_id]
-    ContextDocumentPurgePlan:
-      type: object
-      additionalProperties: false
-      required: [manifest_digest, target_count, targets, sealed_at]
-      properties:
-        manifest_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
-        target_count: {type: integer, minimum: 0}
-        targets: {type: array, items: {$ref: '#/components/schemas/ContextDocumentPurgeTarget'}}
-        sealed_at: {type: string, format: date-time}
-      x-invariants:
-        - target_count equals targets.length
-        - manifest_digest is the canonical digest of the exact ordered targets
     ContextDocumentCreateMetadata:
       type: object
       additionalProperties: false
@@ -5638,19 +5596,6 @@ components:
           type: array
           items: {$ref: '#/components/schemas/ResourceRevisionView'}
         next_cursor: {type: [string, 'null']}
-    ConversationTurn:
-      type: object
-      required: [turn_id, conversation_id, user_message_id, status, retry_ordinal, created_at, version]
-      properties:
-        turn_id: {type: string}
-        conversation_id: {type: string}
-        user_message_id: {type: string}
-        agent_session_id: {type: [string, 'null']}
-        status: {type: string, enum: [OPEN, RUNNING, WAITING_USER, WAITING_DEPENDENCY, COMPLETED, FAILED, CANCEL_REQUESTED, CANCELLED]}
-        retry_ordinal: {type: integer, minimum: 0}
-        created_at: {type: string, format: date-time}
-        settled_at: {type: [string, 'null'], format: date-time}
-        version: {type: integer, minimum: 1}
     UserRequest:
       type: object
       oneOf:

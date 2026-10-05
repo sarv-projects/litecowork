@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that the planned backlog covers the current contracts and preserves its links."""
 from __future__ import annotations
-import csv, json, re, sys
+import csv, json, re, subprocess, sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PLAN = ROOT / 'implementation'
@@ -105,4 +105,11 @@ for r in inv:
 scope=(PLAN/'SCOPE.md').read_text()
 for term in ('Desktop alpha','Cloud follows','Remote Runtime','user alone','provider','owner'):
     if term.lower() not in scope.lower(): fail('scope omits '+term)
+coverage_check = subprocess.run(
+    [sys.executable, str(ROOT/'scripts/validate_implementation_coverage.py')],
+    cwd=ROOT,
+    check=False,
+)
+if coverage_check.returncode:
+    fail('architecture coverage validation failed')
 print(f"Implementation plan validation passed: {len(stories)} stories, {len(coverage)} coverage rows, all current numbered flows/benchmarks and machine-contract inventory linked.")
