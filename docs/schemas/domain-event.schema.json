@@ -2116,8 +2116,9 @@
             "format": "date-time"
           },
           "consecutive_failures": {
-            "type": "string",
-            "minLength": 1
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
           },
           "open_until": {
             "type": "string",
@@ -5721,6 +5722,8 @@
         "RATE_LIMITED",
         "INVOCATION_NOT_FOUND",
         "INVOCATION_AMBIGUOUS",
+        "PROVIDER_INPUT_UNSUPPORTED",
+        "SENSITIVE_INPUT_UNSUPPORTED",
         "USER_REQUEST_NOT_FOUND",
         "USER_REQUEST_EXPIRED",
         "APPROVAL_ALREADY_CONSUMED",
