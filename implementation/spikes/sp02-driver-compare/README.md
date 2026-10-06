@@ -1,26 +1,50 @@
-# SP02 isolated SQLite driver experiment
+# SP02 SQLite driver comparison
 
-This experiment runs two separate processes because SQLx 0.9.0 and the current
-rusqlite 0.40.2 resolve incompatible `libsqlite3-sys` link versions and cannot be
-linked into one Cargo target. Each executable reads the same repository v1 SQLite DDL
-and applies the same single-writer transaction shape: read Workspace version, update its
-projection, increment the Workspace/origin sequence, insert a domain-event row, then
-commit. Both use WAL, `synchronous=FULL`, an eight-producer workload, and a 32-entry
-bounded writer queue. Each executable reopens the database and verifies the final version
-and event count.
+This directory contains separate SQLx and rusqlite executables. They cannot be linked
+together because their `libsqlite3-sys` version requirements conflict. Each runs in its
+own Cargo workspace, lockfile, binary, and target directory.
 
-Run the checks and release samples from the repository root:
+Both executables use the same Workspace domain service, eight-producer update workload,
+32-slot writer queue, WAL/FULL durability settings, and production encrypted
+`FileBlobStore` implementation. The rusqlite executable calls the actual product
+`SqliteWorkspaceStore`; the SQLx executable uses an experimental adapter around SQLx and
+the same WorkspaceStore ports. Both initialize from `docs/schemas/sqlite-v1.sql`, close
+and reopen the database, decrypt/replay aggregate-state blobs and compare the replayed
+projections. SQLx migration receipts/schema-drift checks and some other product adapter
+hardening are not implemented, so this experiment does not establish full adapter parity.
+
+The production `storage-sqlite` default remains bundled SQLite. Only these comparison
+executables disable bundling and use the host library. SQLx must enable `sqlite-unbundled`
+without the SQLx `sqlite` convenience feature because that convenience feature also enables
+bundled SQLite. Before measuring, verify both executables report the same result from
+`SELECT sqlite_version()` and dynamically load the same system library.
+
+## Commands
+
+Run focused tests from the repository root:
 
 ```sh
+cargo test --no-default-features --features sqlite-rusqlite-defaults -p storage-sqlite
 cargo test --locked --manifest-path implementation/spikes/sp02-driver-compare/Cargo.toml
 cargo test --locked --manifest-path implementation/spikes/sp02-driver-compare/rusqlite/Cargo.toml
-cargo run --release --locked --manifest-path implementation/spikes/sp02-driver-compare/Cargo.toml -- 1000
-CARGO_TARGET_DIR=implementation/spikes/sp02-driver-compare/target cargo run --release --locked --manifest-path implementation/spikes/sp02-driver-compare/rusqlite/Cargo.toml -- 1000
 ```
 
-This is a directional single-host experiment. It does not implement the product adapter
-ports, encrypted aggregate-state BlobStore work, mixed read/write load, memory sampling,
-process cancellation, or storage-full injection. The bundled SQLite patch versions also
-differ because the dependency link constraints require isolated binaries. These samples
-must not decide the production driver without controlling those differences and comparing
-the complete adapter workload.
+Build optimized executables:
+
+```sh
+cargo build --release --locked --manifest-path implementation/spikes/sp02-driver-compare/Cargo.toml
+cargo build --release --locked --manifest-path implementation/spikes/sp02-driver-compare/rusqlite/Cargo.toml
+```
+
+Run a sample (200 updates is the recorded comparison workload):
+
+```sh
+implementation/spikes/sp02-driver-compare/target/release/sp02-driver-compare 200
+implementation/spikes/sp02-driver-compare/rusqlite/target/release/sp02-rusqlite-qualification 200
+```
+
+Repeat three times per driver, alternating driver order. Each reported end-to-end update
+latency includes the domain service, canonical aggregate serialization, encrypted
+content-addressed blob write and readback verification, and database transaction. It does
+not include workspace setup or reopen/replay verification. See [`../SP02.md`](../SP02.md)
+for the recorded environment, results, limitations and provisional decision.

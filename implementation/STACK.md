@@ -15,7 +15,7 @@ a candidate fails qualification.
 | Operator | Tauri 2, React, strict TypeScript, Vite, pnpm | Existing architecture fit; native-webview differences must be tested on each OS |
 | UI state | Generated OpenAPI types; query cache for projections; component-local transient state | Server owns truth; reconnect rehydrates versioned projections |
 | UI components | Accessible Radix primitives, CSS tokens/Tailwind where useful | Existing DESIGN-SYSTEM/MOTION drive appearance; no wholesale copied template |
-| Local storage | SQLite WAL, FK on, one bounded write executor; rusqlite 0.40.2 is the provisional first adapter | Preserves the single-writer transaction boundary in the current slice; SQLx comparison and performance qualification remain open in SP02 |
+| Local storage | SQLite WAL, FK on, one bounded write executor; rusqlite 0.40.2 is the provisional first adapter | Preserves the single-writer transaction boundary in the current slice; controlled system-SQLite SP02 samples show no decisive driver performance winner, so rusqlite remains provisional |
 | Search | SQLite FTS5 for deterministic metadata/text search | Semantic retrieval remains a separate qualified provider |
 | Operator transport | Typed HTTP/OpenAPI + resumable event stream candidate through Axum | Authenticate even loopback; origin checks; IPC bridge qualification SP03 |
 | Rust tests | cargo test, proptest, fault injection, fixture/contract suites | Test command/event transaction and legal transitions, not only methods |
@@ -61,7 +61,7 @@ Docling is a parsing candidate, not a guarantee of lossless office fidelity.
 | ID | Experiment | Required output / decision |
 |---|---|---|
 | SP01 | Tauri+React native shell on Linux; Windows/macOS qualification matrix | Daemon survives UI close; tray/reconnect; install prerequisites; supported driver limitations |
-| SP02 | rusqlite vs SQLx, actual contract DDL, write+event+projection transactions | Product rusqlite adapter and recovery checks are implemented; isolated SQLx/rusqlite bounded-writer samples exercise a reduced transaction shape but differ in bundled SQLite version; full-adapter comparison, mixed read/write qualification, disk-full injection, and production driver choice remain open |
+| SP02 | rusqlite vs SQLx, actual contract DDL, encrypted aggregate-state writes, event+projection transactions and reopen/replay | Product rusqlite adapter and recovery checks are implemented; controlled samples use the same system SQLite and production encrypted FileBlobStore, while SQLx remains a less-complete prototype; mixed read/write qualification, sustained backpressure, memory, cancellation/shutdown, disk-full injection, owner-host repeats and production driver choice remain open |
 | SP03 | Authenticated Operator transport and event reconnect | Threat tests for malicious local page, stolen token, origin/peer identity; choose transport |
 | SP04 | Codex App Server, Claude supported host interface, OpenCode server, Cline | Feature matrix from real runs; select first full-harness adapter and explicit unsupported features |
 | SP05 | Local-model harness on two measured hardware profiles | Tool success, context/cancel, time-to-first-token, RSS/VRAM, no-network run; no brand-parity claim |

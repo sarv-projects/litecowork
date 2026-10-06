@@ -5,11 +5,16 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[features]
+default = ["sqlite-bundled", "sqlite-rusqlite-defaults"]
+sqlite-bundled = ["rusqlite/bundled"]
+sqlite-rusqlite-defaults = ["rusqlite/cache", "rusqlite/ffi-sqlite-wasm-rs"]
+
 [dependencies]
 chacha20poly1305 = "0.10.1"
 getrandom = "0.3"
 hex = "0.4"
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.40.2", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_json_canonicalizer = "0.3.2"

@@ -86,7 +86,7 @@ fn create_workspace(store: &SqliteWorkspaceStore, workspace_id: &str) -> Committ
 }
 
 #[test]
-fn applies_full_contract_schema_and_reports_bundled_sqlite() {
+fn applies_full_contract_schema_and_reports_sqlite_runtime() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let store = test_store(&directory, Duration::from_secs(1));
     let version = store.sqlite_version().expect("SQLite version");
@@ -100,7 +100,7 @@ fn applies_full_contract_schema_and_reports_bundled_sqlite() {
         actual >= (3, 38, 0),
         "SQLite {version} is below the contract minimum"
     );
-    println!("bundled SQLite {version}");
+    println!("SQLite {version}");
 
     let connection =
         Connection::open(state_database(&directory)).expect("inspect migrated database");

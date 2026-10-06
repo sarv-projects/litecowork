@@ -7,25 +7,25 @@ operational context; architecture and owning domain contracts remain authoritati
 
 **E01-S02 — Transactional persistence** (`IN_PROGRESS`, owner review pending).
 
-E01-S01 remains `IN_REVIEW`: the owner has not yet completed the clean-clone acceptance on
-the reference machine, and hosted GitHub Actions has not run for that work. This S02 work
-continues at the owner's direction but does not waive the dependency or claim either story
-accepted.
+E01-S01 remains `IN_REVIEW`: owner clean-clone acceptance on the reference machine and
+hosted GitHub Actions are still pending. This S02 work continues at the owner's direction;
+it does not waive the dependency or claim either story accepted.
 
 ## Repository state
 
 - Repository: `litecowork`
 - Branch: `main`
-- Base for this S02 working tree: `61b4376c12127664faf7dceca4825569bfdb8cc6`
-- This storage slice is committed locally for owner review; the branch was already two commits
-  ahead of `origin/main` at the start of the run.
+- S02 implementation base: `61b4376c12127664faf7dceca4825569bfdb8cc6`
+- Most recent commit before the active SP02 edits: `765cbda test(storage): add SQLite driver qualification spike`.
+- At the start of this run, `main` was four commits ahead of `origin/main`. The controlled
+  qualification is now committed locally; `main` is five commits ahead of `origin/main`.
 - No push is authorized or performed in this run.
-- V1 order remains desktop/local first, cloud continuation second, remote Runtime third.
+- V1 delivery order remains desktop/local, cloud continuation, then remote Runtime.
 - Coding agents implement and report evidence; the owner reviews and accepts product
-  behavior. Agents do not claim hosted CI, owner-machine acceptance, provider qualification,
-  or production readiness from local tests.
+  behavior. Local tests do not establish hosted CI, owner-machine acceptance, provider
+  qualification, or production readiness.
 
-## Completed in this run
+## Completed implementation scope
 
 - Added Rust `storage-core` ports for `StateStore`, `EventStore`, `BlobStore`, and their
   Workspace persistence composition.
@@ -44,50 +44,65 @@ accepted.
   busy timeout, replay, corrupt/wrong-scope blobs, unavailable keys, broad directory
   permissions, private SQLite state-directory/file permissions, symlink database paths,
   and failed BlobStore commits.
-- Updated the storage/event/schema docs, E01-S02 story/backlog, provisional SP02 report,
-  research references and generated implementation coverage.
-- Added a separate-process SQLx 0.9.0 and rusqlite 0.40.2 SP02 harness. Both apply the
-  canonical DDL and exercise an eight-producer, 32-slot bounded writer with WAL/FULL and
-  Workspace version/sequence/event transactions. SQLx includes a mid-transaction rollback
-  test. Three optimized 1,000-write samples per driver are recorded in `SP02.md`; because
-  their bundled SQLite versions differ and the harness excludes encrypted aggregate-state
-  blobs, it is explicitly exploratory and does not select the production driver.
+- Updated storage/event/schema docs, the E01-S02 story/backlog, research references and
+  generated implementation coverage.
+
+## Active SP02 qualification update
+
+- Separate SQLx 0.9.0 and rusqlite 0.40.2 executables use the same `WorkspaceService`,
+  production encrypted `FileBlobStore`, eight concurrent producers, 32-slot bounded writer,
+  WAL/FULL settings, and host SQLite 3.45.1. SQLx is configured with `sqlite-unbundled`
+  alone; the SQLx `sqlite` convenience feature also enables bundled SQLite. Product
+  `storage-sqlite` remains bundled by default; only the rusqlite spike disables that default.
+- Both executables close/reopen the database, verify the Workspace projection, decrypt
+  aggregate-state blobs, replay events, and compare the replayed state. The rusqlite side
+  uses the product adapter. SQLx is a prototype and lacks the product migration receipts,
+  schema-drift checks, full path hardening/error mapping, and root-scope reads.
+- Three sequential optimized 200-update runs per driver were alternated on Ubuntu 24.04.4
+  LTS under WSL2, x86_64, Linux 6.18.40.1, Rust/Cargo 1.98.1, system SQLite 3.45.1.
+  Median throughput was 327.4 updates/s for rusqlite and 322.9 for SQLx; observed ranges
+  overlap, so this experiment does not select a driver. Exact samples and method are in
+  `implementation/spikes/SP02.md`.
+- `storage-sqlite` retains bundled SQLite and rusqlite's default cache/wasm-compatible
+  features for production. The benchmark disables only SQLite bundling while explicitly
+  preserving those rusqlite defaults. The storage runtime test wording now applies to both
+  bundled and system SQLite builds.
 
 ## Verification status
 
-The focused replay test has passed on Ubuntu 24.04.4 LTS x86_64 and printed:
+Focused checks passed during this run:
 
-```text
-storage replay: sqlite=3.53.2, workspace=workspace-persist, version=2, policy=METADATA_ONLY, events=2, replay_matches=true
-```
+- `cargo test --no-default-features --features sqlite-rusqlite-defaults -p storage-sqlite --offline`:
+  18 passed using system SQLite while retaining rusqlite's non-bundle default features.
+- `cargo test --manifest-path implementation/spikes/sp02-driver-compare/Cargo.toml --offline`:
+  6 passed, including the encrypted Workspace restart/replay run and production blob tests.
+- `cargo test --manifest-path implementation/spikes/sp02-driver-compare/rusqlite/Cargo.toml --offline`:
+  1 passed using the product adapter.
+- Three release samples per driver completed; every run reported SQLite 3.45.1, eight
+  replayed Workspaces and `replay_matches=true`.
 
-Toolchain observed: Rust 1.98.1, Cargo 1.98.1, uv 0.12.23, Python 3.13.12; rusqlite
-0.40.2 with bundled SQLite 3.53.2. The complete `scripts/check.sh` passed after the implementation and coverage inventory
-were refreshed: Rust format, Clippy, 24 Rust tests, build, 6 Python tests, architecture
-validation, implementation-plan/coverage validation (64 documents, 4,796 rows), and
-`git diff --check`. This is local Ubuntu evidence only; owner-machine acceptance and hosted
-GitHub Actions remain pending.
+The full `scripts/check.sh` passed after refreshing generated coverage. It ran Rust formatting,
+Clippy, build and 24 workspace Rust tests; six Python tests; architecture validation; plan
+and coverage validation (64 documents, 864 sections, 4,797 traceability rows); and
+`git diff --check`. Locked SQLx and rusqlite spike test commands also passed after the
+feature correction. Default production bundled SQLite remains SQLite 3.53.2 as previously
+recorded. Owner-machine acceptance and hosted GitHub Actions remain pending.
 
-Exact review instructions and limitations are in the [E01-S02 review packet](reviews/E01-S02.md).
-SP02 remains partial: the separate-process driver sample is not a controlled full-adapter
-comparison, and mixed reader/writer behavior, adapter-level backpressure, memory,
-cancellation/shutdown, and real disk-full injection remain unqualified. No production
-keychain/cloud key-service, key rotation/recovery, or cryptographic review exists. This
-library is not yet wired into `litecoworkd`, the desktop, Operator transport, or a real
-external provider.
+Exact review instructions and remaining product limitations are in
+[`reviews/E01-S02.md`](reviews/E01-S02.md) and [`spikes/SP02.md`](spikes/SP02.md). SP02 and
+E01-S02 remain partial/in progress. Mixed reader/writer load, sustained backpressure,
+memory, cancellation/shutdown, disk-full injection, key-service qualification, key rotation
+and cryptographic review are still open. The storage library is not yet wired into
+`litecoworkd`, the desktop, Operator transport, or a real external provider.
 
 ## Next actions
 
-1. Review the local implementation commit and its S02 review packet; do not push without an
-   explicit owner instruction.
-2. Owner runs the S02 replay command and `scripts/check.sh`, records OS/output/decision in
-   `implementation/reviews/E01-S02.md`, and reviews the limitations.
-4. Owner separately completes E01-S01 reference-machine acceptance and hosted Actions.
-   Neither E01-S01 nor E01-S02 may become `ACCEPTED` before its explicit owner gates and
-   dependency conditions are met.
-5. If continuing S02 qualification, use the pinned spike commands in
-   `implementation/spikes/sp02-driver-compare/README.md`; first control SQLite version and
-   include the encrypted aggregate-state blob path before using timings to choose a driver.
+1. Inspect all changed paths and review the complete diff before staging.
+2. Keep E01-S02 `IN_PROGRESS` and rusqlite provisional pending owner review and remaining
+   qualification. Do not infer owner acceptance from local evidence.
+3. Owner completes the separate E01-S01 reference-machine and hosted Actions gates; neither
+   E01-S01 nor E01-S02 becomes `ACCEPTED` before its stated dependencies and owner review.
+4. Do not push without an explicit owner instruction.
 
 ## Next implementation scope
 
