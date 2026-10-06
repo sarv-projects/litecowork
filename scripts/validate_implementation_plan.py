@@ -12,16 +12,26 @@ def fail(message: str) -> None:
 data = json.loads((PLAN/'backlog.json').read_text())
 stories = data.get('stories', [])
 by_id = {s.get('id'): s for s in stories}
+status_vocabulary = re.search(
+    r"Status vocabulary in backlog:\s*([A-Z_, ]+)\.",
+    (PLAN/'PROCESS.md').read_text(),
+)
+if not status_vocabulary:
+    fail('PROCESS.md: missing backlog status vocabulary')
+allowed_statuses = set(re.findall(r'[A-Z_]+', status_vocabulary.group(1)))
 if len(by_id) != len(stories) or not stories:
     fail('backlog story IDs must be unique and nonempty')
 for s in stories:
     for field in ('title','implementation','acceptance','negative_cases','demo'):
         if not s.get(field): fail(f"{s.get('id')}: missing {field}")
-    if s.get('status') != 'PLANNED': fail(f"{s['id']}: initial backlog status must be PLANNED")
+    if s.get('status') not in allowed_statuses:
+        fail(f"{s['id']}: status must be one of {sorted(allowed_statuses)}")
     if not {'CODE','SYSTEM','USER'} <= {x.rsplit('-',1)[-1] for x in s.get('tests',[])}:
         fail(f"{s['id']}: requires CODE, SYSTEM and USER test IDs")
     for dep in s.get('depends_on',[]):
         if dep not in by_id: fail(f"{s['id']}: unknown dependency {dep}")
+        elif s.get('status') == 'ACCEPTED' and by_id[dep].get('status') != 'ACCEPTED':
+            fail(f"{s['id']}: cannot be ACCEPTED while dependency {dep} is not ACCEPTED")
     for source in s.get('sources',[]):
         if source not in (PLAN/'SOURCES.md').read_text(): fail(f"{s['id']}: unknown research source {source}")
     for authority in s.get('authorities',[]):

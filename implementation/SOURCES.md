@@ -1,6 +1,6 @@
 # Research sources and repository reference guide
 
-Snapshot checked 2026-10-05. This is a navigation list, not permission to copy code or a
+Snapshot checked 2026-10-06. This is a navigation list, not permission to copy code or a
 claim that every rolling page remains accurate. Before implementation, open the current
 upstream document/repository at the version in use, record access date and applicable
 license, and confirm the described feature is shipped. Vendor examples are vendor-reported;
@@ -10,6 +10,12 @@ our parity requires the real-use cases in [WORKFLOWS](WORKFLOWS.md) and [TESTING
 
 | ID | Source and type | URL | Where/why to consult |
 |---|---|---|---|
+| R-RUST-RELEASES | Official Rust release notes | [https://doc.rust-lang.org/stable/releases.html](https://doc.rust-lang.org/stable/releases.html) | Check stable toolchain and component availability before updating `rust-toolchain.toml`. |
+| R-RUSTUP | Official rustup installation guide | [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install) | Install rustup before using the repository-pinned compiler/toolchain components. |
+| R-PYTHON-RELEASES | Official Python release pages | [https://www.python.org/downloads/](https://www.python.org/downloads/) | Check supported/security-maintenance release before updating `.python-version`. |
+| R-UV-INSTALL | Official uv installer docs | [https://docs.astral.sh/uv/getting-started/installation/](https://docs.astral.sh/uv/getting-started/installation/) | Install the exact repository-pinned uv version on developer machines. |
+| R-UV-GITHUB | Official uv GitHub Actions guide | [https://docs.astral.sh/uv/guides/integration/github/](https://docs.astral.sh/uv/guides/integration/github/) | Locked Python tool environment, pinned uv action, cache and CI setup. |
+| R-UV-LOCK | Official uv project/lock guidance | [https://docs.astral.sh/uv/concepts/projects/](https://docs.astral.sh/uv/concepts/projects/) | Reproducible validator dependency lock and `--locked` behavior. |
 | R-TAURI | Framework docs — Tauri 2 official docs | [https://v2.tauri.app/start/](https://v2.tauri.app/start/) | Desktop framework fit, packaging, webview variance and IPC tests. Do not infer app performance from sample size. |
 | R-SQLITE | Official database docs — SQLite FTS5 | [https://www.sqlite.org/fts5.html](https://www.sqlite.org/fts5.html) | Deterministic full-text candidate; compare indexes/corpus before vector addition. |
 | R-DOCLING | Official parser docs — Docling | [https://docling-project.github.io/docling/](https://docling-project.github.io/docling/) | Evaluate extraction/table/layout/OCR limits, licensing, resource isolation. |

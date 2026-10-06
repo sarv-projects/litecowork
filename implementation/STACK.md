@@ -1,9 +1,13 @@
 # Stack recommendations and qualification decisions
 
-These are implementation recommendations, not claims that dependencies have been
-installed or benchmarked. Pin exact versions/locks only after SP01–SP07; document selected
-versions and licenses in the first implementation milestone. Existing contracts remain
-stable when a candidate library fails qualification.
+The initial development toolchain is now pinned: Rust 1.98.1, Python 3.13.12, and uv
+0.12.23. `rust-toolchain.toml`, `.python-version`, `.uv-version`, `pyproject.toml`, and
+`uv.lock` are the authorities; `scripts/check.sh` is the local/CI entry point. Node,
+TypeScript, and pnpm are intentionally deferred to E02-S01, when the actual desktop UI
+exists. These pins qualify the build and architecture validators only; they do not qualify
+provider behavior or production packaging. Other library/provider choices below remain
+candidates until the named spikes produce evidence. Existing contracts remain stable when
+a candidate fails qualification.
 
 | Area | Recommended starting point | Reason and qualification |
 |---|---|---|
@@ -24,6 +28,25 @@ stable when a candidate library fails qualification.
 | Portable blobs | Local immutable blobs; S3-compatible port when cloud copy is needed | Domain/event replication, never DB-file synchronization |
 | Observability | tracing/OpenTelemetry-compatible export and redacted structured logs | No prompt/secret payload export by default |
 | Packaging | Tauri installers + independent daemon service artifacts; locked builds/SBOM/signatures | Owner signing credentials are release dependencies, never stored in repo |
+
+## Pinned development baseline
+
+Rust 1.98.1 and Python 3.13.12 are pinned for the current executable and contract
+validators; uv 0.12.23 is pinned for locked Python tooling. Update these only with a
+reviewed toolchain change and regenerated lockfiles.
+
+To bootstrap a Linux/macOS checkout, install rustup and the pinned uv version from their
+official installers, then run:
+
+```sh
+rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt
+curl -LsSf https://astral.sh/uv/0.12.23/install.sh | sh
+scripts/check.sh
+```
+
+`uv` reads `.python-version` and provisions Python 3.13.12 as needed. Windows setup uses
+the official PowerShell installers linked in [SOURCES](SOURCES.md), followed by the same
+repository check commands in a supported Bash environment (for example, Git Bash).
 
 Tauri uses the OS webview and supports web frontends; its own documentation also describes
 security scoping and distribution. Small framework examples do not predict LiteCowork's

@@ -3,13 +3,13 @@
 This index connects the current architecture sources to implementation stories. The
 primary story is a planning guardian; it does not claim that a story implements every
 cross-cutting rule in a document. Linked flows, schemas, failure cases, and related
-domain owners still apply. All stories remain planned until code and evidence exist.
+domain owners still apply. Story status tracks planning through owner acceptance; coverage is not implementation evidence.
 
 ## Coverage inventory
 
 - 64 source Markdown documents; 863 heading-level sections are digest-pinned.
-- 26 implementation-plan documents and 127 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
-- 55 planned backlog stories, each with CODE/SYSTEM/USER test case IDs.
+- 26 implementation-plan documents and 128 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 55 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
 - 79 flows and 74 benchmarks.
 - 174 OpenAPI operations and 271 component schemas; 0 components are unreachable from every Operator operation.
 - 97 error codes; 212 shared IDs/value definitions.

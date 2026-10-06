@@ -19,3 +19,9 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Build and local environments
+target/
+.venv/
+node_modules/
+dist/

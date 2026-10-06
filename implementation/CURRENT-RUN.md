@@ -1,114 +1,87 @@
 # Current run and agent handoff
 
-This file records the active repository work so another coding agent can continue without
-reconstructing this conversation. Update it when the active task or handoff state changes.
-Architecture and domain contracts remain authoritative; this file is operational context.
+Update this file when the active story, implementation state, or handoff changes. It is
+operational context; architecture and owning domain contracts remain authoritative.
 
-## Active task
+## Active story
 
-Complete the end-to-end V1 implementation-plan traceability audit: ensure every current
-architecture Markdown document and heading, ADR, numbered flow and benchmark, backlog
-story, and machine-contract object has a primary implementation guardian; make actual
-remaining limits explicit; and repair verifiable contract inconsistencies found during the
-audit.
+**E01-S01 — Contract/toolchain baseline** (`IN_REVIEW`)
 
-## Repository state at start
+The goal is one reproducible local/CI gate and a real, minimal `litecoworkd` executable
+that supports help/version only. This is a build foundation: no listener, database,
+Runtime lifecycle, UI, or agent integration is implemented yet.
+
+## Repository state
 
 - Repository: `litecowork`
 - Branch: `main`
-- Starting commit: `9775a0357ef17050292166f0dd9890a8f8d0519e`
-- Release sequence: desktop/local first, cloud continuation second, remote Runtime third.
-- V1 is built by coding agents and reviewed by the repository owner alone. Do not assume
-  separate developers or QA staff; do not spawn parallel agents unless explicitly assigned.
-- No product implementation story has started in this run. The 55 backlog stories remain
-  `PLANNED`.
+- Starting HEAD for this run: `a1fb178` (implementation coverage audit)
+- Implementation review commit: current local `HEAD` (do not assume it has been pushed).
+- V1 delivery order: desktop/local first, cloud continuation second, remote Runtime third.
+- The owner reviews and accepts product behavior. Coding agents do not claim owner
+  acceptance, provider qualification, or GitHub Actions success from local checks.
+- Two read-only subagent reviews were used for bounded E01-S01 scope and toolchain/CI
+  review, at the owner's request. Their shared finding was to move storage, generated
+  client, and native-provider tests to the stories that implement those systems.
 
-## Completed in this run
+## Implemented in this run
 
-- Added `scripts/validate_implementation_coverage.py`. Default mode is read-only and detects
-  stale generated outputs. `--write` regenerates them after source changes have been
-  reviewed.
-- Wired the coverage validator into `scripts/validate_implementation_plan.py`, so the
-  repository's required plan check runs the coverage audit too.
-- Expanded `implementation/coverage.csv` and `implementation/machine-inventory.json`, and
-  added the generated human-readable `implementation/ARCHITECTURE-COVERAGE.md`.
-- The coverage audit indexes all source architecture Markdown files and headings, plan
-  documents/headings, ADRs, F00–F78 flows, B01–B74 benchmarks, all 55 stories and their
-  CODE/SYSTEM/USER case IDs, all OpenAPI operations and reachable component schemas,
-  shared schema identifiers/types, error codes, event types/payloads, and SQLite
-  tables/columns/foreign keys/unique/check constraints/views/triggers/indexes.
-- Added cross-contract checks for prose API routes versus OpenAPI, event registry versus
-  typed payload schemas, shared error-code enums, OpenAPI component operation reachability,
-  and SQLite DDL execution/introspection.
-- Fixed the OpenAPI route placement for `POST /routines/{routineId}/revisions`; it had been
-  nested under `/routines/{routineId}/health` despite `docs/API.md` specifying the revisions
-  route.
-- Removed four OpenAPI components that are Core/provider-internal values and are not
-  returned by any Operator operation: `ChannelThreadRef`, `ConversationTurn`,
-  `ContextDocumentPurgePlan`, and `ContextDocumentPurgeTarget`. Their domain contracts stay
-  in the architecture documents; the Operator API exposes receipts/projections where
-  appropriate.
-- Updated the architecture validator to check the public `ConversationTurnReceipt` rather
-  than requiring the Core-owned `ConversationTurn` aggregate as a public API schema.
-- Rewrote `implementation/COVERAGE.md` and linked this handoff and the coverage report from
-  `implementation/README.md`.
+- Pinned Rust 1.98.1 in `rust-toolchain.toml`, Python 3.13.12 in `.python-version`, and
+  uv 0.12.23 in `.uv-version`; added reproducible Python validator dependencies in
+  `pyproject.toml`/`uv.lock` and a Rust workspace lockfile.
+- Added `apps/litecoworkd`, with process-level help, version, and unsupported-argument
+  behavior tests, including that secret-shaped argument values are not echoed. It does not
+  open a listener, storage, or an agent.
+- Added `scripts/check.sh` for exact tool-version checks, Rust format/Clippy/tests/build,
+  Python fixture tests, both required contract validators, and whitespace validation.
+- Updated the existing GitHub Actions workflow to install the pinned toolchains and run
+  the same local check command.
+- Added valid/malformed-schema fixtures and wrong-tool-version checks.
+- Updated the E01-S01 epic/backlog scope, deferred Node/TypeScript/pnpm pinning to E02-S01,
+  and aligned its states with `implementation/PROCESS.md`: `PLANNED`, `READY`,
+  `IN_PROGRESS`, `IN_REVIEW`, `BLOCKED`, and owner-approved `ACCEPTED`. Accepted stories
+  also require accepted dependencies.
+- Regenerated architecture coverage outputs after the implementation-plan changes.
 
-## Coverage result and its limits
+## Verification run
 
-The generated report currently inventories 64 architecture source documents, 863 source
-headings, 26 implementation-plan documents, 127 plan headings, 79 flows, 74 benchmarks, 55
-planned stories, 174 OpenAPI operations, 271 operation-reachable component schemas, 97
-error codes, 69 shared IDs, 143 shared schema definitions, 133 event types/payload schemas,
-and 105 SQLite tables with their enumerated fields/constraints/indexes/triggers.
-
-These are traceability counts, not implementation evidence. The report explicitly lists
-what is not established: runtime/product behavior, provider/OS/cloud/remote qualification,
-semantic completeness of narrative contracts, complete many-to-many story ownership,
-field-by-field behavioral assertions, and intentionally deferred non-V1 surfaces. See
-[`ARCHITECTURE-COVERAGE.md`](ARCHITECTURE-COVERAGE.md) for the generated full document list
-and residual limits, and [`coverage.csv`](coverage.csv) for individual mappings.
-
-## Required checks
-
-Run after modifying the checker, contracts, or generated inventory. The architecture
-validator needs the dependencies installed by `.github/workflows/architecture-docs.yml`
-(`jsonschema`, `PyYAML`, `openapi-spec-validator`).
+Run from repository root:
 
 ```sh
-python scripts/validate_architecture.py
-python scripts/validate_implementation_plan.py
-python scripts/validate_implementation_coverage.py
-git diff --check
+scripts/check.sh
 ```
 
-For this run, both plan checks passed with `python3`. The shell had no bare `python`
-command, and its default `python3` lacked `openapi_spec_validator`; the architecture check
-passed in the already-provisioned `/tmp/litecowork-architecture-venv/bin/python` instead.
-That environment-specific path is not a project dependency or a required future path.
+Expected local evidence includes:
 
-These checks validate documentation/backlog consistency and machine-contract structure;
-they do not prove product behavior. Each implementation story still requires code tests,
-actual system/provider/platform testing, and the owner's real-user acceptance case with
-recorded evidence, as specified in `implementation/TESTING.md` and `AGENTS.md`.
+- Rust 1.98.1, Python 3.13.12, uv 0.12.23.
+- 4 Rust CLI integration tests pass.
+- 6 Python tests pass, covering valid/malformed schemas, toolchain mismatch rejection, and
+  CI/local command version agreement.
+- Architecture validator passes all machine/document checks.
+- Implementation-plan and generated coverage validation pass.
+- `git diff --check` passes.
 
-## Handoff instructions
+A disposable local clone of the implementation commit passed `scripts/check.sh` on Linux.
+GitHub Actions has not run for this change, and the owner has not yet run the clean-clone
+acceptance case on the reference development machine. This packet does not claim either
+result. Do not mark the story `ACCEPTED` until the owner has reviewed the change and run
+the owner acceptance case in `implementation/epics/E01.md`.
 
-1. Read `AGENTS.md`, this file, `implementation/README.md`, and the selected story in
-   `implementation/backlog.json`.
-2. Before implementing a domain, reread its current authority docs and exact OpenAPI/event/
-   schema/SQLite definitions; a coverage row only points to navigation and is not permission
-   to skip that contract review.
-3. Keep the delivery order desktop/local → cloud continuation → remote Runtime. Preserve the
-   finalized local feature coverage while splitting it into reviewable vertical slices.
-4. Work only on the assigned story. Update its contract/flows/benchmarks/tests/coverage and
-   this file as the active run changes. Do not claim mocks, screens, or green architecture
-   validators as integrated product behavior.
-5. Preserve all repository invariants in `AGENTS.md`; in particular do not invent LiteSPM
-   endpoints or move Artifact/Effect/Evidence/Trust ownership out of Core.
+## Owner review still required
 
-## Next planned action
+1. Review the local commit and confirm the pinned actions/toolchain setup is acceptable.
+2. Run `scripts/check.sh`, `cargo run --locked -p litecoworkd -- --help`, and
+   `cargo run --locked -p litecoworkd -- --version` in a clean checkout on the reference
+   development machine; record OS/tool versions and output. GitHub Actions remains a CI
+   check after the branch is pushed through the owner's workflow.
+3. Request any corrections, then set E01-S01 to `ACCEPTED` only after the owner evidence
+   and CI result are satisfactory. E01-S02 is dependency-gated on that acceptance.
 
-The coverage-audit task is complete. The next product-development task should be selected
-from the dependency-ready backlog (starting at its next unblocked story), with the owning
-contracts reread before coding. No implementation story is implicitly started by this
-handoff.
+## Next story after E01-S01
+
+E01-S02 implements the storage ports and SQLite write executor. Before coding, reread the
+full current contracts in `docs/IMPLEMENTATION.md`, `docs/STORAGE.md`, `docs/EVENTS.md`,
+`docs/PROTOCOLS.md`, and the exact `docs/schemas/sqlite-v1.sql` plus event schema sections.
+Implement the transaction/recovery slice and its adversarial tests before touching UI,
+agent adapters, or cloud work. Run SP02 in that story. Never infer product behavior from
+passing architecture validators.

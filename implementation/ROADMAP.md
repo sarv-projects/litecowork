@@ -21,10 +21,13 @@ No invented calendar schedule; one-week planning/review windows follow [process]
 
 ## First implementation cycle
 
-Start E01-S01 with SP01–SP04 reports, selecting a real first adapter. Then E01-S02–S04:
-one durable Workspace transaction and an authenticated client with replay. Next E02:
-installable shell and Resource intake. E03/E04 produce the first verified local task and
-kill/restart recovery. G1 requires that whole behavior, not a page of successful mocks.
+Start with E01-S01: pin Rust/Python development tools, build the minimal `litecoworkd`
+help/version executable, and make the local/CI contract gate reproducible. This is a
+build foundation, not an operational daemon. Then implement E01-S02 storage while running
+SP02, E01-S03 lifecycle, and E01-S04 authenticated transport while running SP03. Run SP01
+with E02-S01 before committing to the desktop shell; run SP04 alongside E03-S01 before
+selecting the first native adapter. G1 still requires a complete verified local task, not
+a successful shell page or a set of mocks.
 
 E05–E10 complete local workforce, RAG, local models, browser/office, persistent identity,
 context, responsibility, rich outputs and reusable skills. Early Coworker naming can be

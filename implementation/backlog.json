@@ -7,7 +7,7 @@
       "epic": "E01",
       "title": "Contract/toolchain baseline",
       "gate": "G0",
-      "status": "PLANNED",
+      "status": "IN_REVIEW",
       "depends_on": [],
       "authorities": [
         "docs/IMPLEMENTATION.md",
@@ -16,10 +16,10 @@
         "docs/PROTOCOLS.md",
         "docs/NETWORK-SECURITY.md"
       ],
-      "implementation": "Pin Rust/TS/Python toolchains and lockfiles; reproduce schema/API/SQL validator; create workspace build and lint CI without empty domain crates.",
-      "acceptance": "Clean checkout builds and validators pass; pipeline reports exact versions and skips no required contract check.",
-      "negative_cases": "Missing toolchain, malformed schema, stale generated client, unsupported license.",
-      "demo": "Reproduce build and contract checks in a disposable checkout.",
+      "implementation": "Pin the Rust and architecture-check Python toolchains with lockfiles; add one reproducible local/CI check command; build a minimal litecoworkd CLI supporting help/version only. Defer Node/TypeScript/pnpm pins to E02-S01; do not start a listener, open storage, or launch an agent.",
+      "acceptance": "A clean checkout runs scripts/check.sh with exact pinned versions, Rust format/lint/test/build, Python fixture tests, and both contract validators. CLI help/version succeed and unsupported options fail. No operational Runtime behavior is claimed.",
+      "negative_cases": "Missing or mismatched pinned toolchain, malformed JSON schema fixture, unsupported CLI option.",
+      "demo": "Run scripts/check.sh in a clean checkout, then run cargo run --locked -p litecoworkd -- --help and cargo run --locked -p litecoworkd -- --version on the reference development OS.",
       "tests": [
         "E01-S01-CODE",
         "E01-S01-SYSTEM",
