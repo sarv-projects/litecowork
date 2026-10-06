@@ -10,6 +10,22 @@ BlobStore
 
 Domain/application code depends on ports, never SQLite/Postgres/S3 directly.
 
+`StateStore` owns version-checked aggregate projection reads and atomic writes of an
+aggregate projection, its event(s), request-deduplication receipt, and the local
+Workspace/origin sequence allocator. `EventStore` reads immutable streams/cursors and
+accepts authenticated replication through the transaction owner. `BlobStore` provides
+immutable content-addressed `put/get/verify` operations; it does not make domain
+decisions. The SQLite adapter exposes one bounded writer executor and performs no
+provider, filesystem-encryption-key, or network call while a SQL transaction is open.
+Blob bytes are committed and verified before a transaction can reference them; a failed
+transaction may leave an unreferenced blob for delayed garbage collection.
+
+Every production BlobStore construction requires an injected `WorkspaceBlobKeyProvider`
+and versioned encryption implementation. Keys are scoped to a Workspace and purpose,
+kept outside SQLite and backups, and zeroized when practical. If the key provider or
+encryption implementation is unavailable, the store fails closed; plaintext storage is
+not a fallback. Test-only key providers are not valid production providers.
+
 `runtime_incarnations` is the compact authenticated Runtime Mesh registry required to
 validate references from replicated aggregates. Local OS boot IDs and diagnostics live in
 `runtime_incarnation_local_observations`, which is never replicated or backed up.
@@ -32,6 +48,9 @@ is `INCLUDE_CHECKPOINTS` and the Workspace replication policy also permits it.
 
 - SQLite 3.38 or later with JSON functions enabled for relational/domain projections
   and the local event index.
+- The state directory is private to the owning OS user; on Unix, create/check it as
+  `0700` and the SQLite main file as `0600`. WAL/SHM sidecars remain under that directory.
+  Other OSes must use an equivalent ACL and qualify it in platform tests before release.
 - local content-addressed blob directory for artifacts/checkpoints.
 - immutable aggregate-state records referenced by each DomainEvent; these are separate
   from periodic projection-rebuild snapshots and stored in the same BlobStore.
@@ -170,7 +189,17 @@ pending_replication_events
 
 domain_events
 request_dedup
+schema_migrations
+workspace_origin_sequences
 ```
+
+The local-only `schema_migrations` table records the monotonically numbered migration,
+its immutable SQL-source checksum, the fingerprint of the resulting SQLite schema
+objects, and application time. `PRAGMA user_version` is the
+supported schema version marker. The local-only `workspace_origin_sequences` table
+persists the last committed event sequence for each `(workspace_id, origin_runtime_id)`;
+it advances in the same transaction as the event and aggregate projection, so archival
+cannot cause sequence reuse. Neither table is a replicated Workspace aggregate.
 
 ## Required constraints/indexes
 
@@ -186,6 +215,8 @@ trigger guard_artifact_initial_revision -> initial ArtifactVersion ResourceRevis
 trigger guard_artifact_current_revision -> Artifact current-version change names current Resource head
 UNIQUE domain_events(event_id)
 UNIQUE domain_events(workspace_id, origin_runtime_id, origin_sequence)
+PRIMARY KEY workspace_origin_sequences(workspace_id, origin_runtime_id)
+PRIMARY KEY schema_migrations(version)
 UNIQUE replication_receipts(workspace_id, receiver_runtime_id, origin_runtime_id, origin_sequence)
 UNIQUE automation_revisions(automation_id, revision)
 UNIQUE routine_revisions(routine_id, revision)
@@ -408,12 +439,20 @@ Mutable aggregate commands include `expected_version` where user/process races a
 ## Blob storage
 
 Blob key is the plaintext content digest, with workspace-scoped encryption handled by
-the BlobStore. Blob commits are immutable. Artifact writes:
+the BlobStore and an injected WorkspaceBlobKeyProvider. `BlobRef.digest` and
+`size_bytes` describe the verified plaintext bytes; encrypted storage metadata records
+the cipher/key version separately and never changes the domain identity of the blob.
+Blob commits are immutable. Artifact writes:
 1. stream temporary object
 2. compute digest
 3. fsync/commit provider object
 4. create immutable manifest
 5. reference from ArtifactVersion/Event only after commit
+
+The v1 JCS encoder orders object keys and follows RFC 8785 number formatting. Typed integer
+values outside the exact I-JSON safe-integer range are rejected before persistence; a
+domain schema that needs a larger exact integer must define a decimal-string wire form.
+This prevents Rust `u64` precision from silently changing in JSON digests.
 
 Before each domain-event transaction, the writer serializes and commits the canonical
 post-transition aggregate record as an `AggregateStateRef` blob. The database transaction
@@ -508,6 +547,14 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
 ## Migrations
 
 - monotonically numbered schema migrations.
+- each applied migration records a SHA-256 checksum of its exact embedded SQL bytes and
+  a fingerprint of all non-internal `sqlite_master` schema objects; reopening refuses a
+  changed migration checksum or missing/changed schema object.
+- a clean install applies migration 1, writes its migration row, and advances
+  `PRAGMA user_version` in one transaction. A crash leaves either the old schema/version
+  or the complete new schema/version.
+- opening a database with a newer `user_version`, an unversioned non-empty schema, a
+  missing migration record, or a checksum mismatch fails closed for explicit recovery.
 - migrations are forward-only in production; rollback is restore/forward-fix.
 - runtime refuses to open a database newer than its supported schema major.
 - managed rolling upgrades use expand/migrate/contract pattern.

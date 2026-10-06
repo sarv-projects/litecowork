@@ -1,5 +1,21 @@
 PRAGMA foreign_keys = ON;
 
+-- Local schema bookkeeping; neither table is replicated as Workspace domain state.
+CREATE TABLE schema_migrations (
+  version INTEGER PRIMARY KEY CHECK (version > 0),
+  name TEXT NOT NULL,
+  source_checksum TEXT NOT NULL CHECK (length(source_checksum) = 71 AND substr(source_checksum, 1, 7) = 'sha256:' AND substr(source_checksum, 8) NOT GLOB '*[^0-9a-f]*'),
+  schema_fingerprint TEXT NOT NULL CHECK (length(schema_fingerprint) = 71 AND substr(schema_fingerprint, 1, 7) = 'sha256:' AND substr(schema_fingerprint, 8) NOT GLOB '*[^0-9a-f]*'),
+  applied_at TEXT NOT NULL
+);
+
+CREATE TABLE workspace_origin_sequences (
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  origin_runtime_id TEXT NOT NULL,
+  last_sequence INTEGER NOT NULL CHECK (last_sequence >= 0),
+  PRIMARY KEY(workspace_id, origin_runtime_id)
+);
+
 CREATE TABLE workspaces (
   workspace_id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

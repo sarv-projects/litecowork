@@ -396,6 +396,12 @@ for the complete post-transition aggregate record at that revision. The referenc
 is transferred and verified before an event is applied or acknowledged. Use a Hybrid
 Logical Clock or equivalent ordering scheme across Runtimes.
 
+JSON digests use RFC 8785 canonicalization. The owning Runtime serializes event sequence
+allocation with the aggregate/event commit and retains the allocator independently of
+event compaction; a failed transaction advances neither the aggregate nor its sequence.
+Local blob encryption keys are supplied by a Runtime key provider and are never stored in
+the database or domain state. Missing keys fail closed; a plaintext fallback is forbidden.
+
 Replicate domain events, immutable artifacts, resource identity/location manifests, Task revisions,
 capability locks, and execution ownership. Do not replicate live database files. Local
 SQLite plus local content-addressed storage is suitable for a standalone Runtime; storage

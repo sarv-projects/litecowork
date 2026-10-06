@@ -963,7 +963,20 @@ In-process/local pub-sub for committed event delivery to projections; not source
 
 ### BlobStore
 
-Content-addressed immutable blob storage.
+Content-addressed immutable blob storage. `put(workspace_id, purpose, bytes)` computes
+the plaintext SHA-256 `BlobRef`, encrypts using a versioned Workspace-scoped key from
+`WorkspaceBlobKeyProvider`, commits the immutable object, and returns only after the
+committed bytes can be verified. `get` authenticates/decrypts, checks the plaintext
+digest/size, and returns bytes only to an authorized caller. A missing key or failed
+authentication is an error; plaintext fallback is forbidden.
+
+### WorkspaceBlobKeyProvider
+
+Supplies versioned encryption keys for an exact `(WorkspaceId, BlobPurpose)` scope. Key
+material stays in the OS keystore/HSM or deployment key service, is never stored in
+SQLite/events/backups/logs, and is not exposed through the ordinary BlobStore API. Key
+creation, rotation, recovery and deletion are deployment-provider responsibilities and
+must be qualified before production release.
 
 ### BackupKeyProvider
 

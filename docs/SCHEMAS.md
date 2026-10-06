@@ -11,6 +11,8 @@ ownership and fields are in `DATA-MODEL.md`; legal transitions are in
   `EVENTS.md`, not wall-clock comparison.
 - Durations are integer milliseconds. Sizes and sequences are unsigned integers.
 - Content digests identify their algorithm; SHA-256 is the v1 content digest.
+- JSON values covered by a digest use RFC 8785 JCS canonical bytes. Numeric values outside
+  the RFC 8785/I-JSON domain are rejected or represented as strings by the owning schema.
 - Missing authority, permission, identity, or policy data is never assigned an
   implicit permissive default.
 - Wire enum values are stable uppercase strings. Unknown values are rejected for

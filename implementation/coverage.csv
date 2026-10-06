@@ -174,7 +174,7 @@ API_OPERATION,PUT /notification-preferences/{eventClass},E01-S04,setNotification
 API_OPERATION,PUT /resources/uploads/{uploadId}/chunks/{chunkIndex},E06-S01,uploadResourceChunk; operation sha256:f756e56df990caedc01c6c8e64d4effcd88feda0949e5561d8bea6d6b57cc223.
 API_OPERATION,PUT /workspaces/{workspaceId}/suggestion-preferences/{kind},E02-S02,setSuggestionPreference; operation sha256:8f9031865b7684a53e594fbda213d4060fa6e98eb4942a3c29bb85e7fb0d0dc8.
 ARCH_DOC,AGENTS.md,E01-S01,"Repository development rules; file sha256:2d4d11e8d21b66e55f2e21ece766ef605b130a909e2dd01f6fe4fb2f0ac544b5; section rows below map implementation guardians, not completion."
-ARCH_DOC,ARCHITECTURE.md,E01-S01,"Product architecture authority; file sha256:e143ea80c37167f2a47ddc636b84c7866e00f82cc2ad9a839bb0c93aa5131f72; section rows below map implementation guardians, not completion."
+ARCH_DOC,ARCHITECTURE.md,E01-S01,"Product architecture authority; file sha256:036b2e0526b167443021f1a8b9211795f7bb21d479e7e103af376df0a5028e50; section rows below map implementation guardians, not completion."
 ARCH_DOC,CONTRIBUTING.md,E01-S01,"Contribution workflow; file sha256:709b7f2d6cad96c6017d6794f69515b6325d9ab07cdcf86abd85eb38de48a040; section rows below map implementation guardians, not completion."
 ARCH_DOC,GLOSSARY.md,E01-S01,"Canonical vocabulary; file sha256:4057c8a27e92d782e59f384ad5fd5894343279d29b3d1990191659a6691d1805; section rows below map implementation guardians, not completion."
 ARCH_DOC,README.md,E02-S01,"Product overview; file sha256:4fbbb784213b9ca2d4343ec5be4856cec207021860f3518486d1d6b70022c27a; section rows below map implementation guardians, not completion."
@@ -193,7 +193,7 @@ ARCH_DOC,docs/DATA-MODEL.md,E01-S02,"Architecture contract; file sha256:e20efc20
 ARCH_DOC,docs/DELEGATION.md,E05-S04,"Architecture contract; file sha256:d8ac74b5c430291b265be69ac925c96a17efa773196f4ecee05710b74f3b1e05; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/DESIGN-SYSTEM.md,E08-S05,"Architecture contract; file sha256:2d4e26851704445d1f89cf87ddd7718f45d67d6320309c80bef822b29f104eb7; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/ENVIRONMENTS.md,E07-S01,"Architecture contract; file sha256:61163f1ada9602948a2ca9f7c758d2ca52fd5cf4f820ba13e03887c283b927a4; section rows below map implementation guardians, not completion."
-ARCH_DOC,docs/EVENTS.md,E01-S02,"Architecture contract; file sha256:0b3d5b1f93b6fda9032286f7f6fe339825c8be649eb1015f04d285525b88ad0f; section rows below map implementation guardians, not completion."
+ARCH_DOC,docs/EVENTS.md,E01-S02,"Architecture contract; file sha256:a42f5778d8024208eb2fb3d189d90fae350d381517e21212649c459f17c900c9; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/EXPERIENCE.md,E08-S04,"Architecture contract; file sha256:17de055b8898d6fe27a8b04fdcef0f01a28e6c91719d6701d0a8a44d9fc65498; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/FAILURE-RECOVERY.md,E13-S02,"Architecture contract; file sha256:6c1703e1749b6047f6ee7bfe882bea34a14aebd5c2c18eeb8c3e8b6816fc902f; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/FLOWS.md,E13-S03,"Architecture contract; file sha256:78579c10d332d220440d3d00917e82d7c4c581d2529b74f6a89c669598680adf; section rows below map implementation guardians, not completion."
@@ -207,12 +207,12 @@ ARCH_DOC,docs/RESPONSIBILITIES.md,E08-S02,"Architecture contract; file sha256:2b
 ARCH_DOC,docs/ROUTINES.md,E09-S01,"Architecture contract; file sha256:0fc661d39a0097b87adef2b9a9156196a8d0991646624d3c43428597a18c1d9c; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/RUNTIME-LIFECYCLE.md,E01-S03,"Architecture contract; file sha256:1bea93feb792abc63c55c2259c3023e4cbf9bcabc0af4d58d1f2ae57fe52b74b; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/RUNTIME-MESH.md,E11-S03,"Architecture contract; file sha256:87e8100bcabd38e3b8b75c79c955c64d9dd2e44f73faa733d4ceae58b27397b5; section rows below map implementation guardians, not completion."
-ARCH_DOC,docs/SCHEMAS.md,E01-S04,"Architecture contract; file sha256:bbbc5e7a84f2540d991d8f3e11b9518988e87e68e47952c1c125aeedc5ea0060; section rows below map implementation guardians, not completion."
+ARCH_DOC,docs/SCHEMAS.md,E01-S04,"Architecture contract; file sha256:b27b11e4f72c5da48d823399a637ea81ed361cf8f078977f7aeb4308e2a1d240; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/SECURITY.md,E04-S01,"Architecture contract; file sha256:534fd952523469d5af71ee82d4b3881a4485a7da4b5da10e349ae476d8963862; section rows below map implementation guardians, not completion."
-ARCH_DOC,docs/SERVICES.md,E01-S04,"Architecture contract; file sha256:0433970bf37179e715406172175841d54c4595546a79ef3c09e60adaf7b9612f; section rows below map implementation guardians, not completion."
+ARCH_DOC,docs/SERVICES.md,E01-S04,"Architecture contract; file sha256:5e4783bcbd133bf2cadf9aefb166d396b5257e37d170d68cc27b73ef0313e7db; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/SOURCE-RECONCILIATION.md,E01-S01,"Architecture contract; file sha256:55d1629157ac8763ecf61ad6e590a8118c09eac2a4fb72aa6458026cb619cff9; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/STATE-MACHINES.md,E01-S02,"Architecture contract; file sha256:2df577bdfdda87c2e7491b1afe8b5a4a6d458dfc8963892aefbdd612bc42166d; section rows below map implementation guardians, not completion."
-ARCH_DOC,docs/STORAGE.md,E01-S02,"Architecture contract; file sha256:ad32178827034308553a31eaaf1b7082f2d982c2cc893b7eefef23b1350c277a; section rows below map implementation guardians, not completion."
+ARCH_DOC,docs/STORAGE.md,E01-S02,"Architecture contract; file sha256:f1b432c3002032bad8f7a203d389a797c45dd3f9c2c2b68b05197053ec8c74e9; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/TASK-RUNTIME.md,E03-S04,"Architecture contract; file sha256:9139edc6a8774d4f9f54bc681d69be941f9d05d2b1378c99770bdfed544f5eb9; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/TESTING.md,E13-S03,"Architecture contract; file sha256:f0ef5425eca4ee4f257b0c4a79e4c23cd876c3490904375ad060dce1a90defe8; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/TRUST.md,E04-S01,"Architecture contract; file sha256:73aef1fcdcd77a58272ce41e81dfe332427667893c2b4f6af665d4f2952c8869; section rows below map implementation guardians, not completion."
@@ -238,7 +238,7 @@ ARCH_DOC,docs/adr/0018-context-content-is-resource-backed-and-provider-pluggable
 ARCH_DOC,docs/adr/0019-credential-egress-and-audit-boundaries.md,E04-S01,"Architecture decision record; file sha256:5b93f069c10c9806f553aa508f59c217e4f39039f9f2dd1352a3a1021a352036; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/adr/README.md,E01-S01,"Architecture decision record; file sha256:be3dc351f022bef535987574ab8650dcd25771145d5e05712e09f0f816e02e7e; section rows below map implementation guardians, not completion."
 BACKLOG_STORY,E01-S01,E01-S01,"Contract/toolchain baseline; authorities: docs/IMPLEMENTATION.md, docs/STORAGE.md, docs/EVENTS.md, docs/PROTOCOLS.md, docs/NETWORK-SECURITY.md; required test cases: E01-S01-CODE, E01-S01-SYSTEM, E01-S01-USER; story sha256:232ffd0bf1b883ef24ae10fe6ffcd97948e3c02fe559fbcbaf1d71646c5a9de8."
-BACKLOG_STORY,E01-S02,E01-S02,"Transactional persistence; authorities: docs/IMPLEMENTATION.md, docs/STORAGE.md, docs/EVENTS.md, docs/PROTOCOLS.md, docs/NETWORK-SECURITY.md; required test cases: E01-S02-CODE, E01-S02-SYSTEM, E01-S02-USER; story sha256:0053b3952a5f4cc73476f74e375de251ad6f8f62bb30760e3fc36125f50bf266."
+BACKLOG_STORY,E01-S02,E01-S02,"Transactional persistence; authorities: docs/IMPLEMENTATION.md, docs/STORAGE.md, docs/EVENTS.md, docs/SERVICES.md, docs/SCHEMAS.md, docs/PROTOCOLS.md, docs/NETWORK-SECURITY.md, docs/schemas/sqlite-v1.sql; required test cases: E01-S02-CODE, E01-S02-SYSTEM, E01-S02-USER; story sha256:7ecedcfa0c72a99e16d564ec8cc7b2c35fd97adeb621244355df00bf82b102f1."
 BACKLOG_STORY,E01-S03,E01-S03,"Independent Runtime lifecycle; authorities: docs/IMPLEMENTATION.md, docs/STORAGE.md, docs/EVENTS.md, docs/PROTOCOLS.md, docs/NETWORK-SECURITY.md; required test cases: E01-S03-CODE, E01-S03-SYSTEM, E01-S03-USER; story sha256:38738042291e3f6a0839e7cfc12821aec5cc3252083cd7ba77565594582358c9."
 BACKLOG_STORY,E01-S04,E01-S04,"Authenticated Operator boundary; authorities: docs/IMPLEMENTATION.md, docs/STORAGE.md, docs/EVENTS.md, docs/PROTOCOLS.md, docs/NETWORK-SECURITY.md; required test cases: E01-S04-CODE, E01-S04-SYSTEM, E01-S04-USER; story sha256:34de206b794718e3d35926bdffb6605b88986d0cd9c951b9cf2095b15b62d9f0."
 BACKLOG_STORY,E02-S01,E02-S01,"Desktop shell/onboarding; authorities: docs/EXPERIENCE.md, docs/DESIGN-SYSTEM.md, docs/MOTION.md, docs/WORLD-RESOURCES.md, docs/CONTEXT.md, docs/API.md; required test cases: E02-S01-CODE, E02-S01-SYSTEM, E02-S01-USER; story sha256:633b8aefceca28923924d80600c0f81ae1c9c6bf08b58693aeafbe222fb348d2."
@@ -370,7 +370,7 @@ CONTRACT_FILE,docs/schemas/delegation.schema.json,E05-S01,machine contract/tooli
 CONTRACT_FILE,docs/schemas/domain-event.schema.json,E01-S02,machine contract/tooling file sha256:356c47ac08fa1ca85b3ce4360733ee8448d5dc45c71a8f22a25aa42a9dc46a71; exact objects are enumerated below.
 CONTRACT_FILE,docs/schemas/error-codes.schema.json,E01-S04,machine contract/tooling file sha256:43ee1fc66fa3d99a8ced3100aecc7228f7edff5725c3c31a78f1ec2b7b753d12; exact objects are enumerated below.
 CONTRACT_FILE,docs/schemas/operator-api.openapi.yaml,E01-S04,machine contract/tooling file sha256:2f0518feb06161d915dc99a01c937ac97743a7808bc4047821ee93d8f22e94ad; exact objects are enumerated below.
-CONTRACT_FILE,docs/schemas/sqlite-v1.sql,E01-S02,machine contract/tooling file sha256:1051b1b2416fd5d3898663b40ae5f943c04e27538a582a292c8c6c88518beb36; exact objects are enumerated below.
+CONTRACT_FILE,docs/schemas/sqlite-v1.sql,E01-S02,machine contract/tooling file sha256:ed3f158d4d9c1eaf59a9872d179e11a4cf2460cb14e85e6c965e831d0f9d03e9; exact objects are enumerated below.
 CONTRACT_FILE,scripts/validate_architecture.py,E01-S01,machine contract/tooling file sha256:3db2c273afa36db4160332642075949ac0b3e7a5a5f2427347f5e8e0221a7c1a; exact objects are enumerated below.
 DOC_SECTION,AGENTS.md## LiteCowork Repository Instructions,E01-S01,section sha256:2d4d11e8d21b66e55f2e21ece766ef605b130a909e2dd01f6fe4fb2f0ac544b5; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,AGENTS.md### Architecture authority,E01-S01,section sha256:a205b11e6d66b137c31fe9340f8dcfa21cd6af4ac8dd4d982a55f6a4907fb52b; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -378,7 +378,7 @@ DOC_SECTION,AGENTS.md### Archives and Git,E01-S01,section sha256:7661a81143df794
 DOC_SECTION,AGENTS.md### Core invariants,E01-S01,section sha256:2ad9eb9c5a2bda6ee24737f680b66ddbd3d7891132d3fd8eb9a05c535f11efe2; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,AGENTS.md### Implementation delivery plan,E01-S01,section sha256:666d0a15bb69928b46fe9fb2b78119de1e7609060ab1dc26105241d30ac0552e; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,AGENTS.md### Working process,E01-S01,section sha256:cf51ff943f45b0a28d8ea498c74f77f68f84c5e9f68071048c62b6b9924c436a; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,ARCHITECTURE.md## LiteCowork Architecture,E01-S01,section sha256:e143ea80c37167f2a47ddc636b84c7866e00f82cc2ad9a839bb0c93aa5131f72; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,ARCHITECTURE.md## LiteCowork Architecture,E01-S01,section sha256:036b2e0526b167443021f1a8b9211795f7bb21d479e7e103af376df0a5028e50; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,ARCHITECTURE.md### 1. Product definition,E01-S01,section sha256:e2e7f3404edb4d44da5a83002fc1dd9553270aa5aef9f8b0ac65bea85a39d4cb; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,"ARCHITECTURE.md### 10. Artifacts, evidence, and completion",E01-S01,section sha256:f38deba0e6365af30c9920987ac091317f9d120e418f4e460ac91d36d5f76f4d; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,ARCHITECTURE.md### 11. Protocol boundaries,E01-S01,section sha256:0a35f24d35560a300dcc46882f785727dc7da2af83367878ba14814100bc56ac; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -393,7 +393,7 @@ DOC_SECTION,ARCHITECTURE.md### 4. Core and adapter boundary,E01-S01,section sha2
 DOC_SECTION,ARCHITECTURE.md### 5. LiteCowork Capability Gateway,E01-S01,section sha256:8bada3f41cc63d3c474531f28decaf7c366966cdb67af47e565b816454bf8679; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,"ARCHITECTURE.md### 6. Operator, Runtime, worker, and Environment lifecycles",E01-S01,section sha256:6aec9d0dbe586804982e81d9c46254a1fad3b8f2487906eedfbc50495668e551; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,"ARCHITECTURE.md### 7. Agent, Runtime, and Environment fabrics",E01-S01,section sha256:a0074ce1933e76329a750553fe7bb661bd9c3f6ee74ac4d1432189080a11fe8f; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,"ARCHITECTURE.md### 8. Durable state, resources, events, and replication",E01-S01,section sha256:564cc759d83012ba9354d58c3d65e68079c6e15be45897ecb241646419234546; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,"ARCHITECTURE.md### 8. Durable state, resources, events, and replication",E01-S01,section sha256:fb4ac11d439157ef5705855596c53fb403053c260368cbb906ea4a11621d9ff7; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,"ARCHITECTURE.md### 9. Continuation, leases, and effects",E01-S01,section sha256:4e390d913c184b2be1c4e99c1c7134a629e70a8944827e49159d9335e8d8af2e; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,ARCHITECTURE.md#### Agent Fabric,E01-S01,section sha256:386113d10f309dfa3b50ed1e1729af948ae60eadba3793826ba0574f8847a51a; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,ARCHITECTURE.md#### Capability/provider territory,E01-S01,section sha256:34a8c6e522618d9d949f962cf27168c8590bf9932ffb4aa872b08a8fffa60b29; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -685,9 +685,9 @@ DOC_SECTION,docs/ENVIRONMENTS.md#### GitWorktree,E07-S01,section sha256:8a50ce12
 DOC_SECTION,docs/ENVIRONMENTS.md#### LocalWorkspace,E07-S01,section sha256:6eac29c318569ef5f01e79f1fce23d33a8fd0aab52bd8971d79d9d910e0fd979; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/ENVIRONMENTS.md#### RemoteMachine,E07-S01,section sha256:c9733e97981e8661cb7fd82d6b30171429b2d59d7c025d5a44dbe108c313a3d2; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/ENVIRONMENTS.md#### VM,E07-S01,section sha256:3ff635a45f66f6c78e9c714b4f1bba136702b107a6782ee338450bf6bbe5cae1; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/EVENTS.md## Event Journal and Event Schemas,E01-S02,section sha256:0b3d5b1f93b6fda9032286f7f6fe339825c8be649eb1015f04d285525b88ad0f; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/EVENTS.md## Event Journal and Event Schemas,E01-S02,section sha256:a42f5778d8024208eb2fb3d189d90fae350d381517e21212649c459f17c900c9; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/EVENTS.md### Durable event registry,E01-S02,section sha256:ac83e680e6a5410d74a71e7d7c76f7ec16ce59f875403537ee9b47d39a55958b; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/EVENTS.md### Envelope,E01-S02,section sha256:7a88dca1210eefd0bf9aac89af629472f0e315a0db92bb59f1d52d4b175eb207; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/EVENTS.md### Envelope,E01-S02,section sha256:163af7b47da23eedeb1f8b685b138c5880a8a7dec4d9034f23716b1341a3c8b4; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/EVENTS.md### Ephemeral streams,E01-S02,section sha256:d6d08a1c49afdd435b469ad9c8bfbd4cd4f757654373b82be17179d53a54c0b8; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/EVENTS.md### Event versioning,E01-S02,section sha256:1c589c9694e7c91ebad202aaaf67d69563afb143880f248d9c76617920f3cd7a; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/EVENTS.md### EventStore,E01-S02,section sha256:7a91254b061838f32837042eea35b696fe27a9872c537e5b88d7c5ddf358e7c8; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -941,7 +941,7 @@ DOC_SECTION,docs/RUNTIME-MESH.md### Unexpected runtime loss,E11-S03,section sha2
 DOC_SECTION,docs/RUNTIME-MESH.md#### Offline boundary,E11-S03,section sha256:814c6775eeaea8bb8773780890bcd5dd3e50b2c7edd2dd71c9aa9b73c0f1a26e; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/RUNTIME-MESH.md#### Runtime-private provider input and URL handoff,E11-S03,section sha256:26b5239ec164dd89a6f00d86093c1dde3967e367bec6b0b7d80ea7807cced0ee; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md## FAILED -> RUNNING is permitted only through AgentTurnCoordinator.retry_turn;,E03-S02,section sha256:907eda50583f8409476f99eb79d3e46dab837dec06fd97e7181429c681a6297a; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/SCHEMAS.md## Shared Schemas and Error Taxonomy,E01-S04,section sha256:f1954f5ba02fe3edceea2fac2663c50bdb596715209fd406e6a7b36339b942fd; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/SCHEMAS.md## Shared Schemas and Error Taxonomy,E01-S04,section sha256:07a8533381daa3f03827c9cff905af50077de0ba332b2cb2712809e17dc82f5c; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md## the retry increments retry_ordinal and starts a new AgentSession.,E03-S04,section sha256:85bcc83a18720bb7f37d88ec3a114b08263815b246713d08dc571938d99135d6; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md### Assurance and errors,E01-S04,section sha256:683dd8ae59c15ee7110cf9175a90e57f9da2eb555f63ef8e5d6e1ff9f147bb32; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md### Conversation content,E03-S02,section sha256:0d0a861590cd21fa665bc3315abab9feed7abd9ea099557fe03f112283c8ba05; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -949,7 +949,7 @@ DOC_SECTION,"docs/SCHEMAS.md### Criteria, outputs, budgets",E01-S04,section sha2
 DOC_SECTION,docs/SCHEMAS.md### Identifiers,E01-S04,section sha256:5655d76b83913d960f63244aaa0a52fa76c78173d3d66f4ae60b2f75e3585ddf; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md### Other shared values,E01-S04,section sha256:9e6d58833f8e74a70e950d9aaedf1089ced38a8bdfa5c2fd39b254122f37f71d; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md### Placement and continuation,E01-S04,section sha256:cd449abda40ed6a080e8e000c04e1b6e30b2208f8392517a5aeb17c60e9a1606; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/SCHEMAS.md### Primitive conventions,E01-S04,section sha256:697712c1f431dd77dd8e4c7ee5bbb820a4c64d00ee9f9c63d17fdd7c0a0aa262; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/SCHEMAS.md### Primitive conventions,E01-S04,section sha256:a707f8fd6b6cb235be2a11a7feb27584850399fe18abe8f0e27b28c8a662874c; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md### Referenced values,E01-S04,section sha256:026d36f06fcb173547da78d7a17b826aeeedd88624fe2feed45db143907b285b; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md### ResourceRef,E02-S03,section sha256:b297e01aeba02c61f54fe48b4c95c5b7426f1f985c76fd215f02fdb845512166; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md### Retry and failure,E03-S04,section sha256:9ec1ffce0b7768d84f9eca258bf460ef5ecc6fa7c9e52eb35018d20aad5aea57; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -969,10 +969,10 @@ DOC_SECTION,docs/SECURITY.md#### Malicious capability/MCP,E04-S01,section sha256
 DOC_SECTION,docs/SECURITY.md#### Prompt injection from web/email/doc,E04-S01,section sha256:70fe927c2fe09aee0166bd83abfe7a08985695e93d185a818832eede5faaacdd; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SECURITY.md#### Replay attacks,E04-S01,section sha256:1864693c8d8e7edc25a9e3e4029429f9f234919b2f54e3131f22c2382f052eb7; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SECURITY.md#### Stale executor/split brain,E04-S01,section sha256:07b1fcd44b9edca8b62d103efe3d89457c495bbf29fbf565d4ce850220260e58; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/SERVICES.md## Services and Ownership,E01-S04,section sha256:0433970bf37179e715406172175841d54c4595546a79ef3c09e60adaf7b9612f; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/SERVICES.md## Services and Ownership,E01-S04,section sha256:5e4783bcbd133bf2cadf9aefb166d396b5257e37d170d68cc27b73ef0313e7db; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md### Dependency constraints,E01-S04,section sha256:afd14297be1b1cf94b7830067c02a12e452d5d936e12fe9c67a434561aeb47eb; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md### Error and idempotency contract,E01-S04,section sha256:f0679a9997ace7b3977b133925a43d76486fae9e880218d06ff268a192b0e177; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/SERVICES.md### Infrastructure ports,E01-S04,section sha256:492e49ef843f9f658ea0a381cf464515d7d487636fa3a30911152c307a53bee2; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/SERVICES.md### Infrastructure ports,E01-S04,section sha256:3d87eaca059110e849b11b2a15b9e0af9132b3ec25e8c103994b2bcaeaf81617; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md### Internal application services,E01-S04,section sha256:2624eab0c5888637b0c5230d7a9aa3550712fc092d6bce99081134c802e86b6b; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md### Public application ports,E01-S04,section sha256:8581273560e271226e6b66821fd64de16c438babb3442652f169ae5392918f2c; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md### Transaction rule,E01-S04,section sha256:deda1e60da136806e28035af98f13fc1a009e81ed295de260c643b94eb4029e9; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -987,7 +987,7 @@ DOC_SECTION,docs/SERVICES.md#### AuditService,E01-S04,section sha256:6fc52371fc1
 DOC_SECTION,docs/SERVICES.md#### AutomationService,E01-S04,section sha256:9604795d4d634c18c9d7fb09f95e6722049bf340ae64112552e9a28b74c47aa8; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md#### BackupKeyProvider,E01-S04,section sha256:8d18048c51603bbd5ac4f3d8a2f2b51cba2bfe086b40cd6f6d85da8667279e4c; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md#### BackupService,E01-S04,section sha256:c57a85ddffce137caf8a644568cc3108d7d6fd75f064f8c883340117c920c518; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/SERVICES.md#### BlobStore,E01-S04,section sha256:549d4f1bff727ebecbd38557e937233fc8afedaca9295c9b917306c19dc1bf07; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/SERVICES.md#### BlobStore,E01-S04,section sha256:ec5dbbc0a3d835d27ff6bccafac0b9992d45777edbe2ca9a0dab6cc9806bfdfb; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md#### BudgetService,E01-S04,section sha256:443f5686f5246c515111c32936e08843721b549ed7c1e2e45e960c0aa3592c75; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md#### CapabilityBroker,E01-S04,section sha256:8a24d354317a32b0c08ee3c248000627b953916171e7329dcb8909e88c35eff7; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md#### CapabilityHostSupervisor,E01-S04,section sha256:c4ba3ee7685675bfd6570d50fd27999950bfbf3b58243366ac87891b6c139b83; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -1035,6 +1035,7 @@ DOC_SECTION,docs/SERVICES.md#### Verifier,E01-S04,section sha256:9d724d9304d4a89
 DOC_SECTION,docs/SERVICES.md#### VerifierRunner and VerifierRegistry,E01-S04,section sha256:25f6a0a272f4e78663ab692119022c04d3e3720471fe9bc8b56f1e5466e47bb4; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md#### Warm lifecycle ownership,E01-S04,section sha256:0cf446fd71110aa93ab528e7150e943771e5f9957093d9da0844af1e73b3f656; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md#### WarmHoldService,E01-S04,section sha256:94d670ec10548497a8457dfb297c28243a2b28d9fb79f5c52e0a4a4009458a20; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/SERVICES.md#### WorkspaceBlobKeyProvider,E01-S04,section sha256:abbe55225254256e77d39772a0d0317e20b71a12b828ba31d7fb4cc5ef413326; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md#### WorkspaceService,E01-S04,section sha256:e9d2b52e1ccc24be0fce1a1551aecefa3ac34132f13b5371d2409bfb67de3f16; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md#### WorkspaceSnapshotPort,E01-S04,section sha256:5b06d415398d49ea272fa5b1a4b6da9fe5dbd3dc08cd2123bd97fe7a28dd1a92; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SERVICES.md#### WorldIndexer / ResourceService,E01-S04,section sha256:ebbef7d27c9a360270cd138d26e28eaab876be7b350c09f83e2e657cdbce068a; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -1077,19 +1078,19 @@ DOC_SECTION,docs/STATE-MACHINES.md### Transition ownership and event rule,E01-S0
 DOC_SECTION,docs/STATE-MACHINES.md### UserRequest and NotificationDelivery,E01-S02,section sha256:d33078690ed86cc3f54a66b280da1ffc1b720be9bb47dfaba0e4a017cad5e217; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/STATE-MACHINES.md### VerificationRun,E01-S02,section sha256:985889ec68325fc0a025051a06f707f7d503ce7e65527954f698b3c708b525a8; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/STATE-MACHINES.md### Workspace,E01-S02,section sha256:d8503ef5d72d69d95a4323935d2dd8d16f4638d81346cad126231e97778bfcdd; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/STORAGE.md## Storage LLD,E01-S02,section sha256:ad32178827034308553a31eaaf1b7082f2d982c2cc893b7eefef23b1350c277a; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/STORAGE.md## Storage LLD,E01-S02,section sha256:f1b432c3002032bad8f7a203d389a797c45dd3f9c2c2b68b05197053ec8c74e9; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/STORAGE.md### Backup and disaster recovery,E01-S02,section sha256:a467e8ea97e6afeeab3b66d21529c7f103d5b1b586615c720ef3752f6e2ff5b9; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/STORAGE.md### Blob storage,E01-S02,section sha256:a880f67ed915851ee3bd7194f5ce94a0127e64b98209b673148e1c3bd12f3d2f; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/STORAGE.md### Blob storage,E01-S02,section sha256:5670127630a749ce42a80c850fef157b1084709f9b862df11fd2159c89e0f7a7; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/STORAGE.md### Event snapshots and archive,E01-S02,section sha256:d93a3b7cc40030ed31ce370c8511ad5e31196261d16584ccf83db5f878b749f9; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/STORAGE.md### Local deployment,E01-S02,section sha256:68b04f05475ece370a34718e7639f31ab34c92de028ed6a82aa580c6334a5d4e; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/STORAGE.md### Local deployment,E01-S02,section sha256:da2c249dd37783386e2d48143d269ec54ca019bde99c9d6a3da0a82a373914b6; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/STORAGE.md### Managed/multi-user,E01-S02,section sha256:3f55cf865790947834e7089ed2067650a44f50d53c3fe007c6e759fc8d961c77; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/STORAGE.md### Migrations,E01-S02,section sha256:4d5ccef743a9451301cd2670d68a33650feca1bf3070e2adadd04dc79a272e9e; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/STORAGE.md### Migrations,E01-S02,section sha256:9c6e4882557ddd3cb607973f2fa23718324da3ae86b775bcb9b48747ce02a45f; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/STORAGE.md### Optimistic concurrency,E01-S02,section sha256:fd30681efd6991e6f05492bbcd80de2502fa7a49688e20a4a1b3565c28dd3406; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/STORAGE.md### Personal/self-hosted server,E01-S02,section sha256:e800b177ff84653266e9ae6c827df4fe0d1828d0078974c2f13d54cf3a478706; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/STORAGE.md### Relational tables,E01-S02,section sha256:95873554a74e5c04fdf5f544839a35946c1b7f43d9ef20a03276a8705ec4cf19; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/STORAGE.md### Required constraints/indexes,E01-S02,section sha256:2307676443484bf6de214fede5b7c3c7c710488781d12d5f42fbd8faec00e947; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/STORAGE.md### Relational tables,E01-S02,section sha256:23ea8c13410f9f45a31a2e02a8852525b87ed4b72bef27c10393f0dbb9c6912d; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/STORAGE.md### Required constraints/indexes,E01-S02,section sha256:57def77cd633ad58ea8a4b37255a2f45f0bed0c8bce25115b1c40c120a1e0108; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/STORAGE.md### Resumable uploads,E01-S02,section sha256:042ab35a2bd1642066a4b5b09d3663190b8446d068e7476f03bc1c3e717c7c21; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/STORAGE.md### Storage ports,E01-S02,section sha256:3d916a10fda1ebd86ad66871967e07996e90b6b96095f8e71854e1156c91bc15; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/STORAGE.md### Storage ports,E01-S02,section sha256:3340e43517329a3c5eef139429043f4604e02526bafaa998920a6049b4766638; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/STORAGE.md### Transactions,E01-S02,section sha256:85abbf0296a73260d8287105f761641749703ea92d6c098b1923bb4eaa9f1306; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/STORAGE.md#### Routine and trigger Workspace integrity,E01-S02,section sha256:ca9050472414684d317b9978cada1d3fa3d2c0c6e238e749702ba257e7be005c; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/TASK-RUNTIME.md## Task Runtime LLD,E03-S04,section sha256:9139edc6a8774d4f9f54bc681d69be941f9d05d2b1378c99770bdfed544f5eb9; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -1974,12 +1975,12 @@ PLAN_DOC,implementation/README.md,E01-S01,implementation-plan source sha256:f1da
 PLAN_DOC,implementation/RELEASE.md,E13-S04,implementation-plan source sha256:506b1bd384633450c08ec2fba074d065fca4ca3a80800ee0dd0095b40cf1cdcb; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/ROADMAP.md,E01-S01,implementation-plan source sha256:534bb0553b464d6c6af29cd1c385a0512ff56199bc9cf27e3ecba2cf110f3157; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/SCOPE.md,E13-S04,implementation-plan source sha256:6562242f22e1256955e1b806de77294d0535ab940b83307a8adfbc6c6130d233; this file guides delivery and does not override architecture authority.
-PLAN_DOC,implementation/SOURCES.md,E08-S02,implementation-plan source sha256:2d08c11a7f42ffcf90df5733d93a5933dd84808a05c2dc4ce453205beb241d31; this file guides delivery and does not override architecture authority.
-PLAN_DOC,implementation/STACK.md,E01-S01,implementation-plan source sha256:14bcbccacc35bf8df8e63649ccb106caa8503acd1abfaad887ac2355dbee912a; this file guides delivery and does not override architecture authority.
+PLAN_DOC,implementation/SOURCES.md,E08-S02,implementation-plan source sha256:9d718b3ca8ee914d8b2ec761cf0183ce48f2e49f04c888ae6fc293b982f24f6f; this file guides delivery and does not override architecture authority.
+PLAN_DOC,implementation/STACK.md,E01-S01,implementation-plan source sha256:2334abcef9960f31af7db26368f503a84d5d98666925d3e4949ecb166d2b78c2; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/TESTING.md,E13-S03,implementation-plan source sha256:59f640732c1b8e890be5eda975d3840b7c5ebf4383281bdb7c3ccc0605a188bd; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/UI.md,E08-S04,implementation-plan source sha256:2f31e27f329af3cd96b723fc1da145d61b21af127e65c6eb66627aa28f6a404f; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/WORKFLOWS.md,E13-S03,implementation-plan source sha256:dc23a0d03a2a38d100122051f4349c8ee142142295ce30f76202b61f7f9980dc; this file guides delivery and does not override architecture authority.
-PLAN_DOC,implementation/epics/E01.md,E01-S01,implementation-plan source sha256:23897ef34064a9cd272237683a4a60c8484ccb5aa9284d43ab1f5de512157182; this file guides delivery and does not override architecture authority.
+PLAN_DOC,implementation/epics/E01.md,E01-S01,implementation-plan source sha256:fcc2fb059d430ecc93c803953cb7aa031c5a6916b88a67367f350dd7b701742d; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/epics/E02.md,E02-S01,implementation-plan source sha256:55a481b3a6ec4f8586498d305f253aa510bffaf6b2ac68010f72da77ca1cd087; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/epics/E03.md,E03-S01,implementation-plan source sha256:06f26407772192a91a85141ba8a8b59a339d8b43ca10c02dbf810afd7d2197bc; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/epics/E04.md,E04-S01,implementation-plan source sha256:a792b36aac731f90c6205498c44fb578a82b46494d373106c821fbf5153e65f8; this file guides delivery and does not override architecture authority.
@@ -1993,6 +1994,8 @@ PLAN_DOC,implementation/epics/E11.md,E11-S01,implementation-plan source sha256:7
 PLAN_DOC,implementation/epics/E12.md,E12-S01,implementation-plan source sha256:c31868bcd8c62286f43bb9490e2fd39103850380c40169d3b07688e7ad71e5d6; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/epics/E13.md,E13-S01,implementation-plan source sha256:a2b94844d1d6c7677064eea61e8ed0568ac4369ac0ffddb2ce490405bd2ffc3a; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/reviews/E01-S01.md,E01-S01,implementation-plan source sha256:e87fb6748601f768b0ce22fbbd4714383a0b269e5de07f72334853a9ff269625; this file guides delivery and does not override architecture authority.
+PLAN_DOC,implementation/reviews/E01-S02.md,E01-S02,implementation-plan source sha256:31a2ee46979b703a3d73e4162b9c9ccc630c71e15fe412e1070de06d4ad788ae; this file guides delivery and does not override architecture authority.
+PLAN_DOC,implementation/spikes/SP02.md,E01-S01,implementation-plan source sha256:c6032eb582479a6916fea36ecf4b463d8bceb83ba47a683288ef5afbd18cff09; this file guides delivery and does not override architecture authority.
 PLAN_SECTION,implementation/AUDIT.md## Current architecture audit and development refinements,E01-S01,"section sha256:054d327e28c97976d5b11191d1a0e33bf62910f91d0a3171b1c980b5ee1fca48; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/AUDIT.md### Coverage discipline,E01-S01,"section sha256:4879e3c888015d296dd1dd86d7ce1b720e44db56f2789ba2b357a057d981d390; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/AUDIT.md### Evidence and limits,E01-S01,"section sha256:3e79b962a7e1c6343e2d19940a7d6fbb5c168f73edd92115e59f60fa8f61d3e7; implementation guidance, subordinate to linked architecture contracts."
@@ -2030,14 +2033,14 @@ PLAN_SECTION,implementation/SCOPE.md### Coverage versus integration breadth,E13-
 PLAN_SECTION,implementation/SCOPE.md### Gate sequence,E13-S04,"section sha256:2fa868a3e5be3b8a6020855f6725d4191d0116c7f685fb4d68e15463262c6582; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/SCOPE.md### Included feature groups,E13-S04,"section sha256:7c72cf8946778cf49a02903f8ae372e57830b39d769e70a2a053974dd45d437d; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/SCOPE.md### V1 commitment,E13-S04,"section sha256:cd32a2a5fccecd3afeedd9517f3bdd97b9bb2b28a44fa79fe57bddc9097d5463; implementation guidance, subordinate to linked architecture contracts."
-PLAN_SECTION,implementation/SOURCES.md## Research sources and repository reference guide,E08-S02,"section sha256:2d08c11a7f42ffcf90df5733d93a5933dd84808a05c2dc4ce453205beb241d31; implementation guidance, subordinate to linked architecture contracts."
-PLAN_SECTION,implementation/SOURCES.md### Directly checked for this plan,E08-S02,"section sha256:1493b88d4ab14516cd572b68fd863aa801dd49269a938829f128d6fb7133496f; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/SOURCES.md## Research sources and repository reference guide,E08-S02,"section sha256:9d718b3ca8ee914d8b2ec761cf0183ce48f2e49f04c888ae6fc293b982f24f6f; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/SOURCES.md### Directly checked for this plan,E08-S02,"section sha256:57fc4377dd7be142e76c978162939dad32b0cc9b846cd33eb214d0ef0f8cebab; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/SOURCES.md### Existing architecture references retained,E08-S02,"section sha256:c41b0103ce81a662c612b06744ee4ed0a4573f0451fdf52207c0ba4c40284a2b; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/SOURCES.md### Repository review checklist,E08-S02,"section sha256:b3f0c31bb830f90c64b4ff7eb0b3bceea25f9ace71497e6a7bae113464043b8c; implementation guidance, subordinate to linked architecture contracts."
-PLAN_SECTION,implementation/STACK.md## Stack recommendations and qualification decisions,E01-S01,"section sha256:14bcbccacc35bf8df8e63649ccb106caa8503acd1abfaad887ac2355dbee912a; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/STACK.md## Stack recommendations and qualification decisions,E01-S01,"section sha256:2334abcef9960f31af7db26368f503a84d5d98666925d3e4949ecb166d2b78c2; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/STACK.md### Optimizations worth implementing,E01-S01,"section sha256:9e32223cce07a29b3defa24631b3dd2d4b5e89828c6a587cfeddf65b98f209a0; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/STACK.md### Pinned development baseline,E01-S01,"section sha256:abf9c0fc146992f4f870eb39c8a822ff1a990044289bad675380c3ff9f77bf5b; implementation guidance, subordinate to linked architecture contracts."
-PLAN_SECTION,implementation/STACK.md### Spikes with pass/fail outputs,E01-S01,"section sha256:96c36a7194d423e0ab6d64e6c9cdc8518a86da9aa3243c4dcc4495d15ab9e6ca; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/STACK.md### Spikes with pass/fail outputs,E01-S01,"section sha256:a818d6cb1c20fe29d4093ffb8dfa6ff96d2643b1e5b02a9545c7393de2058a56; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/TESTING.md## Tests and acceptance evidence,E13-S03,"section sha256:59f640732c1b8e890be5eda975d3840b7c5ebf4383281bdb7c3ccc0605a188bd; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/TESTING.md### CI progression,E13-S03,"section sha256:b0e986d4f591ffd66cd9416994e00645b5b7e91d424122f8174854202ee3e8eb; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/TESTING.md### Case record format,E13-S03,"section sha256:0132f0abbf20ca81e331abcb928602e495ef75229890dd3af7d66785a4ee0707; implementation guidance, subordinate to linked architecture contracts."
@@ -2053,9 +2056,9 @@ PLAN_SECTION,implementation/UI.md### UI test matrix,E08-S04,"section sha256:1307
 PLAN_SECTION,implementation/WORKFLOWS.md## Cowork replacement assessment,E13-S03,"section sha256:dc23a0d03a2a38d100122051f4349c8ee142142295ce30f76202b61f7f9980dc; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/WORKFLOWS.md### Conclusion and claim threshold,E13-S03,"section sha256:dfb6750869cde5a6ff528442b4ddf6011f46ee897f042f5d3bc38a329be40957; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/WORKFLOWS.md### Workflow coverage and laptop replacement,E13-S03,"section sha256:1dcff361c5ef2889d1e4792cc2126cfc7c287d8be4b04e482b3d2063a9a34e62; implementation guidance, subordinate to linked architecture contracts."
-PLAN_SECTION,implementation/epics/E01.md## E01 — Development foundation,E01-S01,"section sha256:23897ef34064a9cd272237683a4a60c8484ccb5aa9284d43ab1f5de512157182; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/epics/E01.md## E01 — Development foundation,E01-S01,"section sha256:fcc2fb059d430ecc93c803953cb7aa031c5a6916b88a67367f350dd7b701742d; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/epics/E01.md### E01-S01 — Contract/toolchain baseline,E01-S01,"section sha256:d519ec636dadfa18270d0520e997f629354be757a41d76334992b17c0c76b1ae; implementation guidance, subordinate to linked architecture contracts."
-PLAN_SECTION,implementation/epics/E01.md### E01-S02 — Transactional persistence,E01-S02,"section sha256:b0abce3be1ec4e19458b6773b1214551449700f75bcf06c41f1802d192b9e317; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/epics/E01.md### E01-S02 — Transactional persistence,E01-S02,"section sha256:522184d8c693bbc7c6a3ce30780d503a96ff38ca81972dc285656caa72ac83b5; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/epics/E01.md### E01-S03 — Independent Runtime lifecycle,E01-S03,"section sha256:3592320c289cd56b9528b6a18567ff7a1538497f7a1b86ca91664028130fd982; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/epics/E01.md### E01-S04 — Authenticated Operator boundary,E01-S04,"section sha256:3f3c6d438806618f3ffb5c5f7a44e40c5f1fc7b51f862915e85278a3f4c8dd12; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/epics/E02.md## E02 — Desktop shell and resources,E02-S01,"section sha256:55a481b3a6ec4f8586498d305f253aa510bffaf6b2ac68010f72da77ca1cd087; implementation guidance, subordinate to linked architecture contracts."
@@ -2129,9 +2132,23 @@ PLAN_SECTION,implementation/reviews/E01-S01.md### Fixtures and assertions,E01-S0
 PLAN_SECTION,implementation/reviews/E01-S01.md### Limits and owner review,E01-S01,"section sha256:8bbbdc5b64068628807dfbd21ba8e70cfd94acfde9710985ef5d80fdab0993cf; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/reviews/E01-S01.md### Outcome,E01-S01,"section sha256:c5d7f94b821930b041cf246f8cfeb1d0967c7c6bdcd6076855480b5d6f64bcb0; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/reviews/E01-S01.md### Rollback,E01-S01,"section sha256:44f7b31b3d1c6b629185e5b1ab14977e6804d6bad930a6d7f744cd585e701daa; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/reviews/E01-S02.md## E01-S02 review packet — transactional persistence,E01-S02,"section sha256:31a2ee46979b703a3d73e4162b9c9ccc630c71e15fe412e1070de06d4ad788ae; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/reviews/E01-S02.md### Changed implementation paths,E01-S01,"section sha256:3bd45b92e771d10eb10e7086619f7e6978bf3b4bfb285ee1374021be34921bfa; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/reviews/E01-S02.md### Contract references,E01-S01,"section sha256:6d1f3846d9afe0b691b950aa3d3be46be9f0600e3a822831d8cef6bf412eb9b3; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/reviews/E01-S02.md### Failure and race evidence,E01-S01,"section sha256:d695a9ddd90290f9fc3d702e85b324e70225f08d3f49b226504c37b402eac175; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/reviews/E01-S02.md### Limitations and release gates,E01-S01,"section sha256:fdaf4f3997741f3e335a7f1b588de3ddab424baf6cb023b589c5d432c7948712; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/reviews/E01-S02.md### Outcome,E01-S01,"section sha256:62c8158fa5b060102403c6bc55fe1a759062c73c09b16f281e04bf16d834d935; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/reviews/E01-S02.md### Owner decision,E01-S01,"section sha256:68b456432377ab4277cd06f3f70771a1836b8ed228e500234828b71a4ec01679; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/reviews/E01-S02.md### Tool and adapter versions,E01-S01,"section sha256:996d0ff79d1029792c7f3642ec449ae5953e89500092084b299e8f2e415b26ec; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/reviews/E01-S02.md### Verification,E01-S01,"section sha256:3556e813f9ac1c30131578b75f7d7608c19070d842ef1857fe4d1e4ea0a39ef5; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/spikes/SP02.md## SP02 — SQLite adapter qualification,E01-S01,"section sha256:c6032eb582479a6916fea36ecf4b463d8bceb83ba47a683288ef5afbd18cff09; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/spikes/SP02.md### Decision and next experiment,E01-S01,"section sha256:7452a7a0b993ca0034d83f2b83db902238f787b8ba05f427ff38c7f76f8e74e1; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/spikes/SP02.md### Evidence completed,E01-S01,"section sha256:78ff4630e1408cf38bacb7df0809456e557e20343d31b6dedaa26f39b865ac71; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/spikes/SP02.md### Not completed,E01-S01,"section sha256:12160fc04e681951ea4ccd80a3c0b325d5fb3e53851068a92027b9d60bb87b71; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/spikes/SP02.md### References,E01-S01,"section sha256:bad8875fee14f76d31444d60bf68a13967f53d9a72c0727a41b423b9e1cfd9c6; implementation guidance, subordinate to linked architecture contracts."
 PLAN_TOOLING,.github/workflows/architecture-docs.yml,E01-S01,delivery-plan or validation input sha256:e6d6bf651c954a31049dad3d5c94bd928c21408aa4f1e35c023abd028cbd43ef.
 PLAN_TOOLING,implementation/audit-inventory.csv,E01-S01,delivery-plan or validation input sha256:1eaf617779ad2981628e5372a726f2e403bc6f4278e9d6e17054d154585c33a5.
-PLAN_TOOLING,implementation/backlog.json,E01-S01,delivery-plan or validation input sha256:ed3b3a56c1371d89a11cc898a7ad7a5dcb18fc89964264f443b3ef094ea5ca24.
+PLAN_TOOLING,implementation/backlog.json,E01-S01,delivery-plan or validation input sha256:582a52422f4f2f0d3a0ff85b67dd86140c70db83e46e722db9ad086bae6bb7e8.
 PLAN_TOOLING,scripts/validate_implementation_coverage.py,E01-S01,delivery-plan or validation input sha256:e0afe50e66a93efab36122a3087fde93b20a00a64011436f672e06dfb9a24732.
 PLAN_TOOLING,scripts/validate_implementation_plan.py,E01-S01,delivery-plan or validation input sha256:b5f91fdf490edaf3fde858abc63896e0508effefc9aa5499303103feb21c97eb.
 SCHEMA_DEF,delegation.schema.json#acceptance_criterion,E01-S04,delegation wire definition sha256:48f6199adeb7eb7884c311b40e3f3ac3472bbd7c21d87bc83e7be46e3a8da88d.
@@ -2647,6 +2664,9 @@ SQL_CHECK,runtime_offers#CHECK2,E07-S01,expression sha256:97eeb10fef0e55932c4521
 SQL_CHECK,runtime_offers#CHECK3,E07-S01,expression sha256:6c925334951fdac22b8b347d41c2f65c0f26c168eeecef67f7376b15b95e6a0d.
 SQL_CHECK,runtimes#CHECK1,E07-S01,expression sha256:9dc915e3892b0f95391152701801b147e6547e9419718172d901aa41225683c3.
 SQL_CHECK,runtimes#CHECK2,E07-S01,expression sha256:368ae067bf29a624f1328a168cb90618660883f1ee2e62e83b95c7dc34f9637a.
+SQL_CHECK,schema_migrations#CHECK1,E01-S02,expression sha256:429634fbaa2d902be6a1450c11ee39cfbc91fed34f87caba832189c6cd39151c.
+SQL_CHECK,schema_migrations#CHECK2,E01-S02,expression sha256:487d1be6cdb0d6e1d69204dff1239dd76a3536552c2109ae9f4419636671fb99.
+SQL_CHECK,schema_migrations#CHECK3,E01-S02,expression sha256:0e9c455d16af321243c3228534af588894ebc421dd6670a9dc9ad683318cf62e.
 SQL_CHECK,secret_leases#CHECK1,E04-S01,expression sha256:eaeb2f3d7eedb23813c74322cc65705a5f982436ad3ff09cca96f90b791f3295.
 SQL_CHECK,skill_proposals#CHECK1,E10-S02,expression sha256:6135d94882283ca2b4196f49c22e885ba9f5e103c92cb5189dcbf5ae046d74a3.
 SQL_CHECK,skill_proposals#CHECK2,E10-S02,expression sha256:d192ce5206fab1955af4f85e31c80ebe13ddbffb5d192520be8cb9aef9940205.
@@ -2704,6 +2724,7 @@ SQL_CHECK,verification_runs#CHECK2,E04-S05,expression sha256:a6cf1fae96de14bd551
 SQL_CHECK,workspace_backup_manifests#CHECK1,E02-S02,expression sha256:d655df4de8e781cc6e90c55c3dc17463ed950482f4a2579174a7941d46147647.
 SQL_CHECK,workspace_backup_manifests#CHECK2,E02-S02,expression sha256:c56008329a985eabb15328516ac5c937531cf2779a6a3aeeadacaee377790332.
 SQL_CHECK,workspace_instruction_revisions#CHECK1,E02-S02,expression sha256:23e04dc9122a77bd24f55b43a85dce92496194d3be6901d03f9a589fd9776524.
+SQL_CHECK,workspace_origin_sequences#CHECK1,E02-S02,expression sha256:c79974f337a26ab24eb507307ba5502d424b98467fb56b8bdbebced3ab9b29ed.
 SQL_CHECK,workspace_roots#CHECK1,E02-S03,expression sha256:4a248027a8d809591c9b939e4d719f803a9f0d9990c224513b10ca7cdf35ed51.
 SQL_CHECK,workspace_roots#CHECK2,E02-S03,expression sha256:3951ac990cd2c6aa2e389b393735bee1ec124fda78653927fdb6b86d5548bbab.
 SQL_CHECK,workspace_roots#CHECK3,E02-S03,expression sha256:1193a67bd5f56ff3e6c542448b9898f60c7757700da6fc3b207ac1d3102cb44e.
@@ -3663,6 +3684,11 @@ SQL_COLUMN,runtimes.startup_policy,E07-S01,type=TEXT; not_null=true; default=Non
 SQL_COLUMN,runtimes.trust_zone,E07-S01,type=TEXT; not_null=true; default=None; pk_order=0
 SQL_COLUMN,runtimes.version,E07-S01,type=INTEGER; not_null=true; default='1'; pk_order=0
 SQL_COLUMN,runtimes.workspace_id,E07-S01,type=TEXT; not_null=true; default=None; pk_order=0
+SQL_COLUMN,schema_migrations.applied_at,E01-S02,type=TEXT; not_null=true; default=None; pk_order=0
+SQL_COLUMN,schema_migrations.name,E01-S02,type=TEXT; not_null=true; default=None; pk_order=0
+SQL_COLUMN,schema_migrations.schema_fingerprint,E01-S02,type=TEXT; not_null=true; default=None; pk_order=0
+SQL_COLUMN,schema_migrations.source_checksum,E01-S02,type=TEXT; not_null=true; default=None; pk_order=0
+SQL_COLUMN,schema_migrations.version,E01-S02,type=INTEGER; not_null=false; default=None; pk_order=1
 SQL_COLUMN,secret_leases.allowed_usage_json,E04-S01,type=TEXT; not_null=true; default=None; pk_order=0
 SQL_COLUMN,secret_leases.attempt_id,E04-S01,type=TEXT; not_null=false; default=None; pk_order=0
 SQL_COLUMN,secret_leases.capability_ref_json,E04-S01,type=TEXT; not_null=false; default=None; pk_order=0
@@ -3847,6 +3873,9 @@ SQL_COLUMN,workspace_instruction_revisions.created_at,E02-S02,type=TEXT; not_nul
 SQL_COLUMN,workspace_instruction_revisions.parent_revisions_json,E02-S02,"type=TEXT; not_null=true; default=""'[]'""; pk_order=0"
 SQL_COLUMN,workspace_instruction_revisions.revision,E02-S02,type=INTEGER; not_null=true; default=None; pk_order=2
 SQL_COLUMN,workspace_instruction_revisions.workspace_id,E02-S02,type=TEXT; not_null=true; default=None; pk_order=1
+SQL_COLUMN,workspace_origin_sequences.last_sequence,E02-S02,type=INTEGER; not_null=true; default=None; pk_order=0
+SQL_COLUMN,workspace_origin_sequences.origin_runtime_id,E02-S02,type=TEXT; not_null=true; default=None; pk_order=2
+SQL_COLUMN,workspace_origin_sequences.workspace_id,E02-S02,type=TEXT; not_null=true; default=None; pk_order=1
 SQL_COLUMN,workspace_replication_roots.workspace_id,E06-S01,type=TEXT; not_null=true; default=None; pk_order=1
 SQL_COLUMN,workspace_replication_roots.workspace_root_id,E06-S01,type=TEXT; not_null=true; default=None; pk_order=2
 SQL_COLUMN,workspace_roots.added_by_json,E02-S03,type=TEXT; not_null=true; default=None; pk_order=0
@@ -4332,6 +4361,7 @@ SQL_FOREIGN_KEY,verification_runs#FK0.1 task_spec_revision->task_spec_revisions.
 SQL_FOREIGN_KEY,verification_runs#FK1.0 task_id->tasks.task_id,E04-S05,on_update=NO ACTION; on_delete=NO ACTION; match=NONE
 SQL_FOREIGN_KEY,workspace_backup_manifests#FK0.0 workspace_id->workspaces.workspace_id,E02-S02,on_update=NO ACTION; on_delete=NO ACTION; match=NONE
 SQL_FOREIGN_KEY,workspace_instruction_revisions#FK0.0 workspace_id->workspaces.workspace_id,E02-S02,on_update=NO ACTION; on_delete=NO ACTION; match=NONE
+SQL_FOREIGN_KEY,workspace_origin_sequences#FK0.0 workspace_id->workspaces.workspace_id,E02-S02,on_update=NO ACTION; on_delete=NO ACTION; match=NONE
 SQL_FOREIGN_KEY,workspace_replication_roots#FK0.0 workspace_id->workspace_roots.workspace_id,E06-S01,on_update=NO ACTION; on_delete=NO ACTION; match=NONE
 SQL_FOREIGN_KEY,workspace_replication_roots#FK0.1 workspace_root_id->workspace_roots.workspace_root_id,E06-S01,on_update=NO ACTION; on_delete=NO ACTION; match=NONE
 SQL_FOREIGN_KEY,workspace_replication_roots#FK1.0 workspace_id->workspaces.workspace_id,E06-S01,on_update=NO ACTION; on_delete=NO ACTION; match=NONE
@@ -4512,6 +4542,7 @@ SQL_TABLE,runtime_incarnation_local_observations,E07-S01,table DDL sha256:1ed1ee
 SQL_TABLE,runtime_incarnations,E07-S01,table DDL sha256:d5ae13ba4d859fd0c994cba7a59205d53d2fb9bfbd93bfbaf823d28027489560; fields/constraints below.
 SQL_TABLE,runtime_offers,E07-S01,table DDL sha256:88155d23a96fd0e39037add0090cf772e05b8c00de92654fc69d26c72cd22147; fields/constraints below.
 SQL_TABLE,runtimes,E07-S01,table DDL sha256:43216658fc4454c7becd6e6fa878c5c5a33809eb09a9b32d317fa9c3b4fea034; fields/constraints below.
+SQL_TABLE,schema_migrations,E01-S02,table DDL sha256:6aa2dd7539b857d67ff8f217d058046ae3308617c0997ee417e30240c923b51d; fields/constraints below.
 SQL_TABLE,secret_leases,E04-S01,table DDL sha256:85adf4d0e76b9fd56287f9de7c923d1cc7561e7837fddeb2973fa9e3b1426753; fields/constraints below.
 SQL_TABLE,skill_proposals,E10-S02,table DDL sha256:1eb5e639a97fcd0fc99e0652c1d52088f59f2302da62d0e973708bfde5d5e769; fields/constraints below.
 SQL_TABLE,steps,E03-S03,table DDL sha256:8a206072fcc9457fced1be03baa3f8505be8c972c9c70891e20e5c5cd380a898; fields/constraints below.
@@ -4525,6 +4556,7 @@ SQL_TABLE,user_requests,E11-S04,table DDL sha256:b9669b72284e380c0f657784afc6144
 SQL_TABLE,verification_runs,E04-S05,table DDL sha256:35d381a08bf92729f7b0271a61f53f5eb8ba03af66b5529cde0a80c37a504213; fields/constraints below.
 SQL_TABLE,workspace_backup_manifests,E02-S02,table DDL sha256:d69a2580b0d449b5a30efedc9921aec03e4952cf691875b2a63ba61836b91b45; fields/constraints below.
 SQL_TABLE,workspace_instruction_revisions,E02-S02,table DDL sha256:11e2506d0b908463611fef86df14084ef440f6a00d4220e25c4a35fe14a19a62; fields/constraints below.
+SQL_TABLE,workspace_origin_sequences,E02-S02,table DDL sha256:31fee770695fb49ab79c096e5445b417cd2da22165ddee468d08ed7f9c2dd250; fields/constraints below.
 SQL_TABLE,workspace_replication_roots,E06-S01,table DDL sha256:1c5dd629e46e256a1def6f8eb2ff27d017a2176a1ccd7a252d789dc651459c41; fields/constraints below.
 SQL_TABLE,workspace_roots,E02-S03,table DDL sha256:7ef41ab97d6b4e74c080452d8306558ddc6e9c0af2069b97cda93327f2152abf; fields/constraints below.
 SQL_TABLE,workspaces,E02-S02,table DDL sha256:1ac1001fb822f77642f0b9194b11d9068edbbb9af3255f5765b5ee3a20ff2ba3; fields/constraints below.

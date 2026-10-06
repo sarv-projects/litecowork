@@ -34,9 +34,17 @@ their events; every successful domain command appends its event(s) in the same c
 An `origin_sequence` is allocated monotonically per `(workspace_id, origin_runtime_id)`
 in that commit. It is not a Runtime-global sequence: peers and acknowledgements are
 Workspace-scoped, and a Workspace cursor must never wait for another Workspace's events.
-Events are append-only; corrections are new events. `payload_digest` is computed over a
-canonical serialization and checked on replication. Any signature/key format remains a
-transport/security implementation choice, but the authenticated origin must be known.
+The local StateStore keeps a durable per-Workspace/per-origin allocator row. It advances
+in the same transaction as the event and aggregate projection, survives event archival,
+and is not itself replicated. Replicas preserve the authenticated source sequence and do
+not allocate it locally.
+Events are append-only; corrections are new events. `payload_digest` is computed over the
+RFC 8785 JSON Canonicalization Scheme (JCS) serialization of `payload` and checked on
+replication. Canonical aggregate-state blob bytes use the same JCS encoding before their
+SHA-256 digest is computed. Implementations reject values outside the JSON/I-JSON domain
+required by RFC 8785 rather than hashing implementation-specific encodings. Any
+signature/key format remains a transport/security implementation choice, but the
+authenticated origin must be known.
 `aggregate_state_ref` is mandatory for every event. It points to an immutable,
 content-addressed serialization of the complete post-transition aggregate record and
 records that aggregate's revision and record-schema version. This is distinct from

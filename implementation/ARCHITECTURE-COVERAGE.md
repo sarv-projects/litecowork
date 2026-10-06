@@ -7,14 +7,14 @@ domain owners still apply. Story status tracks planning through owner acceptance
 
 ## Coverage inventory
 
-- 64 source Markdown documents; 863 heading-level sections are digest-pinned.
-- 27 implementation-plan documents and 136 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 64 source Markdown documents; 864 heading-level sections are digest-pinned.
+- 29 implementation-plan documents and 150 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
 - 55 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
 - 79 flows and 74 benchmarks.
 - 174 OpenAPI operations and 271 component schemas; 0 components are unreachable from every Operator operation.
 - 97 error codes; 212 shared IDs/value definitions.
 - 133 event types and 133 typed event payload schemas.
-- 105 SQLite tables, 1164 columns, 474 foreign-key columns, 68 unique constraints, 344 checks, 1 view(s), 140 triggers, and 76 indexes.
+- 107 SQLite tables, 1172 columns, 475 foreign-key columns, 68 unique constraints, 348 checks, 1 view(s), 140 triggers, and 76 indexes.
 
 Machine-object names and canonical digests are compared to current source contracts by
 `validate_implementation_coverage.py`. This detects inventory drift; it does not prove

@@ -35,7 +35,7 @@
       "epic": "E01",
       "title": "Transactional persistence",
       "gate": "G0",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E01-S01"
       ],
@@ -43,21 +43,27 @@
         "docs/IMPLEMENTATION.md",
         "docs/STORAGE.md",
         "docs/EVENTS.md",
+        "docs/SERVICES.md",
+        "docs/SCHEMAS.md",
         "docs/PROTOCOLS.md",
-        "docs/NETWORK-SECURITY.md"
+        "docs/NETWORK-SECURITY.md",
+        "docs/schemas/sqlite-v1.sql"
       ],
-      "implementation": "Implement domain/store ports and SQLite write executor, event+aggregate transactions, blobs/digests, migrations and projection replay; run SP02.",
-      "acceptance": "Concurrent expected-version writes have one winner; interrupted writes leave neither half-event nor partial head; projections rebuild identically.",
-      "negative_cases": "Disk full, busy timeout, missing FK/trigger, migration crash, corrupt blob.",
-      "demo": "Create a Workspace, restart storage, rebuild projections and compare digests.",
+      "implementation": "Build the first Workspace persistence vertical slice: StateStore/EventStore/BlobStore ports, WorkspaceService create and policy-update commands, bounded rusqlite writer, versioned schema migration/fingerprint, encrypted content-addressed filesystem blobs through an injected WorkspaceBlobKeyProvider, atomic aggregate/event/origin-sequence commit, restart and projection replay. rusqlite is provisional pending SP02 comparison; production OS key-provider integration is not in this slice.",
+      "acceptance": "On-disk SQLite and filesystem adapters commit Workspace state/event/sequence atomically; one of two stale competing writes wins; restart replay equals the current projection; migration/configuration drift, unsupported schema, missing keys and blob authentication fail closed. Owner acceptance remains pending and E01-S01 is still IN_REVIEW.",
+      "negative_cases": "Concurrent stale writes; injected rollback after aggregate, sequence and event writes; busy timeout; interrupted migration/retry; schema fingerprint drift; corrupt ciphertext; wrong Workspace or purpose; broad blob directory permissions; failed blob commit. Actual database/filesystem disk-full and production key-provider cases remain untested.",
+      "demo": "Run cargo test --locked -p storage-sqlite workspace_create_update_restart_and_projection_replay_match -- --nocapture, then scripts/check.sh. Confirm the printed synthetic Workspace summary, event sequence and replay equality; inspect limitations in implementation/reviews/E01-S02.md.",
       "tests": [
         "E01-S02-CODE",
         "E01-S02-SYSTEM",
         "E01-S02-USER"
       ],
       "sources": [
-        "R-TAURI",
-        "R-SQLITE"
+        "R-SQLITE-WAL",
+        "R-RUSQLITE",
+        "R-SQLX",
+        "R-RFC8785",
+        "R-JCS"
       ]
     },
     {

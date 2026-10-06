@@ -4590,15 +4590,15 @@
     "WorkspaceRootId"
   ],
   "sqlite_detail_counts": {
-    "check_constraints": 344,
-    "columns": 1164,
-    "foreign_keys": 474,
+    "check_constraints": 348,
+    "columns": 1172,
+    "foreign_keys": 475,
     "unique_constraints": 68
   },
   "sqlite_detail_digests": {
-    "check_constraints": "e81e7a17957c12f3adabe5cf863c8e403450003000a60ff38185e8bd732206e8",
-    "columns": "05e1298ac0d0ef6a9f8a6ee50438151c1238d43262612f118295c2eb1fc95f2d",
-    "foreign_keys": "de3a02acb15310b5e8fb9b18dd3ba1c8eb9b158000aed56c7381f2e55b657269",
+    "check_constraints": "389e116698f6f5c564d8b271677edb0fc1305055576378239471249072491048",
+    "columns": "47e0f75e5ad8c9bd45822eae5b2d9f78872e2418c70c5726b0aa2026c2ebb52c",
+    "foreign_keys": "5b06801aa7027594066ea2e6fc71c878d44b5ba5e6d5d6e654971526bc054aa1",
     "unique_constraints": "d7dff379393c9dc2ef1e2da46290386aeac07f01be3ee373da4cbe9429e46d54"
   },
   "sqlite_indexes": [
@@ -5507,6 +5507,11 @@
     },
     {
       "kind": "TABLE",
+      "name": "schema_migrations",
+      "sha256": "6aa2dd7539b857d67ff8f217d058046ae3308617c0997ee417e30240c923b51d"
+    },
+    {
+      "kind": "TABLE",
       "name": "secret_leases",
       "sha256": "85adf4d0e76b9fd56287f9de7c923d1cc7561e7837fddeb2973fa9e3b1426753"
     },
@@ -5569,6 +5574,11 @@
       "kind": "TABLE",
       "name": "workspace_instruction_revisions",
       "sha256": "11e2506d0b908463611fef86df14084ef440f6a00d4220e25c4a35fe14a19a62"
+    },
+    {
+      "kind": "TABLE",
+      "name": "workspace_origin_sequences",
+      "sha256": "31fee770695fb49ab79c096e5445b417cd2da22165ddee468d08ed7f9c2dd250"
     },
     {
       "kind": "TABLE",
@@ -6381,6 +6391,7 @@
     "runtime_incarnations",
     "runtime_offers",
     "runtimes",
+    "schema_migrations",
     "secret_leases",
     "skill_proposals",
     "steps",
@@ -6394,6 +6405,7 @@
     "verification_runs",
     "workspace_backup_manifests",
     "workspace_instruction_revisions",
+    "workspace_origin_sequences",
     "workspace_replication_roots",
     "workspace_roots",
     "workspaces"

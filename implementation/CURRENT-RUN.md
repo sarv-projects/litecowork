@@ -5,87 +5,85 @@ operational context; architecture and owning domain contracts remain authoritati
 
 ## Active story
 
-**E01-S01 — Contract/toolchain baseline** (`IN_REVIEW`)
+**E01-S02 — Transactional persistence** (`IN_PROGRESS`, owner review pending).
 
-The goal is one reproducible local/CI gate and a real, minimal `litecoworkd` executable
-that supports help/version only. This is a build foundation: no listener, database,
-Runtime lifecycle, UI, or agent integration is implemented yet.
+E01-S01 remains `IN_REVIEW`: the owner has not yet completed the clean-clone acceptance on
+the reference machine, and hosted GitHub Actions has not run for that work. This S02 work
+continues at the owner's direction but does not waive the dependency or claim either story
+accepted.
 
 ## Repository state
 
 - Repository: `litecowork`
 - Branch: `main`
-- Starting HEAD for this run: `a1fb178` (implementation coverage audit)
-- Implementation commit: `d50ab88` (local, not pushed); the review-evidence commit is
-  the current `HEAD` on this branch (also not pushed).
-- V1 delivery order: desktop/local first, cloud continuation second, remote Runtime third.
-- The owner reviews and accepts product behavior. Coding agents do not claim owner
-  acceptance, provider qualification, or GitHub Actions success from local checks.
-- Two read-only subagent reviews were used for bounded E01-S01 scope and toolchain/CI
-  review, at the owner's request. Their shared finding was to move storage, generated
-  client, and native-provider tests to the stories that implement those systems.
+- Base for this S02 working tree: `61b4376c12127664faf7dceca4825569bfdb8cc6`
+- This storage slice is committed locally for owner review; the branch was already two commits
+  ahead of `origin/main` at the start of the run.
+- No push is authorized or performed in this run.
+- V1 order remains desktop/local first, cloud continuation second, remote Runtime third.
+- Coding agents implement and report evidence; the owner reviews and accepts product
+  behavior. Agents do not claim hosted CI, owner-machine acceptance, provider qualification,
+  or production readiness from local tests.
 
-## Implemented in this run
+## Completed in this run
 
-- Pinned Rust 1.98.1 in `rust-toolchain.toml`, Python 3.13.12 in `.python-version`, and
-  uv 0.12.23 in `.uv-version`; added reproducible Python validator dependencies in
-  `pyproject.toml`/`uv.lock` and a Rust workspace lockfile.
-- Added `apps/litecoworkd`, with process-level help, version, and unsupported-argument
-  behavior tests, including that secret-shaped argument values are not echoed. It does not
-  open a listener, storage, or an agent.
-- Added `scripts/check.sh` for exact tool-version checks, Rust format/Clippy/tests/build,
-  Python fixture tests, both required contract validators, and whitespace validation.
-- Updated the existing GitHub Actions workflow to install the pinned toolchains and run
-  the same local check command.
-- Added valid/malformed-schema fixtures and wrong-tool-version checks.
-- Updated the E01-S01 epic/backlog scope, deferred Node/TypeScript/pnpm pinning to E02-S01,
-  and aligned its states with `implementation/PROCESS.md`: `PLANNED`, `READY`,
-  `IN_PROGRESS`, `IN_REVIEW`, `BLOCKED`, and owner-approved `ACCEPTED`. Accepted stories
-  also require accepted dependencies.
-- Regenerated architecture coverage outputs after the implementation-plan changes.
+- Added Rust `storage-core` ports for `StateStore`, `EventStore`, `BlobStore`, and their
+  Workspace persistence composition.
+- Added `domain-workspace::WorkspaceService` create and replication-policy update commands
+  with expected-version checks and closed, versioned Workspace events.
+- Added `storage-sqlite`: bounded writer actor; FK/WAL/FULL durability configuration;
+  canonical v1 DDL migration; source checksum and resulting-schema fingerprint; bounded
+  busy timeout; immediate transactions; atomic Workspace projection/event/origin-sequence
+  commits; replay from immutable state blobs; and error mapping.
+- Added encrypted content-addressed `FileBlobStore` with Workspace/purpose-scoped paths,
+  XChaCha20-Poly1305 authenticated data, versioned injected keys, digest/size validation,
+  atomic no-clobber writes, fsync, and fail-closed permissions/key errors. Tests use a
+  fixed test-only key. There is no production key provider.
+- Added adversarial tests for JCS ordering/number formatting, unsafe integer rejection,
+  migration receipts/rollback, schema drift, concurrent stale writes, transaction rollback,
+  busy timeout, replay, corrupt/wrong-scope blobs, unavailable keys, broad directory
+  permissions, private SQLite state-directory/file permissions, symlink database paths,
+  and failed BlobStore commits.
+- Updated the storage/event/schema docs, E01-S02 story/backlog, provisional SP02 report,
+  research references and generated implementation coverage.
 
-## Verification run
+## Verification status
 
-Run from repository root:
+The focused replay test has passed on Ubuntu 24.04.4 LTS x86_64 and printed:
 
-```sh
-scripts/check.sh
+```text
+storage replay: sqlite=3.53.2, workspace=workspace-persist, version=2, policy=METADATA_ONLY, events=2, replay_matches=true
 ```
 
-Expected local evidence includes:
+Toolchain observed: Rust 1.98.1, Cargo 1.98.1, uv 0.12.23, Python 3.13.12; rusqlite
+0.40.2 with bundled SQLite 3.53.2. The complete `scripts/check.sh` passed after the implementation and coverage inventory
+were refreshed: Rust format, Clippy, 24 Rust tests, build, 6 Python tests, architecture
+validation, implementation-plan/coverage validation (64 documents, 4,793 rows), and
+`git diff --check`. This is local Ubuntu evidence only; owner-machine acceptance and hosted
+GitHub Actions remain pending.
 
-- Rust 1.98.1, Python 3.13.12, uv 0.12.23.
-- 4 Rust CLI integration tests pass.
-- 6 Python tests pass, covering valid/malformed schemas, toolchain mismatch rejection, and
-  CI/local command version agreement.
-- Architecture validator passes all machine/document checks.
-- Implementation-plan and generated coverage validation pass.
-- `git diff --check` passes.
+Exact review instructions and limitations are in the [E01-S02 review packet](reviews/E01-S02.md).
+SP02 is partial: there is no SQLx comparison, performance/backpressure benchmark, or real
+disk-full injection. No production keychain/cloud key-service, key rotation/recovery, or
+cryptographic review exists. This library is not yet wired into `litecoworkd`, the desktop,
+Operator transport, or a real external provider.
 
-A disposable local clone of the implementation commit passed `scripts/check.sh` on Linux.
-GitHub Actions has not run for this change, and the owner has not yet run the clean-clone
-acceptance case on the reference development machine. This packet does not claim either
-result. Do not mark the story `ACCEPTED` until the owner has reviewed the change and run
-the owner acceptance case in `implementation/epics/E01.md`.
+## Next actions
 
-Detailed commands, versions, fixtures, results, limitations, and remaining gates are in the
-[E01-S01 review packet](reviews/E01-S01.md).
+1. Review the local implementation commit and its S02 review packet; do not push without an
+   explicit owner instruction.
+2. Owner runs the S02 replay command and `scripts/check.sh`, records OS/output/decision in
+   `implementation/reviews/E01-S02.md`, and reviews the limitations.
+4. Owner separately completes E01-S01 reference-machine acceptance and hosted Actions.
+   Neither E01-S01 nor E01-S02 may become `ACCEPTED` before its explicit owner gates and
+   dependency conditions are met.
 
-## Owner review still required
+## Next implementation scope
 
-1. Review the local commit and confirm the pinned actions/toolchain setup is acceptable.
-2. Run `scripts/check.sh`, `cargo run --locked -p litecoworkd -- --help`, and
-   `cargo run --locked -p litecoworkd -- --version` in a clean checkout on the reference
-   development machine; record OS/tool versions and output. GitHub Actions remains a CI
-   check after the branch is pushed through the owner's workflow.
-3. Request any corrections, then set E01-S01 to `ACCEPTED` only after the owner evidence
-   and CI result are satisfactory. E01-S02 is dependency-gated on that acceptance.
-
-## Next story after E01-S01
-
-E01-S02 implements the storage ports and SQLite write executor. Before coding, reread the
-full current contracts in `docs/IMPLEMENTATION.md`, `docs/STORAGE.md`, `docs/EVENTS.md`,
-`docs/PROTOCOLS.md`, and the exact `docs/schemas/sqlite-v1.sql` plus event schema sections.
-Implement the transaction/recovery slice and its adversarial tests before touching UI,
-agent adapters, or cloud work. Run SP02 in that story. Never infer product behavior from
-passing architecture validators.
+After review, continue the next dependency-ready story. Do not add UI, Operator transport,
+agent adapters, cloud Runtime, RAG, or production key-service behavior to E01-S02 without a
+contract/story change. Re-read `AGENTS.md`, the story, `docs/IMPLEMENTATION.md`,
+`docs/STORAGE.md`, `docs/EVENTS.md`, `docs/SERVICES.md`, `docs/PROTOCOLS.md`,
+`docs/NETWORK-SECURITY.md`, `docs/schemas/sqlite-v1.sql`, and relevant event schemas before
+the next storage domain slice. Preserve the Task/Attempt/Effect/Evidence/Trust/fencing
+invariants.

@@ -1,5 +1,10 @@
 [workspace]
-members = ["apps/litecoworkd"]
+members = [
+  "apps/litecoworkd",
+  "crates/storage-core",
+  "crates/storage-sqlite",
+  "crates/domain-workspace",
+]
 resolver = "3"
 
 [workspace.package]
