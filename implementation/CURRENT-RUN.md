@@ -16,7 +16,8 @@ Runtime lifecycle, UI, or agent integration is implemented yet.
 - Repository: `litecowork`
 - Branch: `main`
 - Starting HEAD for this run: `a1fb178` (implementation coverage audit)
-- Implementation review commit: current local `HEAD` (do not assume it has been pushed).
+- Implementation commit: `d50ab88` (local, not pushed); the review-evidence commit is
+  the current `HEAD` on this branch (also not pushed).
 - V1 delivery order: desktop/local first, cloud continuation second, remote Runtime third.
 - The owner reviews and accepts product behavior. Coding agents do not claim owner
   acceptance, provider qualification, or GitHub Actions success from local checks.
@@ -66,6 +67,9 @@ GitHub Actions has not run for this change, and the owner has not yet run the cl
 acceptance case on the reference development machine. This packet does not claim either
 result. Do not mark the story `ACCEPTED` until the owner has reviewed the change and run
 the owner acceptance case in `implementation/epics/E01.md`.
+
+Detailed commands, versions, fixtures, results, limitations, and remaining gates are in the
+[E01-S01 review packet](reviews/E01-S01.md).
 
 ## Owner review still required
 
