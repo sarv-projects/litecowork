@@ -549,6 +549,59 @@ fn external_writer_lock_returns_busy_without_partial_state() {
 }
 
 #[test]
+fn writer_metrics_record_send_wait_and_bounded_in_flight_pressure() {
+    const WRITERS: usize = 24;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_millis(120));
+    create_workspace(&store, "workspace-pressure");
+    let lock = Connection::open(state_database(&directory)).expect("open lock connection");
+    lock.execute_batch("BEGIN IMMEDIATE")
+        .expect("hold writer lock");
+
+    let barrier = Arc::new(Barrier::new(WRITERS + 1));
+    let writers: Vec<_> = (0..WRITERS)
+        .map(|index| {
+            let store = store.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                service(store).change_replication_policy(ChangeReplicationPolicy {
+                    workspace_id: "workspace-pressure".to_owned(),
+                    expected_version: 1,
+                    policy: ReplicationPolicy::MetadataOnly,
+                    replication_scope_root_ids: Vec::new(),
+                    event: context(&format!("event-pressure-{index}"), 1),
+                })
+            })
+        })
+        .collect();
+    barrier.wait();
+
+    for writer in writers {
+        assert!(matches!(
+            writer.join().expect("writer thread joins"),
+            Err(StoreError::Busy)
+        ));
+    }
+
+    lock.execute_batch("ROLLBACK").expect("release writer lock");
+    let metrics = store.writer_metrics_snapshot();
+    assert_eq!(metrics.outstanding_commands, 0);
+    assert!(metrics.outstanding_commands_peak > 8);
+    assert!(metrics.send_wait_nanos_total > 10_000_000);
+    assert!(metrics.send_wait_nanos_max > 10_000_000);
+    assert_eq!(
+        store
+            .get_workspace("workspace-pressure")
+            .expect("read state")
+            .expect("Workspace exists")
+            .version,
+        1
+    );
+}
+
+#[test]
 fn workspace_policy_event_payload_is_closed_and_versioned() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let store = test_store(&directory, Duration::from_secs(1));

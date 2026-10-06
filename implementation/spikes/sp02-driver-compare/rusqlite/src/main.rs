@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let summary = run_mixed_load(updates_per_workspace)?;
         println!(
-            "rusqlite product adapter mixed load (SQLite {}, queue=32, WAL + FULL): updates={}, reads={}, elapsed_ms={:.2}, write_p50_us={}, write_p95_us={}, read_p50_us={}, read_p95_us={}, snapshots_coherent={}, replayed_workspaces={}, replay_matches={}",
+            "rusqlite product adapter mixed load (SQLite {}, queue=32, WAL + FULL): updates={}, reads={}, elapsed_ms={:.2}, write_p50_us={}, write_p95_us={}, read_p50_us={}, read_p95_us={}, send_wait_total_us={}, send_wait_max_us={}, outstanding_peak={}, snapshots_coherent={}, replayed_workspaces={}, replay_matches={}",
             summary.sqlite_version,
             summary.completed_updates,
             summary.observed_reads,
@@ -86,6 +86,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             summary.write_p95.as_micros(),
             summary.read_p50.as_micros(),
             summary.read_p95.as_micros(),
+            summary.send_wait_total.as_micros(),
+            summary.send_wait_max.as_micros(),
+            summary.outstanding_commands_peak,
             summary.coherent_snapshots,
             summary.replayed_workspaces,
             summary.replay_matches,
@@ -232,6 +235,9 @@ struct MixedLoadSummary {
     write_p95: Duration,
     read_p50: Duration,
     read_p95: Duration,
+    send_wait_total: Duration,
+    send_wait_max: Duration,
+    outstanding_commands_peak: u64,
     coherent_snapshots: bool,
     replayed_workspaces: usize,
     replay_matches: bool,
@@ -369,6 +375,7 @@ fn run_mixed_load(
 
     read_latencies.sort_unstable();
     write_latencies.sort_unstable();
+    let writer_metrics = store.writer_metrics_snapshot();
     drop(setup);
     drop(store);
 
@@ -407,6 +414,9 @@ fn run_mixed_load(
         write_p95: percentile(&write_latencies, 0.95),
         read_p50: percentile(&read_latencies, 0.50),
         read_p95: percentile(&read_latencies, 0.95),
+        send_wait_total: Duration::from_nanos(writer_metrics.send_wait_nanos_total),
+        send_wait_max: Duration::from_nanos(writer_metrics.send_wait_nanos_max),
+        outstanding_commands_peak: writer_metrics.outstanding_commands_peak,
         coherent_snapshots,
         replayed_workspaces: MIXED_WRITERS,
         replay_matches,

@@ -17,8 +17,8 @@ it does not waive the dependency or claim either story accepted.
 - Branch: `main`
 - S02 implementation base: `61b4376c12127664faf7dceca4825569bfdb8cc6`
 - Most recent completed qualification commit: `test(storage): qualify mixed SQLite read-write load`.
-- At the start of this run, `main` was five commits ahead of `origin/main`. The mixed-load
-  qualification is now committed locally; `main` is six commits ahead of `origin/main`.
+- At the start of this run, `main` was seven commits ahead of `origin/main`; this current
+  writer-pressure telemetry slice is uncommitted.
 - No push is authorized or performed in this run.
 - V1 delivery order remains desktop/local, cloud continuation, then remote Runtime.
 - Coding agents implement and report evidence; the owner reviews and accepts product
@@ -71,14 +71,19 @@ it does not waive the dependency or claim either story accepted.
   32-slot writer queue, and 1,200 updates per measured run. Readers check monotonic,
   policy-consistent snapshots; close/reopen verifies replay for all 40 Workspaces. Three
   sequential runs passed integrity checks but showed highly variable elapsed and tail
-  latency. Queue wait/occupancy is not instrumented, so sustained backpressure remains open.
+  latency. Exact queue occupancy is not exposed; longer capacity qualification remains open.
+- Added process-local `SqliteWriterMetricsSnapshot` observations for outstanding command
+  submissions and bounded-channel send wait. A held external writer lock test confirms
+  blocked callers raise the high-water mark and settle without a partial Workspace write.
+  This is runtime telemetry only; it is not durable state, exact queue occupancy, or an
+  Operator metrics export.
 
 ## Verification status
 
 Focused checks passed during this run:
 
 - `cargo test --no-default-features --features sqlite-rusqlite-defaults -p storage-sqlite --offline`:
-  18 passed using system SQLite while retaining rusqlite's non-bundle default features.
+  19 passed using system SQLite while retaining rusqlite's non-bundle default features.
 - `cargo test --manifest-path implementation/spikes/sp02-driver-compare/Cargo.toml --offline`:
   6 passed, including the encrypted Workspace restart/replay run and production blob tests.
 - `cargo test --manifest-path implementation/spikes/sp02-driver-compare/rusqlite/Cargo.toml --offline`:
@@ -87,7 +92,7 @@ Focused checks passed during this run:
   replayed Workspaces and `replay_matches=true`.
 
 The full `scripts/check.sh` passed after refreshing generated coverage. It ran Rust formatting,
-Clippy, build and 24 workspace Rust tests; six Python tests; architecture validation; plan
+Clippy, build and 25 workspace Rust tests; six Python tests; architecture validation; plan
 and coverage validation (64 documents, 864 sections, 4,798 traceability rows); and
 `git diff --check`. Locked SQLx and rusqlite spike test commands also passed after the
 feature correction. Default production bundled SQLite remains SQLite 3.53.2 as previously
@@ -95,9 +100,10 @@ recorded. Owner-machine acceptance and hosted GitHub Actions remain pending.
 
 Exact review instructions and remaining product limitations are in
 [`reviews/E01-S02.md`](reviews/E01-S02.md) and [`spikes/SP02.md`](spikes/SP02.md). SP02 and
-E01-S02 remain partial/in progress. The mixed-load correctness sample is complete, but
-sustained backpressure characterization, memory, cancellation/shutdown, disk-full
-injection, key-service qualification, key rotation and cryptographic review are still open.
+E01-S02 remain partial/in progress. The mixed-load correctness and initial pressure sample
+is complete, but longer supported-hardware capacity qualification, memory,
+cancellation/shutdown, disk-full injection, key-service qualification, key rotation and
+cryptographic review are still open.
 The storage library is not yet wired into
 `litecoworkd`, the desktop, Operator transport, or a real external provider.
 

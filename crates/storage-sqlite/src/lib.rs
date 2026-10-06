@@ -10,10 +10,11 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use storage_core::{
     AggregateStateRef, BlobPurpose, BlobStore, CommittedWorkspace, DomainEvent, EventDraft,
@@ -29,6 +30,26 @@ const STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.aggregate-state+json"
 pub struct SqliteConfig {
     pub writer_queue_capacity: usize,
     pub busy_timeout: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SqliteWriterMetricsSnapshot {
+    /// Public storage commands submitted, including callers waiting for queue capacity.
+    pub outstanding_commands: u64,
+    /// Maximum simultaneous submitted commands observed since this adapter opened.
+    pub outstanding_commands_peak: u64,
+    /// Total elapsed time inside bounded-channel `send` calls, in nanoseconds.
+    pub send_wait_nanos_total: u64,
+    /// Maximum elapsed time inside one bounded-channel `send` call, in nanoseconds.
+    pub send_wait_nanos_max: u64,
+}
+
+#[derive(Default)]
+struct SqliteWriterMetrics {
+    outstanding_commands: AtomicU64,
+    outstanding_commands_peak: AtomicU64,
+    send_wait_nanos_total: AtomicU64,
+    send_wait_nanos_max: AtomicU64,
 }
 
 impl Default for SqliteConfig {
@@ -49,6 +70,7 @@ struct Inner {
     sender: SyncSender<Command>,
     join: Mutex<Option<JoinHandle<()>>>,
     blobs: Arc<dyn BlobStore>,
+    writer_metrics: SqliteWriterMetrics,
 }
 
 enum Command {
@@ -114,6 +136,7 @@ impl SqliteWorkspaceStore {
                     sender,
                     join: Mutex::new(Some(join)),
                     blobs,
+                    writer_metrics: SqliteWriterMetrics::default(),
                 }),
             }),
             Ok(Err(error)) => {
@@ -176,31 +199,83 @@ impl SqliteWorkspaceStore {
 
     pub fn sqlite_version(&self) -> Result<String, StoreError> {
         let (reply_sender, reply_receiver) = mpsc::channel();
-        self.inner
-            .sender
-            .send(Command::SqliteVersion {
+        self.execute_command(
+            Command::SqliteVersion {
                 reply: reply_sender,
-            })
-            .map_err(|_| StoreError::ExecutorStopped)?;
-        reply_receiver
-            .recv()
-            .map_err(|_| StoreError::ExecutorStopped)?
+            },
+            reply_receiver,
+        )
+    }
+
+    /// Reports process-local writer dispatch pressure; this is operational telemetry,
+    /// not durable Workspace or Task state.
+    pub fn writer_metrics_snapshot(&self) -> SqliteWriterMetricsSnapshot {
+        SqliteWriterMetricsSnapshot {
+            outstanding_commands: self
+                .inner
+                .writer_metrics
+                .outstanding_commands
+                .load(Ordering::Relaxed),
+            outstanding_commands_peak: self
+                .inner
+                .writer_metrics
+                .outstanding_commands_peak
+                .load(Ordering::Relaxed),
+            send_wait_nanos_total: self
+                .inner
+                .writer_metrics
+                .send_wait_nanos_total
+                .load(Ordering::Relaxed),
+            send_wait_nanos_max: self
+                .inner
+                .writer_metrics
+                .send_wait_nanos_max
+                .load(Ordering::Relaxed),
+        }
+    }
+
+    fn execute_command<T>(
+        &self,
+        command: Command,
+        reply_receiver: Receiver<Result<T, StoreError>>,
+    ) -> Result<T, StoreError> {
+        let metrics = &self.inner.writer_metrics;
+        let outstanding = metrics
+            .outstanding_commands
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        metrics
+            .outstanding_commands_peak
+            .fetch_max(outstanding, Ordering::Relaxed);
+
+        let send_started = Instant::now();
+        let sent = self.inner.sender.send(command);
+        let send_wait = duration_as_nanos(send_started.elapsed());
+        atomic_saturating_add(&metrics.send_wait_nanos_total, send_wait);
+        metrics
+            .send_wait_nanos_max
+            .fetch_max(send_wait, Ordering::Relaxed);
+        if sent.is_err() {
+            metrics.outstanding_commands.fetch_sub(1, Ordering::Relaxed);
+            return Err(StoreError::ExecutorStopped);
+        }
+
+        let response = reply_receiver.recv();
+        metrics.outstanding_commands.fetch_sub(1, Ordering::Relaxed);
+        response.map_err(|_| StoreError::ExecutorStopped)?
     }
 }
 
 impl StateStore for SqliteWorkspaceStore {
     fn get_workspace(&self, workspace_id: &str) -> Result<Option<Workspace>, StoreError> {
         let (reply_sender, reply_receiver) = mpsc::channel();
-        self.inner
-            .sender
-            .send(Command::GetWorkspace {
+        self.execute_command(
+            Command::GetWorkspace {
                 workspace_id: workspace_id.to_owned(),
                 reply: reply_sender,
-            })
-            .map_err(|_| StoreError::ExecutorStopped)?;
-        reply_receiver
-            .recv()
-            .map_err(|_| StoreError::ExecutorStopped)?
+            },
+            reply_receiver,
+        )
     }
 
     fn commit_workspace(
@@ -234,9 +309,8 @@ impl StateStore for SqliteWorkspaceStore {
             record_schema_version: 1,
         };
         let (reply_sender, reply_receiver) = mpsc::channel();
-        self.inner
-            .sender
-            .send(Command::CommitWorkspace {
+        self.execute_command(
+            Command::CommitWorkspace {
                 commit: Box::new(WorkspaceCommit {
                     expected_version,
                     workspace,
@@ -244,27 +318,37 @@ impl StateStore for SqliteWorkspaceStore {
                     state_ref,
                 }),
                 reply: reply_sender,
-            })
-            .map_err(|_| StoreError::ExecutorStopped)?;
-        reply_receiver
-            .recv()
-            .map_err(|_| StoreError::ExecutorStopped)?
+            },
+            reply_receiver,
+        )
     }
 }
 
 impl EventStore for SqliteWorkspaceStore {
     fn read_workspace_events(&self, workspace_id: &str) -> Result<Vec<DomainEvent>, StoreError> {
         let (reply_sender, reply_receiver) = mpsc::channel();
-        self.inner
-            .sender
-            .send(Command::ReadWorkspaceEvents {
+        self.execute_command(
+            Command::ReadWorkspaceEvents {
                 workspace_id: workspace_id.to_owned(),
                 reply: reply_sender,
-            })
-            .map_err(|_| StoreError::ExecutorStopped)?;
-        reply_receiver
-            .recv()
-            .map_err(|_| StoreError::ExecutorStopped)?
+            },
+            reply_receiver,
+        )
+    }
+}
+
+fn duration_as_nanos(duration: Duration) -> u64 {
+    duration.as_nanos().min(u64::MAX as u128) as u64
+}
+
+fn atomic_saturating_add(counter: &AtomicU64, value: u64) {
+    let mut current = counter.load(Ordering::Relaxed);
+    loop {
+        let next = current.saturating_add(value);
+        match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return,
+            Err(observed) => current = observed,
+        }
     }
 }
 

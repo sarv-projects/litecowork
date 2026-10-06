@@ -942,7 +942,10 @@ owning Broker or Supervisor port.
 
 Transactional storage for current aggregate state and rebuildable projections. Aggregate
 mutation and its DomainEvent append commit atomically. It exposes unit-of-work/transaction
-scope to owning services, not raw SQL to domain code.
+scope to owning services, not raw SQL to domain code. The SQLite adapter may expose a
+process-local writer-pressure snapshot to observability; it includes outstanding command
+submissions and bounded-channel send wait, is best-effort under concurrency, and is never
+durable domain state or an authorization input.
 
 ### WorkspaceSnapshotPort
 

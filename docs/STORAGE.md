@@ -15,8 +15,16 @@ aggregate projection, its event(s), request-deduplication receipt, and the local
 Workspace/origin sequence allocator. `EventStore` reads immutable streams/cursors and
 accepts authenticated replication through the transaction owner. `BlobStore` provides
 immutable content-addressed `put/get/verify` operations; it does not make domain
-decisions. The SQLite adapter exposes one bounded writer executor and performs no
-provider, filesystem-encryption-key, or network call while a SQL transaction is open.
+decisions. The SQLite adapter exposes one bounded writer executor and process-local
+`SqliteWriterMetricsSnapshot` observations for outstanding commands and elapsed time in
+bounded-channel sends. Outstanding commands include callers blocked while submitting,
+queued commands and the active command awaiting its response; they are not exact channel
+occupancy. Send elapsed time includes local call overhead and is not database execution
+time. A snapshot reads independent atomics and is best-effort under concurrent load, not a
+cross-field transactional sample. These observations are ephemeral operational state,
+never persisted or replicated.
+The adapter performs no provider, filesystem-encryption-key, or network call while a SQL
+transaction is open.
 Blob bytes are committed and verified before a transaction can reference them; a failed
 transaction may leave an unreferenced blob for delayed garbage collection.
 

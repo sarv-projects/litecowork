@@ -75,6 +75,11 @@ Never log raw secrets, tokens, cookies or unredacted provider credentials.
 - event_to_projection_latency
 - event_to_operator_update_latency
 - projection_rebuild_time
+- sqlite_writer_commands_outstanding and process-lifetime high-water mark; this counts
+  callers submitting, queued commands, and the active command awaiting its response, not
+  exact bounded-channel occupancy
+- sqlite_writer_command_send_wait_seconds_total and maximum; elapsed time inside bounded
+  channel sends, including local call overhead but excluding response/SQL execution time
 
 ### World Index
 - local_resource_search_latency by root-count and indexed-item-count tier
