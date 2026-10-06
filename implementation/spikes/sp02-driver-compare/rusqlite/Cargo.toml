@@ -1,0 +1,11 @@
+[package]
+name = "sp02-rusqlite-qualification"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+tempfile = "3.20"

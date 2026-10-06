@@ -46,6 +46,12 @@ accepted.
   and failed BlobStore commits.
 - Updated the storage/event/schema docs, E01-S02 story/backlog, provisional SP02 report,
   research references and generated implementation coverage.
+- Added a separate-process SQLx 0.9.0 and rusqlite 0.40.2 SP02 harness. Both apply the
+  canonical DDL and exercise an eight-producer, 32-slot bounded writer with WAL/FULL and
+  Workspace version/sequence/event transactions. SQLx includes a mid-transaction rollback
+  test. Three optimized 1,000-write samples per driver are recorded in `SP02.md`; because
+  their bundled SQLite versions differ and the harness excludes encrypted aggregate-state
+  blobs, it is explicitly exploratory and does not select the production driver.
 
 ## Verification status
 
@@ -58,15 +64,17 @@ storage replay: sqlite=3.53.2, workspace=workspace-persist, version=2, policy=ME
 Toolchain observed: Rust 1.98.1, Cargo 1.98.1, uv 0.12.23, Python 3.13.12; rusqlite
 0.40.2 with bundled SQLite 3.53.2. The complete `scripts/check.sh` passed after the implementation and coverage inventory
 were refreshed: Rust format, Clippy, 24 Rust tests, build, 6 Python tests, architecture
-validation, implementation-plan/coverage validation (64 documents, 4,793 rows), and
+validation, implementation-plan/coverage validation (64 documents, 4,796 rows), and
 `git diff --check`. This is local Ubuntu evidence only; owner-machine acceptance and hosted
 GitHub Actions remain pending.
 
 Exact review instructions and limitations are in the [E01-S02 review packet](reviews/E01-S02.md).
-SP02 is partial: there is no SQLx comparison, performance/backpressure benchmark, or real
-disk-full injection. No production keychain/cloud key-service, key rotation/recovery, or
-cryptographic review exists. This library is not yet wired into `litecoworkd`, the desktop,
-Operator transport, or a real external provider.
+SP02 remains partial: the separate-process driver sample is not a controlled full-adapter
+comparison, and mixed reader/writer behavior, adapter-level backpressure, memory,
+cancellation/shutdown, and real disk-full injection remain unqualified. No production
+keychain/cloud key-service, key rotation/recovery, or cryptographic review exists. This
+library is not yet wired into `litecoworkd`, the desktop, Operator transport, or a real
+external provider.
 
 ## Next actions
 
@@ -77,6 +85,9 @@ Operator transport, or a real external provider.
 4. Owner separately completes E01-S01 reference-machine acceptance and hosted Actions.
    Neither E01-S01 nor E01-S02 may become `ACCEPTED` before its explicit owner gates and
    dependency conditions are met.
+5. If continuing S02 qualification, use the pinned spike commands in
+   `implementation/spikes/sp02-driver-compare/README.md`; first control SQLite version and
+   include the encrypted aggregate-state blob path before using timings to choose a driver.
 
 ## Next implementation scope
 

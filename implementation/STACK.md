@@ -61,7 +61,7 @@ Docling is a parsing candidate, not a guarantee of lossless office fidelity.
 | ID | Experiment | Required output / decision |
 |---|---|---|
 | SP01 | Tauri+React native shell on Linux; Windows/macOS qualification matrix | Daemon survives UI close; tray/reconnect; install prerequisites; supported driver limitations |
-| SP02 | rusqlite vs SQLx, actual contract DDL, write+event+projection transactions | Contract DDL and rusqlite transaction/crash/busy/replay checks are implemented; SQLx comparison, contention/backpressure benchmarks, and disk-full injection remain open; no production driver choice yet |
+| SP02 | rusqlite vs SQLx, actual contract DDL, write+event+projection transactions | Product rusqlite adapter and recovery checks are implemented; isolated SQLx/rusqlite bounded-writer samples exercise a reduced transaction shape but differ in bundled SQLite version; full-adapter comparison, mixed read/write qualification, disk-full injection, and production driver choice remain open |
 | SP03 | Authenticated Operator transport and event reconnect | Threat tests for malicious local page, stolen token, origin/peer identity; choose transport |
 | SP04 | Codex App Server, Claude supported host interface, OpenCode server, Cline | Feature matrix from real runs; select first full-harness adapter and explicit unsupported features |
 | SP05 | Local-model harness on two measured hardware profiles | Tool success, context/cancel, time-to-first-token, RSS/VRAM, no-network run; no brand-parity claim |
