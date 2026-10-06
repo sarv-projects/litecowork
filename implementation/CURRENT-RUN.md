@@ -67,6 +67,11 @@ it does not waive the dependency or claim either story accepted.
   features for production. The benchmark disables only SQLite bundling while explicitly
   preserving those rusqlite defaults. The storage runtime test wording now applies to both
   bundled and system SQLite builds.
+- Added a rusqlite product-adapter mixed workload: 40 Workspace writers, four readers, a
+  32-slot writer queue, and 1,200 updates per measured run. Readers check monotonic,
+  policy-consistent snapshots; close/reopen verifies replay for all 40 Workspaces. Three
+  sequential runs passed integrity checks but showed highly variable elapsed and tail
+  latency. Queue wait/occupancy is not instrumented, so sustained backpressure remains open.
 
 ## Verification status
 
@@ -77,22 +82,23 @@ Focused checks passed during this run:
 - `cargo test --manifest-path implementation/spikes/sp02-driver-compare/Cargo.toml --offline`:
   6 passed, including the encrypted Workspace restart/replay run and production blob tests.
 - `cargo test --manifest-path implementation/spikes/sp02-driver-compare/rusqlite/Cargo.toml --offline`:
-  1 passed using the product adapter.
+  2 passed using the product adapter, including mixed-load snapshot/replay correctness.
 - Three release samples per driver completed; every run reported SQLite 3.45.1, eight
   replayed Workspaces and `replay_matches=true`.
 
 The full `scripts/check.sh` passed after refreshing generated coverage. It ran Rust formatting,
 Clippy, build and 24 workspace Rust tests; six Python tests; architecture validation; plan
-and coverage validation (64 documents, 864 sections, 4,797 traceability rows); and
+and coverage validation (64 documents, 864 sections, 4,798 traceability rows); and
 `git diff --check`. Locked SQLx and rusqlite spike test commands also passed after the
 feature correction. Default production bundled SQLite remains SQLite 3.53.2 as previously
 recorded. Owner-machine acceptance and hosted GitHub Actions remain pending.
 
 Exact review instructions and remaining product limitations are in
 [`reviews/E01-S02.md`](reviews/E01-S02.md) and [`spikes/SP02.md`](spikes/SP02.md). SP02 and
-E01-S02 remain partial/in progress. Mixed reader/writer load, sustained backpressure,
-memory, cancellation/shutdown, disk-full injection, key-service qualification, key rotation
-and cryptographic review are still open. The storage library is not yet wired into
+E01-S02 remain partial/in progress. The mixed-load correctness sample is complete, but
+sustained backpressure characterization, memory, cancellation/shutdown, disk-full
+injection, key-service qualification, key rotation and cryptographic review are still open.
+The storage library is not yet wired into
 `litecoworkd`, the desktop, Operator transport, or a real external provider.
 
 ## Next actions

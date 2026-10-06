@@ -1,6 +1,8 @@
 use domain_workspace::{ChangeReplicationPolicy, CreateWorkspace, EventContext, WorkspaceService};
 use std::{
     sync::Arc,
+    sync::Barrier,
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -12,6 +14,10 @@ use tempfile::TempDir;
 use zeroize::Zeroizing;
 
 const PRODUCERS: usize = 8;
+const READERS: usize = 4;
+const MIXED_WRITERS: usize = 40;
+const MAX_MIXED_UPDATES_PER_WORKSPACE: usize = 10_000;
+const MAX_RECORDED_READ_SAMPLES_PER_READER: usize = 100_000;
 
 #[derive(Clone)]
 struct TestKeys;
@@ -53,7 +59,48 @@ struct Summary {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let writes = parse_write_count()?;
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() == Some("mixed") {
+        let updates_per_workspace = args
+            .next()
+            .map(|arg| arg.parse::<usize>())
+            .transpose()?
+            .unwrap_or(200);
+        if updates_per_workspace == 0 {
+            return Err("updates per workspace must be greater than zero".into());
+        }
+        if updates_per_workspace > MAX_MIXED_UPDATES_PER_WORKSPACE {
+            return Err(format!(
+                "updates per workspace must not exceed {MAX_MIXED_UPDATES_PER_WORKSPACE}"
+            )
+            .into());
+        }
+        let summary = run_mixed_load(updates_per_workspace)?;
+        println!(
+            "rusqlite product adapter mixed load (SQLite {}, queue=32, WAL + FULL): updates={}, reads={}, elapsed_ms={:.2}, write_p50_us={}, write_p95_us={}, read_p50_us={}, read_p95_us={}, snapshots_coherent={}, replayed_workspaces={}, replay_matches={}",
+            summary.sqlite_version,
+            summary.completed_updates,
+            summary.observed_reads,
+            summary.elapsed.as_secs_f64() * 1_000.0,
+            summary.write_p50.as_micros(),
+            summary.write_p95.as_micros(),
+            summary.read_p50.as_micros(),
+            summary.read_p95.as_micros(),
+            summary.coherent_snapshots,
+            summary.replayed_workspaces,
+            summary.replay_matches,
+        );
+        return Ok(());
+    }
+
+    let writes = std::env::args()
+        .nth(1)
+        .map(|arg| arg.parse::<usize>())
+        .transpose()?
+        .unwrap_or(1_000);
+    if writes == 0 {
+        return Err("write count must be greater than zero".into());
+    }
     let summary = run(writes)?;
     println!(
         "rusqlite product adapter (SQLite {}, encrypted aggregate-state blobs, bounded writer queue=32, WAL + FULL): updates={writes}, producers={PRODUCERS}, elapsed_ms={:.2}, throughput_per_s={:.1}, end_to_end_p50_us={}, end_to_end_p95_us={}, replayed_workspaces={}, replay_matches={}",
@@ -66,18 +113,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         summary.replay_matches,
     );
     Ok(())
-}
-
-fn parse_write_count() -> Result<usize, Box<dyn std::error::Error>> {
-    let writes = std::env::args()
-        .nth(1)
-        .map(|arg| arg.parse::<usize>())
-        .transpose()?
-        .unwrap_or(1_000);
-    if writes == 0 {
-        return Err("write count must be greater than zero".into());
-    }
-    Ok(writes)
 }
 
 fn run(writes: usize) -> Result<Summary, Box<dyn std::error::Error>> {
@@ -187,6 +222,213 @@ fn run(writes: usize) -> Result<Summary, Box<dyn std::error::Error>> {
     })
 }
 
+#[derive(Debug)]
+struct MixedLoadSummary {
+    sqlite_version: String,
+    elapsed: Duration,
+    completed_updates: usize,
+    observed_reads: usize,
+    write_p50: Duration,
+    write_p95: Duration,
+    read_p50: Duration,
+    read_p95: Duration,
+    coherent_snapshots: bool,
+    replayed_workspaces: usize,
+    replay_matches: bool,
+}
+
+fn run_mixed_load(
+    updates_per_workspace: usize,
+) -> Result<MixedLoadSummary, Box<dyn std::error::Error>> {
+    if updates_per_workspace == 0 || updates_per_workspace > MAX_MIXED_UPDATES_PER_WORKSPACE {
+        return Err(format!(
+            "updates per workspace must be between 1 and {MAX_MIXED_UPDATES_PER_WORKSPACE}"
+        )
+        .into());
+    }
+    let directory = TempDir::new()?;
+    let blobs = Arc::new(FileBlobStore::new(directory.path().join("blobs"), TestKeys));
+    let store = SqliteWorkspaceStore::open(
+        directory.path().join("state").join("state.sqlite3"),
+        blobs,
+        SqliteConfig {
+            writer_queue_capacity: 32,
+            busy_timeout: Duration::from_secs(5),
+        },
+    )?;
+    let setup = WorkspaceService::new(store.clone());
+    for producer in 0..MIXED_WRITERS {
+        setup.create(CreateWorkspace {
+            workspace_id: workspace_id(producer),
+            name: format!("SP02 mixed workspace {producer}"),
+            owner_principal_id: "sp02-owner".to_owned(),
+            event: event_context(&format!("mixed-create-{producer}")),
+        })?;
+    }
+
+    let barrier = Arc::new(Barrier::new(MIXED_WRITERS + READERS + 1));
+    let finished = Arc::new(AtomicBool::new(false));
+    let started = Instant::now();
+    let mut writer_threads = Vec::with_capacity(MIXED_WRITERS);
+    for producer in 0..MIXED_WRITERS {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        writer_threads.push(thread::spawn(move || {
+            let service = WorkspaceService::new(store);
+            let mut latencies = Vec::with_capacity(updates_per_workspace);
+            barrier.wait();
+            for update in 0..updates_per_workspace {
+                let operation_started = Instant::now();
+                service
+                    .change_replication_policy(ChangeReplicationPolicy {
+                        workspace_id: workspace_id(producer),
+                        expected_version: update as u64 + 1,
+                        policy: policy_for_update(update),
+                        replication_scope_root_ids: Vec::new(),
+                        event: event_context(&format!("mixed-update-{producer}-{update}")),
+                    })
+                    .map_err(|error| error.to_string())?;
+                latencies.push(operation_started.elapsed());
+            }
+            Ok::<_, String>(latencies)
+        }));
+    }
+
+    let mut reader_threads = Vec::with_capacity(READERS);
+    for _ in 0..READERS {
+        let store = store.clone();
+        let barrier = Arc::clone(&barrier);
+        let finished = Arc::clone(&finished);
+        reader_threads.push(thread::spawn(move || {
+            let mut last_versions = [0_u64; MIXED_WRITERS];
+            let mut latencies = Vec::new();
+            let mut coherent = true;
+            barrier.wait();
+            while !finished.load(Ordering::Acquire) {
+                for (workspace_index, last_version) in last_versions.iter_mut().enumerate() {
+                    let operation_started = Instant::now();
+                    let workspace = store
+                        .get_workspace(&workspace_id(workspace_index))
+                        .map_err(|error| error.to_string())?
+                        .ok_or_else(|| "mixed-load Workspace disappeared".to_owned())?;
+                    if latencies.len() < MAX_RECORDED_READ_SAMPLES_PER_READER {
+                        latencies.push(operation_started.elapsed());
+                    }
+                    coherent &= workspace.version >= *last_version
+                        && workspace.replication_policy == policy_for_version(workspace.version);
+                    *last_version = workspace.version;
+                }
+            }
+            Ok::<_, String>((latencies, coherent))
+        }));
+    }
+
+    barrier.wait();
+    let mut write_latencies = Vec::with_capacity(MIXED_WRITERS * updates_per_workspace);
+    let mut writer_error = None;
+    for writer in writer_threads {
+        match writer.join() {
+            Ok(Ok(latencies)) => write_latencies.extend(latencies),
+            Ok(Err(error)) => {
+                writer_error.get_or_insert(error);
+            }
+            Err(_) => {
+                writer_error.get_or_insert("mixed-load writer panicked".to_owned());
+            }
+        };
+    }
+    finished.store(true, Ordering::Release);
+
+    let mut read_latencies = Vec::new();
+    let mut coherent_snapshots = true;
+    let mut reader_error = None;
+    for reader in reader_threads {
+        match reader.join() {
+            Ok(Ok((latencies, coherent))) => {
+                read_latencies.extend(latencies);
+                coherent_snapshots &= coherent;
+            }
+            Ok(Err(error)) => {
+                reader_error.get_or_insert(error);
+            }
+            Err(_) => {
+                reader_error.get_or_insert("mixed-load reader panicked".to_owned());
+            }
+        };
+    }
+    if let Some(error) = writer_error.or(reader_error) {
+        return Err(error.into());
+    }
+    let elapsed = started.elapsed();
+    if write_latencies.len() != MIXED_WRITERS * updates_per_workspace {
+        return Err("mixed-load writer count did not match requested updates".into());
+    }
+    if read_latencies.is_empty() {
+        return Err("mixed-load readers observed no Workspace snapshots".into());
+    }
+
+    read_latencies.sort_unstable();
+    write_latencies.sort_unstable();
+    drop(setup);
+    drop(store);
+
+    let reopened_blobs = Arc::new(FileBlobStore::new(directory.path().join("blobs"), TestKeys));
+    let reopened_store = SqliteWorkspaceStore::open(
+        directory.path().join("state").join("state.sqlite3"),
+        reopened_blobs,
+        SqliteConfig {
+            writer_queue_capacity: 32,
+            busy_timeout: Duration::from_secs(5),
+        },
+    )?;
+    let sqlite_version = reopened_store.sqlite_version()?;
+    let mut replay_matches = coherent_snapshots;
+    for producer in 0..MIXED_WRITERS {
+        let projection = reopened_store
+            .get_workspace(&workspace_id(producer))?
+            .ok_or("missing Workspace projection after mixed-load reopen")?;
+        let replayed = reopened_store
+            .rebuild_workspace_projection(&workspace_id(producer))?
+            .ok_or("missing replayed Workspace after mixed-load reopen")?;
+        replay_matches &= projection == replayed
+            && replayed.version == updates_per_workspace as u64 + 1
+            && replayed.replication_policy == policy_for_version(replayed.version);
+    }
+    if !replay_matches {
+        return Err("mixed-load snapshots or reopened replay were inconsistent".into());
+    }
+
+    Ok(MixedLoadSummary {
+        sqlite_version,
+        elapsed,
+        completed_updates: write_latencies.len(),
+        observed_reads: read_latencies.len(),
+        write_p50: percentile(&write_latencies, 0.50),
+        write_p95: percentile(&write_latencies, 0.95),
+        read_p50: percentile(&read_latencies, 0.50),
+        read_p95: percentile(&read_latencies, 0.95),
+        coherent_snapshots,
+        replayed_workspaces: MIXED_WRITERS,
+        replay_matches,
+    })
+}
+
+fn policy_for_update(update: usize) -> ReplicationPolicy {
+    if update.is_multiple_of(2) {
+        ReplicationPolicy::MetadataOnly
+    } else {
+        ReplicationPolicy::LocalOnly
+    }
+}
+
+fn policy_for_version(version: u64) -> ReplicationPolicy {
+    if version <= 1 || (version - 2) % 2 == 1 {
+        ReplicationPolicy::LocalOnly
+    } else {
+        ReplicationPolicy::MetadataOnly
+    }
+}
+
 fn counts_for(total: usize, producer: usize) -> usize {
     total / PRODUCERS + usize::from(producer < total % PRODUCERS)
 }
@@ -221,6 +463,18 @@ mod tests {
         let summary = run(12).expect("rusqlite product-adapter qualification run");
         assert!(summary.sqlite_version.starts_with("3."));
         assert_eq!(summary.replayed_workspaces, PRODUCERS);
+        assert!(summary.replay_matches);
+    }
+
+    #[test]
+    fn mixed_reads_and_writes_preserve_monotonic_coherent_snapshots_and_replay() {
+        let summary = run_mixed_load(2).expect("rusqlite mixed-load qualification run");
+
+        assert!(summary.sqlite_version.starts_with("3."));
+        assert_eq!(summary.completed_updates, MIXED_WRITERS * 2);
+        assert!(summary.observed_reads > 0);
+        assert!(summary.coherent_snapshots);
+        assert_eq!(summary.replayed_workspaces, MIXED_WRITERS);
         assert!(summary.replay_matches);
     }
 }

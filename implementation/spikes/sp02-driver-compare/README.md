@@ -43,6 +43,18 @@ implementation/spikes/sp02-driver-compare/target/release/sp02-driver-compare 200
 implementation/spikes/sp02-driver-compare/rusqlite/target/release/sp02-rusqlite-qualification 200
 ```
 
+Run the separate product-rusqlite mixed read/write correctness and latency check (40
+writers, four readers, queue capacity 32; 30 updates per Workspace):
+
+```sh
+cargo run --release --locked --manifest-path implementation/spikes/sp02-driver-compare/rusqlite/Cargo.toml -- mixed 30
+```
+
+This workload checks monotonic, internally consistent Workspace snapshots and final
+encrypted-state replay. Its queue wait is not separately instrumented; observed latency is
+not a queue-saturation or capacity guarantee. See [`../SP02.md`](../SP02.md) for the
+recorded samples and limitations.
+
 Repeat three times per driver, alternating driver order. Each reported end-to-end update
 latency includes the domain service, canonical aggregate serialization, encrypted
 content-addressed blob write and readback verification, and database transaction. It does
