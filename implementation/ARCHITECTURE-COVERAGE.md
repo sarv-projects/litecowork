@@ -7,10 +7,10 @@ domain owners still apply. Story status tracks planning through owner acceptance
 
 ## Coverage inventory
 
-- 64 source Markdown documents; 864 heading-level sections are digest-pinned.
-- 30 implementation-plan documents and 154 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 64 source Markdown documents; 870 heading-level sections are digest-pinned.
+- 32 implementation-plan documents and 177 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
 - 55 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
-- 79 flows and 74 benchmarks.
+- 82 flows and 77 benchmarks.
 - 174 OpenAPI operations and 271 component schemas; 0 components are unreachable from every Operator operation.
 - 97 error codes; 212 shared IDs/value definitions.
 - 133 event types and 133 typed event payload schemas.

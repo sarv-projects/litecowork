@@ -177,6 +177,13 @@ of truth.
   session may continue that Attempt only in the same Runtime incarnation with the same
   valid lease and reconciled checkpoint/Invocation state. Otherwise abandon the Attempt and
   create a replacement Attempt under a higher lease epoch.
+- Provider turn state is not process-quiescence evidence. In the Codex App Server probe,
+  `turn/completed` with status `interrupted` arrived while the sandboxed shell command kept
+  writing. The adapter must stop or fence the owned host/Environment and observe that its
+  writable child processes are quiescent before closing the session as safely stopped or
+  admitting a replacement Attempt. If the adapter cannot prove this, retain cancellation as
+  pending/ambiguous and block replacement. A provider acknowledgement or UI state alone never
+  establishes stale-writer exclusion.
 - A long-running CapabilityInvocation is owned by the Invocation runner, not by the
   AgentSession process. It may continue after the agent yields and its session closes. On
   completion, the AttemptRunner can start a replacement session and deliver the durable

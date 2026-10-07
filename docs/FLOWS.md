@@ -1679,6 +1679,77 @@ and Coworker revisions use expected-version commands.
 does not rewrite/cancel Attempts that already pinned it. Removing a profile from a Coworker
 revision affects future Tasks/children only.
 
+## F79 — Native turn interruption with a live spawned command
+
+**Actors/preconditions:** TaskService, AttemptRunner, native AgentAdapter, owned
+AgentHost/Environment, and a replacement profile; an admitted sender is running a command
+that can produce an observable heartbeat or write marker.
+
+1. Request interruption and record the provider's turn acknowledgement/completion as
+   provider turn state only. Do not infer process exit or revoke stale write risk from an
+   `interrupted` status.
+2. Stop or fence the owned host/Environment using the adapter's qualified containment
+   mechanism. Wait for the relevant process scope to exit or otherwise prove it cannot write
+   to the Attempt's mutable resources.
+3. Reconcile outstanding CapabilityInvocations and Effects, capture the checkpoint, and
+   settle/release the prior lease. If host stop or quiescence cannot be proved, keep the
+   Attempt stopping/ambiguous and block replacement admission.
+4. Verify the checkpoint/version manifest and admit a fresh replacement Attempt under a
+   higher lease epoch. Observe the write marker through the handoff window and reject any
+   stale sender write.
+
+**Failure/UI/postcondition:** Turn interruption is not a safe-switch fence. Show “Stopping
+sender” or a concrete blocker until the owned writer is fenced and quiescent. Do not report
+handoff complete or start the replacement while old write authority may remain.
+
+## F80 — Runtime restarts during replacement startup
+
+**Actors/preconditions:** RuntimeLifecycleService, AttemptRunner, AgentHostSupervisor, and
+TaskService; a replacement Attempt admission was committed under an older Runtime incarnation,
+but startup did not reach a durable running state before that Runtime stopped unexpectedly.
+
+1. Start the new Runtime in `RECOVERING` under a fresh `RuntimeIncarnation`. Keep new Task and
+   worker admission closed while old-incarnation execution handles are reconciled.
+2. Resolve the old Attempt's launch owner and every owned process/Environment handle using the
+   platform's verified process identity and containment evidence. A PID or provider turn
+   status alone is insufficient.
+3. If all writers are proven quiescent, reconcile CapabilityInvocations and Effects, settle
+   or abandon the prior Attempt through its ordinary recovery path, and release/fence its
+   lease. Preserve the consumed lease epoch and pinned handoff checkpoint.
+4. Admit a fresh Attempt only after recovery commits, using a higher lease epoch and a new
+   AgentSession pinned to the new Runtime incarnation.
+5. If owner identity, quiescence, Effect state, or lease fencing remains uncertain, keep the
+   old Attempt unresolved, leave Runtime readiness degraded, and block replacement writers.
+
+**Failure/UI/postcondition:** Never clear an `ADMITTED` slot or retry only because its Runtime
+restarted. Expose the verified recovery state or the specific blocker. Recovery is idempotent;
+it cannot create two replacement Attempts for the same lease epoch or replay an ambiguous
+Effect.
+
+## F81 — Runtime restarts after a replacement Attempt reaches RUNNING
+
+**Actors/preconditions:** RuntimeLifecycleService, AttemptRunner, AgentHostSupervisor,
+EnvironmentSupervisor, LeaseCoordinator, EffectReconciler, and TaskService; the replacement
+Attempt and its owned process identity were durably recorded as `RUNNING` before the old Runtime
+stopped unexpectedly.
+
+1. Start the new Runtime in `RECOVERING`; close new Task/worker admission.
+2. Resolve the previous Runtime incarnation, the Attempt's owned host/process tree, and its
+   Environment using platform-verified identities and containment evidence. PID absence alone
+   is insufficient where identity cannot be read; a live or ambiguous writer keeps the Attempt
+   unresolved.
+3. Reconcile pending CapabilityInvocations and Effects, then fence/release the prior lease.
+   Provider turn status alone cannot establish process quiescence or Effect outcome.
+4. After all writers are proven quiescent and Effects/lease are settled, mark the Attempt
+   `ABANDONED`, preserve its checkpoint and consumed epoch, and clear its active Task ownership.
+5. Admit one new Attempt using the unchanged Task truth, pinned checkpoint, a strictly higher
+   lease epoch, and an AgentSession bound to the new Runtime incarnation.
+
+**Failure/UI/postcondition:** Missing process identity, unreadable host state, active writers,
+ambiguous Effects, or failed lease fencing leaves the old Attempt unresolved and blocks new
+writers. Recovery is idempotent and never labels a previously running Attempt as a startup
+failure. Any local PoC booleans for Effect/lease state are test scaffolding only.
+
 ## Shared flow invariants
 
 - Every mutating command has an authenticated principal, RequestId, correlation ID, and

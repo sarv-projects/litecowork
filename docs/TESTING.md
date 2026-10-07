@@ -118,6 +118,16 @@ Recurring trigger creates ordinary Task and deduplicates duplicate trigger deliv
 - pause and cancel remain distinct; PAUSED requires checkpoint, provider Invocation quiescence, Effect reconciliation, and lease settlement
 - pause/cancel from VERIFYING fences completion; active VerificationRuns settle against pinned inputs and a late result cannot win after the Task transition
 - Task cancellation remains CANCEL_REQUESTED until every Task/Attempt Invocation has terminal provider state; cancel acknowledgement alone is insufficient
+- interrupt a native agent turn while a spawned shell command writes a heartbeat; verify
+  turn completion alone does not admit a replacement, then stop/fence the owned host or
+  Environment and prove the writer is quiescent before replacement
+- crash the Runtime after replacement admission and at each host-start boundary; restart
+  under a fresh RuntimeIncarnation, reconcile old process handles by verified identity, and
+  prove no duplicate Attempt or stale writer is admitted. An unresolved handle keeps the
+  Task blocked; PID or provider turn status alone cannot release it (F80/B76)
+- crash the Runtime after replacement `RUNNING` is durable; recover only after both Runtime
+  and worker identities are proven gone, then reconcile Effects and fence the lease before
+  admitting a higher-epoch Attempt from the pinned checkpoint (F81/B77)
 - loss of provider state from WAITING/INPUT_REQUIRED records AMBIGUOUS and cannot be mistaken for a terminal result
 - no old EnvironmentControlLease epoch command is accepted or replayed after takeover
 - criterion changes require fresh VerificationRun even if criterion ID is reused

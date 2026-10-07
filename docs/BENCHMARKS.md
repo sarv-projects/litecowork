@@ -431,6 +431,43 @@ the method before Invocation creation, dispatch repeats it, SQLite rejects metho
 and cross-method Effect links, each batch shares one method, and the UI never upgrades
 `UNKNOWN` to an inferred API/browser claim.
 
+### B75 Native interrupt and spawned-writer quiescence
+
+Run a native coding-agent turn that starts a bounded command which repeatedly writes a
+heartbeat inside its permitted Environment. Request native turn interruption and record the
+acknowledgement plus terminal turn status. Keep the AgentHost alive and observe whether the
+writer continues; a continued write must block replacement. Then stop/fence the owned host or
+Environment, prove the heartbeat remains unchanged across the configured quiet interval,
+reconcile Effects/Invocations, and admit a receiver from the digest-pinned checkpoint. Verify
+the receiver passes the full acceptance suite and no stale write occurs afterward. Repeat for
+every supported host adapter and OS containment strategy. A passing turn-interrupt response
+without writer-quiescence evidence fails this benchmark.
+
+### B76 Runtime crash during replacement startup
+
+Crash the Runtime after replacement admission at each boundary before and after native host
+process creation and before the Attempt/session running transition is durably observed. On the
+next Runtime incarnation, reconcile the old owner and all Attempt-scoped process handles using
+verified process identity and containment evidence; never trust a PID alone. Preserve the
+consumed lease epoch, prove old writers are quiescent, reconcile Invocations and Effects, and
+admit at most one fresh replacement. If process ownership or quiescence cannot be established,
+keep the Attempt unresolved and block new writers. Verify the recovered Task can continue from
+its pinned checkpoint without duplicate execution or stale writes.
+
+### B77 Runtime crash after replacement reaches RUNNING
+
+Commit the replacement Attempt and its supervised process identity as `RUNNING`, then crash
+the owning Runtime. On the next Runtime incarnation, require verified absence of both the old
+Runtime identity and the contained worker identity before marking the Attempt `ABANDONED`.
+Reject missing, unreadable, reused, or live identities. Require process quiescence, Effect
+reconciliation, and lease fencing before releasing the Task slot. Preserve the pinned
+checkpoint and consumed lease epoch; admit at most one fresh Attempt at a higher epoch. A
+heartbeat writer must remain quiet through a bounded observation interval before admission.
+If worker identity sampling fails after process creation, keep the Attempt active and block
+recovery rather than treating startup as failed.
+The Linux PoC may mock Effect/lease reconciliation, but product acceptance must use the real
+services and supported OS containment path.
+
 ## Failure/edge benchmark extensions
 
 - OAuth expires mid-Task
