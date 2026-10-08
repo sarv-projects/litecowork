@@ -51,6 +51,43 @@ AgentCapabilities {
 
 ## Profiles and Workspace bindings
 
+### Local installation inventory
+
+The authenticated local Operator may expose a runtime-local installation inventory
+before protocol negotiation. An inventory row proves only that a known executable
+returned a bounded, recognized version string to its `--version` invocation. It is
+not an `AgentProfile`, `AgentEndpoint`, or `AgentBinding` and does not prove auth,
+provider/model access, session support, or lead/delegation eligibility. The inventory
+does not persist executable paths or raw command output. Its readiness fields remain
+`UNKNOWN` / `NOT_PROBED` permanently; later negotiated auth/session readiness belongs
+to separate AgentProfile/RuntimeOffer observations and does not mutate the inventory
+row. Creating an enabled binding, launching a turn, or mutating native config is not part
+of inventory discovery. The local snapshot may be cached for at most five seconds to
+coalesce concurrent UI refreshes.
+
+For the initial desktop Codex and OpenCode adapters, creating or refreshing an
+AgentProfile is an explicit owner-triggered operation, separate from installation
+inventory. The selected Workspace must already authorize the exact current local Runtime
+incarnation through an ACTIVE `LOCAL_ENROLLMENT` RuntimeWorkspaceBinding carrying
+`EXECUTOR` and `OPERATOR_ENDPOINT`; serving the authenticated Operator does not imply this
+enrollment. The Codex probe performs bounded App Server initialization, account-state
+read without refresh, and one bounded model-catalog page. The OpenCode probe starts the
+owned local Server and reads only the documented `/provider` connection summary and
+`/config/providers` catalog routes. Its projection contains bounded provider/model IDs and
+display names plus explicitly labeled reported connected-provider IDs; it never returns
+native provider/model objects, options, headers, keys, URLs, or raw responses. A reported
+connected provider is not proof of authentication, entitlement, or inference success.
+OpenCode's catalog is display-only: session model selection is `NOT_QUALIFIED`, and its
+RuntimeOffer is always incompatible until session-option semantics, Task admission,
+Environment isolation, native capability mediation, process-tree containment, Effect
+reconciliation, and lease fencing are integrated and qualified. Both probes stop their
+owned direct process and store sanitized observations plus an expiring RuntimeOffer. They
+do not start a Task, AgentSession, Environment, or inference turn, and do not prove model
+entitlement or descendant-writer quiescence. Catalog metadata is not an entitlement
+claim. Runtime-local executable locators remain private to their Runtime incarnation.
+See [F95](FLOWS.md#f95-explicit-local-coding-agent-profile-probe-and-binding-setup) for
+the end-to-end setup flow.
+
 AgentAdapter discovery yields an `AgentProfile` for an available Runtime offer. Profiles
 describe protocol/features; they do not carry credentials or imply authorization. The
 owner creates a Workspace `AgentBinding` that refers to a discovered profile, optional
@@ -69,6 +106,11 @@ bindings are disabled until explicitly enabled. Disabling prevents new planning/
 admission; sessions already admitted stay pinned and settle under their current Task,
 lease, and Effect rules.
 
+Until an adapter-specific non-secret configuration allowlist exists, V1 AgentBinding
+`configuration` must be an empty object. Reject unknown configuration rather than
+persisting arbitrary values that may contain credentials. Credentials belong in the
+SecretStore and are referenced only through a validated `SecretRef`.
+
 The profile list includes stable software/protocol identity plus a Runtime inventory
 projection with currently observed Runtime IDs and offer expiry; it may go stale when a
 Runtime goes offline. Endpoint command paths, sockets, and URLs are local bindings and are
@@ -82,6 +124,38 @@ and incarnation as durable provenance. The host binding and opaque native sessio
 handle live in a Runtime-local `AgentSessionHostBinding`, which is not event state and is
 excluded from Workspace backup. Remote API/A2A endpoints use a local binding for their
 connection/resume handle but do not imply a local process.
+
+Local native CLI hosts start with a cleared process environment and receive only an
+explicit Runtime-selected allowlist needed for the agent's native home/config/data paths,
+helper executable search path, operating-system support, and temporary directory. The
+daemon's arbitrary environment is not inherited. Provider credentials remain in the
+agent's native credential store or an explicitly authorized SecretLease flow; they must
+not be copied into this environment, logs, or durable session state. Adapter-specific
+allowlists must preserve the native harness without widening process authority.
+
+### OpenCode Server transport identity gate
+
+The current local OpenCode Server transport retains OpenCode's native configuration and
+credentials; it does not rewrite the user's config or copy provider secrets. Since the
+documented `opencode serve` interface accepts a port rather than an inherited listener,
+the adapter may reserve an OS-selected loopback port and then release it before spawn. It
+must not send its generated HTTP Basic credential based only on a health response: a local
+process could otherwise win that bind race and impersonate the server. Before the first
+authenticated request, the adapter requires a bounded `server listening on
+http://127.0.0.1:<selected-port>` startup line from the owned child's stdout, emitted after
+the native server reports a successful bind. Recognized legacy/current prefixes are
+strictly parsed; missing, oversized, unexpected, or mismatched output fails closed and
+the direct child is stopped. The reader continues draining bounded stdout after readiness
+so the child cannot block on a full pipe. The server password is never sent before this
+gate.
+
+This is a process-origin bind-success signal, not general OS peer authentication, child
+process containment, or proof that OpenCode's descendants stopped writing. It depends on
+the installed CLI's startup output contract and must be covered by the supported-version
+qualification matrix ([OpenCode Server documentation](https://opencode.ai/docs/server/)).
+This transport remains unusable for Task/Attempt execution until
+Task admission, isolated Environment, native capability mediation, process-tree
+containment, Effect reconciliation, and lease fencing are integrated and qualified.
 
 ## SessionSpec
 
@@ -121,6 +195,17 @@ Session admission rules:
   The durable AgentSession records that revision. If the TaskSpec head changes, the old
   planner is fenced from new Invocations and plan acceptance, its in-flight Invocations
   are settled, and its session is closed before a fresh envelope/session is admitted.
+  The current Codex App Server transport now has typed read-only thread/turn constructors
+  and a strict initial-plan output schema. Its turn policy sets `type: readOnly` and
+  `networkAccess: false`; this disables writes and shell network for the Codex sandbox but
+  does not restrict reads to a set of Resource roots. Codex's default read-only access may
+  include the host filesystem, so this path is unusable for Task planning until the
+  Runtime provides an externally isolated, Task-specific Environment. It also does not
+  disable or mediate user-configured MCP servers, app tools, or other non-filesystem native
+  capabilities; establish Environment identity, Task admission, process-tree containment,
+  or writer quiescence. A coordinator must fail closed until the native capability set is
+  disabled or individually authorized/mediated and the sandbox payload is qualified for
+  the installed Codex protocol version.
 - `ATTEMPT_EXECUTION {task_id, attempt_id}` requires one admitted Attempt, its
   Runtime/Environment, active lease, and scoped grants. Its TaskPacket is required and
   names the TaskSpecRevision referenced by the Step's accepted PlanRevision, that

@@ -252,6 +252,14 @@ to ACTIVE. An opaque native session/resume handle belongs only to a local
 new Runtime incarnation always creates a new AgentSession and never receives the prior
 local handle.
 
+`agent.session.starting.v1` durably claims a `STARTING` session before invoking a native
+adapter. `STARTING` is not readiness and grants no Task tool or Invocation authority.
+After adapter readiness is observed, activation must atomically transition the session to
+`ACTIVE` and a first-planning Task from `READY` to `RUNNING`; the adapter call itself must
+occur outside the SQLite transaction. On daemon recovery, each prior-incarnation
+`STARTING` session is reconciled as `LOST` (or resumed only when the same live Runtime
+incarnation and adapter explicitly prove a safe resume).
+
 `AgentHostInstance` is separate Runtime-operational state:
 
 ```text
@@ -446,6 +454,29 @@ Resource retention policy.
 
 ## Runtime
 
+Workspace authorization is a separate binding state machine:
+
+```text
+PENDING -> ACTIVE -> REVOKED
+PENDING ----------> REVOKED
+```
+
+`RuntimeWorkspaceBinding` is created as `LOCAL_ENROLLMENT` for a local Workspace or as
+`MESH_PAIRING` only after authenticated Hub pairing. Activation requires the Workspace
+owner/principal authorization and the binding's enrollment-specific checks. Revocation is
+terminal for that binding; re-enrollment creates a new binding identity. It blocks new
+Workspace operations and admissions and stops replication for that binding. Existing
+Attempts retain their pinned Runtime/incarnation and go through ordinary lease and Effect
+reconciliation; revocation never silently transfers them or globally revokes the Runtime.
+Before an ACTIVE binding can be revoked, the Workspace must clear it as Mesh hub and drain
+its ChannelHost assignment/lease, enabled TriggerHost cursors, and every nonterminal
+AutomationOccurrence pinned to that TriggerHost. Disabling an Automation stops new
+occurrence creation but does not itself settle already admitted occurrences. Storage
+rejects a revocation that leaves those Runtime roles or nonterminal occurrences active for
+the Workspace; terminal occurrence history may retain its original Runtime provenance.
+Binding changes are Runtime Mesh/security control metadata with an audit record, not
+Workspace Task-domain events.
+
 ```text
 PAIRING -> STARTING -> RECOVERING -> ONLINE <-> DEGRADED
                                       |             |
@@ -459,6 +490,13 @@ RuntimeMesh owns paired identity, presence, and revocation. RuntimeLifecycleServ
 local daemon startup/drain and publishes readiness to RuntimeMesh. Presence expiry changes
 availability; it does not itself expire a lease. Revocation rejects new authentication
 and authority from that Runtime.
+
+**Current source status:** the daemon persists its local startup/recovery/shutdown
+incarnation states and handles process-supervisor shutdown signals, but does not expose
+an authenticated Operator stop command. The documented DRAINING transition is a target
+API operation only until admitted Task Attempts, Effects, leases, and local service
+references can be inventoried and safely settled. A process signal is not a substitute
+for that contract.
 
 Every daemon process start creates a distinct `RuntimeIncarnation`:
 
@@ -538,6 +576,7 @@ ACTIVE(owner=AGENT, epoch n) -> ACTIVE(owner=HUMAN, epoch n+1)
 ACTIVE(owner=HUMAN, epoch n) -> ACTIVE(owner=AGENT, epoch n+1)
 ACTIVE -> RELEASING -> RELEASED
 ACTIVE -> EXPIRED | REVOKED
+RELEASING -> EXPIRED
 ```
 
 EnvironmentManager owns input-control leases separately from Runtime ExecutionLeases.
@@ -709,7 +748,13 @@ creating a Resource and ResourceRevision; failed final verification is terminal 
 requires a new upload. Identical chunk replay is idempotent; a conflicting chunk range
 fails with UPLOAD_OFFSET_CONFLICT. Chunk metadata is local transfer state, not replicated
 or journaled as one event per chunk; only session creation and lifecycle transitions are
-DomainEvents.
+DomainEvents. The session's `version` advances only on lifecycle transitions and matches
+the aggregate revision in lifecycle events. `progress_version` advances on each newly
+accepted chunk and is used for concurrent chunk/expiry fencing; it is not a DomainEvent
+revision. The final accepted chunk atomically advances both versions and emits
+OPEN -> CONTENT_RECEIVED. Commit atomically advances lifecycle `version`, creates the
+Resource, and emits CONTENT_RECEIVED -> COMMITTED. TTL expiry advances only lifecycle
+`version` and emits the current open state -> EXPIRED transition.
 
 ## Artifact and ArtifactVersion
 
@@ -840,16 +885,46 @@ completion. Delivery retry count and backoff are bounded.
 
 Resource identity and immutable revisions are append-only. ResourceLocation availability
 and freshness are observations owned by the WorldIndexer/provider adapter. WorkspaceRoot
-transitions `ACTIVE <-> PAUSED`, `ACTIVE | PAUSED -> UNAVAILABLE`,
+transitions `ACTIVE <-> PAUSED`, `ACTIVE -> UNAVAILABLE`,
 `UNAVAILABLE -> ACTIVE` only after root identity revalidation, and
 `ACTIVE | PAUSED | UNAVAILABLE -> REVOKED`; revocation is terminal and stops future
-observation/search/exposure/replication under that root. Resource changes append
+observation/search/exposure/replication under that root. `PAUSED` is explicit owner intent
+and remains `PAUSED` if its ResourceLocation becomes unavailable; successful identity
+revalidation restores only the location and never resumes a paused root. Owner resume is a
+separate expected-version/idempotent action from PAUSED to ACTIVE and requires an AVAILABLE
+location plus both local identity bindings for the current Runtime incarnation. A stale or
+unavailable identity fails the resume transaction; it never rewrites a binding. Owner pause
+preserves the validated local bindings and selected replication scope, while downstream
+observation, search, exposure, and transfer eligibility must require an ACTIVE root. Owner
+pause/resume/revoke events use reason codes `USER_PAUSED`, `USER_RESUMED`, and
+`USER_REVOKED`. A resume transition requires a fresh proof that the saved directory still
+matches both identity bindings; a previously validated database row alone is not a fresh
+proof after a possible same-session path replacement. Current source checks the current-
+incarnation bindings but does not reopen the directory on the resume request, so this
+production safety condition remains unimplemented. Until then, consumers must perform
+their own no-follow identity check before accessing folder content. Resource changes append
 InvalidationRecords for dependent artifacts and verification projections. ArtifactStore
 and VerifierRunner create immutable DependencyEdges from exact pinned input ResourceRefs;
 DependencyService maintains/rebuilds the reverse index and appends invalidations when a
 new revision makes a consumed revision stale. Original ArtifactVersion, VerificationRun,
 and Evidence records are never mutated. DependencyEdges have no update transition;
 corrections require rebuilding the derived index from authoritative aggregate state/events.
+
+At Runtime startup, after the current incarnation is registered and before Operator IPC
+starts, the root revalidator pages non-revoked local roots in deterministic bounded order.
+For each root it reopens the prior private locator with no-follow handle traversal, compares
+the prior raw FileIdentityBinding, and verifies the stable keyed Resource identity fields.
+One immediate SQLite transaction updates current-incarnation locator/identity bindings,
+ResourceLocation availability, any WorkspaceRoot status transition, aggregate snapshots,
+events, and the idempotency receipt. Exact identity success sets the location AVAILABLE;
+an existing ACTIVE or PAUSED root retains that status, while a previously UNAVAILABLE root
+may return to ACTIVE. Failure removes partial bindings for the new incarnation and sets an
+ACTIVE root and its location UNAVAILABLE; a PAUSED root remains PAUSED while its location
+becomes UNAVAILABLE. Revoked roots are never admitted. A root-local identity
+failure continues startup for unrelated Runtime work; storage or atomic-commit integrity
+failure blocks Operator startup so no stale trusted root is exposed. The current source path
+is Linux/macOS only, unqualified, and the OS-principal key-loss path still fails before this
+state machine runs.
 
 ResourceRevision forms an acyclic, same-Resource ancestry DAG. New observations append a
 revision with explicit parent IDs; concurrent edits remain sibling heads. The Resource's
@@ -858,10 +933,13 @@ means unknown; multiple heads mean conflicted. No timestamp or Runtime priority 
 the conflict. A pinned reference may select a branch; an unpinned reference returns
 `RESOURCE_CONFLICT`. A merge appends a revision whose parents include all merged heads.
 The append, parent edges, location observation, unique-head pointer update, invalidations,
-and `resource.revision.observed.v1` event commit atomically. A revision-upload session
-pins the Resource version and exact current parent-head set before accepting content; its
-commit rechecks both and either appends one immutable revision or returns `RESOURCE_CONFLICT`.
-An explicit merge names every current head. No append operation chooses a branch implicitly.
+and `resource.revision.observed.v1` event commit atomically. A revision-upload session pins
+the Resource version and exact current parent-head set before accepting content; its commit
+rechecks both and either appends one immutable revision or returns `RESOURCE_CONFLICT`. The
+authenticated owner upload emits `resource.revision.created.v1`, and the Resource head,
+parent edges, managed local location, revision-scoped index/dependency invalidation, upload
+lifecycle, event/snapshot, and idempotency receipt share one SQLite transaction. An
+explicit merge names every current head. No append operation chooses a branch implicitly.
 
 ContextDocument is a Resource classification with this state machine:
 
@@ -871,9 +949,11 @@ ACTIVE | REVOKED -> DELETION_PENDING -> DELETED
 ```
 
 ResourceService owns status transitions and event writes. Revocation immediately blocks
-future context resolution/attachment but retains the content. `DELETION_PENDING` is a
-replicated tombstone that blocks all content reads while Core-managed blobs/indexes are
-purged. The purge reconciler records one immutable receipt per required replica and exact
+future context resolution/attachment and new content-read admission while retaining the
+content; an already-admitted read may finish. `DELETION_PENDING` is a replicated tombstone
+that blocks all new content reads while Core-managed blobs/indexes are purged. Derived
+state prepared from an in-flight read must recheck status in its final transaction and
+cannot commit after revocation/deletion. The purge reconciler records one immutable receipt per required replica and exact
 revision set; only after all required acknowledgements (and any provider-backed deletion
 confirmation) may ResourceService commit `DELETED`. A ContextDocument with no purge targets
 can complete only after the reconciler verifies that the owned replica inventory is empty.
@@ -883,7 +963,7 @@ status changes and revision appends serialize on the Resource version.
 
 ## Automation and occurrence
 
-Automation definition content is immutable by revision. An update creates AutomationRevision(n+1) and advances the mutable Automation.current_revision pointer; pause/resume/disable changes only lifecycle status. Existing occurrences retain their pinned revision.
+Automation definition content is immutable by revision. An update creates AutomationRevision(n+1) and advances the mutable Automation.current_revision pointer only while the Automation is `PAUSED`; an `ENABLED` Automation must be paused first (`AUTOMATION_NOT_PAUSED`), and a `DISABLED` Automation is terminal. Pause/resume/disable changes only lifecycle status. Existing occurrences retain their pinned revision.
 
 ```text
 Automation: ENABLED <-> PAUSED; ENABLED | PAUSED -> DISABLED
@@ -940,7 +1020,11 @@ standalone authority: every use authenticates the caller and rechecks the active
 incarnation, epoch, expiry, and requested operation. A new daemon incarnation cannot
 renew an old incarnation's lease. An expired/released/revoked lease cannot be revived; a
 new owner receives a strictly higher epoch. Mediated writes validate the current fence at
-the authority that commits the mutation.
+the authority that commits the mutation. Recovery may expire an overdue `RELEASING` lease
+after the previous Runtime incarnation is no longer current; this settles lease authority
+only. The Attempt is abandoned and its Task/Step remain blocked until process, Invocation,
+and Effect state is safely reconciled. Expiry never proves that an escaped worker process
+has stopped or authorizes replacement execution by itself.
 
 ## Handoff, Connection, and ChannelBinding
 
@@ -957,12 +1041,27 @@ Connection: CONNECTING -> CONNECTED -> DEGRADED -> CONNECTED
 ChannelBinding: ACTIVE -> DEGRADED -> ACTIVE; ACTIVE | DEGRADED -> REVOKED
 
 ChannelHostAssignment: ACTIVE -> DRAINING -> ACTIVE(new Runtime, higher host_epoch)
-  ACTIVE -> ACTIVE(same Runtime, renewed bounded lease)
-  DRAINING -> ACTIVE(same Runtime, same host_epoch) only if source lease remains valid
-    and target reassignment has not committed
-  ingress_continuity: CONTINUOUS -> GAP_ACCEPTED only with explicit owner confirmation;
-    GAP_ACCEPTED is historical for that assignment and never silently returns to CONTINUOUS
-  expired lease -> reassignment only after expiry + clock-skew safety margin
+  ACTIVE -> DRAINING -> ACTIVE(same Runtime, same host_epoch) may resume only while the
+    exact source lease remains valid and before a target reassignment commits
+  Lease renewal changes only ChannelHostLeaseRecord; it does not update the assignment
+  DRAINING -> ACTIVE(new Runtime) requires an immutable release record and either a
+    matching QUIESCENT drain proof or Hub-authoritative expiry + pinned clock-skew margin
+  New assignment starts ACTIVE; Runtime changes cannot bypass DRAINING
+  Within one host_epoch, continuity status and evidence/decision provenance are immutable
+  A new CONTINUOUS epoch requires verified cursor-transfer/replay evidence
+  GAP_ACCEPTED requires explicit owner confirmation represented by an ALLOW AuditRecord
+  A prior epoch's gap remains in immutable assignment-event history
+  Lease safe_reassign_after = expiry + pinned margin (minimum 30 seconds)
+  A committed ACTIVE assignment has exactly one matching lease; a committed DRAINING
+    assignment retains the exact source lease until atomic release
+  DRAINING -> ABSENT is an internal RuntimeMesh transition used only after immutable lease
+    release; it preserves ChannelBinding, receipt, cursor provenance, and release history
+  ABSENT -> ACTIVE creates `max(released host_epoch) + 1` and exactly one fresh lease in one
+    transaction; epochs never reset after assignment-row removal. Without an eligible target
+    the ChannelBinding remains DEGRADED/unassigned
+  RuntimeWorkspaceBindingService cannot revoke the source binding before move or clear commits
+  lease IDs are never reused across ChannelBindings/host epochs; fresh fencing credentials
+    are derived from unique immutable lease identity and are never reused
 
 ChannelReplyTarget: ACTIVE -> CONSUMED | CLOSED | EXPIRED
 ```
@@ -1009,12 +1108,48 @@ reassigned host are rejected. ACCEPTED, REJECTED, and FAILED are terminal. Only 
 EDIT, and DELETE provider events use this receipt; outbound delivery is tracked as a
 separate Effect/Evidence outcome.
 
+After the host assignment enters DRAINING, no new receipt may be claimed and no old claim may
+be reclaimed. The original claimant may settle an already-PROCESSING receipt to a terminal
+state only while its claim expiry and exact source host lease remain valid. RuntimeMesh cannot
+record a quiescent drain proof until all claims for that source epoch are terminal and the
+source's outbound Effects and Hub replication boundary have been reconciled.
+
+Receipt insertion is also fenced by the current assignment. The ingress transaction verifies
+the ACTIVE assignment, unexpired lease, and active RuntimeWorkspaceBinding before inserting
+the RECEIVED row and allocating its origin sequence. It serializes on the same per-binding
+authority row as ACTIVE→DRAINING and drain-proof admission. If insertion commits first, that
+receipt is part of the source drain frontier and cannot be acknowledged before Hub durability.
+If DRAINING commits first, source ingress does not insert or acknowledge/defer-ack a new
+receipt; the provider event must remain retryable/replayable, or the owner explicitly accepts
+and audits an ingress gap. A drain proof requires no source-epoch PROCESSING claim, every
+pre-drain RECEIVED row Hub-durable and included in the successor's replay frontier,
+reconciled outbound Effects, and zero unreplicated receipts. A successor may claim a
+Hub-durable pre-drain RECEIVED row under its new lease. This barrier closes the race in
+which a receipt could appear after proof but before lease release.
+
 For receipt updates, the only PROCESSING -> PROCESSING transition is an expired or fenced
 claim being reclaimed with `claim_epoch + 1`. Terminal settlement clears `claim_expires_at`
 but preserves claimant identity/epoch for audit. The provider cursor cannot move past an
 event until its receipt is durable and, for a non-authoritative Runtime, acknowledged by Hub
 replication. A changed payload digest for an existing provider event ID is a conflict, not
 a new receipt.
+
+Lease release, release-tombstone creation, and assignment movement are one Hub transaction.
+It either commits the next ACTIVE assignment with exactly one new lease or removes the old
+assignment into the explicit unassigned state; there is no committed ACTIVE/no-lease or
+DRAINING/no-lease intermediate state. If Runtime revocation has no target, the assignment is
+cleared only after exact proof or authoritative expiry-plus-skew release, and ChannelBinding
+becomes DEGRADED until an owner assigns a new eligible host. v1→v4 migration rejects an
+ACTIVE assignment without its matching unexpired lease and a DRAINING assignment without
+its matching persisted lease row. A DRAINING row may be expired; v4 backfills its pinned
+skew boundary and does not treat that row as current authority. A missing row has no legacy
+release tombstone from which safe release can be reconstructed.
+
+ChannelHost lease IDs are globally unique and checked against immutable release records.
+The issuer derives a fresh domain-separated HMAC credential from the unique lease identity,
+including Workspace, ChannelBinding, Runtime, host epoch, and lease ID. Renewal preserves
+that identity/credential; reassignment never does. Any duplicate lease ID or observed
+credential-digest collision fails closed before assignment commit.
 
 The opaque ChannelIngressCursorBinding is Runtime-local and incarnation-scoped. After a
 restart it must be validated or marked RECONCILIATION_REQUIRED before polling resumes.

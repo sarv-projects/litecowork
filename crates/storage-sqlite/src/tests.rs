@@ -1,10 +1,18 @@
 use super::*;
+#[path = "artifact_tests.rs"]
+mod artifact_tests;
+#[path = "coworker_tests.rs"]
+mod coworker_tests;
+#[path = "goal_tests.rs"]
+mod goal_tests;
+#[path = "routine_tests.rs"]
+mod routine_tests;
 use domain_workspace::{ChangeReplicationPolicy, CreateWorkspace, EventContext, WorkspaceService};
 use rusqlite::Connection;
 use std::sync::Barrier;
 use storage_core::{
-    AggregateStateRef, BlobPurpose, CommittedWorkspace, EventDraft, ReplicationPolicy, StoreError,
-    Workspace,
+    AggregateStateRef, BlobPurpose, BlobRef, CommittedWorkspace, EventDraft, ReplicationPolicy,
+    StoreError, Workspace,
 };
 use zeroize::Zeroizing;
 
@@ -86,6 +94,40 @@ fn create_workspace(store: &SqliteWorkspaceStore, workspace_id: &str) -> Committ
 }
 
 #[test]
+fn blob_read_failure_reports_context_document_transition_only_when_proven() {
+    let blob_error = StoreError::Blob("Resource blob disappeared during read".to_owned());
+
+    assert_eq!(
+        prefer_context_document_status_error_after_read_failure(
+            blob_error.clone(),
+            Ok(Some("DELETION_PENDING".to_owned())),
+        ),
+        StoreError::Invalid("CONTEXT_DOCUMENT_DELETION_PENDING".to_owned()),
+    );
+    assert_eq!(
+        prefer_context_document_status_error_after_read_failure(
+            blob_error.clone(),
+            Ok(Some("REVOKED".to_owned())),
+        ),
+        StoreError::Invalid("CONTEXT_DOCUMENT_REVOKED".to_owned()),
+    );
+    assert_eq!(
+        prefer_context_document_status_error_after_read_failure(
+            blob_error.clone(),
+            Ok(Some("ACTIVE".to_owned())),
+        ),
+        blob_error,
+    );
+    assert_eq!(
+        prefer_context_document_status_error_after_read_failure(
+            StoreError::Blob("Resource blob unavailable".to_owned()),
+            Err(StoreError::Database("status read failed".to_owned())),
+        ),
+        StoreError::Blob("Resource blob unavailable".to_owned()),
+    );
+}
+
+#[test]
 fn applies_full_contract_schema_and_reports_sqlite_runtime() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let store = test_store(&directory, Duration::from_secs(1));
@@ -123,6 +165,8 @@ fn applies_full_contract_schema_and_reports_sqlite_runtime() {
         "domain_events",
         "schema_migrations",
         "workspace_origin_sequences",
+        "resource_text_indexes",
+        "resource_text_index_terms",
     ] {
         let exists: bool = connection
             .query_row(
@@ -484,6 +528,33 @@ fn migration_crash_rolls_back_ddl_and_can_retry() {
 }
 
 #[test]
+fn resource_index_migration_failure_is_atomic_and_retryable() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let mut connection = Connection::open(directory.path().join("migration-v7.sqlite3"))
+        .expect("open test database");
+    connection.pragma_update(None, "foreign_keys", true).expect("enable FK");
+    connection.query_row("PRAGMA journal_mode = WAL", [], |row| {
+        row.get::<_, String>(0)
+    }).expect("enable WAL");
+
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV7Migration)).is_err());
+    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read schema version after interrupted v7");
+    assert_eq!(version, V6_SCHEMA_VERSION);
+    let indexes_exist: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'resource_text_indexes')",
+        [],
+        |row| row.get(0),
+    ).expect("check interrupted v7 rollback");
+    assert!(!indexes_exist);
+
+    migrate(&mut connection).expect("retry Resource index migration");
+    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read final schema version");
+    assert_eq!(version, SCHEMA_VERSION);
+}
+
+#[test]
 fn schema_drift_and_unknown_newer_versions_fail_closed() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let path = state_database(&directory);
@@ -512,7 +583,7 @@ fn schema_drift_and_unknown_newer_versions_fail_closed() {
         TestKeys { key: [19_u8; 32] },
     ));
     let result = SqliteWorkspaceStore::open(&newer_path, blob_store, SqliteConfig::default());
-    assert!(matches!(result, Err(StoreError::UnsupportedSchema(2))));
+    assert!(matches!(result, Err(StoreError::UnsupportedSchema(version)) if version == SCHEMA_VERSION + 1));
 }
 
 #[test]
@@ -672,4 +743,106 @@ fn reports_blob_commit_failure_before_any_aggregate_write() {
             .expect("read database")
             .is_none()
     );
+}
+
+#[test]
+fn sqlite_full_error_maps_safely_and_rolls_back_workspace_commit() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    let created = create_workspace(&store, "workspace-sqlite-full");
+    drop(store);
+
+    let database = state_database(&directory);
+    let mut connection = Connection::open(&database).expect("reopen migrated database");
+    let page_count: u32 = connection
+        .pragma_query_value(None, "page_count", |row| row.get(0))
+        .expect("read page count");
+    connection
+        .pragma_update(None, "max_page_count", page_count)
+        .expect("cap database at current page count");
+
+    let mut changed = created.workspace.clone();
+    changed.name = "x".repeat(1024 * 1024);
+    changed.version = 2;
+    changed.updated_at = "2026-10-07T12:00:00Z".to_owned();
+    let event = EventDraft {
+        event_id: "event-full-update".to_owned(),
+        workspace_id: changed.workspace_id.clone(),
+        entity_type: "Workspace".to_owned(),
+        entity_id: changed.workspace_id.clone(),
+        origin_runtime_id: "runtime-local".to_owned(),
+        entity_revision: 2,
+        hlc_timestamp: "2026-10-07T12:00:00Z".to_owned(),
+        correlation_id: "correlation-full".to_owned(),
+        causation_id: None,
+        schema_version: 1,
+        event_type: "workspace.replication_policy.changed.v1".to_owned(),
+        payload: serde_json::json!({"padding": "x".repeat(1024 * 1024)}),
+        recorded_at: "2026-10-07T12:00:00Z".to_owned(),
+    };
+    let state_ref = AggregateStateRef {
+        blob: BlobRef {
+            digest: format!("sha256:{}", "0".repeat(64)),
+            size_bytes: 1,
+            media_type: STATE_MEDIA_TYPE.to_owned(),
+        },
+        entity_revision: 2,
+        record_schema_version: 1,
+    };
+
+    let result = commit_workspace_transaction(
+        &mut connection,
+        Some(1),
+        changed.clone(),
+        event.clone(),
+        state_ref.clone(),
+        None,
+    );
+    assert!(matches!(
+        result,
+        Err(StoreError::Io(ref message)) if message == "database disk is full"
+    ));
+
+    let version: i64 = connection
+        .query_row(
+            "SELECT version FROM workspaces WHERE workspace_id = ?1",
+            ["workspace-sqlite-full"],
+            |row| row.get(0),
+        )
+        .expect("read committed Workspace after failed transaction");
+    let event_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE workspace_id = ?1",
+            ["workspace-sqlite-full"],
+            |row| row.get(0),
+        )
+        .expect("read events after failed transaction");
+    let sequence: i64 = connection
+        .query_row(
+            "SELECT last_sequence FROM workspace_origin_sequences WHERE workspace_id = ?1 AND origin_runtime_id = 'runtime-local'",
+            ["workspace-sqlite-full"],
+            |row| row.get(0),
+        )
+        .expect("read origin sequence after failed transaction");
+    assert_eq!(version, 1);
+    assert_eq!(event_count, 1);
+    assert_eq!(sequence, 1);
+
+    connection
+        .pragma_update(None, "max_page_count", page_count.saturating_add(1024))
+        .expect("restore database growth allowance");
+    let retried =
+        commit_workspace_transaction(&mut connection, Some(1), changed, event, state_ref, None)
+            .expect("retry after capacity is restored");
+    assert_eq!(retried.event.origin_sequence, 2);
+    assert_eq!(retried.workspace.version, 2);
+
+    let final_sequence: i64 = connection
+        .query_row(
+            "SELECT last_sequence FROM workspace_origin_sequences WHERE workspace_id = ?1 AND origin_runtime_id = 'runtime-local'",
+            ["workspace-sqlite-full"],
+            |row| row.get(0),
+        )
+        .expect("read retried origin sequence");
+    assert_eq!(final_sequence, 2);
 }

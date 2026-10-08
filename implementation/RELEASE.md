@@ -12,7 +12,7 @@ Keep OS signing and provider credentials external. Verify artifact checksums and
 tampered updates. Ship daemon independently of Operator lifecycle and document startup,
 tray, stop, suspend and uninstall/data-retention choices.
 
-## Cloud/remote runbook deliverables
+## Post-V1 cloud/remote runbook deliverables
 
 Document persistent volumes, backup keys, least-privilege service user, TLS/auth/ingress,
 egress/provider credentials, worktree/browser sandbox isolation, RAM/CPU/disk caps,
@@ -47,19 +47,23 @@ schedule health. Diagnostics export is owner-previewed/redacted. Retention/delet
 cloud inference disclosure must match actual paths, including native-provider history
 that LiteCowork cannot recall. Synthetic staging data is default.
 
-## G5 checklist
+## G3 desktop/local V1 checklist
 
 - All required stories accepted; coverage rows point to executable cases and evidence.
-- Full local/cloud/remote gates; supported OS/agent/provider matrix published.
+- Full local gates; supported desktop OS/agent/provider matrix published.
 - Real-use corpus passed, blockers resolved; no critical authority/isolation/data-loss
   defects. Any unavailable optional integrations visibly unavailable and owner recorded.
 - Code/system/user tests and architecture/plan validation green from exact release commit.
 - Numeric performance/quality baselines frozen and regression gates passed; soak report.
 - Installer signature, upgrade, uninstall, restore and rollback verified on clean hosts.
-- Cloud costs, health, backups, fencing, quota, channel assurance and incident drills proven.
+- Local cost/health/backup/recovery and incident drills proven.
 - User documentation: first task, workers, uploads/RAG, approvals, artifacts, automation,
-  cloud/remote, privacy/provider limitations, troubleshooting and diagnostics.
+  privacy/provider limitations, troubleshooting and diagnostics.
 - Owner reviews evidence and approves release claims; no invented cost savings or parity.
+
+Cloud continuation and remote Runtime have separate post-V1 release checklists. They do
+not block this desktop/local V1 release and must not be represented as available until
+their own deployment and recovery evidence passes.
 
 Keep completed evidence in an execution record separate from this initial planned backlog.
 The initial docs cannot satisfy any product release gate by themselves.

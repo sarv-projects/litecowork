@@ -1,11 +1,14 @@
 # LiteCowork implementation plan
 
-Status: planned; no application implementation or product qualification is claimed.
+Status: active source implementation; product qualification remains unverified. V1 is
+desktop/local; cloud continuation and remote Runtime are post-V1.
 Baseline: `8af59a5b9be0a00b12849caf40eac287527ac43e`. Prepared 2026-10-05.
 
-This is the delivery plan for coding agents with one owner reviewing the work. The
-architecture and domain documents remain contract authority. This folder owns execution
-ordering, story acceptance, evidence, research references, and release gates.
+This is the delivery plan for coding agents with one owner reviewing the work. V1 covers
+the complete desktop/local product; cloud continuation and remote Runtime are planned in
+post-V1 tracks. The architecture and domain documents remain contract authority. This
+folder owns execution ordering, story acceptance, evidence, research references, and
+release gates.
 
 ## Read in order
 
@@ -20,6 +23,7 @@ ordering, story acceptance, evidence, research references, and release gates.
 9. [Practical Cowork replacement assessment](WORKFLOWS.md)
 10. [Research and repository reference catalogue](SOURCES.md)
 11. [Production operations and release checklist](RELEASE.md)
+12. [Deferred licensing and packaging research](licensingandpkacgingresearch.md)
 
 [Architecture coverage](ARCHITECTURE-COVERAGE.md) lists every tracked architecture source,
 heading, ADR, flow, benchmark, story, and enumerated machine-contract object with a primary

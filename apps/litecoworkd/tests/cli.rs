@@ -11,7 +11,7 @@ fn help_is_available_without_starting_runtime_services() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 help output");
     assert!(stdout.contains("USAGE:"));
-    assert!(stdout.contains("does not start a listener"));
+    assert!(stdout.contains("does not accept work"));
     assert!(output.stderr.is_empty());
 }
 

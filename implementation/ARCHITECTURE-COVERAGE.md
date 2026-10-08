@@ -7,11 +7,11 @@ domain owners still apply. Story status tracks planning through owner acceptance
 
 ## Coverage inventory
 
-- 64 source Markdown documents; 870 heading-level sections are digest-pinned.
-- 32 implementation-plan documents and 177 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
-- 55 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
-- 82 flows and 77 benchmarks.
-- 174 OpenAPI operations and 271 component schemas; 0 components are unreachable from every Operator operation.
+- 66 source Markdown documents; 890 heading-level sections are digest-pinned.
+- 32 implementation-plan documents and 179 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 57 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
+- 87 flows and 79 benchmarks.
+- 177 OpenAPI operations and 274 component schemas; 0 components are unreachable from every Operator operation.
 - 97 error codes; 212 shared IDs/value definitions.
 - 133 event types and 133 typed event payload schemas.
 - 107 SQLite tables, 1172 columns, 475 foreign-key columns, 68 unique constraints, 348 checks, 1 view(s), 140 triggers, and 76 indexes.
@@ -30,6 +30,7 @@ USER tests provide that evidence when executed.
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | E01-S01 | Contribution workflow |
 | [`GLOSSARY.md`](../GLOSSARY.md) | E01-S01 | Canonical vocabulary |
 | [`README.md`](../README.md) | E02-S01 | Product overview |
+| [`apps/litecowork-ui/README.md`](../apps/litecowork-ui/README.md) | E02-S01 | Architecture contract |
 | [`docs/AGENT-FABRIC.md`](../docs/AGENT-FABRIC.md) | E03-S05 | Architecture contract |
 | [`docs/API.md`](../docs/API.md) | E01-S04 | Architecture contract |
 | [`docs/ARTIFACTS-EVIDENCE.md`](../docs/ARTIFACTS-EVIDENCE.md) | E04-S05 | Architecture contract |
@@ -53,6 +54,7 @@ USER tests provide that evidence when executed.
 | [`docs/MOTION.md`](../docs/MOTION.md) | E08-S05 | Architecture contract |
 | [`docs/NETWORK-SECURITY.md`](../docs/NETWORK-SECURITY.md) | E04-S02 | Architecture contract |
 | [`docs/OBSERVABILITY.md`](../docs/OBSERVABILITY.md) | E13-S02 | Architecture contract |
+| [`docs/PRESENTATION-RUNTIME.md`](../docs/PRESENTATION-RUNTIME.md) | E08-S06 | Architecture contract |
 | [`docs/PRODUCT.md`](../docs/PRODUCT.md) | E08-S01 | Architecture contract |
 | [`docs/PROTOCOLS.md`](../docs/PROTOCOLS.md) | E01-S04 | Architecture contract |
 | [`docs/RESPONSIBILITIES.md`](../docs/RESPONSIBILITIES.md) | E08-S02 | Architecture contract |

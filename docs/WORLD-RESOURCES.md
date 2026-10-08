@@ -58,6 +58,24 @@ one branch. Resolution never drops sibling heads. A merge must create a new revi
 parent set includes every head it actually merges; merely selecting a branch is not a
 merge.
 
+An authenticated owner may append a new revision to an existing managed Resource through
+the revision-upload protocol in `API.md`. Admission requires `If-Match` for the exact
+Resource version and a non-empty set of unique parent IDs equal to every current head. The
+upload pins that version and parent set; commit rechecks both under the storage transaction,
+verifies the full-content SHA-256, and preserves Resource identity and metadata. A concurrent
+edit therefore returns `RESOURCE_CONFLICT`; clients must reload and deliberately create a
+new upload with the current complete head set. This local upload operation does not merge
+conflicted heads implicitly and is unavailable when the Resource lacks an available managed
+local content location.
+
+Revision-history pages return a bounded keyset page over immutable SQLite append order,
+with the last revision ID as the cursor. Since a parent must already exist before a child
+ancestry edge can be committed, append order is a stable parent-before-child traversal
+without loading and sorting the full history in the daemon. The cursor is scoped to the
+Workspace and Resource; appends after a page naturally appear after its cursor. The current
+schema has no indexed append ordinal, so SQLite may scan matching revisions internally;
+bounded database work needs an additive append-order column/index migration.
+
 Only verified `STRONG` or `PROVIDER_SCOPED` provider identity tuples receive an
 `identity_digest` eligible for Workspace-scoped deduplication. `WEAK` observations have no
 cross-location deduplication digest and remain separate Resources until stronger evidence
@@ -97,11 +115,31 @@ already-created Artifacts; retained derived content follows Workspace retention 
 Adding a folder as a message attachment is a one-time input reference. Adding it as a
 WorkspaceRoot is a persistent user-authorized relationship that enables ongoing
 observation and deterministic search under the selected policy. A WorkspaceRoot becomes
-`UNAVAILABLE` when its only observing Runtime is offline and returns to `ACTIVE` only
-after the root identity is revalidated. It never falls back to another path or broader
-root. `PAUSED` is an explicit user/service lifecycle state, not a synonym for offline
-availability. Root observation does not grant a capability, secret, write permission, or
-cloud replication by itself; these are independent decisions. `SELECTED_FOLDERS` stores
+`UNAVAILABLE` when its observing Runtime cannot prove the saved root identity. Before
+Operator IPC starts, Runtime startup reopens the saved private locator using no-follow
+directory-handle traversal, compares the prior raw operating-system identity, and checks the
+Resource's stable keyed identity digest and identity projection. Only an exact match binds
+fresh private locator and raw-identity rows to the current Runtime incarnation; the root
+never falls back to a new path or broader scope. A missing/mismatched binding, unsupported
+platform, invalid locator, or changed/unopenable directory commits the root and location as
+`UNAVAILABLE` and removes partial current-incarnation bindings. Root status, location
+availability, safe events/snapshots, and private binding writes are one SQLite transaction.
+Root-specific failures do not prevent unrelated Runtime service startup. Revoked roots are
+excluded and cannot be reactivated. `PAUSED` is an explicit user/service lifecycle state,
+not a synonym for offline availability. This startup implementation currently has Linux/macOS
+source support only and is not OS-qualified; Windows and unsupported platforms fail closed.
+Loss of the OS-principal/keyring identity currently blocks startup before this root
+transaction, so that key-loss path does not yet durably mark roots unavailable. Root
+The owner may pause an ACTIVE root without deleting its identity bindings or selected-folder
+replication preference; every observer, search, exposure, and replication transfer must
+still filter for ACTIVE status. Resuming a PAUSED root is a separate versioned user action
+and requires the current Runtime incarnation to have the matching AVAILABLE location and
+both validated private identity bindings. A stale/missing current-incarnation binding
+returns a conflict and leaves the root PAUSED. UNAVAILABLE is recovered only by Runtime
+identity revalidation, not by the resume button. Revocation remains terminal and deletes the
+private bindings and selected-root replication relation. Root observation does not grant a
+capability, secret, write permission, or cloud replication by
+itself; these are independent decisions. `SELECTED_FOLDERS` stores
 stable WorkspaceRoot IDs, not revision-pinned ResourceRefs, so newly observed content
 under an authorized selected root remains eligible. Workspace and root replication
 policies intersect; a root-level setting cannot broaden the Workspace's scope.
@@ -155,6 +193,69 @@ caller grants before returning names or snippets. Snippets are bounded and are n
 automatically attached to an AgentSession. The user/agent explicitly selects which
 ResourceRefs enter a TaskPacket or ContextAttachment. Semantic RAG, web search, and
 cross-document reasoning are external capabilities.
+
+**Desktop local text index:** Current managed Resource revisions with an allowlisted plain
+text media type/extension, at most 1 MiB, and at most 20,000 distinct normalized terms
+of at most 128 Unicode characters each are indexed when imported or uploaded. Inputs
+outside those parser bounds are left unindexed rather than represented by a partial
+index. The
+index is a rebuildable projection scoped by Workspace, Resource, and exact
+ResourceRevision. Extracted UTF-8 text is stored only as an encrypted `RESOURCE_INDEX`
+BlobStore object under a Workspace/purpose key. SQLite stores the encrypted blob digest,
+source revision/digest, parser version, key version, and distinct HMAC-SHA256 term tokens;
+it stores neither plaintext extracted text nor raw terms. Matching is deterministic,
+case-normalized Unicode token equality with AND across query terms, not semantic
+similarity. Results include the exact revision-pinned ResourceRef and a bounded excerpt
+read back from the encrypted index object. The search boundary must recheck Workspace,
+current revision, source digest, and ContextDocument active status after reading the
+snapshot. An unavailable/lost index key disables indexed search and never falls back to
+plaintext indexing.
+
+Index preparation happens before the Resource SQLite writer transaction; the index row
+and keyed-term rows are committed with initial Resource creation/upload. An owner can
+explicitly rebuild the local projection for the exact current managed Resource revision
+from Library. The request pins both revision ID and content digest, verifies the current
+head before and after bounded byte access, and atomically commits the encrypted projection
+and a `request_dedup` receipt containing only the typed outcome. A retry with the same
+principal/request ID and normalized pin replays the original result; a changed head returns
+a conflict and is never indexed implicitly. Unsupported, oversized, invalid UTF-8,
+control-character, or over-term-limit inputs return `NOT_INDEXABLE` with a reason and no
+source content or terms. The no-index result removes any obsolete projection for that
+exact revision. This owner action changes no Resource/Task history and emits no domain
+event. An encryption or key-provider error is surfaced and cannot create a plaintext
+index. New Resource revisions do not reuse older terms; they require an index built from
+the verified bytes for that revision. The shared Resource content-read admission boundary
+rejects non-`ACTIVE` ContextDocuments before BlobStore access. A read admitted while
+`ACTIVE` may finish after a concurrent status change, but the rebuild's final transaction
+rechecks status and the exact source pin and will not publish that prepared projection.
+Old revision projections are excluded from current-resource search and are
+removed with their ResourceRevision or through the registered derived-index purge target.
+Root revocation removes the root from future observation/search; it does not silently
+purge separately uploaded Resource content. ContextDocument revocation immediately
+excludes its rows from indexed search. Physical deletion of the encrypted index snapshot
+is not yet wired to the Resource/ContextDocument purge worker; until that integration
+exists, the purge plan must account for `RESOURCE_INDEX` blobs and term rows before
+claiming `DELETED`.
+
+The earlier `ON_DEMAND_CONTENT` mode remains a bounded compatibility path, not the
+persistent index. It scans at most 20 candidates, 1 MiB per Resource and 8 MiB total per
+request. It requires a non-empty query and examines only allowlisted valid UTF-8 text.
+Search cursors bind Workspace, query, mode, and filters. ZIP files remain opaque Resources
+and are never indexed or extracted here. PDF/Office parsing, OCR, embeddings, semantic
+retrieval, local-model RAG, persistent WorkspaceRoot crawling, and folder recursive
+indexing are not implemented by this slice. They require isolated, qualified providers
+and Core-mediated Resource revision, authorization, provenance, deletion, and freshness.
+Search results are not implicit Task/Agent attachments; a user or authorized workflow
+explicitly selects a pinned ResourceRef.
+
+The local Operator's read-only `GET /v1/capabilities/zip-intake` readiness route is
+mounted and Workspace-owner scoped; a Tauri command exposes that observation to the Library.
+Its current status is `UNAVAILABLE` because the parser has not been integrated behind a
+supervised isolated worker with enforced hard resource budgets. The desktop may save a ZIP
+as an opaque Resource but must tell the user its members are not unpacked or indexed. Do not
+pass archive bytes to the in-process Python provider. Extraction remains deferred until
+worker containment, cancellation and crash handling, per-entry provenance, transactional
+child-Resource publication, deletion, and platform/system qualification are implemented.
 
 ## Local application availability
 

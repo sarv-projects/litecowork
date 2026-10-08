@@ -231,6 +231,12 @@ Changing the Coworker does not rewrite an AutomationRevision. The owner must rev
 Automation to adopt another Coworker revision. Historical Tasks retain the revision that
 their pinned AutomationRevision selected.
 
+Definition create and revise requests explicitly carry either an exact
+`CoworkerRevisionRef` or `null`. The desktop selector pins the active Coworker's current
+revision when selected; editing an existing definition defaults to preserving its exact
+existing pin, including an older revision. Clearing or changing the pin is an explicit
+edit. Saving still creates a `PAUSED` Automation and does not admit a Task or run a trigger.
+
 ## Task inputs and trigger security
 
 ```text

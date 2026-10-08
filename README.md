@@ -79,16 +79,16 @@ native features.
 
 ## Desktop-first delivery
 
-The product is built in release gates: local desktop work first, cloud continuation second,
-and remote Runtime third. The V1 goal is a complete, tested product for the finalized
+V1 is a complete, production-qualified desktop/local product for the finalized local
 feature set, not a demo that substitutes mock workers for real provider integrations.
+Cloud continuation and remote Runtime are post-V1 releases.
 
 The intended use is that coding agents implement bounded changes while you review them.
-The plan also tests real non-coding workflows so LiteCowork can grow into a useful laptop
-coworker: organizing files, working from local documents, preparing reports, and handling
-approved recurring project work. Provider account requirements, model quality, local
-hardware, site rules and operating-system support set practical limits; supported
-capabilities will be published against tested versions.
+The desktop/local V1 also targets real non-coding workflows: organizing files, working
+from local documents, preparing reports, and handling approved recurring project work.
+Provider account requirements, model quality, local hardware, site rules and operating-
+system support set practical limits; supported capabilities will be published against
+tested versions.
 
 ## Architecture and development
 

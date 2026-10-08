@@ -68,6 +68,14 @@ pending prompt and during an inbound claim; verify higher host epoch, no copied 
 references, stale-owner rejection, ambiguous outbound reconciliation, and Operator inbox
 fallback for replies to old prompts.
 
+Also inject races at the Hub transaction boundary: receipt insertion wins before drain and
+is included in reconciliation; drain wins before insertion and the source neither stores nor
+acknowledges the provider event; proof creation cannot commit while any source-epoch receipt
+is PROCESSING or any accepted RECEIVED receipt is unreplicated/unaccounted for; a durable
+pre-drain RECEIVED row can be claimed by the successor after reassignment; after proof, no
+late source receipt can appear before lease release. The successor replays and deduplicates
+any unacknowledged event, or the owner-confirmed gap is audited.
+
 ### Gate 5 — automation
 Recurring trigger creates ordinary Task and deduplicates duplicate trigger delivery.
 
@@ -88,6 +96,10 @@ Recurring trigger creates ordinary Task and deduplicates duplicate trigger deliv
 - channel response rejects another sender, revoked/low-assurance binding, missing RESPOND action, expired/answered request, duplicate event, ambiguous/missing target, attachments, nested schema, and credential-like content without consuming a valid target
 - channel response records the exact provider event provenance, atomically accepts its receipt and consumes only the matched target; replay cannot answer a sibling request or resolve an Approval
 - channel host assignment is unique per binding; a new Runtime cannot claim/settle receipts or use reply targets at an old epoch, and no new host lease is granted before source settlement or authoritative expiry plus skew margin
+- every committed ACTIVE ChannelHostAssignment has exactly one matching lease; a committed DRAINING assignment retains its source lease; assignment movement commits release, higher target epoch, and one fresh target lease atomically, while no-target Runtime revocation commits release plus explicit unassignment and leaves the ChannelBinding DEGRADED
+- receipt insertion is serialized with ACTIVE→DRAINING and drain-proof creation; DRAINING rejects new source receipt insertion/acknowledgment; quiescent proof requires no source-epoch PROCESSING claims, every accepted RECEIVED row Hub-durable/accounted for in the successor frontier, no unresolved outbound Effects, and no unreplicated receipts
+- RuntimeWorkspaceBinding revocation with no eligible ChannelHost target clears the assignment only after proof or expiry-plus-skew; old source receives no more work, receipt/reply-target history remains, and later assignment requires a fresh current lease
+- migration rejects ACTIVE/no-lease and DRAINING/no-lease ChannelHost rows; host lease IDs are never reused across bindings/epochs, renewal preserves identity, reassignment derives a new credential, and duplicate identity/digest detection fails closed
 - a receipt is durably replicated before cursor/deferred-ack advancement; reclaim after expired/fenced claim increments claim_epoch, preserves origin provenance, and rejects a conflicting digest
 - host restart marks stale cursor incarnation for reconciliation; host move resumes after last Hub-replicated receipt, and a move without replay/transfer requires explicit gap acceptance that remains visible
 - provider-accepted notification timeout remains AMBIGUOUS and cannot create a reply target or retry until reconciliation
@@ -140,6 +152,15 @@ Recurring trigger creates ordinary Task and deduplicates duplicate trigger deliv
 - notification delivery state never mutates Task state
 - a Task can use an explicitly registered local intranet capability through the on-device broker, while sandbox sockets, arbitrary Agent URLs, unauthorized redirects, cloud Metadata endpoints, and cloud-runtime use of local grants remain blocked
 - Resource search is deterministic, scoped, freshness-aware, and does not consume model usage
+- Indexed Resource search uses only exact-current Workspace revisions and encrypted
+  `RESOURCE_INDEX` snapshots; SQLite contains keyed tokens, not source terms or snippets
+- Current Resource-index code-test sources cover allowlist/container exclusion, Unicode
+  normalization and AND matching, bounded/sanitized snippets, query limits, stable
+  Workspace-scoped HMAC tokens, and atomic/retryable v7 DDL migration. Before acceptance,
+  add/run conformance cases for retained key-version search, unavailable-key fail-closed
+  behavior, reindex after rotation, stale-revision exclusion, ContextDocument revocation,
+  snapshot tampering, and exact physical index/blob purge. Source tests are not runtime
+  verification evidence until the matching API integration is built and run.
 - ArtifactVersion/VerificationRun inputs pin exact Resource revisions and produce one rebuildable DependencyEdge per input
 - dependency invalidation links the exact edge to the changed revision, is idempotent, and marks downstream projections stale without mutating immutable records
 - a conflicted Resource revision graph never projects a dependency as current
@@ -178,6 +199,10 @@ Recurring trigger creates ordinary Task and deduplicates duplicate trigger deliv
   the kind, prevents future proposals, and unmute does not revive dismissed items
 - Suggestion dismissal suppresses only the exact dedupe key for 30 days; expiry and
   acceptance do not create a dismissal cooldown
+- Accepting a TASK Suggestion atomically creates one ordinary READY Task and resolves
+  the Suggestion with its `result_task_id`; exact idempotent replay returns the same Task,
+  and injected failures leave neither aggregate partially committed. Acceptance creates
+  no Plan, AgentSession, Attempt, lease, Environment, Invocation, Effect, or Evidence.
 - ContextDocument kind/owner pairs are validated, Resources are revisioned, and concurrent
   edits never last-write-wins
 - Environment sharing scope/owner/lifetime constraints reject cross-scope attachments;

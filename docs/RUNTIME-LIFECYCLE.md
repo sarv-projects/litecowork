@@ -55,12 +55,134 @@ startup, while Automation triggers create user work.
 Desktop builds therefore install/register two programs with distinct lifetimes: the
 Operator shell (window/tray/optional global Quick Entry) and `litecoworkd` (headless
 Runtime). On-demand startup uses authenticated local IPC. The Operator may request a
-Runtime start or stop but cannot report the daemon ready until the Runtime lifecycle
-projection confirms it.
+Runtime start or stop but cannot report the Operator API ready until an authenticated
+`GET /v1/operator/readiness` response matches the private connection metadata's Runtime
+and local-incarnation IDs. This confirms API serving only; it does not imply Runtime
+execution readiness. The documented lifecycle API may eventually request a start or
+stop, but current source exposes only the readiness handshake. Authenticated Operator
+stop is intentionally unavailable until Task Attempt drain, Effect reconciliation,
+lease fencing/release, and local service-reference settlement are integrated. The
+process signal handler is a daemon/supervisor shutdown path, not an Operator lifecycle
+API and not evidence that those domain dependencies were reconciled.
+
+The desktop transport's OS identity, endpoint lifecycle, frame bounds, and reconnection
+contract are specified in [`LOCAL-OPERATOR-IPC.md`](LOCAL-OPERATOR-IPC.md). The daemon
+and Tauri source now use that Unix IPC path on Linux/macOS; Windows fails closed. The
+source has not passed build, system, or OS qualification and must not be treated as a
+production-ready transport.
+
+The local bootstrap currently holds the single-instance lock, persists Runtime/incarnation
+state, validates the OS-principal binding, opens local storage, and starts the authenticated
+Operator IPC endpoint where Unix transport is supported. `litecoworkd status` probes the
+lock to distinguish a running daemon from stale state after a crash. Tauri can start the
+separate daemon, display status, and use the local Workspace/Resource Operator routes. The
+Runtime remains `DEGRADED` because Task recovery and execution are not implemented; an
+authenticated Operator response is not execution readiness. Windows IPC and cross-platform
+package install/uninstall integration remain open.
+
+On Linux, the desktop's current lifecycle slice installs or refreshes a marked, user-owned
+`systemd/user/litecoworkd.service` under Tauri's resolved user configuration directory
+(typically `~/.config`, subject to XDG configuration). The unit uses `Delegate=yes`,
+`KillMode=control-group`, `Restart=on-failure`, and a 90-second `TimeoutStopSec`. The daemon
+allows up to 60 seconds for already-admitted Operator handlers to settle after admission
+stops, so the service-manager deadline must exceed that drain window and leave time for
+Runtime lifecycle persistence. If storage or the OS stalls beyond the manager deadline,
+systemd may still force-kill the daemon; the next start must then report an unclean
+incarnation and recover before readiness. This is bounded best-effort shutdown, not proof
+that external work or Effects settled. The unit also uses escaped absolute daemon/data
+paths. The Operator calls
+`systemctl --user daemon-reload`, `start`, and `show` with deadlines. It never enables the
+unit at login and never directly starts `litecoworkd` when systemd is unavailable. Each
+Operator launch rewrites the marked unit for the currently resolved packaged executable;
+an already active service is not stopped or restarted for an update, so the refreshed
+`ExecStart` takes effect when systemd next starts it. Status requires the exact marked unit
+body, active systemd properties, and `/proc` executable plus argument identity matching
+the selected daemon and data directory. A mismatch degrades the displayed Runtime status
+without changing authenticated Operator API readiness. These checks validate lifecycle
+ownership only. A separate Linux-only `linux-process-scope` source primitive now starts a
+trusted scope gate inside a transient per-Attempt cgroup, checks the gate's cgroup-v2
+membership and requested `memory.max`, `cpu.max`, and `pids.max` before allowing the native
+agent to exec, and observes recursive `cgroup.events` state for quiescence. The primitive
+is not connected to Attempt admission and remains unbuilt and OS-unqualified. A same-user
+worker can still access the user systemd control bus and filesystem; the primitive is not
+a hostile-code sandbox or a production-safe switching proof. A separate Environment
+boundary must restrict those paths before untrusted worker execution. Task admission
+remains unavailable. Uninstall cleanup is not wired; packaging must safely remove
+the marked unit only after a future drain protocol and must never kill active work. These
+Linux changes are source-only pending build, system and OS qualification.
+
+Before GO, cleanup may be reported settled only after the direct launcher is reaped and a
+bounded observation proves the exact transient unit `ActiveState` is `inactive`/`dead` or
+its known cgroup-v2 `cgroup.events` reports `populated 0`. A failed kill request, direct
+child reap, timeout, malformed evidence, or unobservable unit/cgroup is not proof of
+quiescence; the caller retains a retryable `PendingCleanup` handle with the unit and child,
+plus the cgroup event path when it was resolved. This is a source contract, not yet a
+qualified systemd guarantee. Post-GO cleanup continues to require recursive cgroup-v2
+quiescence; neither path settles external Effects or provider-side work.
+
+The desktop status command performs the daemon status subprocess and authenticated IPC
+readiness probe on Tauri's blocking pool so the command executor remains available. During
+on-demand startup, the shell retains the launched process handle only until the readiness
+handshake succeeds or the child exits; an early child exit is reported when no process owns
+the Runtime lock, while a different lock owner is still observed through its readiness
+handshake. After authenticated readiness the shell drops its handle and
+the daemon continues under its own single-instance lock and lifecycle. A readiness timeout
+does not terminate a possibly recovering daemon; a later status/start request must observe
+the process lock and authenticated handshake again. This is source behavior only and has
+not been built or platform-qualified. Status probes use a one-second overall deadline,
+with the daemon status subprocess and readiness exchange each capped at 400 ms and clamped
+to the remaining budget. On-demand startup uses one absolute five-second deadline across
+its initial status check and all subsequent probes, rather than restarting the timeout for
+each poll.
+
+After registering the current Runtime incarnation and before starting Operator IPC, startup
+pages this Runtime's non-revoked local WorkspaceRoots in deterministic bounded batches.
+Linux/macOS source reopens each prior private locator from a no-follow directory handle,
+compares the prior raw file identity and the Resource's stable keyed identity projection,
+then revalidates the handle. One immediate SQLite transaction records either a matching
+current-incarnation locator and identity pair plus an AVAILABLE location, or removes any
+partial current-incarnation pair and records the location as UNAVAILABLE with a safe
+reason-coded event. An ACTIVE root becomes UNAVAILABLE on failed identity validation; an
+explicitly PAUSED root stays PAUSED even while its location is unavailable, so recovery
+cannot silently resume it. A matching unavailable root may become ACTIVE only after this
+identity check succeeds. A root-specific missing, changed, or unsupported identity does not
+block unrelated Runtime/Operator startup. A storage/transaction integrity failure blocks
+Operator readiness and attempts to persist the registered Runtime incarnation as DEGRADED;
+if storage also rejects that lifecycle update, only the private local status file can reflect
+the blocker. Revoked roots are excluded and are never reactivated. This source path is not
+OS-qualified; Windows and other platforms fail closed.
+
+The OS-principal/keyring validation still precedes storage open. If that credential is
+missing or invalid, the current bootstrap stops before root revalidation and does not persist
+WorkspaceRoot UNAVAILABLE transitions; startup remains fail-closed to preserve authenticated
+IPC. Handling that key-loss case while keeping unrelated local Runtime services available
+requires a separately designed recovery/storage path and is deferred, not claimed here.
 
 ## Runtime incarnation
 
-`RuntimeId` identifies a paired installation/device across daemon restarts. Every daemon
+`runtime-state.json` is private installation bootstrap/lifecycle state. Its stable
+`runtime_id` and current `local_incarnation_id` are mirrored into the local Runtime catalog
+after SQLite opens, before the Operator handshake. The local catalog is not published to
+Mesh and is not backed up as Workspace content. The authenticated same-installation
+`GET /v1/operator/readiness` handshake returns the IDs so the desktop can fence a
+connection to the daemon incarnation it observed; readiness does not imply Workspace
+execution authority. Creating a Workspace does not enroll the Runtime automatically. The
+Workspace owner must explicitly request a `LOCAL_ENROLLMENT` binding. Authenticated Mesh
+pairing, Runtime presence, and Workspace replication remain separate operations and require
+the corresponding active `MESH_PAIRING` binding. Workspace-scoped local admissions require
+an ACTIVE local or Mesh binding plus ordinary Workspace authorization. The bootstrap
+record preserves startup policy and clean-shutdown observation; it is not the durable
+Runtime catalog or Workspace authorization record.
+
+The public DeviceIdentity is derived from a stable Ed25519 signing key held only by the
+platform credential store. The keyring entry is scoped to the canonical local data
+directory and binds the bootstrap RuntimeId; loss, corruption, or mismatch fails closed.
+No local file, SQLite record, Workspace blob key, or bootstrap field is a fallback for
+private signing material. Local registration records only the public key descriptor and
+the current daemon observation.
+
+`RuntimeId` identifies one installed daemon across restarts; pairing associates that
+installation with Mesh. Every daemon
 process that acquires the single-instance lock creates a new `RuntimeIncarnationId` before
 recovery begins:
 
@@ -78,9 +200,11 @@ RuntimeIncarnation {
 }
 ```
 
-`RuntimeIncarnation` is registered as durable Mesh metadata. The OS boot ID and local
-diagnostic references live in `RuntimeIncarnationLocalObservation` and never leave the
-Runtime or enter Workspace backups. An incarnation is not a second device identity. Agent host process
+`RuntimeIncarnation` is persisted in the local Runtime catalog before recovery proceeds.
+It is registered with Mesh only over authenticated pairing before publishing offers or
+events that refer to it. The OS boot ID and local diagnostic references live in
+`RuntimeIncarnationLocalObservation` and never leave the Runtime or enter Workspace
+backups. An incarnation is not a second device identity. Agent host process
 references, CapabilityHostInstance observations/provider handles, process/application
 ownership tokens, watcher cursors, AgentEndpoint command/socket/URL locators, Environment
 provider locators, checkpoint handles, ResourceLocation private locators, raw file identity
@@ -114,8 +238,11 @@ STOPPED → STARTING → RECOVERING → READY | DEGRADED
 1. Acquire the per-installation single-instance lock; reject a duplicate daemon.
 2. Open StateStore and BlobStore, apply forward migrations, and validate journal/checkpoint
    integrity. Unsupported schema or corruption leaves the Runtime unavailable for work.
-3. Persist the new RuntimeIncarnation in local StateStore as `RECOVERING`; keep any OS boot
-   identifier in local-only observation state. Do not advertise execution readiness.
+3. Load or create the installation Ed25519 identity in the OS credential store and verify
+   its binding to the bootstrap RuntimeId. Atomically persist the Runtime descriptor, new
+   RuntimeIncarnation as `RECOVERING`, and local-only observation in StateStore; keep any
+   OS boot identifier local. Credential-store or identity mismatch leaves the daemon
+   degraded and Operator API unavailable. Do not advertise execution readiness.
 4. Reconcile previous-incarnation AgentHost/CapabilityHost/Environment/application handles
    by verified process identity or provider observation. Do not trust a PID or replay a
    command just because its process is gone.
@@ -151,7 +278,7 @@ storage adapter cannot be hidden by an ONLINE projection.
 | Suspend/lid sleep | OS suspends it; presence expires later | Continues | Stops making progress and is reconciled after wake | Hub triggers continue; local triggers record an observation gap/misfire |
 | Powered off | Offline | Continues | Waits for the local Runtime | Hub triggers continue; local trigger policy applies on return |
 | Daemon crash | Service manager may restart it | Unaffected | New incarnation recovers before resuming | Durable trigger definitions/cursors reload; no blind replay |
-| Graceful Runtime stop | Drains and records clean stop | Unaffected | Pauses/blocks after safe settlement | Local trigger host stops; Hub schedules remain independent |
+| Graceful Runtime stop | Current supervisor-signal path stops Operator admission, drains bounded in-flight handlers, then records local stop; Task/Effect/lease drain is not integrated | Unaffected | Authenticated Operator stop remains unavailable | Local trigger host stops; Hub schedules remain independent |
 
 Locking a laptop does not guarantee GUI automation remains possible: desktop/browser
 requirements are rechecked. Sleep/offline does not mean a Task vanished. A local-bound
@@ -159,16 +286,19 @@ Task retains its blocker and can continue only after fresh resource, application
 and Effect checks. Remote Tasks are not silently migrated as running processes; eligible
 continuation creates a new Attempt under a new lease epoch.
 
-`preview_stop` reports active Attempts, local trigger duties, roots, managed processes
-and eligible handoffs without changing admission. After user confirmation, `request_stop`
-checks the expected incarnation and current dependencies before setting `DRAINING` and
-rejecting new local admission. `CANCEL` changes nothing. The user can move eligible work
-through ordinary handoff or stop with explicit consequences; a stale preview does not
-reserve dependencies or authorize shutdown of a restarted daemon. A graceful
-stop checkpoints safe work, reconciles Effects, releases leases, releases scoped provider
-activation references, stops only LiteCowork-owned worker processes, marks local
-observations stale as needed, and records a clean incarnation stop. Forced termination may
-leave Ambiguous Effects and Abandoned Attempts; next startup reconciles them before retry.
+The target `preview_stop` operation reports active Attempts, local trigger duties, roots,
+managed processes and eligible handoffs without changing admission. After user
+confirmation, `request_stop` checks the expected incarnation and current dependencies
+before setting `DRAINING` and rejecting new local admission. `CANCEL` changes nothing.
+The user can move eligible work through ordinary handoff or stop with explicit
+consequences; a stale preview does not reserve dependencies or authorize shutdown of a
+restarted daemon. A graceful stop checkpoints safe work, reconciles Effects, releases
+leases, releases scoped provider activation references, stops only LiteCowork-owned worker
+processes, marks local observations stale as needed, and records a clean incarnation stop.
+**This target flow is not implemented in the current source.** The authenticated
+Operator stop route is absent and must remain absent until the Runtime can perform those
+reconciliation steps. Forced process termination may leave Ambiguous Effects and
+Abandoned Attempts; next startup reconciles them before retry.
 Stopping the Runtime is distinct from cancelling Tasks and never implies that a remote
 Runtime stopped.
 

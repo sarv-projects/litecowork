@@ -27,9 +27,21 @@ an accessible busy state, not a decorative animation.
 
 ## Semantic transitions
 
-| Domain/UI change | Trigger that must already be committed | Motion |
+Live text may show a nonanimated insertion caret only while new `turn.delta` frames are
+actually arriving. It disappears immediately on a stream gap, stall, settled turn, or
+reduced-motion preference. Heartbeats and elapsed time do not animate the caret or imply
+new work. The Activity label remains static unless its source projection changes.
+
+| Domain/UI change | Commit or observation required before motion | Motion |
 |---|---|---|
 | Conversation message appears | `conversation.message.added.v1` projection | Fade in 120ms, standard easing; no slide-in |
+| Live response text extends | Current monotonic `turn.delta` received for an active turn | Append real text; optional nonanimated caret while frames arrive; never animate fabricated characters |
+| Stream reconnects/resyncs | Snapshot/cursor accepted by Operator | Replace stale projection immediately; do not replay historical message, activity, or artifact entrances |
+| Context-used disclosure opens | User action | Expand/collapse 120ms; reduced motion changes immediately; no retrieval animation |
+| Artifact version history opens | User action against current Artifact projection | Expand/collapse 120ms; version rows remain ordered by committed version |
+| Artifact compare/restore result | Exact adjacent-version responses validated / new ArtifactVersion committed | Clear prior comparison before loading; reveal both exact panes together after validation, or show fallback immediately; restore card appears only after new version commit |
+| Artifact Save As | Owner selects exact managed version and native save completes | Native dialog owns selection; cancel changes no UI/domain state; show “Saved” only after verified bytes are written; no download animation or Artifact event |
+| Renderer fallback appears | Renderer resolution returns unsupported/disabled | Static fallback with reason; no failed-renderer shake or success-like transition |
 | Message expands to Task card | `task.created.v1` projection | Height + opacity, 180ms, enter easing |
 | Default AgentBinding changes | `workspace.default_agent_binding.changed.v1` projection | Update selected label with 120ms fade; no automatic agent-switch animation |
 | Planning status appears | `agent.session.started.v1` for TASK_PLANNING | Opacity 120ms; no lane, spinner, or percentage |
@@ -42,6 +54,16 @@ an accessible busy state, not a decorative animation.
 | Task pauses/resumes | committed pause/resume/lease events | Text/status change 180ms; old process is never depicted as restarting |
 | Human/Agent control changes | control lease owner/epoch projection changes | Badge/label 120ms; never animate queued pointer input |
 | Resource freshness changes | location/revision projection changes | Label + linked freshness icon 120ms |
+| Imported Resource appears | Resource + initial revision/location and idempotency receipt commit | Add the catalog row with a 120ms fade; never animate on file selection or while bytes are being sent |
+| Text preview appears | Authenticated current-revision bytes pass digest/size checks and Tauri accepts a text-like UTF-8 response within 1 MiB | Reveal the inert plain-text panel with opacity 120ms; never render active content or animate a preview before verified response |
+| Markdown preview appears | Authenticated exact-version bytes pass digest/size checks and the bounded parser accepts the supported subset | Reveal the inert preview with opacity 120ms; fallback/raw-source changes are immediate and no source content is animated as executable markup |
+| Saved Task presentation refreshes | A new finite authenticated snapshot for the same Task identity is validated | Keep existing rows stable; update only fields that changed. Freshness label may change at 120ms. Initial load, reconnect, or snapshot replacement does not replay historical item animations |
+| Workspace instruction revision appears | `workspace.instructions.revision.created.v1` commits | Add the revision-history row with opacity 120ms; keep the editor's unsaved text unchanged until the user reloads or switches Workspaces |
+| Instruction conflict comparison appears | stale-version response followed by successful latest-revision read | Reveal the latest saved text with opacity 120ms beside the preserved draft; never imply a merge or overwrite occurred |
+| Saved Task objective editor opens/closes | Owner action on an eligible `READY`/unplanned Task | Show/hide immediately; no draft is represented as committed state |
+| Task `Work details` disclosure opens/closes | User action on the loaded Task detail | Native disclosure, immediate; no Task/plan/status transition is implied, and reduced-motion behavior is identical |
+| TaskSpec history disclosure opens | User action on the loaded Task | Load exact revisions lazily; show rows only after identity/order validation; stale cached history gets a text notice with no row replay |
+| TaskSpec revision appears | `task.spec.revised.v1` committed and the subsequent Task read confirms the current revision | Update objective/revision label immediately; on conflict keep the draft static and show Reload latest Task |
 | Task lane fails | affected lane projects failure | Border/status update 180ms; no screen-wide flash |
 | Handoff phase/location changes | each Handoff phase committed; target lease required for final location | Current phase label 180ms; “Saving progress…” only during checkpoint/transfer, target only after lease acquisition |
 | Archived Workspace banner appears | `workspace.archived.v1` projection | Banner fade 180ms; persistent read-only state |

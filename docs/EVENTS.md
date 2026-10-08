@@ -34,6 +34,12 @@ their events; every successful domain command appends its event(s) in the same c
 An `origin_sequence` is allocated monotonically per `(workspace_id, origin_runtime_id)`
 in that commit. It is not a Runtime-global sequence: peers and acknowledgements are
 Workspace-scoped, and a Workspace cursor must never wait for another Workspace's events.
+
+The local `ResourceTextIndex` is a rebuildable, non-replicated projection over exact
+ResourceRevision bytes. Index insertion/rebuild does not append a DomainEvent and cannot
+change Resource or Task truth. Resource lifecycle events remain authoritative; the index
+must be rebuildable from retained, verified Resource blobs, and its encrypted snapshot and
+term rows are removed only through the owning Resource/ContextDocument purge contract.
 The local StateStore keeps a durable per-Workspace/per-origin allocator row. It advances
 in the same transaction as the event and aggregate projection, survives event archival,
 and is not itself replicated. Replicas preserve the authenticated source sequence and do
@@ -53,6 +59,11 @@ can reconstruct the exact current record without guessing omitted fields from a 
 partial event payload. Events remain necessary for lifecycle history, audit, and side-effect
 semantics; the state blob is not permission to replay a command or external Effect.
 `entity_revision` is mandatory and must equal `aggregate_state_ref.entity_revision`.
+For `task.plan.revised.v1`, the Task snapshot includes its updated current-plan pointer,
+TaskSpec head, immutable current PlanRevision, and the Steps materialized by that
+acceptance transaction. Each `step.created.v1` points to the complete initial Step record.
+These snapshots make plan/Step reconstruction possible after replication or restart; the
+event payload alone is not a substitute for them.
 
 RuntimeOffer and CapabilityHostInstance readiness/health observations are expiring
 Runtime-operational inventory, not replicated Task aggregates or durable domain events.
@@ -62,7 +73,12 @@ health observation cannot rewrite those histories.
 `RuntimeIncarnation` is registered and versioned through the authenticated Runtime Mesh
 control protocol before any offer or event can reference it; its compact public record is
 retained with Workspace replication metadata. OS boot IDs and local diagnostics are never
-in event state or Workspace backup. `AgentSessionHostBinding` and
+in event state or Workspace backup. `RuntimeWorkspaceBinding` is security/control-plane
+metadata, not a Workspace Task-domain event. Local enrollment is stored in the local
+Runtime StateStore and audited. Mesh pairing and revocation are authenticated Runtime Mesh
+control records with versioned receipts; they are not relayed as ordinary Workspace
+events. A Workspace Runtime list is projected only after checking an active binding for
+the selected Workspace. `AgentSessionHostBinding` and
 `CapabilityActivationHostBinding` are local operational relations: native session handles,
 provider handles, and host-instance IDs never enter replicated event payloads or aggregate
 state blobs. `AgentEndpointBinding` keeps endpoint command/socket/URL locators local.
@@ -127,7 +143,11 @@ workspace.archived.v1
 workspace.instructions.revision.created.v1
 workspace.root.created.v1
 workspace.root.status.changed.v1
+agent.binding.created.v1
+agent.binding.changed.v1
 resource.created.v1
+resource.created.v2 # versioned provenance may include folder_import
+resource.revision.created.v1 # owner-authored immutable Resource revision append
 resource.revision.observed.v1
 resource.context_document.status.changed.v1
 resource.context_document.purge.acknowledged.v1
@@ -162,7 +182,8 @@ attempt.status.changed.v1
 attempt.checkpointed.v1
 attempt.failure.recorded.v1
 
-agent.session.started.v1
+agent.session.starting.v1 — claims a bounded durable STARTING reservation; it is not adapter readiness and grants no Task authority.
+agent.session.started.v1 — records adapter readiness after an atomic transition to ACTIVE; its payload/state must not include native handles.
 agent.session.lost.v1
 agent.session.closed.v1
 agent.binding.changed.v1
@@ -255,6 +276,7 @@ automation.occurrence.settled.v1
 connection.state.changed.v1
 channel.binding.changed.v1
 channel.host.assignment.changed.v1
+channel.host.assignment.changed.v2
 channel.inbound.received.v1
 channel.receipt.changed.v1
 channel.outbound.settled.v1
@@ -273,6 +295,15 @@ handoff.created.v1
 handoff.phase.changed.v1
 audit.record.created.v1
 ```
+
+ResourceUpload chunk receipts are local transfer progress, not one event per chunk.
+`version` advances with the session lifecycle and is pinned to each lifecycle event;
+`progress_version` fences accepted chunk writes but is not an event revision. The final
+chunk emits OPEN -> CONTENT_RECEIVED, TTL expiry emits OPEN/CONTENT_RECEIVED -> EXPIRED,
+successful finalization emits CONTENT_RECEIVED -> COMMITTED, and terminal stored-content
+integrity failure emits CONTENT_RECEIVED -> FAILED. Each event, aggregate snapshot, and
+matching projection transition commit atomically. Transient storage/database failures do
+not produce FAILED and leave the upload retryable.
 
 The per-event payload schema is represented by the following field contract (all IDs
 reference existing immutable/domain records):
@@ -295,21 +326,41 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `workspace.root.created` | `workspace_root_id`, `workspace_id`, `resource_id`, `location_id`, `added_by`, `aggregate_version` |
 | `workspace.root.status.changed` | `workspace_root_id`, `from`, `to`, `reason_code`, `aggregate_version` |
 | `resource.created` | `resource_id`, `workspace_id`, `kind`, `identity_digest?`, `provenance`, `context_document?` (safe kind/owner/status metadata only; new ContextDocuments start ACTIVE), `aggregate_version` |
+| `resource.created.v2` | Same creation fields; the closed provenance schema may include validated one-time `folder_import` metadata |
+| `resource.revision.created.v1` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `content_digest`, `size_bytes`, `media_type`, `created_by`, `aggregate_version` |
 | `resource.revision.observed` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `provider_revision?`, `content_digest?`, `observed_at` |
 | `resource.context_document.status.changed` | `resource_id`, `from`, `to`, `changed_by`, `purge_manifest_digest?`, `purge_target_count?`, `aggregate_version`; manifest fields are required when status changes to DELETION_PENDING or DELETED |
 | `resource.context_document.purge.acknowledged` | `resource_id`, `replica_ref` (stable non-secret identity, never a locator), `replica_kind`, `runtime_id?`, `runtime_incarnation_id?`, `target_revision_ids[]`, `receipt_digest`, `acknowledged_at`, `aggregate_version` |
 | `resource.location.changed` | `location_id`, `resource_id`, `availability`, `observed_revision_id?`, `observed_at` |
 | `resource.edge.created` | `edge_id`, `from_resource_id`, `to_resource_id`, `relation`, `observed_at` |
 | `resource.invalidation.created` | `invalidation_record_id`, `dependency_edge_id`, `observed_revision_id`, `reason_code`, `created_at` |
-| `resource.upload.created` | `upload_id`, `workspace_id`, `expected_size_bytes`, `expected_digest?`, `chunk_size_bytes`, `expires_at`, `resource_id?`, `expected_resource_version?`, `parent_revision_ids[]?`, `aggregate_version` |
+| `resource.upload.created` | `upload_id`, `workspace_id`, `expected_size_bytes`, `expected_digest`, `chunk_size_bytes`, `expires_at`, `resource_id?`, `expected_resource_version?`, `parent_revision_ids[]?`, `aggregate_version` |
 | `resource.upload.status.changed` | `upload_id`, `from`, `to`, `resource_id?`, `reason_code?`, `aggregate_version` |
+
+Runtime-start WorkspaceRoot revalidation reuses the canonical
+`workspace.root.status.changed.v1` and `resource.location.changed.v1` events. The root event
+is emitted only when status changes; for revalidation its `reason_code` is one of `ROOT_IDENTITY_REVALIDATED`,
+`NO_PRIOR_BINDING`, `LOCATOR_BINDING_MISSING`, `FILE_IDENTITY_BINDING_MISSING`,
+`BINDING_MISMATCH`, `UNSUPPORTED_PLATFORM`, `INVALID_LOCATOR`, `IDENTITY_CHANGED`, or
+`IDENTITY_UNAVAILABLE`. Owner transitions use `USER_PAUSED`, `USER_RESUMED`, and
+`USER_REVOKED`; the event payload schema constrains statuses and these reason codes. The
+location event records the observed `AVAILABLE` or `UNAVAILABLE`
+state on every revalidation attempt. Both events, their safe aggregate snapshots, status and
+location projections, idempotency receipt, and private current-incarnation bindings are
+committed atomically. Raw paths and operating-system file identities are absent from event
+payloads, snapshots, receipts, and public projections. OS-principal key loss happens before
+this process and does not currently produce these events.
+
+Resource search, including `ON_DEMAND_CONTENT`, emits no domain event: it creates no durable
+Resource/index state. Content-mode matches and snippets are request-local projections and
+must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `conversation.created` | `conversation_id`, `created_by` |
 | `conversation.message.added` | `message_id`, `conversation_id`, `author`, `content_digest`, `resource_refs` |
 | `conversation.turn.created` | `turn_id`, `conversation_id`, `user_message_id`, `agent_binding_id`, `aggregate_version` |
 | `conversation.turn.retried` | `turn_id`, `prior_agent_session_id?`, `agent_session_id`, `retry_ordinal`, `aggregate_version` |
 | `conversation.turn.resumed` | `turn_id`, `user_request_id`, `prior_agent_session_id?`, `agent_session_id`, `aggregate_version` |
 | `conversation.turn.settled` | `turn_id`, `from`, `to`, `reason_code?`, `agent_session_id?`, `aggregate_version` |
-| `task.created` | `task_id`, `conversation_id?`, `initial_spec_revision`, `created_by` |
+| `task.created` | `task_id`, `conversation_id?`, `origin_coworker_id` (nullable), `origin_coworker_revision` (nullable; paired with the Coworker ID), `initial_spec_revision`, `created_by` |
 | `task.spec.revised` | `task_id`, `revision`, `parent_revisions[]`, `spec_digest`, `authored_by` |
 | `task.plan.revised` | `task_id`, `revision`, `task_spec_revision`, `produced_by_agent_session_id`, `produced_by_attempt_id?`, `step_ids[]`, `aggregate_version` |
 | `task.lead_agent.changed` | `task_id`, `from_agent_binding_id`, `to_agent_binding_id`, `cause`, `actor`, `task_spec_revision`, `trigger_observation?`, `aggregate_version`; policy failover requires a typed, fresh trigger observation |
@@ -326,6 +377,7 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `attempt.failure.recorded` | `attempt_id`, `failure_code`, `failure_signature`, `retryable` |
 | `agent.session.*` | `agent_session_id`, `scope`, `task_spec_revision`, `agent_binding_id`, `endpoint_id`, `runtime_id`, `runtime_incarnation_id`, `session_state`, `reported_at` |
 | `agent.binding.changed` | `agent_binding_id`, `workspace_id`, `agent_profile_id`, `runtime_id?`, `from_enabled`, `to_enabled`, `aggregate_version`, `requested_by` |
+| `agent.binding.created` | `agent_binding_id`, `workspace_id`, `agent_profile_id`, `runtime_id?`, `from_enabled=false`, `to_enabled=false`, `aggregate_version=1`, `requested_by` |
 | `runtime.*` | `runtime_id`, `device_id?`, `availability`, `offers_digest?`, `key_version?` |
 | `provider.circuit.changed` | `runtime_id`, `provider_kind`, `provider_ref`, `from`, `to`, `failure_window_started_at?`, `consecutive_failures`, `open_until?`, `aggregate_version` |
 | `environment.created` | `environment_id`, `runtime_id`, `to`, `provider_kind`, `lifetime`, `from?`, `reason_code?`, `provision_preview_digest?` (mandatory when the lifetime value is WORKSPACE_PERSISTENT) |
@@ -348,8 +400,12 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `artifact.version.created` | `artifact_id`, `resource_id`, `version`, `resource_revision_id`, `input_refs[]`, `content_kind`, `content_digest?`, `storage_ref?`, `resource_ref?`, `provider_revision?`, `created_by_attempt?`, `aggregate_version` |
 | `artifact.library.promoted` | `artifact_id`, `from`, `to`, `aggregate_version` |
 | `artifact.library.archived` | `artifact_id`, `from`, `to`, `aggregate_version` |
-| `effect.proposed` | `effect_id`, `task_id`, `attempt_id`, `capability_invocation_id`, `execution_method`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
-| `effect.*` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
+| `effect.proposed` | `effect_id`, `task_id`, `attempt_id`, `capability_invocation_id`, `execution_method`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal=0` |
+| `effect.observed` | common Effect fields, `observation_evidence_id` |
+| `effect.failed` | common Effect fields, `failure_code`, `failure_retryable`, `failure_digest?` |
+| `effect.ambiguous` | common Effect fields, `ambiguity_reason_digest` |
+| `effect.retry.authorized` | common Effect fields, `retry_evidence_id`, `retry_basis` |
+| other `effect.*` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
 | `evidence.created` | `evidence_id`, `task_id`, `subject_ref`, `level`, `kind`, `producer`, `payload_digest?` |
 | `verification.started` | `verification_run_id`, `task_id`, `criterion_id`, `task_spec_revision`, `criterion_digest`, `verifier_kind`, `verifier_version`, `subject_refs[]`, `inputs[]`, `status`, `evidence_refs[]`, `aggregate_version` |
 | `verification.completed` | `verification_run_id`, `task_id`, `criterion_id`, `task_spec_revision`, `criterion_digest`, `verifier_kind`, `verifier_version`, `subject_refs[]`, `inputs[]`, `status`, `evidence_refs[]`, `aggregate_version` |
@@ -371,7 +427,8 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `automation.occurrence.*` | `occurrence_id`, `automation_id`, `automation_revision`, `routine_id`, `routine_revision`, `trigger_id`, `trigger_host_runtime_id`, `occurrence_key`, `claim_epoch`, `claim_expires_at?`, `trigger_input_ref?`, `trigger_payload_digest?`, `task_id?`, `from?`, `to` |
 | `connection.state.changed` | `connection_id`, `from`, `to`, `provider_ref` |
 | `channel.binding.changed` | `channel_binding_id`, `connection_id?`, `from`, `to`, `assurance_level`, `allowed_actions[]` |
-| `channel.host.assignment.changed` | `channel_binding_id`, `from_runtime_id?`, `runtime_id`, `host_epoch`, `status`, `ingress_continuity`, `ingress_gap_since?`, `aggregate_version` |
+| `channel.host.assignment.changed.v1` | `channel_binding_id`, `from_runtime_id?`, `runtime_id`, `host_epoch`, `status`, `ingress_continuity`, `ingress_gap_since?`, `aggregate_version` |
+| `channel.host.assignment.changed.v2` | v1 fields plus conditional `source_release_basis?`, `source_drain_proof_ref?`, `source_drain_proof_digest?`, `continuity_proof_ref?`, `continuity_proof_digest?`, `ingress_gap_decision?` |
 | `channel.inbound.received` | `channel_binding_id`, `provider_event_id`, `origin_runtime_id`, `origin_host_epoch`, `ingress_sequence`, `event_kind`, `payload_digest` |
 | `channel.receipt.changed` | `channel_binding_id`, `provider_event_id`, `claim_runtime_id`, `claim_host_epoch`, `from`, `to`, `claim_epoch`, `claim_expires_at?` |
 | `channel.outbound.settled` | `channel_binding_id`, `runtime_id`, `host_epoch`, `delivery_id`, `provider_event_id?`, `state`, `result_digest?` |
@@ -398,6 +455,72 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `demonstration.status.changed` | `demonstration_session_id`, `environment_id`, `from`, `to`, `capture_policy_digest`, `captured_action_count`, `captured_trace_bytes`, `trace_resource_id?`, `skill_proposal_id?`, `aggregate_version` |
 | `environment.sharing_scope.changed` | `environment_id`, `from`, `to`, `changed_by`, `aggregate_version` |
 
+`channel.host.assignment.changed.v1` remains unchanged. New assignment history that needs
+source-release or ingress-gap provenance uses `channel.host.assignment.changed.v2`; the
+Operator projection adds nullable provenance fields without changing the meaning of older
+records. `source_drain_proof_ref` is an opaque `ChannelHostDrainProofRef` containing the
+SQL proof row's `proof_id` plus its `channel_binding_id`, `workspace_id`, `runtime_id`, and
+`host_epoch`; it is not a `ResourceRef`. `source_drain_proof_digest` is the row's
+`proof_digest`. For a cross-Runtime assignment that becomes `ACTIVE`, v2 MUST record
+`source_release_basis`: `SAFE_SETTLEMENT_PROOF` requires both the scoped
+`source_drain_proof_ref` and its digest; SQL `release_kind = QUIESCENT` maps to
+`SAFE_SETTLEMENT_PROOF`. SQL `release_kind = EXPIRY_PLUS_SKEW` maps to
+`LEASE_EXPIRY_PLUS_SKEW`, records that the Hub-authoritative source lease reached its
+pinned `safe_reassign_after`, and MUST omit both proof fields. For current assignment
+epoch N, the projection joins the immutable release row for epoch N-1; for QUIESCENT it
+joins `drain_proof_id` to the immutable proof row and exposes the scoped reference and
+`proof_digest`. Epoch 1 has no prior release and therefore no source-release provenance.
+The proof is a non-secret record of source settlement/reconciliation; never include
+credentials, provider message references, or raw provider payloads in it or in the event.
+
+For a cross-Runtime `ACTIVE` assignment with `ingress_continuity = CONTINUOUS`, v2 also
+includes `continuity_proof_ref` and `continuity_proof_digest`. The opaque reference contains
+the immutable SQL continuity-proof `proof_id` and its assignment scope: binding, Workspace,
+source Runtime/epoch, and target Runtime/epoch. Its digest is the row's `proof_digest`.
+Projection joins the proof row for target epoch N and verifies its source scope is the prior
+assignment at epoch N-1. `GAP_ACCEPTED` assignments have no continuity proof; the explicit
+owner decision is represented by `ingress_gap_decision`. Initial assignments and legacy
+rows with no retained proof provenance expose neither continuity-proof field.
+
+RuntimeMesh service validation MUST compare the event target `runtime_id` with the prior
+assignment: the source-release basis is required only when they differ, and
+`from_runtime_id` must equal that exact prior Runtime. The service must reject source proof
+or expiry provenance for same-Runtime resume and reject a cross-Runtime activation with
+missing/mismatched release provenance. It resolves the release row for the prior
+`channel_binding_id`/`workspace_id`/`runtime_id`/`host_epoch`, validates the release kind
+and its eligibility (`QUIESCENT` with its proof row, or `EXPIRY_PLUS_SKEW` only after
+`safe_reassign_after`), and for a proof verifies that `proof_id`, binding, Workspace,
+source Runtime, and source epoch exactly match that immutable proof row and prior
+assignment. JSON Schema validates field shape and proof pairing, but cannot compare a
+payload's Runtime IDs with each other or with prior aggregate state.
+
+For an ingress-continuous cross-Runtime activation, the service also verifies that the
+continuity-proof reference and digest identify the immutable proof row for the exact
+channel binding and Workspace, that its source Runtime/epoch equals the prior assignment,
+that its target Runtime/epoch equals the new assignment, and that its digest matches the
+row. It rejects missing proof on that path and rejects continuity-proof provenance on a
+gap-accepted or same-Runtime resume path. The reference is opaque and non-authorizing; it
+is not a `ResourceRef`.
+
+When a v2 assignment change records `ingress_continuity = GAP_ACCEPTED`, it MUST include
+`ingress_gap_decision` with the authenticated owner `decided_by`, `decided_at`,
+`audit_record_id`, and nonempty `reason_code`. The referenced audit record records the
+explicit acceptance command and its decision. The assignment stores
+`ingress_gap_decision_audit_id`; projection joins that ID to the same-Workspace immutable
+AuditRecord and maps its principal, `occurred_at`, and `reason_code` to the decision
+object. The AuditRecord is committed atomically with the assignment event, names the same
+principal, uses action `channel.host.ingress_gap.accept` and decision `ALLOW`, and carries
+the same reason code. SQLite triggers enforce record identity, Workspace, action, decision,
+and ChannelBinding reference. RuntimeMesh service validation additionally checks exact
+actor, timestamp and reason-code equality with the AuditRecord, plus that its
+`payload_digest` covers the canonical non-secret command identity, target Runtime,
+expected assignment version, and explicit acceptance flag. These fields are provenance,
+not authority that can be replayed. Legacy
+`GAP_ACCEPTED` events without this object remain valid for
+history; a v1 projection shows decision provenance as unavailable and MUST NOT infer an
+actor or synthesize an audit reference. Consumers validate v2 provenance according to its
+conditional requirements and continue to decode v1 with its original closed schema.
+
 For `suggestion.proposed.v1`, every `source_refs[]` entry is a `PinnedResourceRef` and
 every `goal_refs[]` entry is a `GoalRevisionRef`; both types pin exact same-Workspace
 revisions.
@@ -415,17 +538,30 @@ the provider cannot prove a more specific route; the UI must not infer one from 
 | `suggestion.preference.changed.v1` | SuggestionPreference / SuggestionService | Workspace-scoped preference replicates; muting also resolves currently proposed items of that kind in the same transaction |
 | `task.coworker.origin.pinned.v1` | Task / TaskService | Immutable Task origin provenance; Coworker revision is pinned |
 | `agent.binding.lead_eligibility.changed.v1` | AgentBinding / AgentBindingService | Workspace authorization state; no endpoint locator or credentials |
+| `agent.session.starting.v1` | AgentSession / AgentSessionStore | Reserves a Task planner slot before native startup; includes only normalized scope/selection IDs and Runtime incarnation, never a native handle |
+| `agent.session.started.v1` | AgentSession / AgentSessionSupervisor | Adapter readiness and ACTIVE state; first planning also transitions Task to RUNNING atomically |
 | `agent.session.harness_descriptor.pinned.v1` | AgentSession / AgentSessionSupervisor | Non-secret descriptor/feature/config digests and session scope only; no descriptor contents or handles |
 | `delegation_profile.*.v1` | DelegationProfile / DelegationProfileService | Profile revisions/status replicate; provider-native option values remain opaque, non-secret adapter-owned values |
 | `delegation.admitted.v1` | Task / TaskService admission transaction | Attempt/profile/revision/grant/reservation identity is durable; candidate digest contains no prompts or secret config |
 | `coworker.*.v1` | Coworker / CoworkerService | Identity and immutable preferences replicate under Workspace policy; no agent session state |
 | `goal.*.v1` | Goal / GoalService | Immutable Goal revision/status and same-Workspace references replicate |
-| `suggestion.*.v1` | Suggestion / SuggestionService | Proposal digest, provenance refs, status, and result Task ref replicate; source content remains in Resources |
+| `suggestion.*.v1` | Suggestion / SuggestionService owner actions; TaskService atomic admission for TASK acceptance | Proposal digest, provenance refs, status, and result Task ref replicate; source content remains in Resources |
 | `suggestion.visibility.changed.v1` | Suggestion / SuggestionService | Visibility timestamps and owner identity only; snooze cannot extend past expiry, null clears a snooze |
 | `demonstration.status.changed.v1` | DemonstrationSession / DemonstrationSessionService | Status and trace Resource ID only; semantic trace Resource follows normal replication policy |
 | `resource.context_document.status.changed.v1` | Resource / ResourceService | Status tombstone and owner identity replicate; never includes document content |
 | `resource.context_document.purge.acknowledged.v1` | Resource / ContextDocumentPurgeReconciler | Replica identity, target revisions, Runtime incarnation (when applicable), and receipt digest only; no content or locator |
 | `environment.sharing_scope.changed.v1` | Environment / EnvironmentManager | Scope change requires expected-version and current-use check; provider locators remain local |
+
+Accepting a `TASK` Suggestion appends the ordinary `task.created.v1` event and
+`suggestion.resolved.v1` (`to=ACCEPTED`, `resolution_reason=ACCEPTED_BY_OWNER`,
+`result_task_id=<created Task>`) with both aggregate snapshots in the same SQLite
+transaction and Workspace event-sequence allocation. A receiving Runtime can therefore
+observe the linked Task and terminal Suggestion together; neither event is emitted if the
+transaction aborts. Acceptance creates only a `READY` Task and does not dispatch work.
+
+The revision digest in `goal.revised.v1` covers the complete immutable GoalRevision,
+including Task IDs, exact RoutineRevision references, and exact `ArtifactVersionRef`
+values. The event does not copy Artifact content or change the Artifact aggregate.
 
 `QuotaObservation`, candidate ranking detail, warm process state, WorkerPerformance,
 TaskProgress, GoalProgress, RoutineHealth, and Coworker presence are operational or
@@ -462,6 +598,8 @@ TaskCreatedV1 {
   conversation_id?
   initial_spec_revision
   created_by
+  origin_coworker_id?
+  origin_coworker_revision?
 }
 
 AttemptCreatedV1 {
@@ -524,6 +662,19 @@ ArtifactLibraryTransitionV1 {
 ```
 
 ## Event versioning
+
+`resource.created.v1` keeps its original closed payload. Resource creation with
+`provenance.folder_import` emits `resource.created.v2`, whose nested provenance schema
+explicitly permits the new field.
+
+An owner-authored upload that appends bytes to an existing managed Resource emits
+`resource.revision.created.v1`; it does not emit `resource.created`. The event carries the
+exact parent head set and verified content digest/size/media type. The immutable revision,
+parent edges, current Resource head/version, managed local location, revision-scoped index
+projection, dependent invalidations, upload lifecycle, event/snapshot, and idempotency
+receipt commit atomically. If the Resource version or complete head set changed since upload
+admission, commit conflicts and does not publish a revision. Replaying a committed upload
+returns its stored commit receipt rather than appending a second revision.
 
 - event `type` includes major schema version.
 - any payload field-set/type/meaning change, including adding an optional field, creates a

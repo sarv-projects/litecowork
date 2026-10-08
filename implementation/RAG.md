@@ -89,6 +89,26 @@ not full agent functionality. Publish which model/hardware supports each benchma
 small local models may fail sophisticated coding/office reasoning even with good RAG.
 Offer explicit profile escalation under policy rather than silent cloud fallback.
 
+## Current LiteCowork support boundary
+
+The desktop source currently supports bounded lexical indexing for a narrow allowlist of
+small UTF-8 text Resources. This is not semantic RAG, document parsing, embedding, or a
+local-model integration. The Operator API and UI do not currently register, probe, or
+discover arbitrary local inference endpoints, and no local model is eligible for a Task.
+Ollama, LM Studio, and llama.cpp are qualification candidates only; their presence in
+configuration or on the machine must not be presented as a connected provider.
+
+Do not add a direct WebView-to-model HTTP call or expose an inference endpoint to an
+Agent/Environment. `docs/NETWORK-SECURITY.md` requires local-provider access through a
+trusted on-device broker and an exact registered service binding; endpoint URLs supplied
+by Agents or Resource content are not authority. Before implementing endpoint readiness or
+model discovery, SP05 must select and pin an exact provider protocol/version and define
+owner-controlled endpoint registration, authenticated local transport, address/redirect
+rules, time/body/model-count bounds, secret handling, cancellation, and sanitized result
+semantics. A successful catalog probe must report only catalog availability; it does not
+prove inference entitlement, harness support, or Task execution readiness. If those gates
+are not met, show the provider as unavailable/unconfigured and offer no silent fallback.
+
 ## Existing local AI application comparison
 
 Inspect Open WebUI's knowledge bases and incremental directory sync, Jan's project/file

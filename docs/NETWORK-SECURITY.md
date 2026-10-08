@@ -56,9 +56,26 @@ Windows named-pipe ACL/client identity). If loopback HTTP is used, require both 
 OS peer identity where available and a high-entropy, short-lived client credential; bind
 only to loopback and reject browser-origin requests/CSRF.
 
+The normative desktop transport contract is [`LOCAL-OPERATOR-IPC.md`](LOCAL-OPERATOR-IPC.md).
+It specifies per-logon Windows pipe ACLs, Unix peer-credential checks, a bounded framed
+protocol, endpoint naming/lifecycle, Runtime-to-OS-principal binding, and qualification
+gates. The local IPC adapter may attach an authenticated peer marker only after the OS
+identity check; that marker is process-local and cannot be supplied by a remote request.
+
 Every mutating request carries RequestId, correlation ID, selected Workspace scope, and
 expected aggregate version where applicable. Remote Operator access uses authenticated
 TLS and the same Principal/policy checks.
+
+The current desktop source path uses owner-only Unix IPC plus kernel-reported peer UID
+checks on Linux/macOS. The Runtime validates an installation-scoped OS-principal binding
+before starting the endpoint, and Tauri authenticates the daemon peer before sending a
+frame. The Operator application handlers remain the authorization boundary. Windows has
+no named-pipe implementation and fails closed. This source integration is not yet
+build-, system-, or OS-qualified; do not describe it as production-ready until the
+qualification gates in [`LOCAL-OPERATOR-IPC.md`](LOCAL-OPERATOR-IPC.md) pass. Readiness
+confirms only Operator API serving for the reported local incarnation, not Task execution
+readiness or Mesh registration. No loopback HTTP/bearer fallback is present in the desktop
+Tauri client or daemon Operator listener.
 
 ## LiteCowork Capability Gateway authentication
 
@@ -143,6 +160,21 @@ bindings. Replicated FileIdentity values are keyed pseudonyms generated with a R
 held in the OS keystore; that key is not part of Workspace backup. Losing it invalidates
 cross-restart identity confidence and requires bounded re-indexing rather than content-only
 deduplication.
+
+At local Runtime startup, each persisted non-revoked WorkspaceRoot is reopened from its
+prior private locator with no-follow directory-handle traversal before Operator IPC is
+started. The held directory's raw identity must equal its prior local binding, and its
+keyed Resource identity digest/projection must still match. Exact matches receive current-
+incarnation private bindings atomically with an AVAILABLE ResourceLocation. Missing,
+changed, mismatched or unsupported identities receive no replacement binding and make the
+location UNAVAILABLE; an ACTIVE root becomes UNAVAILABLE while a PAUSED root remains
+PAUSED. Exact later recovery can reactivate only a previously UNAVAILABLE root and never
+resumes a PAUSED root. No path substitution or broader-root fallback is permitted. These
+failures are root-local and do not block unrelated Runtime services. Current source support
+is Linux/macOS only and is not OS-qualified. The separate
+OS-principal credential validation occurs before storage open; if that key is unavailable,
+startup fails closed before root revalidation, so this specific key-loss case does not yet
+persist UNAVAILABLE root transitions.
 
 File uploads and extracted archives have compressed size, expanded size, entry count,
 nesting depth, path normalization, and processing-time limits. Reject absolute paths,

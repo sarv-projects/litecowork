@@ -3050,6 +3050,22 @@ def check_vnext_responsibility_contract() -> None:
 
     for name in ("goals", "goal_revisions", "goal_task_links", "goal_routine_links"):
         table(name)
+    goal_revision_schema = api_schemas.get("GoalRevisionInput", {})
+    artifact_refs_schema = goal_revision_schema.get("properties", {}).get("related_artifact_refs", {})
+    artifact_refs_items = artifact_refs_schema.get("items", {})
+    if artifact_refs_items.get("$ref") != "#/components/schemas/ArtifactVersionRef":
+        fail("GoalRevisionInput must expose exact ArtifactVersionRef links")
+    sqlite_v10 = (DOCS / "schemas" / "sqlite-v10.sql").read_text(encoding="utf-8")
+    if not all(value in sqlite_v10 for value in (
+        "CREATE TABLE goal_artifact_links",
+        "FOREIGN KEY(goal_id, revision, workspace_id)",
+        "FOREIGN KEY(artifact_id, artifact_version)",
+        "goal_artifact_link_current_revision_guard",
+        "a.workspace_id = NEW.workspace_id",
+        "goal_artifact_link_immutable_update",
+        "goal_artifact_link_immutable_delete",
+    )):
+        fail("sqlite-v10.sql must pin exact Goal Artifact versions, enforce Workspace/current revision, and keep historical links immutable")
     if "primary_coworker_archive_guard" not in sql:
         fail("SQLite must prevent archiving the selected primary Coworker")
 

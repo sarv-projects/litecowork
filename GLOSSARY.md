@@ -10,6 +10,16 @@ The human-facing exchange that can contain ordinary discussion and references to
 or more durable Tasks.
 _Avoid_: Chat session as the work record
 
+**Presentation Runtime**:
+The Operator read/render path that turns authorized projections and bounded Agent output
+into typed user-visible items; it does not own durable work or permission state.
+_Avoid_: Second event store, agent UI authority
+
+**PresentationItem**:
+A typed, source-linked presentation value derived from a projection; it is neither a
+domain event nor a durable aggregate.
+_Avoid_: UI-owned Task state
+
 **Task**:
 The durable outcome a user wants accomplished, including its requirements, progress,
 outputs, and unresolved decisions.
@@ -128,8 +138,12 @@ specification is created or revised.
 _Avoid_: Hidden agent memory
 
 **Runtime**:
-A running LiteCowork daemon with identity, roles, presence, and execution capacity.
+A stable identity for one installed `litecoworkd` Runtime; current process state belongs to its RuntimeIncarnation.
 _Avoid_: Environment
+
+**RuntimeWorkspaceBinding**:
+An independently revocable authorization relationship between one Runtime installation and one Workspace, including its enrollment mode and permitted Runtime roles.
+_Avoid_: Runtime identity, implied Workspace membership
 
 **RuntimeIncarnation**:
 One daemon lock-holder process lifetime under a persistent Runtime identity. Restart

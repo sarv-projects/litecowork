@@ -138,6 +138,18 @@ Advanced popover may expose Agent, Model (when agent exposes it), Reasoning, Exe
 
 ## Conversation
 
+Conversation uses the same presentation hierarchy for a simple answer and a durable Task:
+answer/outcome first, concise real activity second, expandable work and source detail third,
+Inspector last. There is no separate nontechnical/technical product mode. “Context used”
+is an optional read-only disclosure listing the exact attachments and retrieved/instruction
+sources resolved for that turn; it never claims that an Agent read every available file.
+Transient streamed text is marked in progress until the ConversationMessage commits.
+Reconnect replaces stale local state from the authorized projection and does not replay
+old typing or activity animations. See [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md).
+Side conversations/branches are not part of v1. If introduced later, they must pin their
+own context snapshot and cannot alter a parent Conversation or Task unless the user
+explicitly applies a reviewed result.
+
 Conversation is the human continuity surface. Task cards appear inline when durable work materializes.
 
 ConversationTurn `WAITING_USER` is labeled “Waiting for you”. After a user response is
@@ -180,6 +192,17 @@ Task list filters:
 
 Task detail sections:
 - objective/current spec summary
+- for a `READY`, unplanned Task, an objective editor that appends a TaskSpecRevision; it is not an inline mutation and is unavailable once planning or an accepted Plan exists
+- for an unplanned Task, an explicit read-only **Check readiness** action may show the current Task-version's sanitized local planning blockers; it is not a Start action, never starts an AgentSession, and always states that dispatch is unavailable in this desktop slice
+- offer a lazy, read-only Task specification history disclosure with exact objective, author, timestamp, and parent revision; do not expose restore/edit controls from history
+- compare the history head with the loaded TaskSpec revision; label a newer head “Latest saved,” disclose an older/incomplete response, and offer explicit Task reload rather than mislabeling a revision “Current”
+- disable that Task reload while an objective draft or unresolved save request is open, preserving user-authored edits
+- keep the objective, current plain-language status, and whether a current plan is saved visible without expansion
+- when a Task has Coworker origin, show the name from the exact immutable CoworkerRevision it pins; if that revision cannot be loaded, show the pinned revision identity and a clear unavailable state rather than the Coworker's current name
+- put timestamps, current TaskSpec/Plan revision metadata, exact pinned Resource inputs, and persisted Plan Steps in a collapsed-by-default `Work details` disclosure
+- use “inputs” for pinned Resource references; do not assume every Resource is a file
+- show the current accepted PlanRevision and its materialized Step statuses only when present
+- clear stale-plan notice when the plan pins an older TaskSpecRevision
 - progress/workstreams
 - outputs/artifacts
 - approvals/blockers
@@ -187,11 +210,40 @@ Task detail sections:
 - execution location
 - actions: steer, request a lead-agent change, pause/resume, cancel, recover a failed Step where valid
 
+The saved-Task editor is intentionally narrow in the first desktop slice. Save creates a
+new immutable revision using optimistic Task versioning. Unedited specification fields
+remain pinned as-is. A conflict keeps the user's draft visible and offers a reload of the
+current Task; the UI never claims a revision was saved until the Operator receipt and the
+subsequent Task read agree. Saving does not start planning or execution.
+
+The first desktop Task detail keeps its metadata, input list, and persisted Plan Steps
+inside `Work details`, collapsed by default. Expanding it reveals only data loaded and
+validated from the authenticated Task/Resource/Plan projections. The view does not infer
+Attempts, Evidence, verification, or progress from a Plan Step. This disclosure state is a
+local presentation choice and does not change Task state.
+
+The current saved outcome/activity panel uses a finite authenticated snapshot. It shows the
+saved objective/status, committed output records, and a short activity preview; full source
+IDs stay collapsed. It labels `CURRENT` only when the persisted source records were read
+from one consistent SQLite snapshot; stale/unknown values remain distinct if a later
+projection source reports them. Snapshot time is never called verified Evidence. The panel
+cannot show result text or blocker details absent from the projection, and refreshing it
+does not imply a live stream.
+
 ## Live Desk
 
 Live Desk projects real work into outcome-oriented lanes.
 
-Default hides agent names and protocol internals. A planning status may appear before plan acceptance, but no work lane appears until real Steps and Attempts exist. Each lane corresponds to real Step/Attempt state.
+Default hides agent names and protocol internals. A Task opens with its outcome, current
+plain-language state, next required action, and newest committed output or blocker. A
+compact activity summary shows a few recent real updates and offers `View activity`;
+expanding it reveals persisted Step/Attempt lanes. `Details` exposes worker names and the
+delegation tree; Inspector exposes protocols and runtime machinery. Users may keep activity
+expanded for the current Task. This changes only local presentation state.
+
+A planning status may appear before plan acceptance, but no work lane appears until real
+Steps exist. Plan Steps may appear in Task details before Attempts exist; worker lanes
+require real Step/Attempt state.
 
 Possible lane elements:
 - source/resource card
@@ -224,6 +276,31 @@ Tabs may include:
 
 LiteCowork owns the shell, identity/provenance and display contract; domain editing logic belongs to capability/provider.
 
+When an Artifact is selected, the header keeps its stable title, current immutable version,
+source Task, verification state, and dirty-draft state visible. Version history is available
+without leaving the work. Compare appears only for supported renderer types. Restoring an
+older version publishes its content as a new version after expected-version validation;
+history is never destructively rewound. A renderer/provider failure distinguishes unavailable
+preview from unavailable content and retains any unsaved draft. Editing follows the owning
+provider contract and publication creates an ordinary ArtifactVersion.
+
+The current desktop Workbench remains narrower than this target: it selects exact
+committed versions, previews supported bounded UTF-8 text as escaped text, copies selected
+text, compares supported text with its exact prior version side by side using the same
+renderer, and offers an authorized immutable
+native Save As for the exact selected managed ArtifactVersion up to 10 MiB, plus
+content/provenance metadata. Save As checks the selected version identity and digest through
+the authenticated local bridge; the daemon verifies stored bytes and the native process
+checks media type and length before writing. Cancel writes nothing, and linked
+external/oversized content is not fetched or saved through this path. It also supports editing and restoring only managed
+`text/plain` content up to 1 MiB through the mounted authenticated append path.
+Restore asks for explicit confirmation, copies a selected historical text version into a
+draft based on the freshly read current head, and requires a separate Publish action. It
+never rewinds or overwrites history, and stale publication preserves the draft. The
+current append contract records `user.text_edit` but does not persist a separate
+restored-from relation. This is not a general document editor; external content, HTML,
+office files, and other media remain read-only/download-only.
+
 ## Library
 
 Filters/resources:
@@ -237,6 +314,60 @@ Filters/resources:
 - Saved workflows
 
 Saving/promotion is explicit. Linked resources show provider and external revision/availability.
+For a current managed file Resource up to 10 MiB, Library offers **Save original…**. The
+native dialog receives a sanitized suggested name; cancellation reads no content. Save
+revalidates the exact current Resource revision, digest, byte length, media type, local
+managed provider, and ContextDocument status before writing through the native atomic-save
+path. The UI receives only Saved/Cancelled status, never file bytes or the selected
+destination path. Stale, inactive, non-file, external, unavailable, or oversized content is
+not saved. ZIP archives remain opaque and may be saved byte-for-byte as uploaded; Library
+does not extract them. The action creates no new Resource revision or Task history.
+Artifact detail exposes version history, provenance, and verification state; comparisons
+use exact immutable versions and their source ResourceRevisions, and do not imply changed-line
+detection unless a qualified diff renderer provides it. Failure to read a prior comparison
+version preserves the selected authorized preview and Artifact history; denial for the
+selected version itself hides that version's metadata/content. Refresh is disabled while a
+draft is open, and closing a dirty Artifact view requires explicit discard confirmation.
+Restore-as-new-version uses the Workbench rules. Unsupported types remain downloadable when
+authorized.
+
+Small managed CSV/TSV Artifact previews use a bounded table view (500 rows, 32 columns,
+8,192 characters per cell, and the existing 1 MiB transfer ceiling). Cells are rendered as
+escaped text; malformed or out-of-bound content falls back to the original text, which is
+also available from the table view. This does not imply spreadsheet formula evaluation or
+editing support.
+
+The desktop/local intake slice shows a keyset-paginated Resource catalog and
+Workspace-wide metadata/content search. Users load the first page quickly and request
+older rows as needed. Search results may be explicitly pinned as Task inputs; the action
+records the exact Resource revision and does not fetch its content. The Home composer
+shows selected names and allows removal before saving. A text Preview action requests the
+selected current revision through the authenticated Operator API and renders only valid
+UTF-8 text-like content up to 1 MiB as escaped plain text. HTML, SVG, PDF, Office
+documents, ZIPs and other binary/active content are not rendered by this first preview.
+Preview is Workspace-scoped and no-store. A pinned Task input is a reference, not a grant:
+a future ContextPlanner must re-evaluate availability, policy and sensitivity before
+content reaches an agent. The full Library contract continues to require authorized
+download/renderers, durable indexing, revision history and root-aware freshness as their
+implementation stories land.
+
+The current desktop Library also exposes the existing exact `kind` and `freshness` search
+filters. They are applied by the authenticated Resource search route before pagination;
+changing either filter clears the previous page/cursor and starts a new query. They refine
+the selected search mode but do not change its content-reading limits or attach results to
+a Task. With metadata mode selected, a user can leave the query empty to browse by filters;
+content-search modes still require search terms. This UI source is not yet built or verified.
+
+For a selected Resource row, Library offers **Rebuild local text index** as an explicit
+owner action. It submits the exact revision ID and content digest currently displayed by
+the catalog, so a stale row cannot rebuild a newer revision. While a request is active the
+button reports that state; a confirmed result announces either that the encrypted local
+index was rebuilt or a plain-language reason the file cannot be indexed. If the response
+is ambiguous, retry uses the same request ID; a changed Resource head instead asks the
+owner to reload. The action returns no file text or search terms. ZIP and unsupported
+formats remain intact and are reported as not indexable; this control does not imply ZIP
+extraction, semantic RAG, or background indexing. The UI source has not been built or
+verified.
 
 ## Automations
 
@@ -369,6 +500,7 @@ Every surface must define:
 | Workspace selector/setup | Workspace name, replication scope, status | Create, select, update policy, archive when quiescent | Creation defaults to local-only; cloud scope is explicit; archive blockers name active Tasks/Automations |
 | Home | Composer, recent Conversations/Tasks, Runtime availability | Start a Conversation, attach resources, reopen recent work | First-use guidance; offline local-only explanation; reconnect state with cached data labeled stale |
 | Conversation | Ordered messages, attachments, inline Task cards | Reply, attach, steer linked Task, stop/cancel a running turn, retry a failed turn | Empty prompt; send failure preserves draft; message/task creation is idempotent; prior failed output remains provenance-tagged |
+| Context used | Exact context sources resolved for a turn/Task | Open authorized source revision; navigate to context settings | No source content on permission loss; unknown provider provenance is stated; no claim that all history was read |
 | Task list | Durable outcome, status, next required action, latest update | Filter, open, pause/resume, cancel, recover an eligible Step | Empty filter-specific state; cached/offline status is visibly stale |
 | Task detail | Current spec revision, progress, artifacts, blockers, history | Steer, approve, cancel, request recovery, open artifact | Missing/archived resources are identified; no fabricated progress |
 | Live Desk | Steps, active Attempts, inputs, capability activity, artifacts, verification | Inspect lane, respond, stop, open result | No lanes before Steps/Attempts exist; preserve last known state as stale when disconnected |
@@ -427,8 +559,9 @@ settled and reports any blockers.
 - Replication policy is shown as scope, not as a security grant. Capability and secret access still require their own authorization.
 - Policy updates do not imply remote deletion. The UI states that already-replicated copies remain until separately managed.
 - Archive does not delete or hide history. Archived Workspaces are read-only; inbound channel messages are rejected with a clear channel-side response.
-- Workspace instructions have a version history and a clear current revision. Updating them does not silently alter active Tasks.
+- Workspace instructions are edited in Settings as plain UTF-8 text (64 KiB maximum) and committed as immutable revisions backed by a pinned Resource; the UI shows revision history. Updating them does not silently alter active Tasks, and TaskSpec pinning is required before this guidance reaches Task sessions.
 - Adding a folder as an attachment is one-time. “Add to Workspace” creates a persistent WorkspaceRoot with a separate watch policy; root observation does not imply write access or cloud replication.
+- Persistent-folder rows show WorkspaceRoot lifecycle status separately from the last committed ResourceLocation availability. Availability is an observed value, not a live Runtime probe; `PAUSED` must not hide an `OFFLINE`/`UNAVAILABLE` location, and the view never exposes a local path or raw file identity.
 - Resource search results show freshness and available locations. A conflicted Resource exposes its revision branches; an unpinned reference is not resolved until a branch is explicitly pinned or a verified merge is created. Search matches do not silently enter agent context; the user/agent must attach selected ResourceRefs.
 
 ## Needs you inbox and notifications
@@ -488,6 +621,20 @@ Before that commit, admission verifies an eligible selected AgentBinding. If mis
 unavailable, no ConversationTurn or Task is created; the complete draft remains in the
 composer and the user is routed through explicit Agent setup.
 
+### Desktop implementation staging
+
+The current desktop increment offers **Save Task** against the selected active Workspace
+and its explicit current default lead binding. The owner can select existing Library
+Resources as exact revision-pinned inputs; selections remain Workspace-scoped. Saving
+commits the standalone Task envelope and inputs, then opens Work detail. `READY` with no
+current PlanRevision is rendered as “Ready” with the note “No accepted plan is currently
+saved for this Task.” This staged action does not start a
+planning session, read Resource contents for an agent, or imply agent work; the normal
+product flow above remains the target once planner/session admission is integrated. If
+the local Operator response is ambiguous, an in-window retry reuses the same RequestId
+only for the same Workspace, objective, lead binding, and ordered input references.
+Changing any pinned field creates a new RequestId.
+
 ## Initial planning projection
 
 While the lead planning session is active, show “Planning” with session status and stop/steer affordances permitted by Task policy. Do not show a fabricated worker lane, environment, runtime handoff, progress percentage, or artifact. Once PlanRevision and Step Attempts exist, Live Desk lanes may appear from their persisted state.
@@ -533,6 +680,13 @@ use. Profile rows show `Available to: Alex, Researcher` or `Not assigned`; editi
 assignment creates a new CoworkerRevision. The enable flow asks whether to make a profile
 available to the selected Coworker, so users can distinguish installed, enabled, and
 Coworker-allowed states.
+
+The current Codex profile's expandable probe details show only bounded allowlisted
+observations returned by the Operator: protocol initialization, account-read and
+authentication observation, model-list/catalog status and count, whether session start
+was tested, direct probe-process stop, and writer-quiescence status. A listed model is
+never presented as inference entitlement. These details are diagnostics, not execution
+readiness; the probe does not create a work session or prove safe switching.
 
 The profile editor has sections for: status/name; short “When to use” description;
 adapter-discovered model/reasoning/session options; worker instructions; capability
@@ -584,9 +738,17 @@ lease provenance. If no listed lead qualifies, the Task remains blocked for the 
 ### Goals and Suggestions
 
 Goals show the owner's objective, success criteria, horizon, linked active/completed Tasks,
-linked Routine revisions, and evidence-backed contributions. Conflicting or stale source
-records have explicit badges and do not count as verified progress. Only the owner can
-complete or reopen a Goal.
+linked Routine revisions, pinned Artifact versions, and evidence-backed contributions.
+The owner can add or remove Task and Artifact links while editing a Goal. Removing a link
+creates a new Goal revision; it does not alter or delete the Task or Artifact. Conflicting
+or stale source records have explicit badges and do not count as verified progress. Only
+the owner can complete or reopen a Goal.
+
+When the local projection is partial, the Goal page labels the limitation and renders
+unknown verified/stale/conflicted counts as unavailable, never zero. A Task marked
+`COMPLETED` remains unverified until the current mandatory criteria and inputs are matched
+to passing VerificationRuns. Artifact evidence is shown only when the exact pinned version's
+Evidence IDs resolve to committed records in the selected Workspace.
 
 At most one prominent Idea appears on Home and at most three in the Ideas drawer. Similar
 open suggestions deduplicate. Each card offers Prepare/Accept, Remind me, Dismiss, and Why
@@ -613,7 +775,10 @@ First run is a short sequence with Skip/Back and no mandatory avatar/personaliza
    are a separate explicit choice.
 3. Discover/connect an agent, create its disabled binding, authenticate if needed, enable
    it, then choose a lead-eligible binding. Preserve drafts when setup is incomplete.
-4. Name the first Coworker and choose a role; configuration can be revisited later.
+4. Create/select the primary Coworker with the neutral name “Assistant” and role
+   “General-purpose assistant”; renaming, role changes, avatar, and personalization are
+   optional and can be changed later. Do not invent a human-like personality or require
+   naming before the user can start work.
 5. Offer optional worker setup (“Use lower-cost workers for suitable work”) with per-
    profile descriptions, provider usage caveat, and no automatic enablement.
 6. Suggest one concrete first Task from the available Workspace resources; do not auto-

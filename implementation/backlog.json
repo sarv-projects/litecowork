@@ -49,7 +49,7 @@
         "docs/NETWORK-SECURITY.md",
         "docs/schemas/sqlite-v1.sql"
       ],
-      "implementation": "Build the first Workspace persistence vertical slice: StateStore/EventStore/BlobStore ports, WorkspaceService create and policy-update commands, bounded rusqlite writer, versioned schema migration/fingerprint, encrypted content-addressed filesystem blobs through an injected WorkspaceBlobKeyProvider, atomic aggregate/event/origin-sequence commit, restart and projection replay. rusqlite is provisional pending SP02 comparison; production OS key-provider integration is not in this slice.",
+      "implementation": "Build the first Workspace persistence vertical slice: StateStore/EventStore/BlobStore ports, WorkspaceService create and policy-update commands, bounded rusqlite writer, versioned schema migration/fingerprint, encrypted content-addressed filesystem blobs through an injected WorkspaceBlobKeyProvider, atomic aggregate/event/origin-sequence commit, restart and projection replay. The desktop OS key-provider implementation exists; platform qualification, rotation/recovery tests, and cryptographic review remain open. SQLite v3 source adds/backfills RuntimeWorkspaceBinding and gates Attempt admission; daemon binding persistence/query and migration qualification are still open. Four v1 composite Runtime/Workspace foreign keys continue to limit a Runtime row to one Workspace. rusqlite is provisional pending SP02 comparison.",
       "acceptance": "On-disk SQLite and filesystem adapters commit Workspace state/event/sequence atomically; one of two stale competing writes wins; restart replay equals the current projection; migration/configuration drift, unsupported schema, missing keys and blob authentication fail closed. Owner acceptance remains pending and E01-S01 is still IN_REVIEW.",
       "negative_cases": "Concurrent stale writes; injected rollback after aggregate, sequence and event writes; busy timeout; interrupted migration/retry; schema fingerprint drift; corrupt ciphertext; wrong Workspace or purpose; broad blob directory permissions; failed blob commit. Actual database/filesystem disk-full and production key-provider cases remain untested.",
       "demo": "Run cargo test --locked -p storage-sqlite workspace_create_update_restart_and_projection_replay_match -- --nocapture, then scripts/check.sh. Confirm the printed synthetic Workspace summary, event sequence and replay equality; inspect limitations in implementation/reviews/E01-S02.md.",
@@ -71,7 +71,7 @@
       "epic": "E01",
       "title": "Independent Runtime lifecycle",
       "gate": "G0",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E01-S02"
       ],
@@ -82,10 +82,10 @@
         "docs/PROTOCOLS.md",
         "docs/NETWORK-SECURITY.md"
       ],
-      "implementation": "Implement single-instance/incarnation boot, recovery, shutdown/drain, startup policy, sleep/wake and service packaging skeleton.",
+      "implementation": "Partial: litecoworkd run/status now acquires a cross-process single-instance file lock, persists local bootstrap Runtime/incarnation identity and lifecycle state atomically, opens LocalWorkspaceStorage, serves initial authenticated Workspace Operator routes, reports DEGRADED until Task recovery/execution exists, and closes storage on Ctrl-C. Remaining: durable Mesh RuntimeIncarnation registration after Workspace bootstrap, domain recovery, authenticated start/stop controls, native service-manager integration, sleep/wake, dependency-aware drain preview, and process identity reconciliation. Current code has not been built or tested.",
       "acceptance": "Closing Operator leaves daemon running; reboot changes incarnation; stale process cannot own a lease; workers lazy-start.",
-      "negative_cases": "Duplicate startup, SIGKILL, sleep during write, invalid state directory permissions.",
-      "demo": "Close app, reopen, kill daemon, recover same durable records.",
+      "negative_cases": "Duplicate startup, SIGKILL/restart, corrupted/symlinked state, lock-file symlink/broad permissions, sleep during write, invalid state directory permissions, storage/key-store recovery failure, and shutdown signal during drain.",
+      "demo": "Start the daemon twice against one state directory, inspect DEGRADED status, stop gracefully, restart and inspect incarnation/recovery state. This demonstrates bootstrap lifecycle only; Task recovery and authenticated control remain pending.",
       "tests": [
         "E01-S03-CODE",
         "E01-S03-SYSTEM",
@@ -101,7 +101,7 @@
       "epic": "E01",
       "title": "Authenticated Operator boundary",
       "gate": "G0",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E01-S03"
       ],
@@ -112,7 +112,7 @@
         "docs/PROTOCOLS.md",
         "docs/NETWORK-SECURITY.md"
       ],
-      "implementation": "Implement scoped authenticated Operator API, RequestId dedupe, error envelopes, event subscription cursors/backpressure and generated TS client; run SP03.",
+      "implementation": "Partial development bootstrap: litecoworkd serves authenticated loopback GET Workspace list/read and POST Workspace create using a per-incarnation high-entropy bearer credential; validates exact Host, rejects browser Origin, filters by local owner, and requires matching X-Workspace-ID for Workspace read. Workspace create supports contract-approved initial replication policies (SELECTED_FOLDERS waits until roots exist) and stores an idempotency receipt atomically with aggregate/event commit. Tauri native code reads a private descriptor and lists/creates Workspaces without exposing the credential to frontend JS. This does not authenticate the OS peer and is not production-qualified. The production IPC contract is docs/LOCAL-OPERATOR-IPC.md. A shared framing primitive exists but is not integrated; it does not enforce connection count or I/O deadlines. Remaining: Runtime-to-OS-principal binding, authenticated listener with Unix peer checks and per-logon Windows pipe DACL, Tauri IPC client migration with no HTTP fallback, remaining domain routes, pagination, event replay/stream, generated client, lifecycle controls and OS qualification. Current edits are unbuilt and untested.",
       "acceptance": "Replay returns same command result; another origin/unauthenticated process denied; reconnect fills missed events before live updates.",
       "negative_cases": "Malformed ID, cross-Workspace request, reused RequestId with changed payload, slow stream.",
       "demo": "Use desktop client and adversarial HTTP client against same daemon.",
@@ -131,7 +131,7 @@
       "epic": "E02",
       "title": "Desktop shell/onboarding",
       "gate": "G1",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E01-S04"
       ],
@@ -143,9 +143,9 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Tauri React shell, theme tokens, routes, keyboard navigation, primary empty states, daemon connection/tray; run SP01.",
+      "implementation": "Partial: Tauri 2 + React shell has Home/Work/Library/Needs You/Settings, honest empty states, and native commands to start litecoworkd, display persisted/live-lock status, and list/create Workspaces through authenticated Operator routes. The Home composer saves standalone Task envelopes through authenticated local IPC. It pins exact Library Resource revisions when explicitly selected; Task detail shows the actual READY state and says no accepted plan is currently saved without inferring the Task has never started. It does not start planning or execution. Node.js 24.21.0 is pinned in .node-version/package.json engines; pnpm 12.10.1 is pinned in package.json; pnpm-workspace.yaml sets nodeVersion 24.21.0 and engineStrict true; pnpm-lock.yaml was generated with --lockfile-only --ignore-scripts and was not regenerated after adding engine validation config. npm is unsupported. Strict rejection and frozen install/build remain unverified. Other remaining work: packaged signed daemon sidecar, tray/background lifecycle, reconnect acceptance and product Task execution. Current edits are unbuilt and untested.",
       "acceptance": "Fresh install creates local Workspace; no fake worker card; daemon offline is explicit; native shell survives reconnect.",
-      "negative_cases": "Webview missing, daemon unavailable, repeated submit, resize/200% zoom.",
+      "negative_cases": "Webview missing, daemon unavailable, repeated submit, resize/200% zoom; wrong Node major/too-old patch, pnpm rejects an incompatible required dependency engine, mismatched pnpm, changed manifest against frozen lockfile must fail without silently resolving. npm is unsupported.",
       "demo": "Install on reference OS, create Workspace and close/reopen Operator.",
       "tests": [
         "E02-S01-CODE",
@@ -161,7 +161,7 @@
       "epic": "E02",
       "title": "Workspace policy and instructions",
       "gate": "G1",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E02-S01"
       ],
@@ -171,11 +171,16 @@
         "docs/MOTION.md",
         "docs/WORLD-RESOURCES.md",
         "docs/CONTEXT.md",
-        "docs/API.md"
+        "docs/API.md",
+        "docs/DATA-MODEL.md",
+        "docs/EVENTS.md",
+        "docs/FLOWS.md",
+        "docs/schemas/operator-api.openapi.yaml",
+        "docs/schemas/sqlite-v1.sql"
       ],
-      "implementation": "Implement Workspace create/revise/archive, replication policy, roots, versioned instructions and optimistic concurrency.",
-      "acceptance": "Tasks pin instructions; archive cannot strand active authority; local-only is default; stale editor gets conflict.",
-      "negative_cases": "Root escapes, overlapping roots, offline policy edit, archive with active Task.",
+      "implementation": "Implement Workspace revise/archive, replication policy, roots, versioned instructions and optimistic concurrency. Basic local create is currently in E01-S04. Unverified slices: authenticated Workspace replication-policy update has expected-version checks, idempotent transaction receipts, and a desktop Settings selector; immutable instruction revisions use pinned same-Workspace UTF-8 text Resources, transactional local projection/event/receipt writes, opaque paginated history, and a desktop editor/history view. Cloud transfer is not implemented; SELECTED_FOLDERS awaits WorkspaceRoot support; Tasks do not yet pin instructions.",
+      "acceptance": "Tasks pin instructions; archive cannot strand active authority; local-only is default; stale editor gets conflict with current revision available for comparison; instruction revision/history is owner- and Workspace-scoped; exact retries are idempotent; local policy UI does not imply cloud transfer.",
+      "negative_cases": "Root escapes; overlapping roots; offline policy edit; archive with active Task; stale If-Match; same RequestId with changed policy or instruction; selected-folder policy without validated roots; lost response followed by exact retry; wrong Workspace header/path; foreign or unpinned ResourceRef; non-UTF-8, non-text, >64 KiB, or digest-mismatched instruction content; duplicate/nonexistent/wrong-parent instruction revisions; pagination cursor replay or cross-Workspace cursor; Workspace switch during editor/history reads; Resource import succeeds but instruction revision commit fails",
       "demo": "Create two Workspaces and prove isolated instructions and search.",
       "tests": [
         "E02-S02-CODE",
@@ -191,7 +196,7 @@
       "epic": "E02",
       "title": "Resource intake and factual index",
       "gate": "G1",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E02-S02"
       ],
@@ -203,9 +208,9 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Implement resumable uploads, file/folder selection, immutable revisions/ancestry, identity/freshness watchers and deterministic FTS search.",
-      "acceptance": "Cancel/restart upload resumes verified chunks; rename preserves correct identity; search metadata does not silently attach content.",
-      "negative_cases": "Symlink/TOCTOU, duplicate digest, deleted root, watcher overflow, unsupported encoding.",
+      "implementation": "Unverified slices: desktop multi-file/folder selection; resumable local upload sessions up to 100 MiB/file using encrypted 4 MiB chunks, 24-hour expiry, durable progress, reselected-file hash checks before resume, zero-byte commit and atomic Resource/revision/location/event/session-commit transaction; keyset-paginated Workspace-scoped catalog; authenticated current-revision content retrieval and Tauri plain-text preview capped at 1 MiB. Session creation, final-chunk CONTENT_RECEIVED, TTL EXPIRED, and COMMITTED transitions append aggregate-state-backed domain events. Lifecycle version is separate from chunk progress_version. Encrypted orphan cleanup is implemented in source using durable reservations and GC fences; it remains unbuilt/untested and requires race/crash/provider deletion qualification. Metadata search is Workspace-wide and keyset-paginated; exact kind/freshness filters are now exposed in the Library and retained across cursor paging. Metadata mode supports filter-only browsing with an empty query; content modes still require search terms. Optional ON_DEMAND_CONTENT search scans at most 20 current managed candidates, 1 MiB per Resource, and 8 MiB total in request memory for allowlisted UTF-8 plain text, with a pinned-revision recheck and bounded excerpt. No extracted plaintext, search terms, or snippets are persisted. Source now adds a v7 revision-scoped encrypted lexical projection for allowlisted UTF-8 text up to 1 MiB: encrypted RESOURCE_INDEX snapshots, Workspace/purpose-scoped OS-keystore keys, versioned HMAC term tokens, deterministic AND matching, bounded snippets with pinned ResourceRevision provenance, and commit hooks for direct Resource creation and upload commit. Missing retained keys fail indexed search closed; a new Resource revision does not reuse old terms. Storage, Operator, Tauri command, and Library search-mode source now expose INDEXED_CONTENT; all are unbuilt and untested. Physical derived-index blob purge and durable indexing failure state/retry are not integrated. A storage reindex operation exists, but there is no background migration/reindex worker or user-facing reindex control. ZIPs, rich documents and WorkspaceRoots remain excluded; PDF/Office parsing, OCR, embeddings, semantic RAG and local-model retrieval are not implemented. Remaining: persistent WorkspaceRoots, safe ZIP inspection/extraction, physical index/blob cleanup and rebuild lifecycle, binary preview/download, watcher-based identity/freshness/invalidation, and qualified local semantic retrieval. Persistent roots additionally require authenticated OS-peer IPC and an explicit mapping from a desktop Runtime installation to its Workspace-scoped Runtime catalog entries; raw selected paths must remain outside WebView-visible/public Operator data. Empty files are accepted. Exact Resource revisions can now be selected from Library and pinned to a saved Task through the existing TaskSpec input_refs contract; this reads no Resource bytes for an agent and grants no access. The Library additionally supports pausing multi-file uploads client-side between requests while retaining resumable sessions; no server cancellation is sent. This UI/IPC source remains unbuilt and untested. This does not satisfy E02-S03 acceptance.",
+      "acceptance": "Cancel/restart upload resumes verified chunks; rename preserves correct identity; search metadata does not silently attach content; supported text indexes are encrypted, pinned to the exact current revision and Workspace, return bounded provenance-backed snippets, survive daemon restart, and fail closed when a required key is unavailable.",
+      "negative_cases": "Symlink/TOCTOU, duplicate digest, deleted root, watcher overflow, unsupported encoding, crash between upload blob reservation/blob write/receipt, shared digest retained while referenced, concurrent collector/reservation fencing, restart with DELETING fence, missing-object idempotency, deletion-provider failure retry, ZIP/PDF/Office and oversized inputs never indexed, malformed UTF-8/control-heavy text skipped, stale revision excluded, cross-Workspace token mismatch, lost retained key, rotation with old and active key versions, snapshot tampering, context revocation while searching, query term/byte bounds, and failed v7 migration rollback/retry.",
       "demo": "Import a project folder, rename/edit files, search and inspect exact revisions.",
       "tests": [
         "E02-S03-CODE",
@@ -251,7 +256,7 @@
       "epic": "E03",
       "title": "Harness qualification and bindings",
       "gate": "G1",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E02-S04"
       ],
@@ -262,7 +267,7 @@
         "docs/CONTEXT.md",
         "docs/DELEGATION.md"
       ],
-      "implementation": "Run SP04; probe supported native descriptor/config digest/session options; implement discovery, auth readiness, enabled and lead_eligible.",
+      "implementation": "Run SP04; probe supported native descriptor/config digest/session options; implement discovery, auth readiness, enabled and lead_eligible. Current source adds explicit local Runtime enrollment, bounded Codex App Server profile observation, sanitized expiring offers, versioned disabled/enable AgentBinding setup, and Workspace default lead selection from Agent Settings. OpenCode inventory accepts its documented bare semver output but has no profile probe; current contract authorizes only Codex probing. Task AgentSession admission/readiness, model entitlement/inference, process-tree containment and provider qualification remain incomplete.",
       "acceptance": "Native config remains unchanged; unsupported overrides rejected; installed/connected/lead eligibility displayed independently.",
       "negative_cases": "Missing binary, expired auth, config drift, unavailable model, plugin conflict.",
       "demo": "Compare selected native agent with LiteCowork launched session using same config.",
@@ -315,7 +320,7 @@
       "epic": "E03",
       "title": "Planning and atomic plan acceptance",
       "gate": "G1",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E03-S02"
       ],
@@ -324,12 +329,15 @@
         "docs/TASK-RUNTIME.md",
         "docs/STATE-MACHINES.md",
         "docs/CONTEXT.md",
-        "docs/DELEGATION.md"
+        "docs/DELEGATION.md",
+        "docs/API.md",
+        "docs/FLOWS.md",
+        "docs/EXPERIENCE.md"
       ],
-      "implementation": "Implement TaskSpec revisions, attempt-free PlanningAssignment, accepted PlanRevision/Steps transaction and user steering.",
+      "implementation": "Source now includes standalone Task creation, durable planner reservation/activation, initial PlanRevision/Step acceptance in one SQLite transaction, idempotent replay, complete Task/Step event-state blobs, plan/Step GET reads, and a bounded saved-Task objective revision path. The revision path is limited to READY/no-Plan/no-live-planner Tasks, uses If-Match + exact parent + idempotency key, and preserves omitted fields. The Tauri Task detail exposes objective editing, an exact authenticated read-only TaskSpec history disclosure, and reloads committed state. History checks Task/Workspace identity, ordered positive revisions, parent pins, author identity, and timestamps; compares the history head with the loaded Task revision; labels a newer saved head without calling the older Task detail current; offers explicit Task reload for stale/incomplete heads only when no objective draft or unresolved revision request is open; and has no restore action. Initial plans require a current active TASK_PLANNING session; replan admission remains unavailable until Attempt/lease authority exists. The Home composer saves standalone Tasks with exact pinned Resource revisions, server-resolved Coworker revision/failover provenance, and a same-window retry envelope that retains the original RequestId and lead/Coworker snapshot; changed drafts are blocked until the owner checks Work and explicitly clears the unresolved retry. Tauri validates returned Task/TaskSpec identity, objective, and ordered Resource refs, and the UI independently checks the returned objective and inputs before clearing the draft. The retry envelope is not persisted across application restart. The composer does not admit planning or execution. The API plan POST remains unwired because authenticated Operator requests do not yet carry trusted producer-scoped session authority; no native agent invokes the plan service. Task detail has a read-only planning-readiness diagnostic through the authenticated GET route; it shows sanitized blockers and always reports planning dispatch unavailable. It creates no execution state and remains source-only/unverified. See F100 and F106. Source is unbuilt/untested and this story does not meet acceptance.",
       "acceptance": "No Attempt before accepted Step; stale plans refused; criteria and resources pinned; changed intent creates revision.",
-      "negative_cases": "Concurrent acceptance, invalid DAG, missing capability, stale TaskSpec, plan crash.",
-      "demo": "Request repo review, inspect durable plan and accepted Steps.",
+      "negative_cases": "Concurrent acceptance, invalid DAG, missing capability, stale TaskSpec, plan crash; objective editor rejects stale version/parent, active planner, accepted Plan, non-READY/terminal Task, invalid or unchanged objective, and changed-payload reuse of an idempotency key; lost response retry returns the original revision; objective-only edit preserves all other spec fields and starts no planning/execution record.",
+      "demo": "Save a standalone Task, revise its objective before planning, reload and inspect the immutable spec revision/event; then confirm stale/planned Task conflicts and no planner/session/Attempt is started. Separately request repo review and inspect plan/Steps when the full producer path is available.",
       "tests": [
         "E03-S03-CODE",
         "E03-S03-SYSTEM",
@@ -566,7 +574,7 @@
       "epic": "E05",
       "title": "DelegationProfile lifecycle and UI",
       "gate": "G2",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E04-S05"
       ],
@@ -577,7 +585,7 @@
         "docs/TRUST.md",
         "docs/OBSERVABILITY.md"
       ],
-      "implementation": "Versioned profile CRUD/duplicate/enable/archive, adapter option validation and Coworker assignment UI; same binding multiple profiles.",
+      "implementation": "Source slice now has typed profile commands; SQLite idempotent create/revise/duplicate/disable/archive; authenticated Operator routes; and desktop create/revise/duplicate/disable/archive controls. Profiles are created disabled and enablement remains fail-closed until adapter option validation, Trust, Environment, and Task admission are integrated. Same-binding multiple profiles are supported. The desktop profile card now shows allowlisted Codex probe stages and makes untested inference/session start and unproven writer quiescence explicit; these diagnostics are not execution readiness. Code/system/owner acceptance, lockfile resolution, and verification remain open.",
       "acceptance": "Disabled by default including lead; revision pin never mutates running child; enable starts no process.",
       "negative_cases": "Enable disconnected agent, stale profile edit, archived binding, unsupported model.",
       "demo": "Create fast and reviewer profiles on one installed harness.",
@@ -701,7 +709,7 @@
         "docs/TRUST.md",
         "docs/OBSERVABILITY.md"
       ],
-      "implementation": "Qualify Codex/Claude/OpenCode/Cline adapters where real interfaces permit; measure premium-only vs cheap-workforce outcomes.",
+      "implementation": "Codex has a bounded owner-triggered profile probe. OpenCode now has an unverified owner-triggered probe that reads only bounded provider-status/configured-catalog routes, publishes an incompatible display-only offer, and is exposed through explicit desktop controls with sanitized provider/model details. Neither proves authentication, inference, session/model override, containment, or Task execution. Still required: qualify Codex/Claude/OpenCode/Cline execution adapters where real interfaces permit; measure premium-only vs cheap-workforce outcomes.",
       "acceptance": "Supported profiles prove native strengths; publish usage/cost/retries/verified-success and human rescues, no invented multiplier.",
       "negative_cases": "Unreported quota/cost, unsupported Cline host feature, provider rate-limit bursts.",
       "demo": "Run same code task corpus with baseline and delegated policy.",
@@ -862,16 +870,17 @@
         "E06-S04"
       ],
       "authorities": [
+        "docs/PRESENTATION-RUNTIME.md",
         "docs/WORLD-RESOURCES.md",
         "docs/CONTEXT.md",
         "docs/CAPABILITY-FABRIC.md",
         "docs/NETWORK-SECURITY.md",
         "docs/RESPONSIBILITIES.md"
       ],
-      "implementation": "Upload/folder/ZIP progress, extraction errors, index ready/stale states, citation viewer, source scope, retention and local/cloud availability.",
+      "implementation": "Upload/folder/ZIP progress, extraction errors, index ready/stale states, citation viewer, source scope, retention and local/cloud availability. Add a read-only Context used disclosure from exact resolved attachments/retrieval receipts, with provenance, freshness, and provider-provenance limitations; this is not autonomous memory extraction.",
       "acceptance": "Uploading != searchable; embedding egress shown; local-only resource blocks cloud resolution; reindex/cancel retry are actionable.",
       "negative_cases": "Partial folder permissions, removed drive, disconnected provider, repeated submit.",
-      "demo": "Drag a ZIP, inspect readiness and citation, attempt disallowed cloud task.",
+      "demo": "Drag a ZIP, inspect readiness and citation, inspect Context used for a grounded Task, verify exact source revisions, and attempt a disallowed cloud Task.",
       "tests": [
         "E06-S05-CODE",
         "E06-S05-SYSTEM",
@@ -1055,10 +1064,10 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Revisioned Coworker/default lead/interaction defaults/primary selection, presence, Home hierarchy and allowlist worker assignment.",
-      "acceptance": "Pause blocks new proactive work not existing Tasks; archive guards primary/responsibilities; named composer with advanced controls.",
-      "negative_cases": "Archived lead, multiple active Tasks, offline default path, stale assignment.",
-      "demo": "Create Alex, assign cheap workers, start two Tasks and inspect status.",
+      "implementation": "Implemented source remains partial and unverified: revisioned Coworker/default lead/interaction defaults/primary selection, presence projection, enabled worker-profile assignment, and Coworker/Goal/Automation settings are mounted. Home now shows the selected Coworker, paginates the active roster, allows explicit Workspace defaults, pins the exact Coworker ID/version into Task creation, and rejects stale/archived/unavailable selections without silently falling back; retry matching includes the selection. Remaining: ordinary Conversation turns, the full Home hierarchy, primary Coworker creation/onboarding, and final presentation behavior. No source here establishes agent Task execution. Complete only after E05/E06 dependencies and the full owner scenario pass. UI source is unbuilt and unverified.",
+      "acceptance": "Pause blocks new proactive work not existing Tasks; archive guards primary/responsibilities; named composer with advanced controls; first-run can start with a neutral default Coworker without requiring name/avatar/personalization.",
+      "negative_cases": "Archived lead, multiple active Tasks, offline default path, stale assignment, abandoned onboarding before optional Coworker personalization.",
+      "demo": "Start with the neutral default Coworker without entering a name, complete a useful Task, then optionally rename it and assign a worker. Verify future Tasks use the new revision and existing Task provenance stays pinned.",
       "tests": [
         "E08-S01-CODE",
         "E08-S01-SYSTEM",
@@ -1074,7 +1083,7 @@
       "epic": "E08",
       "title": "Goals and suggestion producers",
       "gate": "G2",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E08-S01"
       ],
@@ -1086,7 +1095,7 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Passive Goal links/progress/reopen; bounded deterministic/provider producers with provenance, dedupe/cooldown/mute/snooze/expiry and accept flow.",
+      "implementation": "Partial desktop slice: authenticated Workspace-scoped Suggestions list with VISIBLE/SNOOZED/ALL views, bounded filter-bound cursors, and provenance display; authenticated retry-safe dismiss, snooze, unsnooze, and accept commands; atomic acceptance to an ordinary READY Task with pinned inputs, criteria, Goal/Coworker provenance, and Coworker failover policy. The desktop preserves each unresolved mutation RequestId and the original snooze target after response loss. Bounded event-backed expiry settlement is wired and refuses to serve the page while due transitions remain. Versioned Workspace kind preferences have virtual unmuted defaults (version 0), authenticated read/update routes, and atomic preference change plus dismissal of current proposed items; the Ideas page exposes mute/unmute controls. Producers/proposal admission, Routine/Automation draft acceptance, and Task planning/execution remain unavailable, so no producer-backed Ideas are generated and acceptance only saves a READY Task. Source is unverified.",
       "acceptance": "Goal never executes; Suggestion accept makes reviewed Task/draft; max one prominent idea; producer cannot self-authorize.",
       "negative_cases": "Duplicate proposal, stale source, snoozed/muted suggestion, goal archive race.",
       "demo": "Link verified Tasks to goal, surface and accept/dismiss a provenance-backed idea.",
@@ -1105,7 +1114,7 @@
       "epic": "E08",
       "title": "Editable context lifecycle",
       "gate": "G2",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E08-S02"
       ],
@@ -1117,10 +1126,10 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "ContextDocument editor, exact parent merge/conflict, revoke/delete tombstones/receipt saga; stop affected native sessions safely.",
+      "implementation": "Partial desktop slice: show read-only provenance for existing immutable Workspace instruction revisions (exact source Resource/revision, digest, and parent instruction revisions), explicitly distinct from Task Context used. Additional source-only, unverified API/storage slice mounts owner-scoped Resource detail/history and revision upload. It pins If-Match Resource version plus complete parent heads; commit rechecks pins and content digest/size/media type, atomically appends immutable ResourceRevision/ancestry/head/location/index invalidations and resource.revision.created.v1 with event/snapshot/upload/idempotency state, and supports committed receipt replay. New Library source adds a ContextDocument-only editor: metadata and paged history, replacement local-file selection or small supported text editing, chunked authenticated Tauri upload, and commit pinned to the observed Resource version/current head. Conflict reloads current state and requires the owner to choose content again; no silent rebase. Revocation/deletion are displayed as unavailable, with no actions. This is unbuilt/untested source. ContextDocument metadata editing, merge UI, revoke/delete purge receipts, resumable UI recovery, and affected-session invalidation remain unimplemented.",
       "acceptance": "Lost edit not overwritten; revoked bytes not reattached; native history cannot be recalled and old session not reused.",
       "negative_cases": "Two concurrent editors, purge target offline, revocation during context fetch, restore tombstone.",
-      "demo": "Edit profile twice concurrently, merge and delete with visible pending receipts.",
+      "demo": "Current partial source demo: inspect exact Workspace instruction Resource/revision, digest, and parent provenance while the UI states this is not Task-used context; open an owner-authored ContextDocument in Library, inspect metadata/paginated history, select revised content or edit a small text Resource, and create a revision pinned to the observed head. Force a concurrent version change and confirm the conflict refreshes history without committing or silently rebasing. This desktop/API/storage source is unbuilt and untested. Full concurrent ContextDocument edit/merge, revoke, purge, and session-invalidation demo remains unimplemented.",
       "tests": [
         "E08-S03-CODE",
         "E08-S03-SYSTEM",
@@ -1134,13 +1143,14 @@
     {
       "id": "E08-S04",
       "epic": "E08",
-      "title": "Live Desk/Workbench/Library/Inspector",
+      "title": "Live Work surface and activity projection",
       "gate": "G2",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E08-S03"
       ],
       "authorities": [
+        "docs/PRESENTATION-RUNTIME.md",
         "docs/RESPONSIBILITIES.md",
         "docs/EXPERIENCE.md",
         "docs/DESIGN-SYSTEM.md",
@@ -1148,10 +1158,10 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Outcome-first Work filters, actual worker tree/progress, rich artifact registry/sandboxed preview/edit versions, Library provenance, Inspector diagnostics.",
-      "acceptance": "Every lane/output tied to committed state/version; renderers isolated; dirty/version conflict explicit; advanced IDs not default flow.",
-      "negative_cases": "Late projection, malicious HTML preview, incompatible renderer, artifact edit conflict.",
-      "demo": "Open code diff, report and spreadsheet outputs; inspect evidence and worker tree.",
+      "implementation": "Partial source: the saved Task presentation panel foregrounds the pinned objective/status, committed Artifact outputs, and a short activity summary; full activity/source IDs are collapsed. It labels stale/unknown snapshot freshness, keeps the last selected-Task snapshot visible with an out-of-date notice when the Runtime disconnects or refresh fails, and uses a presentation-item count rather than claiming every item is a Step. This consumes a finite five-second authenticated snapshot and does not implement Work filters, live event streaming, blocker details absent from the projection, or Task execution. Unbuilt and unverified.",
+      "acceptance": "Every lane/output references committed state/version; activity timestamps and verified Evidence remain distinct; stale/missing projections are labeled; advanced IDs stay out of the default flow.",
+      "negative_cases": "Late/out-of-order projection, cursor expiry/resync, duplicate committed event, worker state reversal, stale Task deep link, Artifact changing while activity is open.",
+      "demo": "Follow an ordinary Task without Inspector, expand activity, reconnect after projection refresh, then inspect worker/Evidence detail in Inspector.",
       "tests": [
         "E08-S04-CODE",
         "E08-S04-SYSTEM",
@@ -1169,9 +1179,12 @@
       "gate": "G2",
       "status": "PLANNED",
       "depends_on": [
-        "E08-S04"
+        "E08-S04",
+        "E08-S06",
+        "E08-S07"
       ],
       "authorities": [
+        "docs/PRESENTATION-RUNTIME.md",
         "docs/RESPONSIBILITIES.md",
         "docs/EXPERIENCE.md",
         "docs/DESIGN-SYSTEM.md",
@@ -1179,10 +1192,10 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Every route empty/loading/offline/error/conflict/permission state; keyboard/search/Quick Entry; motion interruption/reduced motion/contrast/zoom.",
+      "implementation": "Every route empty/loading/offline/error/conflict/permission state; keyboard/search/Quick Entry; motion interruption/reduced motion/contrast/zoom; validate both nontechnical Workbench and technical Inspector paths.",
       "acceptance": "All critical paths keyboard usable; live announcements throttled; no fake ETA/cost/progress; state transition only after actual event.",
-      "negative_cases": "Long text, 400% zoom, reduced motion, rapid state reversal, deep-link stale auth.",
-      "demo": "Owner completes task/approval/takeover solely by keyboard and reduced motion.",
+      "negative_cases": "Long text, 400% zoom, reduced motion, rapid state reversal, deep-link stale auth, reconnect during response stream, revoked context, renderer fallback, keyboard-only version compare/restore., screen-reader status spam during streaming",
+      "demo": "Owner completes task/approval/takeover by keyboard and reduced motion, then completes one nontechnical document workflow without Inspector and one coding workflow with diff/Evidence detail.",
       "tests": [
         "E08-S05-CODE",
         "E08-S05-SYSTEM",
@@ -1230,11 +1243,13 @@
       "epic": "E09",
       "title": "Automation and occurrences",
       "gate": "G2",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E09-S01"
       ],
       "authorities": [
+        "docs/API.md",
+        "docs/RESPONSIBILITIES.md",
         "docs/ROUTINES.md",
         "docs/AUTOMATION.md",
         "docs/CHANNELS.md",
@@ -1242,10 +1257,10 @@
         "docs/STATE-MACHINES.md",
         "docs/RUNTIME-LIFECYCLE.md"
       ],
-      "implementation": "Pinned Routine/Coworker Automation revisions, schedule/manual/webhook/file/poll/provider trigger conformance, cursor/misfire/dedupe/concurrency.",
+      "implementation": "Partial desktop definition slice: authenticated create/revise writes now pin an exact Routine revision and explicitly select an exact Coworker revision or null. The editor loads Workspace-scoped Coworkers, defaults edits to preserving the current immutable pin, and saves only PAUSED definitions. Trigger hosting, occurrence-to-Task admission, cursor/misfire/dedupe/concurrency, and resume/run remain unimplemented and unavailable.",
       "acceptance": "Every occurrence ordinary Task; edit never resets logical cursor; current Coworker ACTIVE checked; local unavailable waits.",
-      "negative_cases": "DST gap/fold, restart catch-up, duplicate webhook, no-change poll, cursor race.",
-      "demo": "Weekly local report across daemon restart and schedule edit without duplicate run.",
+      "negative_cases": "DST gap/fold, restart catch-up, duplicate webhook, no-change poll, cursor race; Coworker head changes before selection recheck, exact Coworker revision missing/foreign, stale Automation version, explicit pin preserve/change/clear, idempotent replay, and all mutations remain paused with no occurrence or Task admission.",
+      "demo": "Save a paused Automation pinned to a Coworker revision, edit the Coworker and verify the old pin remains unchanged, explicitly revise to the new Coworker revision, then confirm no trigger or Task starts. Occurrence hosting across daemon restart remains a later system/user gate.",
       "tests": [
         "E09-S02-CODE",
         "E09-S02-SYSTEM",
@@ -1273,7 +1288,7 @@
         "docs/STATE-MACHINES.md",
         "docs/RUNTIME-LIFECYCLE.md"
       ],
-      "implementation": "Exact-revision test Task without real occurrence/cursor changes; create-preview-test-enable wizard, health projection and drift repair proposal.",
+      "implementation": "BLOCKED / PLANNED: only an internal TestRunIdentity fingerprint exists. There is no authenticated test-run route, atomic reservation with ordinary Task admission, or Task provenance field distinguishing an Automation test Task from an occurrence Task. The local Automation router exposes no run route and the desktop page correctly discloses that Automations cannot run. Do not add a Test button or claim dry-run behavior until exact AutomationRevision pinning, normal authorization/Task admission, idempotency, explicit test provenance, and a no-occurrence/no-trigger-cursor-mutation guarantee are implemented together. Then add the create-preview-test-enable wizard, health projection and drift repair proposal.",
       "acceptance": "Test can perform only authorized actions; no implicit dry-run fiction; enable separate; repair immutable draft revision.",
       "negative_cases": "Failed test, stale revision on enable, broken source layout, auth revoked.",
       "demo": "Test a saved routine, inspect health, simulate source drift and repair draft.",
@@ -1382,10 +1397,10 @@
       "id": "E11-S01",
       "epic": "E11",
       "title": "Cloud deployment and operations",
-      "gate": "G3",
+      "gate": "POST_V1_CLOUD",
       "status": "PLANNED",
       "depends_on": [
-        "E10-S02"
+        "E13-S04"
       ],
       "authorities": [
         "docs/RUNTIME-MESH.md",
@@ -1413,7 +1428,7 @@
       "id": "E11-S02",
       "epic": "E11",
       "title": "Pairing, sync and conflict authority",
-      "gate": "G3",
+      "gate": "POST_V1_CLOUD",
       "status": "PLANNED",
       "depends_on": [
         "E11-S01"
@@ -1444,7 +1459,7 @@
       "id": "E11-S03",
       "epic": "E11",
       "title": "Handoff, failure and fencing",
-      "gate": "G3",
+      "gate": "POST_V1_CLOUD",
       "status": "PLANNED",
       "depends_on": [
         "E11-S02"
@@ -1475,7 +1490,7 @@
       "id": "E11-S04",
       "epic": "E11",
       "title": "Human channel integration",
-      "gate": "G3",
+      "gate": "POST_V1_CLOUD",
       "status": "PLANNED",
       "depends_on": [
         "E11-S03"
@@ -1506,7 +1521,7 @@
       "id": "E11-S05",
       "epic": "E11",
       "title": "Cloud capability and security qualification",
-      "gate": "G3",
+      "gate": "POST_V1_CLOUD",
       "status": "PLANNED",
       "depends_on": [
         "E11-S04"
@@ -1537,7 +1552,7 @@
       "id": "E12-S01",
       "epic": "E12",
       "title": "Remote installation and enrollment",
-      "gate": "G4",
+      "gate": "POST_V1_REMOTE",
       "status": "PLANNED",
       "depends_on": [
         "E11-S05"
@@ -1566,7 +1581,7 @@
       "id": "E12-S02",
       "epic": "E12",
       "title": "Remote placement/continuation tests",
-      "gate": "G4",
+      "gate": "POST_V1_REMOTE",
       "status": "PLANNED",
       "depends_on": [
         "E12-S01"
@@ -1595,10 +1610,10 @@
       "id": "E13-S01",
       "epic": "E13",
       "title": "Backup/restore and safe upgrades",
-      "gate": "G5",
+      "gate": "G3",
       "status": "PLANNED",
       "depends_on": [
-        "E12-S02"
+        "E10-S02"
       ],
       "authorities": [
         "docs/TESTING.md",
@@ -1626,7 +1641,7 @@
       "id": "E13-S02",
       "epic": "E13",
       "title": "Performance/soak and resilience",
-      "gate": "G5",
+      "gate": "G3",
       "status": "PLANNED",
       "depends_on": [
         "E13-S01"
@@ -1642,7 +1657,7 @@
       "implementation": "Measure idle/start/event/task/retrieval/provider latencies, memory/backpressure/load; freeze numeric SLOs from baseline then enforce regression.",
       "acceptance": "No unbounded queues/process leak; long soak recovers injected faults; Core and provider latency separated.",
       "negative_cases": "Many installed idle providers, million-row task, provider circuit storm, disk pressure.",
-      "demo": "Record desktop/cloud/remote benchmark and sustained-run report.",
+      "demo": "Record desktop/local benchmark and sustained-run report.",
       "tests": [
         "E13-S02-CODE",
         "E13-S02-SYSTEM",
@@ -1657,7 +1672,7 @@
       "id": "E13-S03",
       "epic": "E13",
       "title": "Real workflow and platform release suite",
-      "gate": "G5",
+      "gate": "G3",
       "status": "PLANNED",
       "depends_on": [
         "E13-S02"
@@ -1688,7 +1703,7 @@
       "id": "E13-S04",
       "epic": "E13",
       "title": "Packaging/security/runbooks and launch",
-      "gate": "G5",
+      "gate": "G3",
       "status": "PLANNED",
       "depends_on": [
         "E13-S03"
@@ -1702,7 +1717,7 @@
         "docs/SECURITY.md"
       ],
       "implementation": "Signed supported installers, daemon service upgrades, SBOM/licenses/dependency scan, docs/privacy/support diagnostics/incident playbooks and release candidate.",
-      "acceptance": "Owner accepts G5; no open critical/high authority or data-loss issue; rollback and signing verified; claims match evidence.",
+      "acceptance": "Owner accepts G3; no open critical/high authority or data-loss issue; rollback and signing verified; claims match desktop/local evidence.",
       "negative_cases": "Tampered updater, unsigned artifact, private logs, broken uninstall retention choice.",
       "demo": "Install/update/uninstall on supported OS and execute incident drill.",
       "tests": [
@@ -1713,6 +1728,72 @@
       "sources": [
         "R-TAURI",
         "R-OPENCLAW"
+      ]
+    },
+    {
+      "id": "E08-S06",
+      "epic": "E08",
+      "title": "Typed Presentation Runtime and reconnect-safe streaming",
+      "gate": "G2",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S02",
+        "E08-S04"
+      ],
+      "authorities": [
+        "docs/PRESENTATION-RUNTIME.md",
+        "docs/API.md",
+        "docs/EVENTS.md",
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md"
+      ],
+      "implementation": "Typed PresentationItem projection and isolated renderer registry with safe fallback; transient response deltas with per-turn/retry sequence; snapshot/cursor handshake, gap detection and resync; Context-used disclosure tied to exact authorized source revisions. Domain events remain truth and transient frames are not journaled as domain events.",
+      "acceptance": "Supported items render; unsupported/disabled renderers fall back safely; reconnect resumes with valid cursor or fresh snapshot; retry sequence does not collide; Context-used links resolve only to authorized revisions.",
+      "negative_cases": "Duplicate/out-of-order/gapped frames, partial-stream retry, terminal-turn delta, expired cursor, renderer crash/disablement, hostile markup, oversized item, revoked source during display, transient-only output after restart.",
+      "demo": "Use real provider response, interrupt/reconnect during output, verify retry boundary and final state, open Context used and confirm source revision; restart and confirm transient-only content is not presented as durable.",
+      "tests": [
+        "E08-S06-CODE",
+        "E08-S06-SYSTEM",
+        "E08-S06-USER"
+      ],
+      "sources": [
+        "R-MUSE",
+        "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E08-S07",
+      "epic": "E08",
+      "title": "Adaptive Artifact Workbench and version history",
+      "gate": "G2",
+      "status": "IN_PROGRESS",
+      "depends_on": [
+        "E04-S05",
+        "E06-S05",
+        "E08-S04"
+      ],
+      "authorities": [
+        "docs/PRESENTATION-RUNTIME.md",
+        "docs/ARTIFACTS-EVIDENCE.md",
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/CONTEXT.md",
+        "docs/API.md"
+      ],
+      "implementation": "Partial: Artifact Workbench exposes a native Save As action for the exact selected managed ArtifactVersion up to 10 MiB. Its registered Tauri command checks expected Artifact/Workspace/version, ResourceRevision, digest, media type and size; the authenticated daemon content route verifies stored bytes and the native bridge checks response media/length before a same-directory staged write. Cancel does not read content; only Saved/Cancelled returns through WebView IPC. It also exposes an on-demand list of the latest 10 immutable versions through the existing authenticated exact-version read route, bounded text editing through the mounted append route, and a managed text/plain restore-as-new-version draft. Restore requires explicit confirmation and separate publication against a freshly loaded current head; stale conflicts preserve the draft. The append contract records user.text_edit but does not persist a distinct restored_from relation. Adjacent managed text versions can be opened by exact version metadata/content routes and compared side-by-side with the same bounded safe renderer; each pane labels its exact ResourceRevision. The comparison is read-only and does not identify changed lines or publish content. Recent history exposes exact output revision plus source-count/provider/Attempt provenance when recorded. Full qualified renderers, external/non-text restore, Library provenance, renderer sandboxing, and owner/system/code acceptance remain open. Current source has not been built or verified. Managed Markdown preview also supports a bounded safe subset (headings, paragraphs, lists, quotes, fenced code, inline emphasis/code, confirmed HTTPS links) using React text nodes; unsupported or malformed syntax falls back to source text and no remote images load. This is not full CommonMark or an editor. Source remains unbuilt/unverified.",
+      "acceptance": "No immutable version is overwritten; conflicts are recoverable; restore appends a new ArtifactVersion; renderer failure preserves download/provenance; revoked sources are not represented as currently authorized context.",
+      "negative_cases": "Concurrent edits, stale compare input, restore racing a new version, linked/external or non-plain-text restore request, text over 1 MiB, missing historical blob, unchanged-content restore, incompatible renderer, hostile document, revoked source while open, dirty close/navigation; native Save As cancel without content fetch, selected-version/ResourceRevision/digest/media/size mismatch, external or >10 MiB content, daemon digest rejection, response media/length mismatch, temporary-write/rename failure preserving the destination, and no bytes/full path crossing WebView IPC.",
+      "demo": "Review a generated document/spreadsheet and coding diff; compare, save the exact selected version to a chosen path, edit, resolve a version conflict, restore a prior version as a new version, restart, and inspect provenance.",
+      "tests": [
+        "E08-S07-CODE",
+        "E08-S07-SYSTEM",
+        "E08-S07-USER"
+      ],
+      "sources": [
+        "R-MUSE",
+        "R-CLAUDE-USE"
       ]
     }
   ]

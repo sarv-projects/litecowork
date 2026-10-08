@@ -78,6 +78,14 @@ user's Task.
     configuration or claim ownership of its private subagents, prompts, memory, tools, or
     effects. Unsupported session options fail explicitly; they are never silently
     replaced.
+15. **Runtime identity is installation-scoped; Workspace authorization is explicit.** A
+    stable Runtime identifies one `litecoworkd` installation, not one Workspace. Each
+    authorized Workspace has an independently revocable `RuntimeWorkspaceBinding`.
+    Operator API readiness, Runtime execution readiness, and authenticated Mesh
+    registration are separate facts. Workspace-scoped Runtime use also checks the
+    binding role required for that operation. SQLite's v4 schema removes the historical
+    Runtime-to-Workspace column and guards Workspace-scoped Runtime tables through active
+    bindings; this does not itself register or enroll a Runtime.
 15. **Host delegation is a Core-owned Attempt.** A delegated child targets a Step in an
     already accepted immutable PlanRevision. Every child receives a new AgentSession,
     lease, child-scoped grant evaluation, budget admission, and verification path, plus an
@@ -108,6 +116,10 @@ user's Task.
 24. **Personal context remains Resource-backed and revocable.** Core controls retrieval
     eligibility and deletion of owned replicas. Provider-derived memory proposals are not
     part of v1 until they have an owner-review lifecycle.
+25. **Presentation is a projection, not product truth.** Typed Operator items and transient
+    stream frames are derived from authorized domain projections and bounded Agent output.
+    They cannot create or settle domain state, carry authority, or replace persisted
+    ConversationMessages, Task records, Artifacts, Approvals, Effects, or Evidence.
 
 ## 3. Canonical concepts and ownership
 
@@ -126,6 +138,7 @@ user's Task.
 | Coworker / revision | User-facing identity and operating preferences; it does not own Task execution. |
 | Goal / revision | User-authored desired outcome; progress is a projection over verified work. |
 | Suggestion | Expiring proposal with provenance; it cannot execute or authorize itself. |
+| PresentationItem | Ephemeral typed Operator read model sourced from authorized projections; it is not durable domain state. |
 | AgentSession | Agent-specific reasoning session; optional native session handles are optimizations, not Task truth. |
 | Runtime | A running `litecoworkd` instance, with identity, role, presence, and resource offers. |
 | RuntimeIncarnation | One daemon process lifetime under a persistent Runtime identity; process-bound state is scoped to it. |
@@ -247,6 +260,10 @@ releases the host-use reference; the next interaction uses a bounded projection 
 durable Conversation/Task state. Its native resume handle and host binding are Runtime-local
 and never travel in event state or Workspace backups; continuing on another Runtime creates
 a new session.
+One installation-scoped Runtime may be authorized for multiple Workspaces. The explicit
+`RuntimeWorkspaceBinding` scopes local Workspace operations and Mesh pairing; a RuntimeId
+alone never authorizes Workspace access. Local enrollment does not imply cloud pairing.
+See ADR-0020 and `RUNTIME-MESH.md`.
 Explicitly configured shared daemons are allowed, but no installed agent is kept hot by
 default. Model/agent selection changes affect future sessions or planning assignments;
 already admitted Attempts remain pinned. Apps launch only when a selected Environment
@@ -526,10 +543,11 @@ capable by composing replaceable parts rather than implementing every domain.
 
 ## 14. Implementation and release sequence
 
-The release is delivered in this order: **local desktop → cloud continuation → remote
-Runtime**. This is a delivery order, not permission to omit the accepted contract surface.
-The first desktop alpha proves a useful local Task; V1 exit requires the finalized local
-feature coverage before progressing through cloud and remote gates.
+V1 is the complete **desktop/local product**. Cloud continuation and remote Runtime are
+post-V1 releases; they remain supported architectural directions, but they are not V1
+acceptance gates. This keeps the V1 goal honest and focused without removing finalized
+local capabilities from scope. The first desktop alpha proves a useful local Task; V1 exit
+requires the full finalized local feature coverage and production qualification.
 
 1. **Development foundation (G0):** verified toolchain, contract CI, storage/event
    transactions, authenticated Operator boundary, separate Runtime lifecycle, test
@@ -545,20 +563,20 @@ feature coverage before progressing through cloud and remote gates.
    leases, environments/warmth/deadline preflight, Coworker/Home/Goals/Suggestions,
    editable context, rich Workbench, accessibility/motion, Routines/Automations,
    Teach-a-task/skills and notification UX. The one qualified human channel is delivered
-   with the cloud gateway at G3. The complete finalized local coverage matrix and
-   real-user workflows pass before cloud GA work.
-4. **Cloud continuation (G3):** deploy the same `litecoworkd` domain contract, persistent
+   notification UX. The complete finalized local coverage matrix and real-user workflows
+   pass before V1 production qualification.
+4. **V1 production qualification (G3):** real local desktop installers and upgrades,
+   local backup/restore and rollback, declared local platform/adapter matrix, all local
+   Flows and Benchmarks, local fault injection, accessibility, privacy/security review,
+   real-user corpus, measured performance and owner-signed acceptance.
+5. **Post-V1 cloud continuation:** deploy the same `litecoworkd` domain contract, persistent
    storage and blob replication, device pairing/revocation, placement/resource policy,
    leases/fencing, portable Task handoff, remote approval/status, backup/restore, cloud
    operations and cost/security recovery, including one qualified human channel gateway.
    No database-file/native-agent-state sync and no live process teleport.
-5. **Remote Runtime (G4):** install/enroll the same headless Runtime on a remote host,
+6. **Post-V1 Remote Runtime:** install/enroll the same headless Runtime on a remote host,
    qualify capabilities and Resources, placement, OS service lifecycle, disconnection,
    revocation and continuation against cloud fencing.
-6. **Production qualification (G5):** real installers and upgrades, restore/rollback,
-   full declared platform/adapter matrix, all Flows and Benchmarks, local/cloud/remote
-   fault injection, accessibility, privacy/security review, real-user corpus, measured
-   performance and owner-signed acceptance.
 
 Each numbered release gate is decomposed into one-owner-reviewable stories in
 [`implementation/ROADMAP.md`](implementation/ROADMAP.md) and
@@ -610,7 +628,7 @@ small set of domain modules. A candidate source layout is:
 
 ```text
 apps/litecoworkd/                    # headless Runtime/service binary
-apps/operator-desktop/               # Tauri UI, tray, later Quick Entry
+apps/litecowork-ui/                  # Tauri + React desktop UI and native command bridge
 apps/operator-web/                   # future optional client; not V1
 crates/domain/{conversation,task,artifact,effect,evidence}/
 crates/runtime/{lifecycle,supervisor,attempt_runner,dependency_planner}/

@@ -1,0 +1,23 @@
+.zip-intake-notice {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border, #dce2ea);
+  border-left: 3px solid #9a6b1d;
+  border-radius: 9px;
+  background: #fff9eb;
+  color: var(--color-text, #171d27);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.zip-intake-notice strong {
+  color: #69480f;
+  font-size: 13px;
+}
+
+.zip-intake-notice p {
+  margin: 0;
+  color: var(--color-text-muted, #515c6c);
+}

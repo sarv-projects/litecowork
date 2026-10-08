@@ -20,3 +20,5 @@ Superseded decisions remain available with an explicit successor reference.
 | [0017](0017-deadline-sensitive-is-best-effort.md) | Deadline-sensitive work is best-effort |
 | [0018](0018-context-content-is-resource-backed-and-provider-pluggable.md) | Context is Resource-backed and provider-pluggable |
 | [0019](0019-credential-egress-and-audit-boundaries.md) | Separate policy, approval, credentials, egress, and audit boundaries |
+| [0020](0020-runtime-identity-is-installation-scoped.md) | Runtime identity is installation-scoped; Workspace access uses explicit bindings |
+| [0021](0021-device-signing-identity.md) | Device identity uses OS-keystore-backed Ed25519 signing keys |

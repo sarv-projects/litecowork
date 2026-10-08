@@ -47,6 +47,50 @@ PlanAcceptance {
 }
 ```
 
+The authenticated submit command is:
+
+```text
+SubmitPlanRequest {
+  task_spec_revision: u64
+  steps: PlannedStep[]
+  reason_for_revision: string?
+}
+```
+
+`task_id` comes from the route, `expected_task_version` comes from `If-Match`, and
+producer provenance comes from the authenticated request context; none is accepted as
+authority from the JSON body. The producer context is bound to either the current active
+`TASK_PLANNING` AgentSession or the current lead Attempt's active AgentSession and valid
+lease. A planning session must pin `task_spec_revision`; an execution producer must be
+authorized to plan against that exact current TaskSpec revision. TaskService records the
+authenticated producer's AgentSession and optional Attempt in PlanRevision. An owner
+credential without a producer-scoped authority cannot submit a plan by naming a session
+or Attempt. Planning tools receive the current Task version after AgentSession activation
+(including the initial `READY -> RUNNING` transition); a version captured before
+activation is stale and cannot be used as the submit precondition.
+
+The route requires the current Task aggregate version in `If-Match`, while
+`task_spec_revision` must equal the Task's current TaskSpec head. Both checks occur in the
+acceptance transaction with producer/session/lease revalidation. A Task version mismatch
+returns `409 CONFLICT` (or the typed `STALE_TASK_VERSION`); a spec mismatch returns
+`409 STALE_SPEC_REVISION`. A proposal whose authenticated producer is no longer current,
+active, or authorized is rejected with `403 FORBIDDEN` or `409 CONFLICT`, without
+creating a PlanRevision or Steps. The Task must still be in a plan-accepting state
+(`READY` or `RUNNING`); pause/cancel and acceptance serialize on the Task version, and a
+winning pause/cancel fences a late proposal.
+
+The command requires `Idempotency-Key`. Its receipt is scoped to the authenticated
+producer, Workspace, Task route, and key, and stores the normalized request digest and
+committed `PlanAcceptance`. Repeating the same key and digest returns the original
+response and creates no additional PlanRevision, Steps, or events, even if the Task has
+since advanced. Reusing a key with a different route, precondition, or normalized body
+returns `409 CONFLICT`. Authentication and Workspace ownership are still checked before
+replay, and the receipt must match the authenticated idempotency subject. A replay does
+not re-run mutable producer-admission checks after the original command committed;
+otherwise a planner that closed after successful acceptance could not safely recover a
+lost response. A new key is subject to current preconditions and full producer
+revalidation.
+
 ## TaskProgressProjection
 
 `TaskProgressProjection` is a rebuildable read model returned by
@@ -95,6 +139,22 @@ AgentSession. The AgentSession and Task aggregate are the durable records; at mo
 planning session may be STARTING/ACTIVE/INTERRUPTING/CLOSING for a Task. A changed Task
 version, spec revision, lead binding, or non-runnable Task status invalidates the envelope.
 Replacing a planner creates a new envelope and AgentSession while retaining the same Task.
+
+### TaskPlanningReadiness projection
+
+The desktop's `GET /v1/tasks/{id}/planning-readiness` operation is a separate read-only
+diagnostic, not a PlanningAssignment admission command. It requires the selected Workspace
+and current Task version (`If-Match`), checks the persisted Task/lead/endpoint facts, and
+may construct the bounded PlanningAssignment packet transiently to reuse the local
+preflight. It does not reserve an AgentSession, acquire a lease, call an adapter/provider,
+activate the Task, create a Plan/Step/Attempt/Environment, or write an event. Its public
+projection contains only Task ID/version/spec revision/status, observation time, a
+sanitized blocker enum list, and literal false values for dispatch/session/plan creation.
+It never returns the packet, objective/model context, provider handle, or endpoint ID.
+This local implementation always reports `dispatch_available=false`; removing all
+preflight blockers is not evidence that the separate planning-admission contract is
+qualified or enabled. A stale Task version returns a conflict and requires a fresh Task
+read before another check.
 
 ## CreateTaskRequest
 
@@ -156,17 +216,48 @@ in the Operator until admission succeeds.
 The operator appends the originating ConversationMessage in the same command boundary
 when the Task came from a message. A standalone Task may omit a Conversation.
 
+### Revising a saved Task before planning
+
+An owner may append a new TaskSpecRevision while the Task is `READY`, has no accepted
+PlanRevision, and has no live `TASK_PLANNING` AgentSession. The command is conditional on
+the current Task aggregate version and exactly one parent: the current TaskSpec head.
+Unspecified fields are copied from that head, so an objective-only editor cannot clear
+inputs, constraints, output requirements, approvals, budget, placement, or lead failover
+policy accidentally. The current desktop editor exposes only the objective field. A
+successful revision atomically advances the Task's spec pointer/version and writes the
+immutable revision, aggregate-state snapshot, `task.spec.revised.v1` event and idempotency
+receipt. It creates no planning or execution records. An identical retry recovers the same
+revision even if the response was lost; reusing its key for changed content conflicts.
+
+If Task version/spec head changed, a planner became live, the Task left `READY`, or a Plan
+was accepted, the edit is rejected. The owner reloads current Task state and uses the normal
+steering/replan lifecycle after planning has begun. The storage transaction repeats all
+state, owner, Workspace, input Resource revision, and lead-binding checks; the UI is not an
+admission authority.
+
 ## Initial planning session
 
-TaskService creates a transient PlanningAssignment for the current lead binding and TaskSpecRevision. PlanningCoordinator asks AgentSessionSupervisor to start a durable TASK_PLANNING AgentSession. The session has Task read, plan proposal, and user-clarification tools only; it has no Attempt, lease, Environment write access, consequential capability invocation, or artifact publication. TaskService changes READY to RUNNING only after the session is ready. Plan acceptance creates/promotes a PlanRevision and materializes Steps; only then can an execution Attempt be admitted. A planning session may be replaced without changing Task identity or fabricating an Attempt. User clarification closes the current planning session; after a valid response, the coordinator builds a new envelope against the current TaskSpec revision and starts a fresh session.
+TaskService creates a transient PlanningAssignment for the current lead binding and TaskSpecRevision. PlanningCoordinator asks AgentSessionSupervisor to reserve a durable `STARTING` TASK_PLANNING AgentSession in a short storage transaction. Storage rechecks Task version/status/spec/lead, Workspace ownership, binding eligibility, endpoint binding, and current READY Runtime incarnation while claiming the unique planner slot. The coordinator then starts the native adapter outside the transaction. Only observed adapter readiness permits a serialized activation that transitions the session to `ACTIVE` and a first-planning Task from `READY` to `RUNNING` atomically. A `STARTING` session grants no planning tools or invocation authority. After daemon restart, stranded prior-incarnation `STARTING` sessions are reconciled before another planner is admitted.
+
+The session has Task read, plan proposal, and user-clarification tools only; it has no Attempt, lease, Environment write access, consequential capability invocation, or artifact publication. Plan acceptance creates/promotes a PlanRevision and materializes Steps; only then can an execution Attempt be admitted. A planning session may be replaced without changing Task identity or fabricating an Attempt. User clarification closes the current planning session; after a valid response, the coordinator builds a new envelope against the current TaskSpec revision and starts a fresh session.
+
+The current Codex transport includes typed read-only thread and plan-turn constructors
+with a structured initial-plan output schema. The turn requests `type: readOnly` and
+`networkAccess: false`, which constrain writes and shell network but do not restrict
+filesystem reads to Task Resources; default read-only access may include the host
+filesystem. This is not an admitted `TASK_PLANNING` session and must not be treated as
+one. Planner admission remains unavailable until a Task-specific isolated Environment is
+provided, native MCP/app tools and other configured capabilities are disabled or mediated,
+the installed Codex protocol version is qualified, and process containment/recovery are
+integrated.
 
 ## Plan acceptance
 
 `submit_plan` validates:
 - references exactly the current TaskSpec revision; stale proposals are rejected with STALE_SPEC_REVISION
-- Step IDs unique within plan
+- `steps` is non-empty and each `logical_key` is unique within the proposal; durable Step IDs are allocated by TaskService
 - no dependency cycles
-- all dependencies exist
+- every `depends_on_logical_keys` reference exists in the proposal
 - acceptance criteria are representable
 - requested capabilities are structurally valid
 
@@ -174,15 +265,28 @@ It does not evaluate whether the plan is intellectually good.
 
 Plan acceptance is one TaskService transaction: append immutable PlanRevision, advance
 Task.current_plan_revision, create the Step records, supersede obsolete unstarted Steps,
-and append all related events. It returns PlanAcceptance. A crash therefore cannot leave a
-current PlanRevision with no corresponding Steps. The internal materialization helper is
-idempotent but is not a separately observable command. A completed Step remains historical;
-an unstarted obsolete Step becomes `SUPERSEDED`; an active Step is cancellation-requested
-or allowed to reach a safe boundary under the new revision, and its lease remains authoritative
-until settled. An authorized TASK_PLANNING AgentSession may propose the initial plan without
-an Attempt. For later proposals, the producer must be the currently assigned lead planning
-session or the current lead execution Attempt under a valid lease. TaskService validates
-producer authority and plan structure, then alone promotes the PlanRevision.
+and append all related events. It returns PlanAcceptance with the committed Task version.
+A crash therefore cannot leave a current PlanRevision with no corresponding Steps. The
+transaction and idempotency receipt commit together; event replay does not repeat Step ID
+allocation. A completed Step remains historical; an unstarted obsolete Step becomes
+`SUPERSEDED`; an active Step is cancellation-requested or allowed to reach a safe boundary
+under the new revision, and its lease remains authoritative until settled. An authorized
+TASK_PLANNING AgentSession may propose the initial plan without an Attempt. For later
+proposals, the producer must be the currently assigned lead planning session or the
+current lead execution Attempt under a valid lease. TaskService validates producer
+authority and plan structure, then alone promotes the PlanRevision. Acceptance does not
+otherwise change Task status; planning has already moved the Task to `RUNNING` when the
+lead session became ready.
+
+The current source slice implements only PlanRevision 1 submitted from an active
+`TASK_PLANNING` session while the Task is `RUNNING`. It rejects empty/oversized plans,
+duplicate logical keys, missing/self/duplicate dependencies, cycles, and malformed
+capability/criterion shapes. SQLite repeats structural checks and atomically persists the
+Task/Plan/Step snapshots, events, and idempotency receipt. Plan/Step read ports and GET
+routes are wired. Execution-produced replans and the POST Operator route remain
+unavailable: current Operator authentication has no trusted producer-scoped session
+assertion, and a body-supplied AgentSession ID is not authority. This is not yet
+end-to-end planning; no native adapter invokes the service.
 
 ## Lead-agent change
 
@@ -243,10 +347,15 @@ AgentSession and ExecutionLease must also match that same Runtime incarnation. T
 record stores only a digest of its raw fencing credential; the credential is delivered
 over private authenticated Runtime/provider control and never to the Agent or Operator.
 If `litecoworkd` restarts after Attempt admission, its new incarnation cannot renew the
-old lease or resume that Attempt. Recovery marks the old try abandoned after authority
-and Effect reconciliation; safe continuation creates a new Attempt and higher lease
-epoch. Replacing only the AgentSession may reuse an Attempt only while the same Runtime
-incarnation and lease remain current.
+old lease or resume that Attempt. Recovery first proves lease expiry or authoritative
+incarnation fencing and commits the old lease as EXPIRED/REVOKED, abandons the old
+Attempt, and blocks its Step/Task. This transition fences durable lease authority; it does
+not prove that a provider process or descendant stopped. Invocation/process containment
+and Effect reconciliation must settle before safe continuation can create a new Attempt
+with a higher lease epoch. Replacing only the AgentSession may reuse an Attempt only while
+the same Runtime incarnation and lease remain current. The current SQLite startup recovery
+slice supports only SQLite-clock expiry and leaves the Task blocked; it does not yet
+implement explicit revocation fencing, process proof, Effect reconciliation, or continuation.
 
 ## Steering
 

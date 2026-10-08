@@ -60,7 +60,9 @@ permissions, assurance, and status only; credential bytes remain in the provider
 secret mechanism. The owner reviews allowed actions through the Operator API. Disconnect
 or revocation blocks future use without erasing history or deleting the external account.
 
-Each active ChannelBinding also has one `ChannelHostAssignment`, owned by RuntimeMesh.
+Each ACTIVE ChannelBinding has one `ChannelHostAssignment`, owned by RuntimeMesh. A
+DEGRADED ChannelBinding may be explicitly unassigned while RuntimeMesh safely clears a
+revoked host and waits for an owner to choose an eligible replacement.
 It identifies the Runtime that owns channel polling/webhook processing and outbound
 delivery, with a monotonically increasing host epoch and bounded host lease. New bindings
 default to the Workspace Hub when it advertises the required provider; local-only channel
@@ -69,6 +71,35 @@ that host under the existing SecretRef placement policy. Assignment is distinct 
 binding identity and permission: moving a channel does not grant new actions or copy
 credentials. Inbound claims and outbound sends require the assigned Runtime's current,
 unexpired lease.
+
+When RuntimeMesh changes the assignment from ACTIVE to DRAINING, the source cannot start
+new claims, polls, or sends. A receipt already in PROCESSING under that exact host epoch may
+settle to a terminal state while the source lease remains valid. It cannot be reclaimed,
+and a terminal result from an expired/stale claimant is rejected. Quiescent release waits
+for all such receipts to settle and for RuntimeMesh to verify outbound Effect reconciliation
+and Hub-durable ingress; otherwise release waits through the pinned lease expiry plus its
+clock-skew margin.
+
+Receipt insertion is serialized on the ChannelBinding authority with the ACTIVE→DRAINING
+transition and drain-proof admission. A new receipt can be committed/acknowledged only
+while the source has the current ACTIVE assignment, active CHANNEL_HOST binding, and an
+unexpired lease. If insertion wins, its sequence and receipt commit together and it joins
+the source reconciliation frontier. If draining wins, the source does not insert or
+acknowledge/defer-ack the provider event; delivery must remain retryable/replayable, or the
+owner must explicitly accept an audited ingress gap. A quiescent proof requires no
+source-epoch PROCESSING claims, every pre-drain RECEIVED row Hub-durable and included in the
+successor replay frontier, reconciled outbound Effects, and the Hub durability
+acknowledgement. The successor may claim those durable RECEIVED rows under its new lease.
+Proof and ingress admission share the serialization boundary,
+so no receipt can be inserted after proof and before release.
+
+The source lease is retained for every committed ACTIVE or DRAINING assignment. Release,
+release-history append, and either target assignment plus its lease or explicit unassignment
+commit atomically at the Hub. Thus no committed ACTIVE assignment lacks exactly one
+matching current lease. If Runtime revocation has no eligible replacement, RuntimeMesh
+clears the released assignment and marks the ChannelBinding DEGRADED/unassigned; the
+binding, receipts, and reply-target history remain, but no channel work is admitted until
+an owner assigns a new host.
 
 The adapter's opaque ingress cursor is stored only in an encrypted
 `ChannelIngressCursorBinding` on the assigned Runtime. The service commits a provider
@@ -146,6 +177,12 @@ references. Replies to old prompts fall back to the Operator inbox unless a new 
 explicitly delivered and acknowledged there.
 
 `provider_event_id` is deduplicated by the composite key (channel_binding_id, provider_event_id). The receipt preserves immutable origin Runtime/host epoch separately from the current claim Runtime/host epoch. A claim can be accepted only while that Runtime holds the current unexpired host lease. Its receipt moves through RECEIVED, PROCESSING, and one terminal ACCEPTED, REJECTED, or FAILED state. Every PROCESSING claim increments `claim_epoch`; an identical provider redelivery may be reclaimed by the new assigned Runtime after the old claim expires, while a changed payload digest conflicts. A completion with a stale claim or host epoch is rejected, preventing a late worker from overwriting the current receipt.
+
+RuntimeMesh never reuses a ChannelHost lease ID across bindings or host epochs. It derives
+each fencing credential from a domain-separated immutable identity containing Workspace,
+ChannelBinding, Runtime, host epoch, and the unique lease ID. A detected duplicate ID or
+credential-digest collision fails closed; renewal preserves the current identity and
+credential while advancing only control version and expiry.
 
 Attachments become ResourceRefs/Artifacts before Task consumption.
 Inbound content is untrusted. Sender identity comes from the authenticated provider

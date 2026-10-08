@@ -9,7 +9,8 @@ LiteCowork lets a user describe work once and have the Task survive agent replac
 1. Simple questions remain conversation; outcome-oriented work becomes durable Task state.
 2. User does not need to understand MCP, ACP, providers or runtime topology for ordinary use.
 3. User can inspect internals when desired through Inspector.
-4. Work may continue in cloud only when inputs, secrets, capabilities and effect safety permit it.
+4. V1 work runs on the local desktop. Post-V1 cloud continuation is available only when
+   inputs, secrets, capabilities and effect safety permit it.
 5. LiteCowork never claims completion solely because a worker says "done".
 6. LiteCowork does not fake visual interaction when structured/API capabilities were used.
 7. Connected capabilities are discovered progressively instead of flooding every agent context.
@@ -31,6 +32,11 @@ LiteCowork lets a user describe work once and have the Task survive agent replac
     by their source. Unknown values remain unknown.
 16. Goals are passive user intent and Suggestions are proposals. Neither can authorize or
     start work without the normal user and Task admission path.
+17. Technical and nontechnical users share one product flow. Plain-language outcomes are
+    the default; progressively disclosed work detail and Inspector retain technical
+    provenance without creating separate product modes.
+18. Presentation is derived from authorized projections. Transient streamed output is not
+    durable until its ConversationMessage commits; UI frames cannot authorize or settle work.
 
 ## Primary navigation
 
@@ -88,11 +94,12 @@ TaskSpecRevision.
 
 ## Runtime choices
 
-LiteCowork supports a local-only installation and can connect to a user-controlled or
-managed always-available Runtime. Local and remote Runtime instances use the same domain
-contracts. Cross-device availability is conditional on replicated inputs, eligible
-agents/capabilities, secrets, Environment support, policy, budget, and safe Effects. The
-UI names the actual blocker rather than presenting cloud continuation as unconditional.
+V1 is a local-only desktop installation and does not require a cloud account. Cloud
+continuation and remote Runtime are post-V1 releases. Local and future remote Runtime
+instances use the same domain contracts. Cross-device availability is conditional on
+replicated inputs, eligible agents/capabilities, secrets, Environment support, policy,
+budget, and safe Effects. The UI names the actual blocker rather than presenting cloud
+continuation as unconditional.
 
 The initial product is a single-user Workspace coordinated by one authoritative Hub.
 Additional Runtimes may execute eligible Attempts. Multi-tenant collaboration, automatic

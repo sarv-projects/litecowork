@@ -9,6 +9,14 @@ the HTTP adapter maps `Idempotency-Key` and `X-Workspace-ID` into it, while loca
 provides the equivalent fields. `expected_version` remains a command-specific
 precondition. Read commands receive authenticated scope without a mutation request ID.
 
+`OperatorTransportAdapter` owns transport framing, deadlines, peer authentication, and
+mapping into the shared Operator request/response path. The target desktop implementation
+uses the bounded frame definitions in the `operator-ipc` crate; OS-peer authentication must
+complete before the adapter reads a body or attaches its internal authenticated-peer
+marker. The adapter does not implement Workspace policy or Trust decisions. TCP/HTTP and
+local IPC use separate authentication paths; the production desktop client must have no
+HTTP fallback.
+
 ### WorkspaceService
 
 ```text
@@ -21,9 +29,21 @@ set_primary_coworker(WorkspaceId, CoworkerId?, expected_version, RequestId) -> W
 archive(ArchiveWorkspaceRequest) -> Workspace
 ```
 
+The local Operator create adapter requires a `RequestId`. It canonicalizes the normalized
+create payload, scopes the receipt to the authenticated local Principal, and uses the
+`IdempotentWorkspaceStore` port so the Workspace projection, `workspace.created.v1` event,
+origin sequence, and committed response receipt share one SQLite transaction. Reusing the
+same key and payload returns the original committed Workspace; reusing it with a different
+payload returns `CONFLICT` and creates no second Workspace.
+
 The selected default must be a binding in the same Workspace with both `enabled=true`
 and `lead_eligible=true`; clearing it is explicit. Binding/endpoint availability is rechecked for
 each new turn or Task admission, and no alternate binding is selected silently.
+`set_default_agent_binding` is idempotent by authenticated Principal and RequestId. The
+Workspace version, default binding, event, and original response commit atomically; the
+SQLite adapter rechecks binding eligibility in the same transaction as the Workspace
+write. A lost-response retry with the same key replays the committed Workspace, while a
+stale new command conflicts.
 The primary Coworker must belong to the Workspace and may be ACTIVE or PAUSED; this is a
 UX/context default only and does not select an AgentBinding or confer authority. The
 Workspace default binding and primary Coworker are independent settings.
@@ -56,6 +76,36 @@ backup ID is in the recovery route and the request is accepted only before the l
 installation has a writable Workspace. Restore returns a non-persistent receipt with the
 restored Workspace ID, new Runtime ID, restored cursors, and Connections that require
 reauthentication.
+
+### RuntimeWorkspaceBindingService
+
+```text
+list(WorkspaceId, Principal, Cursor?, Limit) -> Page<RuntimeWorkspaceBinding>
+enroll_local(WorkspaceId, Principal, expected_workspace_version, RequestId) -> RuntimeWorkspaceBinding
+activate_mesh_pairing(PairingReceipt) -> RuntimeWorkspaceBinding
+revoke(WorkspaceId, BindingId, Principal, expected_binding_version, RequestId) -> RuntimeWorkspaceBinding
+require_active(WorkspaceId, RuntimeId, RequiredRuntimeRole) -> RuntimeWorkspaceBinding
+```
+
+This service owns Workspace-scoped Runtime authorization. Local enrollment binds the
+current installation to a locally owned Workspace but never registers Mesh presence.
+Pairing activation accepts only an authenticated, single-use Hub receipt. `require_active`
+is called before Workspace-scoped execution, resource-root access, replication, or
+Runtime-host assignment; TrustService still checks the caller and action. Revoking one
+binding stops new admissions and Workspace replication for that Runtime/Workspace pair,
+but is admitted only after clearing a Mesh hub pointer and draining ChannelHost leases,
+enabled TriggerHost cursors, and nonterminal AutomationOccurrences pinned to that
+TriggerHost. Disabling an Automation prevents new occurrences but does not settle existing
+ones. It then requests ordinary lease/Effect reconciliation for
+active Task work. Installation-wide device revocation remains RuntimeMesh-owned. Binding
+records and decisions are retained
+as security-control metadata/AuditRecords, not Task-domain events.
+Before revocation, this service asks RuntimeMesh to atomically move each ChannelHost to an
+eligible target or safely clear its assignment when no target is available. A cleared host
+leaves its ChannelBinding DEGRADED/unassigned and unable to accept or send events until an
+owner assigns a new host. Revocation waits if the source cannot prove quiescence or reach
+the authoritative expiry-plus-skew boundary. It never revokes first and attempts to repair
+ChannelHost ownership later.
 
 ## Public application ports
 
@@ -243,7 +293,7 @@ Environment, Trust, and lease checks.
 ```text
 CoworkerService.create/revise/set_status -> Coworker state
 WorkspaceService.set_primary_coworker -> Workspace state
-GoalService.create/revise/set_status/link -> Goal revisions and status
+GoalService.create/revise/set_status -> Goal revisions and status
 SuggestionService.propose/accept/dismiss/snooze/expire -> Suggestion lifecycle
 SuggestionService.set_kind_preference -> Workspace-scoped preference and atomic mute cleanup
 ```
@@ -252,8 +302,13 @@ These services own only their aggregates and projections. WorkspaceService owns 
 primary Coworker reference and clears/changes it before the target Coworker can archive.
 CoworkerService pins Coworker
 revision provenance during Task creation but does not own Task execution. GoalService
-links same-Workspace Tasks and Routine revisions and derives progress from Task outcomes
-and Evidence; only an owner command changes Goal completion status. Mutating an archived
+validates same-Workspace Tasks, Routine revisions, and exact ArtifactVersionRefs. Link and
+unlink are ordinary immutable revisions, not a separate command; Artifact links pin an
+existing exact version. A read-only GoalProgressProjector assembles current linked Task
+status, committed Task Evidence IDs, and resolvable Evidence references from exact pinned
+Artifact versions. It reports unavailable VerificationRun/dependency-freshness dimensions
+explicitly and never infers a verified outcome from Task status alone. Only an owner command
+changes Goal completion status. Mutating an archived
 Goal returns `GOAL_ARCHIVED`. SuggestionService validates exact same-Workspace pinned
 Resource/Goal provenance, deduplicates open suggestions, enforces muted kinds and 30-day exact-key
 dismissal cooldown, expires by injected Clock, and atomically converts an accepted Task
@@ -410,6 +465,7 @@ re-check compatibility and authorization before selecting another provider.
 
 ```text
 get_local_status() -> RuntimeLifecycleView
+register_local_startup(DeviceIdentity, RuntimeId, RuntimeIncarnation, LocalObservation) -> RuntimeIncarnation
 set_startup_policy(UpdateRuntimeStartupPolicyRequest) -> RuntimeLifecycleView
 preview_stop() -> RuntimeStopPreview
 request_stop(StopRuntimeRequest) -> RuntimeDrainReceipt
@@ -421,7 +477,11 @@ on_resume(ResumeObservation) -> RuntimeLifecycleView
 Owns the local daemon's startup policy, incarnation creation, boot recovery gates, safe
 drain, and OS resume coordination. An OS service-manager adapter starts/stops the daemon;
 the Operator window is never the service. Startup recovery does not launch worker
-processes. `preview_stop` reports dependencies without changing admission. `request_stop` validates
+processes. After StateStore opens, local startup atomically stores the public Runtime
+descriptor, fresh incarnation, and non-secret observation. Ed25519 private material stays
+in the OS credential store. The local catalog write does not create a Workspace binding,
+pair with Mesh, or publish presence. Startup remains RECOVERING then DEGRADED until Task
+recovery and admission gates exist. `preview_stop` reports dependencies without changing admission. `request_stop` validates
 the expected incarnation and rechecks dependencies before accepting drain;
 only a local authenticated Operator may request it.
 
@@ -473,8 +533,62 @@ channel-host leases, channel-host assignment, and handoff.
 ```text
 assign_channel_host(AssignChannelHostRequest) -> ChannelHostLeaseGrant
 renew_channel_host_lease(RenewChannelHostLeaseRequest) -> ChannelHostLeaseGrant
-release_channel_host_lease(ReleaseChannelHostLeaseRequest) -> ChannelHostAssignment
+record_channel_host_drain_proof(RecordChannelHostDrainProofRequest) -> ChannelHostDrainProof
+release_channel_host_lease(ReleaseChannelHostLeaseRequest) -> ChannelHostLeaseReleaseRecord
+clear_channel_host_for_binding_revocation(ChannelBindingId, source_runtime_id,
+  expected_assignment_version, RequestId) -> ChannelHostAssignmentCleared
 ```
+
+`assign_channel_host` and `clear_channel_host_for_binding_revocation` are transaction-level
+operations, not sequences the caller may partially commit. Every committed ACTIVE
+assignment has exactly one matching current lease. A DRAINING assignment retains its
+matching lease until the release transaction also commits either the next ACTIVE assignment
+and its fresh lease or the cleared/unassigned result. A source receipt-insert transaction
+and the ACTIVE→DRAINING transition serialize on the ChannelBinding authority row: insertion
+requires the current ACTIVE assignment, unexpired lease, and active CHANNEL_HOST binding;
+the ingress cursor/sequence and durable receipt are committed together. Once draining wins,
+the source does not insert or acknowledge/defer-ack new events. Drain-proof admission uses
+the same serialization point and requires no source-epoch PROCESSING claims, every accepted
+pre-drain RECEIVED row Hub-durable and included in the successor replay frontier, outbound
+Effects reconciled, and committed ingress Hub-durable. The no-target clear path first
+releases the exact old lease and removes the assignment while preserving receipts, reply
+targets, and release history; ChannelService marks the ChannelBinding DEGRADED until a new
+host assignment is explicitly created. RuntimeWorkspaceBindingService calls this operation
+before revoking a binding and cannot revoke if release/clear remains unresolved. The clear
+operation is idempotent by RequestId and expected assignment version. The public
+host-assignment route remains the owner-requested move path; clear is internal to Runtime
+revocation, not an unauthenticated deletion API.
+
+These are required transaction invariants, not guarantees supplied by the current v4 SQL
+triggers: v4 does not guard receipt INSERT against DRAINING and has no commit-time
+assignment-to-lease cardinality check. RuntimeMesh/ChannelService must enforce them in one
+Hub transaction; production admission is blocked until storage-level guards and migration
+preflight cover the same conditions. The v1→v4 migration must reject ACTIVE assignments
+without a matching unexpired lease and DRAINING assignments without a matching persisted
+lease row rather than inventing release provenance. The DRAINING lease row may be expired;
+it is retained only as provenance while the v4 skew boundary is backfilled and grants no
+authority.
+
+Drain-proof and continuity-proof creation is a RuntimeMesh-only service command. It reads
+and validates the authoritative Hub receipt/Effect/replication frontier, source lease or
+release record, target binding, and provider cursor boundary in the same serialization
+boundary as ingress and release. Caller-supplied counters, verifier JSON, or digests are
+not accepted as proof. SQL provides immutable scoped storage, not proof authentication.
+
+Every host epoch receives a globally unused opaque lease ID. `CredentialIssuer` derives a
+fresh domain-separated HMAC credential from Workspace, ChannelBinding, Runtime, host epoch,
+and that lease ID. Lease IDs are checked against current leases and immutable release
+records before issuance; a duplicate ID fails closed. Distinct lease identities yield
+collision-resistant credentials; any digest collision observed by the issuer aborts the
+assignment transaction. The release record retains the lease ID, not a historical digest,
+so digest uniqueness is an issuer cryptographic guarantee rather than a SQLite unique
+constraint. Retries
+with the same RequestId and request digest return the original grant, while conflicting
+reuse is rejected.
+
+`ChannelHostAssignmentCleared` is an internal command result containing the ChannelBindingId,
+released source host epoch, immutable release-record identity, `assignment_state=UNASSIGNED`,
+and `channel_binding_status=DEGRADED`; it is not a persisted aggregate or public API schema.
 
 ### EnvironmentProvider
 
@@ -493,18 +607,73 @@ scans or semantic retrieval.
 
 ```text
 add_root(AddWorkspaceRootRequest) -> WorkspaceRoot
+list_roots(WorkspaceId, Status?, Cursor?, Limit) -> Page<WorkspaceRoot>
 update_root(UpdateWorkspaceRootRequest) -> WorkspaceRoot
+pause_root(WorkspaceRootId, expected_version, idempotency_key) -> WorkspaceRoot
+resume_root(WorkspaceRootId, expected_version, idempotency_key) -> WorkspaceRoot
 revoke_root(WorkspaceRootId, expected_version) -> WorkspaceRoot
 search_resources(ResourceSearchRequest) -> Page<ResourceSearchResult>
+rebuild_local_text_index(WorkspaceId, ResourceId, ResourceRevisionId, Sha256Digest, RequestId) -> ResourceTextIndexRebuildResult
 list_resource_revisions(ResourceId, Cursor?, Limit) -> Page<ResourceRevisionView>
 resolve_resource(ResourceRef, ResolutionPolicy) -> ResolvedResource
 ```
+
+The owner-triggered rebuild is limited to the current managed Resource head and the
+existing deterministic lexical parser. It uses a bounded verified source read, exact
+revision/digest compare-and-swap, and atomic projection plus request-receipt commit. Its
+typed result distinguishes `INDEXED` from `NOT_INDEXABLE`; it is not a semantic RAG or
+provider embedding operation and does not change Resource history.
+
+The current desktop implementation work places root registration and lifecycle operations in
+`domain-workspace::WorkspaceRootService` behind `WorkspaceRootStore`; this is an internal
+composition of ResourceService ownership, not a second architecture-level resource owner.
+The SQLite operation atomically creates the folder Resource, observed location, private
+current-incarnation locator binding, root projection, events, and idempotency receipt. It
+is exposed only through the Tauri native folder chooser and private authenticated local
+IPC operation; the path does not enter WebView or public Operator payloads. The local
+Operator also has an owner-scoped paged root-list projection. Current source implements
+expected-version/idempotent pause, resume, and revoke transitions. Pause preserves local
+identity bindings and the selected-root replication preference. Resume requires an
+AVAILABLE location and matching local identity bindings for the current Runtime
+incarnation; startup revalidation is the operation that establishes those bindings.
+Revocation appends the status event and atomically removes local locator and raw
+file-identity bindings plus the selected-root replication relation. It retains
+already-transferred remote copies. These source paths are unbuilt, untested, and
+OS-unqualified. Watching, indexing, and freshness/invalidation projections remain
+unimplemented. It does not make one-time folder-upload provenance a filesystem grant.
+
+The current desktop content-search increment is an explicit `ON_DEMAND_CONTENT` mode on
+the authenticated Operator search route. It scans only current managed encrypted-blob
+Resources, at most 20 candidates, 1 MiB per Resource and 8 MiB total per request. Its
+allowlist is plain UTF-8 text; ZIP members, rich-document parsers, WorkspaceRoots and
+semantic retrieval are out of scope. The scan decrypts and matches in request memory and
+returns only a bounded snippet with an exact revision-pinned ResourceRef. It does not
+persist extracted text, terms, or snippets. Metadata-only mode remains the default. This
+path is deliberately not described as an index and provides no durable indexing status,
+background indexing job, or embedding/RAG service.
 
 Resource revisions form a per-Resource DAG. The service validates parent ownership and
 acyclicity, derives graph heads, and updates `current_revision_id` only when there is one
 head. An unpinned reference to a multi-head Resource returns `RESOURCE_CONFLICT`; callers
 can inspect revisions and explicitly pin a branch. No timestamp-based conflict winner is
 chosen.
+
+The local desktop quick-import adapter currently has a narrow `create_uploaded_resource`
+path for a single verified byte object: it records weak upload identity, an initial
+ResourceRevision and encrypted-blob ResourceLocation. It is not a replacement for
+ResourceUploadService's resumable protocol and does not extract archives, create roots,
+index content, or expose bytes to a renderer.
+
+The local Operator router mounts a read-only ZIP-intake readiness observation at
+`GET /v1/capabilities/zip-intake`, and the Tauri command forwards it to the Library. It is
+owner/Workspace scoped and reports `UNAVAILABLE / ISOLATED_WORKER_NOT_QUALIFIED`; its
+purpose is to prevent the UI from implying ZIP extraction is available. It does not invoke
+`capabilities/zip_intake`, read a Resource, create an Invocation, or change persisted state.
+The Python provider source is not a production provider: it has no supervised IPC/process
+boundary that enforces hard CPU, memory, wall-clock, and output limits. Until that boundary
+is qualified, ZIP upload stores an opaque Resource, and no archive member is available for
+indexing, Task context, or Artifact publication. The desktop notice must state this
+limitation plainly.
 
 ### ResourceUploadService
 
@@ -514,12 +683,53 @@ metadata without replicating chunk events. Session creation and lifecycle transi
 domain events. Commit verifies contiguous coverage, total size, media policy, and the
 whole-object digest before creating a Resource/ResourceRevision.
 
+The authenticated local Operator's `POST /v1/resources/uploads` route delegates initial
+session creation to `ResourceUploadService::create_session`; the service rechecks owner and
+ACTIVE Workspace state, validates upload metadata and folder-path provenance, and accepts
+only Context Document ownership metadata matching the authenticated Principal or selected
+Workspace. The folder path is never resolved as a filesystem grant. Coworker/Goal-owned
+Context Documents remain rejected until their aggregate admission services exist.
+
 ```text
 create(CreateResourceUploadRequest) -> ResourceUploadSession
 put_chunk(UploadId, ChunkIndex, ContentRange, ChunkDigest, Bytes) -> ResourceUploadSession
 commit(UploadId, RequestId) -> ResourceRef
 get(UploadId) -> ResourceUploadSession
+list_expired(now, limit<=100) -> ResourceUploadSession[]
+expire(expected_progress_version, EventDraft) -> ResourceUploadSession
 ```
+
+Initial desktop uploads are capped at 100 MiB, use fixed 4 MiB chunks, and expire after
+24 hours. The local daemon sweeps at most 100 expired sessions every 30 seconds.
+`version` advances for lifecycle transitions; `progress_version` advances for newly
+accepted chunks and fences concurrent transfer writes. The final chunk commits
+OPEN -> CONTENT_RECEIVED, its lifecycle event and aggregate-state blob in the same
+transaction. `expire` uses an expected `progress_version` guard and commits the `EXPIRED`
+projection, its complete aggregate-state blob, and `resource.upload.status.changed.v1`
+atomically. `put_chunk` verifies the inclusive HTTP range, index-derived offsets, session
+state, expiry, and per-chunk digest before persisting the encrypted bytes under
+`BlobPurpose::ResourceUploadChunk`. Replays for the same index are accepted only when
+range and digest match. Empty content is represented by a `CONTENT_RECEIVED` session with
+no chunk records. Commit re-verifies each decrypted chunk and the optional whole-file
+digest; the Resource, initial revision/location, `resource.created.v1` event (or
+`resource.created.v2` when the pinned session has folder-import provenance), replay receipt,
+`COMMITTED` session projection and CONTENT_RECEIVED -> COMMITTED event share one SQLite
+transaction. A definite stored-content integrity failure commits CONTENT_RECEIVED -> FAILED
+and its aggregate snapshot/event before returning the integrity error; transient storage or
+database failures leave the session retryable. Initial upload creation emits
+`resource.upload.created.v1`; zero-byte uploads are created directly in CONTENT_RECEIVED at
+lifecycle revision 1.
+
+Before writing each encrypted chunk blob, the store commits an operational reservation
+row. The final receipt transaction consumes that row atomically with the accepted chunk.
+Expired reservations without a durable chunk reference are eligible for a bounded collector.
+The collector claims a digest under a durable GC fence, checks for any accepted chunk
+reference or unexpired reservation in the same Workspace, removes the exact
+`RESOURCE_UPLOAD_CHUNK` object through `BlobStore.remove`, then clears the fence and
+reservations. Blob deletion is idempotent; a failed removal leaves the durable fence for a
+later retry. The daemon invokes this sweep after expiry processing, at most 100 objects per
+30-second tick. It is not a general blob garbage collector and does not delete referenced
+chunk objects. Reservations and fences are operational recovery state, not domain events.
 
 `ContentRange` is parsed as inclusive HTTP byte offsets, normalized to a half-open
 `[start_offset, end_offset_exclusive)` storage range, and checked against the negotiated
@@ -619,18 +829,53 @@ request expiry/status, and response schema. A successful targeted response is co
 with the ChannelEventReceipt by the assigned Runtime's Store transaction; invalid replies
 leave the target active and do not fall through to generic Conversation steering. Host
 reassignment checks provider compatibility, SecretRef placement, cursor/replay continuity,
-source settlement or authoritative lease expiry, and any explicit gap confirmation; it
+source drain proof or the immutable expiry-plus-skew release time, and any explicit gap
+confirmation/audit reference; it
 fences the source epoch and never copies opaque reply-to references or cursor bytes. Receipt
 claims can be reclaimed only after expiry or authoritative fencing, under the new lease.
 If the source is unreachable, its target rows become non-authoritative through the epoch
 check and are cleaned on reconnect. ChannelService advances provider cursors only after
 receipt durability and required Hub replication acknowledgement.
 
+Receipt insert, claim, settlement, and provider acknowledgement share a per-binding
+serialization boundary with RuntimeMesh drain. `process_inbound` inserts only while the
+source assignment and host lease are current and ACTIVE. If draining commits first, it
+returns a retry/backpressure outcome without acknowledging or storing a new source receipt;
+the provider event remains replayable, or the move must record an explicit ingress gap.
+This applies to new receipt insertion; it does not reject terminal settlement of an existing
+PROCESSING receipt when the original claim and source lease remain valid during DRAINING.
+Drain proof waits for all PROCESSING claims from the source epoch and accounts for every
+pre-drain RECEIVED row in the Hub-durable successor replay frontier; the new host may claim
+those rows under its own lease. The service transaction makes proof and release decisions against the same
+durable receipt/cursor frontier; a heartbeat or local view is not enough.
+
 ## Internal application services
 
 ### PlanningCoordinator
 
-Consumes a TaskService-authorized transient PlanningAssignment envelope with AgentSessionSupervisor. It may start only one TASK_PLANNING session for the current Task version, lead binding, and TaskSpecRevision; the envelope is not a persisted entity. It closes/reconciles the session when the Task pauses, cancels, changes lead/spec, or waits for user input. It does not author or promote PlanRevision records.
+Consumes a TaskService-authorized transient PlanningAssignment envelope with AgentSessionSupervisor. It may start only one TASK_PLANNING session for the current Task version, lead binding, and TaskSpecRevision; the envelope is not a persisted entity. It first claims a STARTING row, then invokes the native adapter outside the storage transaction. Only after adapter readiness does it request an atomic session-ACTIVE/first-Task-RUNNING transition. It closes/reconciles the session when the Task pauses, cancels, changes lead/spec, or waits for user input. It does not author or promote PlanRevision records.
+
+### AgentHostStore
+
+Persists and reads Runtime-local `AgentHostInstance` observations. Creation requires a
+current READY Runtime incarnation and an endpoint/profile match. State transitions use
+an expected-state compare-and-set and do not emit replicated domain events. Host records
+are operational inventory; local process identity is never projected through the Operator
+API. The adapter does not spawn or stop processes; those decisions belong to
+AgentHostSupervisor.
+
+### AgentSessionStore
+
+The storage port commits a version-1 STARTING AgentSession plus its aggregate snapshot,
+`agent.session.starting.v1`, and idempotency receipt atomically. Admission rechecks the
+Task's expected version, status, current TaskSpec revision and lead; Workspace owner and
+status; enabled/lead-eligible AgentBinding; selected endpoint and current Runtime
+incarnation readiness. It exposes a bounded recovery query for STARTING planning sessions
+and a STARTING-to-LOST settlement operation. After observed adapter readiness, the source
+also exposes an atomic activation transaction: it rechecks host/Runtime/binding/endpoint
+readiness, inserts the Runtime-local host binding, and commits AgentSession ACTIVE plus
+first Task RUNNING and their events/snapshots. Adapter startup remains outside storage.
+PlanningCoordinator and AgentSessionSupervisor orchestration are not yet wired.
 
 ### AgentSessionSupervisor
 
@@ -855,10 +1100,19 @@ Environment after in-flight Effects and Invocations are reconciled.
 ### ProjectionService
 
 Consumes domain events and builds Task/Conversation/LiveDesk/Notification, GoalProgress,
-RoutineHealth, WorkerPerformance, and Coworker-presence projections. `routine_health(RoutineId)`
-is derived from the current immutable RoutineRevision's terminal Tasks, UsageObservations,
-dependency health observations, and drift Evidence; it does not write Routine state.
+RoutineHealth, WorkerPerformance, Coworker-presence, and typed Operator presentation
+projections. RoutineHealth is derived from the current immutable RoutineRevision's terminal
+Tasks, UsageObservations, dependency health observations, and drift Evidence; it does not
+write Routine state.
 Projection failure never mutates domain truth.
+
+Presentation projections expose stable item/source identity, source revision, safe typed
+payload, ordering, freshness, and an opaque stream cursor. They are authorized read models,
+not domain events or durable item records. `AgentTurnCoordinator` may forward bounded,
+coalesced active-turn text deltas through the authenticated Operator stream; these transient
+frames are not persisted, replicated, or emitted as EventStore events. A settled
+ConversationMessage replaces them. Renderer selection and local panel/scroll state belong
+to the Operator; they cannot mutate a domain aggregate.
 
 ### TriggerCoordinator
 
@@ -1023,13 +1277,13 @@ DelegationProfileService -> AgentBindingService read port, AgentAdapter option n
 WorkerSelectionService -> AgentHarnessDescriptor observations, BudgetService, RuntimeMesh, EnvironmentManager offer read ports, Trust policy
 DelegationCoordinator -> TaskService, WorkerSelectionService, DelegationProfileService, AgentSessionSupervisor, AttemptRunner, BudgetService, TrustService
 CoworkerService -> WorkspaceService read port, AgentBindingService read port, DelegationProfileService read port, TaskService admission port, StateStore, EventStore
-GoalService -> TaskService read port, RoutineService read port, EvidenceService read port, StateStore, EventStore
+GoalService -> TaskService read port, RoutineService read port, ArtifactStore read port, EvidenceService read port, StateStore, EventStore
 SuggestionService -> TaskService, RoutineService/AutomationService editor/read ports, Clock, StateStore, EventStore
 DemonstrationSessionService -> EnvironmentManager, TrustService, ResourceService, SkillProposalService, StateStore, EventStore
 PersonalContextService -> ResourceService, TrustService, PersonalContextProvider adapters
 PlanningCoordinator -> AgentSessionSupervisor, AgentAdapter, TaskService-issued PlanningAssignment envelope
 AgentSessionSupervisor -> AgentHostSupervisor, AgentAdapter, StateStore, EventStore
-AgentHostSupervisor -> AgentEndpoint registry/binding, RuntimeMesh offer view, RuntimeLifecycleService, local process identity adapter
+AgentHostSupervisor -> AgentHostStore, AgentEndpoint registry/binding, RuntimeMesh offer view, RuntimeLifecycleService, local process identity adapter
 AttemptRunner -> AgentSessionSupervisor, ExecutionDependencyPlanner, CapabilityBroker, EnvironmentManager, LeaseCoordinator, Artifact/Effect services
 PlacementService -> RuntimeMesh read models, Agent registry, Trust policy, Environment offers, WorldIndex
 ExecutionDependencyPlanner -> PlacementService, AgentHostSupervisor, CapabilityBroker, EnvironmentManager, WorldIndex, TrustService
@@ -1055,7 +1309,7 @@ NeedsYouQueryService -> Approval/UserRequest/Task projections
 ChannelService -> TrustService, ConversationService, TaskService, NotificationService
 ConnectionService -> TrustService, SecretStorePort, external provider adapter
 AuditService -> StateStore, EventStore
-ProjectionService -> event stream + Coworker/Goal/Suggestion/WorkerPerformance/TaskProgress projection reducers
+ProjectionService -> event stream + Coworker/Goal/Suggestion/WorkerPerformance/TaskProgress/Presentation projection reducers
 ```
 
 `ResourceAggregatePort` and `ResourceLocationProvider` are Resource-domain ports. The

@@ -69,6 +69,44 @@ it records an observed digest only when supplied by the provider and does not co
 into BlobStore. Artifact IDs are stable; versions are monotonically increasing per Artifact.
 Adding a version requires the expected Artifact aggregate version. In one transaction, the store assigns the next integer version, appends the immutable ArtifactVersion and matching ResourceRevision, advances Artifact.current_version and Resource.current_revision_id, increments their aggregate versions, and appends both events. The current Artifact and Resource pointers must identify the same version. Concurrent publication loses with STALE_VERSION; it cannot overwrite or silently branch. The caller must re-read and explicitly rebase or publish a separate Artifact. Publishing to an ARCHIVED Artifact fails with ARTIFACT_ARCHIVED. Library promotion/archive changes library_status and Artifact.version, not the content version or Resource head. A directory/tree is represented as a manifest of child refs plus content digests, not as an unbounded local path.
 
+The local desktop Operator exposes a narrowly scoped user-authored text append for
+managed `text/plain` Artifacts up to 1 MiB. It publishes a new version through the same
+ArtifactStore append transaction; it cannot edit external-resource content or HTML. The
+request pins the Artifact aggregate version with `If-Match`, plus the content version,
+Resource aggregate version, and exact parent ResourceRevision in its body. New writes
+against archived Workspaces or Artifacts fail. An identical principal-scoped retry may
+return its already committed receipt after later archival, without writing another
+version or event.
+
+The desktop Workbench may show a bounded recent-history panel by requesting exact version
+metadata through the existing `GET /v1/artifacts/{id}/versions/{version}` route. The current
+panel reads at most the latest ten version records from the Artifact's committed
+`current_version` snapshot, marks when older history is omitted, and opens a selected exact
+version through the existing metadata/content routes. It does not add a version-list API,
+claim a live history stream, or infer authorship where `created_by_attempt` is absent.
+
+Desktop Save As operates on the exact selected `MANAGED_BLOB` version up to the existing
+10 MiB IPC content bound. Before opening the native dialog, the Tauri bridge re-reads exact
+Artifact/version metadata and verifies the selected Workspace, Artifact/version,
+ResourceRevision, media type, byte length, and digest. After destination selection, the
+authorized daemon content route resolves that immutable version and verifies the stored
+blob digest; the native bridge checks media type and exact byte count before an atomic
+same-directory write. Cancellation does not fetch content or touch a destination. External
+linked content and oversized versions are not fetched through this path. Save As creates no
+Artifact/Resource revision or domain event; the full destination path and content bytes
+remain in the native process and are not returned through WebView IPC.
+
+For managed `text/plain` versions up to 1 MiB, an owner may explicitly choose **Restore as
+new version** on a historical version. The Workbench confirms the action, loads the latest
+editable head, copies the selected immutable version's verified UTF-8 text into a draft
+based on that current head, and publishes only after a second explicit owner action through
+the existing text append route. The append's Artifact/Resource expected-head checks remain
+authoritative; a concurrent update returns the existing stale-head conflict and preserves
+the draft. This never replaces or deletes a version. The current append contract records
+the publication as a user text edit and does not persist a separate `restored_from` link;
+the confirmation and receipt disclose this limitation. External-resource content, non-text
+formats, and text above 1 MiB remain read-only and cannot use this restore action.
+
 An Artifact may be generated, uploaded, imported, or linked. A linked Artifact retains
 its external provider and revision; it does not imply that bytes were replicated. A
 stale or unavailable linked revision is labeled as such. Publishing a new version never
@@ -158,6 +196,35 @@ criterion digest, verifier/version, exact revision-pinned input ResourceRefs, an
 digests of the bytes actually consumed. Agent output is untrusted data. `REPORTED` can support a progress
 display but cannot satisfy an `OBSERVED` or `VERIFIED` criterion. A later independent
 check appends a new record at its own level.
+
+When Evidence directly concerns an Effect, its canonical `subject_ref` is
+`effect:<EffectId>`. Retry authorization requires matching same-Task `OBSERVED` or
+`VERIFIED` Evidence. Moving an Effect to `VERIFIED` additionally requires that exact
+Evidence record to be `VERIFIED` and referenced by a passing VerificationRun. Human
+verification remains unavailable through the current SQLite Effect port until an explicit
+approval/evidence provenance relation is implemented; it must not be represented by a
+caller-selected Evidence `kind` string.
+
+### Current SQLite persistence boundary
+
+The current Runtime-authenticated persistence writer admits only `REPORTED` Evidence whose
+producer exactly matches that authenticated Runtime principal. It rejects Runtime attempts
+to submit `OBSERVED` or `VERIFIED` Evidence. Those levels require a separately authenticated
+observer/verifier admission contract, which is not implemented; Effect transitions to
+`OBSERVED`/`VERIFIED` therefore remain unavailable through this slice. If `OBSERVED` is
+admitted by a future trusted path, its Evidence ID is pinned in the Effect's
+`observed_state._evidence_id` reserved field and in the transition event. Failure and
+ambiguity transitions persist a typed error code and/or a digest of the bounded reason in
+the immutable event payload; failed transitions also record the retryability classification.
+Raw provider/agent diagnostics are not persisted there.
+
+Effect proposal persistence is not dispatch admission. The current port checks the active
+Attempt/lease fence and exact already-created Invocation, then commits `PROPOSED`; it does
+not atomically consume an ApprovalUse, issue/validate a full Trust decision, or transition
+the Invocation to its dispatched state in the same transaction. Consequently provider
+dispatch remains unavailable until Trust approval/grant admission and Invocation dispatch
+are one authoritative admission boundary. A committed proposal alone never authorizes an
+external call.
 
 ## Verifier
 

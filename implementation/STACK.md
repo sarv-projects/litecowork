@@ -1,23 +1,34 @@
 # Stack recommendations and qualification decisions
 
-The initial development toolchain is now pinned: Rust 1.98.1, Python 3.13.12, and uv
-0.12.23. `rust-toolchain.toml`, `.python-version`, `.uv-version`, `pyproject.toml`, and
-`uv.lock` are the authorities; `scripts/check.sh` is the local/CI entry point. Node,
-TypeScript, and pnpm are intentionally deferred to E02-S01, when the actual desktop UI
-exists. These pins qualify the build and architecture validators only; they do not qualify
-provider behavior or production packaging. Other library/provider choices below remain
+The development toolchain is pinned to Rust 1.98.1, Python 3.13.12, uv 0.12.23,
+Node.js 24.21.0, and pnpm 12.10.1. The Rust workspace minimum supported version is
+1.88, matching the minimum of the locked `time` release; it is distinct from the pinned
+toolchain used for development.
+`rust-toolchain.toml`, `.python-version`, `.uv-version`, `pyproject.toml`, and `uv.lock`
+are the Rust/Python tooling authorities. Desktop pins are
+`apps/litecowork-ui/.node-version`, its `package.json` `packageManager`/`engines` fields,
+`apps/litecowork-ui/pnpm-workspace.yaml`, and `apps/litecowork-ui/pnpm-lock.yaml`.
+The pnpm config pins the engine-validation target and turns strict dependency engine
+checking on. `scripts/check.sh` remains the Rust/Python and
+architecture-contract entry point; it does not install or validate the UI toolchain. The
+desktop dependency graph was lockfile-resolved with lifecycle scripts disabled, but the
+Node 24 UI build has not been run. The desktop supports pnpm only; npm is not a supported
+installer because it has a separate lockfile/configuration contract, and pnpm 12 reads
+project policy from `pnpm-workspace.yaml`, not npm's `.npmrc`. These pins qualify the
+declared toolchain only; they do
+not qualify provider behavior or production packaging. Other library/provider choices below remain
 candidates until the named spikes produce evidence. Existing contracts remain stable when
 a candidate fails qualification.
 
 | Area | Recommended starting point | Reason and qualification |
 |---|---|---|
 | Runtime/domain | Rust stable, Tokio, serde, tracing; modular `litecoworkd` | Strong typed invariants/process control; no second TS runtime owning Tasks |
-| Operator | Tauri 2, React, strict TypeScript, Vite, pnpm | Existing architecture fit; native-webview differences must be tested on each OS |
+| Operator | Tauri 2, React 19, strict TypeScript 5.8, Vite 6, Node.js 24.21.0 LTS, pnpm 12.10.1 | Existing architecture fit; exact dependency graph is in the desktop pnpm lockfile; native-webview differences must be tested on each OS |
 | UI state | Generated OpenAPI types; query cache for projections; component-local transient state | Server owns truth; reconnect rehydrates versioned projections |
 | UI components | Accessible Radix primitives, CSS tokens/Tailwind where useful | Existing DESIGN-SYSTEM/MOTION drive appearance; no wholesale copied template |
 | Local storage | SQLite WAL, FK on, one bounded write executor; rusqlite 0.40.2 is the provisional first adapter | Preserves the single-writer transaction boundary in the current slice; controlled system-SQLite SP02 samples show no decisive driver performance winner, so rusqlite remains provisional |
 | Search | SQLite FTS5 for deterministic metadata/text search | Semantic retrieval remains a separate qualified provider |
-| Operator transport | Typed HTTP/OpenAPI + resumable event stream candidate through Axum | Authenticate even loopback; origin checks; IPC bridge qualification SP03 |
+| Operator transport | Typed HTTP/OpenAPI + resumable event stream through Axum; shared framed Unix IPC for the current Linux/macOS desktop source path | The daemon and Tauri source now use authenticated Unix IPC on Linux/macOS, with peer-UID checks and no bearer/loopback fallback. This source has not been built or OS-qualified. Windows fails closed pending named-pipe DACL/SID support; macOS sandbox bookmark handling remains a separate release gate (SP03). |
 | Rust tests | cargo test, proptest, fault injection, fixture/contract suites | Test command/event transaction and legal transitions, not only methods |
 | UI tests | Vitest + Testing Library; browser harness Playwright; native app driver where supported | Browser tests cannot prove native Tauri integration; OS-specific real-app test gate |
 | Parsing/retrieval | Isolated optional Python provider; Docling candidate plus type-specific parsers | Parsing/OCR libraries are valuable, but untrusted CPU/memory-heavy input stays outside Core |
@@ -32,8 +43,25 @@ a candidate fails qualification.
 ## Pinned development baseline
 
 Rust 1.98.1 and Python 3.13.12 are pinned for the current executable and contract
-validators; uv 0.12.23 is pinned for locked Python tooling. Update these only with a
-reviewed toolchain change and regenerated lockfiles.
+validators; uv 0.12.23 is pinned for locked Python tooling. The Tauri frontend separately
+pins Node.js 24.21.0 in `.node-version`, requires Node `>=24.21.0 <25` through
+`package.json` `engines`, and selects pnpm 12.10.1 through `packageManager`.
+`pnpm-workspace.yaml` sets `nodeVersion: 24.21.0` and `engineStrict: true`: pnpm rejects
+an incompatible project Node engine and fails on incompatible required dependency engines.
+Its `pnpm-lock.yaml` records the resolved frontend dependency graph. Update pins only with
+a reviewed toolchain change and regenerate the relevant lockfile.
+
+The selected versions follow the official Node.js release table, which identifies
+24.21.0 as LTS, and pnpm's 12.10.1 release from 2026-10-06. pnpm 12 supports Node.js 22
+and newer; LiteCowork chooses Node 24 LTS for the desktop frontend. Sources:
+[Node.js 24.21.0](https://nodejs.org/en/download/archive/v24.21.0),
+[Node.js release status](https://nodejs.org/en/about/previous-releases),
+[pnpm 12.10.1 release](https://pnpm.io/blog/releases),
+[pnpm installation and compatibility](https://pnpm.io/installation), and
+[pnpm engineStrict/nodeVersion settings](https://pnpm.io/settings/cli),
+[pnpm project configuration](https://pnpm.io/settings),
+[npm engines behavior](https://docs.npmjs.com/cli/v11/configuring-npm/package-json#engines),
+and [pnpm CI/frozen-lockfile behavior](https://pnpm.io/continuous-integration).
 
 To bootstrap a Linux/macOS checkout, install rustup and the pinned uv version from their
 official installers, then run:
@@ -43,6 +71,10 @@ rustup toolchain install 1.98.1 --profile minimal --component clippy --component
 curl -LsSf https://astral.sh/uv/0.12.23/install.sh | sh
 scripts/check.sh
 ```
+
+For the desktop UI, install Node.js 24.21.0 and pnpm 12.10.1, then from
+`apps/litecowork-ui` use `pnpm install --frozen-lockfile`. This is the dependency
+bootstrap command, not a claim that the current unverified source builds.
 
 `uv` reads `.python-version` and provisions Python 3.13.12 as needed. Windows setup uses
 the official PowerShell installers linked in [SOURCES](SOURCES.md), followed by the same
@@ -62,9 +94,9 @@ Docling is a parsing candidate, not a guarantee of lossless office fidelity.
 |---|---|---|
 | SP01 | Tauri+React native shell on Linux; Windows/macOS qualification matrix | Daemon survives UI close; tray/reconnect; install prerequisites; supported driver limitations |
 | SP02 | rusqlite vs SQLx, actual contract DDL, encrypted aggregate-state writes, event+projection transactions and reopen/replay | Product rusqlite adapter and recovery checks are implemented; controlled samples use the same system SQLite and production encrypted FileBlobStore, while SQLx remains a less-complete prototype; mixed-load correctness and initial writer-pressure telemetry pass, while longer capacity/backpressure, memory, cancellation/shutdown, disk-full injection, owner-host repeats and production driver choice remain open |
-| SP03 | Authenticated Operator transport and event reconnect | Threat tests for malicious local page, stolen token, origin/peer identity; choose transport |
+| SP03 | Qualify the integrated authenticated Operator IPC and event reconnect across supported desktop OSes | Build and exercise the Linux/macOS Unix IPC path; prove browser origins cannot invoke privileged commands; validate peer UID, endpoint ownership/mode, stale endpoint cleanup, cancellation and Runtime shutdown. Add Windows named-pipe current-user/logon-session DACL, remote-client rejection and client-token identity before enabling Windows. Qualify macOS sandbox security-scoped bookmark transfer. Until the platform gates pass, do not claim production-ready desktop IPC or safe switching. |
 | SP04 | Codex App Server, Claude supported host interface, OpenCode server, Cline | Feature matrix from real runs; select first full-harness adapter and explicit unsupported features |
-| SP05 | Local-model harness on two measured hardware profiles | Tool success, context/cancel, time-to-first-token, RSS/VRAM, no-network run; no brand-parity claim |
+| [SP05](spikes/SP05.md) | Local-model provider + native-harness qualification on two measured hardware profiles | Exact protocol/security boundary, tool success, context/cancel, time-to-first-token, RSS/VRAM, no-network/no-fallback run; no brand-parity claim |
 | SP06 | Parsing/hybrid RAG over gold PDF/office/code/scans/ZIP corpus | Extraction accuracy, citations, deletion receipts, quality/latency vs FTS; choose provider and index |
 | SP07 | Linux cloud deployment and disposable second Runtime | Persistence, sandbox isolation, auth/egress, restart, backup; price and limits documented |
 

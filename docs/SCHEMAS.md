@@ -26,12 +26,12 @@ JsonObject = map<string, JsonValue>
 ## Identifiers
 
 ```text
-WorkspaceId WorkspaceInstructionRevisionId ConversationId ConversationTurnId MessageId
+WorkspaceId WorkspaceInstructionRevisionId ConversationId ConversationTurnId MessageId DeviceId
 TaskId TaskSpecRevisionId PlanRevisionId StepId AttemptId AgentProfileId
-AgentEndpointId AgentBindingId AgentSessionId AgentHostInstanceId CapabilityHostInstanceId RuntimeId RuntimeIncarnationId
+AgentEndpointId AgentBindingId AgentSessionId AgentHostInstanceId CapabilityHostInstanceId RuntimeId RuntimeIncarnationId RuntimeWorkspaceBindingId
 EnvironmentId EnvironmentCheckpointId EnvironmentControlLeaseId CapabilityId CapabilityGrantId
 CapabilityActivationId CapabilityInvocationId ArtifactId EffectId EvidenceId
-VerificationRunId ApprovalId ApprovalUseId AutomationId OccurrenceId ExecutionLeaseId
+VerificationRunId ApprovalId ApprovalUseId AutomationId OccurrenceId ExecutionLeaseId ChannelHostDrainProofId ChannelHostContinuityProofId
 HandoffId ConnectionId ChannelBindingId PrincipalId SecretRefId SecretLeaseId
 UserRequestId UserRequestResponseId UsageObservationId BudgetReservationId DeliveryId SkillProposalId
 RoutineId ExecutionDependencyPlanId DelegationProfileId CoworkerId GoalId SuggestionId
@@ -40,11 +40,33 @@ ResourceId ResourceRevisionId ResourceLocationId WorkspaceRootId ResourceEdgeId 
 InvalidationRecordId ResourceUploadId BackupId AuditRecordId EventId RequestId CorrelationId ServiceId
 ```
 
+## Device signing identity
+
+```text
+DeviceId = "ed25519-sha256:" + lowercase_hex(SHA256(raw_ed25519_public_key_bytes))
+Ed25519PublicKey = "ed25519:" + lowercase_hex(32 raw public-key bytes)
+DeviceIdentity = {
+  device_id: DeviceId,
+  public_key: Ed25519PublicKey,
+  key_version: u32, # starts at 1; rotation requires an explicit future protocol
+  issued_at: Timestamp,
+  display_name?: string
+}
+```
+
+The private Ed25519 seed is held only by the platform credential store (OS-protected,
+potentially exportable software key material; not assumed hardware-backed). It is absent
+from SQLite, bootstrap JSON, replicated records, backups, events, logs, and Operator
+projections. See ADR-0021 for the device identity signing and encoding decision.
+
 ## Status enums
 
 ```text
 WorkspaceStatus = ACTIVE | ARCHIVED
 AgentProtocol = ACP | A2A | SDK | API | CLI | TERMINAL
+AgentInstallationState = MISSING | INSTALLED | VERSION_UNAVAILABLE
+AgentAuthenticationReadiness = UNKNOWN
+AgentSessionReadiness = NOT_PROBED
 AgentEndpointTopology = LOCAL_INTERACTIVE | REMOTE_AGENT_SERVICE | VENDOR_SERVICE | PROCESS_ADAPTER
 EndpointSelectionMode = AUTO_COMPATIBLE | PINNED_ENDPOINT
 NativeHarnessIntegrityMode = NATIVE_UNMODIFIED | NATIVE_PLUS_BRIDGE
@@ -79,6 +101,31 @@ AgentFeature = session.resume | session.steer | session.interrupt | session.canc
   extension.mcp_http | extension.skills | extension.plugins | extension.dynamic_attach |
   reporting.tool_calls | reporting.plan | reporting.usage | reporting.native_subagents |
   reporting.approvals | environment.cwd | environment.extra_directories
+AgentInstallation = {
+  agent_id: string,
+  display_name: string,
+  protocol_candidate: CODEX_APP_SERVER | ACP,
+  installation: AgentInstallationState,
+  version: string | null,
+  authentication: AgentAuthenticationReadiness,
+  session_readiness: AgentSessionReadiness
+}
+ProbeLocalAgentProfileRequest = { provider_key: CODEX | OPENCODE }
+OpenCodeProfileProbeConstraints = {
+  probe_readiness: COMPLETE | PARTIAL | FAILED,
+  reported_provider_status: OBSERVED | UNKNOWN | NOT_PROBED,
+  reported_connected_provider_ids: bounded string[],
+  reported_model_catalog: OBSERVED | UNKNOWN | NOT_PROBED,
+  configured_providers: [{id, display_name?, models: [{id, display_name?}]}],
+  authentication_observation: UNKNOWN,
+  session_model_selection: NOT_QUALIFIED,
+  inference_access_verified: false,
+  host_process_stopped: boolean,
+  writer_quiescence_proven: false,
+  profile_admission_supported: false
+}
+# Exact bounds and complete fields are defined by the OpenCodeProfileProbeConstraints
+# component in schemas/operator-api.openapi.yaml. This is display-only catalog metadata.
 RuntimeRole = WORKSPACE_HUB | EXECUTOR | RESOURCE_NODE | CHANNEL_HOST | TRIGGER_HOST | OPERATOR_ENDPOINT
 TrustZone = PERSONAL_DEVICE | USER_CLOUD | MANAGED_CLOUD
 SensitivityClass = PUBLIC | PERSONAL | CONFIDENTIAL | RESTRICTED
@@ -97,6 +144,13 @@ ResourceCapacity = {
   sampled_at: Timestamp
 }
 ResourceUploadState = OPEN | CONTENT_RECEIVED | COMMITTED | FAILED | EXPIRED
+FolderImportMetadata = { relative_path: NormalizedRelativePath }
+NormalizedRelativePath = string # slash-separated, nonempty segments; no absolute/drive/UNC form, `.`/`..`, backslash, NUL/control; <= 240 Unicode scalars and <= 128 segments
+ResourceUploadSession.folder_import = FolderImportMetadata? # initial one-time folder attachment only; pinned across resume/commit
+ProvenanceRecord.folder_import = FolderImportMetadata? # copied from the pinned upload session at commit
+ResourceUploadSession.expected_digest = sha256:<64 lowercase hex> for new sessions; legacy v1 may be null and is non-resumable/non-committable
+ResourceUploadSession.version = lifecycle revision used by upload DomainEvents
+ResourceUploadSession.progress_version = accepted-chunk revision used to fence transfer writes
 ReplicationPolicy = LOCAL_ONLY | METADATA_ONLY | ACTIVE_TASK_INPUTS | SELECTED_FOLDERS | FULL_WORKSPACE
 AgentSessionScope =
   CONVERSATION { conversation_id, conversation_turn_id }
@@ -112,6 +166,64 @@ ChannelEventKind = INBOUND | EDIT | DELETE
 ChannelEventReceiptStatus = RECEIVED | PROCESSING | ACCEPTED | REJECTED | FAILED
 ChannelHostAssignmentStatus = ACTIVE | DRAINING
 ChannelIngressContinuity = CONTINUOUS | GAP_ACCEPTED
+ChannelHostSourceReleaseBasis = SAFE_SETTLEMENT_PROOF | LEASE_EXPIRY_PLUS_SKEW
+ChannelIngressGapDecision = {
+  decided_by: PrincipalRef,
+  decided_at: Timestamp,
+  audit_record_id: AuditRecordId,
+  reason_code: string
+}
+ChannelHostDrainProofRef = {
+  proof_id: ChannelHostDrainProofId,
+  channel_binding_id: ChannelBindingId,
+  workspace_id: WorkspaceId,
+  runtime_id: RuntimeId,
+  host_epoch: u64
+}
+ChannelHostContinuityProofRef = {
+  proof_id: ChannelHostContinuityProofId,
+  channel_binding_id: ChannelBindingId,
+  workspace_id: WorkspaceId,
+  source_runtime_id: RuntimeId,
+  source_host_epoch: u64,
+  target_runtime_id: RuntimeId,
+  target_host_epoch: u64
+}
+ChannelHostAssignmentProvenance = {
+  source_release_basis?: ChannelHostSourceReleaseBasis | null,
+  source_drain_proof_ref?: ChannelHostDrainProofRef | null,
+  source_drain_proof_digest?: Sha256Digest | null,
+  continuity_proof_ref?: ChannelHostContinuityProofRef | null,
+  continuity_proof_digest?: Sha256Digest | null,
+  ingress_gap_decision?: ChannelIngressGapDecision | null
+}
+# Assignment-change v1 events retain their original schema. v2 cross-Runtime ACTIVE
+# changes record source_release_basis. The source_drain_proof_ref is an opaque reference
+# to the SQL ChannelHostDrainProof row (not a ResourceRef); source_drain_proof_digest is
+# that row's proof_digest. SQL release_kind QUIESCENT maps to
+# SAFE_SETTLEMENT_PROOF; EXPIRY_PLUS_SKEW maps to LEASE_EXPIRY_PLUS_SKEW. For the current
+# assignment at epoch N, projection joins the immutable release row for epoch N-1 and,
+# for QUIESCENT, its drain_proof_id to the proof row; the ref's scope fields come from
+# that row. An initial assignment has no source-release provenance.
+# A continuity proof reference is opaque and contains the SQL proof row's proof_id and
+# assignment scope (binding, Workspace, source Runtime/epoch, target Runtime/epoch);
+# continuity_proof_digest is that row's proof_digest. For an ACTIVE cross-Runtime
+# assignment with CONTINUOUS ingress, projection joins the proof row for target epoch N
+# whose source scope is the prior assignment at epoch N-1. GAP_ACCEPTED assignments have
+# no continuity proof. Epoch 1 and legacy rows without retained provenance expose neither
+# field. These proof refs are not ResourceRefs or authority tokens.
+#
+# A v2 cross-Runtime ACTIVE CONTINUOUS change requires this continuity proof pair. The
+# RuntimeMesh service validates the source and target scopes, target epoch N/source epoch
+# N-1 relation, digest, and proof row against the prior assignment; JSON Schema checks only
+# the value shape and pair/continuity conditions.
+#
+# A v2 GAP_ACCEPTED
+# decision records ChannelIngressGapDecision by joining ingress_gap_decision_audit_id to
+# the same-Workspace AuditRecord; a legacy projection without it remains explicitly
+# provenance-unavailable and must not be attributed to a guessed principal. The
+# Operator's current ChannelHostAssignment projection exposes this provenance as
+# optional/nullable fields; full assignment history is the versioned event stream.
 ChannelIngressCursorBindingStatus = AVAILABLE | RECONCILIATION_REQUIRED | UNAVAILABLE
 ConversationTurnStatus = OPEN | RUNNING | WAITING_USER | WAITING_DEPENDENCY | COMPLETED | FAILED |
   CANCEL_REQUESTED | CANCELLED
@@ -136,6 +248,8 @@ RoutineRevisionRef = { routine_id: RoutineId, revision: u64 }
 GoalRevisionRef = { goal_id: GoalId, revision: u64 }
 CoworkerRevisionRef = { coworker_id: CoworkerId, revision: u64 }
 RuntimeAvailability = PAIRING | STARTING | RECOVERING | ONLINE | DEGRADED | DRAINING | OFFLINE | REVOKED
+RuntimeWorkspaceEnrollmentMode = LOCAL_ENROLLMENT | MESH_PAIRING
+RuntimeWorkspaceBindingStatus = PENDING | ACTIVE | REVOKED
 RuntimeStartupPolicy = MANUAL | LOGIN_BACKGROUND | ALWAYS_ON_SERVICE
 RuntimeIncarnationState = STARTING | RECOVERING | READY | DEGRADED | DRAINING | STOPPING | STOPPED
 AgentHostState = STARTING | READY | BUSY | DEGRADED | STOPPING | STOPPED | FAILED
@@ -178,9 +292,13 @@ UserRequestScope = CONVERSATION { conversation_id, conversation_turn_id }
 NotificationDeliveryStatus = PENDING | SENDING | SENT | FAILED | AMBIGUOUS | SUPPRESSED
 SkillProposalStatus = DRAFT | REVIEW | APPROVED | REJECTED | PUBLISHED
 ResourceFreshness = CURRENT | STALE | CONFLICTED | UNKNOWN | UNAVAILABLE
+ResourceSearchMode = METADATA | ON_DEMAND_CONTENT | INDEXED_CONTENT
+ResourceTextIndexRebuildOutcome = INDEXED | NOT_INDEXABLE
+ResourceTextIndexSkipReason = UNSUPPORTED_TYPE | OVER_SIZE_LIMIT | INVALID_UTF8 |
+  CONTROL_CHARACTERS | TERM_LIMIT_EXCEEDED
 ResourceLocationFreshness = CURRENT | STALE | UNKNOWN | UNAVAILABLE
 DependencyFreshness = CURRENT | STALE | CONFLICTED | UNKNOWN
-ResourceLocationAvailability = AVAILABLE | OFFLINE | PLACEHOLDER | REVOKED | UNKNOWN
+ResourceLocationAvailability = AVAILABLE | OFFLINE | PLACEHOLDER | REVOKED | UNKNOWN | UNAVAILABLE
 WorkspaceRootStatus = ACTIVE | PAUSED | REVOKED | UNAVAILABLE
 VerificationRunStatus = PENDING | RUNNING | PASSED | FAILED | INCONCLUSIVE
 AutomationStatus = ENABLED | PAUSED | DISABLED
@@ -189,6 +307,24 @@ ClaimEpoch = monotonically increasing u64 per claimable receipt/occurrence
 ResourceIdentityConfidence = STRONG | PROVIDER_SCOPED | WEAK
 ResourceEdgeRelation = CONTAINS | DERIVED_FROM | REFERENCES | SAME_PROVIDER_OBJECT
 InvalidationDependentKind = ARTIFACT_VERSION | VERIFICATION_RUN
+
+ResourceTextIndexRebuildRequest {
+  workspace_id: WorkspaceId       # selected context; not authority
+  resource_id: ResourceId
+  resource_revision_id: ResourceRevisionId
+  content_digest: Sha256Digest
+  request_id: RequestId            # Idempotency-Key at HTTP transport
+}
+ResourceTextIndexRebuildResult {
+  workspace_id: WorkspaceId
+  resource_id: ResourceId
+  resource_revision_id: ResourceRevisionId
+  content_digest: Sha256Digest
+  request_id: RequestId
+  correlation_id: CorrelationId
+  outcome: ResourceTextIndexRebuildOutcome
+  reason: ResourceTextIndexSkipReason? # required iff NOT_INDEXABLE
+}
 Blocker {
   blocker_id: string
   code: ErrorCode
@@ -380,6 +516,23 @@ the referenced content digest.
 JsonSchema = JsonObject
 Sha256Digest = `sha256:` followed by 64 lowercase hexadecimal characters
 
+ResourceContentScanInfo {
+  candidates_scanned: u32
+  text_resources_checked: u32
+  skipped_unsupported_type: u32
+  skipped_over_file_limit: u32
+  skipped_revision_changed: u32
+  byte_budget_exhausted: bool
+  candidate_budget_exhausted: bool
+  max_candidates: 20
+  max_file_bytes: 1_048_576
+  max_total_bytes: 8_388_608
+}
+
+This request-only projection is present for `ON_DEMAND_CONTENT` search and null for
+`METADATA` and `INDEXED_CONTENT`. It is not persisted, replicated, or treated as an
+indexing lifecycle state.
+
 TriggerPlacement = HUB | SPECIFIC_RUNTIME | AUTO
 WakePolicy = NEVER | TRY_WAKE | REQUIRE_RUNTIME_AWAKE
 MisfirePolicy =
@@ -496,6 +649,7 @@ ProvenanceRecord {
   source_inputs: ResourceInput[]
   transformations: ProvenanceTransformation[]
   tool_reports: PinnedResourceRef[]
+  folder_import?: FolderImportMetadata
 }
 
 ProvenanceTransformation {
@@ -910,7 +1064,9 @@ ContextDocumentPurgePlan { # immutable Resource-owned subrecord, not a separate 
 
 `ContextDocumentMetadata` classifies a versioned Resource; it does not create another
 content store or version chain. New documents start `ACTIVE`. `REVOKED` documents are
-excluded from future context retrieval while their content remains retained. `DELETION_PENDING`
+excluded from future context retrieval and new content reads while their content remains
+retained. A read admitted while `ACTIVE` may finish after a concurrent status transition;
+derived-state commits recheck status and cannot publish afterward. `DELETION_PENDING`
 blocks new reads and waits for all owned blob/index replicas to confirm purge. `DELETED`
 retains only Resource/revision identity, digests, provenance, and the tombstone needed by
 historical Task references; content bytes and derived provider indexes are unavailable.
@@ -1022,7 +1178,7 @@ DELEGATION_PROFILE_OPTIONS_INVALID
 DELEGATION_DEPTH_EXCEEDED DELEGATION_CONCURRENCY_EXCEEDED
 PLACEMENT_UNAVAILABLE RUNTIME_UNAVAILABLE ENVIRONMENT_UNAVAILABLE
 CAPABILITY_UNAVAILABLE CAPABILITY_UNHEALTHY SECRET_UNAVAILABLE RESOURCE_UNAVAILABLE
-AUTOMATION_NOT_FOUND AUTOMATION_REVISION_NOT_FOUND AUTOMATION_DISABLED INVALID_TRIGGER
+AUTOMATION_NOT_FOUND AUTOMATION_REVISION_NOT_FOUND AUTOMATION_DISABLED AUTOMATION_NOT_PAUSED INVALID_TRIGGER
 OCCURRENCE_NOT_FOUND TRIGGER_UNSUPPORTED TRIGGER_HOST_UNAVAILABLE
 ROUTINE_NOT_FOUND ROUTINE_REVISION_NOT_FOUND ROUTINE_ARCHIVED ROUTINE_INPUT_INVALID
 RUNTIME_STOP_BLOCKED RUNTIME_STARTUP_UNAVAILABLE

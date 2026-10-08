@@ -2,6 +2,8 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
 };
+use hmac::{Hmac, Mac};
+use hkdf::Hkdf;
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
@@ -162,6 +164,18 @@ impl<K: WorkspaceBlobKeyProvider> BlobStore for FileBlobStore<K> {
             .parent()
             .ok_or_else(|| StoreError::Invalid("blob path has no parent".to_owned()))?;
         validate_private_directory(parent)?;
+        let path_metadata = fs::symlink_metadata(&path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                StoreError::NotFound
+            } else {
+                io_error(error)
+            }
+        })?;
+        if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
+            return Err(StoreError::Integrity(
+                "blob object is not a regular file".to_owned(),
+            ));
+        }
         let mut file = File::open(path).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 StoreError::NotFound
@@ -169,8 +183,21 @@ impl<K: WorkspaceBlobKeyProvider> BlobStore for FileBlobStore<K> {
                 io_error(error)
             }
         })?;
-        let mut envelope = Vec::new();
-        file.read_to_end(&mut envelope).map_err(io_error)?;
+        let expected_envelope_len = blob
+            .size_bytes
+            .checked_add((HEADER_LEN + 16) as u64)
+            .ok_or_else(|| StoreError::Integrity("blob envelope length overflowed".to_owned()))?;
+        let metadata = file.metadata().map_err(io_error)?;
+        if !metadata.is_file() || metadata.len() != expected_envelope_len {
+            return Err(StoreError::Integrity(
+                "blob envelope size does not match its BlobRef".to_owned(),
+            ));
+        }
+        let allocation_len = usize::try_from(expected_envelope_len).map_err(|_| {
+            StoreError::Integrity("blob envelope is too large for this Runtime".to_owned())
+        })?;
+        let mut envelope = vec![0_u8; allocation_len];
+        file.read_exact(&mut envelope).map_err(io_error)?;
         if envelope.len() < HEADER_LEN + 16 || &envelope[..4] != BLOB_HEADER {
             return Err(StoreError::Integrity(
                 "blob envelope is truncated or unknown".to_owned(),
@@ -217,6 +244,84 @@ impl<K: WorkspaceBlobKeyProvider> BlobStore for FileBlobStore<K> {
             ));
         }
         Ok(plaintext)
+    }
+
+    fn remove(
+        &self,
+        workspace_id: &str,
+        purpose: BlobPurpose,
+        blob: &BlobRef,
+    ) -> Result<(), StoreError> {
+        let path = self.object_path(workspace_id, purpose, &blob.digest)?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| StoreError::Invalid("blob path has no parent".to_owned()))?;
+        match validate_private_directory(parent) {
+            Ok(()) => {}
+            Err(StoreError::NotFound) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(io_error(error)),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(StoreError::Integrity(
+                "refusing to remove a non-regular blob object".to_owned(),
+            ));
+        }
+        fs::remove_file(&path).map_err(io_error)?;
+        sync_directory(parent)
+    }
+
+    fn resource_index_token(
+        &self,
+        workspace_id: &str,
+        key_version: Option<u32>,
+        normalized_term: &str,
+    ) -> Result<(u32, String), StoreError> {
+        let (version, mut tokens) = self.resource_index_tokens(workspace_id, key_version, &[normalized_term.to_owned()])?;
+        let token = tokens.pop().ok_or_else(|| StoreError::Integrity("Resource index token is missing".to_owned()))?;
+        Ok((version, token))
+    }
+
+    fn resource_index_tokens(
+        &self,
+        workspace_id: &str,
+        key_version: Option<u32>,
+        normalized_terms: &[String],
+    ) -> Result<(u32, Vec<String>), StoreError> {
+        if workspace_id.trim().is_empty()
+            || normalized_terms.is_empty()
+            || normalized_terms.iter().any(|term| term.is_empty() || term.len() > 512 || term.contains('\0'))
+        {
+            return Err(StoreError::Invalid("Resource index terms are invalid".to_owned()));
+        }
+        let key = match key_version {
+            Some(version) if version > 0 => self
+                .keys
+                .key_by_version(workspace_id, BlobPurpose::ResourceIndex, version)?,
+            Some(_) => return Err(StoreError::Invalid("Resource index key version must be nonzero".to_owned())),
+            None => self.keys.current_key(workspace_id, BlobPurpose::ResourceIndex)?,
+        };
+        if key.version == 0 {
+            return Err(StoreError::Blob("Resource index key version must be nonzero".to_owned()));
+        }
+        let hkdf = Hkdf::<Sha256>::new(Some(b"LiteCowork.ResourceIndex.key.v1"), key.bytes.as_ref());
+        let mut mac_key = Zeroizing::new([0_u8; 32]);
+        hkdf.expand(b"term-token-hmac-sha256", mac_key.as_mut())
+            .map_err(|_| StoreError::Blob("Resource index key derivation failed".to_owned()))?;
+        type HmacSha256 = Hmac<Sha256>;
+        let mut tokens = Vec::with_capacity(normalized_terms.len());
+        for term in normalized_terms {
+            let mut mac = HmacSha256::new_from_slice(mac_key.as_ref())
+                .map_err(|_| StoreError::Blob("invalid Resource index key".to_owned()))?;
+            mac.update(b"LiteCowork.ResourceIndex.term.v1\0");
+            mac.update(term.as_bytes());
+            tokens.push(hex::encode(mac.finalize().into_bytes()));
+        }
+        Ok((key.version, tokens))
     }
 }
 
@@ -369,6 +474,33 @@ mod tests {
         }
     }
 
+    struct WorkspaceScopedKeys;
+
+    impl WorkspaceBlobKeyProvider for WorkspaceScopedKeys {
+        fn current_key(
+            &self,
+            workspace_id: &str,
+            _purpose: BlobPurpose,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            Ok(WorkspaceBlobKey {
+                version: 1,
+                bytes: Zeroizing::new(Sha256::digest(workspace_id.as_bytes()).into()),
+            })
+        }
+
+        fn key_by_version(
+            &self,
+            workspace_id: &str,
+            purpose: BlobPurpose,
+            version: u32,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            if version != 1 {
+                return Err(StoreError::Blob("unknown key version".to_owned()));
+            }
+            self.current_key(workspace_id, purpose)
+        }
+    }
+
     #[test]
     fn encrypted_blobs_round_trip_and_are_workspace_scoped() {
         let directory = tempfile::tempdir().expect("temporary blob directory");
@@ -407,6 +539,26 @@ mod tests {
             fs::read_dir(directory.path()).expect("blob root").count(),
             0
         );
+    }
+
+    #[test]
+    fn resource_index_tokens_are_stable_and_workspace_scoped() {
+        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let store = FileBlobStore::new(directory.path(), WorkspaceScopedKeys);
+        let (version, token) = store
+            .resource_index_token("workspace-a", None, "architecture")
+            .expect("token from OS-style workspace key provider");
+        let (same_version, same_token) = store
+            .resource_index_token("workspace-a", Some(version), "architecture")
+            .expect("token remains stable for the key version");
+        let (_, other_workspace_token) = store
+            .resource_index_token("workspace-b", None, "architecture")
+            .expect("different Workspace has a different scoped key");
+
+        assert_eq!(version, same_version);
+        assert_eq!(token, same_token);
+        assert_ne!(token, other_workspace_token);
+        assert_eq!(token.len(), 64);
     }
 
     #[test]

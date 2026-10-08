@@ -156,6 +156,48 @@
       },
       "additionalProperties": false
     },
+    "channel_host_drain_proof_ref": {
+      "type": "object",
+      "required": [
+        "proof_id",
+        "channel_binding_id",
+        "workspace_id",
+        "runtime_id",
+        "host_epoch"
+      ],
+      "properties": {
+        "proof_id": {"type": "string", "minLength": 1},
+        "channel_binding_id": {"type": "string", "minLength": 1},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "runtime_id": {"type": "string", "minLength": 1},
+        "host_epoch": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false,
+      "description": "Opaque, scoped reference to an immutable ChannelHostDrainProof row; not a ResourceRef or authority token."
+    },
+    "channel_host_continuity_proof_ref": {
+      "type": "object",
+      "required": [
+        "proof_id",
+        "channel_binding_id",
+        "workspace_id",
+        "source_runtime_id",
+        "source_host_epoch",
+        "target_runtime_id",
+        "target_host_epoch"
+      ],
+      "properties": {
+        "proof_id": {"type": "string", "minLength": 1},
+        "channel_binding_id": {"type": "string", "minLength": 1},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "source_runtime_id": {"type": "string", "minLength": 1},
+        "source_host_epoch": {"type": "integer", "minimum": 1},
+        "target_runtime_id": {"type": "string", "minLength": 1},
+        "target_host_epoch": {"type": "integer", "minimum": 2}
+      },
+      "additionalProperties": false,
+      "description": "Opaque, scoped reference to an immutable ChannelHostContinuityProof row; not a ResourceRef or authority token."
+    },
     "capability_ref": {
       "type": "object",
       "oneOf": [
@@ -417,6 +459,65 @@
       },
       "additionalProperties": false
     },
+    "provenance_record_v2": {
+      "type": "object",
+      "required": [
+        "source_inputs",
+        "transformations",
+        "tool_reports"
+      ],
+      "properties": {
+        "created_by_attempt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capability_ref": {
+          "$ref": "#/$defs/capability_ref"
+        },
+        "transformations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/provenance_transformation"
+          }
+        },
+        "tool_reports": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/pinned_resource_ref"
+          }
+        },
+        "source_inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/resource_input"
+          }
+        },
+        "folder_import": {
+          "oneOf": [
+            {"$ref": "#/$defs/folder_import_metadata"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "folder_import_metadata": {
+      "type": "object",
+      "required": ["relative_path"],
+      "properties": {
+        "relative_path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "description": "Slash-separated selected path; provenance/display metadata only, never a filesystem locator or grant."
+        }
+      },
+      "additionalProperties": false
+    },
     "task_status": {
       "type": "string",
       "enum": [
@@ -649,15 +750,28 @@
           },
           "from": {
             "type": "string",
-            "minLength": 1
+            "enum": ["ACTIVE", "PAUSED", "UNAVAILABLE"]
           },
           "to": {
             "type": "string",
-            "minLength": 1
+            "enum": ["ACTIVE", "PAUSED", "REVOKED", "UNAVAILABLE"]
           },
           "reason_code": {
             "type": "string",
-            "minLength": 1
+            "enum": [
+              "ROOT_IDENTITY_REVALIDATED",
+              "NO_PRIOR_BINDING",
+              "LOCATOR_BINDING_MISSING",
+              "FILE_IDENTITY_BINDING_MISSING",
+              "BINDING_MISMATCH",
+              "UNSUPPORTED_PLATFORM",
+              "INVALID_LOCATOR",
+              "IDENTITY_CHANGED",
+              "IDENTITY_UNAVAILABLE",
+              "USER_PAUSED",
+              "USER_RESUMED",
+              "USER_REVOKED"
+            ]
           },
           "aggregate_version": {
             "type": "integer",
@@ -814,6 +928,154 @@
         },
         "additionalProperties": false
       },
+      "resource_created_v2": {
+        "type": "object",
+        "required": [
+          "resource_id",
+          "workspace_id",
+          "kind",
+          "provenance",
+          "aggregate_version"
+        ],
+        "properties": {
+          "resource_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workspace_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "FILE",
+              "FOLDER",
+              "ARTIFACT",
+              "CONNECTOR_OBJECT",
+              "WEB_RESOURCE",
+              "OTHER"
+            ]
+          },
+          "identity_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "provenance": {
+            "$ref": "#/$defs/provenance_record_v2"
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "context_document": {
+            "type": "object",
+            "required": [
+              "kind",
+              "owner_ref",
+              "status"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "PERSONAL_PROFILE",
+                  "COWORKER_NOTES",
+                  "WORKSPACE_NOTES",
+                  "GOAL_NOTES"
+                ]
+              },
+              "owner_ref": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "principal_id"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "USER"
+                      },
+                      "principal_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "workspace_id"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "WORKSPACE"
+                      },
+                      "workspace_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "workspace_id",
+                      "coworker_id"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "COWORKER"
+                      },
+                      "workspace_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "coworker_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "kind",
+                      "workspace_id",
+                      "goal_id"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "GOAL"
+                      },
+                      "workspace_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "goal_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "status": {
+                "const": "ACTIVE"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
       "resource_revision_observed": {
         "type": "object",
         "required": [
@@ -855,6 +1117,30 @@
         },
         "additionalProperties": false
       },
+      "resource_revision_created": {
+        "type": "object",
+        "required": [
+          "resource_id",
+          "resource_revision_id",
+          "parent_revision_ids",
+          "content_digest",
+          "size_bytes",
+          "media_type",
+          "created_by",
+          "aggregate_version"
+        ],
+        "properties": {
+          "resource_id": {"type": "string", "minLength": 1},
+          "resource_revision_id": {"type": "string", "minLength": 1},
+          "parent_revision_ids": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "content_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+          "size_bytes": {"type": "integer", "minimum": 0, "maximum": 104857600},
+          "media_type": {"type": "string", "minLength": 1, "maxLength": 160},
+          "created_by": {"$ref": "#/$defs/principal_ref"},
+          "aggregate_version": {"type": "integer", "minimum": 2}
+        },
+        "additionalProperties": false
+      },
       "resource_location_changed": {
         "type": "object",
         "required": [
@@ -879,7 +1165,8 @@
               "OFFLINE",
               "PLACEHOLDER",
               "REVOKED",
-              "UNKNOWN"
+              "UNKNOWN",
+              "UNAVAILABLE"
             ]
           },
           "observed_revision_id": {
@@ -965,6 +1252,7 @@
           "upload_id",
           "workspace_id",
           "expected_size_bytes",
+          "expected_digest",
           "chunk_size_bytes",
           "expires_at",
           "aggregate_version"
@@ -1263,7 +1551,9 @@
         "required": [
           "task_id",
           "initial_spec_revision",
-          "created_by"
+          "created_by",
+          "origin_coworker_id",
+          "origin_coworker_revision"
         ],
         "properties": {
           "task_id": {
@@ -1280,6 +1570,14 @@
           },
           "created_by": {
             "$ref": "#/$defs/principal_ref"
+          },
+          "origin_coworker_id": {
+            "type": ["string", "null"],
+            "minLength": 1
+          },
+          "origin_coworker_revision": {
+            "type": ["integer", "null"],
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -2322,6 +2620,29 @@
         ],
         "additionalProperties": false
       },
+      "agent_binding_created": {
+        "type": "object",
+        "required": [
+          "agent_binding_id",
+          "workspace_id",
+          "agent_profile_id",
+          "from_enabled",
+          "to_enabled",
+          "aggregate_version",
+          "requested_by"
+        ],
+        "properties": {
+          "agent_binding_id": {"type": "string", "minLength": 1},
+          "workspace_id": {"type": "string", "minLength": 1},
+          "agent_profile_id": {"type": "string", "minLength": 1},
+          "runtime_id": {"type": "string", "minLength": 1},
+          "from_enabled": {"const": false},
+          "to_enabled": {"const": false},
+          "aggregate_version": {"type": "integer", "const": 1},
+          "requested_by": {"$ref": "#/$defs/principal_ref"}
+        },
+        "additionalProperties": false
+      },
       "agent_binding_changed": {
         "type": "object",
         "required": [
@@ -3059,7 +3380,7 @@
           },
           "dispatch_ordinal": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 0
           },
           "provider_task_status": {
             "type": "string",
@@ -3755,6 +4076,7 @@
           "to",
           "operation",
           "target_digest",
+          "dispatch_ordinal",
           "capability_invocation_id",
           "execution_method"
         ],
@@ -3790,7 +4112,7 @@
           },
           "dispatch_ordinal": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 0
           },
           "capability_invocation_id": {
             "type": "string",
@@ -3913,7 +4235,8 @@
           "attempt_id",
           "to",
           "operation",
-          "target_digest"
+          "target_digest",
+          "observation_evidence_id"
         ],
         "properties": {
           "effect_id": {
@@ -3944,6 +4267,10 @@
             "type": "string",
             "minLength": 1,
             "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "observation_evidence_id": {
+            "type": "string",
+            "minLength": 1
           },
           "dispatch_ordinal": {
             "type": "integer",
@@ -4007,7 +4334,9 @@
           "attempt_id",
           "to",
           "operation",
-          "target_digest"
+          "target_digest",
+          "failure_code",
+          "failure_retryable"
         ],
         "properties": {
           "effect_id": {
@@ -4039,9 +4368,20 @@
             "minLength": 1,
             "pattern": "^sha256:[a-f0-9]{64}$"
           },
+          "failure_code": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{0,127}$"
+          },
+          "failure_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "failure_retryable": {
+            "type": "boolean"
+          },
           "dispatch_ordinal": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 0
           }
         },
         "additionalProperties": false
@@ -4054,7 +4394,8 @@
           "attempt_id",
           "to",
           "operation",
-          "target_digest"
+          "target_digest",
+          "ambiguity_reason_digest"
         ],
         "properties": {
           "effect_id": {
@@ -4084,6 +4425,10 @@
           "target_digest": {
             "type": "string",
             "minLength": 1,
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "ambiguity_reason_digest": {
+            "type": "string",
             "pattern": "^sha256:[a-f0-9]{64}$"
           },
           "dispatch_ordinal": {
@@ -4148,7 +4493,9 @@
           "attempt_id",
           "to",
           "operation",
-          "target_digest"
+          "target_digest",
+          "retry_evidence_id",
+          "retry_basis"
         ],
         "properties": {
           "effect_id": {
@@ -4179,6 +4526,14 @@
             "type": "string",
             "minLength": 1,
             "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "retry_evidence_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "retry_basis": {
+            "type": "string",
+            "enum": ["CONFIRMED_NOT_OCCURRED", "SAME_KEY_IDEMPOTENT"]
           },
           "dispatch_ordinal": {
             "type": "integer",
@@ -6369,6 +6724,305 @@
         },
         "additionalProperties": false
       },
+      "channel_host_assignment_changed_v2": {
+        "type": "object",
+        "required": [
+          "channel_binding_id",
+          "runtime_id",
+          "host_epoch",
+          "status",
+          "ingress_continuity",
+          "aggregate_version"
+        ],
+        "properties": {
+          "channel_binding_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from_runtime_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtime_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "host_epoch": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "DRAINING"
+            ]
+          },
+          "ingress_continuity": {
+            "type": "string",
+            "enum": [
+              "CONTINUOUS",
+              "GAP_ACCEPTED"
+            ]
+          },
+          "ingress_gap_since": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source_release_basis": {
+            "type": "string",
+            "enum": [
+              "SAFE_SETTLEMENT_PROOF",
+              "LEASE_EXPIRY_PLUS_SKEW"
+            ],
+            "description": "v2 provenance only for cross-Runtime ACTIVE reassignment. RuntimeMesh service validates source Runtime differs from target against the current assignment. SQL release_kind QUIESCENT maps to SAFE_SETTLEMENT_PROOF; EXPIRY_PLUS_SKEW maps to LEASE_EXPIRY_PLUS_SKEW."
+          },
+          "source_drain_proof_ref": {
+            "$ref": "#/$defs/channel_host_drain_proof_ref",
+            "description": "Opaque scoped reference to the immutable SQL ChannelHostDrainProof row; present with its digest only when the matching lease-release row has release_kind QUIESCENT."
+          },
+          "source_drain_proof_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "description": "Digest of the referenced immutable source settlement proof."
+          },
+          "continuity_proof_ref": {
+            "$ref": "#/$defs/channel_host_continuity_proof_ref",
+            "description": "Opaque scoped reference to the immutable continuity proof for a verified cross-Runtime ingress-continuous assignment."
+          },
+          "continuity_proof_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "description": "Digest of the referenced immutable continuity proof row."
+          },
+          "ingress_gap_decision": {
+            "type": "object",
+            "required": [
+              "decided_by",
+              "decided_at",
+              "audit_record_id",
+              "reason_code"
+            ],
+            "properties": {
+              "decided_by": {
+                "$ref": "#/$defs/principal_ref"
+              },
+              "decided_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "audit_record_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason_code": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false,
+            "description": "Authenticated owner decision and audit provenance for a newly accepted ingress gap. RuntimeMesh service validates every field against the referenced same-Workspace AuditRecord."
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "ingress_continuity": {
+                  "const": "GAP_ACCEPTED"
+                }
+              },
+              "required": [
+                "ingress_continuity"
+              ]
+            },
+            "then": {
+              "required": [
+                "ingress_gap_since"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "ingress_continuity": {
+                  "const": "CONTINUOUS"
+                }
+              },
+              "required": [
+                "ingress_continuity"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "ingress_gap_since"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "source_release_basis"
+              ]
+            },
+            "then": {
+              "properties": {
+                "status": {
+                  "const": "ACTIVE"
+                }
+              },
+              "required": [
+                "from_runtime_id",
+                "status"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "source_release_basis": {
+                  "const": "SAFE_SETTLEMENT_PROOF"
+                }
+              },
+              "required": [
+                "source_release_basis"
+              ]
+            },
+            "then": {
+              "required": [
+                "source_drain_proof_ref",
+                "source_drain_proof_digest"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "source_release_basis": {
+                  "const": "LEASE_EXPIRY_PLUS_SKEW"
+                }
+              },
+              "required": [
+                "source_release_basis"
+              ]
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "source_drain_proof_ref"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "source_drain_proof_digest"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "source_drain_proof_ref"
+              ]
+            },
+            "then": {
+              "required": [
+                "source_drain_proof_digest"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "source_drain_proof_digest"
+              ]
+            },
+            "then": {
+              "required": [
+                "source_drain_proof_ref"
+              ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "ingress_gap_decision"
+              ]
+            },
+            "then": {
+              "properties": {
+                "ingress_continuity": {
+                  "const": "GAP_ACCEPTED"
+                }
+              },
+              "required": [
+                "ingress_continuity"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "ingress_continuity": {
+                  "const": "GAP_ACCEPTED"
+                }
+              },
+              "required": [
+                "ingress_continuity"
+              ]
+            },
+            "then": {
+              "required": [
+                "ingress_gap_decision"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "source_release_basis": {
+                  "enum": ["SAFE_SETTLEMENT_PROOF", "LEASE_EXPIRY_PLUS_SKEW"]
+                },
+                "ingress_continuity": {"const": "CONTINUOUS"}
+              },
+              "required": ["source_release_basis", "ingress_continuity"]
+            },
+            "then": {
+              "required": ["continuity_proof_ref", "continuity_proof_digest"]
+            }
+          },
+          {
+            "if": {
+              "required": ["continuity_proof_ref"]
+            },
+            "then": {
+              "required": ["continuity_proof_digest", "ingress_continuity"],
+              "properties": {
+                "ingress_continuity": {"const": "CONTINUOUS"}
+              }
+            }
+          },
+          {
+            "if": {
+              "required": ["continuity_proof_digest"]
+            },
+            "then": {
+              "required": ["continuity_proof_ref"]
+            }
+          }
+        ],
+        "additionalProperties": false
+      },
       "channel_host_assignment_changed": {
         "type": "object",
         "required": [
@@ -7733,6 +8387,7 @@
         "AUTOMATION_NOT_FOUND",
         "AUTOMATION_REVISION_NOT_FOUND",
         "AUTOMATION_DISABLED",
+        "AUTOMATION_NOT_PAUSED",
         "OCCURRENCE_NOT_FOUND",
         "INVALID_TRIGGER",
         "TRIGGER_UNSUPPORTED",
@@ -7818,6 +8473,25 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "agent.binding.created.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/agent_binding_created"
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {
@@ -7974,6 +8648,25 @@
       "if": {
         "properties": {
           "type": {
+            "const": "resource.created.v2"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/resource_created_v2"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
             "const": "resource.revision.observed.v1"
           }
         },
@@ -7988,6 +8681,13 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {"type": {"const": "resource.revision.created.v1"}},
+        "required": ["type"]
+      },
+      "then": {"properties": {"payload": {"$ref": "#/$defs/payloads/resource_revision_created"}}}
     },
     {
       "if": {
@@ -8479,6 +9179,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/attempt_failure_recorded"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "agent.session.starting.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/agent_session_started"
           }
         }
       }
@@ -9581,6 +10300,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/channel_host_assignment_changed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "channel.host.assignment.changed.v2"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/channel_host_assignment_changed_v2"
           }
         }
       }

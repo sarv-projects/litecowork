@@ -192,6 +192,18 @@ semantic tokens but may not introduce hard-coded hex values in component styles.
 | Suggestion card | Reason, source refs, intended result, authority preview, expiry, actions | Accept is an explicit proposal transition and never grants authority |
 | Control owner badge | Agent/Human owner, Environment name, input-control epoch status | Separate from ExecutionLease; stale owner actions are disabled with reason |
 | Profile editor group | Routing, native options, instructions, enforced limits, budget, environment | Guidance and enforceable policy have separate headings and validation states |
+| Presentation item | Typed content, source identity, freshness, status, accessible label | Stable source ordering; safe text/download fallback; no arbitrary HTML or authority in payload |
+| Context-used disclosure | Source groups, scope, exact revision/freshness, retrieval limitation | Read-only; never claims all history/resources were read; opens authorized source only |
+| Artifact version panel | Current version, version list, source Task/author, verification, compare/restore/Save As actions | Save As is a native owner action for exact managed versions up to 10 MiB; cancel writes nothing; restore appends a new version; stale publish preserves draft and requires explicit resolution |
+| Activity summary | Plain-language current action, observed time, expandable details | Shows actual projection/observation only; stale/offline state textual; no fake percentage/ETA |
+| Task outcome/activity panel | Saved objective/status, committed output records, short activity preview, collapsed sources | Snapshot freshness is labeled; output is not a verified outcome unless a VerificationRun says so; count reflects presentation items, not presumed Steps |
+| Task specification history | Lazy read-only revision list with objective, author, time, and parent revisions | Exact Task/Workspace identity only; stale cached history is labeled offline; no restore control |
+| Markdown preview | Heading/body/list/quote/code hierarchy; explicit external-link affordance | Bounded supported syntax only; unsupported/malformed input becomes escaped source text; no active HTML or implicit remote assets |
+
+The current Markdown preview is a subset, not a full renderer. External HTTPS links display
+their destination in a confirmation before leaving the Workbench. Raw content remains
+available; tables and other unsupported syntax use the plain-text fallback rather than a
+partially interpreted view.
 
 Button state priority is disabled, loading, pressed, focus, hover, default. Hover and
 pressed change surface shade/border only; do not move important content. Focus uses a

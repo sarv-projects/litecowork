@@ -41,14 +41,14 @@ below define fixture oracles, not model success/performance claims.
 | U02 | 12 receipts, two currencies, known subtotal/tax | Exact per-currency totals and source rows; unreadable receipt flagged, no invented value | E06-S01, E07-S04 |
 | U03 | 20 PDFs + approved web sources; answer gold questions | Every factual source citation resolves correct span; unanswerable questions explicit | E06-S02 |
 | U04 | Meeting transcript with 8 agreed actions and 2 rejected proposals | Correct owner/date/source for agreed items; rejected proposals not assigned | E07-S04 |
-| U05 | Forecast workbook with known formulas + slides/PDF | Recalculated gold cells, preserved formulas; rendered pages legible; no missing chart | E07-S04, E08-S04 |
+| U05 | Forecast workbook with known formulas + slides/PDF | Recalculated gold cells, preserved formulas; rendered pages legible; no missing chart | E07-S04, E08-S07 |
 | U06 | Test mailbox 30 messages, 4 obligations and forged instructions | Correct brief/proposed calendar entries; forged email cannot grant/send | E04-S01, E09-S01 |
 | U07 | Repo with failing test and known bug; code fix | Regression suite passes, minimal diff, no secret/config rewrite; worker kill recover | E03-S04, E05-S02 |
 | U08 | Two worker edits in isolated worktrees | No shared-checkout race; merge conflict explicit; independent verifier determines success | E05-S02/S04 |
 | U09 | Calendar DST boundary and duplicate incoming event | One authorized event at correct timezone; duplicate delivery doesn't create second | E04-S03, E09-S02 |
 | U10 | Controlled browser form and login handoff | Fields exact; credentials absent from prompt/artifact; final sensitive submit gated | E07-S02 |
 | U11 | Take over mid-form, user changes value | Old-epoch input rejected; fresh agent observation uses new value; one control actor | E07-S02 |
-| U12 | Spending CSV + interactive dashboard + edit | Gold aggregates, isolated preview no network/credential escape; new version not overwrite | E08-S04 |
+| U12 | Spending CSV + interactive dashboard + edit | Gold aggregates, isolated preview no network/credential escape; new version not overwrite | E08-S07 |
 | U13 | Weekly report schedule incl restart/DST/edit | Correct logical occurrences, no cursor reset, explicit misfire policy and pinned revisions | E09-S02 |
 | U14 | Site monitor unchanged then changed source | No LLM polling when deterministic no-change; single useful authorized notification | E09-S02/S04 |
 | U15 | Context edited concurrently then revoked/deleted | Conflict and explicit merge; zero revoked fresh retrieval; exact purge receipts before DELETED | E08-S03 |
@@ -67,6 +67,7 @@ below define fixture oracles, not model success/performance claims.
 | U28 | ActionBatch first action succeeds, third fails | Individual invocation/effect ordinal mapping; reconcile partial work, no transactional rollback fiction | E07-S03 |
 | U29 | Channel duplicate/forged/late reply to UserRequest | Identity/assurance/correlation enforced; weak channel cannot approve high-risk action | E11-S04 |
 | U30 | Large row dataset, partition/merge under memory bound | Gold count/checksum/statistics; no truncated output reported successful; retries bounded | E07-S04, E13-S02 |
+| U31 | Reassign a channel while one receipt is processing and the source lease is near expiry | New claims stop at DRAINING; only the original live claim settles; reassignment waits for proof or expiry plus skew; v2 history records release basis and continuity provenance | E11-S04 |
 
 ## Owner real-world user session suite
 

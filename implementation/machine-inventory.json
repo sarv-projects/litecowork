@@ -1578,6 +1578,18 @@
     },
     {
       "method": "GET",
+      "operationId": "listLocalResources",
+      "path": "/resources",
+      "sha256": "60b06e634638698ea603519e74ae8049a297c16e7f445b18ce45b4e48585c78f"
+    },
+    {
+      "method": "POST",
+      "operationId": "quickImportResource",
+      "path": "/resources/quick-import",
+      "sha256": "4426ff33ef08144bf38651eefb8b9d5fa7910dbbcd62244e5ca111fa5e6b5b06"
+    },
+    {
+      "method": "GET",
       "operationId": "searchResources",
       "path": "/resources/search",
       "sha256": "6c5af1ab893fb5803ab04ffa2360187056ac127f60cdeb5a9f50ef73a7f87233"
@@ -1611,6 +1623,12 @@
       "operationId": "getResource",
       "path": "/resources/{resourceId}",
       "sha256": "146faa0e1865440ab8b8cfed55631da59ab147828e7a8bf80d12df8fd1ab3e56"
+    },
+    {
+      "method": "GET",
+      "operationId": "readLocalResourceContent",
+      "path": "/resources/{resourceId}/content",
+      "sha256": "6e918f0a4a3f5e0cf7f28150b79ae4ee40edce36d4abf698f85fdbf3d2f63967"
     },
     {
       "method": "GET",
@@ -2018,7 +2036,7 @@
       "method": "POST",
       "operationId": "createWorkspace",
       "path": "/workspaces",
-      "sha256": "0e87c8790f4474eb4f98de9d947d3adb0c3edf25b198613195057faa1c2652f3"
+      "sha256": "048226bca4ded1e974890314cfba1105a52e7178b44a9e737e5d1e9b2a0eb06f"
     },
     {
       "method": "GET",
@@ -2545,6 +2563,16 @@
     },
     {
       "method": "GET",
+      "operationId": "listLocalResources",
+      "path": "/resources"
+    },
+    {
+      "method": "POST",
+      "operationId": "quickImportResource",
+      "path": "/resources/quick-import"
+    },
+    {
+      "method": "GET",
       "operationId": "searchResources",
       "path": "/resources/search"
     },
@@ -2572,6 +2600,11 @@
       "method": "GET",
       "operationId": "getResource",
       "path": "/resources/{resourceId}"
+    },
+    {
+      "method": "GET",
+      "operationId": "readLocalResourceContent",
+      "path": "/resources/{resourceId}/content"
     },
     {
       "method": "GET",
@@ -3389,7 +3422,7 @@
     },
     {
       "name": "CreateWorkspaceRequest",
-      "sha256": "28e34a52d77e8e838b00d56fcd3e76d3d1e6d99ea40f1fd367208c6b9842b3b6"
+      "sha256": "7f37480db71fdae46a158fa546b7cb22c67e5592ac4dca796a1e27ab7225d3c8"
     },
     {
       "name": "DelegatedEnvironmentPolicy",
@@ -3684,6 +3717,14 @@
       "sha256": "4ec6f7fe766287ff58ebc7ff1ae60b0bbdd0c57edaec89f383275ef1878e5d07"
     },
     {
+      "name": "QuickImportResourceRequest",
+      "sha256": "87aaab9dd69c9a517fc5365bc81e99c8eb743365ed7718309bc21aa52ff54022"
+    },
+    {
+      "name": "QuickImportResourceResponse",
+      "sha256": "b7e1bb5cf1637049ea19071ab4b106d61c05cca1c6fee752ab4957c277bec3b9"
+    },
+    {
       "name": "QuietHours",
       "sha256": "b985d1dd1571dc75f115ae5a3f01225b761d4d80409c1c1562d438266246f501"
     },
@@ -3770,6 +3811,10 @@
     {
       "name": "ResourceSearchResult",
       "sha256": "8d0ff60059408eefdb2e78870a21353668632f3ac77628568391fe699cebe5c6"
+    },
+    {
+      "name": "ResourceSummary",
+      "sha256": "9a9ced0c7209ce24a3b8c5583b4432097aeca0dce36e08dc4d81f0db79a4fce5"
     },
     {
       "name": "ResourceUploadSession",
@@ -4268,6 +4313,8 @@
     "ProvenanceRecord",
     "ProvenanceTransformation",
     "ProviderIdentity",
+    "QuickImportResourceRequest",
+    "QuickImportResourceResponse",
     "QuietHours",
     "QuotaObservation",
     "ReassignChannelHostRequest",
@@ -4290,6 +4337,7 @@
     "ResourceScope",
     "ResourceSearchPage",
     "ResourceSearchResult",
+    "ResourceSummary",
     "ResourceUploadSession",
     "RestoreReceipt",
     "RestoreWorkspaceBackupRequest",

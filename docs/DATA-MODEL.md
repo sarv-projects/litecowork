@@ -1,6 +1,6 @@
 # Data Model
 
-IDs are opaque, globally unique and stable. Durable records carry the creation or receipt time relevant to their lifecycle. Mutable aggregates carry an optimistic `version`; `updated_at` appears where it belongs to that aggregate's update contract. Immutable records have no update API. Timestamps are RFC 3339 UTC. Canonical entities and relationships are defined here; shared enums are in `SCHEMAS.md`, transitions in `STATE-MACHINES.md`, and SQL representation in `schemas/sqlite-v1.sql`.
+IDs are opaque, globally unique and stable. Durable records carry the creation or receipt time relevant to their lifecycle. Mutable aggregates carry an optimistic `version`; `updated_at` appears where it belongs to that aggregate's update contract. Immutable records have no update API. Timestamps are RFC 3339 UTC. Canonical entities and relationships are defined here; shared enums are in `SCHEMAS.md`, transitions in `STATE-MACHINES.md`, and the current SQLite schema is the ordered immutable baseline plus migrations `schemas/sqlite-v1.sql` through `schemas/sqlite-v10.sql`.
 
 ## Workspace
 
@@ -32,6 +32,9 @@ versioned policy update.
 `primary_coworker_id` selects the default Coworker shown for new work; setting it requires
 an ACTIVE or PAUSED Coworker in this Workspace and emits `workspace.primary_coworker.changed.v1`.
 Clearing it is explicit. It never changes a Task's origin Coworker or lead binding.
+`hub_runtime_id`, when present, identifies the installation hosting this Workspace's
+Mesh authority. That Runtime must also have an ACTIVE `MESH_PAIRING`
+`RuntimeWorkspaceBinding` for this Workspace; the RuntimeId itself is not authorization.
 
 ### WorkspaceInstructionRevision
 
@@ -47,8 +50,9 @@ WorkspaceInstructionRevision {
 }
 ```
 
-Instruction revisions are immutable, bounded, digest-checked, and treated as untrusted
-content. Tasks pin the selected revision. Updating Workspace instructions affects future
+Instruction revisions are immutable, limited to 64 KiB of UTF-8 text, digest-checked, and
+treated as untrusted content. Their pinned Resource revision must belong to the same
+Workspace. Tasks pin the selected revision. Updating Workspace instructions affects future
 Tasks; an existing Task changes context only through an explicit TaskSpecRevision.
 Creation is Hub-authoritative and carries `If-Match` plus explicit `parent_revisions`.
 Revision 1 has no parents; an ordinary edit must name exactly the current instruction
@@ -424,7 +428,6 @@ and a freshly built envelope pinned to the current TaskSpec revision.
 ```text
 Runtime {
   runtime_id: RuntimeId
-  workspace_id: WorkspaceId
   device_identity: DeviceIdentity
   runtime_version: SemVer
   platform: string
@@ -436,6 +439,19 @@ Runtime {
   current_incarnation_id: RuntimeIncarnationId?
   resource_capacity: ResourceCapacity
   last_seen: Timestamp
+  version: u64
+}
+
+RuntimeWorkspaceBinding {
+  runtime_workspace_binding_id: RuntimeWorkspaceBindingId
+  runtime_id: RuntimeId
+  workspace_id: WorkspaceId
+  enrollment_mode: LOCAL_ENROLLMENT | MESH_PAIRING
+  status: PENDING | ACTIVE | REVOKED
+  roles: RuntimeRole[]
+  created_at: Timestamp
+  activated_at: Timestamp?
+  revoked_at: Timestamp?
   version: u64
 }
 
@@ -459,19 +475,40 @@ RuntimeIncarnationLocalObservation {
 }
 ```
 
-`RuntimeIncarnation` is a durable Runtime Mesh registry record. An authenticated Runtime
-registers it before publishing offers or events that refer to it; Workspace peers retain
-the compact public record so replicated aggregates can preserve origin-incarnation
-references. `os_boot_id` and diagnostic details remain in the local-only observation and
-never replicate or enter Workspace backups. RuntimeId identifies the paired installation;
-every daemon lock-holder start creates a new incarnation. Process-bound handles, local
-offers, and observation cursors are tagged with the incarnation that observed them.
+`Runtime` identifies one installed daemon and is not owned by a single Workspace.
+`RuntimeWorkspaceBinding` is the explicit scope link. `LOCAL_ENROLLMENT` authorizes local
+Workspace operations only; it does not imply Mesh pairing, remote presence, or
+replication. `MESH_PAIRING` is created only after the Hub's authenticated pairing flow
+succeeds. Every Workspace-scoped Runtime operation must check an ACTIVE binding and the
+relevant Workspace principal policy; binding activation alone is not a capability Grant.
+Revocation prevents new work in that Workspace but does not alter Runtime identity or
+another binding. `RuntimeIncarnation` is first persisted in the installation-local Runtime
+catalog after SQLite opens and before recovery begins; that registration does not create a
+Workspace binding. Authenticated Mesh publication is a separate operation performed only
+after pairing.
+
+The local `Runtime` and `RuntimeIncarnation` catalog is durable installation state and is
+excluded from Workspace backup/replication. An authenticated Runtime registers the
+incarnation with Mesh before publishing offers or events that refer to it; authorized
+Workspace peers retain the compact public record so replicated aggregates can preserve
+origin-incarnation references. `os_boot_id` and diagnostic details remain in the local-only
+observation and never replicate or enter Workspace backups. RuntimeId identifies the
+installed daemon; every daemon lock-holder start creates a new incarnation. Process-bound
+handles, local offers, and observation cursors are tagged with the incarnation that
+observed them.
 Runtime lifecycle and boot recovery are defined in `RUNTIME-LIFECYCLE.md`.
 `RuntimeIncarnationLocalObservation` is keyed by incarnation and remains local to the
 Runtime. It may help determine whether the OS itself rebooted, but it is not authority for
 lease or Effect settlement.
 
 Runtime advertised inventory is maintained separately as offers so it can expire without rewriting runtime identity.
+
+For `OPENCODE_SERVER`, the expiring offer constraints may contain only the bounded
+`OpenCodeProfileProbeConstraints` projection defined in `SCHEMAS.md`: provider/model IDs
+and display names plus OpenCode-reported connected-provider IDs. These are display-only
+observations. The offer remains `compatible=false` and cannot admit an AgentBinding while
+session-model selection and execution lifecycle remain unqualified. Native provider/model
+objects and credentials are never persisted in offer constraints.
 
 ```text
 RuntimeOffer {
@@ -889,6 +926,8 @@ ChannelHostAssignment {
   status: ACTIVE | DRAINING
   ingress_continuity: CONTINUOUS | GAP_ACCEPTED
   ingress_gap_since: Timestamp?
+  ingress_gap_decision_audit_id: AuditRecordId?
+  continuity_proof_ref: EvidenceRef?
   assigned_at: Timestamp
   version: u64
 }
@@ -1050,6 +1089,12 @@ CapabilityInvocation. Its `execution_method` is provenance for the route used by
 Invocation, not agent-reported UI text. The Effect and Invocation must agree on Task,
 Attempt, request digest, operation, and method. `UNKNOWN` is retained when the adapter
 cannot prove the route; it is never displayed as a specific API/browser method.
+
+When Effect state is `OBSERVED`, `observed_state` reserves the `_evidence_id` property for
+the exact immutable same-Task Evidence record establishing that observation. Other
+observation properties remain provider/observer-defined JSON. Writers reject a conflicting
+caller-supplied `_evidence_id`; the canonical transition event also carries
+`observation_evidence_id`.
 
 Each new observation is a new immutable Evidence row; an earlier `REPORTED` record is
 not upgraded in place to `OBSERVED` or `VERIFIED`.
@@ -1405,13 +1450,94 @@ sort key across reassignment. The successor resumes from the receipt with the gr
 provider event ID is passed only to the authenticated adapter and is not returned by the
 Operator API.
 
-`ChannelHostAssignment.ingress_continuity` describes the current host boundary. It is
-`CONTINUOUS` after a verified cursor transfer or replay catch-up. If the owner explicitly
-confirms a move without either guarantee, it is `GAP_ACCEPTED` and `ingress_gap_since` is
-required; the UI must preserve that warning in channel history. A heartbeat, timeout, or
-best-effort rescan cannot silently change `GAP_ACCEPTED` back to `CONTINUOUS`. A later
-assignment may begin `CONTINUOUS` only after its own provider transfer/replay is verified;
-the prior gap remains in the immutable assignment event history.
+`ChannelHostAssignment.ingress_continuity` describes the current host boundary. Within one
+`host_epoch`, continuity status and provenance are immutable. `CONTINUOUS` after the first
+epoch requires a verified cursor-transfer/replay evidence reference. `GAP_ACCEPTED` requires
+`ingress_gap_since` and an `AuditRecordId` for the explicit owner decision; that audit record
+must identify this ChannelBinding and an allowed decision. A later epoch may establish new
+continuity only from its own verified transfer/replay proof; earlier gaps remain in
+assignment-event history and cannot be erased by editing the old epoch.
+
+```text
+ChannelHostDrainProof {
+  proof_id: ChannelHostDrainProofId
+  channel_binding_id: ChannelBindingId
+  workspace_id: WorkspaceId
+  runtime_id: RuntimeId
+  host_epoch: u64
+  lease_id: OpaqueLeaseId
+  lease_control_version: u64
+  proved_at: Timestamp
+  proof_digest: Digest
+  verified_by: ServiceRef
+  unsettled_receipt_count: 0
+  unresolved_effect_count: 0
+  unreplicated_receipt_count: 0
+}
+
+RecordChannelHostDrainProofRequest {
+  request_id: RequestId
+  channel_binding_id: ChannelBindingId
+  runtime_id: RuntimeId
+  host_epoch: u64
+  lease_id: OpaqueLeaseId
+  expected_lease_control_version: u64
+}
+
+The request identifies the exact lease to settle; it does not accept caller-supplied
+proof digests or zero counters. RuntimeMesh derives the proof, verifier identity, receipt
+frontier, unresolved-Effect count, and replication state from its authoritative stores.
+
+ChannelHostContinuityProof {
+  proof_id: ChannelHostContinuityProofId
+  channel_binding_id: ChannelBindingId
+  workspace_id: WorkspaceId
+  source_runtime_id: RuntimeId
+  source_host_epoch: u64
+  source_lease_id: OpaqueLeaseId
+  source_lease_control_version: u64
+  target_runtime_id: RuntimeId
+  target_host_epoch: u64 # source_host_epoch + 1
+  last_replicated_receipt_ref: ChannelEventReceiptRef? # null means no receipt existed at handoff
+  source_cursor_digest: Digest
+  target_cursor_digest: Digest
+  verified_at: Timestamp
+  proof_digest: Digest
+  verified_by: ServiceRef
+}
+
+ChannelHostLeaseReleaseRecord {
+  channel_binding_id: ChannelBindingId
+  workspace_id: WorkspaceId
+  runtime_id: RuntimeId
+  host_epoch: u64
+  lease_id: OpaqueLeaseId
+  control_version: u64
+  fencing_token_digest: Digest
+  safe_reassign_after: Timestamp
+  released_at: Timestamp
+  release_kind: QUIESCENT | EXPIRY_PLUS_SKEW
+  drain_proof_id: ChannelHostDrainProofId?
+}
+```
+
+Drain proofs and lease-release records are immutable Runtime Mesh operational records,
+not a replacement for Task Effects/Evidence. RuntimeMesh creates a quiescent proof only
+after stopping new source work, while the source lease and authenticated source Runtime are
+still valid, settling all in-flight receipt claims, reconciling outbound Effects, and
+confirming committed ingress is durable at the Hub. The zero counters are service-verified
+claims, not user-supplied assertions; only RuntimeMesh may record them after checking its
+authoritative receipt, Effect, and replication state. The proof is pinned to the exact source
+lease id/control version. Otherwise release waits until `safe_reassign_after`.
+
+`ChannelHostContinuityProof` records RuntimeMesh-verified provider cursor transfer or bounded
+replay to the last Hub-replicated receipt. It pins both Runtime/epoch endpoints, the exact
+source lease identity, the receipt boundary, and digests of the source and target cursor
+state; it never stores raw provider cursor bytes. Its opaque proof ID and digest are used by
+assignment/event projections. A cross-Runtime `CONTINUOUS` assignment must reference this
+record for its target epoch. The proof may be completed after lease release if the release
+record already proves the source is fenced and the target replay independently reaches the
+durable receipt boundary.
 
 ## CapabilityInvocation
 
@@ -1844,6 +1970,12 @@ ResourceLocation {
   last_checked_at: Timestamp?
 }
 
+`availability = UNAVAILABLE` means the source Runtime cannot currently establish the
+location through its persisted private binding. It is distinct from `OFFLINE` (the source
+is known but not currently reachable) and `UNKNOWN` (freshness/availability has not been
+observed). For a local WorkspaceRoot, only exact Runtime-start identity revalidation may
+change an unavailable location back to `AVAILABLE`.
+
 ResourceLocationBinding { # Runtime-local operational relation
   location_id: ResourceLocationId
   runtime_id: RuntimeId
@@ -1904,16 +2036,26 @@ ResourceUploadSession {
   workspace_id: WorkspaceId
   display_name: string
   media_type: string
-  expected_size_bytes: u64
+  expected_size_bytes: u64 # initial desktop Resource uploads are capped at 100 MiB
   expected_digest: Sha256Digest?
-  chunk_size_bytes: u64
+  chunk_size_bytes: u64 # local desktop currently negotiates fixed 4 MiB chunks
+  context_document?: ContextDocumentCreateMetadata # pinned only for initial Resource uploads
+  folder_import?: FolderImportMetadata # pinned only for initial one-time folder attachments
   state: ResourceUploadState
   received_ranges: UploadRange[]  # derived from immutable ResourceUploadChunk rows
   next_missing_offset: u64        # derived progress projection
   expires_at: Timestamp
-  resource_id: ResourceId?
+  resource_id: ResourceId?          # target Resource for revision uploads
+  committed_resource_id: ResourceId? # populated atomically when committed
+  expected_resource_version: u64?   # If-Match pin for revision uploads
+  parent_revision_ids: ResourceRevisionId[]
   created_at: Timestamp
-  version: u64
+  version: u64                # lifecycle aggregate revision used by DomainEvents
+  progress_version: u64       # advances per newly accepted chunk; fences concurrent PUTs
+}
+
+FolderImportMetadata {
+  relative_path: string # normalized '/' separators; never an absolute path or locator
 }
 
 UploadRange {
@@ -1928,7 +2070,7 @@ ResourceUploadChunk {
   start_offset: u64
   end_offset_exclusive: u64
   sha256: Sha256Digest
-  temporary_blob_ref: string
+  temporary_blob_ref: string # encrypted BlobStore object under RESOURCE_UPLOAD_CHUNK
   received_at: Timestamp
 }
 
@@ -1936,6 +2078,14 @@ InvalidationDependentRef =
   `artifact://<workspace-id>/<artifact-id>@v<version>`
   | `verification://<verification-run-id>`
 ```
+
+`provenance.folder_import`, when present, is the normalized relative path reported by a
+one-time folder attachment picker. It is provenance/display metadata only: it is not a
+Resource identity, filesystem locator, persistent `WorkspaceRoot`, or access grant. The
+current desktop also keeps this value in `display_name` for compatibility with existing
+catalog/search behavior. It has the same Workspace replication and visibility as Resource
+metadata/display names and does not broaden either. Raw and absolute filesystem paths
+remain Runtime-local and are never stored here.
 
 An InvalidationRecord is unique for `(dependency_edge_id, observed_revision_id)`.
 `observed_revision_id` is the newly observed revision that invalidated the exact older
@@ -1986,6 +2136,30 @@ observation, indexing, search, resolution, race defenses, and invalidation behav
 ResourceRef uses stable identity (`resource://<workspace-id>/<resource-id>@<revision-id?>`);
 filesystem paths, Runtime IDs, connector handles, and browser tabs are location/provider
 details. `ResourceSearchResult` is a projection, not a durable entity.
+
+`ResourceSearchResult` and `ResourceTextIndex` are rebuildable local projections, not
+canonical domain entities. `ResourceTextIndex` is keyed by Workspace, Resource, and exact
+ResourceRevision; it records the source digest, encrypted extracted-text BlobRef, parser
+version, keyed-token version, and index time. Distinct term tokens are HMAC-SHA256 values
+under the Workspace's `RESOURCE_INDEX` OS-keystore key; raw terms and extracted text are
+not persisted in SQLite. The extracted snapshot uses the encrypted BlobStore. Search
+requires the matching Workspace key, an exact current Resource revision/digest, and an
+active ContextDocument. A missing key fails closed. Rebuildable index rows are not
+replicated as domain events and are excluded from historical Task truth. Deletion plans
+for ContextDocuments must include this BlobStore object and its term rows as a derived
+index target.
+
+An owner-triggered index rebuild is projection maintenance, not a Resource mutation. Its
+request pins one current `ResourceRevisionId` and `Sha256Digest`; the result is durably
+replayed by the authenticated Principal/RequestId and reports `INDEXED` or a typed
+`NOT_INDEXABLE` reason. This receipt belongs to request deduplication, not the domain
+event journal, and contains no source text or terms.
+
+`ResourceSearchMode=ON_DEMAND_CONTENT` remains a bounded compatibility request
+projection. `INDEXED_CONTENT` matches normalized Unicode terms deterministically (AND
+across terms) over the local encrypted index and returns a pinned ResourceRef with an
+optional short excerpt. It makes no semantic relevance claim. ZIP members and
+rich-document contents are not ResourceRefs in this implementation slice.
 
 ## Event
 
@@ -2060,7 +2234,7 @@ form because provenance, verification, and staleness depend on an exact revision
   operation/resource scope.
 - A managed ArtifactVersion points only to committed content whose digest has been verified; an external ArtifactVersion pins a Resource/revision and records any digest the provider supplies.
 - Evidence and AuditRecord are append-only. Corrections append new records.
-- AutomationOccurrence pins immutable AutomationRevision and RoutineRevision records plus a stable trigger ID; its occurrence key is independent of definition revision.
+- AutomationOccurrence pins immutable AutomationRevision, RoutineRevision, trigger ID, trigger-host Runtime, input/provenance fields, and occurrence key; its occurrence key is independent of definition revision. Only claim, blocker, Task-link, status, and update fields may change. Its Task link is assigned at most once during CLAIMED→STARTED/WAITING_DEPENDENCY and must point back to the same AutomationOccurrence. Status changes follow the state machine; terminal states are immutable. A nonterminal occurrence can advance only while its pinned Runtime has an ACTIVE TRIGGER_HOST binding; revocation waits for every such occurrence to settle.
 - An archived Workspace has no nonterminal Tasks, unsettled Conversation turns/Invocations, enabled Automations, active grants/SecretLeases/control leases, or live persistent Environment workload. Watchers are stopped; retained environments may remain suspended. It admits no new Task or inbound channel work. Archived Routines cannot be selected for new Tasks or Automations.
 - Resource identity is stable across locations; unavailable locations do not imply a Resource is absent, and stale source revisions invalidate downstream evidence without mutating its history.
 - A Task cannot be completed while a mandatory criterion lacks its required evidence,
@@ -2090,8 +2264,9 @@ Additional cross-entity constraints:
 
 - Task Coworker origin ID/revision are both null or both present and reference the same
   Workspace; they are immutable after Task creation.
-- A Goal may reference only Tasks and Routine revisions in its Workspace. Goal links are
-  historical grouping; they do not affect Task status or authority.
+- A Goal may reference only Tasks, Routine revisions, and exact Artifact versions in its
+  Workspace. Goal links are historical grouping; they do not affect Task status or
+  authority. Artifact references pin `(workspace_id, artifact_id, version)`.
 - Coworker avatar, Suggestion source, and Suggestion Goal references pin exact revisions
   that exist in the same Workspace; they never mean “whatever is current when read.”
 - A DelegationProfile references an AgentBinding in the same Workspace. Profile revisions

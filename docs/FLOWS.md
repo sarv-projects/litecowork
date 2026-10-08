@@ -8,7 +8,7 @@ directly. The listed sequence is normative unless a linked owner contract is str
 
 Actors: User, Operator UI, WorkspaceService, TrustService, RuntimeMesh.
 
-1. The user creates a Workspace. WorkspaceService commits `LOCAL_ONLY` and an empty selected-root set when no other allowed initial policy is supplied, then emits `workspace.created`.
+1. The user creates a Workspace. The desktop retains the same RequestId if the response is lost and the same name/policy is retried. WorkspaceService commits the chosen supported initial policy (default `LOCAL_ONLY`) and an empty selected-root set, then emits `workspace.created`; the idempotency receipt commits with the aggregate, event, and origin sequence. `SELECTED_FOLDERS` is rejected until roots exist.
 2. The user adds persistent WorkspaceRoots for selected folders. A one-time message attachment does not create a root.
 3. The UI explains each replication scope before the user explicitly enables cloud replication. `SELECTED_FOLDERS` requires one or more active WorkspaceRoot IDs in this Workspace; it follows new revisions under each root rather than pinning one snapshot.
 4. WorkspaceService applies a versioned prospective policy update and stores the selected root IDs transactionally with `workspace.replication_policy.changed`.
@@ -798,7 +798,7 @@ UI: show last verified backup time, restore point, and any missing artifact/effe
 | F54 | Changed native configuration digest and re-probe | Preserve user config; reject unsupported/stale overrides |
 | F55 | Coworker created, selected primary, then first Task | Identity persists across lead changes; Task pins Coworker revision |
 | F56 | Suggestion acceptance creates ordinary Task or opens editor | No direct execution, scheduling, or authority grant |
-| F57 | Goal links verified Task outcomes and Evidence | Progress remains derived; only owner changes Goal completion status |
+| F57 | Goal links verified Task outcomes, Evidence, and pinned Artifact versions | Progress remains derived; only owner changes Goal completion status |
 | F58 | Concurrent ContextDocument Resource revisions | Preserve both changes and require explicit merge/rebase |
 | F59 | Deadline preflight and bounded ActionBatch | Fail before effects when prerequisites fail; reconcile partial Effects before fallback |
 | F60 | Shared browser profile takeover through control lease | One current controller; stale epoch input is discarded |
@@ -812,6 +812,50 @@ UI: show last verified backup time, restore point, and any missing artifact/effe
 | F68 | Owner mutes a SuggestionKind | Atomically persist Workspace preference and dismiss current proposals of that kind |
 | F69 | Owner reopens a completed Goal | Change Goal status only; retain prior completion, Tasks, and Evidence |
 | F70 | Duplicate a DelegationProfile | Create revision 1 disabled under the same binding; preserve no authority or execution state |
+| F71 | Policy-based lead failover | Fresh lead session and handoff only after pinned policy and admission checks |
+| F72 | Coworker-owned Automation creates a Task | Pin Automation/Coworker revisions and admit an ordinary Task once |
+| F73 | Bounded ActionBatch with partial failure | One Invocation per operation; reconcile committed Effects before continuing |
+| F74 | Concurrent Resource revision edit | Preserve both edits and require explicit merge/rebase on stale heads |
+| F75 | ContextDocument revocation/deletion | Block new reads immediately; retain purge tombstone until every registered target is acknowledged |
+| F76 | Suggestion producer admission/suppression | Only registered bounded producers; dedupe, mute, cooldown and provenance before proposal |
+| F77 | Bounded Teach-a-task capture | Semantic trace becomes a reviewed SkillProposal, not an executable replay |
+| F78 | Workspace worker enablement vs Coworker assignment | Available workers are distinct from those permitted for one Coworker |
+| F79 | Native turn interruption with live command | Stop/reap the owned process tree and prove writer quiescence before releasing its fence |
+| F80 | Runtime restart during replacement startup | Recover durable state and do not assume the replacement process/session survived |
+| F81 | Runtime restart after replacement Attempt is running | New incarnation fences old lease; reconcile Effects before any retry |
+| F82 | Render, stream, and recover a Conversation presentation | Sequenced transient frames resume or replace from committed state without journaling deltas |
+| F83 | Inspect context used for work | Show only exact authorized attachments/retrieval receipts actually resolved |
+| F84 | Compare and restore an Artifact version | Compare immutable versions; restore by appending a new version |
+| F85 | Import local files into a Workspace | User-selected bytes become digest-checked Resources with explicit provenance |
+| F86 | Read and preview a committed local Resource | Resolve exact authorized revision and retain raw download fallback |
+| F87 | Create/list local Workspace instruction revisions | Append immutable instructions; pin the exact revision used by future Task context |
+| F88 | Edit Workspace instructions in desktop | Require current version/parent and preserve draft on conflict |
+| F89 | Browse a large local Resource catalog | Bound pages and discard late Workspace responses |
+| F90 | Resumable desktop Resource upload | Resume exact content digest; distinguish committed upload from lost response |
+| F91 | Confirm authenticated local Operator incarnation | Tauri becomes ready only after identity-bound daemon readiness response |
+| F92 | Search managed Resources | Enforce Workspace scope and label lexical/on-demand match semantics honestly |
+| F93 | Enroll/revoke local Runtime for a Workspace | Versioned owner action; stop future access without rewriting Task history |
+| F94 | Authenticate desktop Operator over local OS IPC | Per-install identity, peer validation and bounded authenticated requests |
+| F95 | Explicit coding-agent profile probe | Display bounded observations only; unknown auth/inference stays unqualified |
+| F96 | Select Workspace default lead agent | Versioned eligible binding; no silent lead/model fallback |
+| F97 | Persist standalone Task envelope | Atomic READY Task/spec/event/receipt; no planning or Attempt implied |
+| F98 | Claim durable Task planning startup | Producer-scoped session reservation and stale assignment fencing |
+| F99 | Accept initial plan into durable Task state | Validate producer, TaskSpec and DAG; atomically append Plan/Steps |
+| F100 | Save standalone Task from desktop composer | Preserve draft and Coworker/Workspace identity until committed receipt |
+| F101 | Pin Library Resources to saved Task | Pin exact authorized Resource revisions; attachment does not imply content exposure |
+| F102 | Load persisted Task plan/Steps in desktop | Validate Task identity and show only saved plan state |
+| F103 | Revise an unplanned Task objective | Append TaskSpec revision only when READY and no Plan is accepted |
+| F104 | Pause/resume persistent folder scope | Verify exact selected root identity; never broaden to a replacement path |
+| F105 | Pin Coworker revision to paused Automation | Preserve exact origin configuration; definition remains paused |
+| F106 | Check Task planning readiness | Read-only blocker projection; never dispatch or create execution records |
+| F107 | Link/unlink Workspace work from Goal | Versioned provenance links only; Task/Routine/Artifact state remains authoritative |
+| F108 | Accept actionable Suggestion as Task | Atomic ordinary READY Task plus Suggestion resolution; no execution authority |
+| F109 | Read exact Coworker revision provenance | Return the pinned historical revision; never substitute the current head |
+| F110 | Review saved Task outcome/activity snapshot | Show only committed fields; keep stale freshness distinct from Evidence and no live claim |
+| F111 | Preview managed Markdown Artifact | Safe bounded rendering; malformed syntax falls back to raw text; external HTTPS requires confirmation |
+| F112 | Inspect immutable TaskSpec history | Exact Task-scoped revisions, read-only; preserve cached history when offline |
+| F113 | Compare adjacent Artifact versions | Exact immutable versions through the same safe renderer; no inferred diff or mutation |
+| F114 | Save an exact Artifact version from desktop | Native Save As for selected managed content up to 10 MiB; verify identity and digest; cancellation writes nothing |
 
 
 ## F37 — Runtime boot and incarnation recovery
@@ -819,13 +863,18 @@ UI: show last verified backup time, restore point, and any missing artifact/effe
 **Actors/preconditions:** OS service manager or authenticated Operator; installed Runtime,
 exclusive installation lock, accessible StateStore and authorized startup policy.
 
-1. Acquire the lock and create a RuntimeIncarnation; open storage and apply supported
-   migrations before admitting commands that mutate Task execution.
-2. Validate journal/checkpoints; recover claims and reconcile stale leases, Effects, and
+1. Acquire the installation lock, create a fresh bootstrap incarnation ID, open StateStore
+   and BlobStore, and apply supported migrations.
+2. Load/create the stable Ed25519 DeviceIdentity through the OS credential store. Verify
+   its RuntimeId binding and any existing Runtime catalog identity, then atomically persist
+   the Runtime, new `RECOVERING` incarnation, and local observation. Credential failure
+   or identity mismatch fails closed before Operator API startup.
+3. Validate journal/checkpoints; recover claims and reconcile stale leases, Effects, and
    owned process handles. Restore scheduler cursors and mark watcher gaps stale.
-3. Reconnect the Hub, refresh offers, and resume authorized resource observation.
-4. Publish readiness only after mandatory recovery gates pass. Installed workers remain
-   cold; recovery never starts every agent/provider/application.
+4. Reconnect the Hub, refresh offers, and resume authorized resource observation.
+5. Publish readiness only after mandatory recovery gates pass. Installed workers remain
+   cold; recovery never starts every agent/provider/application. Local catalog registration
+   creates no Workspace binding or Mesh presence.
 
 **Failure/UI/postcondition:** storage or integrity failure prevents execution admission;
 show recovery/degraded reasons. Local operational incarnation state and logs record boot
@@ -909,6 +958,12 @@ unsafe replay. Show reconnect/stale/waiting states until reconciled; sleeping lo
 is never presented as still executing.
 
 ## F42 — Explicit Runtime stop and safe drain
+
+**Implementation status:** target flow only. The current daemon does not expose an
+authenticated Operator stop endpoint or stop preview. Do not add a direct IPC-to-signal
+shortcut. Implement this flow only after Attempt admission/drain, Effect reconciliation,
+lease settlement, and local trigger/provider-reference ownership can provide the required
+quiescence proof.
 
 **Actors/preconditions:** authenticated Operator, RuntimeLifecycleService, TaskService,
 Mesh; user requests stop against the current incarnation.
@@ -1030,16 +1085,43 @@ Runtimes, channel provider; active ChannelBinding and eligible target offer.
    losslessly from the latest Hub-replicated receipt. The versioned request must set
    `accept_ingress_gap = true` if provider cursor transfer/replay cannot prove continuity;
    otherwise reject it before changing assignment.
-2. Put the source assignment into `DRAINING`: stop new receipt claims and outbound sends,
-   allow in-flight reads to settle, and reconcile outbound sends that may be ambiguous.
-3. Settle/flush source receipts to the Workspace Hub before releasing the lease, or wait
-   for authoritative expiry plus clock-skew margin if the source is unavailable. A heartbeat
-   loss alone never grants the target ownership. An unreplicated receipt prevents a
-   continuity-safe move unless the owner explicitly accepts a possible gap.
-4. RuntimeMesh atomically increments `host_epoch`, commits the target Runtime assignment,
-   issues a new bounded host lease over authenticated Mesh control, and appends
-   `channel.host.assignment.changed.v1`. The target starts/attaches only its channel
-   adapter when this assignment is active and its provider/secret checks pass.
+2. Serialize inbound receipt admission with the ACTIVE → DRAINING transition on the
+   ChannelBinding. An ingress transaction may insert and acknowledge a receipt only after
+   it verifies the current ACTIVE assignment, current unexpired source lease, and active
+   CHANNEL_HOST binding; receipt insertion and origin sequence allocation commit atomically
+   at the authoritative receipt store. A non-authoritative source acknowledges/defer-acks
+   the provider only after the Hub confirms durable replication. The Hub serializes receipt
+   admission against the drain transition for that binding. If ingress admission commits
+   first, its receipt is included in drain reconciliation. If DRAINING commits first, the source inserts no new receipt and does
+   not acknowledge/defer-ack that provider event; it leaves delivery retryable for the
+   successor. If the provider cannot retry or replay it, the move requires explicit
+   `accept_ingress_gap` and records that uncertainty.
+3. After DRAINING commits, stop new claims, polls, and outbound sends. Let already-claimed
+   receipts settle only under their unchanged, still-valid source lease. A pre-drain
+   `RECEIVED` row may remain unclaimed if it is Hub-durable and included in the successor's
+   replay frontier; the successor may claim it under its new lease. Reconcile outbound sends
+   that may be ambiguous. If the source is available, RuntimeMesh verifies that no
+   source-epoch receipt remains `PROCESSING`, outbound Effects are settled/reconciled, and
+   every pre-drain `RECEIVED` receipt is Hub-durable and included in the successor's replay
+   frontier, then records an immutable
+   `ChannelHostDrainProof` pinned to the exact lease id/control version. Proof creation and
+   receipt insertion share the binding-level serialization point, so a successful proof
+   cannot race a later source receipt. If the source is unavailable or proof cannot be
+   established, retain DRAINING and wait until the lease's pinned `safe_reassign_after`
+   (expiry plus at least 30 seconds of clock-skew margin). A heartbeat loss or missing lease
+   row alone never grants target ownership. Any source-local receipt not yet Hub-replicated
+   remains an unsettled drain dependency and blocks quiescent proof. An unreplicated receipt blocks a continuity-safe
+   move unless the owner explicitly accepts a possible gap.
+4. RuntimeMesh releases the source lease, advances `host_epoch`, commits either the target
+   ACTIVE assignment plus its new bounded lease, or an explicitly unassigned/degraded
+   ChannelBinding when no eligible target is available, and appends the assignment event
+   with source-release and continuity provenance. These changes are one Hub transaction:
+   no committed ACTIVE assignment lacks exactly one matching current lease. Lease IDs are
+   never reused; each host epoch receives a fresh fencing credential derived from a
+   domain-separated immutable identity containing the ChannelBinding, Runtime, host epoch,
+   and unique lease ID. A credential digest must differ from the current digest; duplicate
+   lease identities/digests fail closed. The target starts/attaches only its channel adapter
+   after the assignment and lease commit and its provider/secret checks pass.
 5. The target validates/imports its provider cursor or replays from the receipt with the
    largest `(origin_host_epoch, ingress_sequence)` before it acknowledges or advances
    provider ingress. Old receipt claims and ChannelReplyTargets fail the current epoch
@@ -1060,6 +1142,15 @@ resume only if its lease remains valid and no higher epoch has committed; otherw
 channel is visibly unavailable until another eligible host is assigned. Stale source events
 cannot create messages, answer UserRequests, or trigger Tasks. The UI shows the actual host
 and handoff state; changing host does not change binding permissions.
+
+If a Workspace Runtime binding is being revoked and there is no eligible replacement,
+RuntimeMesh completes the safe release and removes the ChannelHostAssignment in the same
+transaction that records its release; the ChannelBinding remains present but is marked
+`DEGRADED`/unassigned. It accepts no new inbound or outbound work until a new eligible host
+and lease are explicitly assigned. This unassigned path never deletes receipt history or
+reply-target provenance. A committed DRAINING assignment retains its matching lease until
+the atomic release-and-move or release-and-clear transaction; legacy DRAINING rows without
+a lease cannot be safely inferred as released and fail migration preflight for repair.
 
 ## F47 — Enable an installed AgentBinding as a worker
 
@@ -1196,8 +1287,10 @@ configuration or silently select another model.
 
 **Actors/preconditions:** Workspace owner; agent setup may be complete or deferred.
 
-1. First-run setup asks for name/role and optional context, notification, and worker
-   preferences; avatar is optional. Primary Coworker is a separate Workspace setting.
+1. First-run setup creates/selects the primary Coworker with the neutral defaults
+   (“Assistant”, “General-purpose assistant”); renaming/role customization can be skipped
+   and edited later. Optional context, notification, and worker preferences remain
+   explicit; avatar is optional.
 2. CoworkerService creates the identity and revision; it provisions no host and creates
    no background work.
 3. The Operator sends the selected Coworker ID (normally prefilled from Workspace primary)
@@ -1240,10 +1333,16 @@ Routine revisions.
 
 1. GoalService validates references and writes an immutable revision; links are
    provenance/context only.
-2. GoalProgressProjection reads Task outcomes and pinned Evidence and reports completed,
-   active, blocked, conflicting, or stale contributions with source links.
-3. Worker reports can suggest progress but cannot complete the Goal. Only owner command
-   changes Goal status to COMPLETED.
+2. The current read projection loads same-Workspace Task statuses and bounded committed
+   Evidence IDs, plus Evidence IDs that resolve from each exact Goal-pinned Artifact
+   version. It reports `PARTIAL` because VerificationRun and dependency-freshness
+   readers are not integrated. `COMPLETED` Task status alone remains `UNVERIFIED`; only
+   explicit `INCOMPLETE`, `FAILED`, or `CANCELLED` Task statuses map to `INCOMPLETE`.
+   Unsupported verified/stale/conflicted counts are null with typed limitation codes.
+3. When VerificationRun and dependency readers are integrated, the projector may report
+   `VERIFIED`, `STALE`, or `CONFLICTED` only from criterion/input-bound records. Worker
+   reports can suggest progress but cannot complete the Goal. Only owner command changes
+   Goal status to COMPLETED.
 
 **Failure/UI/postcondition:** Missing/stale/conflicted sources stay visible and do not
 count as verified progress. Goal status never mutates linked Tasks or Routines.
@@ -1749,6 +1848,1445 @@ stopped unexpectedly.
 ambiguous Effects, or failed lease fencing leaves the old Attempt unresolved and blocks new
 writers. Recovery is idempotent and never labels a previously running Attempt as a startup
 failure. Any local PoC booleans for Effect/lease state are test scaffolding only.
+
+## F82 — Render, stream, and recover a Conversation presentation
+
+**Actors/preconditions:** Owner, Operator, ConversationService, PresentationProjector,
+authenticated Operator stream; the Workspace is readable and the Conversation turn is
+active or settled.
+
+1. Operator fetches the authorized Conversation presentation snapshot and its projection
+   revision/cursor. It renders committed messages and linked Task/Artifact/UserRequest items
+   by stable source order.
+2. For an active turn, the stream may deliver bounded `turn.delta` frames with a
+   `retry_ordinal` and monotonic sequence within that retry. The UI appends real text and
+   labels it in progress; the frames are transient and are not stored as ConversationMessages
+   or domain events.
+3. ConversationService commits the final response as a ConversationMessage. The new
+   projection replaces transient text and supplies its durable source identity.
+4. If the stream disconnects, the client fetches the latest authorized snapshot and resumes
+   from its cursor. An expired cursor requires full projection replacement before new
+   frames are applied. Duplicate, reordered, stale, or post-settlement deltas are ignored.
+   If a live sequence gap cannot be replayed by the current adapter, the Operator drops
+   the partial buffer and waits for committed output instead of joining discontinuous text.
+5. A failed turn leaves no saved assistant answer from uncommitted deltas; the user may use
+   the ordinary retry flow, with earlier committed messages preserved.
+
+**Failure/UI/postcondition:** No historical typing animation is replayed. A partial failed
+response is visibly incomplete and never appears as a committed answer. Presentation frames
+cannot create a Task, resolve a UserRequest/Approval, or claim an Effect succeeded. See
+[`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md) and the Operator stream in `API.md`.
+
+## F83 — Inspect context used for work
+
+**Actors/preconditions:** Owner, Operator, ContextService/ResourceResolver, and an authorized
+Conversation turn or Task projection with recorded context attachment/retrieval provenance.
+
+1. The user opens “Context used” from a Conversation response or Task detail.
+2. Operator loads the exact resolved context receipt for that scope: explicit attachments,
+   instruction revisions, selected ContextDocuments, and provider-retrieved source refs.
+3. The view labels each source with scope and available revision/freshness data. It does not
+   claim that unselected Resources or all prior conversations were read. Unknown provenance
+   is disclosed as unknown.
+4. Opening a source rechecks Workspace authorization and resolves the pinned revision.
+   Revoked/deleted content is unavailable even when historical Task provenance remains.
+5. Editing, revoking, or deleting a ContextDocument routes through ResourceService; the
+   inspection surface itself is read-only.
+
+**Failure/UI/postcondition:** Provider loss or missing provenance produces an explicit
+limitation, not a fabricated source. Scope violations reveal no source metadata/content.
+No memory record is autonomously created or changed.
+
+## F84 — Compare and restore an Artifact version
+
+**Actors/preconditions:** Owner, Workbench, ArtifactStore, ArtifactVersion/ResourceRevision,
+and a renderer qualified for the selected content kind.
+
+1. Workbench pins the selected Artifact ID and immutable current version, then loads the
+   authorized version list and provenance.
+2. If the renderer supports comparison, the user selects two committed versions. Otherwise
+   the compare action is absent and both versions remain independently open/downloadable.
+3. Restore selects an existing version as content input; ArtifactStore checks current
+   Artifact aggregate version and publication state.
+4. ArtifactStore appends a new ArtifactVersion and matching ResourceRevision with the
+   selected prior content. It never moves the current-version pointer backward or removes
+   later versions.
+5. A concurrent publication returns the ordinary stale-version conflict. Workbench keeps
+   any local dirty draft and offers explicit compare/rebase; it never overwrites it.
+
+**Failure/UI/postcondition:** History order follows committed Artifact version numbers.
+Restore is shown as complete only after ArtifactStore commits the new version. Renderer
+failure does not imply content deletion. See `ARTIFACTS-EVIDENCE.md` and
+[`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md).
+
+## F85 — Import local files into the selected Workspace
+
+**Actors/preconditions:** Workspace owner, desktop Library, authenticated local Operator,
+ResourceStore, encrypted BlobStore; the selected Workspace is active and owned by the
+local Principal.
+
+1. The user selects files, a ZIP, or a folder as a one-time multi-file attachment. The
+   desktop limits a selection to 100 files/100 MiB and each file to 100 MiB; a directory
+   selection does not create a persistent WorkspaceRoot. Folder selection filters known
+   credential/build paths (for example `.env`, private-key files, `.ssh`, `.aws`, `.git`,
+   `node_modules`, and build output) and reports the excluded count. This filename/path
+   filter is defense in depth, not secret-content scanning; ZIP internals remain opaque.
+2. For folder selections, the WebView normalizes `webkitRelativePath` to slash-separated
+   segments and retains that relative path as the compatibility display name. It never
+   sends the absolute selected folder path. The WebView passes bounded upload chunks and
+   this optional metadata to Tauri; the native client uses authenticated local IPC and
+   sends each upload with the exact selected Workspace and a stable Idempotency-Key.
+3. Operator rechecks Workspace ownership and ACTIVE status, validates the path at the
+   daemon boundary, requires it to match display_name, and rejects absolute/drive/UNC,
+   dot-segment, empty-segment, backslash, control-character, overlong, or excessive-depth
+   paths. The path is never opened or resolved as a filesystem location.
+4. Storage pins `folder_import` in the resumable session and its aggregate snapshot, includes
+   it in idempotency and resume matching, and copies it from that session into Resource
+   provenance at commit. It encrypts and verifies bytes, then transactionally writes the
+   Resource, initial revision/location, event and idempotency receipt. Folder-derived
+   Resources emit `resource.created.v2`; other uploads keep `resource.created.v1`.
+5. The desktop shows the committed catalog metadata only after the API response. On
+   Workspace change/reopen it reloads the bounded Resource list from the local Runtime.
+   Content preview, extraction, indexing, and search are not implied by catalog presence.
+
+**Failure/UI/postcondition:** Invalid selection/path, oversized files, inactive/foreign
+Workspace, corrupted chunk/digest, BlobStore failure, or database conflict creates no
+visible successful item. Retrying the same key and exact path returns the original upload
+session; using the key with another path conflicts. Changing a folder path forces a new
+resume identity and RequestId. A crash may leave an unreachable encrypted blob for later
+garbage collection, but never a partial Resource row. Folder provenance is descriptive;
+it does not authorize access to a WorkspaceRoot or file on a later run.
+
+## F87 — Create and list local Workspace instruction revisions
+
+**Actors/preconditions:** Workspace owner, desktop/Operator client, authenticated local
+Operator, WorkspaceService, SQLite store, and encrypted Resource BlobStore. The user has
+already imported a same-Workspace UTF-8 text Resource no larger than 64 KiB.
+
+1. The client reads the current Workspace version and selects an exact Resource revision;
+   the ResourceRef carries Workspace, Resource, and revision IDs, plus its content digest.
+2. The client posts the proposed parent revision IDs and pinned ResourceRef with matching
+   `X-Workspace-ID`, current Workspace `If-Match`, and an idempotency key. The daemon
+   authenticates the native client and confirms Workspace ownership.
+3. Operator resolves the Resource through storage, which verifies the encrypted bytes and
+   digest. It rejects a foreign Workspace, non-current/unavailable revision, non-text MIME,
+   invalid UTF-8, oversize content, or a digest mismatch.
+4. WorkspaceService and SQLite validate the current Workspace version, ACTIVE status,
+   next instruction revision, and same-Workspace parent revisions. One transaction writes
+   the immutable revision, Workspace current-revision/version projection, aggregate state,
+   `workspace.instructions.revision.created.v1`, origin sequence, and RequestId receipt.
+5. A retry with the same key and payload returns the original committed result. Reusing
+   that key for another payload conflicts. A stale version creates no revision.
+6. The list endpoint checks the same owner and Workspace scope, then reads the indexed
+   immutable revision projection in ascending order using a Workspace-bound opaque cursor.
+
+**Failure/UI/postcondition:** No instruction text is copied into event payloads or logs;
+the event stores a pinned ResourceRef and digest. Current implementation is local-only and
+has no desktop editor, pagination, Hub authority, or TaskSpec pinning. The request can be
+retried safely after a lost response, but this slice is not complete Workspace-instruction
+product support.
+
+## F86 — Read and preview a committed local Resource
+
+**Actors/preconditions:** Workspace owner, desktop Library, authenticated local Operator,
+ResourceStore and encrypted BlobStore; the Resource belongs to the selected owned
+Workspace (active or archived/read-only) and has one current revision with an available
+encrypted-blob location.
+
+1. The owner requests a preview for a catalog Resource. Tauri authenticates the daemon's
+   OS peer over local IPC and sends the selected Workspace header, Resource ID, and the
+   revision ID displayed in that catalog result.
+2. Operator verifies Workspace ownership before resolving the Resource; archived Workspaces
+   remain readable under the existing resource-download contract.
+   Storage queries only the current revision/location for that exact Workspace/Resource
+   pair; provider locators are not returned to the client. If `revision_id` was supplied
+   and no longer matches the current revision, Operator returns `RESOURCE_CONFLICT`.
+3. Storage reads through the Resource-purpose BlobStore and verifies byte length and
+   SHA-256 against the pinned current revision before returning content. The current
+   local read path checks indexed size before decrypting and rejects revisions over
+   10 MiB; the text preview UI has its own 1 MiB limit.
+4. The local API sends bytes as `application/octet-stream` with `no-store` and `nosniff`.
+   It does not allow a WebView or browser to execute the Resource.
+5. Tauri permits an inline preview only for text-like media types, caps the response at
+   1 MiB, and requires valid UTF-8. The UI displays the result as escaped plain text; larger,
+   binary, unavailable, stale, corrupt, or unsupported content remains metadata-only with
+   an actionable explanation.
+
+**Failure/UI/postcondition:** Foreign Workspace IDs are denied without revealing Resource
+existence. Missing content returns unavailable; a selected-revision mismatch returns
+`RESOURCE_CONFLICT` and no preview; digest/length mismatch returns an integrity error and
+no preview. A read creates no domain event and does not
+implicitly attach the Resource to an AgentSession. HTML, SVG and other active content is
+never rendered inline. This does not implement general download, binary rendering, content
+indexing/search, folder-root search, or semantic RAG.
+
+## F88 — Edit Workspace instructions in the desktop shell
+
+**Actors/preconditions:** Workspace owner, Tauri desktop shell, authenticated local Operator,
+and an ACTIVE Workspace. The owner may begin with no instruction revision.
+
+1. On Workspace selection, the desktop loads immutable instruction history. If a current
+   revision exists, it loads the referenced Resource through the bounded text preview path,
+   pinning the exact `content_ref.revision_id`, and places the content in the editor. A
+   generation guard discards results from a previously selected Workspace. If that Resource
+   has advanced, the current-head-only endpoint returns `RESOURCE_CONFLICT`; the UI explains
+   that it did not replace the pinned instruction text with newer bytes.
+2. The owner edits the shared guidance and saves. The UI enforces a 64 KiB UTF-8 byte limit
+   before any network request and creates a stable request identity for the unchanged draft.
+   Editing the draft after a failed request starts a new identity.
+3. Tauri imports the text as a same-Workspace `text/plain; charset=utf-8` Resource using a
+   separate idempotency key, then asks the Operator to create an instruction revision from
+   that exact Resource ID, revision ID, and digest using the Workspace version and current
+   instruction revision as concurrency/parent inputs.
+4. The UI reports the new revision only after the Operator returns a committed result,
+   refreshes the Workspace version and immutable history, and explains that existing Tasks
+   are unchanged.
+
+**Failure/UI/postcondition:** If Resource import succeeds but instruction commit fails, the
+text Resource remains in the Library and may be unreferenced; the UI reports the failure
+and retains the same request identity for retry of the unchanged draft. Reusing that
+identity replays the Resource import and instruction mutation. The current local slice has
+no atomic cross-command transaction, orphan cleanup, explicit merge editor, historical
+Resource-revision content read, or TaskSpec instruction pinning. A late list/content response
+from another Workspace cannot replace the current editor contents. A changed backing
+Resource may make older instruction content unavailable until historical revision reads are
+implemented; it must never silently display the newer head.
+
+**Tests to add in the later verification pass:** every instruction preview sends the pinned
+`content_ref.revision_id`; missing revision refs are not previewed; a Resource head change
+between history load and preview returns `RESOURCE_CONFLICT`; the editor never receives the
+newer unpinned bytes; Workspace switching still discards late content responses.
+
+## F89 — Browse a large local Resource catalog
+
+**Actors/preconditions:** Workspace owner, desktop Library, authenticated local Operator,
+and an owned Workspace with zero or more committed Resources.
+
+1. The desktop requests the first metadata page with a bounded `limit`; the Operator checks
+   owner and Workspace scope before asking storage for `limit + 1` rows.
+2. SQLite orders current Resource summaries by `created_at DESC, resource_id DESC` and
+   applies a keyset cursor. The cursor contains the selected Workspace and the last row's
+   ordering key; it grants no access and cannot be reused with another Workspace.
+3. Operator returns at most `limit` metadata summaries plus `next_cursor` only when another
+   row exists. Content bytes, snippets, paths, and provider locators are never returned.
+4. The desktop shows the first page and lets the owner load older pages. It appends only
+   previously unseen Resource IDs and rejects empty/repeated cursors. Changing Workspace
+   resets the catalog and invalidates outstanding page responses.
+5. Name/type filtering operates only on rows already loaded. It does not claim to search
+   older pages or Resource content; deterministic indexed search remains a separate flow.
+
+**Failure/UI/postcondition:** Invalid limits, malformed cursors, and cursors bound to a
+different Workspace are rejected. A storage failure leaves already loaded rows visible
+and reports that the next page could not be loaded. Concurrent new Resources inserted
+ahead of the cursor do not shift the older-page boundary. Listing creates no domain event,
+does not read encrypted Resource bytes, and does not attach Resources to a Task.
+
+## F90 — Resumable desktop Resource upload
+
+**Actors/preconditions:** Workspace owner, desktop Library, Tauri native bridge, authenticated
+local Operator, SQLite ResourceUploadStore, encrypted BlobStore. The user selected files
+within the 100-file / 100-MiB selection limit; each file is at most 100 MiB.
+
+1. Tauri creates an upload session with a stable request key and local metadata. The daemon
+   binds it to the selected owner Workspace, fixes the chunk size at 4 MiB, and sets a
+   24-hour expiry. A zero-byte file is immediately `CONTENT_RECEIVED` with no chunk rows.
+   It commits `resource.upload.created.v1` with the complete initial session state. A daemon
+   sweeper checks up to 100 due sessions every 30 seconds and commits the
+   `EXPIRED` transition with a progress-version guard and aggregate-state-backed event.
+2. For each non-empty file, the UI reads bounded slices. Before resuming an existing session,
+   it hashes every previously received range from the newly selected file and reuses only
+   exact matches. A v1 session without a whole-file digest, or with an old size/chunk limit
+   outside the current contract, is not resumed; the desktop starts a new verified upload.
+   A COMMITTED session is recovered only after the selected bytes match its pinned digest;
+   the deterministic commit receipt returns the original Resource, which is inserted into
+   the visible catalog by its exact ID. A digest-less legacy COMMITTED session cannot prove
+   that it represents the selected bytes, so the desktop stops and asks the owner to review
+   the Library. A migrated committed row without a deterministic receipt returns a typed
+   conflict instead of creating a duplicate. The browser stores upload ID, request IDs, and
+   file metadata only; file bytes stay transient.
+3. Each PUT carries a chunk index, inclusive `Content-Range`, raw SHA-256 header, and
+   idempotency key. The Operator authenticates the native caller, verifies Workspace
+   ownership and exact range/digest. Storage commits an operational reservation before
+   encrypting bytes with the dedicated `RESOURCE_UPLOAD_CHUNK` purpose, then commits the
+   chunk receipt while consuming the reservation. Each accepted chunk
+   advances `progress_version`; lifecycle `version` advances only on state transitions.
+   The final contiguous chunk emits OPEN -> CONTENT_RECEIVED in the same transaction as
+   its receipt and aggregate-state snapshot. Replaying identical bytes is idempotent;
+   changed content for an accepted index conflicts.
+4. The desktop commits only after all bytes are accepted. Storage loads chunks in index
+   order, decrypts and verifies each digest/size, checks contiguous total coverage and the
+   required whole-file digest, then creates the Resource, revision, location, event and
+   replay receipt, the session `COMMITTED` state, and CONTENT_RECEIVED -> COMMITTED event
+   in the same SQLite transaction.
+5. Tauri appends the returned Resource to the visible catalog only after commit succeeds.
+   If the process stops mid-upload, the user reselects the file; matching acknowledged
+   chunks are skipped and missing chunks resume. Expired sessions start over. ZIP input
+   remains an opaque Resource; this flow does not extract archives or add a persistent root.
+6. The desktop may offer **Pause upload**. This is a client-side stop, not a server-side
+   cancellation: it waits for the current create/chunk/commit request to settle, starts no
+   further request or file, and retains the upload ID/request metadata so the same unchanged
+   file can be reselected to resume within the session TTL. If the last in-flight request
+   commits the Resource, the UI reports that committed result rather than claiming it was
+   paused. No new upload state or domain event is created by the pause control.
+
+**Failure/UI/postcondition:** Wrong Workspace, invalid size/range, expired session, or
+conflicting replay is rejected without changing the Resource. Commit retries for one upload
+ID resolve to the same Resource. Definite stored-content integrity failure durably
+transitions CONTENT_RECEIVED -> FAILED with an aggregate-state-backed event before returning
+`INTEGRITY_FAILURE`; the user must start a new upload. Transient blob/database failures leave
+the session retryable and do not show a committed Resource. A failed metadata transaction
+may leave an encrypted object with an expired reservation. The daemon's bounded sweep
+claims expired reservations only when no accepted chunk references that Workspace/digest
+and no unexpired reservation exists. It writes a durable GC fence before removing the exact
+encrypted object, preventing a new chunk reservation during deletion. A crash after claim
+leaves a `DELETING` reservation/fence for retry after daemon restart; missing-object removal
+is idempotent. The single-instance daemon runs the collector after upload-expiry processing,
+at most 100 candidates per 30-second tick. Cleanup failures are non-fatal to Operator
+availability and leave the fence intact for retry. The local implementation journals
+session creation and lifecycle transitions, but not operational reservations/GC state.
+
+**Tests to add in the later verification pass:** Crash after reservation but before blob
+write; crash after encrypted blob write but before receipt; shared-digest reservation and
+accepted-reference retention; collector versus concurrent reservation/receipt; collector
+restart with a persisted DELETING fence; missing-object retry; BlobStore remove failure
+keeps the fence and retries; bounded batches and expiry order; zero-byte commit; exact 4-MiB and final
+short chunk boundaries; 100-MiB maximum and +1 byte rejection; missing/out-of-order chunk;
+wrong total/range/index; incorrect per-chunk and whole-content hashes; same-index exact
+replay and changed-byte conflict; same chunk RequestId with changed payload conflicts;
+concurrent identical chunk retries using the same or different RequestIds return the
+accepted receipt after the first transaction consumes its reservation; a losing duplicate
+reservation is removed in that replay transaction; replay of the final chunk after
+CONTENT_RECEIVED or COMMITTED returns the current upload state; retries after lost
+create/chunk/commit responses; malformed chunk geometry creates neither a durable
+reservation nor a BlobStore object; resume
+after daemon restart from reselected identical bytes; reject changed source file on resume;
+cross-Workspace session lookup; owner mismatch; archived Workspace; durable TTL expiry;
+expiry/commit and expiry/chunk races; sweeper restart and bounded-page behavior; crash before
+and after commit transaction; BlobStore or DB failure leaves no partial Resource; encrypted
+temporary chunk plaintext absent from disk; zero-byte digest; UI survives Workspace switch
+and reports already committed files accurately.
+
+**Additional pause-control verification:** Pause upload waits for the current Operator
+request, sends no later chunk/file/commit request, preserves the resumable session, treats
+a commit already in flight as completed, and resumes only after the same unchanged file is
+reselected.
+
+## F91 — Desktop confirms the authenticated local Operator incarnation
+
+**Actors/preconditions:** desktop Tauri shell, `litecoworkd`, private local connection
+descriptor; the daemon may still be DEGRADED and unable to execute Tasks.
+
+1. Tauri derives the local endpoint from its private application-data directory. Shared
+   endpoint validation checks the directory owner/mode and a non-symlink Unix socket.
+2. Tauri opens a fresh local connection and validates the daemon's kernel-reported peer
+   UID before writing any frame. Unsupported platforms fail closed; there is no bearer or
+   loopback fallback.
+3. Tauri sends a bounded `GET /v1/operator/readiness` frame with a unique request ID. The
+   daemon validates the caller UID before reading the frame and dispatches through the
+   existing Operator router with a private process-local authenticated-peer marker.
+4. The response reports `operator_state=SERVING`, local bootstrap IDs, and the supported
+   Operator contract version. The status projection compares those IDs with the daemon's
+   lock-backed status before setting `operator_ready=true`; `SERVING` does not mean Task
+   execution readiness. Subsequent domain calls use one authenticated request/response
+   exchange per connection and retain their original RequestId for safe mutation retry.
+
+**Failure/UI/postcondition:** lock held without a listener, invalid token, stale
+descriptor, wrong Runtime/incarnation, unsupported contract version, malformed response,
+or timeout leaves `operator_ready=false`; no Workspace/resource command is issued. An
+already-running daemon is never spawned a second time. Runtime state may remain DEGRADED
+while Operator API is SERVING. These local IDs are not Mesh identity and are not
+replicated.
+
+**Tests to add in the later verification pass:** lock acquired before listener startup;
+listener bind/runtime initialization failure; correct authenticated handshake; missing and
+wrong bearer; browser Origin and unexpected Host; stale descriptor after daemon restart;
+descriptor Runtime mismatch; descriptor incarnation mismatch; unsupported contract
+version; process alive but API unavailable; API serving while Runtime is DEGRADED; startup
+wait deadline; repeated client acquisition after token rotation; hostile HTTP(S)_PROXY
+environment variables cannot receive the bearer; exact snake_case wire/schema conformance;
+private descriptor mode and symlink rejection; second start request while an authenticated
+daemon is already serving.
+
+## F92 — Search managed Resources by metadata or bounded on-demand text scan
+
+**Actors/preconditions:** owner-authenticated desktop session; selected owner-accessible
+Workspace (an archived Workspace remains read-only);
+Resources already imported into the managed encrypted BlobStore.
+
+1. The Library debounces the query and sends it through Tauri to the authenticated local
+   Operator with the selected Workspace header. In `METADATA` mode, kind/freshness filters
+   may be used with an empty query to browse the filtered catalog. `ON_DEMAND_CONTENT` and
+   `INDEXED_CONTENT` are explicit user-selected modes and require non-empty search terms.
+   Metadata and on-demand matching use ASCII-case-insensitive literal substrings; indexed
+   mode tokenizes Unicode alphanumeric terms and requires every distinct query term.
+2. The Operator validates Workspace ownership, mode, query, kind, freshness, limit, and
+   cursor. A cursor is accepted only when its Workspace and exact query/mode/filter values
+   match the request.
+3. SQLite searches current managed revisions and selects one deterministic encrypted-blob
+   location per Resource. Metadata mode filters display-name/media-type and returns its
+   existing stable keyset page. On-demand mode scans no more than 20 candidates, reads at
+   most 1 MiB per Resource and 8 MiB total, and considers only allowlisted UTF-8 text in
+   request memory. Indexed mode token-matches only current revisions with an encrypted
+   snapshot and matching HMAC key version. The query HMAC is derived outside the SQL
+   transaction; unavailable Workspace keys fail the indexed mode closed. SQLite stores
+   no text or raw term. ZIP, PDF/Office, unsupported/binary text, and WorkspaceRoot
+   content are excluded. Indexed snippets are decrypted and digest-checked outside SQL,
+   then revision and ContextDocument status are rechecked before return. Cursors bind
+   Workspace, query, mode, and filters.
+4. Tauri reduces the response to Library fields. The UI labels on-demand and indexed
+   matches distinctly. A result includes a pinned ResourceRef; selecting Preview remains
+   a separate explicit action and rechecks that pinned revision. Search results are not
+   attached to a Task or AgentSession.
+
+**Failure/UI/postcondition:** owner mismatch is forbidden; archived Workspace search is
+read-only; malformed/oversized filters, unsupported/conflicted freshness, invalid limit,
+malformed cursor, cross-Workspace cursor, or cursor/filter mismatch returns a typed client
+error. Storage failure does not produce a partial success.
+Content modes return only bounded snippets. The deterministic encrypted index does not
+search path provenance, ZIP members, rich documents, or WorkspaceRoots, and does not
+implement semantic RAG. No search result is implicit Task context. ContextDocument
+revocation excludes matching rows immediately; deletion includes term rows and encrypted
+snapshot blobs in its sealed purge target and does not claim completion until purge
+receipts acknowledge them.
+
+**Tests to add in the later verification pass:** matching and nonmatching Resource names;
+media-type match; literal `%` and `_`; ASCII-case-insensitive match; empty query returns the
+filtered catalog; direct API leading/trailing whitespace is preserved as literal query text;
+exact kind and supported freshness filtering; one-owner/foreign-Workspace request;
+all cursor mismatch cases; equal timestamps and inserted rows retain keyset semantics;
+page boundary and limit bounds; absent managed location is excluded; observed digest or
+revision mismatch reports stale; unavailable/revoked location does not claim current;
+multiple managed locations still yield one deterministically selected location/result;
+10k-Resource search latency is recorded as a qualification sample, not an unverified SLO;
+Tauri maps the wire response; UI debounce cancels stale queries, Workspace changes clear
+results/cursors, new Resources refresh active search, repeated next cursor is rejected,
+selected result previews only after explicit click, a changed revision returns
+`RESOURCE_CONFLICT` without previewing newer bytes, and no search result enters a Task
+automatically. On-demand cases include UTF-8 allowlist and binary/control rejection,
+case-insensitive literal matches, snippet bounds, 20-candidate/1-MiB-per-file/8-MiB
+aggregate budgets, exact revision/digest recheck, and cursor continuation. Indexed cases
+include upload-time index creation, revision replacement without stale term reuse, exact
+Workspace/key-version isolation, HMAC key rotation with retained-key search and explicit
+rebuild, missing-key fail-closed behavior, no plaintext in SQLite, encrypted snapshot
+digest/authentication failure, current-revision/ContextDocument recheck, purge, Unicode
+AND matching, query-term limits, ZIP/PDF/Office exclusion, and keyset pagination. Treat
+elapsed search time as a qualification measurement, not an SLO.
+
+## F93 — Enroll or revoke a local Runtime for one Workspace
+
+**Actors/preconditions:** authenticated local Operator over qualified OS-peer IPC,
+Workspace owner, RuntimeWorkspaceBindingService, StateStore, Runtime Mesh when pairing.
+
+1. Workspace creation or an explicit owner action requests local enrollment. The service
+   resolves the installation's stable RuntimeId and creates one ACTIVE
+   `LOCAL_ENROLLMENT` binding for the selected Workspace. An exact idempotent retry returns
+   the same binding; it does not create another Runtime identity.
+2. The binding authorizes only Workspace-scoped local operations allowed by its roles and
+   the separate Workspace/Trust checks. It creates no Mesh presence, replication grant,
+   capability grant, or folder authority.
+3. Optional cloud pairing is a separate owner action. The Hub consumes a single-use
+   Workspace-scoped token, authenticates the device key, and records a `MESH_PAIRING`
+   binding before allowing presence or replication.
+4. Revoking one binding blocks new admissions, Workspace writes, root access, and
+   replication on that binding. If the Runtime is currently selected as this Workspace's
+   Mesh hub, the service first clears `hub_runtime_id` under the expected Workspace
+   version. It also drains any ChannelHost assignment and releases its host lease. When a
+   target is eligible, the assignment and target lease commit atomically; when none is
+   eligible, RuntimeMesh atomically clears the released assignment and leaves its
+   ChannelBinding visibly DEGRADED/unassigned. It reassigns or disables enabled TriggerHost
+   cursors before revocation. It also settles all nonterminal AutomationOccurrences pinned
+   to that TriggerHost; disabling an
+   Automation prevents new occurrences but does not settle existing ones. Storage rejects
+   revocation while these references remain live. Active Task work follows lease and Effect
+   reconciliation; it is never silently moved to another Runtime. Installation-wide
+   revocation is a separate operation affecting all bindings.
+
+**Failure/UI/postcondition:** missing OS-peer authentication, mismatched Workspace,
+inactive/revoked binding, owner mismatch, stale version, replayed token, a local enrollment
+selected as a Mesh hub, undrained host/trigger references, or unavailable Hub fails closed.
+The UI distinguishes “this computer can access this Workspace” from “this Runtime is
+paired for cloud sync.” Runtime API readiness alone never displays a Workspace as enrolled.
+
+Revocation cannot skip the ChannelHost ingress barrier. Receipt insertion and the
+ACTIVE→DRAINING transition are serialized; once DRAINING commits, the source neither inserts
+nor acknowledges new receipts. A live source must settle all source-epoch PROCESSING claims,
+make every pre-drain RECEIVED row Hub-durable and part of the successor replay frontier, and
+reconcile outbound Effects before a quiescent proof. The successor may claim a durable
+pre-drain RECEIVED row using its new lease. If the source cannot prove this, revocation waits
+through `safe_reassign_after` or leaves the binding unrevoked. Migration rejects ACTIVE assignments without a matching lease and DRAINING
+assignments without a matching live lease, because v1 has no release tombstone from which
+the safe release can be reconstructed.
+
+**Tests to add in the later verification pass:** one installation with two Workspaces has
+distinct bindings; revoking one preserves the other; local enrollment creates no Mesh
+presence or replication; exact retry is idempotent; cross-Workspace root/admission requests
+fail; revoked binding stops new work but does not rewrite a live Attempt; Mesh pairing
+token replay/expiry/owner mismatch fails; global Runtime revoke invalidates every binding;
+legacy v1/v2 Runtime rows backfill correctly through v3 and v4 removes the legacy Workspace
+   column without losing Runtime/Workspace authorization or scoped rows; migration preflight
+   rejects legacy ChannelHost rows whose `GAP_ACCEPTED` owner decision or later-epoch
+   continuity proof cannot be reconstructed; preflight rejects
+orphaned/wrong-role Environment, channel, trigger, or Workspace-hub references, including
+a reusable Environment without an ACTIVE EXECUTOR binding and a revoked ChannelHost with
+an unexpired lease; nonterminal TriggerHost occurrences cannot advance after revocation;
+ChannelHost assignment reactivation under a revoked binding, illegal occurrence status
+transitions, direct pre-linked/non-PENDING occurrence insertion, duplicate Tasks for one
+occurrence, Task-link reassignment/mismatch, and terminal occurrence rewrites are rejected;
+Automation claim epochs advance exactly once per new claim, expired claims alone requeue,
+and materialization rejects expired claims or missing Task links; ChannelHost assignments
+cannot skip draining, and lease identity/control versions cannot be rewritten or renewed
+after expiry; in-flight receipt settlement is permitted only for the unchanged source claim
+while draining; new claims/reclaims stop in DRAINING; live release needs an exact drain proof;
+expired release waits through the pinned safety margin; assignment continuity provenance is
+immutable within an epoch; malformed claim/lease timestamps and impossible legacy occurrence
+status/epoch/expiry/Task tuples fail v4 migration preflight;
+all migrated foreign keys pass `foreign_key_check`; injected v4 interruption leaves either
+the complete v3 schema with foreign keys restored or the complete v4 schema; two Workspaces
+can attach one Runtime with independently scoped EXECUTOR/CHANNEL_HOST/TRIGGER_HOST/
+WORKSPACE_HUB roles; binding revocation rejects an uncleared Mesh hub or undrained
+ChannelHost/TriggerHost, including nonterminal TriggerHost occurrences, and succeeds after
+those references are settled.
+ChannelHost ingress insertion racing DRAINING is serialized (insert wins and is reconciled,
+or drain wins and source does not insert/ack); proof cannot race a RECEIVED/PROCESSING
+source-epoch receipt; late provider delivery is retried/replayed or requires an audited gap
+decision; release plus target lease assignment or explicit unassignment is atomic; every
+committed ACTIVE assignment has exactly one matching lease; no-target Runtime revocation
+leaves a DEGRADED/unassigned ChannelBinding with no authority on the old Runtime; migration
+rejects ACTIVE/no-lease and DRAINING/no-lease ChannelHost rows; host lease IDs and derived
+fencing credentials are unique across epochs and reuse fails closed.
+
+## F94 — Authenticate desktop Operator over local OS IPC
+
+**Actors/preconditions:** Tauri native process, `litecoworkd`, private application-data
+directory, matching local Runtime OS-principal binding, shared `operator-ipc` protocol.
+
+1. Tauri derives the endpoint from its trusted app-data directory; the WebView cannot
+   provide or override it. Tauri opens a Unix-domain socket or local named pipe.
+2. The OS enforces endpoint access. The daemon checks Unix peer UID against its persisted
+   Runtime OS-user binding; separate Unix sessions with the same UID are within that same
+   user trust boundary. Windows pipe creation uses a protected DACL restricted to the
+   current logon SID and SYSTEM and rejects remote clients. Missing/mismatched identity
+   closes the connection before the request header/body is read.
+3. The desktop sends a bounded, versioned frame with request ID, allowlisted method/path,
+   allowlisted logical headers, and declared raw body length. The daemon rejects invalid
+   lengths, unsupported versions, absolute/traversal paths, forbidden headers, and
+   incomplete frames before route dispatch. Each connection carries one request; extra
+   bytes cannot create a second dispatch and the server closes after responding.
+4. The adapter attaches an internal authenticated-local-peer marker and dispatches through
+   the same Operator handler path as the logical API. Workspace owner, Trust, expected
+   version, and idempotency checks still run there.
+5. The daemon returns a bounded response frame carrying the same request ID. Tauri checks
+   the authenticated readiness response against native Runtime/incarnation status before
+   using normal routes.
+6. After daemon restart, Tauri reconnects and performs readiness again. A mutation whose
+   response was lost is reconciled using its original idempotency key; it is never replayed
+   as a new command or silently sent to another Runtime.
+
+**Failure/UI/postcondition:** wrong OS user, wrong Windows logon session, missing peer credentials, failed DACL,
+unsafe endpoint, malformed/oversized frame, stale incarnation, or timeout fails closed.
+There is no loopback/bearer fallback. Incomplete mutation delivery is shown as an
+ambiguous result and reconciled by request identity. IPC peer authentication grants no
+Workspace access, folder access, Capability grant, or Effect authority.
+
+**Tests to add in the later verification pass:** cross-user denial on Unix and Windows;
+second Windows logon session denial; document that a same-UID Unix session shares the
+authorized user boundary; socket/pipe endpoint precreation and replacement;
+symlink/wrong-owner stale socket; Unix missing/mismatched peer credential; Windows DACL
+failure; malformed protocol version; forbidden headers; path traversal/absolute URL;
+short/oversized frame; extra bytes cannot create a second request; slow header/body timeout; concurrent admission limit;
+daemon crash before and after durable mutation commit; exact idempotent reconciliation;
+restart readiness/incarnation mismatch; no WebView endpoint/identity exposure; no HTTP
+fallback on any IPC failure. Run on each supported OS and record version/build evidence.
+
+## F95 — Explicit local coding-agent profile probe and binding setup
+
+**Actors/preconditions:** authenticated desktop owner, active Workspace, serving local
+Operator, current Runtime incarnation, local Runtime enrollment for that Workspace,
+AgentCatalogStore, bounded native adapter.
+
+1. The owner opens Settings and selects a Workspace. Installation inventory may show
+   that the Codex CLI or OpenCode CLI is installed, but this does not create an
+   AgentProfile or claim authentication/session readiness.
+2. If this exact Runtime incarnation is not enrolled for the selected Workspace, the
+   UI shows `Not enrolled` and offers an explicit owner action. The Operator checks the
+   owner and Workspace version; storage accepts only the exact current PERSONAL_DEVICE
+   Runtime in `ONLINE/READY` or `DEGRADED/DEGRADED` serving state and records an ACTIVE
+   local binding with `EXECUTOR` and `OPERATOR_ENDPOINT` roles. This is control-plane
+   authorization only; it does not grant filesystem roots, Mesh presence, replication,
+   Task readiness, or agent execution.
+3. The owner explicitly requests `POST /v1/agent-profiles/probe` with `provider_key` set
+   to `CODEX` or `OPENCODE`. The Operator requires the active local enrollment and
+   resolves the Runtime-local executable. Codex uses a bounded App Server process and
+   performs initialize, account/read without refresh, and one bounded model/list page.
+   OpenCode launches its owned Server process with an allowlisted environment and reads
+   only `GET /provider` and `GET /config/providers`, each under the existing bounded
+   response limit. Both probes stop their owned direct process. Neither creates a
+   Conversation turn, Task, AgentSession, Environment, model inference request, grant,
+   or Effect.
+4. The Operator persists the stable AgentProfile/AgentEndpoint identity, private
+   Runtime-incarnation-bound executable locator, and sanitized expiring offer. The UI
+   distinguishes installation, reported provider readiness, option catalog, endpoint
+   compatibility/readiness, and the still-unverified session/inference lifecycle. For
+   Codex, expandable probe details expose only allowlisted protocol/account/model-list
+   observations. For OpenCode, they expose only bounded provider/model IDs and display
+   names, plus the provider IDs OpenCode reported as connected. This is not an
+   authentication or entitlement claim. OpenCode model entries are display-only;
+   session model selection remains `NOT_QUALIFIED`, its offer is always incompatible,
+   and no AgentBinding can be created or enabled from it. Neither probe exposes raw
+   native payloads, configuration, credentials, or endpoint locators. Both report that
+   inference was not tested and writer quiescence was not proven.
+   Every explicit probe is a fresh observation, not an idempotent mutation; clients do
+   not automatically retry it.
+5. The owner may create a Workspace AgentBinding only from a fresh compatible offer.
+   Creation is version 1 and disabled. The owner may then separately enable it under an
+   expected version; enablement requires the offer to remain fresh and compatible.
+   Neither creation nor enablement selects a Workspace default or starts an agent.
+6. Future Task admission remains unavailable until Task planning, binding selection,
+   AgentSession lifecycle, Environment/lease admission, and Effect reconciliation are
+   integrated and qualified. Profile-probe `writer_quiescence_proven=false` is not
+   sufficient evidence for safe switching.
+
+**Failure/UI/postcondition:** no selected Workspace, non-owner, missing/stale enrollment,
+inactive Workspace, Runtime incarnation change, executable absence, timeout, protocol
+rejection, unsafe server request, process-stop uncertainty, incompatible/expired offer,
+stale binding version, or unavailable storage fails closed. The UI keeps install inventory
+separate from profile offers and bindings, displays `Could not check` on enrollment-read
+failure, and never labels binding enablement as an executable Task capability.
+
+**Tests for the later verification pass:** non-owner and cross-Workspace probe denied;
+unenrolled or stale-incarnation Runtime cannot probe; `ONLINE/READY` and serving
+`DEGRADED/DEGRADED` enroll, while DRAINING/OFFLINE/REVOKED do not; one exact ACTIVE
+Workspace binding with required roles is returned; a Workspace can enroll multiple
+local Runtime installations without sharing authority; profile probe executes only the
+allowlisted bounded methods, never refreshes auth or performs inference, rejects server
+requests, limits model options/catalog counts/response bytes, reaps its direct child, and
+preserves unproven writer quiescence; OpenCode output contains only sanitized provider/
+model IDs and display names plus reported connected IDs; catalog entries and reported
+connection state never enable OpenCode binding admission; private executable locator/
+account data/native protocol payloads never appear
+in Operator responses, domain events, backups, or logs; offers expire and stale offers
+cannot create/enable a binding; binding creation is disabled at version 1; enable is
+version-fenced and idempotent; lost mutation responses reconcile using the original
+RequestId; the UI handles loading, unknown/error enrollment, workspace changes, stale
+offers, and disabled actions without claiming Task execution. Run native protocol and
+process-containment qualification separately before calling switching production-safe.
+
+## F96 — Select the Workspace default lead agent
+
+**Actors/preconditions:** authenticated Workspace owner, active Workspace, enabled
+same-Workspace AgentBinding with `lead_eligible=true` (or an explicit choice to clear
+the default), Operator API, WorkspaceService, and the SQLite Workspace transaction.
+
+1. Settings lists only bindings returned for the selected Workspace and offers enabled,
+   lead-eligible bindings as selectable defaults. Enabling a binding alone never selects
+   it.
+2. The owner chooses one binding or explicitly chooses “No default agent.” The desktop
+   submits `PATCH /v1/workspaces/{workspace_id}/default-agent-binding` with the selected
+   Workspace header, current Workspace `If-Match` version, and a stable RequestId.
+3. WorkspaceService commits the changed Workspace projection, version,
+   `workspace.default_agent_binding.changed.v1`, and idempotency receipt together. The
+   storage transaction rejects a binding from another Workspace or one that is disabled
+   or not lead-eligible. A stale version conflicts; retrying the same RequestId replays
+   the original result.
+4. Settings updates the displayed default only from the committed Workspace response.
+   Clearing the default is explicit. The change affects future admissions only; it does
+   not start an agent, change an existing Task, or execute work.
+5. Until TaskService, lead readiness admission, PlanningCoordinator, and durable
+   AgentSession lifecycle exist, the composer remains unavailable and no Task is implied
+   by selecting a default.
+
+**Failure/UI/postcondition:** cross-Workspace selection, disabled/non-lead binding,
+archived Workspace, malformed/null-omitted request, stale version, and reused RequestId
+with another payload fail without mutating the Workspace. The selector reports the saved
+default, supports an explicit unconfigured state, and does not claim that setup has
+started work.
+
+**Tests for the later verification pass:** set, clear, same-target update, exact idempotent
+replay after a lost response, same RequestId/different payload conflict, stale Workspace
+version, disabled binding, non-lead binding, cross-Workspace binding, archived Workspace,
+and missing-versus-null request field; verify one event/version per committed update and
+that existing Task/session bindings remain unchanged.
+
+## F97 — Persist a standalone Task envelope (implementation increment)
+
+**Actors/preconditions:** authenticated Workspace owner, active Workspace, selected enabled
+lead-eligible AgentBinding, Operator API, `domain-task::TaskService`, and TaskStore.
+
+1. The client submits a standalone `POST /v1/tasks` request with the selected Workspace
+   header and RequestId. This increment rejects Conversation-message and Coworker origins;
+   those require their own atomic source/admission services.
+2. The Operator validates owner, Workspace state, and explicit-or-Workspace-default lead
+   selection. It never substitutes another binding if the selected one is invalid.
+3. TaskService builds Task + TaskSpecRevision(1) in `READY` state and calls TaskStore.
+   One SQLite transaction commits Task, immutable initial spec, `task.created.v1`, aggregate
+   snapshot, and idempotency receipt. Workspace instructions and pinned Resource revisions
+   are rechecked by storage.
+4. The endpoint returns the committed TaskView. This increment does not create a planning
+   AgentSession, Plan, Step, Attempt, lease, Environment, or Invocation. It is durable Task
+   persistence only; the desktop composer stays disabled until the planning coordinator can
+   actually start and track the lead session.
+
+**Failure/UI/postcondition:** missing/invalid lead, archived Workspace, malformed spec,
+unsupported origin, stale instructions, out-of-Workspace/unpinned Resource, or RequestId
+reuse with a different payload creates no Task. Exact retry returns the original committed
+TaskView. No UI state says “Planning” or “Working” for this persistence-only increment.
+
+**Tests for the later verification pass:** standalone create, owner and Workspace mismatch,
+no configured lead, disabled/non-lead lead, explicit lead precedence, stale instruction
+revision, invalid/missing Resource revision, conversation/Coworker-origin rejection,
+unknown field rejection, exact RequestId replay after response loss, changed-payload key
+reuse, transaction crash before/after commit, and assertion that no Plan/Step/Attempt/
+AgentSession/lease/Environment rows are created.
+
+## F98 — Claim durable Task planning session startup
+
+**Actors/preconditions:** authenticated Workspace owner; READY or RUNNING Task; current
+TaskSpec revision and lead; enabled lead-eligible AgentBinding; selected endpoint bound to
+the current READY Runtime incarnation; AgentSessionStore.
+
+1. PlanningCoordinator builds the transient assignment from a current Task view and
+   selects a compatible endpoint/Runtime. No native session has started yet.
+2. AgentSessionStore transactionally rechecks Task version/status/spec/lead, Workspace
+   owner/status, AgentBinding eligibility, endpoint/profile match, endpoint binding expiry,
+   and current Runtime incarnation readiness.
+3. The transaction inserts exactly one `TASK_PLANNING` AgentSession in `STARTING`, stores
+   the immutable aggregate-state reference, appends `agent.session.starting.v1`, and stores
+   the RequestId receipt. The active-planner unique index rejects a competing assignment.
+4. The caller may now start the adapter outside SQLite. `STARTING` grants no planning tools
+   or Invocation authority. Adapter failure/recovery may atomically settle this row as LOST
+   with `agent.session.lost.v1`; Task status is unchanged and the planner slot is released.
+5. After adapter readiness, `TaskService::activate_planning_session` asks storage to
+   revalidate the current Task/spec/lead, host, endpoint binding, Runtime incarnation,
+   Workspace and binding eligibility. One transaction inserts the Runtime-local host
+   binding, sets the session `ACTIVE`, transitions a first-planning Task to `RUNNING`, and
+   appends the corresponding event snapshots. A Task already `RUNNING` receives no second
+   status event. A stale/degraded host or Runtime cannot activate.
+6. After daemon restart, stranded prior-incarnation `STARTING` sessions can be enumerated
+   and explicitly settled as `LOST`; automatic coordinator reconciliation and adapter
+   startup/retry orchestration are not implemented by this storage slice.
+
+**Failure/UI/postcondition:** stale Task/spec/lead, unavailable owner/Workspace, disabled
+binding, endpoint mismatch/expiry, Runtime/incarnation mismatch, idempotency-key reuse with
+different input, or active planner conflict commits no new session. If activation loses a
+readiness/version race, its transaction commits no ACTIVE session, host binding, or Task
+transition; the existing STARTING reservation remains claimed until the coordinator proves
+startup containment and settles it LOST. It must not retry activation against a different
+host or silently reuse a native handle. A stranded STARTING row is discoverable by the
+bounded recovery query; no UI may call it active work.
+
+**Tests for the later verification pass:** exact RequestId replay, changed-payload replay
+conflict, stale Task version/spec/lead, non-runnable Task state, wrong Workspace owner,
+disabled/non-lead binding, wrong endpoint profile, endpoint bound to an old Runtime
+incarnation, expired binding, non-READY Runtime, one-planner race, transaction crash
+before/after commit, recovery query across old incarnations, LOST settlement releasing the
+planner slot without changing Task status, activation after Runtime restart/degradation,
+host stop/failure, binding disablement, endpoint expiry, wrong host profile/endpoint/
+incarnation, invalid event schema version, rollback if a snapshot or event append fails,
+and no native handle in the aggregate/event/request receipt.
+
+## F99 — Accept an initial plan into durable Task state (storage slice)
+
+**Actors/preconditions:** active Task-planning AgentSession for the current lead, RUNNING
+Task, exact current TaskSpec revision, authenticated Workspace owner context, TaskService,
+TaskStore, and SQLite v5.
+
+1. The internal planner integration submits bounded proposed Steps using logical keys and
+   dependency keys. The domain service rejects an empty or over-limit plan, malformed
+   keys, duplicate keys/IDs, missing/self/duplicate dependencies, cycles, malformed
+   acceptance criteria, and mismatched Step/event counts before constructing records.
+2. TaskService materializes opaque Step IDs, resolves logical-key dependencies, and sets
+   dependency-free Steps `READY`; dependent Steps begin `PENDING`. Each Step stays bound to
+   PlanRevision 1. This slice accepts initial plans only; it does not accept execution
+   replans because Attempt/lease producer authority is not implemented.
+3. SQLite begins an immediate transaction. It replays an identical prior RequestId receipt
+   or rejects key reuse with a different digest, checks Workspace owner/active status,
+   compares Task version/spec/status/head, and revalidates that the producer session is
+   ACTIVE, current-spec-pinned, `TASK_PLANNING`, no-Attempt, and the enabled current lead.
+   It also requires the producer to be attached to a host on the Runtime's current
+   `ONLINE`/`READY` incarnation, checks the live endpoint binding and active Workspace
+   EXECUTOR binding, and requires every event's Runtime ID to match that producer Runtime.
+   Endpoint expiry is evaluated against the daemon's UTC admission clock, not the event's
+   recorded timestamp. The Workspace association comes from `runtime_workspace_bindings`;
+   the installation-scoped Runtime row itself has no Workspace column.
+4. The transaction appends immutable PlanRevision 1, inserts all Steps, advances
+   `Task.current_plan_revision` and Task version, appends one `task.plan.revised.v1` plus
+   one `step.created.v1` per Step with complete post-state blobs, stores the original
+   PlanAcceptance receipt whose digest includes the normalized validated plan, and commits.
+   Readers can then load PlanRevision history and Steps after daemon restart. Step rows
+   cannot be deleted; lifecycle fields may advance while their identity remains fixed.
+5. A retry with the same principal/RequestId and normalized body returns the stored result
+   without another revision/event. A stale task/spec, closed or replaced planner, invalid
+   owner/status, or SQLite failure commits no partial plan.
+
+**Deliberate boundary:** the Operator API route is not wired to this command yet because
+the current local Operator authentication proves Workspace-owner identity but does not
+carry an AgentSession-scoped producer assertion. Do not accept a body-supplied session ID
+as producer authority. No native agent currently invokes this service; it is a durable
+domain/storage seam, not end-to-end agent planning.
+
+**Tests for the later verification pass:** valid single- and multi-step plans; empty and
+over-limit input; unique logical keys and Step IDs; missing/self/duplicate dependencies;
+cycle rejection; malformed capability/criterion values; current/stale TaskSpec; wrong
+Workspace; owner mismatch; non-RUNNING Task; wrong/closed/non-lead/spec-stale planner;
+Attempt-bearing session rejection; concurrent submissions; Task pause/cancel/spec change
+races; duplicate RequestId replay and changed-digest conflict; crash before commit and
+after commit/before response; exact Step-ID replay; all event state blobs reconstruct the
+Task pointer/Plan/Steps; no Step/Attempt admission before acceptance; re-read after daemon
+restart; PlanRevision update/delete rejection; Step deletion rejection; and immutable Step
+identity enforcement. Also cover an old Runtime incarnation, missing/mismatched host
+binding, expired endpoint at admission time despite a fresh-looking event timestamp, revoked
+Workspace EXECUTOR binding, non-string/extra `step_ids`, extra Step event payload keys,
+duplicate event IDs, and same RequestId/plan submitted by a different AgentSession.
+
+## F100 — Save a standalone Task from the desktop composer
+
+**Actors/preconditions:** desktop owner, authenticated local Operator IPC, active selected
+Workspace, TaskService and TaskStore. An explicit Task lead, selected Coworker default
+lead, or Workspace default lead must resolve to an enabled, lead-eligible binding. The
+Runtime is serving the current authenticated Operator endpoint.
+
+1. The Home composer retains the unsent objective until the owner submits **Save Task**.
+   It requires a non-empty objective within the UTF-8 limit and an active selected
+   Workspace. If neither the selected Coworker nor Workspace supplies a lead, it routes the
+   owner to Settings; it does not choose an arbitrary discovered agent. The owner may
+   explicitly select existing Library Resources as Task inputs; each selection pins its
+   exact `ResourceRevisionId`.
+2. Tauri pins the exact Workspace, objective, selected Coworker ID and observed aggregate
+   version (when available), resolved lead binding, ordered pinned input references and
+   RequestId for this save. It does not submit a Coworker revision. It submits
+   `POST /v1/tasks` over authenticated local IPC. The WebView never sees the IPC endpoint
+   or peer identity.
+3. The Operator resolves the selected Coworker's current immutable revision. Lead
+   precedence is explicit Task lead, Coworker revision default, then Workspace default;
+   the Coworker failover default is also copied into the initial TaskSpec when the request
+   does not supply an explicit policy. Storage atomically rechecks Workspace ownership,
+   Coworker status/current revision/optional expected version, resolved failover policy,
+   and that the exact lead binding is same-Workspace, enabled and lead-eligible. TaskService
+   and SQLite persist the standalone Task in `READY`, initial TaskSpecRevision,
+   `task.created.v1`, snapshots and idempotency receipt.
+4. On a committed response, Tauri verifies the Task belongs to the selected Workspace and
+   that its initial current spec revision is 1, and that returned Coworker origin matches
+   the selected Coworker ID with a paired revision. It verifies the embedded TaskSpec's
+   `task_id` matches the Task and its `revision` matches
+   `task.current_spec_revision`; Workspace ownership is inherited through that Task
+   relationship. It also checks the requested objective and ordered input references.
+   Only then does the UI clear the matching draft and input selection and open the Task
+   detail. The detail shows the pinned inputs and renders the actual `READY` status with a
+   note that no accepted plan is currently saved. It does not infer that the Task has never
+   been planned or executed. Pinning a Resource does not read its contents or grant an agent
+   access. When Coworker origin exists, Task detail resolves and displays the exact pinned
+   CoworkerRevision name; a missing historical revision is shown as unavailable rather
+   than replaced by the current name. It does not display Planning/Working, start a provider, or create an
+   AgentSession, Plan, Step, Attempt, lease, Environment, CapabilityInvocation, Effect, or
+   Evidence.
+5. If the local response is ambiguous while the window remains open, retrying the same
+   Workspace/objective/ordered inputs reuses the original request envelope and RequestId;
+   it retains the originally pinned Coworker/version/lead even if defaults change while
+   the response is uncertain. The UI labels this as **Retry original save** and directs
+   the owner to Work before discarding an unresolved request or creating a separate Task.
+   Changing objective/inputs does not silently create another Task while that request is
+   unresolved. The current client does not persist the draft/idempotency envelope across application
+   restart. Workspace selection and primary navigation are disabled while the save is in
+   flight; after an ambiguous result, the owner can retry the same request in the current
+   window or check Work before submitting again after restart.
+
+**Failure/UI/postcondition:** missing or disabled lead, archived Workspace, invalid
+objective, transport failure, Task/TaskSpec identity or revision mismatch, returned
+objective/input mismatch, or idempotency conflict never shows the Task as started.
+Failed/ambiguous saves retain the draft and show a recoverable message. The storage
+receipt prevents duplicate creation only when the same RequestId is reused; do not promise
+cross-restart exactly-once behavior from this UI slice.
+
+**Tests for the later verification pass:** active/inactive Workspace, Runtime unavailable,
+missing Workspace/Coworker/explicit lead, Coworker-to-Workspace lead fallback, explicit
+lead precedence, disabled/non-lead/cross-Workspace binding, paused/archived Coworker,
+optional/stale Coworker version, Coworker revision change between read and commit, exact
+Coworker origin ID/revision in Task and event, pinned Coworker failover default, UTF-8
+boundary, empty draft, same-key exact replay, same-key changed-objective/input-reference conflict, response loss
+after commit, rapid double-submit, returned Task/TaskSpec identity mismatch, TaskSpec
+revision differing from the Task pointer, returned Workspace/objective/input mismatch, stale or
+foreign Resource revision, no draft or input loss on failure, Workspace-specific input
+selection surviving a Workspace switch, navigation/Workspace switch controls disabled
+during submit, successful draft/input clear only after commit, and assertion that the save
+creates no planner session, Plan,
+Step, Attempt, lease, Environment or Invocation.
+
+## F101 — Pin Library Resources to a saved Task
+
+**Actors/preconditions:** desktop owner, authenticated local Operator IPC, active Workspace,
+existing Resource revisions visible in the Library, and an enabled default lead binding
+when the Task is eventually saved.
+
+1. From Home, the owner chooses **Add inputs** and enters the selected Workspace Library.
+2. A catalog or search result offers **Add to Task**. Selecting it pins the exact
+   `workspace_id`, `resource_id`, and `revision_id`; it does not fetch the Resource body.
+   Selecting the same revision again removes it. Choosing a different revision for the
+   same Resource replaces the pending selection explicitly.
+3. **Use in Task** returns to Home. The composer shows selected file names and that each
+   exact revision is pinned. The owner can remove individual inputs or clear all. Selections
+   are kept separately per Workspace so a Workspace switch cannot attach another
+   Workspace's Resources.
+4. **Save Task** includes the pinned `input_refs` in the same idempotent Task creation
+   request. The daemon validates that each reference belongs to the selected Workspace
+   and that the Resource revision exists before the Task and initial TaskSpecRevision are
+   committed. The Task detail shows the durable references and names when the local
+   presentation cache has them; otherwise it shows the Resource ID and exact revision.
+5. The attached references do not themselves grant file access or trigger execution.
+   A later ContextPlanner/AgentSession must independently resolve availability, policy,
+   sensitivity and authority before making content available to an agent.
+
+**Failure/UI/postcondition:** a stale/missing or cross-Workspace reference rejects the
+entire Task save. The composer retains its objective and selected input references. An
+ambiguous response retry uses the same RequestId only while the Workspace, objective,
+lead binding and exact ordered reference list are unchanged. A changed selection gets a
+new RequestId. No Resource content, extracted text, search snippet, or local path is copied
+into the Task envelope.
+
+**Tests for the later verification pass:** attach/remove/replace revision, exact TaskSpec
+reference roundtrip, same-Workspace and foreign-Workspace refs, missing revision, Resource
+revision change between search and save, unchanged retry and changed-ref idempotency,
+Workspace-specific pending selections, selected names surviving save into Task detail,
+fallback ID display after restart, no Resource bytes in Task/event payloads, and no agent,
+Environment, Invocation, Effect or Evidence created by pinning.
+
+## F102 — Load persisted Task plan and Step state in desktop details
+
+**Actors/preconditions:** desktop owner, authenticated local Operator IPC, a Task in the
+selected Workspace, and the existing read-only plan-history and Step routes.
+
+1. Tauri loads the TaskView and checks that the Task belongs to the selected Workspace
+   and that its embedded TaskSpec matches the Task ID and current-spec revision pointer.
+2. If `current_plan_revision` is null, Task details say no accepted plan is currently saved
+   and make no plan-history or Step request. The status remains **Ready**; the UI does not
+   infer that the Task has never been planned or executed.
+3. If a current plan exists, Tauri loads plan history and Steps through the authenticated
+   Workspace-scoped routes. It selects only the PlanRevision named by the Task pointer,
+   then checks Task identity, plan/spec revision bounds, planned logical keys, and
+   materialized Step identities/count before constructing the desktop view.
+4. Task details render the ordered persisted Steps and their actual stored statuses with
+   plain-language labels. If the PlanRevision pins an older TaskSpecRevision, the view
+   shows a stale-plan notice. It never implies that a Step has an Attempt, Evidence,
+   verification result, or active worker unless those separately loaded records exist.
+5. A malformed, incomplete, foreign-Task, or mismatched plan response fails the detail
+   load rather than presenting partial rows as current Task truth.
+
+**Tests for the later verification pass:** Task without plan performs no plan requests;
+current PlanRevision and Steps display in logical order; multiple historical revisions
+select only the Task pointer; stale plan displays the pinned/current spec revisions;
+foreign Task IDs, wrong plan revision, missing/duplicate/mismatched logical keys, incomplete
+Step rows, malformed payloads, offline Runtime, and response loss show recoverable errors;
+Step status text remains understandable without color; no Attempt/Evidence is fabricated.
+
+## F103 — Revise a saved, unplanned Task objective
+
+**Actors/preconditions:** Workspace owner in the desktop Operator, authenticated local
+Operator IPC, active Workspace, and a Task whose current state is `READY`, whose
+`current_plan_revision` is null, and which has no live `TASK_PLANNING` AgentSession.
+
+1. Task details show **Edit objective** only while the loaded Task satisfies the visible
+   `READY`/no-Plan conditions. The owner edits a local draft; no domain state changes while
+   typing or cancelling.
+2. Save submits `parent_revisions=[current_spec_revision]`, the objective, `If-Match` with
+   the loaded Task aggregate version, and an idempotency key. The desktop retains the same
+   key only for a retry of the exact same Task/version/parent/objective tuple; changed text
+   receives a new key.
+3. Operator authenticates the Workspace owner and checks the selected Workspace. The
+   TaskService checks the current Task and parent; SQLite repeats owner, active Workspace,
+   version, READY/no-Plan, no-live-planner, exact Resource revision and lead eligibility
+   checks inside an immediate transaction.
+4. On success, SQLite appends the next immutable TaskSpecRevision, advances the Task
+   spec pointer/version, stores the complete Task aggregate snapshot, emits
+   `task.spec.revised.v1`, and commits the idempotency receipt atomically. Unspecified
+   fields inherit the old revision. No AgentSession, Plan, Step, Attempt, ExecutionLease,
+   Environment, Invocation, Effect, or Evidence is created.
+5. The UI validates the revision receipt, reloads the Task through its ordinary detail
+   route, and displays the committed objective and spec revision. If the Task was planned
+   concurrently after the edit committed, the reload displays that current plan and state.
+
+**Failure/UI/postcondition:** stale Task version/parent, a live planner, non-READY status,
+or an accepted Plan returns a conflict; the draft remains visible and offers **Reload latest
+Task**. Invalid fields return `INVALID_ARGUMENT`. A lost response can be retried with the
+same key and receives the original committed revision. Reusing the key after changing the
+objective conflicts. Saving unchanged objective text is disabled and creates no revision.
+Edits after planning starts use the ordinary steering/replanning
+lifecycle; this editor never bypasses it.
+
+**Tests for the later verification pass:** objective change appends exactly one revision
+and event; unchanged fields remain byte/structure-equivalent; same-key retry after a lost
+response returns the same revision/event without another aggregate write; changed payload
+with same key conflicts; stale Task version and wrong parent conflict; READY with live
+planner rejects; READY with Plan, RUNNING, terminal, archived Workspace and foreign owner
+reject; missing/foreign Resource revision rejects when inputs are submitted; two concurrent
+editors yield one head advance; unchanged objective creates no revision; composer/list/detail
+show the committed revision; no agent process, planning session, Plan, Step, Attempt, lease,
+Environment or Invocation starts.
+
+## F104 — Pause and resume a persistent folder scope
+
+**Actors/preconditions:** Workspace owner, desktop Library, authenticated local Operator,
+`WorkspaceRootService`, SQLite, and the current local Runtime incarnation. Folder
+watching/indexing are not implemented by this source slice.
+
+1. The Library renders the persisted WorkspaceRoot status and aggregate version. It offers
+   **Pause** only for `ACTIVE` and **Resume** only for `PAUSED`; `UNAVAILABLE` is shown as
+   unavailable and cannot be resumed from that button. Revocation remains available for
+   every non-revoked root.
+2. The owner selects **Pause** or **Resume**. Tauri sends a bodyless request with the
+   selected `X-Workspace-ID`, `If-Match` set to the displayed version, and a new
+   `Idempotency-Key`. It does not optimistically change the row. Exact retry of the same
+   action/request key returns the committed receipt; reusing that key with another payload
+   conflicts.
+3. The Operator authenticates the OS peer, checks Workspace ownership and the selected
+   Workspace, parses the expected version/key, then calls `WorkspaceRootService`. The
+   service validates the allowed transition and checks a prior idempotency receipt before
+   building a new aggregate/event. SQLite repeats ownership, root identity, status, and
+   expected-version checks in an immediate transaction.
+4. Pause accepts only `ACTIVE -> PAUSED`. It increments the WorkspaceRoot version and
+   atomically commits the root snapshot, `workspace.root.status.changed.v1` event with
+   `USER_PAUSED`, and idempotency receipt. It preserves the local identity bindings,
+   ResourceLocation observation, and selected-folder replication preference. Consumers
+   must gate any future observation, search, exposure, or transfer on root status `ACTIVE`.
+5. A fresh Resume accepts only `PAUSED -> ACTIVE`. Before committing, the Runtime reopens
+   the saved directory without following symlinks, checks its current file identity against
+   the private prior binding and keyed Resource projection, and retains the verified handle
+   through the atomic status/binding/event/receipt commit. The transaction also requires the
+   ResourceLocation to be `AVAILABLE`, the current Runtime incarnation, and `READY` or
+   `DEGRADED` Runtime state. `UNAVAILABLE` is recovered only by Runtime identity
+   revalidation; a successful startup revalidation does not resume a previously paused root.
+   An exact idempotent replay returns its original receipt without another filesystem read.
+   This check proves identity at resume admission only. Future filesystem consumers must
+   independently revalidate/use a qualified handle-based provider; no watcher/content reader
+   currently consumes the root.
+6. After a validated response, Tauri checks WorkspaceRoot ID, Workspace ID, target status,
+   and exactly one version advance before updating the Library row. On an error or
+   ambiguous response it keeps the prior row, reports the failure, and reloads rather than
+   implying a successful transition. The Library states that folder watching/indexing are
+   not active in this build.
+
+**Failure/UI/postcondition:** stale version returns a conflict and leaves state unchanged;
+wrong current status returns a conflict; a resume with unavailable/stale identity bindings
+leaves the root paused; unauthorized or archived Workspace requests fail; storage failure
+commits neither status, event, aggregate snapshot, nor receipt. Pause/resume do not create a
+Capability, Grant, SecretLease, Effect, Resource revision, or claim that content is indexed.
+
+**Tests for the later verification pass:** ACTIVE pause, PAUSED resume, exact-key replay,
+changed-payload key reuse, stale version, invalid transition, non-owner/foreign Workspace,
+archived Workspace, current and stale Runtime incarnation, unavailable location, missing
+locator binding, missing file-identity binding, Runtime recovery states, atomic failure at
+projection/event/receipt writes, preservation of root selection/bindings on pause, PAUSED
+preservation across successful/failed restart revalidation, UNAVAILABLE recovery without
+implicit resume, response loss after commit, malformed/mismatched UI response, Workspace
+switch during request, and an owner workflow that pauses a folder, restarts LiteCowork,
+confirms identity recovery leaves it paused, then explicitly resumes it. Also qualify and
+test replacement of the directory after startup revalidation and before a fresh resume; the
+resume path must reject that swap and persist the resulting unavailable location. Verify
+that exact replay does not re-open the path or mutate state.
+
+## F105 — Pin an exact Coworker revision to a paused Automation
+
+**Actors/preconditions:** Workspace owner, authenticated local Operator IPC, an Automation
+definition editor, a saved Routine revision, and Coworker list/detail read routes. This flow
+only creates or revises an inert Automation definition; it does not start a trigger host,
+create an occurrence, or admit a Task.
+
+1. The editor loads Coworkers from the selected Workspace and offers active Coworkers with
+   their current revision numbers. Creating a definition starts with no Coworker pin. Editing
+   defaults to **Keep existing pin**, preserving the exact historical revision or null.
+2. Selecting a Coworker records its exact current revision. Before save, the client reloads
+   that Coworker and rejects a Workspace mismatch, inactive status, or changed revision; the
+   owner must refresh the selection rather than silently pin a newer revision.
+3. Create and revise requests include `coworker_ref` explicitly as either
+   `{ coworker_id, revision }` or `null`. The authenticated daemon checks the Coworker and
+   exact immutable revision in the selected Workspace; the SQLite responsibility transaction
+   repeats that reference check atomically with the Automation snapshot, event, revision, and
+   idempotency receipt.
+4. Creation persists `PAUSED`. Revision is accepted only for a paused Automation and advances
+   its immutable definition revision. Choosing **No Coworker pin** explicitly clears the
+   source preference; choosing **Keep existing pin** preserves the old reference. Existing
+   Automation revisions and Tasks are never rewritten.
+5. The UI validates the committed Automation receipt and reports the paused state. Coworker
+   selection supplies only the revision-pinned lead/worker/context/interaction defaults for
+   a future occurrence; it does not create a Grant, approve an Effect, start a Runtime, or
+   make an Automation executable. Resume, manual run, occurrence hosting, and Task admission
+   remain unavailable until their separate safety prerequisites are implemented.
+
+**Failure/UI/postcondition:** if the Coworker head has changed before the editor's final
+read, foreign Workspace, missing Coworker revision, stale Automation version, or idempotency
+payload conflict, the prior Automation remains unchanged and the editor draft is preserved.
+The desktop does not offer archived Coworkers for a new pin; the owner may preserve an
+existing historical pin. If the Coworker changes after the final client read, the immutable
+revision selected by the owner remains the one pinned rather than silently following the new
+head. Future occurrence admission separately checks the Coworker's current status. No Task,
+occurrence, session, lease, Environment, capability invocation, Effect, or Evidence is created.
+
+**Tests for the later verification pass:** create with null/current Coworker pin; revise
+preserving exact old pin, changing to current revision, and clearing; Coworker head changes
+before the final selection read; paused/archived Coworker visibility and preservation of a
+historical pin; foreign/missing revision; cross-Workspace ID; stale Automation version;
+exact idempotent replay and changed-payload replay; Coworker changes after client recheck
+still pin only the explicitly selected immutable revision; editor state survives errors; all
+saves remain PAUSED and create no occurrence/Task/session/lease/Environment/Effect/Evidence.
+
+## F106 — Check local Task planning readiness without starting work
+
+**Actors/preconditions:** Workspace owner viewing a saved Task in the desktop, an
+authenticated local Operator connection, the current Task version, and the read-only
+`GET /v1/tasks/{id}/planning-readiness` route. This is a diagnostic only; planning dispatch
+is unavailable in this build.
+
+1. Task details offer **Check readiness** when no PlanRevision is currently saved. The
+   action sends the selected Workspace, Task ID, and the Task version already loaded by
+   the view. It does not submit objective text, a planning packet, provider information,
+   or a session identifier.
+2. Tauri calls the authenticated Operator with `X-Workspace-ID` and `If-Match`. It accepts
+   only the strict bounded response shape, the requested Task ID/version, a known Task
+   status and blocker enum set, and literal `false` for dispatch/session/Plan flags. It
+   rejects unknown fields, duplicate/unknown blockers, or a response for another/stale
+   Task version.
+3. The daemon reauthorizes Workspace ownership, reloads the Task, and compares its current
+   aggregate version with `If-Match`. It reports eligibility and sanitized local blockers.
+   The preflight may construct its bounded planning packet transiently, but returns none of
+   the objective/context, endpoint ID, provider handle, or packet content. It does not
+   persist a PlanningAssignment or reserve an AgentSession. It creates no Plan, Step,
+   Attempt, lease, or Environment; it starts no process, invokes no provider, and appends no
+   domain state/event.
+4. The desktop renders translated blocker descriptions and the observation time for that
+   exact Task version. It always states that planning dispatch remains unavailable and
+   that this result does not authorize or start work. If no local blocker is observed, the
+   UI explicitly says that this does not mean planning can start. Stale responses clear
+   the diagnostic and offer a Task reload; switching Tasks cannot display the earlier
+   result.
+
+**Failure/UI/postcondition:** a stale version returns a conflict without retrying against
+newer state; authentication/Workspace mismatch and missing Task are reported generically;
+malformed or over-limit responses fail closed. The screen never exposes blocker internals
+as executable controls and creates no durable Task, AgentSession, Plan, Step, Attempt,
+ExecutionLease, Environment, Invocation, Effect, or Evidence.
+
+**Tests for the later verification pass:** exact-version success; missing/malformed/zero
+If-Match; stale Task version; foreign Workspace/owner; missing Task; every supported
+blocker; duplicate/unknown blocker; extra response field; mismatched Task/version/spec;
+any true dispatch/session/Plan flag; bounded response; no event or storage mutation; no
+provider/process/session start; request racing Task edit/plan acceptance; Task switch and
+late-response suppression; offline Runtime; keyboard activation and screen-reader status;
+and no-blocker result still explicitly denies start availability. Compare Task and event
+state before/after the diagnostic to prove it remains read-only.
+
+## F107 — Link or unlink Workspace work from a Goal
+
+**Actors/preconditions:** Authenticated Workspace owner editing a non-archived Goal.
+Task and Artifact pickers read the existing selected-Workspace catalog. Artifact links pin
+the exact current version observed by the picker.
+
+1. The editor loads Tasks and Artifacts through the authenticated local Operator bridge.
+   Task choices are identified by Task ID; Artifact choices show name/type/current version.
+   Every response is checked against the selected Workspace boundary.
+2. The owner selects or clears Task links and selects or clears Artifact links. Linking
+   never starts a Task. An Artifact selection records
+   `{workspace_id, artifact_id, version}`; later Artifact versions do not retarget it.
+3. Save sends a complete new Goal revision using the current Goal version in `If-Match`
+   and a stable `Idempotency-Key`. GoalService validates each referenced Task,
+   RoutineRevision, and ArtifactVersion exists in that Workspace, then commits the
+   immutable revision, links, aggregate event/snapshot, and replay receipt atomically.
+4. Unlinking omits that reference from the new revision. Prior Goal revisions keep their
+   original links. Neither linking nor unlinking mutates the linked Task, Routine, or
+   Artifact and neither operation changes execution authority.
+5. The UI replaces the displayed Goal only with the committed receipt. A stale Goal
+   version or missing/foreign reference preserves the draft and requires reload/review;
+   it never reports an optimistic link as saved.
+
+**Failure/UI/postcondition:** cross-Workspace and missing Artifact-version references are
+rejected without a Goal revision/event. Artifact version changes during editing do not
+silently advance a pin. Paused Goals may retain or revise links; archived Goals are
+read-only. No Task, Attempt, AgentSession, lease, Environment, Effect, or Evidence is
+created or modified.
+
+**Tests for the later verification pass:** link/unlink Task; link/unlink exact Artifact
+version; Artifact receives a newer version before save and the selected old version remains
+pinned; missing Artifact version; cross-Workspace Task/Artifact; duplicate Artifact IDs;
+archived Goal; stale Goal version; identical idempotent replay and payload conflict;
+restart/readback of prior and current Goal revisions; no linked entity state change; picker
+pagination, Workspace switch, offline/error and keyboard/screen-reader behavior.
+
+## F108 — Owner accepts an actionable Suggestion as a Task
+
+**Actors/preconditions:** Authenticated Workspace owner; active Workspace and local
+Runtime binding; `PROPOSED` unexpired `TASK` Suggestion with a valid pinned TaskSpec
+proposal; current `If-Match`; stable `Idempotency-Key`; an enabled lead-eligible binding
+from the originating Coworker or Workspace default.
+
+1. The owner reviews the proposal's objective and provenance, then selects **Create Task**.
+   The UI retains the same idempotency key if the response is lost and offers retry; it
+   never starts execution from the Suggestion action.
+2. Operator authenticates the owner and selected Workspace, runs bounded event-backed
+   expiry settlement, then checks the current Suggestion status/version/expiry and
+   validates the exact proposal. It resolves the current
+   Coworker revision/head version when the Suggestion has a Coworker origin, otherwise
+   uses the Workspace lead default. The chosen lead must still be enabled and lead-eligible.
+3. TaskService builds the normal `READY` Task and immutable initial TaskSpecRevision from
+   the proposal. Objective, constraints, pinned Resource inputs, outputs, criteria,
+   budgets, and deadline must match exactly. The Task pins Coworker origin when present.
+4. One SQLite immediate transaction writes the Task, TaskSpec, Task event/snapshot and
+   request receipt, then changes the Suggestion to `ACCEPTED`, records the owner and
+   `result_task_id`, and writes its resolution event/snapshot. If either side fails, the
+   entire transaction rolls back.
+5. A lost-response retry returns the already linked Task; it does not create another
+   Task or append another Suggestion resolution. A different request payload using the
+   same idempotency key conflicts. Stale version, expiry, changed Coworker head, missing
+   lead, unavailable source revision, or invalid proposal leaves no partial Task.
+6. The desktop opens the committed Task in Work. Its status remains `READY` and the UI
+   says it is saved for review. Planning, AgentSession creation, and execution require
+   the ordinary independent Task admission flow.
+
+**Failure/UI/postcondition:** non-Task Suggestions cannot use this endpoint. The normal
+Suggestion resolve endpoint handles dismissal only. `ACCEPTED` TASK Suggestions always
+link to the created Task; neither acceptance nor retry grants authority, creates an
+Effect, invokes a provider, or runs code.
+
+**Tests for the later verification pass:** happy path creates one READY Task and pins
+exact inputs/Coworker revision; Task and Suggestion rows/events/snapshots/idempotency
+receipt commit together; injected failure between Task insert and Suggestion update rolls
+everything back; concurrent acceptors yield one linked Task; exact request replay returns
+the same Task without duplicate events; same key with changed payload conflicts; response
+loss and retry still opens the linked Task after Coworker revision changes; stale
+Suggestion version, expired/non-TASK/malformed proposal, foreign Workspace, archived
+Workspace/Coworker, changed Coworker head, disabled lead, missing lead, missing or
+cross-Workspace source Resource revision, and authorization revocation create no Task;
+acceptance never creates a Plan/Step/Attempt/AgentSession/ExecutionLease/Environment/
+CapabilityInvocation/Effect/Evidence; successful UI opens Work and does not show a
+running state; offline Runtime, duplicate click, accessible busy/error state, and keyboard
+activation.
+
+## F109 — Read exact Coworker revision provenance
+
+**Actors/preconditions:** Authenticated Workspace owner reviewing a Task that stores an
+`origin_coworker_id` and `origin_coworker_revision`; active local Runtime Workspace
+binding; the pinned historical revision remains retained.
+
+1. Task detail reads the Task's immutable Coworker origin ID and revision number. It does
+   not infer the origin from the Workspace primary Coworker or the current Coworker head.
+2. The desktop calls `GET /v1/coworkers/{coworker_id}/revisions/{revision}` through the
+   finite authenticated native Coworker bridge, carrying the selected Workspace context.
+3. Operator verifies Workspace ownership and the current Runtime Workspace binding,
+   reads that exact immutable revision from `SqliteCoworkerStore::get_revision`, then
+   rechecks authorization before returning the definition, author, and creation time.
+   The response is `no-store`; missing or foreign-scope data is returned as unavailable.
+4. The client verifies both returned IDs against the Task pin and renders the historical
+   Coworker definition as provenance. It does not use that definition as current Task
+   authority or mutate either the Task or Coworker.
+
+**Failure/UI/postcondition:** unavailable historical revision remains visibly unavailable;
+the client never substitutes the Coworker's current revision. The command creates no
+event, new revision, Task state, grant, or execution record.
+
+**Tests for the later verification pass:** exact older revision differs from current and
+is returned unchanged; nonexistent revision; zero/overflow/malformed path revision;
+foreign Workspace header, non-owner, archived Coworker with retained history, revoked
+Runtime Workspace binding during read, authorization recheck failure, changed/malformed
+response ID or revision, no mutation/event, `Cache-Control: no-store`, finite Tauri path
+mapping, and abort signal behavior.
+
+## F110 — Review saved Task outcome and activity
+
+**Actors/preconditions:** Authenticated Workspace owner opening one persisted Task in the
+desktop Work view; the selected Workspace and Task identity are pinned for the request.
+
+1. The desktop requests the finite authenticated Task presentation snapshot. The Operator
+   returns only committed Task, current-plan Step, and Task-linked ArtifactVersion records;
+   it does not infer live provider activity, verification, progress, or blockers that are
+   absent from those records.
+2. The client checks Workspace/Task identity and validates each bounded PresentationItem.
+   Unsupported or malformed items are omitted with a visible count; late responses from a
+   prior Task or Workspace are discarded.
+3. The default view shows the saved objective/status first, then committed output cards,
+   then at most three recent saved activity items. The activity count describes
+   presentation items, not necessarily Steps. Full activity and source identifiers remain
+   in collapsed detail disclosures.
+4. `CURRENT` means the included persisted source records came from one consistent SQLite
+   read snapshot. `STALE` or `UNKNOWN` values from other projection sources remain distinct.
+   Snapshot time is not called “last verified” or evidence time. Refreshing an open/visible
+   panel may reload the finite snapshot; it does not create a stream or synthesize activity.
+5. If the local Runtime goes offline or refresh fails while this same Task is selected,
+   the client retains the last successfully loaded snapshot for that Workspace/Task and
+   labels it as possibly out of date. Selecting a different Task clears the prior snapshot;
+   an old response cannot populate the new selection. If no snapshot was loaded, show the
+   unavailable state without implying that cached content exists.
+
+**Failure/UI/postcondition:** Offline state, stale data, and malformed items remain
+visible without replacing the Task identity. No Task, Attempt, Effect, Evidence, or
+Verification record is created or advanced by viewing the panel.
+
+**Tests for the later verification pass:** empty snapshot; absent objective/activity/output;
+unknown status; current/stale/unknown freshness labels; activity count with non-Step items; more
+than three records and deterministic ordering; duplicate and invalid item; foreign or late
+Task response; Runtime disconnect after a successful snapshot retains that same Task's
+snapshot and marks it possibly out of date; a Task switch clears the prior snapshot; offline
+with no saved snapshot shows unavailable; source IDs stay collapsed; no evidence claim from
+activity; refresh does not mutate Task state or emit domain events.
+
+## F111 — Preview a managed Markdown Artifact safely
+
+**Actors/preconditions:** Workspace owner has opened an authorized immutable managed
+ArtifactVersion whose media type is Markdown and whose content is within the existing
+preview size bound. The version is resolved through the normal Artifact authorization
+boundary.
+
+1. The Workbench loads exact-version bytes and decodes UTF-8 strictly. Content is treated
+   as untrusted text.
+2. The client parses only the bounded supported subset: headings, paragraphs, simple
+   lists, blockquotes, fenced code, inline emphasis/code, and HTTPS links. It creates React
+   elements/text nodes; it never inserts source through raw HTML, fetches remote images, or
+   interprets embedded HTML/commands.
+3. A malformed or unsupported construct causes the whole preview to fall back to the
+   original text rather than rendering a partially parsed document. The original immutable
+   source remains available through the existing raw-text view/download path.
+4. Opening an HTTPS link requires explicit confirmation showing the destination. The
+   desktop opens it outside the Workbench with opener isolation; other protocols are not
+   rendered as links.
+
+**Failure/UI/postcondition:** Invalid UTF-8 or content outside preview bounds is not
+rendered as Markdown. Renderer failure preserves the authorized raw content fallback and
+does not change ArtifactVersion state.
+
+**Tests for the later verification pass:** common supported syntax; malformed/unclosed
+fence; nested/indented/table syntax fallback; raw HTML/script displayed only as escaped
+text; `javascript:`, `file:`, credential-bearing, and malformed URLs never navigate;
+HTTPS requires owner confirmation; no image/network request; strict UTF-8 and size limit;
+renderer failure and download fallback; no Artifact mutation.
+
+## F112 — Inspect immutable Task specification history
+
+**Actors/preconditions:** Authenticated Workspace owner has opened a saved Task in the
+desktop Work view. The Task identity and selected Workspace are fixed for the history read.
+
+1. The history disclosure requests the exact Task's immutable specification revisions from
+   the authenticated Workspace-scoped Operator route only when opened.
+2. The Tauri bridge verifies Task identity, positive ascending revision numbers, parent
+   revision ordering, author kind/identity, and timestamp presence before returning the
+   bounded response to the WebView. Workspace ownership is enforced by the selected-workspace
+   route; any Workspace identity supplied by storage output must match that selection.
+3. The UI lists newest revision first and shows the objective, author, timestamp, and exact
+   parent revisions. The view is read-only; it cannot restore, revise, or change Task state.
+   The history head is compared with the Task detail's loaded current revision: equal heads
+   identify “Current”; a newer history head is labeled “Latest saved” and offers “Reload
+   Task”; a history head behind the detail is disclosed as stale/incomplete and offers
+   explicit Task reload and history refresh. Reload is unavailable while an objective draft
+   or unresolved revision request is open, so stale-data refresh cannot discard that draft.
+   The UI never labels a non-head revision current.
+4. On a Task/Workspace switch, prior history is cleared and late responses are discarded.
+   If the Runtime disconnects after history loaded, the same Task's saved history remains
+   visible with an out-of-date notice. If no history was loaded, the UI shows unavailable
+   and allows an explicit retry after reconnect.
+
+**Failure/UI/postcondition:** A malformed, foreign, or inconsistent response is rejected.
+Viewing history creates no Task revision, event, Attempt, or provider call.
+
+**Tests for the later verification pass:** lazy load; empty/malformed history; unordered or
+duplicate revision IDs; invalid parent; foreign Task/Workspace; author/timestamp mismatch;
+Task change during request; history head newer than the loaded Task; history head behind the
+loaded Task; explicit Task reload and history refresh; reload blocked during dirty or
+unresolved objective edits; offline after successful load; offline before first load;
+refresh/retry; keyboard disclosure; no mutation or restore action.
+
+## F113 — Compare adjacent immutable Artifact versions
+
+**Actors/preconditions:** Workspace owner has an authorized Artifact open in the Workbench,
+selected an exact version with a preceding version, and both are managed text formats
+within the existing preview bounds.
+
+1. The owner explicitly selects “Compare with prior version.” The Workbench requests exact
+metadata/content for the selected version and its immediate predecessor through the
+existing authenticated Artifact routes.
+2. The client checks Artifact identity, selected version numbers, supported managed media
+types, size bounds, strict UTF-8, and content authorization. It renders both sides using
+the same bounded renderer as ordinary preview.
+3. Each pane identifies its exact immutable Artifact version and backing ResourceRevision.
+   The UI says this is a side-by-side read-only view; it does not claim changed-line or
+   semantic-diff detection.
+4. Unsupported, missing, revoked, oversized, or invalid prior content leaves the selected
+   version and history intact, keeps the selected-version preview available where possible,
+   and shows a comparison preview error. Authorization failure for the selected version
+   itself invalidates its metadata/content view. Compare cannot publish, restore, or mutate
+   either version.
+
+**Failure/UI/postcondition:** Both panes always correspond to the exact version labels.
+Renderer/API failure does not silently substitute the current head or alter Artifact state.
+
+**Tests for the later verification pass:** current/previous identity mismatch; unsupported
+media; missing or revoked prior version; authorization denial for prior versus selected
+version; invalid UTF-8; size limit; exact ResourceRevision labels; Markdown fallback
+consistency; compare off/on state; refresh/close while editing; dirty-draft preservation;
+no mutation, restore, or changed-line claim; download and provenance remain available after
+comparison preview failure.
+
+## F114 — Save an exact Artifact version from desktop
+
+**Actors/preconditions:** Workspace owner has an authorized managed ArtifactVersion selected
+in the desktop Workbench; stored content is at most 10 MiB.
+
+1. Before opening the dialog, the native bridge re-reads the Artifact and exact version
+   metadata over authenticated local Operator IPC. It checks Workspace/Artifact/version
+   identity, the selected ResourceRevision, media type, content digest, size, and the
+   matching backing ResourceRevision. The dialog suggests a sanitized name containing the
+   exact version number. Cancel performs no content read and creates or truncates no file.
+2. After a destination is selected, the bridge reads only the exact managed version through
+   the authorized content route. The daemon resolves the immutable version and verifies the
+   stored blob against its digest; the native bridge checks returned media type and exact
+   byte count before writing.
+3. The native bridge enforces the 10 MiB limit and writes verified bytes through a
+   same-directory temporary file followed by rename. Content bytes and the full destination
+   path do not cross the WebView command boundary.
+4. The UI reports Saved or Cancelled. External linked content and content above 10 MiB
+   remain unavailable to this Save As path; no provider fetch or larger IPC allocation is
+   attempted.
+
+**Failure/UI/postcondition:** A failed metadata/content/integrity check leaves the chosen
+destination untouched. A write failure is reported without claiming success. No Artifact,
+Resource, Task, or Event is mutated.
+
+**Tests for the later verification pass:** dialog cancel; exact selected historical version;
+Workspace/Artifact/version mismatch; ResourceRevision/digest/size/media drift; archived but
+readable version; external content; exactly 10 MiB and over-limit content; content-route
+denial; digest mismatch; write/overwrite failure preserves prior target; safe filename;
+no bytes or local path returned to WebView; no domain mutation.
+
+## F115 — Save the original current Resource from Library
+
+**Actors/preconditions:** Workspace owner selects a current Library Resource no larger than
+10 MiB in the desktop. The operation is a local export, not a Resource mutation.
+
+1. The UI offers **Save original…** only when the catalog size is within 10 MiB. The native
+   command validates the selected Workspace/Resource/revision IDs, digest, size, and media
+   type. It re-reads Resource detail and bounded revision history through authenticated
+   local Operator IPC. Only a current `FILE` from the managed local-upload provider is
+   eligible. It requires the detail head and revision record to identify the exact selected
+   revision and match its digest, size, and media type. If a ContextDocument exists, its
+   status must be `ACTIVE`; owner-facing errors distinguish revoked, deletion-pending, and
+   deleted content.
+2. After validation, the command opens the native save dialog with a sanitized suggested
+   filename. Cancel returns `CANCELLED`, performs no content read, and touches no file.
+3. After destination selection, the command requests only the selected revision through the
+   authorized Resource content route. A concurrent head change or ContextDocument status
+   transition is rejected by that route. The daemon verifies the managed blob; native code
+   checks the exact media type and byte count, then writes through the existing atomic
+   same-directory temporary-file path.
+4. The WebView receives only `SAVED` or `CANCELLED`. Bytes and the full destination path
+   stay native. ZIP files are copied as opaque original bytes; this flow does not parse or
+   extract them. No Resource, Artifact, Task, or domain Event is created or changed.
+
+**Failure/UI/postcondition:** Non-file, non-managed, external/unavailable, stale, inactive,
+or over-limit content is refused without writing. A read admitted for an ACTIVE
+ContextDocument may race a later revocation; the final content route rechecks status and
+rejects that read before returning bytes. If authorization, metadata, size, media type, or
+integrity cannot be verified, report the typed/safe failure and leave the selected target
+untouched. No endpoint, path, or content is sent back to the WebView.
+
+**Tests for the later verification pass:** cancel before content fetch; current exact head;
+stale head before picker and after selection; digest/size/media mismatch; non-FILE kind;
+external provider; unavailable blob; each non-ACTIVE ContextDocument status before and
+after picker; exactly 10 MiB and over-limit; invalid filename sanitization; ZIP saved
+byte-for-byte with no extraction; atomic write failure/overwrite behavior; no bytes or
+destination path in IPC response; no domain mutation.
 
 ## Shared flow invariants
 

@@ -148,8 +148,8 @@ mutation, and handoff for destructive/financial actions.
 
 A Goal is a user-authored, passive statement of desired outcome. It has an immutable
 revision containing objective, success criteria, constraints, optional horizon, and
-related Task/Routine references. Links are provenance only. A Goal does not schedule work,
-select an agent, issue authority, or create Tasks by itself.
+related Task/Routine/Artifact references. Links are provenance only. A Goal does not
+schedule work, select an agent, issue authority, or create Tasks by itself.
 
 ```text
 Goal {
@@ -172,16 +172,23 @@ GoalRevision {
   horizon?: Timestamp
   related_task_ids: TaskId[]
   related_routine_refs: RoutineRevisionRef[]
+  related_artifact_refs: ArtifactVersionRef[]
   authored_by: PrincipalRef
   created_at: Timestamp
 }
 ```
 
-Related IDs are validated in the same Workspace and stored in the immutable revision;
-links do not create a second source of Task or Routine state. Artifacts and Evidence are
-discovered through linked Tasks. `GoalProgressProjection` is recomputed from accepted
-Task outcomes and Evidence. It labels partial, stale, or conflicting evidence and never
-claims completion merely from a worker summary. Only an authenticated owner command may
+Task and Routine references are validated in the same Workspace and stored in the
+immutable revision. Artifact links pin an exact `ArtifactVersionRef` from that Workspace;
+the referenced Artifact version must exist when the Goal revision is committed. Linking
+or unlinking is an ordinary owner-authored Goal revision guarded by `If-Match` and an
+idempotency key. Unlinking never deletes the prior revision or the Artifact. Links are
+provenance/context only and do not create a second source of Task, Routine, or Artifact
+state. Evidence remains discoverable through linked Tasks. The current local
+`GoalProgressProjection` reads current linked Task status and bounded committed Evidence
+IDs. It remains `PARTIAL` while VerificationRun and Task/Artifact dependency-freshness
+readers are unavailable; verified/stale/conflicted counts are null rather than synthetic
+zeroes when those dimensions cannot be proved. Only an authenticated owner command may
 mark a Goal `COMPLETED`; inferred success may prompt the owner but cannot transition it.
 An owner may reopen a completed Goal by changing it to `ACTIVE`; prior completion events
 and linked Task outcomes remain intact. Completing or reopening a Goal does not change
@@ -189,19 +196,40 @@ linked Tasks or disable linked Routines. An archived Goal is terminal; mutating 
 that require an active Goal return `GOAL_ARCHIVED`, while historical Goal/revision reads
 remain available.
 
-The embedded `GoalProgressProjection` is factual rather than a semantic judgment of free-
-text Goal criteria:
+`GoalProgressProjection` is factual rather than a semantic judgment of free-text Goal
+criteria:
 
 ```text
 GoalProgressProjection {
   computed_at: Timestamp
-  verified_task_count: u64
+  availability: COMPLETE | PARTIAL
+  limitations: GoalProgressLimitation[]
+  verified_task_count: u64 | null # null when verification state cannot be proven
   linked_task_count: u64
-  stale_source_count: u64
-  conflicted_source_count: u64
+  stale_source_count: u64 | null # null when dependency freshness is unavailable
+  conflicted_source_count: u64 | null # null when dependency freshness is unavailable
   contributions: GoalTaskContribution[]
+  artifact_evidence_refs: GoalArtifactEvidenceRefs[]
   summary: string
 }
+
+`availability: COMPLETE` means all dimensions applicable to the linked Task and Artifact
+set were readable; it never means that the Goal's success criteria are satisfied. An
+empty linked-work set can therefore have complete projection availability while making
+no claim about Goal completion.
+
+GoalArtifactEvidenceRefs {
+  artifact_id: ArtifactId
+  version: u64
+  evidence_refs: EvidenceId[] # only committed Evidence references in this Workspace
+}
+
+GoalProgressLimitation =
+  VERIFICATION_RUN_READ_MODEL_UNAVAILABLE
+  TASK_DEPENDENCY_FRESHNESS_UNAVAILABLE
+  ARTIFACT_DEPENDENCY_FRESHNESS_UNAVAILABLE
+  ARTIFACT_EVIDENCE_REFERENCE_UNRESOLVED
+  EVIDENCE_LIST_TRUNCATED
 
 GoalTaskContribution {
   task_id: TaskId
@@ -212,10 +240,19 @@ GoalTaskContribution {
 ```
 
 `VERIFIED` means the linked Task's pinned mandatory acceptance criteria passed against
-current inputs; it does not mean the Goal itself is achieved. Contributions are
-recomputed from current Task/Evidence/Dependency state and identify stale or conflicting
-sources. Only the owner changes Goal status. These fields are the `progress` property in
-`GET /v1/goals/{id}` and never change Goal aggregate version.
+current inputs; it does not mean the Goal itself is achieved. A complete projector may
+report verified, stale, or conflicting outcomes only from current Task, VerificationRun,
+Evidence, and dependency-freshness readers. Only the owner changes Goal status. The current local projection reads linked
+Task status and bounded committed Evidence IDs. Since VerificationRun and dependency
+freshness readers are not integrated, verified/stale/conflicted counts are null whenever
+those dimensions cannot be proved; `limitations` names each unavailable dimension. A
+Goal-pinned Artifact version exposes only its exact version's Evidence references that
+resolve to committed same-Workspace Evidence; unresolved references are omitted and
+reported. Evidence references are bounded to 1,000 total per projection (200 per Task or
+Artifact) and truncation is explicit. A terminal `COMPLETED` Task remains `UNVERIFIED` until its current mandatory criteria can be
+matched to passing VerificationRuns and current inputs. `FAILED`, `CANCELLED`, and
+`INCOMPLETE` Task statuses are reported as `INCOMPLETE`. This read-only projection is
+included in Goal list/get responses and never changes Goal aggregate version.
 
 ## Suggestions
 
@@ -276,23 +313,29 @@ SuggestionPreference {
   workspace_id: WorkspaceId
   kind: SuggestionKind
   muted: bool
-  updated_at: Timestamp
+  updated_at: Timestamp?
   version: u64
 }
 ```
 
-An absent preference means `muted=false`, version `0`; setting it creates version `1`.
-Settings list all supported kinds, including defaults. Changes use expected-version
-checking and emit `suggestion.preference.changed.v1`; they replicate with
-Workspace state. A mute command and resolution events for its currently proposed items
-commit atomically. Expiration and snooze use the SuggestionService Clock. Individual
+An absent preference means `muted=false`, `version=0`, and `updated_at=null`; it is a
+virtual default, not a persisted row and has no truthful update time. Settings list all
+supported kinds, including defaults. Changes use expected-version checking (including
+`If-Match: 0` for a virtual default) and emit `suggestion.preference.changed.v1`; they replicate with
+Workspace state. The persisted key is `(workspace_id, kind)`; in the DomainEvent,
+`entity_type` is `SuggestionPreference`, `entity_id` is the kind enum, and
+`workspace_id` scopes that aggregate key. A mute command and resolution events for its
+currently proposed items commit atomically. Expiration and snooze use the SuggestionService Clock. Individual
 dismissal cooldown checks only a prior owner dismissal of the exact key with
 `resolved_at` in the preceding 30 days.
 
 Accepting a `TASK` Suggestion validates its pinned proposal and creates an ordinary Task
 with the normal TaskSpec, lead, budget, and Trust checks; Task creation and Suggestion
-resolution commit atomically. It does not run the Task unless the standard admission
-path can safely continue. If a required source is unavailable or its dependency freshness
+resolution commit atomically. The accepted Task begins in `READY`; acceptance itself does
+not create a Plan, start an AgentSession, or begin execution. Any later start follows the
+ordinary explicit Task admission path. The Task preserves exact source Resource inputs
+and, when present, pins its originating Coworker revision. If a required source is
+unavailable or its dependency freshness
 is STALE/CONFLICTED, acceptance opens a review/update step and cannot silently advance the
 reference to a newer version. Accepting an editor action opens a user-confirmed Routine or
 Automation editor; nothing is persisted until the owner saves through the existing

@@ -468,6 +468,50 @@ recovery rather than treating startup as failed.
 The Linux PoC may mock Effect/lease reconciliation, but product acceptance must use the real
 services and supported OS containment path.
 
+### B78 Presentation stream and renderer recovery
+
+Run a real Conversation turn through the desktop Operator and qualified AgentAdapter. Drop
+and reconnect the Operator stream while text is arriving; inject duplicate, delayed,
+reordered, and post-settlement frames in the contract harness. Verify monotonic per-retry
+ordering, bounded buffering/backpressure, no duplicated or fabricated text, correct
+resync, and that only a committed ConversationMessage appears as a saved answer. Force an
+unsupported/disabled renderer, stale source revision, permission revocation while open, and
+Artifact publication conflict. Inject HTML/script, remote asset, and disallowed URL payloads.
+Verify safe fallback, source reauthorization, draft preservation, no unauthorized fetch or
+execution, and no authority/state mutation from a PresentationItem. Record desktop build,
+OS/webview, adapter/provider versions, frame limits, reconnect evidence, and remaining
+limitations.
+
+### B79 Nontechnical and technical workbench usability
+
+The owner completes two prepared laptop workflows from a clean desktop install. In the
+nontechnical workflow, request a cited report from a selected folder/ZIP, resolve one
+realistic blocker, inspect Context used and open the finished Artifact without entering the
+Inspector. In the technical workflow, ask for a bounded code change, inspect the diff,
+worker/source/test evidence in Details/Inspector, compare two Artifact versions, and restore
+an older version as a new version. Both workflows must show truthful current status, preserve
+drafts on failure, keep Needs You reachable, and explain the next action without protocol
+jargon in the default surface. Record completion, errors, owner assistance, task duration,
+accessibility mode, and whether each required fact was discoverable. This is owner
+acceptance evidence, not a statistically representative usability study.
+
+### B80 Local Resource lexical-index scope and freshness
+
+On a clean desktop Workspace, import allowlisted UTF-8 text, query with multiple terms,
+and verify deterministic AND matches cite the exact current ResourceRevision with a
+bounded excerpt. Restart the daemon and repeat to prove the Workspace/purpose key remains
+available. Import a new revision and prove old tokens no longer return it. Search another
+Workspace with the same query and prove no cross-Workspace match or key reuse. Remove or
+revoke the ContextDocument and prove it is excluded immediately. Rotate the ResourceIndex
+key while retaining the prior version and verify both indexed versions remain searchable;
+then simulate a missing retained key and prove the operation fails closed with no
+plaintext fallback. Include empty, 1 MiB boundary, oversized, malformed UTF-8, ZIP/PDF/
+Office, Unicode, query-limit, snapshot-tamper, concurrent revision update, and database
+restart cases. Record the exact daemon build, OS credential store, Resource fixtures,
+latency, peak memory, returned ResourceRefs, failure behavior, and unimplemented parser or
+semantic-retrieval limitations. ZIP stays opaque; this benchmark does not claim semantic
+RAG or local-model retrieval.
+
 ## Failure/edge benchmark extensions
 
 - OAuth expires mid-Task
@@ -522,3 +566,14 @@ Do not collapse to one leaderboard score. Record:
 
 Record these separately from implementation throughput benchmarks; a successful outcome
 without correct ownership, deduplication and truthful UI fails the scenario.
+
+### B73 Atomic TASK Suggestion acceptance
+
+Accept a pinned TASK Suggestion through the desktop UI, then inject/lab-simulate response
+loss, concurrent duplicate acceptance, stale Suggestion version, Coworker-head change,
+and failures at each write boundary. Require exactly one READY Task linked from the
+accepted Suggestion, with exact pinned inputs and Coworker provenance where applicable;
+the Task/Suggestion events and snapshots share one transaction. Replays return the linked
+Task without duplicate events. Every rejected/aborted case leaves no partial Task and no
+agent/session/plan/effect side effect; the UI opens the saved Task without implying it is
+running.

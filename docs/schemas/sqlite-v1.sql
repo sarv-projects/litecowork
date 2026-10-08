@@ -332,6 +332,8 @@ CREATE INDEX idx_suggestions_workspace_status_created ON suggestions(workspace_i
 CREATE UNIQUE INDEX uq_suggestions_open_dedupe ON suggestions(workspace_id, dedupe_key) WHERE status = 'PROPOSED';
 CREATE INDEX idx_suggestions_dismissal_cooldown ON suggestions(workspace_id, dedupe_key, resolved_at DESC) WHERE status = 'DISMISSED';
 
+-- Missing rows represent virtual defaults (muted=false, version=0, updated_at=null).
+-- Persisted preference revisions always have an actual owner-authored updated_at.
 CREATE TABLE suggestion_preferences (
   workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
   kind TEXT NOT NULL CHECK (kind IN ('TASK_OPPORTUNITY', 'ROUTINE_OPPORTUNITY', 'AUTOMATION_OPPORTUNITY')),

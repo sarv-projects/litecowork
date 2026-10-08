@@ -6,6 +6,8 @@
 StateStore
 EventStore
 BlobStore
+ResourceStore
+RuntimeLifecycleStore
 ```
 
 Domain/application code depends on ports, never SQLite/Postgres/S3 directly.
@@ -14,8 +16,9 @@ Domain/application code depends on ports, never SQLite/Postgres/S3 directly.
 aggregate projection, its event(s), request-deduplication receipt, and the local
 Workspace/origin sequence allocator. `EventStore` reads immutable streams/cursors and
 accepts authenticated replication through the transaction owner. `BlobStore` provides
-immutable content-addressed `put/get/verify` operations; it does not make domain
-decisions. The SQLite adapter exposes one bounded writer executor and process-local
+content-addressed `put/get/verify` operations and provider-mediated deletion of an exact
+object only after its owner has fenced new references and proved the object unreferenced;
+it does not make domain decisions. The SQLite adapter exposes one bounded writer executor and process-local
 `SqliteWriterMetricsSnapshot` observations for outstanding commands and elapsed time in
 bounded-channel sends. Outstanding commands include callers blocked while submitting,
 queued commands and the active command awaiting its response; they are not exact channel
@@ -23,10 +26,72 @@ occupancy. Send elapsed time includes local call overhead and is not database ex
 time. A snapshot reads independent atomics and is best-effort under concurrent load, not a
 cross-field transactional sample. These observations are ephemeral operational state,
 never persisted or replicated.
+
+`ResourceStore::read_resource_content_bounded` requires providers to check indexed
+revision size before reading/decrypting blob bytes. A provider must not implement this by
+calling an unbounded read and checking the returned `Vec`; that would defeat the memory
+bound. Both bounded and trusted unbounded Resource reads check ContextDocument status at
+the SQLite read-admission boundary before returning a BlobRef to the caller: ordinary
+Resources and `ACTIVE` ContextDocuments may be read; `REVOKED`, `DELETION_PENDING`, and
+`DELETED` ContextDocuments are rejected with status-specific internal errors. The owner
+Operator maps these to `CONTEXT_DOCUMENT_NOT_ACTIVE` with a status-appropriate message;
+metadata reads remain available. A read admitted while `ACTIVE` may finish if a status
+transition commits afterward. Derived-state writers must recheck the exact status and
+source pin in their final transaction, so an in-flight read cannot publish an index after
+revocation/deletion. The Operator currently caps a single IPC Resource response at 10 MiB
+and workspace instruction input at 64 KiB. The unbounded read port is reserved for trusted
+internal consumers that have their own explicit size contract.
+
+If BlobStore access fails after read admission, SQLite re-reads the Resource's current
+ContextDocument status. A confirmed transition returns the status-specific inactive error;
+an active, absent, or unprovable status preserves the original BlobStore/integrity error.
+The Operator reports unavailable content as `RESOURCE_LOCATION_UNAVAILABLE` and verified
+content-integrity failures as `INTEGRITY_FAILURE`; a failed status recheck does not mask the
+original read failure.
+
+The desktop's bounded `ON_DEMAND_CONTENT` compatibility path reads current managed
+Resource blobs using the digest-verifying bounded read path. The local text-index path
+uses a distinct `RESOURCE_INDEX` BlobPurpose encrypted with the Workspace/purpose key and
+stores only its digest plus workspace-keyed HMAC term tokens in SQLite migration v7.
+Extracted text, query terms, and snippets are never stored as plaintext in SQLite. The
+index is a rebuildable projection over exact Resource revisions, not an evented aggregate
+or replicated history. The local key provider keeps versioned Workspace/purpose keys in
+the OS credential store; the database and blob tree hold no key material, and no key is
+exposed to an agent or Operator response. Key versions remain stable across daemon
+restarts. Rotation creates a new active key version while retaining older versions so
+indexed queries can search each version (up to eight retained indexed versions per
+Workspace); explicit reindexing from verified authorized Resource bytes moves a revision
+to the active version. If an index key version is unavailable or the searchable-version
+bound is exceeded, indexed search fails closed and never tries plaintext or silently
+omits that version. If the active-version pointer is absent while a version-1 credential
+already exists, key initialization and rotation fail with a recovery-required error; they
+must not overwrite the existing version-1 credential. An encrypted snapshot or term projection can be rebuilt from the source Resource
+when its own authorized Resource key and source bytes remain available. ZIP, PDF/Office,
+OCR, embeddings, semantic/local-model retrieval and persistent WorkspaceRoot crawling
+remain outside this provider slice.
+
+Owner-triggered local text-index rebuild uses the same rebuildable projection tables and
+BlobPurpose. The request carries the authenticated principal, RequestId, Workspace,
+Resource, exact current ResourceRevision ID, and expected source digest. Pinned metadata
+declines unsupported/oversized files without reading their bytes; eligible text is read
+through the bounded digest-verifying path and index preparation happens outside the SQLite writer transaction; final commit opens an
+IMMEDIATE transaction, rechecks owner/active Workspace and exact head+digest (including
+active ContextDocument status), replaces/removes the projection, and inserts the encoded
+typed result in `request_dedup` atomically. Receipt lookup happens before source access so
+a lost-response retry returns the original result even if the source later changes or the
+Workspace is archived. Reuse of that principal/RequestId with a different normalized
+Resource/revision/digest payload conflicts. The response contains no extracted text or
+terms. This projection-only maintenance command does not append domain events or mutate
+Resource, Task, or Artifact aggregates.
+
 The adapter performs no provider, filesystem-encryption-key, or network call while a SQL
 transaction is open.
 Blob bytes are committed and verified before a transaction can reference them; a failed
-transaction may leave an unreferenced blob for delayed garbage collection.
+transaction may leave an unreferenced blob for delayed garbage collection. Deletion is
+idempotent for a missing object, must reject unsafe object types, and must durably remove
+the exact content-addressed object. Providers that cannot implement these semantics must
+return an unsupported-operation error; callers must not emulate deletion by traversing or
+clearing a BlobStore directory.
 
 Every production BlobStore construction requires an injected `WorkspaceBlobKeyProvider`
 and versioned encryption implementation. Keys are scoped to a Workspace and purpose,
@@ -34,9 +99,57 @@ kept outside SQLite and backups, and zeroized when practical. If the key provide
 encryption implementation is unavailable, the store fails closed; plaintext storage is
 not a fallback. Test-only key providers are not valid production providers.
 
+`storage-sqlite::OsWorkspaceBlobKeyProvider` is the desktop implementation. It stores
+versioned blob keys and the active-version pointer in the platform credential store
+(macOS Keychain, Windows Credential Manager, and the Linux Secret Service/keyutils
+backend selected by the configured `keyring` features). Credential account labels contain
+only a SHA-256 scope pseudonym, not the Workspace ID. Key bytes are created with the OS
+CSPRNG and zeroized in process memory where supported. A missing, locked, or unavailable
+credential store and malformed items fail closed. There is no local-file fallback.
+`rotate_key` activates a new version while retaining old versions for reads; rotation,
+recovery, and platform backend behavior still require system qualification and
+cryptographic review before production claims.
+
+`storage-sqlite::OsRuntimeDeviceIdentityProvider` uses a separate keyring service and a
+SHA-256 account label derived from the canonical private data-directory path. Its UTF-8
+credential contains the Ed25519 seed, RuntimeId binding, key version, and issuance time;
+the seed is wrapped in zeroizing buffers in process memory and never written to a local
+file or SQLite. The public DeviceIdentity is persisted with the Runtime descriptor. This
+is an OS credential-store secret and may be exportable; hardware-backed key protection is
+not assumed. A missing/corrupt credential or identity mismatch fails closed. Moving the
+data directory needs an explicit identity-recovery procedure.
+
+`LocalWorkspaceStorage::open(state_directory, config)` is the local composition entry
+point for the daemon: it opens `litecowork.sqlite3` and the `blobs/` store under the same
+private state root and injects `OsWorkspaceBlobKeyProvider`. The daemon must retain this
+composition for its lifetime and must not construct a test key provider in production.
+
 `runtime_incarnations` is the compact authenticated Runtime Mesh registry required to
 validate references from replicated aggregates. Local OS boot IDs and diagnostics live in
 `runtime_incarnation_local_observations`, which is never replicated or backed up.
+The local `RuntimeLifecycleStore` atomically registers the public Runtime descriptor,
+incarnation, and local observation through the bounded writer. Its operation does not
+create Workspace bindings or Mesh presence. It never stores device private-key material.
+Runtime-to-Workspace authorization is stored separately in
+`runtime_workspace_bindings`; Runtime IDs identify installations, not Workspace
+membership. SQLite v1 and v2 are immutable baselines. V3 backfills one binding per legacy
+Runtime/Workspace pair and updates `attempt_environment_owner_guard` to require an active
+binding. V4 removes `runtimes.workspace_id` and rebuilds the dependent Environment,
+ChannelHostAssignment, AutomationOccurrence, and AutomationCursor tables. New writes to
+these Workspace-scoped Runtime relations require an ACTIVE RuntimeWorkspaceBinding with
+the matching role (`EXECUTOR`, `CHANNEL_HOST`, `TRIGGER_HOST`, or `WORKSPACE_HUB`). The
+attempt admission guard additionally checks the current Runtime incarnation and active
+`EXECUTOR` role. Runtime listings are Workspace-scoped projections through active
+bindings; Runtime identity and installation inventory remain Workspace-neutral. Local
+Runtime registration still requires explicit post-Workspace enrollment and must not invent
+a Workspace to satisfy historical storage shapes.
+
+The v4 migration also validates trigger-enforced scope relationships for copied rows before
+commit; `foreign_key_check` alone cannot validate active status or role membership. A legacy
+database with orphaned or incompatible live Runtime references fails closed for repair.
+Revoking a Workspace binding requires clearing a Mesh hub pointer and draining ChannelHost
+assignments/leases and enabled TriggerHost cursors first. Task Attempts remain governed by
+their own lease and Effect reconciliation lifecycle.
 `agent_host_instances`, `agent_session_host_bindings`, `capability_host_instances`,
 `capability_activation_host_bindings`, `environment_provider_bindings`, and
 `environment_checkpoint_provider_bindings`, `agent_endpoint_bindings`, `resource_location_bindings`, and
@@ -54,6 +167,13 @@ is `INCLUDE_CHECKPOINTS` and the Workspace replication policy also permits it.
 
 ## Local deployment
 
+- `runtime-state.json` and `runtime.lock` are installation-local bootstrap/lifecycle state,
+  stored beside the local database and excluded from Workspace backup/replication. They
+  contain no credentials. `runtime-state.json` is atomically replaced, and the daemon
+  holds an OS file lock for its lifetime. After SQLite opens, the daemon persists its
+  installation-scoped Runtime and new RuntimeIncarnation in the local catalog before
+  recovery; this does not require a Workspace or create a RuntimeWorkspaceBinding.
+  Authenticated Mesh publication is separate and occurs only after pairing.
 - SQLite 3.38 or later with JSON functions enabled for relational/domain projections
   and the local event index.
 - The state directory is private to the owning OS user; on Unix, create/check it as
@@ -99,6 +219,7 @@ goals
 goal_revisions
 goal_task_links
 goal_routine_links
+goal_artifact_links
 suggestions
 suggestion_preferences
 demonstration_sessions
@@ -165,6 +286,9 @@ skill_proposals
 environment_control_leases
 resource_upload_sessions
 resource_upload_chunks
+resource_upload_chunk_requests
+resource_upload_blob_reservations        # operational write intents; local recovery state
+resource_upload_blob_gc_fences            # operational delete fences; local recovery state
 aggregate_snapshots
 event_archive_segments
 workspace_backup_manifests
@@ -181,6 +305,23 @@ automation_trigger_bindings             # encrypted provider cursors; local-only
 channel_ingress_cursor_bindings          # encrypted provider cursors; local-only, host-epoch/incarnation scoped
 channel_reply_targets                    # opaque provider message refs; local-only, excluded from backup/replication
 channel_host_lease_records               # Hub-only renewable control state; digest only, not Workspace backup
+
+Resource upload chunks are stored as authenticated encrypted BlobStore objects under the
+separate `RESOURCE_UPLOAD_CHUNK` purpose. SQLite stores only their digest, byte range,
+index, and opaque content-addressed reference. A durable blob reservation is committed
+before each BlobStore put, then consumed atomically with its chunk receipt. This makes a
+crash between blob write and receipt discoverable after the upload session expires. The
+bounded collector claims only expired reservations with no accepted chunk reference and
+no live reservation for the same `(WorkspaceId, digest)`. A durable GC fence blocks new
+reservations while the exact encrypted object is removed; only then are reservation and
+fence rows cleared. A crash after claiming leaves a `DELETING` reservation/fence for the
+next daemon incarnation to retry. The collector is serialized by the single-instance local
+daemon lifecycle and processes at most 100 objects per 30-second sweep. Shared digests with
+any accepted chunk reference are retained. A Resource commit transaction inserts the
+Resource/revision/location/event and commit receipt while transitioning its upload session
+to `COMMITTED`; it never exposes temporary chunk bytes through catalog or Task APIs. This
+collector only reclaims unreferenced upload-chunk objects; it does not garbage-collect
+committed chunk data or general Resource/Artifact blobs.
 routines
 routine_revisions
 automations
@@ -204,7 +345,42 @@ workspace_origin_sequences
 The local-only `schema_migrations` table records the monotonically numbered migration,
 its immutable SQL-source checksum, the fingerprint of the resulting SQLite schema
 objects, and application time. `PRAGMA user_version` is the
-supported schema version marker. The local-only `workspace_origin_sequences` table
+supported schema version marker. Fresh databases apply `sqlite-v1.sql`, then
+`sqlite-v2.sql`, then `sqlite-v3.sql` in one transaction, followed by the V4 table rebuild
+in its own immediate transaction with foreign-key enforcement temporarily disabled outside
+the transaction and restored on every exit path. V4 runs `foreign_key_check` before
+commit. Existing databases verify each recorded source checksum before applying remaining
+forward migrations; V1-V4 source files and checksums remain immutable. V5 adds
+PlanRevision update/delete rejection, Step identity/deletion protection, and unique logical
+keys within each Task/PlanRevision. Initial-plan acceptance binds its idempotency digest to
+the normalized typed plan. In the same transaction it rechecks the producer's host binding,
+current ready Runtime incarnation, live endpoint binding, active Workspace EXECUTOR binding,
+and enabled lead eligibility. Endpoint expiry uses the daemon's UTC admission time rather
+than caller event time; this depends on the local system clock and still needs clock-skew
+qualification. The receipt digest includes the normalized plan and producer session. V2 adds upload
+lifecycle/progress columns, folder provenance, chunk request and blob-GC recovery tables,
+and write guards that can be expressed additively. It backfills committed Resource IDs from
+durable upload status events when available. V3 adds `runtime_workspace_bindings`,
+backfills explicit bindings from legacy Runtime/Workspace pairs, and makes Attempt
+admission require an active binding. V4 removes the remaining Workspace ownership column
+and four composite foreign keys from the installation-scoped Runtime representation;
+multi-Workspace use also depends on enforcing role-scoped active bindings in admission and
+readiness services. Historical rows retain nullable legacy digest
+and prior chunk-size values; a missing digest or size/chunk values outside current limits
+makes a session non-resumable and non-committable. Folder provenance is never inferred from
+legacy display names. V8 adds Routine revision/head guards. V9 adds Effect legal-transition,
+initial-PROPOSED, and delete guards plus append-only Evidence update/delete guards. Earlier
+migration sources and checksums remain immutable. These guards enforce storage invariants;
+they do not provide Trust authorization, provider dispatch, Effect reconciliation, or
+production-safe Task execution. V6 rebuilds `resource_locations` to add `UNAVAILABLE` while preserving
+existing rows and dependent foreign keys; v1-v5 SQL sources and checksums remain immutable.
+At Runtime startup, bounded root-revalidation candidates are read and each result is committed
+in an immediate transaction with its WorkspaceRoot transition, ResourceLocation observation,
+safe events/snapshots, idempotency receipt, and current-incarnation private locator/raw identity
+bindings. A failed identity check atomically removes any partial current-incarnation pair and
+marks the root and location unavailable. Private binding rows are never included in events,
+snapshots, API results, or receipts. The local-only
+`workspace_origin_sequences` table
 persists the last committed event sequence for each `(workspace_id, origin_runtime_id)`;
 it advances in the same transaction as the event and aggregate projection, so archival
 cannot cause sequence reuse. Neither table is a replicated Workspace aggregate.
@@ -214,6 +390,7 @@ cannot cause sequence reuse. Neither table is a replicated Workspace aggregate.
 ```text
 UNIQUE task_spec_revisions(task_id, revision)
 UNIQUE plan_revisions(task_id, revision)
+UNIQUE steps(task_id, plan_revision, logical_key) WHERE logical_key IS NOT NULL
 UNIQUE artifact_versions(artifact_id, version)
 UNIQUE artifact_versions(artifact_id, resource_id, version)
 FOREIGN KEY artifacts(artifact_id, current_version) -> artifact_versions(artifact_id, version), deferred
@@ -233,6 +410,7 @@ UNIQUE non-archived delegation profile name_key(workspace_id, agent_binding_id)
 UNIQUE coworker_revisions(coworker_id, revision)
 UNIQUE goal_revisions(goal_id, revision)
 UNIQUE goal_task_links(goal_id, revision, task_id)
+UNIQUE goal_artifact_links(goal_id, revision, artifact_id, artifact_version)
 UNIQUE goal_routine_links(goal_id, revision, routine_id, routine_revision)
 UNIQUE automation_occurrences(automation_id, trigger_id, occurrence_key)
 UNIQUE INDEX uq_suggestions_open_dedupe(workspace_id, dedupe_key) WHERE status = 'PROPOSED'
@@ -242,7 +420,7 @@ UNIQUE channel_event_receipts(channel_binding_id, origin_host_epoch, ingress_seq
 PRIMARY KEY channel_ingress_cursor_bindings(channel_binding_id, host_epoch)
 FOREIGN KEY automation_cursors(automation_id,active_automation_revision) -> automation_revisions
 FOREIGN KEY runtime-bound handles(runtime_id,runtime_incarnation_id) -> runtime_incarnations
-RuntimeIncarnation catalog is authenticated Workspace Mesh metadata; persist it before accepting any aggregate that references the incarnation
+Runtime and RuntimeIncarnation catalogs are installation-local durable state; persist them before recovery, and publish the compact incarnation record to authorized Workspace peers only after authenticated Mesh pairing and before any replicated aggregate references it
 runtime_incarnation_local_observations is local-only and excluded from Workspace backups/replication
 environment_provider_bindings, environment_checkpoint_provider_bindings, agent_endpoint_bindings, resource_location_bindings, and file_identity_bindings are local-only, exact-incarnation bindings excluded from Workspace backups/replication
 capability_invocation_provider_bindings, provider_input_bindings, and automation_trigger_bindings are encrypted Runtime-local operational state and are excluded from Workspace backups/replication; restore marks them unavailable and requires provider reconciliation or a bounded rescan
@@ -272,6 +450,10 @@ FOREIGN KEY agent_session_host_bindings(host_instance_id) -> agent_host_instance
 AgentSessionHostBinding must match the AgentSession Runtime/incarnation, selected endpoint, and profile of the joined AgentHostInstance
 AgentSession.endpoint_id is an immutable historical identity and has no FK to expiring Runtime-local agent_endpoints
 AgentSessionHostBinding deletion is allowed only after AgentSession is CLOSED or LOST
+AgentHostStore persists only Runtime-local AgentHostInstance lifecycle state; create requires the current READY incarnation and matching endpoint/profile, and transitions use expected-state compare-and-set without domain events
+TASK_PLANNING admission commits a version-1 STARTING AgentSession, its complete aggregate-state blob reference, `agent.session.starting.v1`, and RequestId receipt in one transaction after rechecking Task/spec/lead, owner, enabled binding, endpoint binding, and current READY Runtime incarnation
+STARTING claims the unique planner slot but is not ready and cannot authorize planning tools; recovery enumeration includes stranded STARTING sessions across Runtime incarnations
+adapter startup occurs outside SQLite; activation must atomically commit AgentSession ACTIVE and first-planning Task RUNNING only after readiness
 FOREIGN KEY capability_activations(runtime_id,runtime_incarnation_id) -> runtime_incarnations
 CapabilityActivation scope tuple must satisfy its tagged-union CHECK and point to the same Workspace as its scope entity
 CapabilityActivation scope, Runtime/incarnation, and CapabilityRef must match the session/invocation at admission
@@ -314,6 +496,7 @@ UNIQUE capability_locks(task_id, identity_kind, source, capability_id, component
 UNIQUE notification_deliveries(workspace_id, dedupe_key)
 UNIQUE user_request_responses(request_id)
 UNIQUE resource_upload_chunks(upload_id, chunk_index)
+UNIQUE resource_upload_chunk_requests(upload_id, request_id)
 UNIQUE dependency_edges(source revision, dependent kind/ref)
 UNIQUE invalidation_records(dependency_edge_id, observed_revision_id)
 UNIQUE non-null verified resource identity digest within Workspace
@@ -413,6 +596,11 @@ Atomic boundaries:
 - PlanRevision append + current-revision promotion + Step materialization + related events in one transaction
 - lease acquisition + Attempt authoritative ownership
 - Effect PROPOSED before external mutation
+- Effect row + immutable aggregate snapshot + `effect.proposed.v1` + idempotency receipt
+  before any later dispatch; proposal rechecks the active Attempt/Invocation/grant and the
+  current Runtime incarnation/ExecutionLease fence. This foundation does not dispatch.
+- Effect transition + versioned snapshot + event + idempotency receipt
+- append-only Evidence row + snapshot + `evidence.created.v1` + idempotency receipt
 - Artifact row + stable ARTIFACT Resource + initial ArtifactVersion/ResourceRevision v1 + input DependencyEdges + synchronized current-version/head pointers + Resource and Artifact events after content is committed
 - Later ResourceRevision/head + ArtifactVersion + input DependencyEdges + synchronized current-version/head pointers + both events after blob digest commit; update Artifact.current_version last so its trigger checks the matching Resource head
 - VerificationRun creation + paired exact ResourceInput refs/observed digests + reverse DependencyEdges + verification event/state blob
@@ -426,6 +614,7 @@ Atomic boundaries:
 - Resource revision/location observation + downstream invalidation records
 - ArtifactVersion/VerificationRun immutable input refs (including paired ResourceInput digests) + DependencyEdge reverse-index rows
 - ResourceRevision append + parent-edge rows + current-head recomputation + location observation + event + dependent invalidations
+- Resource revision-history page read + cursor lookup, returning a bounded append-order keyset page so parent revisions precede child revisions without materializing the full ancestry in the daemon; current SQLite may still scan matching rows because append order is not yet indexed
 - upload chunk acceptance + offset/hash verification; final commit only after full digest verification; session lifecycle event and Resource creation commit atomically
 - notification claim/delivery settlement under stable dedupe key
 - EnvironmentControlLease epoch increment + previous-owner fencing
@@ -543,7 +732,7 @@ active journal retains a verifiable manifest and supports cursor-based retrieval
 
 ## Resumable uploads
 
-Upload sessions pin expected size, optional final digest, chunk size, expiry, and current
+Upload sessions pin expected size, required whole-content digest, chunk size, expiry, and current
 received ranges. HTTP ranges are inclusive; chunk rows persist half-open byte intervals
 using `start_offset` and `end_offset_exclusive`. A chunk index fixes its only legal start
 and maximum size, and ranges cannot overlap. A chunk is accepted idempotently only when
@@ -566,6 +755,21 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
 - migrations are forward-only in production; rollback is restore/forward-fix.
 - runtime refuses to open a database newer than its supported schema major.
 - managed rolling upgrades use expand/migrate/contract pattern.
+- migration 7 adds revision-scoped `resource_text_indexes` and keyed-token projection rows;
+  extracted snapshots remain encrypted Workspace BlobStore objects and are never FTS
+  plaintext.
+- migration 8 makes Routine revisions append-only and guards Routine head updates to
+  append a revision or perform the one-way `ACTIVE` → `ARCHIVED` transition. Routine
+  storage persists reusable definitions only; it does not execute or schedule them.
+- migration 9 guards initial Effect state and legal transitions, rejects direct Effect
+  deletion, and enforces Evidence append-only writes. `OBSERVED`/`VERIFIED` Evidence
+  admission is deliberately disabled until an independently authenticated observer/verifier
+  contract exists; it must not be synthesized by a Runtime request. The migration validates
+  its schema transactionally. Because earlier writers cannot prove historical append-only
+  or producer provenance, migration 9 preflights that both tables are empty and fails closed
+  if either contains rows; a dedicated provenance recovery workflow is not yet implemented.
+- migration 10 adds append-only Goal links to exact same-Workspace Artifact versions;
+  unlinking is represented by a new Goal revision, never by deleting historical link rows.
 
 ### Routine and trigger Workspace integrity
 

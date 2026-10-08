@@ -27,6 +27,30 @@ tags:
 - {name: recovery}
 - {name: notifications}
 paths:
+  /agent-installations:
+    get:
+      tags: [agents]
+      operationId: listLocalAgentInstallations
+      security: [{operatorAuth: []}]
+      responses:
+        '200':
+          description: Authenticated runtime-local executable inventory; not negotiated readiness
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentInstallationPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /operator/readiness:
+    get:
+      tags: [runtime-lifecycle]
+      operationId: getLocalOperatorReadiness
+      security: [{operatorAuth: []}]
+      responses:
+        '200':
+          description: Authenticated local API-serving handshake; does not indicate Runtime execution readiness
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LocalOperatorReadiness'}
+        default: {$ref: '#/components/responses/Error'}
   /workspaces:
     get:
       tags: [workspaces]
@@ -53,6 +77,10 @@ paths:
       responses:
         '201':
           description: Workspace created
+          headers:
+            X-Correlation-ID:
+              required: true
+              schema: {type: string, minLength: 1}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Workspace'}
@@ -176,6 +204,61 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Workspace'}
+        default: {$ref: '#/components/responses/Error'}
+  /workspaces/{workspaceId}/runtime-bindings:
+    get:
+      tags: [workspaces, runtimes]
+      operationId: listWorkspaceRuntimeBindings
+      parameters: [{$ref: '#/components/parameters/WorkspaceId'}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200':
+          description: Runtime installations authorized for the selected Workspace
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeWorkspaceBindingPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /workspaces/{workspaceId}/runtime-bindings/current-local:
+    get:
+      tags: [workspaces, runtimes]
+      operationId: getCurrentLocalRuntimeWorkspaceBinding
+      parameters: [{$ref: '#/components/parameters/WorkspaceId'}]
+      responses:
+        '200':
+          description: Zero or one active enrollment for the exact current local Runtime incarnation. This endpoint is desktop-local and is not the complete Workspace Runtime-binding inventory.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeWorkspaceBindingPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /workspaces/{workspaceId}/runtime-bindings/local-enrollment:
+    post:
+      tags: [workspaces, runtimes]
+      operationId: enrollLocalRuntimeInWorkspace
+      parameters: [{$ref: '#/components/parameters/WorkspaceId'}, {$ref: '#/components/parameters/IdempotencyKey'}, {$ref: '#/components/parameters/IfMatch'}]
+      responses:
+        '201':
+          description: Local-only RuntimeWorkspaceBinding created; no Mesh pairing implied
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeWorkspaceBinding'}
+        default: {$ref: '#/components/responses/Error'}
+  /workspaces/{workspaceId}/runtime-bindings/{bindingId}/revoke:
+    post:
+      tags: [workspaces, runtimes]
+      operationId: revokeWorkspaceRuntimeBinding
+      parameters:
+      - {$ref: '#/components/parameters/WorkspaceId'}
+      - name: bindingId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      responses:
+        '200':
+          description: This Runtime's access to this Workspace was revoked. RuntimeMesh first drains/fences its channel hosts; if no eligible replacement exists, it atomically clears the released assignment, and the affected ChannelBinding remains DEGRADED with host_assignment null. Re-fetch affected bindings to observe their new projections; assignment history remains in versioned events.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeWorkspaceBinding'}
         default: {$ref: '#/components/responses/Error'}
   /conversations:
     post:
@@ -308,7 +391,9 @@ paths:
       parameters:
       - name: status
         in: query
-        schema: {type: string}
+        schema:
+          type: string
+          enum: [READY, RUNNING, WAITING_USER, BLOCKED, VERIFYING, NEEDS_USER, INCOMPLETE, PAUSE_REQUESTED, PAUSED, COMPLETED, FAILED, CANCEL_REQUESTED, CANCELLED]
       - name: conversation_id
         in: query
         schema: {type: string}
@@ -335,7 +420,7 @@ paths:
           description: Task and initial TaskSpecRevision committed
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Task'}
+              schema: {$ref: '#/components/schemas/TaskView'}
         default: {$ref: '#/components/responses/Error'}
   /tasks/{taskId}:
     get:
@@ -344,10 +429,41 @@ paths:
       parameters: [{$ref: '#/components/parameters/TaskId'}]
       responses:
         '200':
-          description: Current Task projection
+          description: Current Task projection and pinned current TaskSpecRevision
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Task'}
+              schema: {$ref: '#/components/schemas/TaskView'}
+        default: {$ref: '#/components/responses/Error'}
+  /tasks/{taskId}/planning-readiness:
+    get:
+      tags: [tasks]
+      operationId: getTaskPlanningReadiness
+      description: Read-only local preflight projection. It does not start planning, create a session/plan/Step/Attempt/lease, invoke a provider, or mutate Task state. The response never contains a planning packet, objective text, provider handles, or endpoint identifiers.
+      parameters:
+      - {$ref: '#/components/parameters/TaskId'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      responses:
+        '200':
+          description: Sanitized readiness blockers observed for this Task version; dispatch remains unavailable in this desktop slice
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskPlanningReadiness'}
+        default: {$ref: '#/components/responses/Error'}
+  /tasks/{taskId}/presentation:
+    get:
+      tags: [tasks, presentation]
+      operationId: getTaskPresentation
+      parameters: [{$ref: '#/components/parameters/TaskId'}]
+      responses:
+        '200':
+          description: Bounded read-only snapshot of committed Task/current spec, current-plan Steps, Task Artifacts, and resolvable current ArtifactVersions read in one SQLite transaction. Caps are 100 Steps and 200 Artifacts; over-cap sources return an error without a partial snapshot. CURRENT freshness means only one consistent SQLite snapshot, not worker liveness, progress, verification, or external-provider freshness. Unresolvable ArtifactVersions are omitted.
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskPresentationSnapshot'}
         default: {$ref: '#/components/responses/Error'}
   /tasks/{taskId}/progress:
     get:
@@ -521,6 +637,40 @@ paths:
                 type: array
                 items: {$ref: '#/components/schemas/PlanRevision'}
         default: {$ref: '#/components/responses/Error'}
+    post:
+      tags: [tasks]
+      operationId: submitTaskPlan
+      description: >-
+        Authenticated plan submission. In addition to the authenticated Workspace owner
+        context, the bearer identity must carry the currently authorized producer scope:
+        either the current lead's active TASK_PLANNING AgentSession or the current lead
+        execution Attempt's active AgentSession and valid lease. Producer IDs are derived
+        from trusted authentication context; they are not request-body authority. If-Match
+        pins the Task aggregate version and task_spec_revision pins the current TaskSpec.
+        An identical idempotent retry replays the original committed PlanAcceptance after
+        authentication/Workspace authorization and receipt-subject matching; it does not
+        re-run mutable producer admission after the producer session has closed.
+      parameters:
+      - {$ref: '#/components/parameters/TaskId'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SubmitPlanRequest'}
+      responses:
+        '201':
+          description: PlanRevision and its materialized Steps committed atomically
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PlanAcceptance'}
+        '409':
+          description: Stale Task/spec, producer no longer authorized, or idempotency-key reuse with different request digest
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        default: {$ref: '#/components/responses/Error'}
   /tasks/{taskId}/steps:
     get:
       tags: [tasks]
@@ -569,6 +719,8 @@ paths:
       responses:
         '200':
           description: Artifact summaries
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema:
@@ -658,7 +810,9 @@ paths:
       - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Authorized Artifacts filtered by Library status
+          description: Authorized Artifacts filtered by Library status; response is no-store
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ArtifactPage'}
@@ -674,10 +828,69 @@ paths:
         schema: {type: string}
       responses:
         '200':
-          description: Artifact metadata
+          description: Artifact metadata; response is no-store
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Artifact'}
+        default: {$ref: '#/components/responses/Error'}
+  /artifacts/{artifactId}/edit-head:
+    get:
+      tags: [artifacts]
+      operationId: getArtifactTextEditHead
+      parameters:
+      - name: artifactId
+        in: path
+        required: true
+        schema: {type: string}
+      responses:
+        '200':
+          description: Exact immutable heads required for a bounded text edit; response is no-store
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArtifactTextEditHead'}
+        default: {$ref: '#/components/responses/Error'}
+  /artifacts/{artifactId}/text-version:
+    post:
+      tags: [artifacts]
+      operationId: appendArtifactTextVersion
+      parameters:
+      - name: artifactId
+        in: path
+        required: true
+        schema: {type: string}
+      - {$ref: '#/components/parameters/IfMatch'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AppendArtifactTextVersionRequest'}
+      responses:
+        '201':
+          description: New immutable Artifact and Resource versions committed
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+            X-Correlation-ID: {required: true, schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArtifactTextVersionAppendResponse'}
+        '200':
+          description: Idempotent replay of the original committed result
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+            X-Correlation-ID: {required: true, schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArtifactTextVersionAppendResponse'}
+        '409':
+          description: Artifact or Resource head changed, or Artifact is archived
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
         default: {$ref: '#/components/responses/Error'}
   /artifacts/{artifactId}/versions/{version}:
     get:
@@ -694,7 +907,9 @@ paths:
         schema: {type: integer, minimum: 1}
       responses:
         '200':
-          description: Immutable artifact version metadata
+          description: Immutable artifact version metadata; response is no-store
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ArtifactVersion'}
@@ -714,7 +929,9 @@ paths:
         schema: {type: integer, minimum: 1}
       responses:
         '200':
-          description: Immutable artifact bytes; Content-Type is the stored media type
+          description: Immutable artifact bytes; Content-Type is the stored media type and response is no-store
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/octet-stream:
               schema: {type: string, format: binary}
@@ -762,7 +979,9 @@ paths:
       parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
       responses:
         '200':
-          description: Library page
+          description: Library page; response is no-store
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ArtifactPage'}
@@ -971,6 +1190,11 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Automation'}
+        '409':
+          description: Automation is enabled, disabled, stale, or has a conflicting idempotency key
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
         default: {$ref: '#/components/responses/Error'}
   /automations/{automationId}/run:
     post:
@@ -1007,7 +1231,7 @@ paths:
       - {$ref: '#/components/parameters/Cursor'}
       responses:
         '200':
-          description: Immutable AutomationRevision history
+          description: Immutable AutomationRevision history in descending revision order; the first page contains the current revision for safe edit reconstruction
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AutomationRevisionPage'}
@@ -1246,35 +1470,36 @@ paths:
     get:
       tags: [agents]
       operationId: listAgentProfiles
-      parameters:
-      - name: runtime_id
-        in: query
-        schema: {type: string}
-      - {$ref: '#/components/parameters/Cursor'}
-      - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Runtime-discovered profiles with unexpired offer observations; inventory becomes stale when a Runtime is offline
+          description: Workspace-visible stable profiles and their current unexpired Runtime offers. This initial local implementation returns the complete bounded catalog and no cursor.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AgentProfilePage'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-profiles/probe:
+    post:
+      tags: [agents]
+      operationId: probeLocalAgentProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ProbeLocalAgentProfileRequest'}
+      responses:
+        '200':
+          description: Explicit owner-triggered, bounded local adapter observation. Each request performs a new probe and records a refreshed expiring Runtime offer; it is not an idempotent domain mutation. Requires the selected Workspace owner and an active local RuntimeWorkspaceBinding. Codex and OpenCode are accepted. OpenCode returns only bounded sanitized provider/model IDs and display names plus reported connected-provider IDs; it never returns native provider/model objects, options, headers, keys, URLs, or raw responses. OpenCode session-model selection is NOT_QUALIFIED and its offer is always incompatible, so the profile cannot be bound or enabled. Raw native messages, endpoint locators, account identifiers, and private configuration are omitted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentProfileView'}
         default: {$ref: '#/components/responses/Error'}
   /agent-bindings:
     get:
       tags: [agents]
       operationId: listAgentBindings
-      parameters:
-      - name: runtime_id
-        in: query
-        schema: {type: string}
-      - name: enabled
-        in: query
-        schema: {type: boolean}
-      - {$ref: '#/components/parameters/Cursor'}
-      - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Workspace AgentBindings
+          description: Complete current AgentBinding list for the selected Workspace; this initial local implementation returns no cursor.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AgentBindingPage'}
@@ -1416,7 +1641,7 @@ paths:
             schema: {$ref: '#/components/schemas/CreateDelegationProfileRequest'}
       responses:
         '201':
-          description: Disabled profile and immutable revision 1 created; no agent host started
+          description: Disabled profile and immutable revision 1 created; no agent host started. The current desktop implementation accepts an empty session_options object until current adapter descriptor validation is integrated.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DelegationProfile'}
@@ -1517,7 +1742,7 @@ paths:
             schema: {$ref: '#/components/schemas/DelegationProfileStatusRequest'}
       responses:
         '200':
-          description: New admissions use the committed status; admitted Attempts remain pinned
+          description: New admissions use the committed status; admitted Attempts remain pinned. The current desktop implementation rejects ENABLED with DEPENDENCY_UNAVAILABLE until adapter descriptor, Trust, and Environment admission validation are integrated.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DelegationProfile'}
@@ -1565,6 +1790,21 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Coworker'}
+        default: {$ref: '#/components/responses/Error'}
+  /coworkers/{coworkerId}/revisions/{revision}:
+    get:
+      tags: [coworkers]
+      operationId: getCoworkerRevision
+      parameters:
+      - {name: coworkerId, in: path, required: true, schema: {type: string}}
+      - {name: revision, in: path, required: true, schema: {type: integer, minimum: 1}}
+      - {$ref: '#/components/parameters/WorkspaceId'}
+      responses:
+        '200':
+          description: Exact immutable Coworker revision in the selected Workspace; never resolves the current revision implicitly
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CoworkerRevisionRecord'}
         default: {$ref: '#/components/responses/Error'}
   /coworkers/{coworkerId}/presence:
     get:
@@ -1647,7 +1887,7 @@ paths:
       - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Goal heads and evidence-derived progress projections
+          description: Goal heads and immutable current revisions with read-only Task/Evidence projections; unavailable verification and freshness dimensions are explicit.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/GoalPage'}
@@ -1676,7 +1916,7 @@ paths:
       - {name: goalId, in: path, required: true, schema: {type: string}}
       responses:
         '200':
-          description: Goal and progress projection
+          description: Goal and immutable current revision with a read-only Task/Evidence projection; unavailable verification and freshness dimensions are explicit.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Goal'}
@@ -1752,10 +1992,36 @@ paths:
             schema: {$ref: '#/components/schemas/ResolveSuggestionRequest'}
       responses:
         '200':
-          description: Accepted Task action commits with the created Task; dismiss creates no work
+          description: Owner dismissal commits the terminal Suggestion state; this endpoint does not create a Task
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Suggestion'}
+        default: {$ref: '#/components/responses/Error'}
+  /suggestions/{suggestionId}/accept-task:
+    post:
+      tags: [suggestions, tasks]
+      operationId: acceptSuggestionTask
+      description: Atomically commits a normal READY Task from the exact pinned proposal and resolves the Suggestion with result_task_id. It does not start planning, an AgentSession, or execution. Repeating the request after a lost response returns the already linked Task.
+      parameters:
+      - {name: suggestionId, in: path, required: true, schema: {type: string}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AcceptSuggestionTaskRequest'}
+      responses:
+        '201':
+          description: Task and Suggestion resolution committed atomically; Task remains READY
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskView'}
+        '200':
+          description: Retry returns the already linked Task after the original response was lost
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskView'}
         default: {$ref: '#/components/responses/Error'}
   /suggestions/{suggestionId}/snooze:
     post:
@@ -1785,7 +2051,7 @@ paths:
       - {name: workspaceId, in: path, required: true, schema: {type: string}}
       responses:
         '200':
-          description: Workspace-scoped suggestion-kind mute preferences
+          description: Workspace-scoped mute preferences for every kind; never-mutated defaults return version 0 and updated_at null
           content:
             application/json:
               schema: {$ref: '#/components/schemas/SuggestionPreferencePage'}
@@ -1797,7 +2063,7 @@ paths:
       parameters:
       - {name: workspaceId, in: path, required: true, schema: {type: string}}
       - {name: kind, in: path, required: true, schema: {type: string, enum: [TASK_OPPORTUNITY, ROUTINE_OPPORTUNITY, AUTOMATION_OPPORTUNITY]}}
-      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
       - {$ref: '#/components/parameters/IfMatch'}
       requestBody:
         required: true
@@ -1806,7 +2072,7 @@ paths:
             schema: {$ref: '#/components/schemas/SetSuggestionPreferenceRequest'}
       responses:
         '200':
-          description: Preference updated; muting resolves open suggestions of this kind
+          description: Preference and dismissal of all currently proposed Suggestions of this kind commit atomically; If-Match 0 selects an absent virtual default
           content:
             application/json:
               schema: {$ref: '#/components/schemas/SuggestionPreference'}
@@ -2030,10 +2296,15 @@ paths:
             schema: {$ref: '#/components/schemas/ReassignChannelHostRequest'}
       responses:
         '200':
-          description: Channel host moved after provider, credential-placement, lease, epoch, and ingress-continuity checks
+          description: Version-fenced explicit assignment to the requested eligible Runtime. If-Match must contain the current ChannelBinding aggregate version, and expected_assignment_version must match the current assignment version or be null when the binding is unassigned. The response is the current ChannelBinding projection. This route does not expose arbitrary clear/delete; RuntimeMesh performs a safe clear internally during RuntimeWorkspaceBinding revocation when no target is eligible, leaving a DEGRADED binding with host_assignment null. Assignment-change events retain history.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/ChannelHostAssignment'}
+              schema: {$ref: '#/components/schemas/ChannelBinding'}
+        '409':
+          description: The ChannelBinding If-Match version or expected_assignment_version is stale; reload the binding and retry against the current nullable assignment state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
         default: {$ref: '#/components/responses/Error'}
   /discover/search:
     get:
@@ -2113,6 +2384,101 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/CapabilityHealthResult'}
+        default: {$ref: '#/components/responses/Error'}
+  /capabilities/zip-intake:
+    get:
+      tags: [capabilities]
+      operationId: getZipIntakeReadiness
+      description: Read-only local readiness observation. It never reads ZIP bytes or invokes the parser. Current status is UNAVAILABLE until isolated worker qualification.
+      parameters:
+      - {$ref: '#/components/parameters/WorkspaceId'}
+      responses:
+        '200':
+          description: ZIP intake readiness and current safe behavior
+          headers:
+            Cache-Control: {schema: {type: string}, example: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ZipIntakeReadiness'}
+        default: {$ref: '#/components/responses/Error'}
+  /resources:
+    get:
+      tags: [resources]
+      operationId: listLocalResources
+      description: Keyset-paginated metadata-only catalog for the selected Workspace. Cursor ordering is descending by created_at then resource_id; content bytes are never returned.
+      parameters:
+      - {$ref: '#/components/parameters/WorkspaceId'}
+      - {$ref: '#/components/parameters/Cursor'}
+      - name: limit
+        in: query
+        required: false
+        schema: {type: integer, minimum: 1, maximum: 100, default: 100}
+      responses:
+        '200':
+          description: A stable Resource catalog page
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ResourceSummaryPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /resources/quick-import:
+    post:
+      tags: [resources]
+      operationId: quickImportResource
+      description: Local desktop first-slice import, limited to 10 MiB. Uses encrypted local blob storage and commits the Resource event/revision atomically. Folder roots, ZIP extraction, resumable sessions, indexing and download use separate contracts.
+      parameters: [{$ref: '#/components/parameters/WorkspaceId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/QuickImportResourceRequest'}
+      responses:
+        '201':
+          description: Stored Resource and its immutable first revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuickImportResourceResponse'}
+        default: {$ref: '#/components/responses/Error'}
+  /resources/{resourceId}/content:
+    get:
+      tags: [resources]
+      operationId: readLocalResourceContent
+      description: Returns bytes only after selected Workspace ownership and current revision/location checks. Optional revision_id pins the expected current revision and returns RESOURCE_CONFLICT if it changed. Storage rejects new reads of REVOKED, DELETION_PENDING, or DELETED ContextDocuments before BlobStore access; the owner receives CONTEXT_DOCUMENT_NOT_ACTIVE while Resource metadata remains readable. A read admitted while ACTIVE may finish after a concurrent status change. Derived-state commits must recheck status. The local IPC Operator caps a response at 10 MiB and rejects larger Resource revisions before blob decryption. The local desktop renderer limits text previews to 1 MiB and never renders active content; this is not a general large-file download path.
+      parameters:
+      - {$ref: '#/components/parameters/WorkspaceId'}
+      - name: resourceId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 160}
+      - name: revision_id
+        in: query
+        required: false
+        description: When supplied, the current Resource revision must still match this selected revision or the Operator returns RESOURCE_CONFLICT.
+        schema: {type: string, minLength: 1, maxLength: 160}
+      responses:
+        '200':
+          description: Verified current Resource bytes; content is marked for download and is not browser-rendered
+          headers:
+            X-Resource-Media-Type: {required: true, schema: {type: string}}
+            X-Content-Type-Options: {required: true, schema: {type: string, const: nosniff}}
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '413':
+          description: Current Resource revision exceeds the 10 MiB local Operator read limit
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '409':
+          description: Resource revision changed or its ContextDocument is not ACTIVE; the error uses RESOURCE_CONFLICT or CONTEXT_DOCUMENT_NOT_ACTIVE respectively
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '503':
+          description: BlobStore content is unavailable; after a failed read, the daemon returns this only when a ContextDocument status transition cannot be proven
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
         default: {$ref: '#/components/responses/Error'}
   /resources/uploads:
     post:
@@ -2266,24 +2632,62 @@ paths:
     get:
       tags: [resources]
       operationId: searchResources
+      summary: Search managed Workspace Resources
+      description: METADATA (default) searches display-name/media-type fields. ON_DEMAND_CONTENT scans bounded current managed Resource bytes in memory. INDEXED_CONTENT searches the revision-scoped encrypted local text index using deterministic AND token matching. Neither mode searches ZIP members, rich documents, or persistent WorkspaceRoots; results are not automatically attached to a Task.
       parameters:
       - name: q
         in: query
-        schema: {type: string}
+        description: Optional and bounded to 256 UTF-8 bytes. METADATA may omit or use an empty q to browse using kind/freshness filters only; METADATA and ON_DEMAND_CONTENT otherwise use a literal case-insensitive substring. INDEXED_CONTENT requires 1 to 32 distinct Unicode alphanumeric terms (128 normalized Unicode characters maximum per term) and AND-matches exact normalized tokens. Content modes reject an empty query.
+        schema: {type: string, maxLength: 256}
       - name: kind
         in: query
-        schema: {type: string}
+        description: Optional exact Resource kind.
+        schema: {type: string, enum: [FILE, FOLDER, ARTIFACT, CONNECTOR_OBJECT, WEB_RESOURCE, OTHER]}
+      - name: mode
+        in: query
+        description: METADATA searches metadata. ON_DEMAND_CONTENT scans at most 20 current managed candidates, 1 MiB per Resource and 8 MiB total per request. INDEXED_CONTENT requires a non-empty query of at most 32 distinct terms and matches all terms in the local encrypted index; source parsing is capped at 20,000 normalized terms of at most 128 characters each.
+        schema: {type: string, enum: [METADATA, ON_DEMAND_CONTENT, INDEXED_CONTENT], default: METADATA}
       - name: freshness
         in: query
-        schema: {$ref: '#/components/schemas/ResourceFreshness'}
+        description: The local managed-resource search supports CURRENT, STALE, UNKNOWN, and UNAVAILABLE. Conflicted revisions are not searchable in this implementation slice.
+        schema: {type: string, enum: [CURRENT, STALE, UNKNOWN, UNAVAILABLE]}
       - {$ref: '#/components/parameters/Cursor'}
       - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Deterministic authorized results with locations and freshness
+          description: Deterministic Workspace-authorized results with pinned ResourceRefs. ON_DEMAND_CONTENT snippets are generated in request memory. INDEXED_CONTENT snippets are recovered from an encrypted, digest-verified local projection for the exact current ResourceRevision; only keyed term tokens and encrypted text snapshots are persisted.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ResourceSearchPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /resources/{resourceId}/text-index/rebuild:
+    post:
+      tags: [resources]
+      operationId: rebuildResourceTextIndex
+      summary: Rebuild the current Resource's encrypted local lexical index
+      description: Owner-triggered, local-only projection maintenance. The request pins the exact Resource revision and content digest observed by the Library. The operation is bounded to 1 MiB source bytes and 20,000 normalized terms, uses ordinary Idempotency-Key replay, and returns only the outcome/reason (never source content or terms). It does not append a domain event or alter Resource/Task history. Unsupported and unsafe text inputs return NOT_INDEXABLE with a typed reason; stale pins and mismatched idempotency-key reuse return CONFLICT. A non-ACTIVE ContextDocument is rejected before BlobStore access with CONTEXT_DOCUMENT_NOT_ACTIVE. If a read was admitted while ACTIVE before a concurrent status change, the final transaction rejects the prepared index unless status remains ACTIVE.
+      parameters:
+      - name: resourceId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 160}
+      - {$ref: '#/components/parameters/WorkspaceId'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RebuildResourceTextIndexRequest'}
+      responses:
+        '200':
+          description: Exact idempotent outcome for the pinned Resource revision
+          headers:
+            X-Correlation-ID:
+              required: true
+              schema: {type: string, minLength: 1}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ResourceTextIndexRebuildResult'}
         default: {$ref: '#/components/responses/Error'}
   /resources/{resourceId}:
     get:
@@ -2332,7 +2736,7 @@ paths:
       - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Immutable revision ancestry with derived head markers
+          description: Immutable revision ancestry with derived head markers, in bounded append order (parents are inserted before children); cursor pagination is Workspace/Resource scoped and keyset based.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ResourceRevisionPage'}
@@ -2348,7 +2752,7 @@ paths:
       - {$ref: '#/components/parameters/Cursor'}
       responses:
         '200':
-          description: Persistent explicitly selected roots
+          description: Owner-scoped persistent roots with last committed ResourceLocation availability (not a live Runtime probe); response is no-store and includes no private locator or identity binding.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/WorkspaceRootPage'}
@@ -2396,6 +2800,8 @@ paths:
     post:
       tags: [resources]
       operationId: pauseWorkspaceRoot
+      summary: Pause an active persistent folder scope
+      description: Requires the current WorkspaceRoot version and an idempotency key. Only ACTIVE roots can be paused. The transition preserves saved local identity bindings and the selected replication-scope preference; consumers must gate use on the committed PAUSED status. This endpoint does not start or stop a watcher or indexer.
       parameters:
       - name: rootId
         in: path
@@ -2414,6 +2820,8 @@ paths:
     post:
       tags: [resources]
       operationId: resumeWorkspaceRoot
+      summary: Resume a paused persistent folder scope
+      description: Requires the current WorkspaceRoot version and an idempotency key. Only PAUSED roots can be resumed, and only when the current Runtime incarnation has an AVAILABLE location and matching identity bindings from its startup revalidation. This request does not itself reopen or revalidate the folder. UNAVAILABLE roots require Runtime identity revalidation before a separate resume action.
       parameters:
       - name: rootId
         in: path
@@ -2423,7 +2831,7 @@ paths:
       - {$ref: '#/components/parameters/IdempotencyKey'}
       responses:
         '200':
-          description: WorkspaceRoot resumed after identity revalidation
+          description: WorkspaceRoot resumed after current-incarnation identity validation
           content:
             application/json:
               schema: {$ref: '#/components/schemas/WorkspaceRoot'}
@@ -2569,8 +2977,7 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items: {$ref: '#/components/schemas/WorkspaceInstructionRevision'}
+                $ref: '#/components/schemas/WorkspaceInstructionRevisionPage'
         default: {$ref: '#/components/responses/Error'}
     post:
       tags: [workspaces]
@@ -3049,6 +3456,10 @@ components:
   responses:
     Error:
       description: Safe typed error
+      headers:
+        X-Correlation-ID:
+          description: Same identifier as the correlation_id field in the ApiError body.
+          schema: {type: string}
       content:
         application/json:
           schema: {$ref: '#/components/schemas/ApiError'}
@@ -3305,7 +3716,7 @@ components:
       additionalProperties: false
       required: [name]
       properties:
-        name: {type: string, minLength: 1}
+        name: {type: string, minLength: 1, maxLength: 160}
         replication_policy: {type: string, description: Defaults to LOCAL_ONLY. SELECTED_FOLDERS is set after WorkspaceRoots have been created., default: LOCAL_ONLY, enum: [LOCAL_ONLY, METADATA_ONLY, ACTIVE_TASK_INPUTS, FULL_WORKSPACE]}
     JsonValue:
       oneOf:
@@ -3462,6 +3873,7 @@ components:
     ChannelBinding:
       type: object
       required: [channel_binding_id, workspace_id, connection_id, provider_ref, external_account_ref, identity_ref, assurance_level, allowed_actions, status, host_assignment, created_at, updated_at, version]
+      description: ACTIVE bindings always have a current host assignment. A DEGRADED binding may be safely unassigned (host_assignment null), including after RuntimeWorkspaceBinding revocation found no eligible replacement; this is not deletion of assignment history. REVOKED bindings may also have no current assignment.
       properties:
         channel_binding_id: {type: string}
         workspace_id: {type: string}
@@ -3475,13 +3887,24 @@ components:
           uniqueItems: true
           items: {type: string, enum: [VIEW, STEER, RESPOND, APPROVE_SAFE, APPROVE_SENSITIVE]}
         status: {type: string, enum: [ACTIVE, DEGRADED, REVOKED]}
-        host_assignment: {$ref: '#/components/schemas/ChannelHostAssignment'}
+        host_assignment:
+          oneOf: [{$ref: '#/components/schemas/ChannelHostAssignment'}, {type: 'null'}]
+          description: Null only when the binding currently has no assignment; historical assignment changes remain available from the event history.
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
+      allOf:
+      - if:
+          properties:
+            host_assignment: {type: 'null'}
+          required: [host_assignment]
+        then:
+          properties:
+            status: {enum: [DEGRADED, REVOKED]}
     ChannelHostAssignment:
       type: object
       required: [channel_binding_id, runtime_id, host_epoch, lease_expires_at, status, ingress_continuity, assigned_at, version]
+      description: Current assignment projection. Optional provenance fields are additive for older clients; an absent value on legacy records means provenance is unavailable, not that a decision or proof is inferred. For current epoch N, source-release projection joins the immutable lease-release row for epoch N-1 and, for QUIESCENT, its drain_proof_id to the scoped drain-proof row. The initial assignment has no source-release provenance.
       properties:
         channel_binding_id: {type: string}
         runtime_id: {type: string}
@@ -3490,6 +3913,27 @@ components:
         status: {type: string, enum: [ACTIVE, DRAINING]}
         ingress_continuity: {type: string, enum: [CONTINUOUS, GAP_ACCEPTED]}
         ingress_gap_since: {type: [string, 'null'], format: date-time}
+        source_release_basis:
+          type: [string, 'null']
+          enum: [SAFE_SETTLEMENT_PROOF, LEASE_EXPIRY_PLUS_SKEW, null]
+          description: Set only by RuntimeMesh service validation for a cross-Runtime ACTIVE reassignment. SQL release_kind QUIESCENT maps to SAFE_SETTLEMENT_PROOF; EXPIRY_PLUS_SKEW maps to LEASE_EXPIRY_PLUS_SKEW after Hub-authoritative safe_reassign_after. The assignment schema cannot compare source and target Runtime IDs, so the service must compare them against the current assignment.
+        source_drain_proof_ref:
+          oneOf: [{$ref: '#/components/schemas/ChannelHostDrainProofRef'}, {type: 'null'}]
+          description: Opaque scoped reference to the immutable SQL ChannelHostDrainProof row, present only with SAFE_SETTLEMENT_PROOF.
+        source_drain_proof_digest:
+          type: [string, 'null']
+          pattern: '^sha256:[a-f0-9]{64}$'
+          description: SQL channel_host_drain_proofs.proof_digest for source_drain_proof_ref; null together with the reference when release relied on lease expiry plus skew.
+        continuity_proof_ref:
+          oneOf: [{$ref: '#/components/schemas/ChannelHostContinuityProofRef'}, {type: 'null'}]
+          description: Opaque scoped reference to the immutable SQL ChannelHostContinuityProof row, present for a verified cross-Runtime ACTIVE assignment with continuous ingress.
+        continuity_proof_digest:
+          type: [string, 'null']
+          pattern: '^sha256:[a-f0-9]{64}$'
+          description: SQL channel_host_continuity_proofs.proof_digest for continuity_proof_ref; null together with the reference when the assignment has no continuity proof.
+        ingress_gap_decision:
+          oneOf: [{$ref: '#/components/schemas/ChannelIngressGapDecision'}, {type: 'null'}]
+          description: Authenticated owner decision and audit provenance for a newly accepted ingress gap. Null or absent on legacy assignments means provenance is unavailable.
         assigned_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
       allOf:
@@ -3508,16 +3952,103 @@ components:
         then:
           properties:
             ingress_gap_since: {type: 'null'}
+      - if:
+          properties:
+            source_release_basis: {const: SAFE_SETTLEMENT_PROOF}
+          required: [source_release_basis]
+        then:
+          required: [source_drain_proof_ref, source_drain_proof_digest]
+          properties:
+            source_drain_proof_ref: {$ref: '#/components/schemas/ChannelHostDrainProofRef'}
+            source_drain_proof_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+      - if:
+          properties:
+            source_release_basis: {const: LEASE_EXPIRY_PLUS_SKEW}
+          required: [source_release_basis]
+        then:
+          properties:
+            source_drain_proof_ref: {type: 'null'}
+            source_drain_proof_digest: {type: 'null'}
+      - if:
+          properties:
+            source_release_basis: {enum: [SAFE_SETTLEMENT_PROOF, LEASE_EXPIRY_PLUS_SKEW]}
+            ingress_continuity: {const: CONTINUOUS}
+          required: [source_release_basis, ingress_continuity]
+        then:
+          required: [continuity_proof_ref, continuity_proof_digest]
+          properties:
+            continuity_proof_ref: {$ref: '#/components/schemas/ChannelHostContinuityProofRef'}
+            continuity_proof_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+      - if:
+          properties:
+            continuity_proof_ref: {type: object}
+          required: [continuity_proof_ref]
+        then:
+          required: [continuity_proof_digest, ingress_continuity]
+          properties:
+            continuity_proof_ref: {$ref: '#/components/schemas/ChannelHostContinuityProofRef'}
+            continuity_proof_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+            ingress_continuity: {const: CONTINUOUS}
+      - if:
+          properties:
+            continuity_proof_digest: {type: string}
+          required: [continuity_proof_digest]
+        then:
+          required: [continuity_proof_ref]
+          properties:
+            continuity_proof_ref: {$ref: '#/components/schemas/ChannelHostContinuityProofRef'}
+      - if:
+          required: [ingress_gap_decision]
+        then:
+          properties:
+            ingress_continuity: {const: GAP_ACCEPTED}
+          required: [ingress_continuity]
     ReassignChannelHostRequest:
       type: object
       additionalProperties: false
-      required: [runtime_id]
+      required: [runtime_id, expected_assignment_version]
+      description: Assigns or reassigns this binding to the requested eligible Runtime; it does not clear an assignment. If-Match fences the ChannelBinding aggregate version, including when unassigned, while expected_assignment_version fences the assignment snapshot (null only when no current assignment exists). Safe no-target clearing is an internal RuntimeMesh operation of RuntimeWorkspaceBinding revocation, not a public assignment-delete command.
       properties:
         runtime_id: {type: string}
+        expected_assignment_version: {type: [integer, 'null'], minimum: 1, description: Must equal the current ChannelHostAssignment.version, or be null when host_assignment is null.}
         accept_ingress_gap:
           type: boolean
           default: false
-          description: Required as true to confirm a host move when provider cursor transfer/replay cannot prove continuity.
+          description: Must be explicitly true to confirm a host move when provider cursor transfer/replay cannot prove continuity. The authenticated owner principal and the generated audit record are retained in ingress_gap_decision; callers cannot supply or impersonate that provenance.
+    ChannelIngressGapDecision:
+      type: object
+      additionalProperties: false
+      required: [decided_by, decided_at, audit_record_id, reason_code]
+      description: Projection of the immutable same-Workspace AuditRecord referenced by ingress_gap_decision_audit_id. RuntimeMesh service validation must require decided_by, decided_at, and reason_code to exactly match that record; SQL assignment triggers currently enforce the record ID, Workspace, ALLOW decision, action, and ChannelBinding reference.
+      properties:
+        decided_by: {$ref: '#/components/schemas/PrincipalRef'}
+        decided_at: {type: string, format: date-time}
+        audit_record_id: {type: string, minLength: 1}
+        reason_code: {type: string, minLength: 1}
+    ChannelHostDrainProofRef:
+      type: object
+      additionalProperties: false
+      required: [proof_id, channel_binding_id, workspace_id, runtime_id, host_epoch]
+      description: Opaque, non-authorizing reference to a ChannelHostDrainProof row. The service resolves proof_id and verifies every scope field against the SQL row and source assignment; this is not a LiteCowork ResourceRef or filesystem/provider locator.
+      properties:
+        proof_id: {type: string, minLength: 1}
+        channel_binding_id: {type: string, minLength: 1}
+        workspace_id: {type: string, minLength: 1}
+        runtime_id: {type: string, minLength: 1}
+        host_epoch: {type: integer, minimum: 1}
+    ChannelHostContinuityProofRef:
+      type: object
+      additionalProperties: false
+      required: [proof_id, channel_binding_id, workspace_id, source_runtime_id, source_host_epoch, target_runtime_id, target_host_epoch]
+      description: Opaque, non-authorizing reference to a ChannelHostContinuityProof row. The service resolves proof_id, verifies every scope field and proof_digest against the SQL row and prior/current assignments; this is not a ResourceRef or filesystem/provider locator.
+      properties:
+        proof_id: {type: string, minLength: 1}
+        channel_binding_id: {type: string, minLength: 1}
+        workspace_id: {type: string, minLength: 1}
+        source_runtime_id: {type: string, minLength: 1}
+        source_host_epoch: {type: integer, minimum: 1}
+        target_runtime_id: {type: string, minLength: 1}
+        target_host_epoch: {type: integer, minimum: 2}
     ChannelBindingPage:
       type: object
       required: [items]
@@ -3637,6 +4168,32 @@ components:
           type: array
           items: {$ref: '#/components/schemas/AgentEndpoint'}
         discovered_at: {type: string, format: date-time}
+    ProbeLocalAgentProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [provider_key]
+      properties:
+        provider_key: {type: string, enum: [CODEX, OPENCODE]}
+    AgentInstallationPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/AgentInstallation'}
+    AgentInstallation:
+      type: object
+      additionalProperties: false
+      required: [agent_id, display_name, protocol_candidate, installation, version, authentication, session_readiness]
+      properties:
+        agent_id: {type: string}
+        display_name: {type: string}
+        protocol_candidate: {type: string, enum: [CODEX_APP_SERVER, ACP]}
+        installation: {type: string, enum: [MISSING, INSTALLED, VERSION_UNAVAILABLE]}
+        version: {type: [string, 'null']}
+        authentication: {type: string, enum: [UNKNOWN]}
+        session_readiness: {type: string, enum: [NOT_PROBED]}
     AgentEndpoint:
       type: object
       additionalProperties: false
@@ -3668,7 +4225,7 @@ components:
     AgentProfileObservation:
       type: object
       additionalProperties: false
-      required: [endpoint_id, runtime_id, runtime_incarnation_id, compatible, readiness, observed_at, offer_expires_at]
+      required: [endpoint_id, runtime_id, runtime_incarnation_id, compatible, readiness, observed_at, offer_expires_at, constraints]
       properties:
         endpoint_id: {type: string}
         runtime_id: {type: string}
@@ -3677,6 +4234,56 @@ components:
         readiness: {type: string, enum: [AVAILABLE, STARTABLE, STARTING, READY, BUSY, DEGRADED, OFFLINE, NEEDS_AUTH, UNAVAILABLE]}
         observed_at: {type: string, format: date-time}
         offer_expires_at: {type: string, format: date-time}
+        constraints:
+          anyOf:
+          - {$ref: '#/components/schemas/JsonObject'}
+          - {$ref: '#/components/schemas/OpenCodeProfileProbeConstraints'}
+    OpenCodeProfileProbeConstraints:
+      type: object
+      additionalProperties: false
+      description: Sanitized OpenCode profile-probe observation. At most 32 providers, 64 models per provider, and 256 models total are returned. Catalog metadata is display-only; authentication, inference entitlement, model selection, and Task admission are not established.
+      required: [agent_id, protocol, probe_readiness, failure, reported_provider_status, reported_connected_provider_ids, reported_connected_provider_ids_truncated, reported_model_catalog, configured_providers, catalog_truncated, authentication_observation, session_model_selection, inference_access_verified, host_process_stopped, writer_quiescence_proven, profile_admission_supported]
+      properties:
+        agent_id: {const: opencode}
+        protocol: {const: OPENCODE_SERVER}
+        probe_readiness: {type: string, enum: [COMPLETE, PARTIAL, FAILED]}
+        failure: {type: [string, 'null'], enum: [INVALID_ADMISSION, HOST_UNAVAILABLE, PROVIDER_STATUS_UNAVAILABLE, CATALOG_UNAVAILABLE, HOST_STOP_UNOBSERVED, null]}
+        reported_provider_status: {type: string, enum: [OBSERVED, UNKNOWN, NOT_PROBED]}
+        reported_connected_provider_ids:
+          type: array
+          maxItems: 32
+          items: {type: string, maxLength: 128, pattern: '^[A-Za-z0-9_.:/-]+$'}
+        reported_connected_provider_ids_truncated: {type: boolean}
+        reported_model_catalog: {type: string, enum: [OBSERVED, UNKNOWN, NOT_PROBED]}
+        configured_providers:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/OpenCodeProviderOption'}
+        catalog_truncated: {type: boolean}
+        authentication_observation: {const: UNKNOWN}
+        session_model_selection: {const: NOT_QUALIFIED}
+        inference_access_verified: {const: false}
+        host_process_stopped: {type: boolean}
+        writer_quiescence_proven: {const: false}
+        profile_admission_supported: {const: false}
+    OpenCodeProviderOption:
+      type: object
+      additionalProperties: false
+      required: [id, display_name, models]
+      properties:
+        id: {type: string, maxLength: 128, pattern: '^[A-Za-z0-9_.:/-]+$'}
+        display_name: {type: [string, 'null'], maxLength: 128}
+        models:
+          type: array
+          maxItems: 64
+          items: {$ref: '#/components/schemas/OpenCodeModelOption'}
+    OpenCodeModelOption:
+      type: object
+      additionalProperties: false
+      required: [id, display_name]
+      properties:
+        id: {type: string, maxLength: 128, pattern: '^[A-Za-z0-9_.:/-]+$'}
+        display_name: {type: [string, 'null'], maxLength: 128}
     AgentBinding:
       type: object
       required: [agent_binding_id, workspace_id, agent_profile_id, runtime_id, endpoint_selection_policy, auth_ref, configuration, enabled, lead_eligible, created_at, version]
@@ -3688,7 +4295,7 @@ components:
         endpoint_selection_policy: {$ref: '#/components/schemas/EndpointSelectionPolicy'}
         auth_ref:
           oneOf: [{$ref: '#/components/schemas/SecretRef'}, {type: 'null'}]
-        configuration: {$ref: '#/components/schemas/JsonObject'}
+        configuration: {type: object, maxProperties: 0, description: Adapter-specific configuration is unavailable until a reviewed non-secret allowlist exists.}
         enabled: {type: boolean}
         lead_eligible: {type: boolean}
         created_at: {type: string, format: date-time}
@@ -3715,7 +4322,7 @@ components:
           default: {mode: AUTO_COMPATIBLE, required_features: [], preferred_topologies: []}
         auth_ref:
           oneOf: [{$ref: '#/components/schemas/SecretRef'}, {type: 'null'}]
-        configuration: {$ref: '#/components/schemas/JsonObject'}
+        configuration: {type: object, maxProperties: 0, description: Adapter-specific configuration is unavailable until a reviewed non-secret allowlist exists.}
     EndpointSelectionPolicy:
       oneOf:
       - type: object
@@ -3902,6 +4509,13 @@ components:
         tool_reports:
           type: array
           items: {$ref: '#/components/schemas/PinnedResourceRef'}
+        folder_import: {oneOf: [{$ref: '#/components/schemas/FolderImportMetadata'}, {type: 'null'}]}
+    FolderImportMetadata:
+      type: object
+      additionalProperties: false
+      required: [relative_path]
+      properties:
+        relative_path: {type: string, minLength: 1, maxLength: 240, description: Slash-separated selected path; no absolute/drive/UNC form, empty segment, dot segment, backslash or control character. The daemon validates it and uses it only as provenance/display metadata.}
     ProvenanceTransformation:
       type: object
       additionalProperties: false
@@ -3945,6 +4559,27 @@ components:
           items: {$ref: '#/components/schemas/PlannedStep'}
         reason_for_revision: {type: [string, 'null']}
         created_at: {type: string, format: date-time}
+    SubmitPlanRequest:
+      type: object
+      additionalProperties: false
+      required: [task_spec_revision, steps]
+      properties:
+        task_spec_revision: {type: integer, minimum: 1, description: Must equal the current TaskSpec revision and the producer's authorized planning scope.}
+        steps:
+          type: array
+          minItems: 1
+          items: {$ref: '#/components/schemas/PlannedStep'}
+        reason_for_revision: {type: [string, 'null'], maxLength: 8192}
+    PlanAcceptance:
+      type: object
+      additionalProperties: false
+      required: [plan_revision, materialized_steps, task_version]
+      properties:
+        plan_revision: {$ref: '#/components/schemas/PlanRevision'}
+        materialized_steps:
+          type: array
+          items: {$ref: '#/components/schemas/Step'}
+        task_version: {type: integer, minimum: 1, description: Task aggregate version after the acceptance transaction commits.}
     Step:
       type: object
       required: [step_id, task_id, plan_revision, title, objective, dependencies, required_capabilities, acceptance_criteria, status, created_at, updated_at, version]
@@ -4156,6 +4791,15 @@ components:
         blockers: {type: array, items: {$ref: '#/components/schemas/Blocker'}}
         dependent_tasks: {type: array, items: {$ref: '#/components/schemas/TaskSummary'}}
         dependent_automations: {type: array, items: {$ref: '#/components/schemas/AutomationSummary'}}
+    LocalOperatorReadiness:
+      type: object
+      additionalProperties: false
+      required: [operator_state, runtime_id, local_incarnation_id, api_contract_version]
+      properties:
+        operator_state: {type: string, enum: [SERVING]}
+        runtime_id: {type: string, minLength: 1}
+        local_incarnation_id: {type: string, minLength: 1}
+        api_contract_version: {type: integer, const: 1}
     UpdateRuntimeStartupPolicyRequest:
       type: object
       additionalProperties: false
@@ -4197,7 +4841,6 @@ components:
       type: object
       required:
       - runtime_id
-      - workspace_id
       - device_identity
       - runtime_version
       - platform
@@ -4211,7 +4854,6 @@ components:
       - version
       properties:
         runtime_id: {type: string}
-        workspace_id: {type: string}
         device_identity:
           type: object
           required: [device_id, public_key, key_version, issued_at]
@@ -4238,6 +4880,33 @@ components:
         resource_capacity: {type: object, additionalProperties: true}
         last_seen: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
+    RuntimeWorkspaceBinding:
+      type: object
+      additionalProperties: false
+      required: [runtime_workspace_binding_id, runtime_id, workspace_id, enrollment_mode, status, roles, created_at, activated_at, revoked_at, version]
+      properties:
+        runtime_workspace_binding_id: {type: string, minLength: 1}
+        runtime_id: {type: string, minLength: 1}
+        workspace_id: {type: string, minLength: 1}
+        enrollment_mode: {type: string, enum: [LOCAL_ENROLLMENT, MESH_PAIRING]}
+        status: {type: string, enum: [PENDING, ACTIVE, REVOKED]}
+        roles:
+          type: array
+          uniqueItems: true
+          items: {type: string, enum: [WORKSPACE_HUB, EXECUTOR, RESOURCE_NODE, CHANNEL_HOST, TRIGGER_HOST, OPERATOR_ENDPOINT]}
+        created_at: {type: string, format: date-time}
+        activated_at: {type: [string, 'null'], format: date-time}
+        revoked_at: {type: [string, 'null'], format: date-time}
+        version: {type: integer, minimum: 1}
+    RuntimeWorkspaceBindingPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/RuntimeWorkspaceBinding'}
+        next_cursor: {type: [string, 'null']}
     RuntimePage:
       type: object
       required: [items]
@@ -4373,26 +5042,79 @@ components:
         health: {type: string, enum: [HEALTHY, DEGRADED, UNHEALTHY, UNKNOWN]}
         checked_at: {type: string, format: date-time}
         safe_summary: {type: [string, 'null']}
+    QuickImportResourceRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, media_type, content_base64]
+      properties:
+        display_name: {type: string, minLength: 1, maxLength: 240}
+        media_type: {type: string, minLength: 1, maxLength: 160}
+        content_base64: {type: string, contentEncoding: base64, maxLength: 13981016, description: Maximum decoded content is 10 MiB.}
+    QuickImportResourceResponse:
+      type: object
+      additionalProperties: false
+      required: [resourceId, workspaceId, resourceRevisionId, displayName, mediaType, contentDigest, sizeBytes]
+      properties:
+        resourceId: {type: string}
+        workspaceId: {type: string}
+        resourceRevisionId: {type: string}
+        displayName: {type: string}
+        mediaType: {type: string}
+        contentDigest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        sizeBytes: {type: integer, minimum: 1, maximum: 10485760}
+    ZipIntakeReadiness:
+      type: object
+      additionalProperties: false
+      required: [capability_id, status, resource_behavior, provider_integrated, extraction_enabled, reason_code, reason]
+      properties:
+        capability_id: {type: string, const: litecowork.zip-intake}
+        status: {type: string, const: UNAVAILABLE}
+        resource_behavior: {type: string, const: OPAQUE_RESOURCE_ONLY}
+        provider_integrated: {type: boolean}
+        extraction_enabled: {type: boolean}
+        reason_code: {type: string, const: ISOLATED_WORKER_NOT_QUALIFIED}
+        reason: {type: string}
+    ResourceSummary:
+      type: object
+      additionalProperties: false
+      required: [resourceId, workspaceId, resourceRevisionId, displayName, mediaType, contentDigest, sizeBytes, createdAt]
+      properties:
+        resourceId: {type: string}
+        workspaceId: {type: string}
+        resourceRevisionId: {type: string}
+        displayName: {type: string}
+        mediaType: {type: string}
+        contentDigest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        sizeBytes: {type: integer, minimum: 0}
+        createdAt: {type: string, format: date-time}
+    ResourceSummaryPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ResourceSummary'}}
+        nextCursor: {type: [string, 'null']}
     CreateResourceUploadRequest:
       type: object
       additionalProperties: false
-      required: [workspace_id, display_name, media_type, size_bytes]
+      required: [workspace_id, display_name, media_type, size_bytes, expected_digest]
       properties:
         workspace_id: {type: string}
         display_name: {type: string, minLength: 1}
         media_type: {type: string}
-        size_bytes: {type: integer, minimum: 0}
-        expected_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        size_bytes: {type: integer, minimum: 0, maximum: 104857600, description: Maximum initial upload size is 100 MiB.}
+        expected_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$', description: Required whole-content SHA-256; binds every resumable chunk to the selected file.}
         context_document: {$ref: '#/components/schemas/ContextDocumentCreateMetadata'}
+        folder_import: {oneOf: [{$ref: '#/components/schemas/FolderImportMetadata'}, {type: 'null'}]}
     CreateResourceRevisionUploadRequest:
       type: object
       additionalProperties: false
-      required: [media_type, size_bytes, parent_revision_ids]
+      required: [media_type, size_bytes, expected_digest, parent_revision_ids]
       properties:
-        media_type: {type: string, minLength: 1}
-        size_bytes: {type: integer, minimum: 0}
-        expected_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
-        parent_revision_ids: {type: array, minItems: 0, maxItems: 16, uniqueItems: true, items: {type: string, minLength: 1}}
+        media_type: {type: string, minLength: 1, maxLength: 160}
+        size_bytes: {type: integer, minimum: 0, maximum: 104857600, description: Maximum revision upload size is 100 MiB.}
+        expected_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        parent_revision_ids: {type: array, minItems: 1, maxItems: 16, uniqueItems: true, items: {type: string, minLength: 1}, description: Must equal the Resource's complete current head set at admission and commit.}
     SetContextDocumentStatusRequest:
       type: object
       additionalProperties: false
@@ -4414,19 +5136,21 @@ components:
     ResourceUploadSession:
       type: object
       additionalProperties: false
-      required: [upload_id, workspace_id, display_name, media_type, expected_size_bytes, context_document, resource_id, expected_resource_version, parent_revision_ids, chunk_size_bytes, received_ranges, next_missing_offset, state, expires_at, created_at, version]
+      required: [upload_id, workspace_id, display_name, media_type, expected_size_bytes, expected_digest, context_document, folder_import, resource_id, committed_resource_id, expected_resource_version, parent_revision_ids, chunk_size_bytes, received_ranges, next_missing_offset, state, expires_at, created_at, version, progress_version]
       properties:
         upload_id: {type: string}
         workspace_id: {type: string}
         display_name: {type: string}
         media_type: {type: string}
-        expected_size_bytes: {type: integer, minimum: 0}
-        expected_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        expected_size_bytes: {type: integer, minimum: 0, description: Newly created sessions are capped at 100 MiB; a migrated legacy session may report a larger original value and is not resumable.}
+        expected_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$', description: Null only for an unmigrated legacy session that cannot be resumed or committed.}
         context_document: {oneOf: [{$ref: '#/components/schemas/ContextDocumentMetadata'}, {type: 'null'}]}
+        folder_import: {oneOf: [{$ref: '#/components/schemas/FolderImportMetadata'}, {type: 'null'}], description: Pinned one-time folder attachment provenance; not a filesystem locator or grant.}
         resource_id: {type: [string, 'null']}
+        committed_resource_id: {type: [string, 'null'], description: Set only when commit atomically creates the Resource.}
         expected_resource_version: {type: [integer, 'null'], minimum: 1, description: Pinned from If-Match for a revision upload; null for an initial Resource upload.}
         parent_revision_ids: {type: array, uniqueItems: true, items: {type: string}}
-        chunk_size_bytes: {type: integer, minimum: 1}
+        chunk_size_bytes: {type: integer, minimum: 1, description: Newly created sessions use 4 MiB chunks; a migrated legacy session may report a larger original size and is not resumable.}
         received_ranges:
           type: array
           items:
@@ -4442,6 +5166,7 @@ components:
         expires_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
+        progress_version: {type: integer, minimum: 1, description: Advances for accepted chunk progress; lifecycle events use version.}
     CreateConversationRequest:
       type: object
       additionalProperties: false
@@ -4678,13 +5403,106 @@ components:
           properties: {origin_coworker_revision: {type: integer}}
           required: [origin_coworker_revision]
         then: {properties: {origin_coworker_id: {type: string, minLength: 1}}}
+    TaskView:
+      type: object
+      additionalProperties: false
+      required: [task, current_spec_revision]
+      properties:
+        task: {$ref: '#/components/schemas/Task'}
+        current_spec_revision: {$ref: '#/components/schemas/TaskSpecRevision'}
+    TaskPlanningReadiness:
+      type: object
+      additionalProperties: false
+      required: [task_id, task_version, task_spec_revision, task_status, observed_at, dispatch_available, planning_started, agent_session_started, plan_created, blockers]
+      properties:
+        task_id: {type: string, minLength: 1}
+        task_version: {type: integer, minimum: 1}
+        task_spec_revision: {type: integer, minimum: 1}
+        task_status: {type: string, enum: [READY, RUNNING, WAITING_USER, BLOCKED, VERIFYING, NEEDS_USER, INCOMPLETE, PAUSE_REQUESTED, PAUSED, COMPLETED, FAILED, CANCEL_REQUESTED, CANCELLED]}
+        observed_at: {type: string, format: date-time}
+        dispatch_available: {type: boolean, const: false}
+        planning_started: {type: boolean, const: false}
+        agent_session_started: {type: boolean, const: false}
+        plan_created: {type: boolean, const: false}
+        blockers:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          items:
+            type: string
+            enum: [TASK_STATE_NOT_ELIGIBLE, PLAN_ALREADY_ACCEPTED, CURRENT_LEAD_OR_ENDPOINT_UNAVAILABLE, TASK_ISOLATION_UNAVAILABLE, NATIVE_CAPABILITIES_UNMEDIATED, PROTOCOL_UNQUALIFIED, PROCESS_CONTAINMENT_UNQUALIFIED, PLANNING_CONTEXT_RESOURCE_UNAVAILABLE, SESSION_SETTLEMENT_UNAVAILABLE, PROVIDER_UNSUPPORTED]
+    TaskPresentationSnapshot:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, task_id, computed_at, freshness, items]
+      properties:
+        workspace_id: {type: string, minLength: 1}
+        task_id: {type: string, minLength: 1}
+        computed_at: {type: string, format: date-time}
+        freshness: {type: string, enum: [CURRENT, STALE, UNKNOWN]}
+        items:
+          type: array
+          maxItems: 301
+          items: {$ref: '#/components/schemas/TaskPresentationItem'}
+    TaskPresentationItem:
+      type: object
+      additionalProperties: false
+      required: [item_key, kind, payload_version, source_refs, order_key, status, payload, freshness]
+      properties:
+        item_key: {type: string, minLength: 1, maxLength: 256}
+        kind: {type: string, enum: [TASK_CARD, ACTIVITY, ARTIFACT]}
+        payload_version: {type: integer, const: 1}
+        source_refs:
+          type: array
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, id]
+            properties:
+              kind: {type: string, enum: [TASK, STEP, ARTIFACT_VERSION, RESOURCE_REVISION]}
+              id: {type: string, minLength: 1, maxLength: 256}
+              revision: {type: string, maxLength: 128}
+        occurred_at: {type: [string, 'null'], format: date-time}
+        order_key: {type: string, minLength: 1, maxLength: 512}
+        status: {type: string, enum: [IN_PROGRESS, WAITING, NEEDS_USER, COMPLETE, INCOMPLETE, FAILED, UNAVAILABLE, UNKNOWN]}
+        label: {type: [string, 'null'], maxLength: 512}
+        payload:
+          oneOf:
+          - type: object
+            additionalProperties: false
+            required: [task_id, objective, status]
+            properties:
+              task_id: {type: string, minLength: 1}
+              objective: {type: string, maxLength: 32768}
+              status: {type: string, maxLength: 64}
+              step_summary: {type: string, maxLength: 2048}
+          - type: object
+            additionalProperties: false
+            required: [summary]
+            properties:
+              summary: {type: string, maxLength: 2048}
+              detail: {type: string, maxLength: 8192}
+          - type: object
+            additionalProperties: false
+            required: [artifact_id, version, display_name, artifact_kind]
+            properties:
+              artifact_id: {type: string, minLength: 1}
+              version: {type: integer, minimum: 1}
+              display_name: {type: string, maxLength: 512}
+              artifact_kind: {type: string, maxLength: 128}
+              verification_status: {type: string, maxLength: 64}
+        freshness: {type: string, enum: [CURRENT, STALE, UNKNOWN]}
     TaskSummary:
       type: object
-      required: [task_id, status]
+      additionalProperties: false
+      required: [task_id, status, objective, created_at, updated_at]
       properties:
-        task_id: {type: string}
-        status: {type: string}
-        objective: {type: [string, 'null']}
+        task_id: {type: string, minLength: 1}
+        status: {type: string, enum: [READY, RUNNING, WAITING_USER, BLOCKED, VERIFYING, NEEDS_USER, INCOMPLETE, PAUSE_REQUESTED, PAUSED, COMPLETED, FAILED, CANCEL_REQUESTED, CANCELLED]}
+        objective: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
     TaskWorkstreamProjection:
       type: object
       additionalProperties: false
@@ -4712,11 +5530,12 @@ components:
         newest_artifact: {oneOf: [{$ref: '#/components/schemas/ArtifactVersionRef'}, {type: 'null'}]}
     TaskPage:
       type: object
+      additionalProperties: false
       required: [items]
       properties:
         items:
           type: array
-          items: {$ref: '#/components/schemas/Task'}
+          items: {$ref: '#/components/schemas/TaskSummary'}
         next_cursor: {type: [string, 'null']}
     Blocker:
       type: object
@@ -4948,6 +5767,33 @@ components:
           type: array
           items: {$ref: '#/components/schemas/Artifact'}
         next_cursor: {type: [string, 'null']}
+    ArtifactTextEditHead:
+      type: object
+      additionalProperties: false
+      required: [artifact_id, aggregate_version, content_version, resource_version, parent_resource_revision_id]
+      properties:
+        artifact_id: {type: string, minLength: 1}
+        aggregate_version: {type: integer, minimum: 1}
+        content_version: {type: integer, minimum: 1}
+        resource_version: {type: integer, minimum: 1}
+        parent_resource_revision_id: {type: string, minLength: 1}
+    AppendArtifactTextVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_content_version, expected_resource_version, expected_parent_resource_revision_id, content]
+      properties:
+        expected_content_version: {type: integer, minimum: 1}
+        expected_resource_version: {type: integer, minimum: 1}
+        expected_parent_resource_revision_id: {type: string, minLength: 1, maxLength: 160}
+        content: {type: string, maxLength: 1048576, description: UTF-8 text; server enforces a 1 MiB encoded byte limit and rejects control characters except line breaks and tabs}
+    ArtifactTextVersionAppendResponse:
+      type: object
+      additionalProperties: false
+      required: [artifact, version, replayed]
+      properties:
+        artifact: {$ref: '#/components/schemas/Artifact'}
+        version: {$ref: '#/components/schemas/ArtifactVersion'}
+        replayed: {type: boolean}
     Routine:
       type: object
       required: [routine_id, workspace_id, name, current_revision, status, version, created_at, updated_at]
@@ -4999,7 +5845,7 @@ components:
         routine_id: {type: string}
         revision: {type: integer, minimum: 1}
         objective_template: {type: string, minLength: 1}
-        instructions: {type: string}
+        instructions: {type: string, minLength: 1}
         input_schema: {type: object, additionalProperties: true}
         constraints: {type: array, items: {type: string}}
         non_goals: {type: array, items: {type: string}}
@@ -5040,7 +5886,7 @@ components:
       required: [objective_template, instructions, input_schema, constraints, non_goals, required_outputs, acceptance_criteria, approvals_required, input_bindings, required_capabilities, placement_preference, verification_policy]
       properties:
         objective_template: {type: string, minLength: 1}
-        instructions: {type: string}
+        instructions: {type: string, minLength: 1}
         input_schema: {type: object, additionalProperties: true}
         constraints: {type: array, items: {type: string}}
         non_goals: {type: array, items: {type: string}}
@@ -5248,7 +6094,7 @@ components:
     CreateAutomationRequest:
       type: object
       additionalProperties: false
-      required: [workspace_id, name, routine_id, routine_revision, triggers, execution_policy]
+      required: [workspace_id, name, routine_id, routine_revision, triggers, execution_policy, coworker_ref]
       properties:
         workspace_id: {type: string}
         name: {type: string, minLength: 1}
@@ -5256,16 +6102,18 @@ components:
         routine_revision: {type: integer, minimum: 1}
         triggers: {type: array, minItems: 1, items: {$ref: '#/components/schemas/TriggerSpec'}}
         execution_policy: {$ref: '#/components/schemas/AutomationExecutionPolicy'}
+        coworker_ref: {oneOf: [{$ref: '#/components/schemas/CoworkerRevisionRef'}, {type: 'null'}]}
     UpdateAutomationRequest:
       type: object
       additionalProperties: false
-      required: [name, routine_id, routine_revision, triggers, execution_policy]
+      required: [name, routine_id, routine_revision, triggers, execution_policy, coworker_ref]
       properties:
         name: {type: string, minLength: 1}
         routine_id: {type: string}
         routine_revision: {type: integer, minimum: 1}
         triggers: {type: array, minItems: 1, items: {$ref: '#/components/schemas/TriggerSpec'}}
         execution_policy: {$ref: '#/components/schemas/AutomationExecutionPolicy'}
+        coworker_ref: {oneOf: [{$ref: '#/components/schemas/CoworkerRevisionRef'}, {type: 'null'}]}
     Automation:
       type: object
       required: [automation_id, workspace_id, name, current_revision, status, version, created_at, updated_at]
@@ -5512,7 +6360,7 @@ components:
         runtime_id: {type: [string, 'null']}
         environment_id: {type: [string, 'null']}
         connection_id: {type: [string, 'null']}
-        availability: {type: string, enum: [AVAILABLE, OFFLINE, PLACEHOLDER, REVOKED, UNKNOWN]}
+        availability: {type: string, enum: [AVAILABLE, OFFLINE, PLACEHOLDER, REVOKED, UNKNOWN, UNAVAILABLE]}
         writable: {type: boolean}
         observed_revision_id: {type: [string, 'null']}
         observed_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
@@ -5557,8 +6405,18 @@ components:
       properties:
         items:
           type: array
-          items: {$ref: '#/components/schemas/WorkspaceRoot'}
+          items: {$ref: '#/components/schemas/WorkspaceRootListItem'}
         next_cursor: {type: [string, 'null']}
+    WorkspaceRootListItem:
+      allOf:
+      - {$ref: '#/components/schemas/WorkspaceRoot'}
+      - type: object
+        required: [location_availability]
+        properties:
+          location_availability:
+            type: string
+            description: Last committed ResourceLocation observation; not a live Runtime probe.
+            enum: [AVAILABLE, OFFLINE, PLACEHOLDER, REVOKED, UNKNOWN, UNAVAILABLE]
     ResourceSearchResult:
       type: object
       required: [resource_ref, display_name, locations, freshness, match_reasons]
@@ -5571,16 +6429,55 @@ components:
         freshness: {$ref: '#/components/schemas/ResourceFreshness'}
         match_reasons:
           type: array
-          items: {type: string}
-        snippet: {type: [string, 'null']}
+          items: {type: string, enum: [NAME, MEDIA_TYPE, CONTENT_ON_DEMAND, CONTENT_INDEXED]}
+        snippet: {type: [string, 'null'], maxLength: 320, description: Bounded plain-text excerpt from a memory scan or digest-verified encrypted local index. It is never rendered as HTML.}
     ResourceSearchPage:
       type: object
-      required: [items]
+      required: [items, mode, content_scan]
       properties:
         items:
           type: array
           items: {$ref: '#/components/schemas/ResourceSearchResult'}
         next_cursor: {type: [string, 'null']}
+        mode: {type: string, enum: [METADATA, ON_DEMAND_CONTENT, INDEXED_CONTENT]}
+        content_scan: {$ref: '#/components/schemas/ResourceContentScan'}
+    RebuildResourceTextIndexRequest:
+      type: object
+      additionalProperties: false
+      required: [resource_revision_id, content_digest]
+      properties:
+        resource_revision_id: {type: string, minLength: 1, maxLength: 160}
+        content_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+    ResourceTextIndexRebuildResult:
+      type: object
+      additionalProperties: false
+      required: [requestId, correlationId, workspaceId, resourceId, resourceRevisionId, contentDigest, outcome, reason]
+      properties:
+        requestId: {type: string, minLength: 1, maxLength: 128}
+        correlationId: {type: string, minLength: 1, maxLength: 128}
+        workspaceId: {type: string, minLength: 1}
+        resourceId: {type: string, minLength: 1, maxLength: 160}
+        resourceRevisionId: {type: string, minLength: 1, maxLength: 160}
+        contentDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        outcome: {type: string, enum: [INDEXED, NOT_INDEXABLE]}
+        reason:
+          type: [string, 'null']
+          enum: [UNSUPPORTED_TYPE, OVER_SIZE_LIMIT, INVALID_UTF8, CONTROL_CHARACTERS, TERM_LIMIT_EXCEEDED, null]
+          description: Required for NOT_INDEXABLE and null for INDEXED.
+    ResourceContentScan:
+      type: [object, 'null']
+      required: [candidates_scanned, text_resources_checked, skipped_unsupported_type, skipped_over_file_limit, skipped_revision_changed, byte_budget_exhausted, candidate_budget_exhausted, max_candidates, max_file_bytes, max_total_bytes]
+      properties:
+        candidates_scanned: {type: integer, minimum: 0}
+        text_resources_checked: {type: integer, minimum: 0}
+        skipped_unsupported_type: {type: integer, minimum: 0}
+        skipped_over_file_limit: {type: integer, minimum: 0}
+        skipped_revision_changed: {type: integer, minimum: 0}
+        byte_budget_exhausted: {type: boolean}
+        candidate_budget_exhausted: {type: boolean}
+        max_candidates: {type: integer, const: 20}
+        max_file_bytes: {type: integer, const: 1048576}
+        max_total_bytes: {type: integer, const: 8388608}
     ResourceRevisionView:
       allOf:
       - {$ref: '#/components/schemas/ResourceRevision'}
@@ -5737,6 +6634,7 @@ components:
         reconcile_observation_ref:
           oneOf: [{$ref: '#/components/schemas/ResourceRef'}, {type: 'null'}]
     WorkspaceInstructionRevision:
+      description: Immutable user-authored Workspace instructions; the pinned text Resource is UTF-8 and at most 64 KiB.
       type: object
       required: [workspace_id, revision, parent_revisions, content_ref, content_digest, authored_by, created_at]
       properties:
@@ -5749,7 +6647,17 @@ components:
         content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
         authored_by: {$ref: '#/components/schemas/PrincipalRef'}
         created_at: {type: string, format: date-time}
+    WorkspaceInstructionRevisionPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/WorkspaceInstructionRevision'}
+        next_cursor: {type: [string, 'null']}
     CreateWorkspaceInstructionRevisionRequest:
+      description: Creates instructions from a pinned, same-Workspace UTF-8 text Resource no larger than 64 KiB.
       type: object
       additionalProperties: false
       required: [parent_revisions, content_ref, content_digest]
@@ -6321,6 +7229,16 @@ components:
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
+    CoworkerRevisionRecord:
+      type: object
+      additionalProperties: false
+      required: [coworker_id, revision, definition, authored_by, created_at]
+      properties:
+        coworker_id: {type: string, minLength: 1}
+        revision: {type: integer, minimum: 1}
+        definition: {$ref: '#/components/schemas/CoworkerRevisionInput'}
+        authored_by: {$ref: '#/components/schemas/PrincipalRef'}
+        created_at: {type: string, format: date-time}
     CoworkerPresenceProjection:
       type: object
       additionalProperties: false
@@ -6351,6 +7269,12 @@ components:
         constraints: {type: array, items: {type: string}}
         horizon: {type: [string, 'null'], format: date-time}
         related_task_ids: {type: array, uniqueItems: true, items: {type: string}}
+        related_artifact_refs:
+          type: array
+          maxItems: 500
+          uniqueItems: true
+          description: Exact current Artifact versions are captured as owner-authored Goal revision provenance; each reference must belong to the selected Workspace.
+          items: {$ref: '#/components/schemas/ArtifactVersionRef'}
         related_routine_refs:
           type: array
           items:
@@ -6385,7 +7309,11 @@ components:
         current_revision: {type: integer, minimum: 1}
         revision: {$ref: '#/components/schemas/GoalRevisionInput'}
         status: {type: string, enum: [ACTIVE, PAUSED, COMPLETED, ARCHIVED]}
-        progress: {$ref: '#/components/schemas/GoalProgressProjection'}
+        progress:
+          oneOf:
+          - {$ref: '#/components/schemas/GoalProgressProjection'}
+          - {type: 'null'}
+          description: A read-only Task/Evidence projection. Null only when the projection cannot be read; PARTIAL explicitly reports unsupported verification/freshness dimensions and uses null counts rather than inferred zeros.
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
@@ -6403,19 +7331,30 @@ components:
         task_id: {type: string}
         task_status: {type: string, enum: [READY, RUNNING, WAITING_USER, BLOCKED, VERIFYING, NEEDS_USER, INCOMPLETE, PAUSE_REQUESTED, PAUSED, COMPLETED, FAILED, CANCEL_REQUESTED, CANCELLED]}
         outcome_state: {type: string, enum: [VERIFIED, INCOMPLETE, UNVERIFIED, STALE, CONFLICTED]}
-        evidence_refs: {type: array, uniqueItems: true, items: {type: string}}
+        evidence_refs: {type: array, maxItems: 200, uniqueItems: true, items: {type: string}}
     GoalProgressProjection:
       type: object
       additionalProperties: false
-      required: [computed_at, verified_task_count, linked_task_count, stale_source_count, conflicted_source_count, contributions, summary]
+      required: [computed_at, availability, limitations, verified_task_count, linked_task_count, stale_source_count, conflicted_source_count, contributions, artifact_evidence_refs, summary]
       properties:
         computed_at: {type: string, format: date-time}
-        verified_task_count: {type: integer, minimum: 0}
+        availability: {type: string, enum: [COMPLETE, PARTIAL]}
+        limitations: {type: array, uniqueItems: true, items: {type: string, enum: [VERIFICATION_RUN_READ_MODEL_UNAVAILABLE, TASK_DEPENDENCY_FRESHNESS_UNAVAILABLE, ARTIFACT_DEPENDENCY_FRESHNESS_UNAVAILABLE, ARTIFACT_EVIDENCE_REFERENCE_UNRESOLVED, EVIDENCE_LIST_TRUNCATED]}}
+        verified_task_count: {type: [integer, 'null'], minimum: 0, description: Null until passing VerificationRuns can be matched to current mandatory Task criteria and inputs.}
         linked_task_count: {type: integer, minimum: 0}
-        stale_source_count: {type: integer, minimum: 0}
-        conflicted_source_count: {type: integer, minimum: 0}
-        contributions: {type: array, items: {$ref: '#/components/schemas/GoalTaskContribution'}}
+        stale_source_count: {type: [integer, 'null'], minimum: 0, description: Null while Task and Artifact dependency freshness readers are unavailable.}
+        conflicted_source_count: {type: [integer, 'null'], minimum: 0, description: Null while Task and Artifact dependency freshness readers are unavailable.}
+        contributions: {type: array, maxItems: 500, items: {$ref: '#/components/schemas/GoalTaskContribution'}}
+        artifact_evidence_refs: {type: array, maxItems: 500, items: {$ref: '#/components/schemas/GoalArtifactEvidenceRefs'}}
         summary: {type: string, maxLength: 500}
+    GoalArtifactEvidenceRefs:
+      type: object
+      additionalProperties: false
+      required: [artifact_id, version, evidence_refs]
+      properties:
+        artifact_id: {type: string}
+        version: {type: integer, minimum: 1}
+        evidence_refs: {type: array, maxItems: 200, uniqueItems: true, items: {type: string}}
     UsageQuantity:
       type: object
       additionalProperties: false
@@ -6568,7 +7507,11 @@ components:
       additionalProperties: false
       required: [resolution]
       properties:
-        resolution: {type: string, enum: [ACCEPTED, DISMISSED]}
+        resolution: {type: string, const: DISMISSED}
+    AcceptSuggestionTaskRequest:
+      type: object
+      additionalProperties: false
+      properties: {}
     SnoozeSuggestionRequest:
       type: object
       additionalProperties: false
@@ -6583,7 +7526,7 @@ components:
         workspace_id: {type: string}
         kind: {type: string, enum: [TASK_OPPORTUNITY, ROUTINE_OPPORTUNITY, AUTOMATION_OPPORTUNITY]}
         muted: {type: boolean}
-        updated_at: {type: string, format: date-time}
+        updated_at: {type: [string, 'null'], format: date-time, description: Null only for a virtual default preference that has never been persisted}
         version: {type: integer, minimum: 0}
     SuggestionPreferencePage:
       type: object

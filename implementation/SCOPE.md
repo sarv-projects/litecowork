@@ -4,16 +4,19 @@
 
 User alone reviews; coding agents implement. No additional developer, QA team,
 product manager, or security engineer is assumed. Reviewer bandwidth is a release resource.
-Desktop/local is the first usable product. Cloud follows that proven local product;
-remote Runtime follows cloud. All finalized contract features remain in the release
-backlog, including non-coding office, research, personal-assistant, browser, and automation
-workflows. A coding-agent implementation team does not make the end product coding-only.
+V1 is a complete, production-qualified **desktop/local product**. Cloud continuation and
+remote Runtime are post-V1 releases and do not block the V1 launch. Cloud follows V1;
+remote Runtime follows cloud. All finalized local contract features remain in scope,
+including non-coding office, research,
+personal-assistant, browser, and automation workflows. A coding-agent implementation team
+does not make the end product coding-only.
 
-The first desktop alpha is an increment, not the complete V1. Full V1 is released only
-when the local, cloud, remote, and finalized capability gates pass. A missing external
-provider is a documented blocker or a visibly unavailable optional integration; it cannot
-be marked implemented using a fixture. Any actual reduction of the committed feature
-scope requires an explicit owner decision and a revised coverage/release record.
+The first desktop alpha is an increment, not the complete V1. V1 is released only after
+the local feature matrix, real-provider workflows, supported desktop platform matrix, and
+production gates pass. A missing external provider is a documented blocker or a visibly
+unavailable optional integration; it cannot be marked implemented using a fixture. Any
+actual reduction of committed local feature scope requires an explicit owner decision and
+a revised coverage/release record.
 
 ## Included feature groups
 
@@ -34,9 +37,15 @@ scope requires an explicit owner decision and a revised coverage/release record.
 - Home, Needs You, Work, Live Desk, Library/Workbench, Discover, settings, Inspector,
   onboarding, keyboard/accessibility/reduced motion, truthful status/cost presentation.
 - Routines, multi-trigger Automations, cursors/occurrences/misfires, test runs, health,
-  notifications, a cloud-hosted qualified human channel, reusable work/Teach-a-task/SkillProposal.
-- Cloud pairing/replication/fencing/handoff, remote Runtime enrollment, backups/restores,
-  upgrades/rollback, observability, deployment and production incident recovery.
+  local notifications, reusable work/Teach-a-task/SkillProposal.
+- Local backups/restores, upgrades/rollback, observability, desktop deployment and
+  production incident recovery.
+
+## Post-V1 releases
+
+- Cloud continuation: cloud deployment, pairing/replication/fencing/handoff, cloud
+  operations, and one qualified cloud-hosted human channel.
+- Remote Runtime: enrollment, placement, remote lifecycle, disconnection and recovery.
 
 ## Coverage versus integration breadth
 
@@ -63,9 +72,9 @@ Cloud services serve the desktop client first. Remote execution is the same Runt
 | G0 contract/development readiness | validators, pinned tooling, first qualification spikes | Accept first story |
 | G1 local durable work | installed app, native agent, verified Artifact, kill/restart recovery | Desktop alpha usable |
 | G2 desktop feature complete | all local epics and representative real workflows pass | Start cloud qualification |
-| G3 cloud complete | two Runtime fault tests, real cloud deployment, restore, handoff | Start remote qualification |
-| G4 remote complete | enrollment/revocation, remote dependency and fencing tests | V1 candidate |
-| G5 production release | release matrix, signed qualified installers, no open critical defects | Publish V1 |
+| G3 V1 production release | local release matrix, signed qualified desktop installers, local restore/rollback, no open critical defects | Publish desktop/local V1 |
+| Post-V1 Cloud | two Runtime fault tests, real cloud deployment, restore, handoff | Start remote qualification |
+| Post-V1 Remote | enrollment/revocation, remote dependency and fencing tests | Remote release candidate |
 
 No calendar date or velocity is asserted before measured delivery. Gates represent
 capability and evidence; dependency-ready stories can overlap within a gate's safe bounds.

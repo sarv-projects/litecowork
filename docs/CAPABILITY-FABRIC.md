@@ -151,6 +151,21 @@ The exact request/response schema for LiteCowork's internal methods is specified
 `SERVICES.md` and shared value types in `SCHEMAS.md`. The LiteSPM-side protocol remains
 out of scope here.
 
+### Local ZIP intake provider boundary
+
+`capabilities/zip_intake` currently contains a bounded Python parser implementation and
+fixture tests, but it is not an activated Capability and is not called by `litecoworkd`.
+Cooperative checks in a library do not provide hard CPU/RSS/time containment. The local
+Operator router currently mounts only a read-only, owner-scoped readiness observation at
+`GET /v1/capabilities/zip-intake`; the Tauri bridge and Library notice are also registered.
+They report ZIP extraction as unavailable. Existing resumable upload stores the archive
+intact as an opaque Resource. Do not add an in-process call, direct UI extraction, or direct
+agent attachment of members. Integration requires a supervised isolated worker with bounded
+IPC, OS-level resource limits, cancellation/timeout and crash recovery, exact source-revision
+binding, and a Core-mediated path for publishing each accepted member's Resource,
+provenance and deletion lifecycle. Qualification must include hostile archive fixtures and
+the supported desktop OS matrix before the status can report READY.
+
 `CapabilityRef` is LiteCowork's internal normalization boundary: package references carry
 the LiteSPM-normalized source, package version, and package digest; an MCP Skill carries
 the host-authenticated server identity in `source`, the exact advertised `SKILL.md` URI

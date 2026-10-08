@@ -65,6 +65,9 @@ struct SqlxInner {
 }
 
 enum Command {
+    ListWorkspaces {
+        reply: mpsc::Sender<Result<Vec<Workspace>, StoreError>>,
+    },
     GetWorkspace {
         workspace_id: String,
         reply: mpsc::Sender<Result<Option<Workspace>, StoreError>>,
@@ -161,6 +164,10 @@ impl SqlxWorkspaceStore {
         self.request(|reply| Command::SqliteVersion { reply })
     }
 
+    fn list_workspaces(&self) -> Result<Vec<Workspace>, StoreError> {
+        self.request(|reply| Command::ListWorkspaces { reply })
+    }
+
     fn replay_workspace(&self, workspace_id: &str) -> Result<Option<Workspace>, StoreError> {
         let events = self.read_workspace_events(workspace_id)?;
         let mut projection = None;
@@ -212,6 +219,10 @@ impl StateStore for SqlxWorkspaceStore {
             workspace_id: workspace_id.to_owned(),
             reply,
         })
+    }
+
+    fn list_workspaces(&self) -> Result<Vec<Workspace>, StoreError> {
+        SqlxWorkspaceStore::list_workspaces(self)
     }
 
     fn commit_workspace(
@@ -286,6 +297,10 @@ fn writer_thread(
     }
     while let Ok(command) = receiver.recv() {
         match command {
+            Command::ListWorkspaces { reply } => {
+                let result = runtime.block_on(list_workspaces(&mut connection));
+                let _ = reply.send(result);
+            }
             Command::GetWorkspace {
                 workspace_id,
                 reply,
@@ -400,6 +415,32 @@ async fn load_workspace(
         })
     })
     .transpose()
+}
+
+async fn list_workspaces(
+    connection: &mut sqlx::SqliteConnection,
+) -> Result<Vec<Workspace>, StoreError> {
+    let rows = sqlx::query(
+        "SELECT workspace_id FROM workspaces
+         ORDER BY created_at ASC, workspace_id ASC",
+    )
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    let mut workspaces = Vec::with_capacity(rows.len());
+    for row in rows {
+        let workspace_id: String = row.try_get("workspace_id").map_err(map_sqlx_error)?;
+        workspaces.push(
+            load_workspace(connection, &workspace_id)
+                .await?
+                .ok_or_else(|| {
+                    StoreError::Integrity(
+                        "Workspace disappeared during serialized catalog read".to_owned(),
+                    )
+                })?,
+        );
+    }
+    Ok(workspaces)
 }
 
 async fn commit_workspace(

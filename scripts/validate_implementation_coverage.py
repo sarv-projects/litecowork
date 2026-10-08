@@ -487,7 +487,7 @@ def operation_story(path: str, method: str, operation_id: str) -> str:
     if p.startswith("/approvals"):
         return "E04-S01"
     if p.startswith(("/artifacts", "/library")):
-        return "E04-S05" if p.startswith("/artifacts") else "E08-S04"
+        return "E04-S05" if p.startswith("/artifacts") else "E08-S07"
     if p.startswith("/routines"):
         return "E09-S03" if "health" in p else "E09-S01"
     if p.startswith("/automations"):
@@ -524,6 +524,8 @@ def operation_story(path: str, method: str, operation_id: str) -> str:
 
 
 def event_story(event_type: str) -> str:
+    if event_type == "task.spec.revised.v1":
+        return "E03-S03"
     prefix = event_type.split(".", 1)[0]
     if prefix in {"conversation", "message", "turn"}:
         return "E03-S02"
@@ -580,7 +582,9 @@ def read_doc_mappings(previous: list[dict[str, str]]) -> dict[str, str]:
             "CONTRIBUTING.md": "E01-S01",
             "GLOSSARY.md": "E01-S01",
             "README.md": "E02-S01",
+            "apps/litecowork-ui/README.md": "E02-S01",
             "docs/FLOWS.md": "E13-S03",
+            "docs/PRESENTATION-RUNTIME.md": "E08-S06",
             "docs/adr/README.md": "E01-S01",
             "docs/adr/0001-durable-task-core.md": "E03-S04",
             "docs/adr/0002-task-and-attempt-identity.md": "E03-S04",
@@ -666,7 +670,7 @@ def plan_doc_story(path: str, title: str, backlog: dict[str, object]) -> str:
         "SOURCES.md": "E08-S02",
         "STACK.md": "E01-S01",
         "TESTING.md": "E13-S03",
-        "UI.md": "E08-S04",
+        "UI.md": "E08-S05",
         "WORKFLOWS.md": "E13-S03",
     }
     for suffix, story in defaults.items():

@@ -5,14 +5,14 @@
 ```text
 apps/
   litecoworkd/             # headless Runtime/service executable
-  operator-desktop/        # Tauri + React UI, tray, later Quick Entry
+  litecowork-ui/           # Tauri + React desktop UI and native command bridge
 
 crates/
+  domain-workspace/        # Workspace aggregate/services
+  domain-task/             # durable Task creation/service
   domain/
     common/
-    workspace/
     conversation/
-    task/
     artifact/
     effect/
     evidence/
@@ -77,7 +77,8 @@ crates/
 Do not create every crate before needed; this is an ownership map. Early implementation
 may combine closely related crates while preserving dependency boundaries.
 `apps/operator-web`, Postgres and S3 adapters are future optional shapes, not V1
-clients/providers; V1 is desktop-first, followed by cloud Runtime and then remote Runtime.
+clients/providers. V1 is the complete desktop/local product; cloud continuation and remote
+Runtime are post-V1 releases.
 
 ## Dependency direction
 
@@ -109,14 +110,14 @@ Stage measurements include CapabilityHost activation/binding overhead, daemon/ta
 startup, and event-to-UI latency. Freeze numeric Stage 1 targets from actual recorded
 hardware/workload baselines; do not guess them.
 
-The contract-level release order is **desktop/local first, cloud continuation second,
-remote Runtime third**. The detailed Agile stories, stack qualification, provider research,
+The contract-level release order is **desktop/local V1 first; cloud continuation and
+remote Runtime post-V1**. The detailed Agile stories, stack qualification, provider research,
 RAG, UI acceptance, real-work tests and release gates are in
 [`../implementation/README.md`](../implementation/README.md). The current authority is
 still this document plus `ARCHITECTURE.md` and each domain contract; a backlog summary
 never overrides them.
 
-Delivery gates are:
+V1 delivery gates are:
 
 1. Foundation, verified toolchain, contract CI, durable local storage, authenticated API
    and independent Runtime lifecycle.
@@ -127,10 +128,11 @@ Delivery gates are:
    RAG, local models, browser/office/research, Coworker/context/Goals/Suggestions,
    Workbench, accessibility, responsibilities and skills, each qualified with real
    providers and useful user cases.
-4. Cloud deployment, one qualified human channel, replication/fencing/continuation and
-   restore with no DB-file or native private-state sync.
-5. Remote Runtime enrollment, placement, authority, availability and recovery.
-6. Production installer/security/performance/real-work qualification and owner release.
+4. Desktop/local production installer, backup/restore, security/performance/real-work
+   qualification and owner release.
+
+Cloud deployment/continuation and remote Runtime have their own post-V1 gates in the Agile
+roadmap; they are not V1 release blockers.
 
 Begin with contract/toolchain and stack spikes, not an assumption that ACP fits every
 native harness. Implement native harness adapters through qualified full-fidelity

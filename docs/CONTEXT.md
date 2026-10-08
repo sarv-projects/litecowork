@@ -29,7 +29,9 @@ delivered only at a safe turn boundary with provenance.
 
 Instructions cannot grant capabilities, approve Effects, loosen Workspace policy, or
 override system/security rules. They are untrusted content for security purposes and are
-size-limited, versioned, digest-checked, and redacted from external telemetry.
+limited to 64 KiB of UTF-8 text per revision, versioned, digest-checked, and redacted from
+external telemetry. The referenced Resource revision is pinned and must belong to the same
+Workspace.
 
 ## Context boundaries
 
@@ -62,8 +64,13 @@ ResumePacket:
 ```
 
 Context construction is progressive. A Resource search result is metadata, not an
-implicit attachment. The Agent or user selects bounded references; ResourceResolver then
-checks scope, pinned revision, freshness, and availability before content is exposed.
+implicit attachment. The desktop may explicitly request deterministic lexical search over
+the revision-scoped encrypted local text index, or use the bounded
+`ON_DEMAND_CONTENT` compatibility scan. Indexed snippets are untrusted display data,
+derived from the exact pinned ResourceRevision, and are never silently added to an
+AgentSession. The result still does not attach bytes. The Agent or user selects bounded,
+pinned ResourceRefs; ResourceResolver then checks scope, revision, freshness, and
+availability before content is exposed.
 Conversation scope cannot read Task-only data without an explicit reference and policy
 authorization.
 
@@ -113,21 +120,33 @@ then purges content and derived indexes from Core-managed replicas; the tombston
 revision digests remain so historical Task provenance does not disappear. A provider-backed
 source is reported as deletion-incomplete until its provider confirms revocation/removal.
 
-Resource edits use `POST /resources/{resourceId}/revision-uploads`, an immutable parent
+Resource edits use the authenticated owner route `POST /v1/resources/{resource_id}/revision-uploads`, an immutable parent
 revision set, digest-verified chunk upload, and atomic commit. `If-Match` pins the current
 Resource version when the upload session is created. A stale write returns
 `RESOURCE_CONFLICT` without accepting bytes; an explicit resolution names every intended
 parent revision. An unknown, cross-Resource, or duplicated parent returns
 `RESOURCE_REVISION_PARENT_MISMATCH`; a valid but stale parent-head set remains
-`RESOURCE_CONFLICT`. The head advances atomically and never uses last-writer-wins.
+`RESOURCE_CONFLICT`. The owner upload is bounded to 100 MiB and requires the complete
+current head set. A successful append emits `resource.revision.created.v1`, never
+`resource.created`; Resource head, ancestry, managed location, derived index/invalidation,
+upload state, event/snapshot, and idempotency receipt commit atomically. The head advances
+atomically and never uses last-writer-wins.
 
 `GET /resources/{resourceId}` remains available for tombstone metadata, but any content
 resolution checks `ContextDocumentStatus` at the last Core authorization boundary. A
-revocation fences new reads and TaskPacket/context attachment. Active sessions that were
-given the document are stopped at the next safe boundary and cannot resume with the stale
-attachment; native history already observed by an external agent cannot be recalled, so the
-old session is never reused. Existing Task/Evidence provenance retains the Resource ID,
-revision IDs, and digests without restoring revoked/deleted bytes.
+revocation fences new reads and TaskPacket/context attachment. Storage checks status when
+admitting a content read, before fetching or decrypting Resource bytes. A read admitted
+while status is `ACTIVE` may finish if a concurrent status change commits after admission;
+the read admission is not a revocation barrier for already-started work. Any operation
+that publishes derived state from those bytes must recheck status in its final transaction
+and discard the result if the document is no longer `ACTIVE`. `REVOKED` retains bytes but
+blocks new reads until restored; `DELETION_PENDING` and `DELETED` also block reads while
+purge proceeds or after completion. Owner metadata remains available so status and the
+appropriate restore/deletion outcome can be shown. Active sessions that were given the
+document are stopped at the next safe boundary and cannot resume with the stale attachment;
+native history already observed by an external agent cannot be recalled, so the old session
+is never reused. Existing Task/Evidence provenance retains the Resource ID, revision IDs,
+and digests without restoring revoked/deleted bytes.
 
 Deletion is a recoverable purge saga. Before `ACTIVE|REVOKED -> DELETION_PENDING`,
 ResourceService seals an immutable `ContextDocumentPurgePlan` over every registered,
@@ -141,3 +160,11 @@ content. Receipts contain no bytes, locators, credentials, or provider continuat
 and remain available for recovery and backup audit. External semantic indexes are purge
 targets only when their provider adapter is registered as an owned replica; arbitrary
 retrieval providers cannot extend or override Resource deletion truth.
+
+The Operator may offer a read-only “Context used” view for a Conversation turn or Task.
+It is derived from the exact ContextAttachments and provider retrieval receipts actually
+resolved for that scope, not a guess about what the Agent considered. It exposes source,
+scope, revision/digest and freshness where available, with links to authorized source
+views. A provider that cannot return source provenance is identified as such. This view
+does not create a Core-owned semantic-memory store or a memory proposal path. Rendering and
+revocation behavior are specified in [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md).

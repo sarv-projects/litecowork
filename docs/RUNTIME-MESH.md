@@ -44,15 +44,19 @@ Each Runtime has a device key pair generated on first initialization.
 
 ```text
 DeviceIdentity {
-  device_id
-  public_key
+  device_id: DeviceId # derived from the raw public-key bytes
+  public_key: Ed25519PublicKey # ed25519:<lowercase hex>
   key_version
   issued_at
   display_name?
 }
 ```
 
-Private keys remain local. Rotation creates a new key version signed by the currently trusted key when possible; recovery pairing is required if old key is unavailable.
+The Runtime uses Ed25519 for device signatures. The private seed is held only in the
+platform credential store and never enters SQLite, bootstrap state, replication, or
+backup. `device_id` is `ed25519-sha256:` plus the lowercase hexadecimal SHA-256 digest of
+the raw 32-byte public key. `key_version` starts at 1; rotation requires a separately
+specified authenticated transition and recovery flow. See ADR-0021.
 
 ## Runtime incarnation registry
 
@@ -77,10 +81,12 @@ valid without treating a stale presence frame as proof of current execution auth
 
 ## Pairing
 
-1. New runtime requests pairing token from Workspace Hub or trusted operator.
+1. The owner requests a Workspace-scoped pairing token from the Workspace Hub or trusted
+   Operator.
 2. Token contains workspace ID, nonce, expiry and allowed initial roles.
 3. New runtime submits device public key + token.
-4. Hub validates token, creates Runtime record and trust binding.
+4. Hub validates token, creates or resolves the installation-scoped Runtime record, and
+   creates the ACTIVE `MESH_PAIRING` RuntimeWorkspaceBinding for that Workspace.
 5. Mutual TLS/session authentication starts.
 6. Pairing token becomes unusable.
 
@@ -88,7 +94,10 @@ Tokens are single-use and short-lived. The Hub chooses expiry under deployment p
 an operator request may ask for a shorter lifetime but cannot extend the policy maximum.
 The bearer token is returned once to the authenticated Operator surface, stored only as a
 verifier/digest, and excluded from domain events, logs, inventory, and replication. A
-successful pairing atomically consumes it; expired/replayed tokens are rejected.
+successful pairing atomically consumes it; expired/replayed tokens are rejected. Revoking
+a Workspace binding is scoped to that Workspace. The global `revoke_runtime` operation is
+reserved for revoking the installation/device identity and all its bindings; it is not
+the UI action for removing one Runtime from one Workspace.
 
 ## Presence
 
@@ -133,7 +142,8 @@ interface RuntimeMesh {
 
   assign_channel_host(AssignChannelHostRequest) -> ChannelHostLeaseGrant
   renew_channel_host_lease(RenewChannelHostLeaseRequest) -> ChannelHostLeaseGrant
-  release_channel_host_lease(ReleaseChannelHostLeaseRequest) -> ChannelHostAssignment
+  record_channel_host_drain_proof(RecordChannelHostDrainProofRequest) -> ChannelHostDrainProof
+  release_channel_host_lease(ReleaseChannelHostLeaseRequest) -> ChannelHostLeaseReleaseRecord
 
   replicate_events(EventBatch) -> ReplicationAck
   fetch_events(EventCursor) -> EventBatch
@@ -145,6 +155,11 @@ interface RuntimeMesh {
   accept_handoff(AcceptHandoffRequest) -> AttemptRef
 }
 ```
+
+`list_runtimes(WorkspaceId)` is an owner-authorized Workspace projection. It returns only
+installations with an ACTIVE `RuntimeWorkspaceBinding` for that Workspace and filters
+operations by the binding's roles. It does not expose the installation-wide Runtime
+inventory or treat a RuntimeOffer as Workspace authorization.
 
 Lease request/response values are internal Mesh contracts, not Operator API schemas:
 
@@ -404,12 +419,48 @@ old credential remains in a provider process.
 RuntimeMesh assigns each active ChannelBinding to exactly one Runtime through a durable
 `ChannelHostAssignment`. The Workspace Hub is the assignment authority. Assignment
 records pin `runtime_id`, monotonically increasing `host_epoch`, status, ingress-continuity
-assessment, and aggregate version. A separate Runtime Mesh `ChannelHostLeaseRecord` holds the current opaque lease
-ID, bounded expiry, and fencing-credential digest. Lease renewals update this operational
-control record; they do not create assignment revisions or domain events. The raw
+assessment/provenance, and aggregate version. A separate Runtime Mesh
+`ChannelHostLeaseRecord` holds the current opaque lease ID, bounded expiry, clock-skew
+margin, immutable `safe_reassign_after`, and fencing-credential digest. The configured
+clock-skew margin is at least 30 seconds and is pinned to each lease when issued; renewal
+preserves that margin and advances `safe_reassign_after` with the new expiry. Lease renewals
+preserve Runtime, host epoch, lease ID, and fencing-token digest, extend an unexpired lease,
+and increment `control_version` exactly once; they update only this operational control
+record and do not create assignment revisions or domain events. Release is legal only after
+the assignment is DRAINING and either a matching immutable quiescent drain proof exists or
+the Hub's authoritative time reaches `safe_reassign_after`. Deletion writes an immutable
+lease-release record, so reassignment cannot infer safety from a missing lease row. The raw
 credential is delivered only to the authenticated assigned Runtime and never enters
 events, state blobs, logs, Operator responses, or backups. ChannelBinding identity, action
 grants, and provider credentials are not changed by assignment.
+
+Every committed ACTIVE assignment has exactly one matching current lease; every committed
+DRAINING assignment retains its exact source lease until an atomic release transaction.
+That transaction commits one of two outcomes: a new ACTIVE assignment and fresh lease, or
+an absent assignment (unassigned) with a durable release record. RuntimeWorkspaceBinding
+revocation invokes the latter when no eligible host exists, and leaves the ChannelBinding
+DEGRADED/unassigned. There is no committed ACTIVE/no-lease or DRAINING/no-lease intermediate
+state. The v1→v4 migration rejects an ACTIVE assignment without a matching unexpired lease
+and rejects every DRAINING assignment without its matching persisted lease row. A DRAINING
+row may be expired: it conveys no current authority, and migration backfills the v4
+skew boundary from its expiry. A missing row cannot be accepted because the old schema has
+no release record that could prove it was safely released.
+
+Only an authenticated RuntimeMesh service command may create drain or continuity proof
+records. It derives proof values from the authoritative Hub receipt, Effect, lease-release,
+and replication state; callers cannot supply trusted zero counters, cursor digests, or
+verifier identity. SQLite enforces immutability and scope relationships, but valid JSON and
+zero-valued columns alone do not prove the underlying state. The service command must
+serialize against ingress, receipt settlement, DRAINING, and lease release.
+
+ChannelHost lease IDs are globally unique across ChannelBindings and host epochs. The issuer
+checks a proposed ID against current lease rows and immutable release records before
+assignment commit. The fencing credential is freshly derived with domain separation from
+the unique immutable identity `(workspace_id, channel_binding_id, runtime_id, host_epoch,
+lease_id)`. Renewal preserves the identity and credential; host reassignment always uses a
+new ID/epoch. A reused ID or detected digest collision fails closed. The digest remains
+non-secret durable metadata; raw credential bytes are delivered only to the authenticated
+assigned Runtime.
 
 ```text
 ChannelHostLeaseRecord { # Hub/control-plane metadata, separate from domain aggregate
@@ -419,7 +470,51 @@ ChannelHostLeaseRecord { # Hub/control-plane metadata, separate from domain aggr
   lease_id
   fencing_token_digest
   expires_at
+  clock_skew_margin_ms # >= 30000, immutable for this lease
+  safe_reassign_after  # expires_at + clock_skew_margin_ms
   control_version
+}
+
+ChannelHostDrainProof {
+  proof_id
+  channel_binding_id
+  workspace_id
+  runtime_id
+  host_epoch
+  lease_id
+  lease_control_version
+  proved_at
+  proof_digest
+  verified_by
+  unsettled_receipt_count = 0
+  unresolved_effect_count = 0
+  unreplicated_receipt_count = 0
+}
+
+RecordChannelHostDrainProofRequest {
+  request_id
+  channel_binding_id
+  runtime_id
+  host_epoch
+  lease_id
+  expected_lease_control_version
+}
+
+The request identifies the exact lease only. RuntimeMesh derives the proof digest,
+verifier identity, and zero counters from the authoritative Hub receipt, Effect, and
+replication state; callers cannot assert those values.
+
+ChannelHostLeaseReleaseRecord {
+  channel_binding_id
+  workspace_id
+  runtime_id
+  host_epoch
+  lease_id
+  control_version
+  safe_reassign_after
+  released_at
+  release_kind: QUIESCENT | EXPIRY_PLUS_SKEW
+  drain_proof_id?
 }
 
 ChannelHostLeaseGrant { # private Mesh response; deliver only to authenticated owner Runtime
@@ -435,6 +530,8 @@ AssignChannelHostRequest {
   target_runtime_id
   expected_assignment_version?
   accept_ingress_gap: boolean # required true only when cursor transfer/replay cannot prove continuity
+  ingress_gap_decision_audit_id? # generated after TrustService authorizes explicit owner confirmation
+  continuity_proof_ref? # RuntimeMesh-verified cursor transfer/replay evidence
 }
 
 RenewChannelHostLeaseRequest {
@@ -445,10 +542,35 @@ RenewChannelHostLeaseRequest {
   expected_control_version
   fencing_credential: FencingCredential
 }
+
+RecordChannelHostDrainProofRequest {
+  request_id
+  channel_binding_id
+  runtime_id
+  host_epoch
+  lease_id
+  expected_lease_control_version
+  proof_digest
+  unsettled_receipt_count: 0
+  unresolved_effect_count: 0
+  unreplicated_receipt_count: 0
+}
+
+ReleaseChannelHostLeaseRequest {
+  request_id
+  channel_binding_id
+  runtime_id
+  host_epoch
+  expected_control_version
+}
 ```
 
 The Runtime must hold an unexpired host lease to poll/receive provider events, claim or
-complete `ChannelEventReceipt`s, or dispatch outbound channel Effects. Renewal requires
+complete `ChannelEventReceipt`s, or dispatch outbound channel Effects. After assignment
+enters DRAINING, it cannot begin new claims or sends. A receipt already PROCESSING under
+the exact source Runtime/host epoch and still-valid lease may settle to a terminal state;
+the same fence does not authorize reclaim or new work. A drain proof is admitted only after
+all such claims settle. Renewal requires
 the same authenticated Runtime and current host epoch. The host checks expiry locally
 before an external dispatch; a disconnected Runtime cannot renew or begin new outbound
 mutations. In-flight sends at lease expiry become AMBIGUOUS and are reconciled before
@@ -460,16 +582,38 @@ encrypted local provider cursor or acknowledges deferred provider ingress. A tar
 replays from the latest Hub-replicated receipt and deduplicates by provider event ID.
 
 Reassignment requires explicit RuntimeMesh admission, a compatible channel-provider offer,
-SecretRef availability, and safe source settlement or authoritative source-lease expiry
-plus clock-skew margin. The Hub increments `host_epoch` before admitting the new Runtime.
+SecretRef availability, and either a matching quiescent drain proof or an immutable lease
+release record written only after `safe_reassign_after`. A heartbeat timeout or absent lease
+row alone is not proof. The Hub increments `host_epoch` before admitting the new Runtime.
 `ingress_continuity = CONTINUOUS` requires a verified provider cursor transfer or replay
-that reaches the last Hub-replicated receipt within the provider's declared replay window.
-Otherwise, the Operator command must explicitly accept an observation gap; the assignment
-records `GAP_ACCEPTED` with its timestamp. The UI preserves that status, and no later scan
-can erase the historical uncertainty. New hosts do not poll until their Runtime-local,
+that reaches the last Hub-replicated receipt within the provider's declared replay window;
+the new epoch records its continuity proof reference. Otherwise, the Operator command must
+explicitly accept an observation gap; TrustService records the owner decision in an
+`AuditRecord`, and the assignment pins that decision reference and timestamp. The UI
+preserves that status, and no later scan can erase the historical uncertainty. New hosts do not poll until their Runtime-local,
 incarnation-scoped cursor binding is validated or rebuilt. Receipt claims may be reclaimed
 only after their bounded claim expires or the old host epoch has been committed as fenced;
 the current host lease is required in both cases.
+
+Receipt insertion is serialized against the assignment's ACTIVE→DRAINING transition and
+drain-proof admission by the Hub's per-ChannelBinding authority transaction. Insertion
+requires the current ACTIVE assignment, unexpired lease, and active CHANNEL_HOST binding;
+the receipt and origin sequence commit together. If insertion commits before DRAINING, the
+receipt joins the source reconciliation frontier. If DRAINING commits first, the source
+does not insert or acknowledge/defer-ack subsequent provider delivery. The provider event
+must remain retryable/replayable, or an owner-approved gap is audited. Drain proof checks
+that no source-epoch PROCESSING claim remains, all pre-drain RECEIVED rows are Hub-durable
+and included in the successor replay frontier, outbound Effects are reconciled, and all
+accepted ingress is Hub-durable. The successor may claim these RECEIVED rows under its new
+lease. These checks and receipt admission
+share the serialization boundary so a late receipt cannot appear between proof and release.
+
+RuntimeMesh exposes an internal `clear_channel_host_for_binding_revocation` operation to
+RuntimeWorkspaceBindingService. It waits for exact drain proof or authoritative expiry plus
+skew, deletes the old lease (which appends the immutable release record), then removes the
+assignment in the same transaction. The ChannelBinding remains visible as DEGRADED and no
+inbound/outbound work is admitted until an owner assigns a new eligible host. This is not a
+public arbitrary assignment-delete operation.
 Old Runtime-local `ChannelReplyTarget`s become non-authoritative immediately because their
 host epoch no longer matches; if the old Runtime is reachable, it closes them as cleanup.
 Opaque provider message references are never copied to the new Runtime. A reply to an old

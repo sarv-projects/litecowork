@@ -1,0 +1,33 @@
+[package]
+name = "litecowork-ui"
+version = "0.1.0"
+description = "LiteCowork desktop shell"
+authors = ["LiteCowork"]
+edition = "2021"
+
+[workspace]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[lib]
+name = "litecowork_ui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+base64 = "0.22"
+operator-ipc = { path = "../../../crates/operator-ipc" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time"] }
+tauri = { version = "2", features = [] }
+rfd = { version = "=0.15.4", default-features = false, features = ["xdg-portal"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1", features = ["process"] }

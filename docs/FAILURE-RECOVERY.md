@@ -46,6 +46,8 @@ Do not include volatile timestamps/random IDs.
 | Lead AgentSession | process/session lost | adapter event/stream EOF | replace session from ResumePacket; new Attempt if ownership changed |
 | Child agent | lost/fails | adapter event | retry child independently or let lead revise plan |
 | Runtime | offline | presence + lease expiry | reconcile Effects; eligible failover only |
+| Linux service stop deadline | Operator drain or final lifecycle persistence exceeds systemd `TimeoutStopSec` | service manager sends SIGKILL after the 90-second bound | treat the incarnation as unclean; keep the prior local state non-clean where possible; next startup performs ordinary recovery and does not infer Effects or work settled from process exit |
+| Runtime device identity | OS credential store unavailable, identity malformed, or RuntimeId/key mismatch | identity-provider startup error | fail closed before Operator readiness; do not create replacement key or Runtime identity; preserve only a truthful DEGRADED local status if the local store is available |
 | Environment | provisioning fail | provider error | alternate provider/runtime or fail Step |
 | Environment | corrupted/unhealthy | health/test | checkpoint if safe, recreate, new Attempt |
 | MCP/provider | process dies or becomes unhealthy | LiteSPM/process-health result or invocation error | open LiteCowork call circuit; ask LiteSPM/provider owner to recover process under its lifecycle policy; retry reads/idempotent operations only |
