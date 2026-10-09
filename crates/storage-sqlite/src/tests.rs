@@ -341,7 +341,9 @@ fn create_workspace(store: &SqliteWorkspaceStore, workspace_id: &str) -> Committ
 
 #[test]
 fn conversation_create_is_durable_idempotent_and_workspace_scoped() {
-    use storage_core::{ConversationRecord, ConversationStore, CreateConversationCommit, WorkspaceCreateRequest};
+    use storage_core::{
+        ConversationRecord, ConversationStore, CreateConversationCommit, WorkspaceCreateRequest,
+    };
     let directory = tempfile::tempdir().expect("temporary store directory");
     let store = test_store(&directory, Duration::from_secs(1));
     create_workspace(&store, "workspace-conversation");
@@ -357,7 +359,11 @@ fn conversation_create_is_durable_idempotent_and_workspace_scoped() {
     let event_context = context("event-conversation-one", 7);
     let payload = serde_json::json!({"operation":"conversation.create.v1","workspace_id":"workspace-conversation","title":"Release notes"});
     let commit = CreateConversationCommit {
-        request: WorkspaceCreateRequest { principal_id: "owner-local".into(), request_id: "conversation-create-1".into(), request_payload: payload },
+        request: WorkspaceCreateRequest {
+            principal_id: "owner-local".into(),
+            request_id: "conversation-create-1".into(),
+            request_payload: payload,
+        },
         conversation: record.clone(),
         event: EventDraft {
             event_id: event_context.event_id,
@@ -376,13 +382,34 @@ fn conversation_create_is_durable_idempotent_and_workspace_scoped() {
         },
     };
     let adapter = SqliteConversationStore::new(store.clone());
-    let created = adapter.create_conversation(commit.clone()).expect("Conversation commits");
-    let replay = adapter.create_conversation(commit).expect("same request replays exact result");
+    let created = adapter
+        .create_conversation(commit.clone())
+        .expect("Conversation commits");
+    let replay = adapter
+        .create_conversation(commit)
+        .expect("same request replays exact result");
     assert_eq!(created.conversation, record);
     assert_eq!(replay.event.event_id, created.event.event_id);
-    assert_eq!(store.read_workspace_events("workspace-conversation").unwrap().iter().filter(|event| event.event_type == "conversation.created.v1").count(), 1);
-    assert_eq!(adapter.get_conversation("owner-local", "workspace-conversation", "conversation-one").unwrap(), Some(record));
-    assert!(adapter.get_conversation("someone-else", "workspace-conversation", "conversation-one").is_err());
+    assert_eq!(
+        store
+            .read_workspace_events("workspace-conversation")
+            .unwrap()
+            .iter()
+            .filter(|event| event.event_type == "conversation.created.v1")
+            .count(),
+        1
+    );
+    assert_eq!(
+        adapter
+            .get_conversation("owner-local", "workspace-conversation", "conversation-one")
+            .unwrap(),
+        Some(record)
+    );
+    assert!(
+        adapter
+            .get_conversation("someone-else", "workspace-conversation", "conversation-one")
+            .is_err()
+    );
 }
 
 fn seed_workspace_notes_resource(directory: &tempfile::TempDir) {

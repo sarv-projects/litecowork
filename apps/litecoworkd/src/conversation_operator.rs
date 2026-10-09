@@ -111,9 +111,16 @@ async fn create_conversation(
             recorded_at: context.recorded_at,
         },
     };
-    let committed = SqliteConversationStore::new(state.store.clone())
-        .create_conversation(commit)
-        .map_err(map_store_error)?;
+    // Conversation creation writes a content-addressed aggregate blob and waits for the
+    // serialized SQLite writer. Keep that blocking persistence work off the Tokio
+    // reactor, as the read routes and the other storage-backed write routes do.
+    let store = state.store.clone();
+    let committed = tokio::task::spawn_blocking(move || {
+        SqliteConversationStore::new(store).create_conversation(commit)
+    })
+    .await
+    .map_err(|_| internal())?
+    .map_err(map_store_error)?;
     let correlation =
         header::HeaderValue::from_str(&committed.event.correlation_id).map_err(|_| internal())?;
     let mut response = (StatusCode::CREATED, Json(committed.conversation)).into_response();

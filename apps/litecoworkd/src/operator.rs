@@ -63,10 +63,10 @@ use tower::ServiceExt;
 mod artifact_operator;
 #[path = "automation_operator.rs"]
 mod automation_operator;
-#[path = "coworker_operator.rs"]
-mod coworker_operator;
 #[path = "conversation_operator.rs"]
 mod conversation_operator;
+#[path = "coworker_operator.rs"]
+mod coworker_operator;
 #[path = "delegation_profiles_operator.rs"]
 mod delegation_profiles_operator;
 #[path = "goal_operator.rs"]
