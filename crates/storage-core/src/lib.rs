@@ -20,6 +20,11 @@ pub use artifact::{
     ArtifactVersionRecord, ArtifactVersionWriteStore, CommittedArtifactLibraryCommand,
     CommittedArtifactVersionAppend,
 };
+pub mod conversation;
+pub use conversation::{
+    CommittedConversation, ConversationPage, ConversationRecord, ConversationStore,
+    CreateConversationCommit,
+};
 
 mod effect_evidence;
 pub use effect_evidence::{

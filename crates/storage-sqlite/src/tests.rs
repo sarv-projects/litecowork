@@ -339,6 +339,52 @@ fn create_workspace(store: &SqliteWorkspaceStore, workspace_id: &str) -> Committ
         .expect("Workspace creation commits")
 }
 
+#[test]
+fn conversation_create_is_durable_idempotent_and_workspace_scoped() {
+    use storage_core::{ConversationRecord, ConversationStore, CreateConversationCommit, WorkspaceCreateRequest};
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-conversation");
+    let at = "2026-10-09T12:00:00Z";
+    let record = ConversationRecord {
+        conversation_id: "conversation-one".into(),
+        workspace_id: "workspace-conversation".into(),
+        title: Some("Release notes".into()),
+        active_agent_binding_id: None,
+        version: 1,
+        created_at: at.into(),
+    };
+    let event_context = context("event-conversation-one", 7);
+    let payload = serde_json::json!({"operation":"conversation.create.v1","workspace_id":"workspace-conversation","title":"Release notes"});
+    let commit = CreateConversationCommit {
+        request: WorkspaceCreateRequest { principal_id: "owner-local".into(), request_id: "conversation-create-1".into(), request_payload: payload },
+        conversation: record.clone(),
+        event: EventDraft {
+            event_id: event_context.event_id,
+            workspace_id: record.workspace_id.clone(),
+            entity_type: "Conversation".into(),
+            entity_id: record.conversation_id.clone(),
+            origin_runtime_id: event_context.origin_runtime_id,
+            entity_revision: 1,
+            hlc_timestamp: event_context.hlc_timestamp,
+            correlation_id: event_context.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.created.v1".into(),
+            payload: serde_json::json!({"conversation_id":"conversation-one","created_by":{"kind":"USER","principal_id":"owner-local"}}),
+            recorded_at: event_context.recorded_at,
+        },
+    };
+    let adapter = SqliteConversationStore::new(store.clone());
+    let created = adapter.create_conversation(commit.clone()).expect("Conversation commits");
+    let replay = adapter.create_conversation(commit).expect("same request replays exact result");
+    assert_eq!(created.conversation, record);
+    assert_eq!(replay.event.event_id, created.event.event_id);
+    assert_eq!(store.read_workspace_events("workspace-conversation").unwrap().iter().filter(|event| event.event_type == "conversation.created.v1").count(), 1);
+    assert_eq!(adapter.get_conversation("owner-local", "workspace-conversation", "conversation-one").unwrap(), Some(record));
+    assert!(adapter.get_conversation("someone-else", "workspace-conversation", "conversation-one").is_err());
+}
+
 fn seed_workspace_notes_resource(directory: &tempfile::TempDir) {
     const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let mut connection = Connection::open(state_database(directory)).expect("fixture connection");

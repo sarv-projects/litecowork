@@ -35,8 +35,9 @@ import {
   type TaskPlanningReadinessView,
 } from "./tasks/planning-readiness";
 import { canOfferLocalRuntimeStart } from "./runtime/runtime-start-readiness";
+import { ConversationsPage } from "./conversations/ConversationsPage";
 
-type Page = "Home" | "Work" | "Library" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Routines" | "Automations" | "Settings";
+type Page = "Home" | "Conversations" | "Work" | "Library" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Routines" | "Automations" | "Settings";
 type RuntimeStatus = {
   state: string;
   runtimeId: string | null;
@@ -220,6 +221,7 @@ type WorkspaceInstructionView = {
 
 const navigation: { label: Page; icon: string; group?: string }[] = [
   { label: "Home", icon: "⌂" },
+  { label: "Conversations", icon: "▤" },
   { label: "Work", icon: "▤" },
   { label: "Library", icon: "▧" },
   { label: "Needs You", icon: "◇" },
@@ -1510,6 +1512,8 @@ function App() {
 
         {page === "Home" ? (
           <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => setPage("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => setPage("Settings")} onOpenCoworkers={() => setPage("Coworkers")} onWorkspaceUpdated={(updated) => setWorkspaces(current => current.map(item => item.workspaceId === updated.workspace_id && item.version <= updated.version ? { ...item, primaryCoworkerId: updated.primary_coworker_id, version: updated.version } : item))} onOpenWork={() => { setOpenedTask(null); setPage("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); setPage("Work"); }} />
+        ) : page === "Conversations" ? (
+          <ConversationsPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} operatorReady={runtime?.operatorReady === true && Boolean(selectedWorkspaceId)} />
         ) : page === "Work" ? (
           <WorkPage key={selectedWorkspaceId} selectedWorkspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={runtime?.operatorReady === true} initialTaskId={openedTask?.workspaceId === selectedWorkspaceId ? openedTask.taskId : null} />
         ) : page === "Library" ? (
@@ -2480,6 +2484,7 @@ function SettingsPage({ runtime, runtimeError, runtimeBusy, startRuntime, refres
 function PlaceholderPage({ page, onSettings }: { page: Page; onSettings: () => void }) {
   const content: Record<Page, { title: string; description: string }> = {
     Home: { title: "Home", description: "Your workspace overview." },
+    Conversations: { title: "Conversations", description: "Saved local conversation history." },
     Work: { title: "Work", description: "Durable Tasks and their real progress will appear here after Task execution and the Operator API are integrated." },
     Library: { title: "Library", description: "Saved files and committed Artifacts for this Workspace." },
     "Needs You": { title: "Needs You", description: "Approvals and blockers will appear here when the authenticated Operator API is integrated." },

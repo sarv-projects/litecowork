@@ -391,6 +391,12 @@ schema_migrations
 workspace_origin_sequences
 ```
 
+Conversation catalog creation is a serialized SQLite transaction that inserts the
+Conversation, appends its aggregate-state-backed `conversation.created.v1` event, and
+stores the idempotency receipt together. Owner-scoped list/get operations read the
+Conversation projection only; message history remains served through the bounded
+Conversation presentation snapshot. This does not imply turn dispatch or agent execution.
+
 The local-only `schema_migrations` table records the monotonically numbered migration,
 its immutable SQL-source checksum, the fingerprint of the resulting SQLite schema
 objects, and application time. `PRAGMA user_version` is the

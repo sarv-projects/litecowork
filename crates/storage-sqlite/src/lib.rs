@@ -1,4 +1,5 @@
 mod artifacts;
+mod conversations;
 mod automation_admission;
 mod blob;
 mod coworkers;
@@ -17,6 +18,7 @@ mod runtime_identity;
 mod suggestions;
 
 pub use blob::{FileBlobStore, WorkspaceBlobKey, WorkspaceBlobKeyProvider};
+pub use conversations::SqliteConversationStore;
 pub use coworkers::{
     AutomationPage, AutomationRevisionPage, CoworkerEventContext, CoworkerPage, SqliteCoworkerStore,
 };
@@ -280,6 +282,9 @@ enum Command {
     },
     RichPresentationOperation {
         operation: rich_presentations::WriterOperation,
+    },
+    ConversationOperation {
+        operation: conversations::WriterOperation,
     },
     EnvironmentOperation {
         operation: environments::WriterOperation,
@@ -13484,6 +13489,7 @@ fn writer_loop(
                     Command::ExecutionOperation { operation } => operation(&mut connection),
                     Command::EnvironmentOperation { operation } => operation(&mut connection),
                     Command::RichPresentationOperation { operation } => operation(&mut connection),
+                    Command::ConversationOperation { operation } => operation(&mut connection),
                     Command::EffectEvidenceOperation { operation } => operation(&mut connection),
                     Command::ArtifactOperation { operation } => operation(&mut connection),
                     Command::AuthorizeArtifactAppend {

@@ -11,7 +11,7 @@ domain owners still apply. Story status tracks planning through owner acceptance
 - 35 implementation-plan documents and 212 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
 - 60 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
 - 137 flows and 90 benchmarks.
-- 195 OpenAPI operations and 315 component schemas; 0 components are unreachable from every Operator operation.
+- 196 OpenAPI operations and 316 component schemas; 0 components are unreachable from every Operator operation.
 - 99 error codes; 251 shared IDs/value definitions.
 - 140 event types and 139 typed event payload schemas.
 - 107 SQLite tables, 1172 columns, 475 foreign-key columns, 68 unique constraints, 348 checks, 1 view(s), 140 triggers, and 76 indexes.

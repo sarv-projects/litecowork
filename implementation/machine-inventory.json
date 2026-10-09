@@ -1420,6 +1420,12 @@
       "sha256": "cc76c04366b145f8081f2acf51ec0d97deb5e270a1430bc3f0ada462db08fc4f"
     },
     {
+      "method": "GET",
+      "operationId": "listConversations",
+      "path": "/conversations",
+      "sha256": "4b0d8c5f63d2d5b896fe36dd3fb5de8ced3f2da988e09450eecd006e2cd0e762"
+    },
+    {
       "method": "POST",
       "operationId": "createConversation",
       "path": "/conversations",
@@ -2549,6 +2555,11 @@
       "path": "/connections/{connectionId}/disconnect"
     },
     {
+      "method": "GET",
+      "operationId": "listConversations",
+      "path": "/conversations"
+    },
+    {
       "method": "POST",
       "operationId": "createConversation",
       "path": "/conversations"
@@ -3603,11 +3614,15 @@
     },
     {
       "name": "Conversation",
-      "sha256": "44038ed663e86d28624362ad36ca9e5fa39d3a10f39289d1f2d71271e49d92ff"
+      "sha256": "5b8f6b1106a5d1d778e63407843117971269f4b826df87e8c2f52b7778c32b04"
     },
     {
       "name": "ConversationInvocationScope",
       "sha256": "708e4daa63c29d9d85933e933c46a9905e6c51978405369c1d8174a55a7ddc61"
+    },
+    {
+      "name": "ConversationListPage",
+      "sha256": "5e66ee1cab2e6d2dcf465631661e6e4d697c88a71c7eb3cafba45c4b7a921f83"
     },
     {
       "name": "ConversationMessage",
@@ -3679,7 +3694,7 @@
     },
     {
       "name": "CreateConversationRequest",
-      "sha256": "3250006c7204920b246a47cfcfcc1d6ab765e7f51c78d311d99fc2c74219d9ae"
+      "sha256": "d1e680bc12787cb469c0717e066eedd791b2a79ac733e25c5a32895526de5c16"
     },
     {
       "name": "CreateCoworkerRequest",
@@ -4643,6 +4658,7 @@
     "ContextOwnerRef",
     "Conversation",
     "ConversationInvocationScope",
+    "ConversationListPage",
     "ConversationMessage",
     "ConversationPresentationMessage",
     "ConversationPresentationSnapshot",

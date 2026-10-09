@@ -65,6 +65,8 @@ mod artifact_operator;
 mod automation_operator;
 #[path = "coworker_operator.rs"]
 mod coworker_operator;
+#[path = "conversation_operator.rs"]
+mod conversation_operator;
 #[path = "delegation_profiles_operator.rs"]
 mod delegation_profiles_operator;
 #[path = "goal_operator.rs"]
@@ -726,6 +728,7 @@ fn build_operator_router(state: ApiState) -> Router {
         .merge(artifact_operator::routes())
         .merge(automation_operator::router())
         .merge(coworker_operator::routes())
+        .merge(conversation_operator::routes())
         .merge(delegation_profiles_operator::routes())
         .merge(goal_operator::routes())
         .merge(suggestions_operator::routes())

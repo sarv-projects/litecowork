@@ -215,6 +215,7 @@ Create defaults to `LOCAL_ONLY`; `SELECTED_FOLDERS` is unavailable in the create
 
 ```text
 POST /v1/conversations
+GET  /v1/conversations?cursor=&limit=
 GET  /v1/conversations/{id}
 POST /v1/conversations/{id}/messages
 POST /v1/conversations/{id}/turns
@@ -225,6 +226,15 @@ GET  /v1/conversations/{id}/presentation?cursor=&limit=
 GET  /v1/rich-presentations/{presentation_id}
 GET  /v1/conversations/{id}/tasks?cursor=
 ```
+
+Conversation creation requires the selected Workspace, a bounded optional title, and an
+`Idempotency-Key`. It commits the Conversation row, `conversation.created.v1` event,
+aggregate-state reference, and request receipt atomically. The authenticated local catalog
+is newest-first and uses a Workspace-bound opaque cursor. Conversation reads are owner
+scoped and remain separate from provider/session state. The desktop Conversation page can
+create, list, and read persisted semantic messages; it does not expose message submission
+as available until E03-S01 native session admission and E03-S02 turn execution are
+connected.
 
 `POST /v1/conversations/{id}/turns` accepts optional
 `presentation_preference: AUTO | SIMPLE | RICH`, default `AUTO`. The preference is pinned

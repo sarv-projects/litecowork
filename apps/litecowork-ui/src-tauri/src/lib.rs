@@ -18,6 +18,7 @@ use operator_ipc::{
 use tauri::{AppHandle, Manager};
 
 mod artifact_bridge;
+mod conversation_bridge;
 mod resource_save_bridge;
 mod automation_bridge;
 mod coworker_bridge;
@@ -4199,6 +4200,9 @@ pub fn run() {
             preview_resource_text_with_provenance,
             artifact_bridge::artifact_read,
             artifact_bridge::artifact_library_command,
+            conversation_bridge::list_conversations,
+            conversation_bridge::create_conversation,
+            conversation_bridge::get_conversation_presentation,
             artifact_bridge::artifact_save_as,
             resource_save_bridge::resource_save_as,
             artifact_bridge::artifact_edit_head,
