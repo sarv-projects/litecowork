@@ -18,6 +18,9 @@
 .conversation-reader-heading h2 { margin: 5px 0 0; overflow-wrap: anywhere; font-size: 20px; line-height: 1.3; font-weight: 640; }
 .conversation-status { flex: 0 0 auto; padding: 5px 9px; border-radius: 99px; background: var(--lc-neutral-100); color: var(--color-text-muted); font-size: 12px; }
 .conversation-messages { display: grid; align-content: start; gap: 17px; flex: 1; min-height: 240px; padding: 24px; overflow: auto; }
+.conversation-load-more { justify-self: center; min-height: 40px; padding: 8px 14px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface); color: var(--color-primary-hover); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.conversation-load-more:hover:not(:disabled) { background: var(--color-primary-soft); }
+.conversation-load-more:disabled { cursor: wait; opacity: 0.7; }
 .conversation-message { max-width: min(760px, 94%); padding: 14px 16px 10px; border: 1px solid var(--color-border); border-radius: 12px; background: #fff; }
 .conversation-message.user { justify-self: end; background: #f2f5fb; }
 .conversation-message-author { margin-bottom: 7px; color: var(--color-text-subtle); font-size: 11px; font-weight: 650; }

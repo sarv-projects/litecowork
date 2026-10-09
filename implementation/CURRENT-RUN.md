@@ -3647,3 +3647,26 @@ These are bounded local slices, not V1 completion. Native coding-agent turns, du
 Task/Attempt execution, production-safe switching, Trust-mediated capabilities/Effects,
 ZIP extraction, semantic/local-model RAG, browser/computer execution, and full Coworker /
 Goal / Automation / Artifact Workbench product acceptance still require implementation.
+
+## Conversation page race and history pagination — 2026-10-09
+
+Fixed the desktop Conversation page's initial-load race by giving Conversation-list and
+selected-history requests independent latest-request epochs. A selection change can no
+longer invalidate the initial list response and leave the page indefinitely busy. The
+saved-message reader now follows the Operator API's bounded `next_cursor` pages and
+appends unseen messages; the Tauri bridge validates and forwards the optional cursor.
+
+Verified locally:
+
+- `node --experimental-transform-types --test apps/litecowork-ui/tests/*.test.ts` — 77
+  passed, 0 failed.
+- `pnpm --config.verifyDepsBeforeRun=false build` in `apps/litecowork-ui` — passed;
+  Vite reports the main JavaScript chunk above 500 kB.
+- `rustfmt --check --edition 2024 apps/litecowork-ui/src-tauri/src/conversation_bridge.rs`
+  — passed. Whole-tree Tauri formatting is not used because it reports unrelated baseline
+  formatting differences across existing files.
+- A first-time `cargo check` for the Tauri manifest is still compiling platform GUI
+  dependencies and has not reached LiteCowork source; result pending.
+
+This closes a current-page loading defect and makes older committed messages accessible.
+It does not add Conversation turn submission or provider-backed Conversation execution.

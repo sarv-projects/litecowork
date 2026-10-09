@@ -1,6 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseConversationList, parseConversationSnapshot } from "../src/conversations/conversation-view.ts";
+import { ConversationRequestEpochs, parseConversationList, parseConversationSnapshot } from "../src/conversations/conversation-view.ts";
+
+test("snapshot selection does not invalidate the initial Conversation list request", () => {
+  const requests = new ConversationRequestEpochs();
+  const listRequest = requests.beginList();
+  requests.beginSnapshot();
+  requests.invalidateSnapshot();
+  assert.equal(requests.isCurrentList(listRequest), true);
+});
+
+test("Conversation snapshots preserve their bounded pagination cursor", () => {
+  const message = { message_id: "message-1", conversation_id: "conversation-1", role: "AGENT", created_at: "2026-10-09T12:00:00Z", content: [{ kind: "TEXT", text: "Saved answer" }] };
+  const snapshot = { workspace_id: "workspace-1", conversation_id: "conversation-1", items: [{ message, rich_presentation: null, linked_items: [] }], next_cursor: "message-1", active_turn: null };
+  assert.equal(parseConversationSnapshot(snapshot, "workspace-1", "conversation-1").next_cursor, "message-1");
+  assert.throws(() => parseConversationSnapshot({ ...snapshot, next_cursor: "../foreign" }, "workspace-1", "conversation-1"), /pagination cursor/);
+});
 
 test("Conversation list accepts only records pinned to the selected Workspace", () => {
   const row = { conversation_id: "conversation-1", workspace_id: "workspace-1", title: "Notes", active_agent_binding_id: null, version: 1, created_at: "2026-10-09T12:00:00Z" };

@@ -30,8 +30,23 @@ export type ConversationSnapshotView = {
   workspace_id: string;
   conversation_id: string;
   messages: ConversationMessageView[];
+  next_cursor: string | null;
   active_turn: { status: string } | null;
 };
+
+/** Separate latest-request fences for independently loaded Conversation views. */
+export class ConversationRequestEpochs {
+  private listEpoch = 0;
+  private snapshotEpoch = 0;
+
+  beginList(): number { return ++this.listEpoch; }
+  isCurrentList(epoch: number): boolean { return epoch === this.listEpoch; }
+  invalidateList(): void { this.listEpoch += 1; }
+
+  beginSnapshot(): number { return ++this.snapshotEpoch; }
+  isCurrentSnapshot(epoch: number): boolean { return epoch === this.snapshotEpoch; }
+  invalidateSnapshot(): void { this.snapshotEpoch += 1; }
+}
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const boundedText = (value: unknown, max = 256): value is string => typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001f]/.test(value);
@@ -77,6 +92,10 @@ export function parseConversationSnapshot(value: unknown, workspaceId: string, c
   if (!record(value) || value.workspace_id !== workspaceId || value.conversation_id !== conversationId
     || !Array.isArray(value.items) || value.items.length > 100
     || !(value.active_turn === null || record(value.active_turn))) throw new Error("Conversation history is invalid.");
+  if (value.next_cursor !== undefined && value.next_cursor !== null
+    && !(boundedText(value.next_cursor) && /^[A-Za-z0-9_-]+$/.test(value.next_cursor))) {
+    throw new Error("Conversation pagination cursor is invalid.");
+  }
   const messages: ConversationMessageView[] = value.items.map((entry) => {
     if (!record(entry) || !record(entry.message) || !("rich_presentation" in entry)
       || !Array.isArray(entry.linked_items) || entry.linked_items.length > 200) throw new Error("Conversation message is invalid.");
@@ -100,5 +119,5 @@ export function parseConversationSnapshot(value: unknown, workspaceId: string, c
       rich_presentation: parseRichPresentationRef(entry.rich_presentation, message.message_id),
     };
   });
-  return { workspace_id: workspaceId, conversation_id: conversationId, messages, active_turn: value.active_turn as { status: string } | null };
+  return { workspace_id: workspaceId, conversation_id: conversationId, messages, next_cursor: (value.next_cursor as string | null | undefined) ?? null, active_turn: value.active_turn as { status: string } | null };
 }

@@ -191,17 +191,25 @@ pub(crate) async fn get_conversation_presentation(
     app: AppHandle,
     workspace_id: String,
     conversation_id: String,
+    cursor: Option<String>,
 ) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if !valid_id(&workspace_id) || !valid_id(&conversation_id) {
+        if !valid_id(&workspace_id)
+            || !valid_id(&conversation_id)
+            || cursor.as_ref().is_some_and(|value| !valid_id(value))
+        {
             return Err("Conversation selection is invalid".to_owned());
         }
         let (client, _) = operator_client(&app)?;
+        let mut request = client
+            .get(format!("/v1/conversations/{conversation_id}/presentation"))
+            .header("X-Workspace-ID", &workspace_id)
+            .query(&[("limit", "50")]);
+        if let Some(cursor) = cursor {
+            request = request.query(&[("cursor", cursor)]);
+        }
         let value = read_json(
-            client
-                .get(format!("/v1/conversations/{conversation_id}/presentation"))
-                .header("X-Workspace-ID", &workspace_id)
-                .query(&[("limit", "50")])
+            request
                 .send()
                 .map_err(|_| "Local Conversation history is unavailable".to_owned())?,
         )?;

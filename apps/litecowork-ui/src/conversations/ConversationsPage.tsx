@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RichResponseView } from "../presentation/RichResponseView";
 import { parseRichPresentationResponse, type ValidatedRichPresentation } from "../presentation/rich-presentation";
-import { parseConversationList, parseConversationSnapshot, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary } from "./conversation-view";
+import { ConversationRequestEpochs, parseConversationList, parseConversationSnapshot, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary } from "./conversation-view";
 import "./conversations-page.css";
 
 function messageText(message: ConversationMessageView): string {
@@ -93,39 +93,72 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
   const [snapshot, setSnapshot] = useState<ConversationSnapshotView | null>(null);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const generation = useRef(0);
+  const requests = useRef(new ConversationRequestEpochs());
+  const activeSnapshotEpoch = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
-    const current = ++generation.current;
+    const current = requests.current.beginList();
     setSnapshot(null);
     setSelectedId(null);
     if (!operatorReady || !workspaceId) { setItems([]); return; }
     setBusy(true); setError(null);
     try {
       const response = await invoke<unknown>("list_conversations", { workspaceId });
-      if (current !== generation.current) return;
+      if (!requests.current.isCurrentList(current)) return;
       const rows = parseConversationList(response, workspaceId);
       setItems(rows);
       if (rows[0]) setSelectedId(rows[0].conversation_id);
     } catch (cause) {
-      if (current === generation.current) setError(cause instanceof Error ? cause.message : String(cause));
-    } finally { if (current === generation.current) setBusy(false); }
+      if (requests.current.isCurrentList(current)) setError(cause instanceof Error ? cause.message : String(cause));
+    } finally { if (requests.current.isCurrentList(current)) setBusy(false); }
   }, [operatorReady, workspaceId]);
 
-  useEffect(() => { void refresh(); return () => { generation.current += 1; }; }, [refresh]);
+  useEffect(() => { void refresh(); return () => { requests.current.invalidateList(); }; }, [refresh]);
 
   useEffect(() => {
-    const current = ++generation.current;
+    const current = requests.current.beginSnapshot();
+    activeSnapshotEpoch.current = current;
     setSnapshot(null);
-    if (!operatorReady || !workspaceId || !selectedId) return () => { generation.current += 1; };
+    setLoadingMore(false);
+    if (!operatorReady || !workspaceId || !selectedId) return () => { requests.current.invalidateSnapshot(); };
     setBusy(true); setError(null);
     void invoke<unknown>("get_conversation_presentation", { workspaceId, conversationId: selectedId })
-      .then(value => { if (generation.current === current) setSnapshot(parseConversationSnapshot(value, workspaceId, selectedId)); })
-      .catch(cause => { if (generation.current === current) setError(cause instanceof Error ? cause.message : String(cause)); })
-      .finally(() => { if (generation.current === current) setBusy(false); });
-    return () => { generation.current += 1; };
+      .then(value => { if (requests.current.isCurrentSnapshot(current)) setSnapshot(parseConversationSnapshot(value, workspaceId, selectedId)); })
+      .catch(cause => { if (requests.current.isCurrentSnapshot(current)) setError(cause instanceof Error ? cause.message : String(cause)); })
+      .finally(() => { if (requests.current.isCurrentSnapshot(current)) setBusy(false); });
+    return () => {
+      requests.current.invalidateSnapshot();
+      if (activeSnapshotEpoch.current === current) activeSnapshotEpoch.current = null;
+    };
   }, [operatorReady, selectedId, workspaceId]);
+
+  const loadMoreMessages = async () => {
+    if (!snapshot?.next_cursor || !selectedId || loadingMore) return;
+    const current = activeSnapshotEpoch.current;
+    if (current === null || !requests.current.isCurrentSnapshot(current)) return;
+    const cursor = snapshot.next_cursor;
+    setLoadingMore(true);
+    try {
+      const value = await invoke<unknown>("get_conversation_presentation", { workspaceId, conversationId: selectedId, cursor });
+      if (!requests.current.isCurrentSnapshot(current)) return;
+      const page = parseConversationSnapshot(value, workspaceId, selectedId);
+      setSnapshot(existing => {
+        if (!existing || existing.conversation_id !== selectedId) return existing;
+        const seen = new Set(existing.messages.map(message => message.message_id));
+        return {
+          ...existing,
+          messages: [...existing.messages, ...page.messages.filter(message => !seen.has(message.message_id))],
+          next_cursor: page.next_cursor,
+        };
+      });
+    } catch (cause) {
+      if (requests.current.isCurrentSnapshot(current)) setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (requests.current.isCurrentSnapshot(current)) setLoadingMore(false);
+    }
+  };
 
   const create = async () => {
     if (!operatorReady || busy) return;
@@ -138,7 +171,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
       setTitle("");
       setItems(current => [created, ...current.filter(item => item.conversation_id !== created.conversation_id)].slice(0, 100));
       setSelectedId(created.conversation_id);
-      setSnapshot({ workspace_id: workspaceId, conversation_id: created.conversation_id, messages: [], active_turn: null });
+      setSnapshot({ workspace_id: workspaceId, conversation_id: created.conversation_id, messages: [], next_cursor: null, active_turn: null });
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   };
@@ -177,7 +210,9 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
         {selected && <div className="conversation-reader-heading"><div><div className="eyebrow">SAVED CONVERSATION</div><h2>{selected.title ?? "New conversation"}</h2></div>{statusLabel && <span className="conversation-status">{statusLabel}</span>}</div>}
         {!selected ? <div className="conversation-empty"><h2>Choose a conversation</h2><p>Create one or select a saved conversation to read its messages.</p></div>
           : busy && !snapshot ? <div className="conversation-empty" role="status">Loading saved messages…</div>
-            : snapshot?.messages.length ? <div className="conversation-messages">{snapshot.messages.map(message => <article className={`conversation-message ${message.role.toLowerCase()}`} key={message.message_id}>
+            : snapshot?.messages.length ? <div className="conversation-messages">
+              {snapshot.next_cursor && <button type="button" className="conversation-load-more" onClick={() => void loadMoreMessages()} disabled={loadingMore}>{loadingMore ? "Loading messages…" : "Load more messages"}</button>}
+              {snapshot.messages.map(message => <article className={`conversation-message ${message.role.toLowerCase()}`} key={message.message_id}>
               <div className="conversation-message-author">{message.role === "USER" ? "You" : message.role === "AGENT" ? "Assistant" : message.role === "SYSTEM_NOTICE" ? "LiteCowork" : "Connected channel"}</div>
               <ConversationMessageContent workspaceId={workspaceId} conversationId={selected.conversation_id} message={message} autoLoadRich={automaticRichIds.has(message.message_id)} />
               <time>{timeLabel(message.created_at)}</time>
