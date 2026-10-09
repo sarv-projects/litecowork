@@ -436,3 +436,7 @@ support embedded views.
 - [MCP Skills extension](https://skills.extensions.modelcontextprotocol.io/specification/stable/skills)
 - [MCP Apps overview](https://apps.extensions.modelcontextprotocol.io/api/documents/overview.html)
 - [MCP Apps CSP and CORS](https://apps.extensions.modelcontextprotocol.io/api/documents/csp-and-cors.html)
+
+## Coworker assignment and task-time connection repair target
+
+The prospective CoworkerCapabilityAssignment is an authorization ceiling and never replaces the live Workspace/Runtime/Task grant, activation, lease, Trust and Effect dispatch transaction. A missing connector can create a typed UserRequest offering provider-owned Connect, after which the pending Task rechecks fresh grants and receipts. Cancelled auth leaves the Task waiting. Removing a Coworker assignment does not uninstall or revoke a shared connector; disconnecting globally requires dependent-Coworker impact review. Invocations remain pinned to the originating AgentSession, capability and authorization scope; existing AMBIGUOUS external actions require reconciliation before retry. No new invocation routes or automatic dispatch are authorized by this target-only contract.

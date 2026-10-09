@@ -454,3 +454,7 @@ authorization revocation, dirty Artifact conflicts, and MCP App denial. UI accep
 keyboard-only navigation, screen reader labels/announcements, reduced motion, zoom/reflow,
 long content, offline state, and one nontechnical plus one technical owner workflow. A
 browser component test does not qualify the Tauri desktop shell or its OS integrations.
+
+## Coworker chat/Workbench and rich results target
+
+A Coworker conversation uses the identical ConversationMessage semantic truth and optional validated RichPresentation contract as ordinary sessions. Running Automations and child Tasks generate concise linked updates under the Coworker and distinct Run timelines; they must not inject whole native agent transcripts into chat history. The right Workbench opens exact committed ArtifactVersions, preserves unsaved edits across Coworker navigation, and shows honest fallback for unsupported editors/preview types. Optional rich blocks cannot implement permissions, approve a connection, start a responsibility, fake Work, store memory or replace authoritative Tasks. All add-connection and confirmation controls are host-owned and attached to real action endpoints only.

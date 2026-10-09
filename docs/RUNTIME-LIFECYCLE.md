@@ -510,3 +510,7 @@ must reattach and revalidate a persistent Environment after Runtime restart befo
   readiness, and Task state are separate projections.
 - See `STATE-MACHINES.md`, `SERVICES.md`, `FLOWS.md`, and `FAILURE-RECOVERY.md` for the
   canonical transition owners and recovery sequences.
+
+## Desktop Coworker unattended work target
+
+A named Coworker does not require its chat or desktop window to remain open. A separately enabled per-user litecoworkd supervisor hosts eligible due occurrences while the device is awake. GUI close and quit, background-disabled, login startup, locked screen, sleep, poweroff, daemon crash and restart are separate tested states. Locked GUIs may require unlock even if background file/API work continues. Sleeping or powered-off local machines perform no work; on wake the coordinator reconciles missed schedules and provider cursors before Task admission. A stopped native agent is not revived without auth/Environment/lease checks. Global Stop unattended work previews active Routines, triggers, Tasks, native workers and AMBIGUOUS Effects, and never implies an external send was cancelled simply because UI closed.

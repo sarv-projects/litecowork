@@ -397,3 +397,7 @@ can become read-only. Admission is fenced during archive; unknown provider state
 archive rather than pretending a background process stopped. Retained filesystem and
 checkpoint state is preserved under the Workspace's storage/backup policy. Archive does
 not itself authorize destructive Environment cleanup.
+
+## Desktop Coworker environment availability target
+
+A Coworker has no implicit computer access. Browser, filesystem, terminal and installed local applications are capabilities only after a qualified Environment provider enforces the requested roots, process containment and egress. A merely installed local app is not a qualified automation adapter. Locked display sessions, unavailable browser profiles and sleeping devices are environment blockers; restart may require a new Attempt with fresh lease and authorization. Do not migrate local GUI sessions to cloud by relabeling placement. On-demand activation must obey process/CPU/memory limits despite an unlimited configured connection catalog.

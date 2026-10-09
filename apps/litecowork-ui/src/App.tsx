@@ -221,16 +221,16 @@ type WorkspaceInstructionView = {
 };
 
 const navigation: { label: Page; icon: string; group?: string }[] = [
-  { label: "Home", icon: "⌂" },
   { label: "Conversations", icon: "▤" },
+  { label: "Coworkers", icon: "◉" },
+  { label: "Home", icon: "⌂" },
+  { label: "Needs You", icon: "◇" },
   { label: "Work", icon: "▤" },
   { label: "Library", icon: "▧" },
-  { label: "Needs You", icon: "◇" },
-  { label: "Ideas", icon: "✦" },
-  { label: "Coworkers", icon: "◉" },
-  { label: "Goals", icon: "◎" },
-  { label: "Routines", icon: "↻" },
   { label: "Automations", icon: "◷" },
+  { label: "Routines", icon: "↻" },
+  { label: "Goals", icon: "◎" },
+  { label: "Ideas", icon: "✦" },
   { label: "Settings", icon: "⚙", group: "Manage" },
 ];
 

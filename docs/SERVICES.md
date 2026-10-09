@@ -1373,3 +1373,7 @@ ID and request digest returns the prior outcome; reusing it with a different dig
 `CONFLICT`. Commands subject to races require an expected aggregate version. Services
 return the common typed error from `SCHEMAS.md`; adapters map provider-specific failures
 without leaking secrets.
+
+## New Coworker target ownership proposals
+
+Future CoworkerConversationService will own the Coworker/Conversation association and last-active projection; existing ConversationService owns turns/messages and TaskService owns executions. StandingResponsibilityService owns only reviewed linkage/configuration and enable fences; RoutineService and TriggerCoordinator continue to own definitions, occurrences, cursors and Task admission. CoworkerCapabilityAssignmentService records user-approved ceilings and delegates actual use to CapabilityBroker and Trust. MemoryCandidateCoordinator schedules eligible agent-backed extraction, while ResourceService owns the committed ContextDocument metadata/revision. These are target interfaces, not implemented services. UserRequest/Needs You and Notification maintain their existing authorities; no shadow planner, task engine, installer or global model provider.

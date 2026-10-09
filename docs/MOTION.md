@@ -246,3 +246,7 @@ UI state is always derived from latest projection. If a new state arrives mid-an
 When enabled:
 - apply state changes immediately without transforms, fades, pulses, or continuous progress.
 - retain textual status and icons.
+
+## Coworker truthful activity target
+
+Switching Coworkers updates the selected identity only after an actual navigation state change and preserved draft decision. Conversation streams animate only while a provider turn is truly active. Memory auto-learning uses at most a quiet temporary indicator after committed changes, not each extracted candidate. Standing responsibility status and trigger activity derive from real event/Task projections; do not pulse while a machine sleeps or invent heartbeats. Reconnect rehydrates exact committed Task/Conversation/Notification state without replaying old typing, notifications, or completion animations. Workbench open/close honors unsaved draft, reduced motion and explicit user control.

@@ -3,6 +3,33 @@
 Update this file when the active story, implementation state, or handoff changes. It is
 operational context; architecture and owning domain contracts remain authoritative.
 
+## Coworker product/architecture and UI reconciliation — 2026-10-10
+
+Reviewed the uploaded 377-line Coworker design as an accepted target and audited all
+116 tracked Markdown files in the repository (36,855 lines) against the existing
+authority/implementation. Added `docs/COWORKERS-TARGET.md`,
+`docs/COWORKER-FLOWS.md` (CF01–CF18), and ADR 0024; reconciled the relevant
+architecture/domain/experience contracts with optional ordinary chat, chat-first
+Coworkers, consumer-first Quick Create, optional unlimited configured integrations,
+private automatic quiet memory as an unimplemented target, reviewed standing
+responsibilities, and scoped local desktop autonomy. Replaced
+`implementation/UI.md` with the per-control/edge-state/keyboard/Workbench/flow
+acceptance map. Reconciled E08/E09/E10 backlog acceptance and architecture coverage.
+
+The current React UI now foregrounds Conversations/Coworkers in navigation and hides
+optional agent/worker/Trust configuration behind Customize in Coworker creation;
+Home Coworker onboarding explicitly states it is optional. This is NOT yet a
+Coworker-owned Conversation or a working native chat; no attempt was made to
+fake missing Operator routes, automatic memory extraction, approval, remote integration,
+or unattended scheduling. Existing Task-only Home persists as a transitional screen.
+
+Validation for this source change: 94/94 existing frontend helper tests passed;
+TypeScript `tsc --noEmit` passed; Vite production build passed with existing
+large-bundle warning. The available Node executable was 22.23.1, below the
+declared Node 24.21 requirement. Architecture validation passed and
+implementation plan/coverage validators passed after adding new indexed documents.
+These checks do NOT close any backlog story or prove real provider/OS user acceptance.
+
 ## Current integration status (2026-10-10)
 
 All three formerly dirty local implementation worktrees were committed, cherry-picked

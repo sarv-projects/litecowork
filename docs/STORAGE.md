@@ -907,3 +907,7 @@ persistent Environment accounted against both budgets via separate reservation r
 Workspace archive uses an admission lock plus fenced
 quiescence checks across turns, Invocations, grants/secret/control leases and persistent
 workloads; a database status update alone cannot prove that an external process stopped.
+
+## Coworker target migration and outbox constraints
+
+Future schema revisions must add immutable optional Conversation.owner_coworker_id and server-derived last_activity_at, versioned StandingResponsibility/Revision and links, CoworkerCapabilityAssignment, CoworkerMemoryPolicy, MemoryCandidate metadata and Resource-backed MemoryRecordMetadata. All same-Workspace references require foreign-key and service-level validation; submitted RequestIds and expected-version checks survive retries. New standing triggers require durable outbox registration or one transaction that cannot claim enabled without host-acknowledged readiness. Candidate payloads use encrypted Resource/blobs rather than plaintext event rows. Migration must preserve existing ordinary Conversations, Coworker primary preference and manually authored ContextDocuments; legacy flags remain readable until an explicit migration maps them. Existing migration schemas are not modified by this target-only description.

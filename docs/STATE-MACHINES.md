@@ -1274,3 +1274,7 @@ semantic-content digest. There is no update/delete/revoke transition in v1; a co
 to the answer is a new ConversationMessage with an optional new RichPresentation. Missing
 or unsupported content is a read/availability condition, not a domain-state rollback.
 No turn or Task transition waits for this aggregate.
+
+## Coworker standing responsibility and learning target (not yet implemented)
+
+StandingResponsibility: DRAFT -> ENABLED <-> PAUSED -> COMPLETED/EXPIRED/ARCHIVED. The group is fenced by Coworker ACTIVE status and provider readiness at each new proactive admission, not by historic edit-time checks alone. Health is a derived HEALTHY/DEGRADED/BLOCKED/UNKNOWN projection, not an independently authoritative status. MemoryCandidate: QUEUED -> EVALUATING -> ACCEPTED/REJECTED/CONFLICTED; Accepted creates an immutable Resource-backed ContextDocument revision only after deterministic policy checks and provenance. Deletion/revocation remains ResourceService-owned. Connection assignment: ENABLED <-> PAUSED -> REVOKED; it is an access ceiling, never a CapabilityGrant. These are accepted target states and MUST NOT appear in the shipped API/event allowlist until their owning schemas and persistence are implemented.

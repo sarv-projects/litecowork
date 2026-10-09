@@ -1506,3 +1506,7 @@ return their owning domain's typed codes.
 `retryable` is advice for transport/operation retry, not permission to repeat an external
 Effect. Effect-specific reconciliation rules always take precedence. `details` contains
 only safe field errors, blockers, or version metadata.
+
+## Coworker target API additions — NOT implemented routes
+
+Proposed Workspace-authorized routes: list/create Coworker-owned Conversations with same-Workspace ownership; read last-active; list/assign/revoke Coworker capability assignments; get/update memory-learning policy and view filtered Resource-backed memory; create/review/enable/pause/resume StandingResponsibilities; read run history/health and actual activity projections. Every route must use the existing authenticated Operator boundary, exact request identity/idempotency semantics and cursor/version policy, not invent a second server. The concrete OpenAPI paths and components remain canonical; these route families are requirements pending specification, implementation and tests. No UI button may call a nonexistent route or claim success from a local mock.

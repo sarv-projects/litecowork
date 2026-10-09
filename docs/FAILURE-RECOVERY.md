@@ -157,3 +157,7 @@ consistent availability after restart or replication.
 ## Projection recovery
 
 Durable event journal is source of truth for replayable projections. Projection schema changes may rebuild from event stream plus immutable records/blobs.
+
+## Coworker autonomy and integration repair cases
+
+A Coworker run blocked by expired OAuth, missing connector, disabled Skill, unqualified desktop app, unavailable lead, revoked memory source, desktop lock, sleep, or exhausted quota stores a typed blocker with a repair action. User answers are bound to the original Task/Invocation/Approval and never accidentally restart earlier completed Steps. Multiple connected Coworkers must not lose shared account state if one assignment is revoked. A replayed schedule or webhook yields the same occurrence; a lost externally consequential acknowledgment stays AMBIGUOUS until positive reconciliation. A disconnected background daemon reports observation gaps, not fake No change observations. Quiet-hours suppression affects notifications only, not durable safety records. Archive/pause never discards independent Artifacts or grants new authority.

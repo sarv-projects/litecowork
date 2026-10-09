@@ -438,3 +438,7 @@ observation and may settle as `NO_ACTION`; the cursor advances atomically only a
 observation/occurrence is durably recorded. A condition change creates one occurrence with
 the pinned before/after observation refs. End conditions stop future checks by pausing or
 disabling the Automation through an explicit transition.
+
+## Standing responsibilities and unattended trigger UX target
+
+StandingResponsibility is a user-facing grouping and admission fence, not an alternative scheduler. One standing request may contain a daily watch and a separate weekly report using multiple existing Automation revisions. A confirmed enable action must atomically persist the reviewed configuration and durable trigger registration/outbox, or report blocked; never call a proposed definition enabled without host readiness. Source events require provider identity/replay verification. Deterministic filtering suppresses unchanged observations without model calls or noisy notifications. Offline reconciliation obeys the exact timezone, DST fold/gap, misfire and overlap policies; duplicate events/host epochs produce only one canonical occurrence. Run now creates a distinct manual occurrence under existing owner authority and never re-enables paused recurrence. Pausing new work fences new occurrences; Pause all additionally invokes safe Task pause. Future cloud TriggerHost placement is separate from the local Runtime that owns desktop resources. See [Coworker target](COWORKERS-TARGET.md).

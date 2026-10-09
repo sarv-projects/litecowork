@@ -85,12 +85,12 @@ export function HomeCoworkerOnboarding({ api, workspaceId, workspaceVersion, ite
   }
 
   if (dismissed) return null;
-  return <section className="setup-callout" aria-label="Set up your primary Coworker" aria-busy={busy}>
+  return <section className="setup-callout" aria-label="Optional Coworker setup" aria-busy={busy}>
     <div>
-      <h2>Choose your primary Coworker</h2>
-      <p>A Coworker holds preferences for future work. Setup is optional; your draft stays here.</p>
+      <h2>Coworkers are optional</h2>
+      <p>Create an assistant for ongoing responsibilities, or continue working with Workspace defaults. Nothing needs to be connected now.</p>
       {items.length === 0 && !hasMore ? <>
-        <p>Create “Assistant” with a general-purpose role, no worker profiles, and owner approval for external changes. It uses the Workspace lead default; configure an available lead in Settings before saving work.</p>
+        <p>Start with a general-purpose Assistant using the Workspace lead. You can rename it or customize it later.</p>
         <button type="button" className="secondary-button" disabled={disabled || busy || pending?.kind === "PRIMARY"} onClick={() => void submit("CREATE")}>{pending?.kind === "CREATE" ? "Retry creating Assistant" : "Create Assistant"}</button>
       </> : <>
         {active.length > 0 ? <>
@@ -103,7 +103,7 @@ export function HomeCoworkerOnboarding({ api, workspaceId, workspaceVersion, ite
         {hasMore && <p>This is a partial roster. Open Coworkers to see more.</p>}
         {pending?.kind === "CREATE" && <button type="button" className="secondary-button" disabled={disabled || busy} onClick={() => void submit("CREATE")}>Retry creating Assistant</button>}
       </>}
-      <p>Making primary changes the default for future work. It does not change existing Tasks or start an agent.</p>
+      <p>A primary Coworker only prefills future Task settings. It is not required for ordinary conversations and never starts an agent by itself.</p>
       {message && <p role="status">{message}</p>}
       <button type="button" className="text-button" disabled={busy} onClick={onManage}>Open Coworkers</button>
       <button type="button" className="text-button" disabled={busy || pending !== null} onClick={() => setDismissed(true)}>Not now</button>

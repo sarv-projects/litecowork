@@ -78,3 +78,7 @@ Cloud services serve the desktop client first. Remote execution is the same Runt
 
 No calendar date or velocity is asserted before measured delivery. Gates represent
 capability and evidence; dependency-ready stories can overlap within a gate's safe bounds.
+
+## Coworker target inclusion and implementation status
+
+The [accepted Coworker target](../docs/COWORKERS-TARGET.md) is part of the desktop/local UX and autonomy design: ordinary chats do not require Coworkers, Coworkers are chat-first; optional connections, standing responsibilities, scoped automatic memory, Workers, background schedules, recovery and Workbench integration are planned behind the existing native-agent, Trust, Environment and Task gates. Do not push these into cloud-only scope. A feature described by target docs is not functional until its API/persistence, real native provider execution and owner acceptance are qualified. Post-V1 cloud only adds execution location; it does not create a separate autonomous Bot engine.

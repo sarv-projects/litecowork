@@ -73,3 +73,7 @@ patterns are not evidence of independent OS-service durability. Unverified commu
 claims and the assertion that no competitor combines every LiteCowork feature are not
 architecture facts. Zapier/n8n inspire trigger/history/review semantics, while their
 workflow execution engines remain external integrations.
+
+## Coworker autonomy reference set (reviewed target; implementation claims excluded)
+
+The accepted consumer and open-source feature comparison is in [Coworker target](COWORKERS-TARGET.md), section 12, with source links and the distinction between claimed experience and qualified behavior. The engineering decisions are optional chat-first assistants, reviewed standing responsibilities, bounded proactive observation, provider-native agent reasoning, secure reuse of app/MCP connections, and local daemon/background limitations without cloud equivalence claims. Do not treat marketing descriptions of Dots, Grok Bot, Muse, Claude Cowork, Kimi Work, OpenClaw, Eigent or OpenWork as independent reliability test evidence.

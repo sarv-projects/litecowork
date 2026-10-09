@@ -279,3 +279,7 @@ Approval, change channel assurance, or mint a SecretLease. UserRequest answers a
 ordinary user input and are never interpreted as Approval without this explicit Trust
 transition. Only the authenticated
 operator or a narrowly authorized service may exercise those transitions.
+
+## Consumer-friendly Coworker connection and autonomy policy target
+
+The default Add Connection UX skips per-operation permission switches; provider OAuth scopes and Core Trust enforce reality. An assignment to a Coworker only restricts eligibility, never creates a Grant, ApprovalUse, SecretLease or native-harness permission. Routine preauthorization may avoid repetitive prompts only within explicit bounded recipients/resources/operations and exact authenticated origin; a new consequential action, changed target, provider policy, expired grant, stale approval or weakly authenticated channel must ask or block. Source documents, MCP tool descriptions, Skills and generated code never self-authorize monitoring, memory-sharing, tool use or delegation. Core must explicitly label operations it cannot mediate/enforce. Removing access fences future calls and safe resume; previously dispatched Effects reconcile before any repeated attempt.

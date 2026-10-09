@@ -90,8 +90,10 @@ state transition.
 
 First-party durable context consists of Workspace instructions, Conversations, Tasks,
 Artifacts, user settings, Connections, approved Automations, and Resource metadata. A
-semantic profile, vector index, knowledge graph, long-term agent memory, or autonomous
-memory rewrite is an external capability. Saving reusable procedures follows the
+semantic profile, vector index, knowledge graph, or candidate extraction is a
+qualified external capability. The Core owns eligibility policy, provenance,
+revisions, durable context metadata and retrieval safeguards, but never a separate
+model-driven planning loop. Saving reusable procedures follows the
 user-reviewed SkillProposal flow in `CAPABILITY-FABRIC.md` and publishes through LiteSPM
 only after approval.
 
@@ -113,7 +115,13 @@ Context precedence is current user instruction and accepted TaskSpec, explicit c
 attachments, Workspace instructions, linked Goal context, Coworker instructions,
 user-confirmed ContextDocuments, then retrieved historical context. A lower-priority
 source cannot override a higher one. Material conflicts become a clarification or blocker.
-V1 has no provider-generated memory proposal path. Owner-authored ContextDocuments may be
+Current implemented storage has no provider-generated memory proposal path. The
+accepted target adds automatic, quiet, scoped memory proposals from authorized
+conversation checkpoints and verified completed work. Proposed records, gating,
+and the future implementation contract are in [Coworker target](COWORKERS-TARGET.md).
+This is NOT permission to mine every connected account or a claim the learning
+pipeline is currently operational. Until the corresponding verified implementation
+exists, owner-authored ContextDocuments may be
 revised, revoked, or deleted through ResourceService. Revocation removes a document from
 future context retrieval while retaining its bytes. Deletion blocks reads immediately,
 then purges content and derived indexes from Core-managed replicas; the tombstone and
@@ -175,3 +183,7 @@ scope, revision/digest and freshness where available, with links to authorized s
 views. A provider that cannot return source provenance is identified as such. This view
 does not create a Core-owned semantic-memory store or a memory proposal path. Rendering and
 revocation behavior are specified in [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md).
+
+## Scoped automatic memory target and revocation test obligations
+
+On meaningful committed Conversation-turn and verified Task-outcome checkpoints, an eligible agent-backed extractor may produce bounded memory candidates; no independent Core model planner is introduced. Deterministic gates validate consent eligibility, exact source revision, Workspace/Coworker/private scope, third-party privacy and secret classifications, provenance, deduplication, contradiction, age and budget. Only approved private eligibility permits quiet automatic commit. Connected sources are searchable KNOWLEDGE by default, not automatically mined into permanent memory. Memory corrections create immutable superseding revisions; stale or conflicting claims remain reviewable and do not overwrite evidence. Temporary chats never queue extraction, including deferred summaries. Shared Workspace/personal learning requires separately authorized policy. ContextUsed disclosures show only actual attached or retrieved sources. Revocation immediately blocks new retrieval and invalidates allowed context caching; an already-active external native session may have seen old bytes, so restart/fence affected sessions at a safe boundary. Provider deletion completion is truthful and receipt-backed. Extraction, metadata and read API are proposed—not current product capability.

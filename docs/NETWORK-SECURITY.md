@@ -230,3 +230,7 @@ root-relative race attempts.
 
 - [MCP Apps security overview](https://apps.extensions.modelcontextprotocol.io/api/documents/overview.html)
 - [MCP Apps CSP and CORS](https://apps.extensions.modelcontextprotocol.io/api/documents/csp-and-cors.html)
+
+## Coworker connection egress and OAuth target
+
+Connecting an app in setup or via a blocked Task must use the owning provider secure authentication flow; never ask the model to solicit passwords, tokens, OAuth callbacks or credentials through conversation. A Coworker may reuse a connected account only when Workspace identity and scoped connection assignment permit it. Remote MCP endpoints, app connectors, local desktop automation providers, and imported Skills retain independent publisher identity, egress policy, origin validation, network and secret leases. The catalog may contain thousands of entries without opening thousands of sockets or spawning processes. Connected knowledge may contain prompt injection; a source cannot extend grant scope, enable automatic monitoring, or authorize its own memory extraction.

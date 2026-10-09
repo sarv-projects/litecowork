@@ -342,8 +342,8 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
 
   return <main className="coworker-settings" aria-labelledby="coworker-settings-title">
     <header className="coworker-settings-header">
-      <div><p className="coworker-settings-kicker">Workspace settings</p><h1 id="coworker-settings-title">Coworkers</h1><p>Set up the assistants you work with. Their tasks and permissions remain governed by the Workspace.</p></div>
-      <button className="coworker-primary-action" type="button" onClick={startCreate} disabled={!workspaceId || mode === "create"}>Add Coworker</button>
+      <div><p className="coworker-settings-kicker">Workspace settings</p><h1 id="coworker-settings-title">Coworkers</h1><p>Optional specialized assistants for ongoing work. Create one in seconds, then personalize it when needed. Ordinary conversations do not require a Coworker.</p></div>
+      <button className="coworker-primary-action" type="button" onClick={startCreate} disabled={!workspaceId || mode === "create"}>+ New Coworker</button>
     </header>
 
     {!workspaceId ? <section className="coworker-empty"><h2>Select a Workspace</h2><p>Choose a Workspace before setting up its Coworkers.</p></section> : <div className="coworker-settings-layout">
@@ -444,7 +444,7 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
     && (currentFailover.mode !== "ALLOW_LISTED" || (currentFailover.fallback_agent_binding_ids.length > 0 && currentFailover.max_lead_changes > 0));
 
   return <form className="coworker-editor" onSubmit={onSubmit}>
-    <div className="coworker-editor-heading"><div><span className="coworker-profile-avatar" aria-hidden="true">{initial(form.name || "?")}</span></div><div><p className="coworker-settings-kicker">{mode === "create" ? "New identity" : "New revision"}</p><h2>{mode === "create" ? "Create a Coworker" : `Edit ${form.name}`}</h2><p>Changes apply to future work. Existing Tasks keep their saved specification.</p></div></div>
+    <div className="coworker-editor-heading"><div><span className="coworker-profile-avatar" aria-hidden="true">{initial(form.name || "?")}</span></div><div><p className="coworker-settings-kicker">{mode === "create" ? "New identity" : "New revision"}</p><h2>{mode === "create" ? "Create a Coworker" : `Edit ${form.name}`}</h2><p>{mode === "create" ? "Give it a name and describe what it helps with. Connections, agents and advanced setup are optional and can be changed later." : "Changes apply to future work. Existing Tasks keep their saved specification."}</p></div></div>
 
     <section className="coworker-form-section"><h3>Identity</h3>
       <label className="coworker-field">Name<input autoFocus={mode === "create"} maxLength={120} required value={form.name} onChange={event => onChange("name", event.currentTarget.value)} placeholder="Assistant" /></label>
@@ -452,6 +452,7 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
       {form.avatar_ref && <p className="coworker-helper">An avatar Resource revision is already pinned and will be preserved. Avatar selection is not available in this editor.</p>}
     </section>
 
+    <details className="coworker-advanced coworker-customize"><summary>Customize agent, workers and access (optional)</summary>
     <section className="coworker-form-section"><h3>Lead and worker profiles</h3>
       {leadBindings === undefined ? <div className="coworker-field"><span>Lead agent</span><p className="coworker-helper">{form.default_lead_agent_binding_id ? `Saved binding ${form.default_lead_agent_binding_id} is preserved.` : "Use the Workspace default."} Agent bindings are managed in Settings → Agents.</p></div>
         : <label className="coworker-field">Lead agent<select value={form.default_lead_agent_binding_id ?? ""} onChange={event => onChange("default_lead_agent_binding_id", event.currentTarget.value || null)}><option value="">Use Workspace default</option>{form.default_lead_agent_binding_id && !eligibleLeadBindings.some(item => item.agent_binding_id === form.default_lead_agent_binding_id) && <option value={form.default_lead_agent_binding_id}>Saved binding · revalidation required</option>}{eligibleLeadBindings.map(item => <option key={item.agent_binding_id} value={item.agent_binding_id}>{item.display_name}</option>)}</select><small>Only enabled, lead-eligible bindings are offered.</small></label>}
@@ -468,6 +469,8 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
     <section className="coworker-form-section"><h3>Interaction defaults</h3><p className="coworker-helper">These preferences do not create Grants or bypass stricter Workspace, provider, or Trust requirements.</p>
       {interactionRows().map(([label, key]) => <label className="coworker-field" key={key}>{label}<select value={form.interaction_policy[key]} onChange={event => onInteractionChange(key, event.currentTarget.value as CoworkerInteractionDefault)}>{INTERACTION_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>)}
     </section>
+
+    </details>
 
     <details className="coworker-advanced"><summary>More settings</summary>
       <section className="coworker-form-section"><h3>Lead change preference</h3><p className="coworker-helper">A lead change starts a new session from the saved Task state; it does not move a running process.</p>
@@ -486,7 +489,7 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
       <section className="coworker-form-section"><h3>Context</h3><fieldset className="coworker-check-group"><legend>Context this Coworker may retrieve</legend>{CONTEXT_OPTIONS.map(option => <label key={option.value}><input type="checkbox" checked={form.context_policy.allowed_context_kinds.includes(option.value)} onChange={event => onChange("context_policy", { ...form.context_policy, allowed_context_kinds: event.currentTarget.checked ? [...form.context_policy.allowed_context_kinds, option.value] : form.context_policy.allowed_context_kinds.filter(item => item !== option.value) })} /><span>{option.label}</span></label>)}</fieldset>
         <label className="coworker-field">Maximum retrieved items<input type="number" min={0} max={100} value={form.context_policy.max_retrieved_items} onChange={event => onChange("context_policy", { ...form.context_policy, max_retrieved_items: Number(event.currentTarget.value) })} /></label>
         <label className="coworker-check-inline"><input type="checkbox" checked={form.context_policy.retain_task_summaries} onChange={event => onChange("context_policy", { ...form.context_policy, retain_task_summaries: event.currentTarget.checked })} />Allow this Coworker’s Task summaries to inform future context</label>
-        <p className="coworker-helper">Memory proposals always require user confirmation.</p>
+        <p className="coworker-helper">Current version: durable memory proposals require review. Automatic quiet learning is an accepted target feature and is not active until qualified provider and storage support exist.</p>
       </section>
       <section className="coworker-form-section"><h3>Notifications</h3>
         <label className="coworker-field">When work is blocked<select value={form.notification_policy.blockers} onChange={event => onChange("notification_policy", { ...form.notification_policy, blockers: event.currentTarget.value as CoworkerRevisionInput["notification_policy"]["blockers"] })}><option value="ALWAYS">Notify me</option><option value="SILENT">Keep it in Needs You</option></select></label>

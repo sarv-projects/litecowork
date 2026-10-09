@@ -1322,3 +1322,7 @@ that registry.
 
 The Operator error envelope is specified in `API.md`. `TriggerSpec` is a tagged union
 defined in `AUTOMATION.md`; trigger deliveries are deduplicated before Task creation.
+
+## Future Coworker records and wire conformance gates
+
+The target data model is explicitly catalogued in [Coworker target](COWORKERS-TARGET.md) and [DATA-MODEL](DATA-MODEL.md). The current CoworkerContextPolicy.require_user_confirmation_for_memory is a legacy implemented field; new automatic learning needs a new policy and candidate status schema rather than reinterpreting this boolean. Before implementing any route, define closed JSON/TypeScript/Rust schema, IDs, authorization/Workspace cross-scope checks, expected-version/RequestId, bounded field sizes and typed errors for Coworker-owned Conversations, Responsibility/Revision, capability assignment, memory policy/candidate and handoff receipts. Do not list proposed event names as accepted wire events before adding their exact payloads to the canonical schema and validators.

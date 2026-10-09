@@ -219,3 +219,7 @@ _Avoid_: Effect; LiteCowork Task
 An external messaging transport that maps authenticated messages into a Conversation;
 it does not own a Task.
 _Avoid_: Agent protocol
+
+## Accepted Coworker target terminology
+
+Coworker: optional persistent named assistant identity, not a new executable agent. Ordinary session: Conversation with no Coworker owner. Standing responsibility: explicitly enabled, versioned user-facing grouping of Goals/Routines/Automations that fences new unattended Task admissions; not a scheduler. Connection: provider-installed/authenticated resource; Coworker assignment restricts its use without creating a live Grant. Knowledge: authorized source retrieval, not necessarily saved memory. Memory candidate: untrusted extraction proposal; memory record: versioned Resource-backed ContextDocument admitted under scoped policy. Proactive activity: confirmed schedule/event/monitor-driven work, not automatic model thought. Current code may not yet implement these accepted targets.

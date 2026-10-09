@@ -5,9 +5,9 @@
 Primary navigation:
 
 ```text
-Home
+New session / Conversations
+Coworkers (optional, chat-first)
 Needs You
-Coworkers
 Work
 Automations
 Library
@@ -98,9 +98,11 @@ switches the AgentBinding or its model.
 - **Pair a Runtime:** explain its role and advertised local resources, issue a short-lived one-use pairing action, and show it as available only after identity verification.
 - **Backup and restore:** Settings lists only verified restore points, their event cursor/schema and key reference, and missing-object blockers. Creating a backup shows a busy state until the verified manifest is returned; it shows stage/percentage only when the snapshot provider reports real progress. Restore is exposed only during authenticated setup on an empty installation and clearly notes that connections may need reauthentication.
 
-## Home
+## Home — legacy Task-first source surface during transition
 
-Purpose: start or resume work.
+This section documents the current interim Home/Task-draft functionality. The accepted final default is ordinary New session/Conversation with optional chat-first Coworker navigation, not a mandatory primary-Coworker Home. The current Conversation page does not yet admit native agent turns; do not relabel its disabled composer as functional. See [Coworker target](COWORKERS-TARGET.md).
+
+Purpose of the interim Home: start or resume work.
 
 States:
 - normal/recent Tasks
@@ -119,9 +121,12 @@ Composer:
 [Alex ▾] What should we work on?                         [ + ] [Send →]
 ```
 
-The default composer addresses the selected Coworker (normally the Workspace primary) and
-keeps agent/runtime controls out of the first interaction. A Coworker selector is shown
-only when the Workspace has more than one active Coworker. `Advanced` exposes Lead Agent,
+The default new-session composer is an ORDINARY conversation, not a required
+Coworker. An optional Coworker can be selected explicitly, and opening one from the
+sidebar opens its last active chat. The chosen native chief agent, native model and
+reasoning effort are accessible without an Agent model router. A legacy Workspace
+primary-Coworker preference can prefill existing Task-origin UI only; it does not
+require creation or automatically attach a new ordinary chat. `Advanced` exposes Lead Agent,
 Model/Reasoning when adapter-supported, Run location, Tools, Budget, and Access. The
 selected Coworker's default lead and enabled worker allowlist are pinned into Task origin
 and TaskSpec at admission; changing them affects future Tasks. A direct lead override is
@@ -753,9 +758,12 @@ While the lead planning session is active, show “Planning” with session stat
 
 ### Coworker page
 
-The page answers “who is helping, what is it responsible for, and what does it know?”
-Its default order is identity/presence, Active/Scheduled/Done work, linked Goals,
-user-editable context, connected access, autonomy summaries, and lead/worker setup.
+Clicking a Coworker opens its most-recent eligible CONVERSATION. If none exists,
+show its name/purpose and a centered empty composer; do not show a dashboard as the
+first experience. Settings is a secondary destination. Contextual destinations are
+Conversations, Responsibilities, Work, Memory & Knowledge, Connections & Tools,
+and Settings. Every view must preserve any dirty Workbench draft and never invent
+Task activity or a background presence.
 Presence is derived from real Task/session/Runtime state and shows separate proactive
 status (`ACTIVE`/`PAUSED`), activity (`AVAILABLE`, `PLANNING`, `WORKING`, `WAITING`,
 `NEEDS_YOU`), and Runtime availability (`AVAILABLE`, `DEGRADED`, `OFFLINE`, `UNKNOWN`);
@@ -901,9 +909,7 @@ First run is a short sequence with Skip/Back and no mandatory avatar/personaliza
    are a separate explicit choice.
 3. Discover/connect an agent, create its disabled binding, authenticate if needed, enable
    it, then choose a lead-eligible binding. Preserve drafts when setup is incomplete.
-4. Create/select the primary Coworker with the neutral name “Assistant” and role
-   “General-purpose assistant”; renaming, role changes, avatar, and personalization are
-   optional and can be changed later. Do not invent a human-like personality or require
+4. Optionally create/select a Coworker, without blocking ordinary chat. A neutral “Assistant” is an optional legacy primary selection, not an automatically created identity. Naming, role, avatar, and later customization may all be skipped. Do not invent a human-like personality or require
    naming before the user can start work.
 5. Offer optional worker setup (“Use lower-cost workers for suitable work”) with per-
    profile descriptions, provider usage caveat, and no automatic enablement.
@@ -945,3 +951,7 @@ state changes, especially worker start/settle, verification, and control ownersh
 At 200% zoom content reflows; at 400% single-column surfaces remain usable. Touch targets
 remain at least 44px. Reduced motion removes spatial expansion, pulse, and fades without
 removing status, focus, or owner labels.
+
+## Coworker chat-first interaction and edge-state contract (target)
+
+See [Coworker target](COWORKERS-TARGET.md) and [UI delivery](../implementation/UI.md). Clicking a roster item loads its most-recent same-Workspace conversation, or a genuine empty composer. If this association API is unavailable, display an honest unavailable-state with the settings action; NEVER open an unrelated conversation and claim it belongs to the Coworker. New chat uses a separate Conversation and AgentSession, with no replay of earlier private transcript. Conversation deletion does not delete independent Task Artifacts or saved ContextDocuments. A selected Coworker switch must preserve the unsent draft or require explicit confirmation before switching; stale responses from the previous Coworker may not replace the new selection. Primary lead/model/effort come from actual eligible adapter options and native auth. A Task pinned before a change keeps its original versions. Connections & Tools opens a single searchable category catalog and supports add from setup, Settings, or task-time missing-connection repair. Installed, authenticated, assigned, ready, granted, activated and invoked are distinct visual states. The ordinary flow is Select, sign in/install if necessary, inspect plain-language purpose, Connect; Manage access is optional. Unsupported providers/actions explain requirements. Once connected, the waiting Task resumes ONLY after the secure auth and Effect/lease/grant barriers are satisfied. Never collect credentials in chat. Responsibilities are compact reviewed proposals and secondary lists; each exposes What/When/Where/Needs You, enable, edit, pause, run now, and history according to actually available API. Enabling requires explicit consent and trigger readiness; a mere Goal/memory candidate does not enable it. Pausing new work fences new trigger admissions, while Pause all safely also requests Task pausing and can remain in a pending state. Needs You approvals show exact target; notifications dedupe and respect quiet settings. On window close/background Runtime operation, sleep/lock/offline, reconnect/misfire, partial subscription failure, stale capabilities, cancelled OAuth, stale draft, orphaned execution receipt or unknown verification, preserve canonical records and show one accurate blocker; never animate fake progress.

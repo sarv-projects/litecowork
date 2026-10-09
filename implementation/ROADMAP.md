@@ -60,3 +60,7 @@ support if a new ID shape is introduced. Do not call an epic done merely because
 first representative screen exists. All finalized APIs/transitions and assigned scenarios
 must be accounted for by the epic's exit. Integrated provider breadth remains an explicit
 qualification matrix; a feature advertised unavailable cannot meet a required release gate.
+
+## Reconciled Coworker implementation sequence
+
+E08-S01/04 first establish optional chat-first ownership with real Conversation creation/list/last-active and honest provider-disabled states, Quick Create, and preserved Workbench context. E04/E10 enable qualified connection assignments; E08-S03 gains deterministic scoped memory candidate eligibility and qualified extraction, independently of proactive actions. E09 then enables reviewed standing responsibilities, trigger outbox/recovery, background service, missing-connection/Needs You and run history using the existing Task engine. This target modifies feature acceptance, not the actual dependency-ready status; backlog and machine-level contract changes require corresponding verified story updates.

@@ -594,6 +594,8 @@ def read_doc_mappings(previous: list[dict[str, str]]) -> dict[str, str]:
             "GLOSSARY.md": "E01-S01",
             "README.md": "E02-S01",
             "apps/litecowork-ui/README.md": "E02-S01",
+            "docs/COWORKER-FLOWS.md": "E09-S02",
+            "docs/COWORKERS-TARGET.md": "E08-S01",
             "docs/FLOWS.md": "E13-S03",
             "docs/PRESENTATION-RUNTIME.md": "E08-S06",
             "docs/adr/README.md": "E01-S01",
@@ -616,6 +618,7 @@ def read_doc_mappings(previous: list[dict[str, str]]) -> dict[str, str]:
             "docs/adr/0017-deadline-sensitive-is-best-effort.md": "E07-S03",
             "docs/adr/0018-context-content-is-resource-backed-and-provider-pluggable.md": "E08-S03",
             "docs/adr/0019-credential-egress-and-audit-boundaries.md": "E04-S01",
+            "docs/adr/0024-optional-chat-first-coworkers.md": "E08-S01",
         }
     )
     for path in schema_docs():

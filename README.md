@@ -105,3 +105,7 @@ LiteSPM is the planned external package/capability ecosystem. It owns package di
 and lifecycle; LiteCowork owns Task-scoped use. Its selected service endpoint and the
 boundary are recorded in [Capability Fabric](docs/CAPABILITY-FABRIC.md). No package API
 or authentication behavior is assumed before its service contract is available.
+
+## Coworkers target evolution
+
+The accepted desktop Coworker design is described in [docs/COWORKERS-TARGET.md](docs/COWORKERS-TARGET.md): optional chat-first persistent assistants, no connector ceiling on configured integrations, natural-language approved responsibilities, quiet scoped memory learning and honest background execution. This is a target design, NOT a claim that UI, memory, trigger or native agent execution are already complete. Current implementation status and gates remain in [implementation/CURRENT-RUN.md](implementation/CURRENT-RUN.md).

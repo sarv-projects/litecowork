@@ -350,3 +350,7 @@ These are required conformance cases, not claims that an implementation already 
 - Workspace archive rejects active Conversation turns, scoped Invocations, live persistent
   Environment workloads and authority leases even when all Tasks are terminal. It stops
   observation/trigger duties and preserves suspended state without destructive cleanup.
+
+## Coworker desktop V1 integration and adversarial acceptance target
+
+In addition to existing contract validators, qualify: zero-Coworker ordinary chat; Quick Create in two fields; opted Customize with zero integrations; reconnecting existing connectors; scoped MCP/Skill/app discovery with 100+ configured tools and no eager schema flood; safe task-time Connect; Coworker last-active conversation after restart; stale list navigation; no private-memory leaks after chief switch; temporary chats never queued; candidate freshness/dedup/correction and retrieval receipts; enabled standing recurrence, duplicate events, DST and wake catch-up; pause new vs pause all; AMBIGUOUS external Effects; consent/approval under spoofed source and changed account; Workbench draft preservation; correct Task/Evidence-driven completion; inaccessible backend controls disabled with explanations. Every supported platform needs actual background close/lock/sleep/resume/restart evidence. Test owner workflows and native app, not only JS snapshots; never mark a new capability implemented based on a document.

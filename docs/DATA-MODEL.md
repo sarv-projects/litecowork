@@ -29,7 +29,7 @@ ReplicationPolicy = LOCAL_ONLY | METADATA_ONLY | ACTIVE_TASK_INPUTS |
 `workspace_replication_roots` rows. Workspace creation starts with an empty selection;
 `SELECTED_FOLDERS` is set only after roots have been created and selected in a separate
 versioned policy update.
-`primary_coworker_id` selects the default Coworker shown for new work; setting it requires
+`primary_coworker_id` is an optional legacy default for Coworker-origin Task preparation, NOT a requirement to create a Coworker or own an ordinary Conversation; setting it requires
 an ACTIVE or PAUSED Coworker in this Workspace and emits `workspace.primary_coworker.changed.v1`.
 Clearing it is explicit. It never changes a Task's origin Coworker or lead binding.
 `hub_runtime_id`, when present, identifies the installation hosting this Workspace's
@@ -2344,3 +2344,7 @@ and case-folded by the owning service using `NFC(NFC(trim(name)).casefold())`; t
 - Suggestion kind is a deterministic mapping from proposed action; snooze changes only
   visibility. A kind mute and resolution of current proposals commit atomically; only an
   owner dismissal of the identical dedupe key creates the 30-day cooldown.
+
+## Accepted Coworker target additions (draft, not current SQLite)
+
+See [Coworker target](COWORKERS-TARGET.md), sections 8-9. An ordinary Conversation has NULL owner_coworker_id; a Coworker-owned Conversation pins one same-Workspace Coworker and cannot silently change owner. Last activity is an authoritative server-derived cursor/order projection. StandingResponsibility / Revision link existing Goal, Routine and Automation revisions to a Coworker, with immutable title/purpose/stop criteria, budgets, notification and approval policy. CoworkerCapabilityAssignment references a shared installed/connected capability with an independently revocable access ceiling. CoworkerMemoryPolicy defines eligible sources and quiet automatic-learning mode, while MemoryCandidate records source digest/receipt/reconciliation state and MemoryRecordMetadata extends Resource-backed ContextDocuments. Handoff between Coworkers creates a separate recipient Task/association, never inherited private context. These models are NOT yet in the canonical SQLite schema, and no live API or status claims may assume they exist until migrated and verified.

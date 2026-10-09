@@ -770,3 +770,7 @@ and resumptions that are neither a new claim nor final settlement.
 The v1 registry is an unpublished implementation candidate. Changes here refine that
 candidate; once published, incompatible payload changes require a new event version and
 an explicit consumer migration.
+
+## Proposed Coworker event family (not in current allowed event types)
+
+When owning aggregate/schema implementation is ready, introduce typed, redacted events for immutable Coworker-owned Conversation association, Coworker capability assignment creation/change/revocation, memory policy revision, candidate evaluation and Resource-backed memory commit/supersession, StandingResponsibility create/revise/status. Persisted health changes are optional; prefer derived health from real Task/trigger state. Every event requires authenticated actor, Workspace, entity, committed revision, source digest, request/causation and correlation IDs. Never include memory plaintext, credentials, OAuth URLs, native hidden reasoning or provider task handles. Until added to domain-event.schema.json and tests, these names are proposals only, not valid emitted events. Full draft names are in [Coworker target](COWORKERS-TARGET.md).

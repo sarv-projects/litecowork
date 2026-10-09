@@ -4256,3 +4256,7 @@ reason and recovery action. A prepared Environment is not presented as a running
 No provider start, AgentSession, Attempt, lease, or Agent-side file access occurs from
 preparation alone. If cleanup cannot prove process-tree quiescence, retain the Environment
 and expose an actionable blocker instead of claiming deletion.
+
+## Coworker chat-first and proactive responsibility target flows
+
+The accepted user-experience flows CF01–CF18 are specified in [Coworker flows](COWORKER-FLOWS.md), including creation, optional setup, task-time connectors, reviewed schedules, proactive no-change, Needs You, sleep/recovery, external sends, revocation, chief switch, drift, pause, verification, notifications, handoffs, generated integrations, quiet memory, and global stop. These are proposed reconciliation requirements and NOT existing executable F-number flow implementations. Existing F18/F19/F40/F41/F55/F72 remain the transactional owners; new contracts must pass schema/authorization/replay tests before activation. The concrete UI control matrix is [implementation/UI](../implementation/UI.md).

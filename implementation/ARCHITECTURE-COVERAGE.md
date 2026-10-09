@@ -7,8 +7,8 @@ domain owners still apply. Story status tracks planning through owner acceptance
 
 ## Coverage inventory
 
-- 79 source Markdown documents; 1097 heading-level sections are digest-pinned.
-- 35 implementation-plan documents and 214 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 82 source Markdown documents; 1178 heading-level sections are digest-pinned.
+- 35 implementation-plan documents and 229 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
 - 60 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
 - 137 flows and 90 benchmarks.
 - 196 OpenAPI operations and 316 component schemas; 0 components are unreachable from every Operator operation.
@@ -48,6 +48,8 @@ USER tests provide that evidence when executed.
 | [`docs/COMPETITIVE-RESEARCH.md`](../docs/COMPETITIVE-RESEARCH.md) | E08-S02 | Architecture contract |
 | [`docs/CONTEXT.md`](../docs/CONTEXT.md) | E08-S03 | Architecture contract |
 | [`docs/COVERAGE-MATRIX.md`](../docs/COVERAGE-MATRIX.md) | E01-S01 | Architecture contract |
+| [`docs/COWORKER-FLOWS.md`](../docs/COWORKER-FLOWS.md) | E09-S02 | Architecture contract |
+| [`docs/COWORKERS-TARGET.md`](../docs/COWORKERS-TARGET.md) | E08-S01 | Architecture contract |
 | [`docs/DATA-MODEL.md`](../docs/DATA-MODEL.md) | E01-S02 | Architecture contract |
 | [`docs/DELEGATION.md`](../docs/DELEGATION.md) | E05-S04 | Architecture contract |
 | [`docs/DESIGN-SYSTEM.md`](../docs/DESIGN-SYSTEM.md) | E08-S05 | Architecture contract |
@@ -103,6 +105,7 @@ USER tests provide that evidence when executed.
 | [`docs/adr/0021-device-signing-identity.md`](../docs/adr/0021-device-signing-identity.md) | E01-S03 | Architecture decision record |
 | [`docs/adr/0022-rich-presentation-is-optional.md`](../docs/adr/0022-rich-presentation-is-optional.md) | E08-S08 | Architecture decision record |
 | [`docs/adr/0023-host-guidance-is-not-capability-authority.md`](../docs/adr/0023-host-guidance-is-not-capability-authority.md) | E08-S08 | Architecture decision record |
+| [`docs/adr/0024-optional-chat-first-coworkers.md`](../docs/adr/0024-optional-chat-first-coworkers.md) | E08-S01 | Architecture decision record |
 | [`docs/adr/README.md`](../docs/adr/README.md) | E01-S01 | Architecture decision record |
 
 ## Not covered by this plan yet

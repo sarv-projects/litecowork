@@ -41,9 +41,9 @@ LiteCowork lets a user describe work once and have the Task survive agent replac
 ## Primary navigation
 
 ```text
-Home
+New session / Conversations
+Coworkers (optional)
 Needs You
-Coworkers
 Work
 Automations
 Library
@@ -54,9 +54,11 @@ Recent Conversations remain visible in the persistent sidebar. Technical surface
 Agents, MCP, Providers, Environments, Runtime details and protocols live under
 Settings/Inspector/Discover details.
 
-First use creates or selects a Coworker, connects/enables an external AgentBinding, and
-selects a Workspace default. Optional worker profiles stay disabled until the owner
-reviews and enables them.
+First use establishes a Workspace and an enabled, explicitly selected native lead
+AgentBinding; creating a Coworker is OPTIONAL. Ordinary sessions use the Workspace
+lead/model/effort without a mandatory Coworker or connection. A Coworker may be
+created later using Quick Create or Customize; worker profiles stay disabled until
+authorized. See [Coworker target](COWORKERS-TARGET.md).
 Conversations may override that selection. If the selected binding is unavailable,
 LiteCowork preserves the unsent draft and requests agent setup; admission does not create
 a partial ConversationTurn or Task. If an assigned binding becomes unavailable after a
@@ -172,3 +174,7 @@ LiteCowork Core is not:
 - a web-search engine
 - a second plugin marketplace
 - a general workflow-engine competitor
+
+## Optional chat-first Coworkers — accepted target
+
+A new ordinary conversation is available with zero Coworkers. The optional Coworkers section lists persistent assistants. Selecting one resumes the most recently active Coworker-owned chat; New chat starts another conversation and retains only authorized Coworker memory, not private native-agent transcripts. Quick Create requires a name and purpose and inherits eligible defaults. Customize may select native chief/model/effort, external worker profiles, knowledge, connections and standing responsibilities; every optional stage can be skipped. Connect apps, MCP, skills and local providers during setup OR while chatting, with no arbitrary configured integration-count limit. Consumer setup never forces per-operation permission checkboxes; consequential actions still follow Trust and scoped approval. A user-confirmed Responsibility can admit scheduled, event or bounded monitor work, while merely creating a Coworker or saving automatic memory never enables autonomous work. The right Workbench and truthful activity are available within a Coworker conversation. Implemented UI/API gaps remain unavailable, not simulated.

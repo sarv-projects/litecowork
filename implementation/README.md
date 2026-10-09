@@ -36,3 +36,7 @@ Run `python3 scripts/validate_implementation_plan.py` alongside the architecture
 This also runs the coverage checker. The checks prove contract and backlog consistency; they
 do not prove that the product works. The owner must implement and review each story's
 CODE, SYSTEM, and USER evidence before accepting it.
+
+## Current target UX and source-status distinction
+
+The reviewed user requirements are preserved in [Coworker target](../docs/COWORKERS-TARGET.md) and detailed controls/tests in [UI](UI.md). Every owner should reconcile the current source, machine contracts and acceptance cases before implementing the target. Older snapshots in CURRENT-RUN are historical; do not present partial native-agent execution, simulated memory, or placeholder buttons as completed features.

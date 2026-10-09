@@ -120,8 +120,10 @@ user's Task.
     CapabilityInvocation and the method used. Unknown method remains explicit; ActionBatch
     groups member Invocations but never makes their Effects transactional.
 24. **Personal context remains Resource-backed and revocable.** Core controls retrieval
-    eligibility and deletion of owned replicas. Provider-derived memory proposals are not
-    part of v1 until they have an owner-review lifecycle.
+    eligibility and deletion of owned replicas. The accepted target is quiet,
+    automatic, scoped learning with versioned candidate provenance and eligibility
+    policy, not an independent model runtime. The current implementation remains
+    owner-authored-only until candidate extraction/admission is qualified.
 25. **Presentation is a projection, not product truth.** Typed Operator items and transient
     stream frames are derived from authorized domain projections and bounded Agent output.
     They cannot create or settle domain state, carry authority, or replace persisted
@@ -548,7 +550,7 @@ work. A weakly authenticated channel cannot approve high-risk actions.
 
 ## 12. User experience
 
-Primary navigation is Home, Needs You, Coworkers, Work, Automations, Library, and Discover, with
+Primary navigation is New session/Conversations, optional Coworkers, Needs You, Work, Automations, Library, and Discover, with
 recent Conversations in the persistent sidebar. One composer handles quick questions and
 durable tasks; no Chat/Cowork/Agent mode switch is required. Sending can explicitly
 materialize a Task, save a Routine, or schedule a Routine; durable Automation creation
@@ -682,3 +684,7 @@ crates/{trust,verification,routines,automation,events,storage,operator-api}/
 
 This is a starting boundary, not a requirement to create empty modules. Introduce a
 module only when a working vertical slice needs it.
+
+## Coworker UX and autonomy vNext authority
+
+The accepted product decision is documented in [Coworker target](docs/COWORKERS-TARGET.md). Ordinary conversations do not require a Coworker. Named Coworkers are chat-first persistent identities; their optional integrated connections and configured responsibilities DO NOT create a new agent harness, execution engine, permissions authority, or hidden planner. A confirmed standing responsibility groups existing Goal/Routine/Automation objects and fences unattended Task admission. Its triggers, execution and verification remain owned by their established services. Connections are unbounded as CONFIGURED inventory, never unbounded live activation. Memory learning is automatically eligible only within a preauthorized source/scope policy; it does not authorize proactive actions. The target record sketches in that document require separate versioned IDL, event and migration implementation before any route or UI action may claim to work. Existing Runtime and Trust restrictions remain mandatory.

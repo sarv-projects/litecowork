@@ -313,3 +313,7 @@ Primary references checked 2026-10-04:
 
 Unknown permission, provenance, health, or compatibility facts fail closed for protected
 operations. A catalog listing is not trusted merely because it exists.
+
+## Unlimited configured connections with bounded active discovery — target UX
+
+A Coworker may configure any number of qualified installed app connectors, remote/local MCP servers, skills, computer/local-app capabilities and knowledge sources; catalogs paginate and search. This does not promise infinite concurrency, health, token budget, or tool schemas loaded into one native context. The installer/connector is owned by LiteSPM or its qualified provider. Coworker assignment reuses a shared connection without duplicating installation or OAuth, has its own scoped/versioned ceiling, and never grants authority itself. Connection setup can be skipped entirely during creation and added from Settings or from an authorized Task blocker. Consumer Connect does not open a per-tool authorization grid. Manage access exposes advanced restrictions, while Trust enforces consequential action-time decisions. An available executable is not necessarily an automation provider; a discovered Skill does not grant the tools named in its instructions. Expose direct native attachment only when qualified to enforce scope/effect/lease; otherwise Gateway mediation or unavailable, never falsely safe. See [Coworker target](COWORKERS-TARGET.md).

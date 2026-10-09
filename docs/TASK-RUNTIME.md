@@ -714,3 +714,7 @@ Lead handoff, delegated work, and worker replacement remain distinct commands. A
 change closes/drains the planning session and produces a bounded handoff projection; it
 does not change active Attempt identity, profile pinning, or parent links. A replacement
 worker is a new Attempt admitted only after the prior Attempt and its Effects are settled.
+
+## Coworker Task origin, autonomy and handoff target
+
+Ordinary Conversations have no required Coworker origin. Coworker conversations and standing responsibilities optionally bind durable Coworker identity/revision at Task admission. A completed Routine run does not mark its Goal or StandingResponsibility completed unless explicit verified stop criteria hold. A Coworker-to-Coworker handoff is a NEW Task under the recipient identity and separate grants, carrying only explicitly approved Artifact/Resource refs, not source private memory, credentials or native session. Bound task budgets and cooldown prevent circular autonomous chains; every child has provenance and depth/cycle controls. Pausing a Coworker blocks new unattended Task admissions without mutating already running Attempts, while Pause all safely requests ordinary Task pause and awaits Effect/Invocation reconciliation.

@@ -194,3 +194,7 @@ redaction, and LiteSPM publication rules still apply. Published Skill changes do
 rewrite RoutineRevision or AutomationRevision pins: the owner reviews a new Routine
 revision and separately updates affected Automation pins. Repair never mutates a package
 or reruns the Task silently.
+
+## Coworker standing responsibility integration target
+
+A StandingResponsibility may link several version-pinned Routine revisions; it does not own or execute them. Enable from chat compiles a plain-language What/When/Where/review proposal, then creates or links the actual Routines and Automations through their existing authority. A run pins the selected RoutineRevision and TaskSpec exactly. Edits cannot mutate prior runs. Repeated or triggered work never runs when source access is revoked, lead is ineligible, machine unavailable, or the Responsibility/Coworker is paused. A missing required app or tool produces a durable dependency blocker with a Connect action, NOT an implicit install or guessed method. A one-shot manual Task does not require a StandingResponsibility.
