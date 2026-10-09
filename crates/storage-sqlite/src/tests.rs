@@ -1,5 +1,7 @@
 #[path = "conversation_turn_tests.rs"]
 mod conversation_turn_tests;
+#[path = "invocation_tests.rs"]
+mod invocation_tests;
 #[path = "rich_presentation_tests.rs"]
 mod rich_presentation_tests;
 use super::*;
@@ -1049,6 +1051,33 @@ fn applies_full_contract_schema_and_reports_sqlite_runtime() {
     assert_eq!(migration.0, MIGRATION_NAME);
     assert!(migration.1.starts_with("sha256:") && migration.1.len() == 71);
     assert!(migration.2.starts_with("sha256:") && migration.2.len() == 71);
+    let trust_migration: (String, String) = connection
+        .query_row(
+            "SELECT name, source_checksum FROM schema_migrations WHERE version = 14",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("Trust v14 migration receipt");
+    assert_eq!(trust_migration.0, V14_MIGRATION_NAME);
+    assert_eq!(trust_migration.0, "trust_policy_decision_audit_v14");
+    assert!(trust_migration.1.starts_with("sha256:") && trust_migration.1.len() == 71);
+    let invocation_migration: (String, String) = connection
+        .query_row(
+            "SELECT name, source_checksum FROM schema_migrations WHERE version = 15",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("Invocation v15 migration receipt");
+    assert_eq!(invocation_migration.0, V15_MIGRATION_NAME);
+    assert!(invocation_migration.1.starts_with("sha256:") && invocation_migration.1.len() == 71);
+    let policy_decision_column: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('audit_records') WHERE name='policy_decision_json')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("Trust v14 policy-decision column");
+    assert!(policy_decision_column);
     for table in [
         "workspaces",
         "domain_events",
@@ -1067,6 +1096,41 @@ fn applies_full_contract_schema_and_reports_sqlite_runtime() {
         assert!(exists, "missing contract table {table}");
     }
     assert!(store.get_workspace("missing").expect("read").is_none());
+}
+
+#[test]
+fn upgrades_schema_v13_through_trust_v14_before_invocation_v15() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    drop(store);
+
+    let mut connection = Connection::open(state_database(&directory)).expect("open database");
+    connection
+        .execute_batch(
+            "DROP TRIGGER capability_invocation_status_transition_guard;
+             DROP TRIGGER capability_invocation_creation_admission_closed;
+             DROP TRIGGER audit_records_immutable_update;
+             DROP TRIGGER audit_records_immutable_delete;
+             ALTER TABLE audit_records DROP COLUMN policy_decision_json;
+             DELETE FROM schema_migrations WHERE version IN (14, 15);
+             PRAGMA user_version = 13;",
+        )
+        .expect("restore the v13 migration boundary for upgrade coverage");
+
+    migrate(&mut connection).expect("apply Trust v14 and Invocation v15 in order");
+
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read migrated schema version");
+    assert_eq!(version, 15);
+    let applied: Vec<i64> = connection
+        .prepare("SELECT version FROM schema_migrations WHERE version >= 14 ORDER BY version")
+        .expect("prepare migration query")
+        .query_map([], |row| row.get(0))
+        .expect("query applied migrations")
+        .collect::<Result<_, _>>()
+        .expect("collect migration versions");
+    assert_eq!(applied, [14, 15]);
 }
 
 #[cfg(unix)]

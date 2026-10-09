@@ -543,6 +543,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "domain-invocations"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "domain-responsibility"
 version = "0.1.0"
 dependencies = [
@@ -1786,6 +1794,7 @@ version = "0.1.0"
 dependencies = [
  "domain-conversation",
  "domain-effects",
+ "domain-invocations",
  "domain-responsibility",
  "serde",
  "serde_json",
@@ -1799,6 +1808,7 @@ dependencies = [
  "domain-conversation",
  "domain-effects",
  "domain-environment",
+ "domain-invocations",
  "domain-responsibility",
  "domain-workspace",
  "ed25519-dalek",

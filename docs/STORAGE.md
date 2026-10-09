@@ -676,7 +676,9 @@ Atomic boundaries:
 - AutomationOccurrence claim + pinned revision + Task creation reference
 - ApprovalUse insertion + one-time approval consumption + associated Effect/grant binding
 - capability lock insertion + canonical CapabilityRef key digest; a Task cannot replace the selected package/Skill revision after locking
-- CapabilityInvocation creation + request deduplication before provider dispatch
+- CapabilityInvocation status transition + immutable aggregate snapshot + status event +
+  request-deduplication receipt. Invocation creation and provider dispatch remain unavailable
+  until Trust, Effect, ApprovalUse, and lease admission share one transaction.
 - Resource revision/location observation + downstream invalidation records
 - ArtifactVersion/VerificationRun immutable input refs (including paired ResourceInput digests) + DependencyEdge reverse-index rows
 - ResourceRevision append + parent-edge rows + current-head recomputation + location observation + event + dependent invalidations
@@ -869,6 +871,15 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   fields, cannot be changed after creation. Lifecycle state (`status`, `health`, and
   provider-reported `budget_enforcement`), `updated_at`, and `version` remain mutable under
   their owning transition/version guards. The original migration definitions are unchanged.
+- migration 14 adds nullable `audit_records.policy_decision_json` for typed Trust decision
+  provenance, validates JSON syntax, and restores append-only update/delete guards on audit
+  records. Its source is the Trust migration prerequisite for migration 15.
+- migration 15 blocks CapabilityInvocation creation at the SQLite INSERT boundary,
+  guards lifecycle status changes with sequential aggregate versions, and rejects every
+  transition to `DISPATCHED`. Its writer supports status observations and local cancellation
+  only; creation and dispatch remain closed until a
+  single admission transaction can recheck the live owner/lease and grant, record the Trust
+  decision and any required ApprovalUse, transition the Invocation, and start/link its Effect.
 
 ### Routine and trigger Workspace integrity
 

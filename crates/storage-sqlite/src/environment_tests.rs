@@ -23,7 +23,7 @@ const AT: &str = "2026-10-09T12:00:00.000000000Z";
 const PROVIDER_OBSERVED_AT: &str = "2026-10-09T08:00:00.000000000Z";
 
 #[test]
-fn v11_to_v13_migrations_are_ordered_atomic_and_retryable() {
+fn v11_to_v15_migrations_are_ordered_atomic_and_retryable() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join("state")).unwrap();
     let mut connection = Connection::open(state_database(&directory)).unwrap();
@@ -98,13 +98,31 @@ fn v11_to_v13_migrations_are_ordered_atomic_and_retryable() {
     );
     assert_eq!(v13_receipts, 0);
 
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV14Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    let v14_receipts: i64 = connection
+        .query_row("SELECT COUNT(*) FROM schema_migrations WHERE version = 14", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!((version, v14_receipts), (13, 0));
+
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV15Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    let v15_receipts: i64 = connection
+        .query_row("SELECT COUNT(*) FROM schema_migrations WHERE version = 15", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!((version, v15_receipts), (14, 0));
+
     migrate(&mut connection).unwrap();
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
     let migration_receipts: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (11, 12, 13)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15)",
             [],
             |row| row.get(0),
         )
@@ -116,7 +134,7 @@ fn v11_to_v13_migrations_are_ordered_atomic_and_retryable() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!((version, migration_receipts, rich_table), (13, 3, 1));
+    assert_eq!((version, migration_receipts, rich_table), (SCHEMA_VERSION, 5, 1));
 }
 
 fn adapter(store: &SqliteWorkspaceStore) -> SqliteEnvironmentStore {
@@ -809,7 +827,7 @@ fn create_get_list_and_exact_replay_commit_one_event_and_aggregate_blob() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!((schema_version, rich_table), (13, 1));
+    assert_eq!((schema_version, rich_table), (SCHEMA_VERSION, 1));
     for (column, value) in [
         ("sharing_scope", "WORKSPACE_SHARED"),
         ("owner_coworker_id", "coworker-forbidden"),

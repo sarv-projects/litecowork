@@ -6,6 +6,7 @@ mod coworkers;
 mod delegation_profiles;
 mod effect_evidence;
 mod environments;
+mod invocations;
 mod rich_presentations;
 pub use rich_presentations::SqliteRichPresentationStore;
 mod execution;
@@ -29,6 +30,7 @@ pub use effect_evidence::SqliteEffectEvidenceStore;
 pub use environments::SqliteEnvironmentStore;
 pub use execution::SqliteStepAttemptStore;
 pub use goals::{GoalEventContext, GoalPage, SqliteGoalStore};
+pub use invocations::SqliteCapabilityInvocationStore;
 pub use os_key_provider::OsWorkspaceBlobKeyProvider;
 pub use os_principal_binding::{
     OsRuntimePrincipalBindingProvider, RuntimeOsPlatform, RuntimeOsPrincipalBinding,
@@ -100,7 +102,9 @@ const SQLITE_V10_DDL: &str = include_str!("../../../docs/schemas/sqlite-v10.sql"
 const SQLITE_V11_DDL: &str = include_str!("../../../docs/schemas/sqlite-v11.sql");
 const SQLITE_V12_DDL: &str = include_str!("../../../docs/schemas/sqlite-v12.sql");
 const SQLITE_V13_DDL: &str = include_str!("../../../docs/schemas/sqlite-v13.sql");
-const SCHEMA_VERSION: i64 = 13;
+const SQLITE_V14_DDL: &str = include_str!("../../../docs/schemas/sqlite-v14.sql");
+const SQLITE_V15_DDL: &str = include_str!("../../../docs/schemas/sqlite-v15.sql");
+const SCHEMA_VERSION: i64 = 15;
 const V3_SCHEMA_VERSION: i64 = 3;
 const V4_SCHEMA_VERSION: i64 = 4;
 const V5_SCHEMA_VERSION: i64 = 5;
@@ -111,6 +115,9 @@ const V9_SCHEMA_VERSION: i64 = 9;
 const V10_SCHEMA_VERSION: i64 = 10;
 const V11_SCHEMA_VERSION: i64 = 11;
 const V12_SCHEMA_VERSION: i64 = 12;
+const V13_SCHEMA_VERSION: i64 = 13;
+const V14_SCHEMA_VERSION: i64 = 14;
+const V15_SCHEMA_VERSION: i64 = 15;
 
 fn require_task_planning_isolation_admission() -> Result<(), StoreError> {
     // No qualified Runtime-owned admission proof producer is connected in this
@@ -132,6 +139,8 @@ const V10_MIGRATION_NAME: &str = "goal_artifact_revision_links_v10";
 const V11_MIGRATION_NAME: &str = "automation_occurrence_aggregate_revision_v11";
 const V12_MIGRATION_NAME: &str = "rich_presentation_optional_v12";
 const V13_MIGRATION_NAME: &str = "environment_identity_immutable_v13";
+const V14_MIGRATION_NAME: &str = "trust_policy_decision_audit_v14";
+const V15_MIGRATION_NAME: &str = "invocation_transition_guards_v15";
 const MIGRATION_NAME: &str = V1_MIGRATION_NAME; // version-one compatibility for schema baseline assertions
 const STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.aggregate-state+json";
 const TASK_STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.task+json";
@@ -276,6 +285,9 @@ enum Command {
     },
     EffectEvidenceOperation {
         operation: effect_evidence::WriterOperation,
+    },
+    InvocationOperation {
+        operation: invocations::WriterOperation,
     },
     ArtifactOperation {
         operation: artifacts::WriterOperation,
@@ -13505,6 +13517,7 @@ fn writer_loop(
                     Command::RichPresentationOperation { operation } => operation(&mut connection),
                     Command::ConversationOperation { operation } => operation(&mut connection),
                     Command::EffectEvidenceOperation { operation } => operation(&mut connection),
+                    Command::InvocationOperation { operation } => operation(&mut connection),
                     Command::ArtifactOperation { operation } => operation(&mut connection),
                     Command::AuthorizeArtifactAppend {
                         workspace_id,
@@ -14734,8 +14747,10 @@ fn migrate_with_failpoint(
         verify_migration_record(connection, 9, V9_MIGRATION_NAME, SQLITE_V9_DDL, false)?;
         verify_migration_record(connection, 10, V10_MIGRATION_NAME, SQLITE_V10_DDL, false)?;
         verify_migration_record(connection, 11, V11_MIGRATION_NAME, SQLITE_V11_DDL, false)?;
-        verify_migration_record(connection, 12, V12_MIGRATION_NAME, SQLITE_V12_DDL, true)?;
-        verify_migration_record(connection, 13, V13_MIGRATION_NAME, SQLITE_V13_DDL, true)?;
+        verify_migration_record(connection, 12, V12_MIGRATION_NAME, SQLITE_V12_DDL, false)?;
+        verify_migration_record(connection, 13, V13_MIGRATION_NAME, SQLITE_V13_DDL, false)?;
+        verify_migration_record(connection, 14, V14_MIGRATION_NAME, SQLITE_V14_DDL, false)?;
+        verify_migration_record(connection, 15, V15_MIGRATION_NAME, SQLITE_V15_DDL, true)?;
         return Ok(());
     }
 
@@ -14859,6 +14874,36 @@ fn migrate_with_failpoint(
                 schema_version == 11,
             )?;
         }
+        if schema_version >= 12 {
+            verify_migration_record(
+                connection,
+                12,
+                V12_MIGRATION_NAME,
+                SQLITE_V12_DDL,
+                schema_version == 12,
+            )?;
+        }
+        if schema_version >= 13 {
+            verify_migration_record(
+                connection,
+                13,
+                V13_MIGRATION_NAME,
+                SQLITE_V13_DDL,
+                schema_version == 13,
+            )?;
+        }
+        if schema_version >= 14 {
+            verify_migration_record(
+                connection,
+                14,
+                V14_MIGRATION_NAME,
+                SQLITE_V14_DDL,
+                schema_version == 14,
+            )?;
+        }
+        if schema_version >= 15 {
+            verify_migration_record(connection, 15, V15_MIGRATION_NAME, SQLITE_V15_DDL, true)?;
+        }
         if schema_version == 1 {
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -14951,6 +14996,18 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V12_SCHEMA_VERSION {
         migrate_environment_identity_guard(connection, failpoint)?;
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V13_SCHEMA_VERSION {
+        migrate_trust_policy_audit_provenance(connection, failpoint)?;
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V14_SCHEMA_VERSION {
+        migrate_invocation_transition_guards(connection, failpoint)?;
     } else if current_version != SCHEMA_VERSION {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -14997,7 +15054,52 @@ fn migrate_environment_identity_guard(
     fail_if(failpoint, Failpoint::DuringV13Migration)?;
     record_migration(&transaction, 13, V13_MIGRATION_NAME, SQLITE_V13_DDL)?;
     transaction
-        .pragma_update(None, "user_version", SCHEMA_VERSION)
+        .pragma_update(None, "user_version", V13_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version fourteen persists typed Trust decision provenance on append-only AuditRecords.
+fn migrate_trust_policy_audit_provenance(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V14_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV14Migration)?;
+    record_migration(&transaction, 14, V14_MIGRATION_NAME, SQLITE_V14_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V14_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version fifteen installs the Invocation transition guard while deliberately
+/// rejecting every transition into DISPATCHED. A future combined admission migration
+/// must replace this closed guard only when it can commit Trust, Effect and ApprovalUse
+/// state atomically.
+fn migrate_invocation_transition_guards(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V15_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV15Migration)?;
+    record_migration(&transaction, 15, V15_MIGRATION_NAME, SQLITE_V15_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V15_SCHEMA_VERSION)
         .map_err(map_database_error)?;
     validate_schema(&transaction)?;
     transaction.commit().map_err(map_database_error)?;
@@ -15595,6 +15697,8 @@ enum Failpoint {
     DuringV11Migration,
     DuringV12Migration,
     DuringV13Migration,
+    DuringV14Migration,
+    DuringV15Migration,
     AfterAggregate,
     AfterSequence,
     AfterEvent,

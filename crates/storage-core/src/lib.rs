@@ -33,6 +33,11 @@ pub use effect_evidence::{
     EffectEvidenceEventContext, EffectEvidenceStore, EffectFenceBinding, EffectRetryAuthorization,
     EffectRetryBasis, EffectTransitionMetadata, ProposeEffectCommit, TransitionEffectCommit,
 };
+mod capability_invocation;
+pub use capability_invocation::{
+    CapabilityInvocationEventContext, CapabilityInvocationStore,
+    CapabilityInvocationTransitionCommit, CommittedCapabilityInvocation,
+};
 mod task_presentation;
 pub use task_presentation::{
     MAX_TASK_PRESENTATION_ARTIFACTS, MAX_TASK_PRESENTATION_STEPS, TaskPresentationActivityEvent,

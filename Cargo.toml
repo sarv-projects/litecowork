@@ -8,6 +8,7 @@ members = [
   "crates/domain-responsibility",
   "crates/domain-workspace",
   "crates/domain-effects",
+  "crates/domain-invocations",
   "crates/domain-environment",
   "crates/domain-conversation",
   "crates/local-environment-staging",

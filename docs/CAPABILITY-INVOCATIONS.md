@@ -126,10 +126,11 @@ ActionBatch aggregate or synthetic all-or-nothing Effect exists.
 
 ### Dispatch readiness gate
 
-The schema and state machine define `CREATED -> DISPATCHED`, but the current local
-storage implementation does not expose an Invocation transition writer or Trust-issued
-exact-action dispatch decision. For Attempt-scoped consequential operations it also has
-no atomic `ApprovalUse` consumer. Until one authoritative transaction rechecks the live
+The schema and state machine define `CREATED -> DISPATCHED`. Current local storage can
+persist status observations and local pre-dispatch cancellation for an existing Invocation,
+but exposes no Invocation creation or dispatch operation and no Trust-issued exact-action
+dispatch decision. For Attempt-scoped consequential operations it also has no atomic
+`ApprovalUse` consumer. Until one authoritative transaction rechecks the live
 owner/lease, grant, activation, Trust decision and any exact Approval; transitions the
 Invocation; links and starts its Effect; and writes the related state snapshots, events,
 audit and idempotency receipt, external provider dispatch is unavailable. The current
