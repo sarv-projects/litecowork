@@ -3628,9 +3628,12 @@ lease integration and reconciliation.
 
 Review of the separate local child-runner branch found a time-of-check/time-of-use race in
 its live output-tree scan: a child-writable directory could be replaced by a symlink before
-the host scanner opens it. That runner has not been merged or enabled. Its output scan
-must become no-follow/fd-relative or run only after positive quiescence, and disk output
-must be genuinely bounded before it can qualify for production Environment admission.
+the host scanner opens it. An isolated follow-up now scans only after positive cgroup
+quiescence and passes the crate's available 9 unit/integration tests; 5 systemd/cgroup
+qualification tests remain ignored on this host. That runner has not been merged or
+enabled. Its writable output bind still has no enforced disk quota and can exhaust host
+storage before post-run size rejection, so it cannot qualify for production Environment
+admission or be wired to Task dispatch.
 
 Automation gained an E08-S09 manual-run slice with client and Tauri request-boundary
 coverage for a READY Task receipt, pinned revision, and exact idempotency-key reuse after
