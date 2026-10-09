@@ -915,6 +915,12 @@ mod linux {
         Ok(result)
     }
 
+    pub(super) fn sandbox_environment_values(
+        env: &AgentEnvironment,
+    ) -> Result<Vec<(&'static str, String)>, ScopeError> {
+        safe_environment(env)
+    }
+
     fn safe_path_value(path: &Path) -> Result<String, ScopeError> {
         let bytes = path.as_os_str().as_bytes();
         let text = std::str::from_utf8(bytes)
@@ -1338,6 +1344,15 @@ pub use linux::{
     PublicManagedScope as ManagedScope, PublicPendingCleanup as PendingCleanup,
     PublicResourceLimits as ResourceLimits, PublicScopeError as ScopeError,
     PublicSystemdCommands as SystemdCommands, spawn,
+};
+
+#[cfg(target_os = "linux")]
+mod bubblewrap;
+
+#[cfg(target_os = "linux")]
+pub use bubblewrap::{
+    BubblewrapLaunchSpec, ReadOnlyRuntimeMount, bubblewrap_binary_is_trusted,
+    prepare_bubblewrap_command, spawn_bubblewrapped,
 };
 
 #[cfg(not(target_os = "linux"))]
