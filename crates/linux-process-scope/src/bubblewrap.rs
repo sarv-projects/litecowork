@@ -17,6 +17,7 @@ const OUTPUT_TARGET: &str = "/workspace/outputs";
 const WORKSPACE_TARGET: &str = "/workspace";
 const TMP_TARGET: &str = "/tmp";
 const MAX_RUNTIME_MOUNTS: usize = 32;
+const MAX_SCRATCH_BYTES: u64 = 512 * 1024 * 1024;
 const SYSTEM_RUNTIME_ROOTS: [&str; 6] = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt"];
 
 /// Trusted host runtime tree exposed read-only at one explicit sandbox path.
@@ -171,7 +172,11 @@ pub fn prepare_bubblewrap_command(
         arg("litecowork-worker"),
         arg("--tmpfs"),
         arg("/"),
-        arg("--dir"),
+        arg("--size"),
+        arg((spec.process.limits.memory_max_bytes / 4)
+            .clamp(1, MAX_SCRATCH_BYTES)
+            .to_string()),
+        arg("--tmpfs"),
         arg(TMP_TARGET),
         arg("--dev"),
         arg("/dev"),
@@ -191,6 +196,10 @@ pub fn prepare_bubblewrap_command(
         arguments.push(source.into_os_string());
         arguments.push(target.into_os_string());
     }
+    // Root scaffolding is immutable after the explicit writable mounts are established.
+    // Bubblewrap's remount is intentionally non-recursive, leaving /tmp and the output
+    // bind writable while preventing unbounded writes into the otherwise empty root tmpfs.
+    arguments.extend([arg("--remount-ro"), arg("/")]);
 
     arguments.extend([
         arg("--dir"),
@@ -444,6 +453,15 @@ mod tests {
         assert!(clear < first_env);
         assert!(args.iter().any(|arg| arg == "/workspace/inputs"));
         assert!(args.iter().any(|arg| arg == "/workspace/outputs"));
+        let tmpfs_size = args.iter().position(|arg| arg == "--size").unwrap();
+        assert_eq!(
+            args[tmpfs_size + 1],
+            (spec.process.limits.memory_max_bytes / 4).to_string()
+        );
+        assert_eq!(args[tmpfs_size + 2], "--tmpfs");
+        assert_eq!(args[tmpfs_size + 3], TMP_TARGET);
+        let readonly_root = args.iter().position(|arg| arg == "--remount-ro").unwrap();
+        assert_eq!(args[readonly_root + 1], "/");
     }
 
     #[test]

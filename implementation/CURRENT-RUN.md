@@ -3615,9 +3615,11 @@ extraction or semantic RAG. ZIPs remain opaque Resources and indexing remains le
 
 The Linux Environment work adds a Bubblewrap launch builder over staged, validated input
 and output roots: input read-only, output writable, host home hidden, environment cleared,
-and user/PID/network/IPC/UTS namespaces required. On the current Ubuntu host with
+and user/PID/network/IPC/UTS namespaces required. The empty root is remounted read-only
+after explicit mounts are established, and `/tmp` is a tmpfs bounded to at most 512 MiB
+(or one quarter of configured memory, whichever is lower). On the current Ubuntu host with
 Bubblewrap 0.9.0, live tests verified input immutability, writable output, hidden `/home`,
-and blocked host-loopback TCP. This is a lower-level sandbox boundary, not a production
+and blocked host-loopback TCP after this hardening. This is a lower-level sandbox boundary, not a production
 EnvironmentProvider. The composed Bubblewrap+cgroup scope test and the existing systemd
 scope tests remain ignored because this host reports a degraded user systemd manager and
 `/non-systemd` cgroups. Task/agent dispatch remains disabled pending ResourceStore pins,
