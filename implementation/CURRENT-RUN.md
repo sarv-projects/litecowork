@@ -10,6 +10,31 @@ what was true at their timestamps. V1 is the complete desktop/local product. Clo
 continuation and remote Runtime are post-V1 and excluded from the V1 release gate; local
 capabilities already committed in the architecture remain in V1 scope.
 
+### Conversation turn lifecycle and Codex safety gate (2026-10-09)
+
+`domain-conversation` now contains the pure version-checked ConversationTurn state
+machine; its `cargo test -p domain-conversation` (8 tests) and strict Clippy check pass.
+It handles explicit retry with a fresh AgentSession, user/dependency waits, provider
+request-again, cancellation races, and terminal settlement. This is not yet connected to
+Conversation message/turn persistence or dispatch.
+
+The Codex Conversation safety probe and Agent Settings diagnostic are integrated. It
+requires proof of all six controls and currently returns `NOT_ELIGIBLE`; missing,
+unknown, and unsupported controls block admission. No Conversation turn is dispatched
+and no provider call is made. The official App Server protocol and the installed Codex
+0.162.0 schema do not establish the needed per-session restrictions, so Codex remains
+unqualified for Conversation tool access. Agent-specific tests (3), Rust formatting,
+`pnpm build`, and independent review passed. Coverage was regenerated for these integrated
+docs; it will be regenerated again after the current parallel story merges.
+
+After integration, `cargo test --locked -p litecoworkd --bin litecoworkd
+conversation_safety` passed (3 tests), `uv run --locked python
+scripts/validate_architecture.py` passed (140 typed events and all machine contracts), and
+`uv run --locked python scripts/validate_implementation_plan.py` passed (60 stories and
+5,313 traceability rows).
+The daemon build reports existing unused/dead-code warnings in unfinished modules; they
+did not fail this focused test.
+
 ### Conversation turn lifecycle foundation (2026-10-09)
 
 Added the `domain-conversation` crate with a pure, version-checked ConversationTurn
