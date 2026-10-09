@@ -2,6 +2,10 @@ mod agents;
 mod local_filesystem;
 mod operator;
 mod runtime;
+// The evaluator is intentionally compiled but not wired until the atomic
+// CapabilityBroker admission transaction and audit persistence exist.
+#[allow(dead_code)]
+mod trust;
 
 use std::{path::PathBuf, process::ExitCode};
 

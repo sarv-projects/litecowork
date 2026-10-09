@@ -1092,6 +1092,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "serde_json_canonicalizer",
  "sha2",
  "storage-core",
  "storage-sqlite",
