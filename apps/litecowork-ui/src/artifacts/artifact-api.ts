@@ -28,6 +28,7 @@ export type ArtifactVersion = {
   content: ArtifactContent; provenance: ProvenanceRecord; created_at: string;
   created_by_attempt?: string | null; verification_refs?: string[];
 };
+export type ComparableArtifactTextVersion = { version: ArtifactVersion; text: string };
 export type ArtifactTextEditHead = {
   artifact_id: string;
   aggregate_version: number;
@@ -57,6 +58,8 @@ export type ArtifactSaveAsRequest = {
 };
 export type ArtifactSaveAsResult = { status: "SAVED" } | { status: "CANCELLED" };
 export type ArtifactSaveAsTransport = (request: ArtifactSaveAsRequest) => Promise<ArtifactSaveAsResult>;
+
+const ARTIFACT_TEXT_PREVIEW_LIMIT = 1024 * 1024;
 
 /** Inject an authenticated Operator transport. Desktop IPC must adapt its native bridge here.
  * No localhost HTTP assumption, provider URL fetch, or fixture fallback is made. */
@@ -179,6 +182,31 @@ export class ArtifactApi {
     if (item.artifact_id !== id || item.version !== version) throw new Error("Artifact version identity mismatch.");
     return item;
   }
+  /** Loads a pinned historical text version for comparison without changing Artifact state. */
+  async loadComparableTextVersion(
+    id: string,
+    versionNumber: number,
+    snapshotCurrentVersion: number,
+    signal?: AbortSignal,
+  ): Promise<ComparableArtifactTextVersion> {
+    str(id);
+    integer(versionNumber);
+    integer(snapshotCurrentVersion);
+    if (versionNumber > snapshotCurrentVersion) throw new Error(`Choose a committed version from 1 to ${snapshotCurrentVersion}.`);
+    const version = await this.getVersion(id, versionNumber, signal);
+    if (version.content.kind !== "MANAGED_BLOB" || !supportsTextPreview(version.content.media_type)
+      || version.content.size_bytes > ARTIFACT_TEXT_PREVIEW_LIMIT) {
+      throw new Error(`Version ${versionNumber} does not support text comparison up to 1 MiB.`);
+    }
+    const bytes = await this.content(version, ARTIFACT_TEXT_PREVIEW_LIMIT, signal);
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      throw new Error(`Version ${versionNumber} is not valid UTF-8 text for comparison.`);
+    }
+    return { version, text };
+  }
   async getTextEditHead(id: string, signal?: AbortSignal): Promise<ArtifactTextEditHead> {
     const item = record(await (await this.request(`${this.path(id)}/edit-head`, { signal })).json());
     const head: ArtifactTextEditHead = {
@@ -236,6 +264,13 @@ export class ArtifactApi {
     integer(maxBytes);
     if (version.content.kind === "MANAGED_BLOB" && version.content.size_bytes > maxBytes) throw new Error("Content exceeds the desktop transfer limit.");
     const response = await this.request(`${this.path(version.artifact_id)}/versions/${version.version}/content`, { signal });
+    if (version.content.kind === "MANAGED_BLOB") {
+      const expectedMediaType = version.content.media_type.split(";", 1)[0].trim().toLowerCase();
+      const responseMediaType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+      if (!responseMediaType || responseMediaType !== expectedMediaType) {
+        throw new Error("Artifact media type does not match its immutable version.");
+      }
+    }
     if (!response.body) throw new Error("Artifact content is unavailable.");
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = []; let size = 0;

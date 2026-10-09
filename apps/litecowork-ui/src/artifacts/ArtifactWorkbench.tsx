@@ -194,12 +194,8 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
         if (comparisonVersion === null) return;
         setComparisonLoading(true);
         try {
-          const target = await api.getVersion(artifactId, comparisonVersion, controller.signal);
-          if (target.artifact_id !== artifactId || target.version !== comparisonVersion) throw new Error("Comparison Artifact version identity mismatch.");
-          if (target.content.kind !== "MANAGED_BLOB" || !supportsTextPreview(target.content.media_type) || target.content.size_bytes > PREVIEW_LIMIT) throw new Error(`Version ${comparisonVersion} does not support text comparison up to 1 MiB.`);
-          const targetBytes = await api.content(target, PREVIEW_LIMIT, controller.signal);
-          const targetText = new TextDecoder("utf-8", { fatal: true }).decode(targetBytes);
-          if (!controller.signal.aborted) setPreview({ text, comparison: { text: targetText, version: target } });
+          const target = await api.loadComparableTextVersion(artifactId, comparisonVersion, artifact.current_version, controller.signal);
+          if (!controller.signal.aborted) setPreview({ text, comparison: { text: target.text, version: target.version } });
         } catch (error) {
           if (!controller.signal.aborted) {
             setComparisonError(`Could not compare version ${comparisonVersion}: ${message(error)}`);
