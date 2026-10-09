@@ -3624,6 +3624,12 @@ scope tests remain ignored because this host reports a degraded user systemd man
 output quotas, authenticated egress, Runtime attestation/restart recovery, Trust/Effect/
 lease integration and reconciliation.
 
+Review of the separate local child-runner branch found a time-of-check/time-of-use race in
+its live output-tree scan: a child-writable directory could be replaced by a symlink before
+the host scanner opens it. That runner has not been merged or enabled. Its output scan
+must become no-follow/fd-relative or run only after positive quiescence, and disk output
+must be genuinely bounded before it can qualify for production Environment admission.
+
 Automation gained an E08-S09 manual-run slice with client and Tauri request-boundary
 coverage for a READY Task receipt, pinned revision, and exact idempotency-key reuse after
 an ambiguous retry. No scheduled host is claimed; daemon/SQLite occurrence-cursor replay,
@@ -3665,8 +3671,8 @@ Verified locally:
 - `rustfmt --check --edition 2024 apps/litecowork-ui/src-tauri/src/conversation_bridge.rs`
   — passed. Whole-tree Tauri formatting is not used because it reports unrelated baseline
   formatting differences across existing files.
-- A first-time `cargo check` for the Tauri manifest is still compiling platform GUI
-  dependencies and has not reached LiteCowork source; result pending.
+- `cargo check --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --locked` — passed
+  after the first-time GUI dependency build; existing Rust warnings remain.
 
 This closes a current-page loading defect and makes older committed messages accessible.
 It does not add Conversation turn submission or provider-backed Conversation execution.
