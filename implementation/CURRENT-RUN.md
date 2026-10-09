@@ -3681,3 +3681,19 @@ Verified locally:
 
 This closes a current-page loading defect and makes older committed messages accessible.
 It does not add Conversation turn submission or provider-backed Conversation execution.
+
+## Artifact text diff extraction and edge-case coverage — 2026-10-09
+
+Extracted the existing bounded LCS line-diff calculation into a pure UI model module and
+added unit coverage for empty/equal files, additions/removals/replacements, reorder
+tie-breaking, CRLF/bare-CR normalization, hostile markup kept as literal data, size-bound
+fallbacks, and the maximum accepted 400-line grid. The rendering component continues to
+render source through React text nodes and retains the side-by-side fallback; this does not
+change Artifact versions or publication state.
+
+Verified on Node v22.23.1 (package declares v24.21+): focused tests passed 7/7, the full
+desktop UI helper suite passed 85/85, and `pnpm --config.verifyDepsBeforeRun=false build`
+passed TypeScript and Vite compilation (96 modules). Vite reports the existing 733.65 kB
+main JavaScript chunk advisory. `git diff --check` passed. The pinned Node version, rendered
+keyboard/screen-reader acceptance, native Save As, and real desktop workflow remain
+unverified; this is a testable UI code increment, not E08-S07 completion.
