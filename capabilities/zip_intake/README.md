@@ -56,27 +56,41 @@ no payload. Individual failures produce `REJECTED` entries; safe siblings can su
 Metadata preview cannot certify body integrity or nested content, so extraction reopens
 and rechecks the archive. No preview result can be used as an admission token.
 
-Time checks are cooperative. This library is **not a process sandbox** and cannot interrupt
-a blocked native decompressor or enforce hard RSS/CPU limits. Before integration, run it
-in a supervised isolated worker without ambient filesystem/network authority, enforce
-hard wall-clock/CPU/memory/output budgets, and discard results on cancellation or worker
-failure. The default expanded-byte limit bounds returned payloads, not process RSS.
+`ZipIntakeProvider` itself is a library, not a process sandbox. Its new `ZipWorker` boundary
+is a Linux-only metadata-preview runner: it starts the fixed `worker.py` entry point using
+Bubblewrap and `/usr/bin/prlimit`, passes a pinned source identity and bounded archive bytes
+over stdin, and returns only a bounded metadata manifest. Bubblewrap gives the worker private
+user/PID/network/IPC/UTS/mount namespaces, a read-only runtime and code view, no host home or
+workspace mount, and a 1 MiB private `/tmp`. Inherited limits bound CPU to 8 seconds,
+address space to 512 MiB, file size to zero, file descriptors to 32, and the parent kills
+the process group after 12 seconds. The worker uses no filesystem extraction path. `qualified()`
+executes a real round-trip probe and returns false if required Linux commands, mounts,
+namespace, or parser execution fail.
+
+This boundary has only been exercised on the current Ubuntu development host (Bubblewrap
+0.9.0, system Python 3.12, util-linux `prlimit`). It does not establish support for other
+distributions or desktop operating systems. The worker is not packaged or called by
+`litecoworkd`; the authenticated Runtime readiness route continues to report ZIP unavailable.
+The Python provider's `extract()` method remains unsafe to call in-process for untrusted
+archives. There is no ZIP preview Operator endpoint, sandboxed member extraction, explicit
+cancellation command, or Core child-Resource/provenance/deletion transaction. Do not expose
+extracted payloads or enable ZIP readiness until those integrations and platform
+qualification are complete.
 
 ## Delivery and deferred verification
 
-Focused standard-library fixture tests are in `tests/test_provider.py`. The intended
-narrow check, once the owner's verification deferral is lifted, is:
+Focused standard-library fixtures and real Linux Bubblewrap integration tests are in
+`tests/`. The narrow check is:
 
 ```sh
 uv run python -m unittest discover -s capabilities/zip_intake/tests -v
 ```
 
-No tests, builds, formatters, or validators were run for this change. SP06 remains
-unperformed: there is no qualified PDF/Office/OCR parser, RAG provider, embedding index,
-provider subprocess transport, Core upload integration, storage transaction coverage,
-or UI extraction report in this slice. E06-S01 and the user/system acceptance gates
-remain incomplete. The current desktop upload/search path still treats ZIPs as opaque
-Resources, as specified in [WORLD-RESOURCES](../../docs/WORLD-RESOURCES.md).
+SP06 remains unperformed: there is no qualified PDF/Office/OCR parser, RAG provider,
+embedding index, Runtime subprocess integration, Core upload integration, storage
+transaction coverage, or UI extraction report in this slice. E06-S01 and the user/system
+acceptance gates remain incomplete. The current desktop upload/search path still treats
+ZIPs as opaque Resources, as specified in [WORLD-RESOURCES](../../docs/WORLD-RESOURCES.md).
 
 The current LiteCowork boundary is explicit: the daemon router mounts
 `GET /v1/capabilities/zip-intake`, the Tauri command handler registers the readiness bridge,

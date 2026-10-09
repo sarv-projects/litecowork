@@ -10,8 +10,10 @@ from .provider import (
     SourceRevision,
     ZipIntakeProvider,
 )
+from .supervisor import WorkerFailed, WorkerTimedOut, WorkerUnavailable, ZipWorker
 
 __all__ = [
     "ArchiveRejected", "EntryReport", "ExtractionResult", "ExtractedEntry",
-    "Limits", "Manifest", "SourceRevision", "ZipIntakeProvider",
+    "Limits", "Manifest", "SourceRevision", "ZipIntakeProvider", "ZipWorker",
+    "WorkerFailed", "WorkerTimedOut", "WorkerUnavailable",
 ]
