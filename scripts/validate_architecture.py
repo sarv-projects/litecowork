@@ -2604,7 +2604,7 @@ def check_gateway_and_names() -> None:
 
     historical_source_path = "docs/adr/0002-litepsm-independent.md"
     stale_product_name = re.compile(r"(?<![A-Za-z0-9_])(?:LitePSM|litepsm)(?![A-Za-z0-9_])")
-    excluded_dirs = {".git", "archive_code", "archives_docs", "ARCHIVE", "archives", "target", "node_modules", "__pycache__"}
+    excluded_dirs = {".git", ".agent-worktrees", "archive_code", "archives_docs", "ARCHIVE", "archives", "target", "node_modules", "__pycache__"}
     text_suffixes = {".md", ".json", ".yaml", ".yml", ".sql", ".py", ".toml"}
     naming_files = [
         candidate for candidate in ROOT.rglob("*")
