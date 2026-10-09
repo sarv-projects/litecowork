@@ -3449,3 +3449,53 @@ tree, not the pinned Node 24 clean-install environment.
 Post-integration validators passed: architecture validation (140 typed events) and
 implementation-plan validation (60 stories, 5,310 coverage rows). The validator now
 excludes `.agent-worktrees`, which are local development worktrees and not source inputs.
+
+## Artifact Workbench exact-version comparison — 2026-10-09
+
+The Workbench comparison path now loads the exact immutable ArtifactVersion selected in
+the loaded Library snapshot. It checks that the version is still in that snapshot, confirms
+the Artifact/ResourceRevision/digest/media/size bindings, verifies fetched bytes and SHA-256,
+rejects mismatched response Content-Type and invalid UTF-8, and only then exposes supported
+text for comparison. A red/green regression first demonstrated that correct bytes with a
+wrong response media type were previously accepted; the new check rejects them.
+
+Verified on the current Linux development environment:
+
+- `node --experimental-transform-types --test apps/litecowork-ui/tests/*.test.ts` — 65
+  passed, 0 failed.
+- `pnpm --config.verifyDepsBeforeRun=false build` in `apps/litecowork-ui` — passed; Vite
+  still warns that the main JavaScript chunk is over 500 kB.
+- `cargo test --locked --workspace` — passed all workspace tests and doc tests; two live
+  systemd/cgroup qualification tests were ignored by default.
+- `uv run --locked python scripts/validate_architecture.py` and
+  `uv run --locked python scripts/validate_implementation_plan.py` — passed before this
+  note was added; this update changes no contract/backlog inventory.
+
+This is one verified Workbench code/UI-data slice. It does not establish a live rendered
+Tauri workflow, Task Artifact output integration, edit/restore/Save As system behavior,
+owner acceptance, or E08-S07 completion.
+
+## Linux-isolated ZIP manifest preview provider — 2026-10-09
+
+Added a fixed-protocol Python worker and Linux Bubblewrap/prlimit supervisor for a bounded
+metadata-only ZIP manifest preview. The worker uses private user/mount/PID/network namespaces,
+a read-only runtime, bounded temporary output, CPU/address-space/time limits, and process-group
+termination. Unsafe or ambiguous archive names/entries fail closed. It does not extract ZIP
+members and is not called by `litecoworkd`; the existing daemon readiness result remains
+`UNAVAILABLE / ISOLATED_WORKER_NOT_QUALIFIED`, uploads remain intact ZIP Resources, and no
+member Resources or indexing results are published.
+
+Verified on the current Ubuntu development host with Bubblewrap 0.9.0 and uv's Python 3.13:
+
+- `uv run --locked python -m unittest discover -s capabilities/zip_intake/tests -v` — 34
+  passed, including real Bubblewrap hostile-archive and timeout cases.
+- The ZIP implementation branch also passed `python3 -m compileall -q capabilities/zip_intake`
+  and both architecture and implementation-plan validators before integration.
+- After integration, the architecture validator caught stale generated coverage; running
+  `uv run --locked python scripts/validate_implementation_coverage.py --write` regenerated
+  `implementation/coverage.csv`. The architecture and implementation-plan validators then
+  passed (79 documents, 1,096 sections, 5,310 traceability rows, 60 stories).
+
+This is Linux-host parser containment evidence only. It does not qualify other Linux
+distributions or operating systems, prove hostile ZIP extraction safety, connect ZIP intake
+to a daemon/API/UI flow, or complete E06-S01.
