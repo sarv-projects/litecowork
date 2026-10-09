@@ -5,6 +5,8 @@ use super::*;
 mod artifact_tests;
 #[path = "coworker_tests.rs"]
 mod coworker_tests;
+#[path = "delegation_profile_tests.rs"]
+mod delegation_profile_tests;
 #[path = "environment_tests.rs"]
 mod environment_tests;
 #[path = "goal_tests.rs"]
