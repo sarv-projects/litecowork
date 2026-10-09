@@ -10,6 +10,24 @@ what was true at their timestamps. V1 is the complete desktop/local product. Clo
 continuation and remote Runtime are post-V1 and excluded from the V1 release gate; local
 capabilities already committed in the architecture remain in V1 scope.
 
+### Artifact download filename usability slice (2026-10-09)
+
+The Workbench's ordinary browser download now preserves the selected immutable version's
+filename extension and inserts the version suffix before it (for example,
+`report-v3.pdf`). A pure, bounded naming helper sanitizes control/path-reserved characters,
+falls back when no usable name remains, and validates the positive safe version number.
+It changes the proposed download filename only; Artifact content, provenance, publication,
+authorization, and native Save As behavior are unchanged. E08-S07 remains partial.
+
+Verification in `.agent-worktrees/e08-download-name`: the full UI helper suite passed 90/90
+using `node --experimental-transform-types --test tests/*.test.ts` on Node 22.23.1; `pnpm
+build` passed TypeScript and Vite production compilation (97 modules). Vite reports the
+existing main-chunk size advisory (>500 kB); pnpm also reported the existing ignored esbuild
+build-script policy during its dependency check, but the build exited successfully. The
+Node version is below the package's declared 24.21+ requirement. This verifies helper and
+bundle compilation only; it is not a rendered download interaction, Tauri Save As, or
+qualified-OS/owner acceptance test.
+
 ### Effect dispatch admission remains closed (2026-10-09)
 
 The SQLite Effect writer now rejects every request to enter `STARTED` with typed blockers

@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { ArtifactApi, ArtifactApiError, supportsTextPreview } from "./artifact-api";
+import { artifactDownloadFileName } from "./artifact-download-name";
 import type { Artifact, ArtifactTextEditHead, ArtifactTextVersionInput, ArtifactTextVersionReceipt, ArtifactVersion, PinnedResourceRef } from "./artifact-api";
 import { StructuredTextPreview } from "./StructuredTextPreview";
 import { TextVersionDiff } from "./TextVersionDiff";
@@ -224,7 +225,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       if (controller.signal.aborted) return;
       const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer], { type: "application/octet-stream" }));
       const link = document.createElement("a");
-      link.href = url; link.download = `${artifact.display_name.replace(/[\u0000-\u001f\u007f/\\]/g, "_").slice(0, 180) || "artifact"}-v${version.version}`;
+      link.href = url; link.download = artifactDownloadFileName(artifact.display_name, version.version);
       document.body.append(link); link.click(); link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
