@@ -4228,6 +4228,43 @@ pub fn run() {
 }
 
 #[cfg(test)]
+mod runtime_status_bridge_tests {
+    use super::RuntimeStatus;
+    use serde_json::json;
+
+    #[test]
+    fn tauri_status_bridge_keeps_process_api_and_execution_readiness_distinct() {
+        let status = RuntimeStatus {
+            state: "DEGRADED".to_owned(),
+            runtime_id: Some("runtime-1".to_owned()),
+            local_incarnation_id: Some("incarnation-2".to_owned()),
+            blockers: vec!["TASK_RECOVERY_UNAVAILABLE".to_owned()],
+            last_shutdown_clean: Some(true),
+            process_running: false,
+            operator_ready: false,
+            daemon_available: true,
+            detail: Some("managed service is not verified".to_owned()),
+        };
+
+        let payload = serde_json::to_value(status).expect("serialize Tauri command result");
+        assert_eq!(
+            payload,
+            json!({
+                "state": "DEGRADED",
+                "runtimeId": "runtime-1",
+                "localIncarnationId": "incarnation-2",
+                "blockers": ["TASK_RECOVERY_UNAVAILABLE"],
+                "lastShutdownClean": true,
+                "processRunning": false,
+                "operatorReady": false,
+                "daemonAvailable": true,
+                "detail": "managed service is not verified"
+            })
+        );
+    }
+}
+
+#[cfg(test)]
 mod bounded_json_tests {
     use super::bounded_json_bytes;
 

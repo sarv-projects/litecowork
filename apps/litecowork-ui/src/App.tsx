@@ -34,6 +34,7 @@ import {
   type PlanningBlocker,
   type TaskPlanningReadinessView,
 } from "./tasks/planning-readiness";
+import { canOfferLocalRuntimeStart } from "./runtime/runtime-start-readiness";
 
 type Page = "Home" | "Work" | "Library" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Routines" | "Automations" | "Settings";
 type RuntimeStatus = {
@@ -1853,9 +1854,9 @@ function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, st
       <div className="setup-callout" role="status">
         <span className="callout-icon" aria-hidden="true">i</span>
         <div>
-          <strong>{runtime?.processRunning && !runtime.operatorReady ? "Local Runtime process is starting" : runtime?.state === "DEGRADED" ? "Local Runtime is available; work execution is not" : "Local Runtime setup"}</strong>
+          <strong>{runtime?.processRunning && !runtime.operatorReady ? "Local Runtime process is starting" : runtime?.processRunning && runtime.state === "DEGRADED" ? "Local Runtime is available; work execution is not" : canOfferLocalRuntimeStart(runtime) ? "Local Runtime is not running" : "Local Runtime setup"}</strong>
           <p>{runtimeError ?? (runtime?.processRunning && !runtime.operatorReady ? "The daemon process exists, but the authenticated Operator API has not confirmed this Runtime incarnation yet." : runtime?.state === "DEGRADED" ? `Work remains blocked: ${runtime.blockers.join(", ") || "startup recovery is incomplete"}.` : "Start the local Runtime to initialize encrypted local storage. It will report any services that are not ready.")}</p>
-          {runtime?.state === "NOT_STARTED" || runtime?.state === "NOT_RUNNING" || runtime?.state === "STOPPED" ? (
+          {canOfferLocalRuntimeStart(runtime) ? (
             <button className="text-button" type="button" onClick={() => void startRuntime()} disabled={runtimeBusy}>
               {runtimeBusy ? "Starting Runtime…" : "Start local Runtime"} <span aria-hidden="true">→</span>
             </button>
@@ -2365,7 +2366,7 @@ function SettingsPage({ runtime, runtimeError, runtimeBusy, startRuntime, refres
         {runtime?.runtimeId && <dl className="runtime-details"><div><dt>Runtime</dt><dd>{runtime.runtimeId}</dd></div><div><dt>Incarnation</dt><dd>{runtime.localIncarnationId}</dd></div></dl>}
         {!!runtime?.blockers.length && <div className="blocker-list"><strong>Unavailable services</strong><ul>{runtime.blockers.map((blocker) => <li key={blocker}>{blocker.replaceAll("_", " ").toLowerCase()}</li>)}</ul></div>}
         <div className="button-row">
-          {(runtime?.state === "NOT_STARTED" || runtime?.state === "NOT_RUNNING" || runtime?.state === "STOPPED" || runtime?.state === "UNAVAILABLE") && <button className="primary-button" type="button" onClick={() => void startRuntime()} disabled={runtimeBusy}>{runtimeBusy ? "Starting…" : "Start local Runtime"}</button>}
+          {canOfferLocalRuntimeStart(runtime) && <button className="primary-button" type="button" onClick={() => void startRuntime()} disabled={runtimeBusy}>{runtimeBusy ? "Starting…" : "Start local Runtime"}</button>}
           <button className="quiet-button" type="button" onClick={() => void refreshRuntime()}>Refresh status</button>
         </div>
       </section>
