@@ -13,7 +13,6 @@ import type { Coworker, WorkspacePrimaryReceipt } from "./coworkers/coworker-api
 import { GoalsPage } from "./goals/GoalsPage";
 import { desktopGoalApi } from "./goals/desktop-goal-api";
 import { SuggestionsPage } from "./suggestions/SuggestionsPage";
-import { desktopSuggestionApi } from "./suggestions/desktop-suggestion-api";
 import { TaskPresentationPanel } from "./presentation/TaskPresentationPanel";
 import { TaskSpecRevisionHistory } from "./tasks/TaskSpecRevisionHistory";
 import { AutomationsPage } from "./automations/AutomationsPage";
@@ -28,6 +27,7 @@ import { ResourceRevisionEditor } from "./resources/ResourceRevisionEditor";
 import { TaskResourceTextPreview } from "./resources/TaskResourceTextPreview";
 import { validateResourceSourceHighlights, type ResourceSourceMatch, type SourceHighlightResult } from "./resources/source-span-highlights";
 import { TaskAttentionPage } from "./needs-you/TaskAttentionPage";
+import { maybeDesktopSuggestionApi } from "./suggestions/desktop-suggestion-api";
 import {
   isTaskPlanningReadinessFor,
   planningReadinessNoBlockersMessage,
@@ -421,7 +421,7 @@ function App() {
   const coworkerApi = useMemo(() => desktopCoworkerApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const delegationProfileApi = useMemo(() => desktopDelegationProfileCatalogApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const goalApi = useMemo(() => desktopGoalApi(selectedWorkspaceId), [selectedWorkspaceId]);
-  const suggestionApi = useMemo(() => desktopSuggestionApi(selectedWorkspaceId), [selectedWorkspaceId]);
+  const suggestionApi = useMemo(() => maybeDesktopSuggestionApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const rootStatusRequestKeys = useRef(new Map<string, string>());
   const selectedWorkspaceIdRef = useRef(selectedWorkspaceId);
   selectedWorkspaceIdRef.current = selectedWorkspaceId;
@@ -1548,9 +1548,11 @@ function App() {
             setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
             setPage("Work");
           }} />
+        ) : page === "Ideas" && !selectedWorkspaceId ? (
+          <div className="page-content subpage-content"><div className="eyebrow">IDEAS</div><h1>Ideas</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">✦</div><h2>Select a Workspace</h2><p>Create or select a Workspace in Settings to view saved Suggestions.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Workspace settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Ideas" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
           <div className="page-content subpage-content"><div className="eyebrow">IDEAS</div><h1>Ideas</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">✦</div><h2>Local Operator unavailable</h2><p>Start the local Runtime to load saved Suggestions. This view never starts work.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
-        ) : page === "Ideas" ? (
+        ) : page === "Ideas" && suggestionApi ? (
           <SuggestionsPage key={selectedWorkspaceId} api={suggestionApi} onTaskAccepted={(taskId) => {
             setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
             setPage("Work");

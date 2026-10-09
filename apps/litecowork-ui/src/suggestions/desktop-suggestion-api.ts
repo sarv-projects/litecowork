@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { createSuggestionApi, type SuggestionAcceptTaskTransport, type SuggestionActionTransport, type SuggestionPreferenceTransport, type SuggestionPreferenceUpdateTransport, type SuggestionTransport } from "./suggestion-api";
+import { createSuggestionApi, type SuggestionAcceptTaskTransport, type SuggestionActionTransport, type SuggestionPreferenceTransport, type SuggestionPreferenceUpdateTransport, type SuggestionTransport } from "./suggestion-api.ts";
 
 function desktopTransport(workspaceId: string): SuggestionTransport {
   return async (_requestedWorkspace, visibility, cursor, signal) => {
@@ -29,4 +29,8 @@ const desktopPreferenceUpdateTransport: SuggestionPreferenceUpdateTransport = as
 
 export function desktopSuggestionApi(workspaceId: string) {
   return createSuggestionApi(workspaceId, desktopTransport(workspaceId), desktopActionTransport, desktopAcceptTaskTransport, desktopPreferenceTransport, desktopPreferenceUpdateTransport);
+}
+
+export function maybeDesktopSuggestionApi(workspaceId: string) {
+  return workspaceId.trim().length === 0 ? null : desktopSuggestionApi(workspaceId);
 }
