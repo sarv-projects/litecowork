@@ -3412,8 +3412,40 @@ when no Workspace was selected: App constructed a Workspace-scoped Suggestions A
 empty ID. API construction is now deferred until selection, and Ideas shows an explicit
 Workspace empty state.
 
-Verified with `pnpm --config.verifyDepsBeforeRun=false build` and
-`node --experimental-transform-types --test tests/*.test.ts` (57 passed, 0 failed). The
-build emits a Vite warning that its main JS chunk is 705.75 kB minified (194.52 kB gzip);
-code splitting remains open. Chrome DevTools reported no console errors in the no-Workspace
-startup/Ideas path. The visible Tauri shell and daemon launch path remain unqualified here.
+The same preview also exposed a managed-start dead end: Home/Settings omitted the real start
+action when an installed daemon was stopped but reported DEGRADED because its systemd unit
+was not yet verified. Startup eligibility now uses daemon presence + process state + Operator
+readiness; it permits that first start but not a second start while a process is recovering.
+
+Verified the merged UI with `pnpm --config.verifyDepsBeforeRun=false build` and
+`node --experimental-transform-types --test tests/*.test.ts` (60 passed, 0 failed). The
+build emits a Vite warning that its main JS chunk is 705.61 kB minified (194.51 kB gzip);
+code splitting remains open. The runtime-start readiness tests passed 3/3, and the Tauri
+RuntimeStatus serialization bridge test passed 1/1. Chrome DevTools reported no console
+errors in the no-Workspace startup/Ideas path. The visible Tauri shell and daemon launch
+path remain unqualified here. These commands used Node 22.23.1 and an existing dependency
+tree, not the pinned Node 24 clean-install environment.
+
+## Parallel local implementation slices — 2026-10-09
+
+- Indexed Resource source-span search now measures the query limit in Unicode characters,
+  so a valid 50-character CJK term is not rejected because it occupies 150 UTF-8 bytes.
+  Focused regression passed 1/1; daemon source-span tests passed 3/3; SQLite resource-index
+  tests passed 13/13. Resource previews still provide digest-pinned exact-revision
+  highlighting, not user-facing citation anchors.
+- DelegationProfile persistence now has regression coverage for revision/CAS behavior,
+  duplication, listing, archive, restart recovery, event records, and rejection of
+  `ENABLED`. The focused test passed 1/1. The full SQLite suite is not green/verified: its
+  run was interrupted after several existing RichPresentation tests exceeded 60 seconds.
+  No delegated execution was enabled.
+- Conversation presentation snapshot read projection now returns bounded owner-scoped
+  semantic-message pages, optional RichPresentation refs, and active-turn state. Focused
+  storage test passed 1/1 and daemon presentation tests passed 9/9. A full authenticated
+  IPC transport test and a Conversation UI are still absent.
+- Linux systemd process-scope unit tests passed 4/4, and live cgroup-v2/systemd tests passed
+  2/2 after the strict ancestry guard. This remains one-host process quiescence evidence,
+  not full sandbox, Task/Attempt integration, or safe-switching qualification.
+
+Post-integration validators passed: architecture validation (140 typed events) and
+implementation-plan validation (60 stories, 5,310 coverage rows). The validator now
+excludes `.agent-worktrees`, which are local development worktrees and not source inputs.
