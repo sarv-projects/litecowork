@@ -59,6 +59,12 @@ export type ArtifactSaveAsRequest = {
 export type ArtifactSaveAsResult = { status: "SAVED" } | { status: "CANCELLED" };
 export type ArtifactSaveAsTransport = (request: ArtifactSaveAsRequest) => Promise<ArtifactSaveAsResult>;
 
+export function artifactSaveAsStatusMessage(result: ArtifactSaveAsResult, version: number): string {
+  return result.status === "SAVED"
+    ? `Saved Artifact version ${version}.`
+    : `Save cancelled for Artifact version ${version}.`;
+}
+
 const ARTIFACT_TEXT_PREVIEW_LIMIT = 1024 * 1024;
 
 /** Inject an authenticated Operator transport. Desktop IPC must adapt its native bridge here.

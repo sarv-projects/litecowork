@@ -37,6 +37,13 @@ Without that callback, references are rendered as escaped historical text.
   authenticated Workspace owner access, no-store, size and digest verification, and
   attachment delivery using the stored media type. Local IPC transfers cap at 10 MiB.
 
+Native Save As re-reads the exact ArtifactVersion and its ResourceRevision before opening
+the OS destination picker. After a confirmed destination, it fetches that exact authorized
+version, independently checks the returned media type, length, and SHA-256 digest, then
+uses a same-directory staged write and rename. A cancelled picker fetches no bytes or
+touches the destination. Only `SAVED` or `CANCELLED` crosses the Tauri WebView boundary,
+and the Workbench reports either outcome through a status message.
+
 The view supports direct selection of an exact version number, history navigation, and
 an on-demand recent-history panel that reads at most ten exact immutable version records
 from the loaded Artifact head. Older versions remain addressable by number; the panel is

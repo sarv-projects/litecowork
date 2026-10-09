@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { ArtifactApi, ArtifactApiError, supportsTextPreview } from "./artifact-api";
+import { ArtifactApi, ArtifactApiError, artifactSaveAsStatusMessage, supportsTextPreview } from "./artifact-api";
 import { artifactDownloadFileName } from "./artifact-download-name";
 import type { Artifact, ArtifactTextEditHead, ArtifactTextVersionInput, ArtifactTextVersionReceipt, ArtifactVersion, PinnedResourceRef } from "./artifact-api";
 import { StructuredTextPreview } from "./StructuredTextPreview";
@@ -242,7 +242,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
     setDownloading(true); setDownloadFailure(null); setSaveNotice(null);
     try {
       const result = await api.saveVersionAs(workspaceId, artifact, version);
-      if (result.status === "SAVED") setSaveNotice(`Saved Artifact version ${version.version}.`);
+      setSaveNotice(artifactSaveAsStatusMessage(result, version.version));
     } catch (error) {
       setDownloadFailure(message(error));
     } finally { setDownloading(false); }

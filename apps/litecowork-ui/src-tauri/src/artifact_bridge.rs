@@ -182,23 +182,21 @@ pub(crate) async fn artifact_save_as(
         if !response.is_success() {
             return Err("Artifact content is unavailable from the local Runtime".to_owned());
         }
-        if response
-            .header("content-type")
-            .is_none_or(|value| !value.eq_ignore_ascii_case(media_type))
-        {
-            return Err("Downloaded Artifact media type does not match its immutable version".to_owned());
-        }
-        if response.content_length() != Some(content_size) {
-            return Err("Downloaded Artifact size does not match its immutable version".to_owned());
-        }
+        let response_media_type = response.header("content-type").map(str::to_owned);
+        let response_content_length = response.content_length();
         let mut bytes = Vec::with_capacity(content_size as usize);
         response
             .take(content_size.saturating_add(1))
             .read_to_end(&mut bytes)
             .map_err(|_| "Artifact content could not be read".to_owned())?;
-        if bytes.len() as u64 != content_size {
-            return Err("Downloaded Artifact size does not match its immutable version".to_owned());
-        }
+        verify_artifact_download(
+            response_media_type.as_deref(),
+            response_content_length,
+            media_type,
+            content_size,
+            content_digest,
+            &bytes,
+        )?;
 
         write_export_atomically(&destination, &bytes)?;
         Ok(ArtifactSaveAsResult { status: "SAVED" })
@@ -347,6 +345,28 @@ fn valid_media_type(value: &str) -> bool {
         && value.contains('/')
 }
 
+fn verify_artifact_download(
+    response_media_type: Option<&str>,
+    response_content_length: Option<u64>,
+    expected_media_type: &str,
+    expected_size: u64,
+    expected_digest: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    if response_media_type.is_none_or(|value| !value.eq_ignore_ascii_case(expected_media_type)) {
+        return Err("Downloaded Artifact media type does not match its immutable version".to_owned());
+    }
+    if response_content_length != Some(expected_size) || bytes.len() as u64 != expected_size {
+        return Err("Downloaded Artifact size does not match its immutable version".to_owned());
+    }
+    use sha2::{Digest, Sha256};
+    let actual_digest = format!("sha256:{:x}", Sha256::digest(bytes));
+    if actual_digest != expected_digest {
+        return Err("Downloaded Artifact digest does not match its immutable version".to_owned());
+    }
+    Ok(())
+}
+
 fn safe_export_name(display_name: &str, artifact_id: &str, version: u64) -> String {
     let leaf = display_name.rsplit(['/', '\\']).next().unwrap_or_default();
     let mut safe: String = leaf
@@ -417,6 +437,73 @@ pub(crate) fn write_export_atomically(destination: &Path, bytes: &[u8]) -> Resul
         return Err("File could not be saved to the selected location".to_owned());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod save_as_tests {
+    use super::*;
+    use sha2::Digest;
+
+    #[test]
+    fn native_save_as_rejects_bytes_that_do_not_match_the_pinned_digest() {
+        let expected_digest = format!("sha256:{:x}", sha2::Sha256::digest(b"expected"));
+        let result = verify_artifact_download(
+            Some("text/plain"),
+            Some(8),
+            "text/plain",
+            8,
+            &expected_digest,
+            b"tamper??",
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn native_save_as_accepts_bytes_matching_pinned_media_size_and_digest() {
+        let expected_digest = format!("sha256:{:x}", sha2::Sha256::digest(b"expected"));
+        let result = verify_artifact_download(
+            Some("text/plain"),
+            Some(8),
+            "text/plain",
+            8,
+            &expected_digest,
+            b"expected",
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn native_save_as_rejects_media_and_size_mismatches() {
+        let expected_digest = format!("sha256:{:x}", sha2::Sha256::digest(b"expected"));
+        assert!(verify_artifact_download(
+            Some("application/octet-stream"), Some(8), "text/plain", 8, &expected_digest, b"expected"
+        ).is_err());
+        assert!(verify_artifact_download(
+            Some("text/plain"), Some(7), "text/plain", 8, &expected_digest, b"expected"
+        ).is_err());
+        assert!(verify_artifact_download(
+            Some("text/plain"), Some(8), "text/plain", 8, &expected_digest, b"short"
+        ).is_err());
+    }
+
+    #[test]
+    fn failed_native_save_as_rename_preserves_existing_destination() {
+        use std::{fs, time::SystemTime};
+
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("litecowork-save-as-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let destination = root.join("existing");
+        fs::create_dir(&destination).unwrap();
+        let result = write_export_atomically(&destination, b"replacement");
+
+        assert!(result.is_err());
+        assert!(destination.is_dir());
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 /// Narrow read-only bridge. Native transport details and arbitrary request paths are
