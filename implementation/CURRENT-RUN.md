@@ -10,6 +10,40 @@ what was true at their timestamps. V1 is the complete desktop/local product. Clo
 continuation and remote Runtime are post-V1 and excluded from the V1 release gate; local
 capabilities already committed in the architecture remain in V1 scope.
 
+### Current parallel implementation handoff — 2026-10-09
+
+Integrated on `main` after review:
+
+- `7430fb2` qualifies the OpenCode 2.0.26 V2 HTTP profile/session transport. Its focused
+  daemon tests passed 13/13, daemon `cargo check` and formatting passed, and architecture,
+  implementation-plan, and coverage validators passed. The official V2 API remains
+  experimental/beta; this adapter does not admit Conversation or Task provider dispatch.
+- `98a1822` verifies native Save As bytes against the pinned ArtifactVersion digest, media
+  type, and size before writing, and reports Saved/Cancelled separately. Four focused
+  Tauri Rust tests, 94 UI tests, `pnpm build`, and all three documentation validators
+  passed. Live daemon/picker interaction, OS qualification, overwrite/failure acceptance,
+  and owner acceptance remain open; E08-S07 remains partial.
+
+After integration, the main-tree validators passed: architecture validation (141 typed
+events), implementation-plan validation (60 stories / 5,317 coverage rows), and coverage
+validation (79 documents / 1,097 sections). These prove contract consistency, not provider,
+daemon, or desktop product acceptance.
+
+In-flight work is isolated in worktrees and is not integrated yet:
+
+- `codex/trust-decision-contract` has the exact-action Trust contract plus a private Rust
+  evaluator under active test/review. The evaluator currently has no admission call site;
+  policy context, audit-event conformance, and storage binding remain unresolved. Do not
+  treat an ALLOW result from this isolated evaluator as dispatch authority.
+- `codex/e04-invocation-writer` is implementing the persisted CapabilityInvocation state
+  transition boundary. Effect STARTED and all provider dispatch must remain closed until
+  Trust, Invocation, ApprovalUse, Effect, lease, and Environment proofs commit together.
+
+The remaining release-critical gap is still a real, bounded native-agent execution path
+through Task/Attempt admission, Environment/process containment, active lease, Trust and
+Effect/Invocation transactions, result import, verification, and restart recovery. UI shell
+layout work remains deferred until the owner supplies the planned design mock.
+
 ### Artifact download filename usability slice (2026-10-09)
 
 The Workbench's ordinary browser download now preserves the selected immutable version's
