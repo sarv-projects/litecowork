@@ -3499,3 +3499,42 @@ Verified on the current Ubuntu development host with Bubblewrap 0.9.0 and uv's P
 This is Linux-host parser containment evidence only. It does not qualify other Linux
 distributions or operating systems, prove hostile ZIP extraction safety, connect ZIP intake
 to a daemon/API/UI flow, or complete E06-S01.
+
+## Conversation catalog and OpenCode profile-probe increments — 2026-10-09
+
+The desktop now has a durable, Workspace-scoped Conversation catalog: owner-authenticated
+create/list/read routes, SQLite aggregate/event/idempotency commit, bounded keyset paging,
+Tauri bridge commands, and a read-only conversation-history view. The page explicitly keeps
+message sending disabled until native AgentSession/turn admission is integrated; no agent
+reply is simulated. The SQLite create route runs on Tokio's blocking pool so blob/storage
+work does not occupy an async reactor thread.
+
+OpenCode profile-probe projection now treats attempted read failures as `UNKNOWN`, bounds
+provider/model lists, rejects obvious account/credential-like provider/model IDs and display
+names, and distinguishes OpenCode-reported provider connection from authentication and model
+entitlement. A real no-inference smoke using isolated HOME/XDG on OpenCode 2.0.26 found
+`/api/provider` and `/api/model` return v2 JSON envelopes, while the legacy probe routes
+`/provider` and `/config/providers` return the SPA's HTML fallback. The adapter correctly
+keeps this installation unqualified/incompatible; no unreviewed v2 interpretation was added.
+
+Verified after integration on the current Linux development host:
+
+- `cargo check --locked -p litecoworkd` — passed (existing unused/dead-code warnings remain).
+- `cargo test --locked -p storage-sqlite conversation_create_is_durable_idempotent_and_workspace_scoped -- --nocapture`
+  — 1 passed: durable creation, exact idempotent replay, single event, owner scope.
+- `cargo test --locked -p litecoworkd agents::opencode_profile_probe::tests -- --nocapture`
+  — 8 passed.
+- `node --experimental-transform-types --test apps/litecowork-ui/tests/*.test.ts` — 67
+  passed, including Conversation parsing and exact Artifact comparison.
+- `pnpm --config.verifyDepsBeforeRun=false build` — passed; Vite reports the main chunk is
+  over 500 kB.
+- `cargo fmt --check --all`, `git diff --check`, the architecture validator and the
+  implementation-plan validator passed. Coverage reports 79 documents, 1,096 sections,
+  5,313 traceability rows, and 60 stories.
+
+Tauri bridge Rust compilation remains unverified: a first-time `cargo check` for the Tauri
+manifest was stopped after 6m18s while still compiling GTK/WebKit/Wry dependencies and before
+LiteCowork source was reached. The Conversation route/UI has no provider-backed turn send,
+streaming, retry/cancel, or owner real-user acceptance. OpenCode remains a diagnostics-only,
+incompatible profile on the installed v2.0.26 build; neither adapter has Task execution or
+safe-switching qualification from this increment.
