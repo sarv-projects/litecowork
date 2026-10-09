@@ -10896,7 +10896,7 @@ where
     let draft = draft.borrow();
     let state_ref = state_ref.borrow();
     if draft.schema_version != 1
-        || !draft.event_type.ends_with(".v1")
+        || !valid_domain_event_type(&draft.event_type)
         || draft.workspace_id.trim().is_empty()
         || draft.entity_id.trim().is_empty()
         || draft.origin_runtime_id.trim().is_empty()
@@ -10951,6 +10951,20 @@ where
             event.recorded_at, event.payload_digest],
     ).map_err(map_database_error)?;
     Ok(event)
+}
+
+fn valid_domain_event_type(event_type: &str) -> bool {
+    let Some((name, version)) = event_type.rsplit_once(".v") else {
+        return false;
+    };
+    !name.is_empty()
+        && version.parse::<u32>().is_ok_and(|version| version > 0)
+        && name.split('.').all(|segment| {
+            !segment.is_empty()
+                && segment.chars().all(|ch| {
+                    ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-'
+                })
+        })
 }
 
 fn load_agent_session(

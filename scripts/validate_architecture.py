@@ -784,8 +784,17 @@ def check_async_capability_contract() -> None:
         if "provider_task_ref" in invocation or "provider_cursor" in invocation:
             fail("OpenAPI must not expose Runtime-private provider task handles or resume cursors")
         turn_event = payloads.get("conversation_turn_settled", {}).get("properties", {}).get("to", {}).get("enum", [])
-        if "WAITING_DEPENDENCY" not in turn_event:
-            fail("conversation.turn.settled.v1 must include WAITING_DEPENDENCY in the turn status enum")
+        if set(turn_event) != {"COMPLETED", "FAILED", "CANCELLED"}:
+            fail("conversation.turn.settled.v1 must contain only terminal ConversationTurn statuses")
+        status_changed = payloads.get("conversation_turn_status_changed", {})
+        if "reason_code" not in status_changed.get("required", []):
+            fail("conversation.turn.status.changed.v1 must require a reason_code")
+        status_changed_to = status_changed.get("properties", {}).get("to", {}).get("enum", [])
+        if not status_changed_to or set(status_changed_to) & {"COMPLETED", "FAILED", "CANCELLED"}:
+            fail("conversation.turn.status.changed.v1 must be limited to nonterminal target states")
+        status_changed_from = status_changed.get("properties", {}).get("from", {}).get("enum", [])
+        if set(status_changed_from) != {"OPEN", "RUNNING", "WAITING_USER", "WAITING_DEPENDENCY"}:
+            fail("conversation.turn.status.changed.v1 source states must exclude terminal/cancellation/retry states")
         request = schemas["UserRequest"]
         required = set(request.get("required", []))
         if "conversation_id" in required:

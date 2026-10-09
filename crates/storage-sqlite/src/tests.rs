@@ -1,3 +1,5 @@
+#[path = "conversation_turn_tests.rs"]
+mod conversation_turn_tests;
 #[path = "rich_presentation_tests.rs"]
 mod rich_presentation_tests;
 use super::*;

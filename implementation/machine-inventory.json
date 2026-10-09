@@ -406,7 +406,11 @@
     },
     {
       "name": "conversation_turn_settled",
-      "sha256": "bbd7e2b50b6dac78513ddf202140520a106390b71b3fbea49b74afcaf0ec386c"
+      "sha256": "49482c0fcfe53722842ad2792839a9ab5c5c0f63011a3a8333d6e963b1f298d8"
+    },
+    {
+      "name": "conversation_turn_status_changed",
+      "sha256": "d9e95e6b2aac6d7bf98d50cac527285a1a22ac2ab02055c53541534137356124"
     },
     {
       "name": "coworker_created",
@@ -800,7 +804,7 @@
     },
     {
       "name": "payloads",
-      "sha256": "dfadef742c4b23b8ae0b05f52ed6fbe34196843716a2e0f2ab91432a24383b2f"
+      "sha256": "6acdb27ff5a8acfc7abaabb9277e6e850dcf5e41443a7ce4448ce66db1ee1b79"
     },
     {
       "name": "pinned_resource_ref",
@@ -924,6 +928,7 @@
     "conversation_turn_resumed",
     "conversation_turn_retried",
     "conversation_turn_settled",
+    "conversation_turn_status_changed",
     "coworker_created",
     "coworker_revised",
     "coworker_status_changed",
@@ -1066,6 +1071,7 @@
     "conversation.turn.resumed.v1",
     "conversation.turn.retried.v1",
     "conversation.turn.settled.v1",
+    "conversation.turn.status.changed.v1",
     "coworker.created.v1",
     "coworker.revised.v1",
     "coworker.status.changed.v1",

@@ -55,7 +55,8 @@ directed to connect/enable/select an AgentBinding before a turn is created.
 Events: `conversation.message.added.v1`, `conversation.turn.created.v1`,
 `agent.session.started.v1`, `agent.session.closed.v1`, `user.request.created.v1`,
 `user.request.resolved.v1`, `conversation.turn.retried.v1`,
-`conversation.turn.resumed.v1`, `conversation.turn.settled.v1`, and any applicable
+`conversation.turn.resumed.v1`, `conversation.turn.status.changed.v1`,
+`conversation.turn.settled.v1`, and any applicable
 `capability.invocation.*.v1`.
 
 No Task/Step/Attempt/ExecutionLease is created. A Conversation-scoped Gateway credential

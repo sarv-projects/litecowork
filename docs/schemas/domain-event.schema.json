@@ -1603,13 +1603,8 @@
           "to": {
             "type": "string",
             "enum": [
-              "OPEN",
-              "RUNNING",
-              "WAITING_USER",
-              "WAITING_DEPENDENCY",
               "COMPLETED",
               "FAILED",
-              "CANCEL_REQUESTED",
               "CANCELLED"
             ]
           },
@@ -8580,6 +8575,19 @@
           }
         },
         "additionalProperties": false
+      },
+      "conversation_turn_status_changed": {
+        "type": "object",
+        "required": ["turn_id", "from", "to", "reason_code", "aggregate_version"],
+        "properties": {
+          "turn_id": { "type": "string", "minLength": 1 },
+          "from": { "type": "string", "enum": ["OPEN", "RUNNING", "WAITING_USER", "WAITING_DEPENDENCY"] },
+          "to": { "type": "string", "enum": ["RUNNING", "WAITING_USER", "WAITING_DEPENDENCY", "CANCEL_REQUESTED"] },
+          "reason_code": { "type": "string", "minLength": 1 },
+          "agent_session_id": { "type": "string", "minLength": 1 },
+          "aggregate_version": { "type": "integer", "minimum": 1 }
+        },
+        "additionalProperties": false
       }
     },
     "provenance_transformation": {
@@ -11488,6 +11496,15 @@
             "$ref": "#/$defs/payloads/conversation_turn_created_v2"
           }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "conversation.turn.status.changed.v1" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": { "payload": { "$ref": "#/$defs/payloads/conversation_turn_status_changed" } }
       }
     }
   ],

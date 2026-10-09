@@ -222,10 +222,10 @@ ARCH_DOC,docs/DATA-MODEL.md,E01-S02,"Architecture contract; file sha256:f27e042c
 ARCH_DOC,docs/DELEGATION.md,E05-S04,"Architecture contract; file sha256:a4195a4d2ac6470370cabd7f52179555ccab7db22a5b6cfc00e5e1942490a7dd; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/DESIGN-SYSTEM.md,E08-S05,"Architecture contract; file sha256:791d298ac0bee2199ba81de30c5e6539f82fa65c174f0eefa577481de86c4b3e; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/ENVIRONMENTS.md,E07-S01,"Architecture contract; file sha256:f710eeb2cd54e2ae725ad06eb7f9a571342ca1923a66a2127ecea8fefcd6cb13; section rows below map implementation guardians, not completion."
-ARCH_DOC,docs/EVENTS.md,E01-S02,"Architecture contract; file sha256:991bf8532b11ce4ef39a41ce656e5252f0d90f773082d29b5805e7a9c3da4b65; section rows below map implementation guardians, not completion."
+ARCH_DOC,docs/EVENTS.md,E01-S02,"Architecture contract; file sha256:731eabc4487591c6eb963f224cca159def95d9ca8c0464a45bb73aec775ff5ab; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/EXPERIENCE.md,E08-S04,"Architecture contract; file sha256:ab5eacab4834bdf580c83c28d9246627b493123fe15a9c854d8461a1b275aa4d; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/FAILURE-RECOVERY.md,E13-S02,"Architecture contract; file sha256:0943d6dba90659deba885e6822dc1e81b401bdbcd59ecf2416bca88ae6a54031; section rows below map implementation guardians, not completion."
-ARCH_DOC,docs/FLOWS.md,E13-S03,"Architecture contract; file sha256:c432277a55244a7ad92bec2bfe6b71d0d65b36ef19d3bf6fa8c4a3212c817cab; section rows below map implementation guardians, not completion."
+ARCH_DOC,docs/FLOWS.md,E13-S03,"Architecture contract; file sha256:da8699ceded0c055c6eefa81c1a2769b77e4080cdffdb2c347cca4e0b8c58cfa; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/HOST-GUIDANCE.md,E08-S08,"Architecture contract; file sha256:203cdbf1766561ea457c50aeae30ddbe775cce39f622e249e829c15434dc019a; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/IMPLEMENTATION.md,E01-S01,"Architecture contract; file sha256:886a18fbf62ca844f85a85c5353ec3dd7bef1c7e9a7ff2b8d54dc871b8752a89; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/LOCAL-OPERATOR-IPC.md,E01-S04,"Architecture contract; file sha256:7deef6c0e6356ef4a7e950b92d4998ddcf6d938967d2d2f01cb09ce3ae3e7ea8; section rows below map implementation guardians, not completion."
@@ -425,11 +425,11 @@ BENCHMARK,B88 Long-running local Task workload,E13-S03,Qualify restart/sleep/rec
 BENCHMARK,B89 Rich Response security and recovery gauntlet,E08-S08,"Exercise semantic fallback, untrusted content, stale frames, and immutable downloads."
 BENCHMARK,B90 Local Environment containment and restart recovery,E07-S00,"Qualify exact-root OS containment, descendant-writer quiescence, and restart recovery for the local provider."
 CONTRACT_FILE,docs/schemas/delegation.schema.json,E05-S01,machine contract/tooling file sha256:46fb9f3a4611576e98480e5d9142caab81a208aca85e8e9d060cc57a08fef0e1; exact objects are enumerated below.
-CONTRACT_FILE,docs/schemas/domain-event.schema.json,E01-S02,machine contract/tooling file sha256:44300c84c15871edf64cb780a6975445e5284e8f151ddbea45c490c55d20a785; exact objects are enumerated below.
+CONTRACT_FILE,docs/schemas/domain-event.schema.json,E01-S02,machine contract/tooling file sha256:2f5152444e5e9a9ed10b9679b9b69d9ad1e1eb491a8a7b98dcdfadf7be5b06aa; exact objects are enumerated below.
 CONTRACT_FILE,docs/schemas/error-codes.schema.json,E01-S04,machine contract/tooling file sha256:0ee5780fd0a18a0c306ab610220991fa33651eb6e31bf10485a476d1446484dc; exact objects are enumerated below.
 CONTRACT_FILE,docs/schemas/operator-api.openapi.yaml,E01-S04,machine contract/tooling file sha256:8ecd4acc7a4289e9e6ad2a566444e8f481f4a1c46bbd48ae6c20b824c4f08f69; exact objects are enumerated below.
 CONTRACT_FILE,docs/schemas/sqlite-v1.sql,E01-S02,machine contract/tooling file sha256:95e88db5fb02e239d8a61ffdda024d4f836ec069ee78233420f593c8fc58c2f6; exact objects are enumerated below.
-CONTRACT_FILE,scripts/validate_architecture.py,E01-S01,machine contract/tooling file sha256:6f3af4018630520d2c5767bf2659f139247a319defae81721fe40c58744b6cd9; exact objects are enumerated below.
+CONTRACT_FILE,scripts/validate_architecture.py,E01-S01,machine contract/tooling file sha256:b5cdad1def48ac757d540a8500f69483fe90d345399cfe49973e116534e10107; exact objects are enumerated below.
 DOC_SECTION,AGENTS.md## LiteCowork Repository Instructions,E01-S01,section sha256:e283b231b78cea2fd21acc56a1bd92aa6cacc35c12624821ccbec57e26248864; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,AGENTS.md### Architecture authority,E01-S01,section sha256:a205b11e6d66b137c31fe9340f8dcfa21cd6af4ac8dd4d982a55f6a4907fb52b; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,AGENTS.md### Archives and Git,E01-S01,section sha256:7661a81143df7940566fb7f248d865918541ab91498b90e868d34612467499cb; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -804,8 +804,8 @@ DOC_SECTION,docs/ENVIRONMENTS.md#### Local Task execution isolation,E07-S01,sect
 DOC_SECTION,docs/ENVIRONMENTS.md#### LocalWorkspace,E07-S01,section sha256:8c1dbea7d9c62c913c9ec225d0c9ecd64260ee9b80e3709f597f96c77650a8fc; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/ENVIRONMENTS.md#### RemoteMachine,E07-S01,section sha256:c9733e97981e8661cb7fd82d6b30171429b2d59d7c025d5a44dbe108c313a3d2; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/ENVIRONMENTS.md#### VM,E07-S01,section sha256:3ff635a45f66f6c78e9c714b4f1bba136702b107a6782ee338450bf6bbe5cae1; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/EVENTS.md## Event Journal and Event Schemas,E01-S02,section sha256:991bf8532b11ce4ef39a41ce656e5252f0d90f773082d29b5805e7a9c3da4b65; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/EVENTS.md### Durable event registry,E01-S02,section sha256:7d9b93d6b9b46adca39302cdc11fa566c69ebbb9a544d3361739a45740f2a70f; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/EVENTS.md## Event Journal and Event Schemas,E01-S02,section sha256:731eabc4487591c6eb963f224cca159def95d9ca8c0464a45bb73aec775ff5ab; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/EVENTS.md### Durable event registry,E01-S02,section sha256:f70333e8f7781df226a92dd088b0b3fb8fa25c879e02fda90600e83a39913c1f; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/EVENTS.md### Envelope,E01-S02,section sha256:405a8dcb1bbfebdbd01537c39717dbceb0ea715210a133cbe9283b051367a55f; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/EVENTS.md### Ephemeral streams,E01-S02,section sha256:d6d08a1c49afdd435b469ad9c8bfbd4cd4f757654373b82be17179d53a54c0b8; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/EVENTS.md### Event versioning,E01-S02,section sha256:86799d71503f986f6135635725b79faccc1f39c30c97ae6c2db582f90d2a34d8; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -860,9 +860,9 @@ DOC_SECTION,docs/FAILURE-RECOVERY.md### Split-brain defense,E13-S02,section sha2
 DOC_SECTION,docs/FAILURE-RECOVERY.md#### Never auto-retry without user/policy,E13-S02,section sha256:7ea83353dbe6cd7aaabae90ccffbbb9662f8b5b90f8152072e52e4cdd58f1259; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/FAILURE-RECOVERY.md#### Reconcile first,E13-S02,section sha256:a448c8b88fff575b18e87a438e9a7ec2e6e16c211850984a2ed393e4376f2c29; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/FAILURE-RECOVERY.md#### Safe automatic retry,E13-S02,section sha256:e2d1e7147f490e93b2b64cf035be1b73eabf6749c3549dc48e49900c6e0b2de2; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/FLOWS.md## End-to-End Flows,E13-S03,section sha256:c432277a55244a7ad92bec2bfe6b71d0d65b36ef19d3bf6fa8c4a3212c817cab; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/FLOWS.md## End-to-End Flows,E13-S03,section sha256:da8699ceded0c055c6eefa81c1a2769b77e4080cdffdb2c347cca4e0b8c58cfa; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,"docs/FLOWS.md### F00 — Workspace creation, replication policy, and archive",E11-S03,section sha256:e972d8815909bbc1e44fe14ba0eb246dcd473fbf50b9a7137aff15aa94480fd5; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,"docs/FLOWS.md### F01 — Simple conversation, no Task",E03-S03,section sha256:99e23dc68f7b7a67be3eee2c6458189c86f0e8308eecae005b853afb7a972a11; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,"docs/FLOWS.md### F01 — Simple conversation, no Task",E03-S03,section sha256:fed88579ecbcff098a394536d1da33130a48be894352c5b8a8180c2e5040f175; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/FLOWS.md### F02 — Conversation materializes a Task,E03-S03,section sha256:c83b81c34b65dbb092e7a96bb878d8dc55690f6009eab7563cfa7bfa17b92863; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/FLOWS.md### F03 — Local Task happy path,E03-S03,section sha256:a819b10f4130f946d4340ee94c5733b4cd302b69f49a23fdb7607c7b84829a5b; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/FLOWS.md### F04 — Capability discovery and direct attachment,E04-S05,section sha256:93caad7edb69c7cf58ba98f728ca7956d605386b7d989882ee4851cfefb40211; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -1635,7 +1635,7 @@ EVENT_DEF,domain-event.schema.json#channel_host_continuity_proof_ref,E01-S02,sha
 EVENT_DEF,domain-event.schema.json#channel_host_drain_proof_ref,E01-S02,shared event schema definition sha256:b2f16afc7c66fe0048a6077abb653e92d96b17403657bd27723c00a9d51d2409.
 EVENT_DEF,domain-event.schema.json#error_code,E01-S02,shared event schema definition sha256:8c5d6b1aec3647b2f6795e04aca7632546d004b52f4b64f17d09fae38d66fd90.
 EVENT_DEF,domain-event.schema.json#folder_import_metadata,E01-S02,shared event schema definition sha256:2728efd3805166348b2474d33e4a662901d19aab7eb4d529b5e472d88e3386a3.
-EVENT_DEF,domain-event.schema.json#payloads,E01-S02,shared event schema definition sha256:dfadef742c4b23b8ae0b05f52ed6fbe34196843716a2e0f2ab91432a24383b2f.
+EVENT_DEF,domain-event.schema.json#payloads,E01-S02,shared event schema definition sha256:6acdb27ff5a8acfc7abaabb9277e6e850dcf5e41443a7ce4448ce66db1ee1b79.
 EVENT_DEF,domain-event.schema.json#pinned_resource_ref,E01-S02,shared event schema definition sha256:77944cd6d815f29aeae771ebde3157eedeadd09a2d73b9df4fb1716197a23871.
 EVENT_DEF,domain-event.schema.json#principal_or_service_ref,E01-S02,shared event schema definition sha256:635bec24d93c37b7835975222fdc169aac691c3245fdcbe72cec09bc0c7470f9.
 EVENT_DEF,domain-event.schema.json#principal_ref,E01-S02,shared event schema definition sha256:8fa63f0ea3f2185416cfce39d42005784cf5be9cc330990d09cfc51e493028fb.
@@ -1698,7 +1698,8 @@ EVENT_PAYLOAD,domain-event.schema.json#payloads/conversation_turn_created,E03-S0
 EVENT_PAYLOAD,domain-event.schema.json#payloads/conversation_turn_created_v2,E03-S02,payload sha256:1c705c193bcc6e6665c730dc01cbb27125be779b0d26344aae6cf861c066ea28; mapped from conversation.turn.created.v2.
 EVENT_PAYLOAD,domain-event.schema.json#payloads/conversation_turn_resumed,E03-S02,payload sha256:99c4d63b925798b1a37c27b8b6af991c30ceb8b00426536c501ff6200fad3014; mapped from conversation.turn.resumed.v1.
 EVENT_PAYLOAD,domain-event.schema.json#payloads/conversation_turn_retried,E03-S02,payload sha256:38de8f55a5299584b385c7e5a5cacc076e474be65f48c75ac8fb0cefcb705d4a; mapped from conversation.turn.retried.v1.
-EVENT_PAYLOAD,domain-event.schema.json#payloads/conversation_turn_settled,E03-S02,payload sha256:bbd7e2b50b6dac78513ddf202140520a106390b71b3fbea49b74afcaf0ec386c; mapped from conversation.turn.settled.v1.
+EVENT_PAYLOAD,domain-event.schema.json#payloads/conversation_turn_settled,E03-S02,payload sha256:49482c0fcfe53722842ad2792839a9ab5c5c0f63011a3a8333d6e963b1f298d8; mapped from conversation.turn.settled.v1.
+EVENT_PAYLOAD,domain-event.schema.json#payloads/conversation_turn_status_changed,E03-S02,payload sha256:d9e95e6b2aac6d7bf98d50cac527285a1a22ac2ab02055c53541534137356124; mapped from conversation.turn.status.changed.v1.
 EVENT_PAYLOAD,domain-event.schema.json#payloads/coworker_created,E08-S01,payload sha256:e98f2e039cfc94d995e3a351063a241d798a6c1940b544cc6c61aad6a08a3347; mapped from coworker.created.v1.
 EVENT_PAYLOAD,domain-event.schema.json#payloads/coworker_revised,E08-S01,payload sha256:e1367babf278b7ffbb8d3b9e7e318c8e43cf1eedca00e2ce92b99c31a7e6e703; mapped from coworker.revised.v1.
 EVENT_PAYLOAD,domain-event.schema.json#payloads/coworker_status_changed,E08-S01,payload sha256:dcfcaa308303ba117234bd9feebdaf2882fd84c35b01535b7ad7babce32f6afd; mapped from coworker.status.changed.v1.
@@ -1839,6 +1840,7 @@ EVENT_TYPE,conversation.turn.created.v2,E03-S02,registered domain event; paired 
 EVENT_TYPE,conversation.turn.resumed.v1,E03-S02,registered domain event; paired payload conversation_turn_resumed.
 EVENT_TYPE,conversation.turn.retried.v1,E03-S02,registered domain event; paired payload conversation_turn_retried.
 EVENT_TYPE,conversation.turn.settled.v1,E03-S02,registered domain event; paired payload conversation_turn_settled.
+EVENT_TYPE,conversation.turn.status.changed.v1,E03-S02,registered domain event; paired payload conversation_turn_status_changed.
 EVENT_TYPE,coworker.created.v1,E08-S01,registered domain event; paired payload coworker_created.
 EVENT_TYPE,coworker.revised.v1,E08-S01,registered domain event; paired payload coworker_revised.
 EVENT_TYPE,coworker.status.changed.v1,E08-S01,registered domain event; paired payload coworker_status_changed.

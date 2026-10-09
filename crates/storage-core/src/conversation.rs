@@ -1,4 +1,5 @@
 use crate::{DomainEvent, EventDraft, StoreError, WorkspaceCreateRequest};
+use domain_conversation::{ConversationTurn, TurnCommand};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -54,6 +55,63 @@ pub trait ConversationStore: Send + Sync {
         after_conversation_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ConversationRecord>, StoreError>;
+}
+
+/// A USER message committed with its OPEN turn. JSON values retain the public
+/// PrincipalRef, MessageContentBlock, ResourceRef, and channel reference shapes.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConversationMessageRecord {
+    pub message_id: String,
+    pub conversation_id: String,
+    pub author: Value,
+    pub role: String,
+    pub agent_session_id: Option<String>,
+    pub agent_binding_id: Option<String>,
+    pub turn_id: Option<String>,
+    pub content: Value,
+    pub resource_refs: Value,
+    pub source_channel_ref: Option<Value>,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateConversationTurnCommit {
+    pub request: WorkspaceCreateRequest,
+    pub principal_id: String,
+    pub workspace_id: String,
+    pub message: ConversationMessageRecord,
+    pub turn: ConversationTurn,
+    pub message_event: EventDraft,
+    pub turn_event: EventDraft,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommittedConversationTurn {
+    pub message: ConversationMessageRecord,
+    pub turn: ConversationTurn,
+    pub events: Vec<DomainEvent>,
+}
+
+pub trait ConversationTurnStore: Send + Sync {
+    fn create_conversation_turn(
+        &self,
+        commit: CreateConversationTurnCommit,
+    ) -> Result<CommittedConversationTurn, StoreError>;
+
+    /// Only lifecycle changes with a canonical event in EVENTS.md are accepted here.
+    /// Native session admission and the OPEN -> RUNNING start command remain closed.
+    fn transition_conversation_turn(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        conversation_id: &str,
+        turn_id: &str,
+        expected_version: u64,
+        command: TurnCommand,
+        event: EventDraft,
+    ) -> Result<ConversationTurn, StoreError>;
 }
 
 pub fn validate_conversation_record(record: &ConversationRecord) -> Result<(), StoreError> {

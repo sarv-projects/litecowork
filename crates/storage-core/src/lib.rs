@@ -22,8 +22,9 @@ pub use artifact::{
 };
 pub mod conversation;
 pub use conversation::{
-    CommittedConversation, ConversationPage, ConversationRecord, ConversationStore,
-    CreateConversationCommit,
+    CommittedConversation, CommittedConversationTurn, ConversationMessageRecord, ConversationPage,
+    ConversationRecord, ConversationStore, ConversationTurnStore, CreateConversationCommit,
+    CreateConversationTurnCommit,
 };
 
 mod effect_evidence;

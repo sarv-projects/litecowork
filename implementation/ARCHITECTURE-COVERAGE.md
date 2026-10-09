@@ -13,7 +13,7 @@ domain owners still apply. Story status tracks planning through owner acceptance
 - 137 flows and 90 benchmarks.
 - 196 OpenAPI operations and 316 component schemas; 0 components are unreachable from every Operator operation.
 - 99 error codes; 251 shared IDs/value definitions.
-- 140 event types and 139 typed event payload schemas.
+- 141 event types and 140 typed event payload schemas.
 - 107 SQLite tables, 1172 columns, 475 foreign-key columns, 68 unique constraints, 348 checks, 1 view(s), 140 triggers, and 76 indexes.
 
 Machine-object names and canonical digests are compared to current source contracts by

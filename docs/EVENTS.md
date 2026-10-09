@@ -161,6 +161,7 @@ conversation.turn.created.v1
 conversation.turn.created.v2 # includes immutable PresentationPreference
 conversation.turn.retried.v1
 conversation.turn.resumed.v1
+conversation.turn.status.changed.v1
 conversation.turn.settled.v1
 rich.presentation.published.v1
 
@@ -360,6 +361,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `rich.presentation.published` | `presentation_id`, `conversation_id`, `message_id`, `schema_version`, `renderer_contract_version`, `semantic_content_digest`, `document_digest`, `document_size_bytes`, `producer_agent_session_id?`, `host_instruction_digest?`, `host_skill_refs[]`, `aggregate_version` |
 | `conversation.turn.retried` | `turn_id`, `prior_agent_session_id?`, `agent_session_id`, `retry_ordinal`, `aggregate_version` |
 | `conversation.turn.resumed` | `turn_id`, `user_request_id`, `prior_agent_session_id?`, `agent_session_id`, `aggregate_version` |
+| `conversation.turn.status.changed` | `turn_id`, `from`, `to`, `reason_code`, `agent_session_id?`, `aggregate_version` |
 | `conversation.turn.settled` | `turn_id`, `from`, `to`, `reason_code?`, `agent_session_id?`, `aggregate_version` |
 | `task.spec.revised` | `task_id`, `revision`, `parent_revisions[]`, `spec_digest`, `authored_by` |
 | `task.plan.revised` | `task_id`, `revision`, `task_spec_revision`, `produced_by_agent_session_id`, `produced_by_attempt_id?`, `step_ids[]`, `aggregate_version` |
@@ -441,6 +443,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `effect.verified` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
 | `resource.created.v2` | `resource_id`, `workspace_id`, `kind`, `identity_digest?`, `provenance`, `aggregate_version`, `context_document?` |
 | `resource.revision.created` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `content_digest`, `size_bytes`, `media_type`, `created_by`, `aggregate_version` |
+
 | `task.created` | `task_id`, `conversation_id?`, `initial_spec_revision`, `created_by`, `origin_coworker_id`, `origin_coworker_revision`, `routine_id?`, `routine_revision?`, `automation_id?`, `automation_occurrence_id?` |
 | `workspace.primary_coworker.changed` | `workspace_id`, `from_coworker_id`, `to_coworker_id`, `changed_by`, `aggregate_version` |
 | `suggestion.preference.changed` | `workspace_id`, `kind`, `from_muted`, `to_muted`, `changed_by`, `aggregate_version` |
@@ -462,6 +465,11 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `suggestion.visibility.changed` | `suggestion_id`, `from_snoozed_until`, `to_snoozed_until`, `changed_by`, `aggregate_version` |
 | `demonstration.status.changed` | `demonstration_session_id`, `environment_id`, `from`, `to`, `capture_policy_digest`, `captured_action_count`, `captured_trace_bytes`, `trace_resource_id?`, `skill_proposal_id?`, `aggregate_version` |
 | `environment.sharing_scope.changed` | `environment_id`, `from`, `to`, `changed_by`, `aggregate_version` |
+
+`conversation.turn.status.changed` records nonterminal state changes. Its `to` values are
+`RUNNING`, `WAITING_USER`, `WAITING_DEPENDENCY`, and `CANCEL_REQUESTED`; `reason_code` is
+required. `conversation.turn.settled` is reserved for terminal outcomes, and its `to`
+values are `COMPLETED`, `FAILED`, and `CANCELLED`.
 
 `channel.host.assignment.changed.v1` remains unchanged. New assignment history that needs
 source-release or ingress-gap provenance uses `channel.host.assignment.changed.v2`; the

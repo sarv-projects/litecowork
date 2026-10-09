@@ -1782,6 +1782,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 name = "storage-core"
 version = "0.1.0"
 dependencies = [
+ "domain-conversation",
  "domain-effects",
  "domain-responsibility",
  "serde",
@@ -1793,6 +1794,7 @@ name = "storage-sqlite"
 version = "0.1.0"
 dependencies = [
  "chacha20poly1305",
+ "domain-conversation",
  "domain-effects",
  "domain-environment",
  "domain-responsibility",

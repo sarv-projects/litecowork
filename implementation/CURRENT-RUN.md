@@ -16,7 +16,8 @@ capabilities already committed in the architecture remain in V1 scope.
 machine; its `cargo test -p domain-conversation` (8 tests) and strict Clippy check pass.
 It handles explicit retry with a fresh AgentSession, user/dependency waits, provider
 request-again, cancellation races, and terminal settlement. This is not yet connected to
-Conversation message/turn persistence or dispatch.
+Operator submission or provider dispatch. Its decisions are now consumed by the bounded
+SQLite persistence slice documented immediately below.
 
 The Codex Conversation safety probe and Agent Settings diagnostic are integrated. It
 requires proof of all six controls and currently returns `NOT_ELIGIBLE`; missing,
@@ -35,6 +36,29 @@ scripts/validate_architecture.py` passed (140 typed events and all machine contr
 The daemon build reports existing unused/dead-code warnings in unfinished modules; they
 did not fail this focused test.
 
+### ConversationTurn SQLite persistence boundary (2026-10-09)
+
+`storage-core` now exposes a `ConversationTurnStore`; SQLite commits an authenticated
+Workspace owner's USER `ConversationMessage`, initial OPEN `ConversationTurn`,
+`conversation.message.added.v1`, `conversation.turn.created.v2`, Conversation version
+update, aggregate snapshots, and request replay receipt in one transaction. Admission
+requires the active enabled/lead-eligible Conversation AgentBinding and a matching event
+binding ID. Exact request replay returns the original receipt. Version-CAS transitions use
+the pure `domain-conversation` lifecycle and emit the existing retry/resume/settled events;
+`conversation.turn.status.changed.v1` now records nonterminal transitions, while
+`conversation.turn.settled.v1` is restricted to terminal targets. Resume/retry require an
+already persisted ACTIVE session scoped to the same turn. `OPEN -> RUNNING` is rejected
+with `CONVERSATION_SESSION_ADMISSION_UNAVAILABLE`; this slice does not create or dispatch
+sessions and adds no HTTP submit route.
+
+Verification on 2026-10-09: after the final event-payload exact-key validation and owner,
+replay, rollback, and transition-CAS tests, `cargo test --locked -p storage-sqlite`
+passed all 108 tests. Architecture validation passed with 141 typed events,
+implementation-plan validation passed (60 stories), generated coverage passed (79
+documents, 1,096 sections, 5,315 rows), and the DomainEvent JSON schema parsed
+successfully. These checks do not qualify provider/session admission, native dispatch,
+HTTP/API behavior, Conversation UI, or real-user acceptance.
+
 ### Conversation turn lifecycle foundation (2026-10-09)
 
 Added the `domain-conversation` crate with a pure, version-checked ConversationTurn
@@ -44,9 +68,10 @@ terminal timestamp invariants. Focused verification passed: `cargo test -p
 domain-conversation` (8 tests), `cargo clippy -p domain-conversation --all-targets -- -D
 warnings`, and `git diff --check`.
 
-This is only a domain decision layer. Conversation user-message/turn persistence,
+This domain decision layer is consumed by the SQLite persistence slice above. The
 idempotent Operator submit API, session admission, native provider dispatch, streaming,
-and UI submission remain unimplemented. No agent session is started by this crate.
+and UI submission remain unimplemented. The persistence store does not start an agent
+session.
 
 ### ResourceStore-to-staging adapter slice (2026-10-09)
 
