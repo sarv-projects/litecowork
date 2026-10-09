@@ -23,6 +23,7 @@ import { AgentCatalogSettings } from "./agents/AgentCatalogSettings";
 import type { AgentProviderKey } from "./agents/agent-catalog-api";
 import { desktopAgentCatalogApi } from "./agents/desktop-agent-catalog-api";
 import { ZipIntakeNotice } from "./resources/ZipIntakeNotice";
+import { isSensitiveOrGenerated, resourceDisplayName, resourceFolderRelativePath, validateResourceFileSelection } from "./resources/resource-intake";
 import { ResourceRevisionEditor } from "./resources/ResourceRevisionEditor";
 import { TaskResourceTextPreview } from "./resources/TaskResourceTextPreview";
 import { validateResourceSourceHighlights, type ResourceSourceMatch, type SourceHighlightResult } from "./resources/source-span-highlights";
@@ -1086,8 +1087,9 @@ function App() {
       setResourceMessage(skipped > 0 ? "Selection contained only excluded secret or generated files." : "No files selected.");
       return;
     }
-    if (selected.length > 100 || selected.reduce((sum, file) => sum + file.size, 0) > 100 * 1024 * 1024 || selected.some((file) => file.size > 100 * 1024 * 1024)) {
-      setResourceMessage("Choose up to 100 files and 100 MiB total. Each file is limited to 100 MiB.");
+    const selectionError = validateResourceFileSelection(selected);
+    if (selectionError) {
+      setResourceMessage(selectionError);
       return;
     }
     setResourceBusy(true);
@@ -1126,6 +1128,7 @@ function App() {
             };
         // Name, size, modification time, and hashes of received chunks cannot
         // identify the bytes in the chunks that have not been uploaded yet.
+        setResourceMessage(`Checking “${displayName}” (${formatBytes(file.size)}) before starting or resuming its upload…`);
         const expectedDigest = `sha256:${await digestHex(await file.arrayBuffer())}`;
         if (resourcePauseRequested.current) {
           pausedFileName = displayName;
@@ -3041,32 +3044,6 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
       </section>
     </div>
   );
-}
-
-function isSensitiveOrGenerated(file: File): boolean {
-  const path = file.webkitRelativePath || file.name;
-  const parts = path.split(/[\\/]/).filter(Boolean).map((part) => part.toLowerCase());
-  const filename = parts[parts.length - 1] ?? "";
-  const excludedDirectories = new Set([".git", ".svn", ".hg", "node_modules", "target", "dist", "coverage", ".venv"]);
-  if (parts.slice(0, -1).some((part) => excludedDirectories.has(part))) return true;
-  if (filename === ".env" || filename.startsWith(".env.") || filename.endsWith(".pem") || filename.endsWith(".p12") || filename.endsWith(".pfx")) return true;
-  if (filename === "id_rsa" || filename === "id_ed25519" || filename.endsWith(".key") || filename.includes("credentials")) return true;
-  return parts.includes(".ssh") || parts.includes(".aws");
-}
-
-function resourceDisplayName(file: File): string {
-  return resourceFolderRelativePath(file) ?? file.name;
-}
-
-function resourceFolderRelativePath(file: File): string | null {
-  const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-  if (!relativePath) return null;
-  const normalized = relativePath.replaceAll("\\", "/");
-  const parts = normalized.split("/");
-  if (normalized.startsWith("/") || normalized.endsWith("/") || normalized.includes("\\") || normalized.length > 4096 || parts.length > 128 || parts.some((part) => !part || part === "." || part === ".." || new TextEncoder().encode(part).byteLength > 255) || /[\u0000-\u001f\u007f]/u.test(normalized) || /^[A-Za-z]:/.test(normalized)) {
-    throw new Error("A selected folder contains an invalid relative path.");
-  }
-  return normalized;
 }
 
 function formatBytes(size: number): string {
