@@ -9,17 +9,64 @@ pub(crate) struct AutomationResponse {
 }
 
 fn valid_id(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 200
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    !value.is_empty()
+        && value.len() <= 200
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 fn valid_request_id(value: &str) -> bool {
     !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_graphic())
 }
+
+struct ManualRunRequest {
+    path: String,
+    workspace_id: String,
+    if_match: String,
+    idempotency_key: String,
+    body: serde_json::Value,
+}
+
+fn manual_run_request(
+    workspace_id: &str,
+    automation_id: Option<&str>,
+    expected_version: Option<u64>,
+    request_id: Option<&str>,
+    automation_revision: Option<u64>,
+    inputs: Option<&serde_json::Value>,
+) -> Result<ManualRunRequest, String> {
+    let automation_id = automation_id
+        .filter(|value| valid_id(value))
+        .ok_or_else(|| "Automation selection is invalid".to_owned())?;
+    let expected_version = expected_version
+        .filter(|value| *value > 0)
+        .ok_or_else(|| "Automation version is invalid".to_owned())?;
+    let request_id = request_id
+        .filter(|value| valid_request_id(value))
+        .ok_or_else(|| "Automation request identity is invalid".to_owned())?;
+    let automation_revision = automation_revision
+        .filter(|value| *value > 0 && *value <= 9_007_199_254_740_991)
+        .ok_or_else(|| "Automation revision is invalid".to_owned())?;
+    let inputs = inputs
+        .filter(|value| value.is_object())
+        .ok_or_else(|| "Manual Automation inputs are invalid".to_owned())?;
+    Ok(ManualRunRequest {
+        path: format!("/v1/automations/{automation_id}/run"),
+        workspace_id: workspace_id.to_owned(),
+        if_match: format!("\"{expected_version}\""),
+        idempotency_key: request_id.to_owned(),
+        body: serde_json::json!({ "automation_revision": automation_revision, "inputs": inputs }),
+    })
+}
 fn read_automation_response(response: LocalOperatorResponse) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
-    response.take(1024 * 1024 + 1).read_to_end(&mut body)
+    response
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut body)
         .map_err(|_| "Local Automation response could not be read".to_owned())?;
-    if body.len() > 1024 * 1024 { return Err("Local Automation response exceeded its size limit".to_owned()); }
+    if body.len() > 1024 * 1024 {
+        return Err("Local Automation response exceeded its size limit".to_owned());
+    }
     Ok(body)
 }
 
@@ -160,20 +207,19 @@ pub(crate) async fn automation_request(
                     .header("Idempotency-Key", request_id)
             }
             "run" => {
-                let id = automation_id.as_deref().ok_or_else(|| "Automation selection is invalid".to_owned())?;
-                let request_id = request_id.as_deref().filter(|value| valid_request_id(value))
-                    .ok_or_else(|| "Automation request identity is invalid".to_owned())?;
-                let version = expected_version.filter(|value| *value > 0)
-                    .ok_or_else(|| "Automation version is invalid".to_owned())?;
-                let revision = automation_revision.filter(|value| *value > 0 && *value <= 9_007_199_254_740_991)
-                    .ok_or_else(|| "Automation revision is invalid".to_owned())?;
-                let inputs = inputs.filter(serde_json::Value::is_object)
-                    .ok_or_else(|| "Manual Automation inputs are invalid".to_owned())?;
-                client.post(format!("/v1/automations/{id}/run"))
-                    .header("X-Workspace-ID", &workspace_id)
-                    .header("If-Match", format!("\"{version}\""))
-                    .header("Idempotency-Key", request_id)
-                    .json(&serde_json::json!({ "automation_revision": revision, "inputs": inputs }))
+                let request = manual_run_request(
+                    &workspace_id,
+                    automation_id.as_deref(),
+                    expected_version,
+                    request_id.as_deref(),
+                    automation_revision,
+                    inputs.as_ref(),
+                )?;
+                client.post(request.path)
+                    .header("X-Workspace-ID", request.workspace_id)
+                    .header("If-Match", request.if_match)
+                    .header("Idempotency-Key", request.idempotency_key)
+                    .json(&request.body)
             }
             _ => return Err("Automation operation is unavailable".to_owned()),
         };
@@ -186,13 +232,78 @@ pub(crate) async fn automation_request(
 }
 
 fn validate_coworker_ref(value: &serde_json::Value) -> Result<(), String> {
-    if value.is_null() { return Ok(()); }
-    let object = value.as_object().ok_or_else(|| "Automation Coworker pin is invalid".to_owned())?;
-    let coworker_id = object.get("coworker_id").and_then(serde_json::Value::as_str);
+    if value.is_null() {
+        return Ok(());
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| "Automation Coworker pin is invalid".to_owned())?;
+    let coworker_id = object
+        .get("coworker_id")
+        .and_then(serde_json::Value::as_str);
     let revision = object.get("revision").and_then(serde_json::Value::as_u64);
     if object.len() != 2
         || !coworker_id.is_some_and(valid_id)
         || !revision.is_some_and(|value| value > 0 && value <= 9_007_199_254_740_991)
-    { return Err("Automation Coworker pin is invalid".to_owned()); }
+    {
+        return Err("Automation Coworker pin is invalid".to_owned());
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod manual_run_bridge_tests {
+    use super::manual_run_request;
+    use serde_json::json;
+
+    #[test]
+    fn manual_run_bridge_preserves_workspace_revision_and_idempotency() {
+        let request = manual_run_request(
+            "workspace-1",
+            Some("automation-1"),
+            Some(7),
+            Some("run-request-1"),
+            Some(3),
+            Some(&json!({ "project": "LiteCowork" })),
+        )
+        .expect("valid manual run request");
+
+        assert_eq!(request.path, "/v1/automations/automation-1/run");
+        assert_eq!(request.workspace_id, "workspace-1");
+        assert_eq!(request.if_match, "\"7\"");
+        assert_eq!(request.idempotency_key, "run-request-1");
+        assert_eq!(
+            request.body,
+            json!({
+                "automation_revision": 3,
+                "inputs": { "project": "LiteCowork" },
+            })
+        );
+    }
+
+    #[test]
+    fn manual_run_bridge_rejects_non_object_inputs_and_missing_identity() {
+        assert!(
+            manual_run_request(
+                "workspace-1",
+                Some("automation-1"),
+                Some(1),
+                Some("request-1"),
+                Some(1),
+                Some(&json!([])),
+            )
+            .is_err()
+        );
+        assert!(
+            manual_run_request(
+                "workspace-1",
+                None,
+                Some(1),
+                Some("request-1"),
+                Some(1),
+                Some(&json!({})),
+            )
+            .is_err()
+        );
+    }
 }
