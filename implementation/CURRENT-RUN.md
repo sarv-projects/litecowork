@@ -10,6 +10,16 @@ what was true at their timestamps. V1 is the complete desktop/local product. Clo
 continuation and remote Runtime are post-V1 and excluded from the V1 release gate; local
 capabilities already committed in the architecture remain in V1 scope.
 
+### Effect dispatch admission remains closed (2026-10-09)
+
+The SQLite Effect writer now rejects every request to enter `STARTED` with typed blockers
+for the missing Trust decision issuer, Invocation transition writer, and ApprovalUse
+consumer. The rejection occurs before state-blob writes, storage queueing, events, or
+provider contact. A proposed Effect, grant row, and lease binding are not dispatch
+authorization. The focused no-mutation test passes, along with architecture and
+implementation-plan validation; provider dispatch remains disabled until these
+dependencies are implemented as one authoritative transaction.
+
 ### Conversation turn lifecycle and Codex safety gate (2026-10-09)
 
 `domain-conversation` now contains the pure version-checked ConversationTurn state

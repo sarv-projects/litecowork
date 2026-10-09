@@ -29,9 +29,9 @@ pub use conversation::{
 
 mod effect_evidence;
 pub use effect_evidence::{
-    AppendEvidenceCommit, CommittedEffect, CommittedEvidence, EffectEvidenceEventContext,
-    EffectEvidenceStore, EffectFenceBinding, EffectRetryAuthorization, EffectRetryBasis,
-    EffectTransitionMetadata, ProposeEffectCommit, TransitionEffectCommit,
+    AppendEvidenceCommit, CommittedEffect, CommittedEvidence, DispatchAdmissionBlocker,
+    EffectEvidenceEventContext, EffectEvidenceStore, EffectFenceBinding, EffectRetryAuthorization,
+    EffectRetryBasis, EffectTransitionMetadata, ProposeEffectCommit, TransitionEffectCommit,
 };
 mod task_presentation;
 pub use task_presentation::{
@@ -2199,6 +2199,12 @@ pub enum StoreError {
     UnsupportedSchema(i64),
     CorruptSchema(String),
     Integrity(String),
+    /// The storage adapter deliberately refuses to mark an Effect STARTED until the
+    /// exact Invocation dispatch, Trust decision, and any required ApprovalUse can be
+    /// admitted together. A PROPOSED Effect alone is never dispatch authority.
+    DispatchAdmissionUnavailable {
+        blockers: Vec<DispatchAdmissionBlocker>,
+    },
     LegacyUploadCommitNeedsReview {
         committed_resource_id: Option<String>,
     },
@@ -2225,6 +2231,9 @@ impl fmt::Display for StoreError {
             }
             Self::CorruptSchema(message) => write!(f, "database schema is inconsistent: {message}"),
             Self::Integrity(message) => write!(f, "stored data failed integrity checks: {message}"),
+            Self::DispatchAdmissionUnavailable { blockers } => {
+                write!(f, "Effect dispatch admission is unavailable: {blockers:?}")
+            }
             Self::LegacyUploadCommitNeedsReview {
                 committed_resource_id,
             } => write!(

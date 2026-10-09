@@ -4,6 +4,31 @@ use domain_effects::{EffectRecord, EvidenceRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Missing production prerequisites for the atomic Invocation/Effect dispatch
+/// admission boundary. These are not policy decisions and do not grant authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DispatchAdmissionBlocker {
+    /// No current, exact-action Trust decision is issued to the storage writer.
+    TrustDecisionUnavailable,
+    /// There is no Invocation writer that atomically admits CREATED -> DISPATCHED.
+    InvocationTransitionWriterUnavailable,
+    /// Required ApprovalUse consumption is not part of the Effect start transaction.
+    ApprovalUseConsumptionUnavailable,
+}
+
+impl DispatchAdmissionBlocker {
+    /// Current prerequisites for any consequential Effect dispatch. Approval policy
+    /// may later prove that an Approval is unnecessary, but that policy decision is
+    /// not available here, so this storage boundary fails closed for every start.
+    pub const fn current() -> [Self; 3] {
+        [
+            Self::TrustDecisionUnavailable,
+            Self::InvocationTransitionWriterUnavailable,
+            Self::ApprovalUseConsumptionUnavailable,
+        ]
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EffectEvidenceEventContext {

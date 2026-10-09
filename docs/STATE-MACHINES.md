@@ -808,6 +808,12 @@ outcome, never an Effect state. If a user resolves ambiguity, append the decisio
 supporting evidence; do not erase the prior uncertainty. `VERIFIED` requires a
 VerificationRun or approved human verification at the criterion's required assurance.
 
+These are legal domain transitions, not proof that the current storage adapter can
+admit them. The current SQLite Effect writer rejects transitions to `STARTED` (including
+reconciliation retries) before persistence because the atomic Trust/Invocation/ApprovalUse
+dispatch boundary is not implemented. A lease check or `PROPOSED` row alone cannot enable
+the transition.
+
 Evidence records are immutable append-only facts with a level of `REPORTED`, `OBSERVED`,
 or `VERIFIED`. Higher assurance creates a new Evidence record; it does not mutate an
 older record.

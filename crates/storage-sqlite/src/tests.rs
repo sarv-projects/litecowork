@@ -23,8 +23,9 @@ use rusqlite::Connection;
 use std::sync::Barrier;
 use storage_core::{
     ActivateTaskPlanningSession, AgentSessionRecord, AggregateStateRef, BlobPurpose, BlobRef,
-    CommittedWorkspace, EventDraft, ReplicationPolicy, StoreError, TaskPlanningSessionStart,
-    Workspace,
+    CommittedWorkspace, DispatchAdmissionBlocker, EffectEvidenceEventContext, EffectEvidenceStore,
+    EffectTransitionMetadata, EventDraft, ReplicationPolicy, StoreError, TaskPlanningSessionStart,
+    TransitionEffectCommit, Workspace,
 };
 use zeroize::Zeroizing;
 
@@ -80,6 +81,114 @@ fn automation_occurrence_aggregate_version_is_not_claim_fencing() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn effect_start_is_blocked_before_any_storage_mutation() {
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    let database = state_database(&directory);
+    let before = {
+        let connection = Connection::open(&database).expect("open read-only check connection");
+        (
+            connection
+                .query_row("SELECT COUNT(*) FROM effects", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("count Effects"),
+            connection
+                .query_row("SELECT COUNT(*) FROM domain_events", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("count events"),
+            connection
+                .query_row("SELECT COUNT(*) FROM request_dedup", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("count idempotency receipts"),
+        )
+    };
+
+    let error = SqliteEffectEvidenceStore::new(store.clone())
+        .transition_effect(TransitionEffectCommit {
+            workspace_id: "workspace".to_owned(),
+            runtime_id: "runtime".to_owned(),
+            runtime_incarnation_id: "incarnation".to_owned(),
+            request_id: "start-effect".to_owned(),
+            effect_id: "effect".to_owned(),
+            expected_version: 1,
+            next_state: domain_effects::EffectState::Started,
+            fence: None,
+            metadata: EffectTransitionMetadata {
+                result_ref: None,
+                observed_state: None,
+                observation_evidence_ref: None,
+                verification_ref: None,
+                retry_authorization: None,
+                failure_code: None,
+                failure_retryable: None,
+                failure_digest: None,
+                ambiguity_reason_digest: None,
+            },
+            event: EffectEvidenceEventContext {
+                event_id: "event".to_owned(),
+                origin_runtime_id: "runtime".to_owned(),
+                origin_runtime_incarnation_id: "incarnation".to_owned(),
+                hlc_timestamp: "2026-10-09T10:00:00Z".to_owned(),
+                correlation_id: "correlation".to_owned(),
+                causation_id: None,
+                recorded_at: "2026-10-09T10:00:00Z".to_owned(),
+            },
+        })
+        .expect_err("Effect start must fail closed until atomic dispatch admission exists");
+
+    assert_eq!(
+        error,
+        StoreError::DispatchAdmissionUnavailable {
+            blockers: vec![
+                DispatchAdmissionBlocker::TrustDecisionUnavailable,
+                DispatchAdmissionBlocker::InvocationTransitionWriterUnavailable,
+                DispatchAdmissionBlocker::ApprovalUseConsumptionUnavailable,
+            ],
+        }
+    );
+    let after = {
+        let connection = Connection::open(&database).expect("open read-only check connection");
+        (
+            connection
+                .query_row("SELECT COUNT(*) FROM effects", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("count Effects"),
+            connection
+                .query_row("SELECT COUNT(*) FROM domain_events", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("count events"),
+            connection
+                .query_row("SELECT COUNT(*) FROM request_dedup", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("count idempotency receipts"),
+        )
+    };
+    assert_eq!(
+        after, before,
+        "blocked admission writes no rows or receipts"
+    );
+    let blob_root = directory.path().join("blobs");
+    let blob_count = if blob_root.exists() {
+        std::fs::read_dir(blob_root)
+            .expect("read BlobStore root")
+            .count()
+    } else {
+        0
+    };
+    assert_eq!(
+        blob_count, 0,
+        "blocked admission writes no aggregate-state blob"
+    );
+    drop(store);
 }
 
 #[test]

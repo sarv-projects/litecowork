@@ -243,6 +243,15 @@ dispatch remains unavailable until Trust approval/grant admission and Invocation
 are one authoritative admission boundary. A committed proposal alone never authorizes an
 external call.
 
+The current SQLite writer also rejects every request to move an Effect to `STARTED` with
+typed blockers (`TrustDecisionUnavailable`, `InvocationTransitionWriterUnavailable`, and
+`ApprovalUseConsumptionUnavailable`). It rejects before writing state blobs, opening a
+storage command, appending an event, or contacting a provider. This is deliberately
+fail-closed: the writer cannot determine whether exact-action approval is required without
+the missing Trust decision, and a caller-supplied `PROPOSED` Effect or lease binding cannot
+stand in for that decision. Effect reconciliation retries that would re-enter `STARTED`
+remain blocked by the same gate.
+
 ## Verifier
 
 ```text

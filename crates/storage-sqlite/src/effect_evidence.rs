@@ -6,9 +6,9 @@ use super::*;
 use domain_effects::{EffectError, EffectRecord, EffectState, EvidenceLevel, EvidenceRecord};
 use serde::Serialize;
 use storage_core::{
-    AppendEvidenceCommit, CommittedEffect, CommittedEvidence, EffectEvidenceEventContext,
-    EffectEvidenceStore, EffectFenceBinding, EffectRetryBasis, EffectTransitionMetadata,
-    ProposeEffectCommit, TransitionEffectCommit,
+    AppendEvidenceCommit, CommittedEffect, CommittedEvidence, DispatchAdmissionBlocker,
+    EffectEvidenceEventContext, EffectEvidenceStore, EffectFenceBinding, EffectRetryBasis,
+    EffectTransitionMetadata, ProposeEffectCommit, TransitionEffectCommit,
 };
 
 trait Replayable {
@@ -100,6 +100,15 @@ impl EffectEvidenceStore for SqliteEffectEvidenceStore {
         &self,
         mut command: TransitionEffectCommit,
     ) -> Result<CommittedEffect, StoreError> {
+        // PROPOSED -> STARTED means an external operation may be dispatched. This
+        // adapter has no Trust decision issuer, Invocation transition writer, or
+        // atomic ApprovalUse consumer, so reject before state-blob writes, queueing,
+        // database access, event emission, or any provider boundary.
+        if command.next_state == EffectState::Started {
+            return Err(StoreError::DispatchAdmissionUnavailable {
+                blockers: DispatchAdmissionBlocker::current().into(),
+            });
+        }
         command.event.recorded_at = canonicalize_utc_timestamp(&command.event.recorded_at)?;
         validate_event_context(
             &command.workspace_id,

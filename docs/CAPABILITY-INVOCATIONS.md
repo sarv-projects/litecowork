@@ -124,6 +124,20 @@ ActionBatch aggregate or synthetic all-or-nothing Effect exists.
 - `TaskService` and `ConversationService` consume Invocation projections but cannot
   rewrite provider history.
 
+### Dispatch readiness gate
+
+The schema and state machine define `CREATED -> DISPATCHED`, but the current local
+storage implementation does not expose an Invocation transition writer or Trust-issued
+exact-action dispatch decision. For Attempt-scoped consequential operations it also has
+no atomic `ApprovalUse` consumer. Until one authoritative transaction rechecks the live
+owner/lease, grant, activation, Trust decision and any exact Approval; transitions the
+Invocation; links and starts its Effect; and writes the related state snapshots, events,
+audit and idempotency receipt, external provider dispatch is unavailable. The current
+Effect store returns typed missing-prerequisite blockers before any write when asked to
+enter `STARTED`. A `PROPOSED` Effect is not a dispatch permit, and retrying an Effect does
+not bypass the gate. No provider call may be made based only on these existing SQLite
+tables or the state-machine definition.
+
 ```text
 CREATED -> DISPATCHED | CANCELLED
 DISPATCHED -> SUCCEEDED | FAILED | WAITING | INPUT_REQUIRED | AMBIGUOUS

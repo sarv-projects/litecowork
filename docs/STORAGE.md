@@ -663,7 +663,9 @@ Atomic boundaries:
 - Effect row + immutable aggregate snapshot + `effect.proposed.v1` + idempotency receipt
   before any later dispatch; proposal rechecks the active Attempt/Invocation/grant and the
   current Runtime incarnation/ExecutionLease fence. This foundation does not dispatch.
-- Effect transition + versioned snapshot + event + idempotency receipt
+- Effect transition + versioned snapshot + event + idempotency receipt; current SQLite
+  rejects any transition to `STARTED` before storage/blob mutation until the atomic
+  Invocation dispatch, Trust decision, and required ApprovalUse admission is implemented
 - append-only Evidence row + snapshot + `evidence.created.v1` + idempotency receipt
 - Artifact row + stable ARTIFACT Resource + initial ArtifactVersion/ResourceRevision v1 + input DependencyEdges + synchronized current-version/head pointers + Resource and Artifact events after content is committed
 - Later ResourceRevision/head + ArtifactVersion + input DependencyEdges + synchronized current-version/head pointers + both events after blob digest commit; update Artifact.current_version last so its trigger checks the matching Resource head
