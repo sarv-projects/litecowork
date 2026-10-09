@@ -401,3 +401,10 @@ not itself authorize destructive Environment cleanup.
 ## Desktop Coworker environment availability target
 
 A Coworker has no implicit computer access. Browser, filesystem, terminal and installed local applications are capabilities only after a qualified Environment provider enforces the requested roots, process containment and egress. A merely installed local app is not a qualified automation adapter. Locked display sessions, unavailable browser profiles and sleeping devices are environment blockers; restart may require a new Attempt with fresh lease and authorization. Do not migrate local GUI sessions to cloud by relabeling placement. On-demand activation must obey process/CPU/memory limits despite an unlimited configured connection catalog.
+
+
+## Consumer file-root mount modes — competitor-informed target
+
+For general desktop users, authorized local roots should support explicit host-enforced modes: **read only**, **read/write**, and **read/write/no delete** where the platform provider can enforce them. This follows the useful security shape documented by Claude Cowork: the user chooses a comprehensible boundary once instead of reviewing shell commands they may not understand.
+
+Mount mode is an Environment/resource boundary, not a model instruction. Symlink/path resolution must occur before containment checks; a child path may not escape an authorized root. Credentials remain outside the execution guest/process where supported. A provider that cannot reliably enforce a requested no-delete/read-only boundary must mark that mode unsupported rather than simulate it in prompt text.

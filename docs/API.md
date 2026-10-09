@@ -197,8 +197,7 @@ Without an eligible binding, chat/Task admission returns
 draft while first-use setup selects and enables an AgentBinding. Other resource/runtime
 blockers after Task creation are represented by `Task.blocking_conditions[]`.
 
-Task creation may include a selected `coworker_id`; the Operator normally prefills the
-Workspace primary Coworker in the composer and sends that exact ID. The service pins the
+Task creation may include a selected `coworker_id`. The accepted chat-first target leaves Coworker origin null for ordinary new sessions unless the user is inside a Coworker-owned Conversation or explicitly chooses one. The current legacy Home Task composer may still prefill the optional Workspace primary Coworker while that transitional UI exists. The service pins the
 Coworker's current revision atomically with Task creation. Lead precedence for a Task is
 explicit Task lead, selected Coworker revision default, then Workspace default. The first
 configured binding is validated and never skipped in favor of a lower-precedence binding.

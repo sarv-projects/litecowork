@@ -3,6 +3,18 @@
 Update this file when the active story, implementation state, or handoff changes. It is
 operational context; architecture and owning domain contracts remain authoritative.
 
+## Coworker desktop benchmark + Workbench second pass — 2026-10-10
+
+Performed a second repository-wide audit after the first Coworker reconciliation: 119 tracked Markdown files / 37,961 lines were scanned for stale mandatory-Coworker, Home-default, manual-memory, connections, autonomy and Workbench assumptions. The remaining normative F55/E08 primary-Coworker wording was corrected; legacy primary settings remain documented only where they describe current transitional Task-origin behavior or actual storage semantics.
+
+Fresh desktop-product research was integrated into `docs/COMPETITIVE-RESEARCH.md` for OpenWork, Open Cowork, Claude Cowork, OpenAI dots, Meta Muse, and Grok Bot. The research distinguishes local desktop behavior from cloud availability and drives concrete acceptance changes: progressive capability discovery, task-time Connect/resume, routine Test + Run history, host-enforced file-root modes, optional technical trace, Coworker Library projection, and user-friendly bounded standing rules.
+
+The right Workbench design is finalized from the supplied desktop reference: it is CLOSED on a brand-new chat, restores only an explicit user pane preference, and never auto-opens from background tool completion. When explicitly opened with no active object, it uses a sparse `Start` launcher for Workspace files, Browser, qualified Computer, conditional advanced Terminal, and actual Recent outputs. One resizable/maximizable shell hosts Artifact/File/Browser/Computer/Terminal/MCP App surfaces; layout restoration never restores stale authorization.
+
+`implementation/ROADMAP.md` now contains an evidence-based done/not-done matrix. Important gaps remain NOT DONE: provider-backed chat send, Coworker-owned Conversation association/last-active API, Coworker capability assignment, automatic memory candidate/policy pipeline, StandingResponsibility aggregate, recurring/provider TriggerHost, proactive no-change monitor, unified Workbench shell, Browser/Computer/Terminal shell integrations, full notifications, and Coworker-to-Coworker handoff. BOUNDED/PARTIAL source exists for Coworker CRUD, manual ContextDocuments, manual Automation occurrence, Trust evaluator, capability-invocation persistence, process-scope journal, Needs You foundations, Artifact Workbench, and Runtime lifecycle.
+
+No backlog status was promoted. The second pass updates acceptance/negative cases for E08-S05, E09-S02, E10-S01 and the matching E07 environment story. These documentation/acceptance changes do not claim the missing schema/API/provider execution exists.
+
 ## Coworker product/architecture and UI reconciliation — 2026-10-10
 
 Reviewed the uploaded 377-line Coworker design as an accepted target and audited all

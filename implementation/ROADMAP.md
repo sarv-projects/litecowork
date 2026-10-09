@@ -64,3 +64,40 @@ qualification matrix; a feature advertised unavailable cannot meet a required re
 ## Reconciled Coworker implementation sequence
 
 E08-S01/04 first establish optional chat-first ownership with real Conversation creation/list/last-active and honest provider-disabled states, Quick Create, and preserved Workbench context. E04/E10 enable qualified connection assignments; E08-S03 gains deterministic scoped memory candidate eligibility and qualified extraction, independently of proactive actions. E09 then enables reviewed standing responsibilities, trigger outbox/recovery, background service, missing-connection/Needs You and run history using the existing Task engine. This target modifies feature acceptance, not the actual dependency-ready status; backlog and machine-level contract changes require corresponding verified story updates.
+
+
+## Second-pass Coworker/readiness audit — 2026-10-10
+
+This table distinguishes target specification, code presence, and actual qualification. **BOUNDED** means a real tested subcomponent exists; it does not mean the end-user feature is done. No row becomes DONE without its owning CODE + SYSTEM + USER evidence.
+
+| Capability | Current source evidence | Status | Next owner |
+|---|---|---|---|
+| Ordinary Conversation list/read | Conversation catalog/presentation exists; composer is read-only | PARTIAL | E03-S02 / E08-S04 |
+| Provider-backed chat send | No qualified desktop native turn admission | NOT DONE | E03-S01/S02 |
+| Coworker CRUD/revision/status | Real API/UI/storage slices | PARTIAL | E08-S01 acceptance |
+| Coworker-owned Conversation + last-active | No Conversation-owner field/service/route; unrelated environment/activity fields do not satisfy it | NOT DONE | E08-S01 |
+| Quick Create then chat | Creation editor simplified; still settings-oriented | PARTIAL | E08-S01 |
+| Coworker capability assignment | Capability fabric exists; no CoworkerCapabilityAssignment type/schema/source | NOT DONE | E10/E04 |
+| Large lazy connection catalog | Discovery/activation contracts exist; consumer catalog not qualified | PARTIAL | E10-S01 |
+| Task-time Connect + resume | UserRequest/capability pieces exist; no full Coworker repair flow | NOT DONE | E04/E10 |
+| Manual ContextDocuments | Resource-backed editor/history slice exists | PARTIAL | E08-S03 |
+| Automatic quiet private memory | No MemoryCandidate or CoworkerMemoryPolicy implementation found | NOT DONE | E08-S03 |
+| StandingResponsibility group | No storage/API/domain type found | NOT DONE | E09-S01/S02 |
+| Manual Automation occurrence | Real manual occurrence admission slice | BOUNDED | E09-S02 |
+| Scheduled/provider/event TriggerHost | Only manual pinned local TriggerHost path observed | NOT DONE | E09-S02 |
+| Proactive deterministic watch/no-change | Architecture only | NOT DONE | E09-S02/provider |
+| Background daemon/window independence | Runtime lifecycle foundations; no qualified unattended Coworker trigger host | PARTIAL | E01/E09 |
+| Trust evaluator | Bounded evaluator committed/tested | BOUNDED | E04 atomic admission |
+| Capability invocation persistence | Durable transitions/storage tests; dispatch deliberately gated | BOUNDED | E04 dispatch |
+| Attempt process-scope journal | Journal and regression tests committed | BOUNDED | E07 Task process isolation |
+| Needs You/approval | Inbox/request foundations exist | PARTIAL | E02/E04 end-to-end |
+| Artifact Workbench | Real history/edit/compare/Save As slices | PARTIAL | E08-S07 |
+| Unified right Workbench shell + Start | No shell/Start component; current Artifact Workbench is embedded | NOT DONE | E08-S05/S07 |
+| Built-in Browser panel | No final unified Workbench browser surface qualified | NOT DONE | E07/E08 |
+| Computer/takeover panel | Control-lease architecture groundwork; no final UI qualification | NOT DONE | E07/E08 |
+| Terminal panel | No final unified shell integration | NOT DONE | E07/E08 |
+| Notifications/quiet hours | Story planned; no complete delivery path | NOT DONE | E09-S04 |
+| Coworker-to-Coworker handoff | No dedicated scoped handoff implementation | NOT DONE | E05/E08 |
+| Cloud continuation | Explicitly future; local-only desktop target | OUT OF DESKTOP V1 | Future placement |
+
+A grep hit is not implementation proof. In particular, owner_coworker_id currently exists for Environment ownership and does NOT establish Coworker-owned Conversations. Likewise the local TriggerHost identity used by manual occurrences is not a recurring/event trigger host.

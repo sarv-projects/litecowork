@@ -189,3 +189,60 @@ A new Coworker begins with Ask me for unattended behavior. Automatic memory is a
 A React mock with static cards is visual exploration only. Route and API actions require committed integration contracts and real backend receipts; do not claim running native chat or automatic memory until it is wired. Test levels are (1) pure model and component, (2) API contract/negative tests, (3) real local daemon+Tauri, (4) host OS and external provider/owner acceptance. E08/E09 stories remain IN PROGRESS/PLANNED until their own complete code, system and owner USER evidence passes. Qualify Windows, Linux and macOS background/window/sleep behavior individually. No future cloud execution promises in a local-only release.
 
 Existing E02–E10 features remain in scope: Workspace local-only setup, persistent Resource Library and ZIP intake, Task Work/Live Desk, Goals and Suggestions, Agents/Subagents, approval inbox, provenance-rich Artifacts and Workbench, Browser/Computer takeover, Discover/Skill installation, scheduling, and final production accessibility/security/packaging.
+
+
+## Right Workbench shell — finalized 2026-10-10
+
+The supplied desktop reference is adopted as the EMPTY Workbench pattern, not as an always-open default. The useful parts are the calm single-surface layout, strong central launch actions, compact title row, and persistent layout controls. LiteCowork keeps chat as the focal surface and opens the Workbench only because the user explicitly asked for a surface or restores a user-owned prior pane state.
+
+### Open and restore policy
+
+- Brand-new ordinary chat: Workbench closed. This preserves reading/composer width and avoids making terminal/browser look mandatory.
+- Existing window/Workspace: restore the user's last explicit open/closed state and width, provided the referenced pane is still authorized; otherwise show Start.
+- Tool/background result: never steal focus or auto-open. The message/activity row offers **Open in Workbench**. Exception: an explicit user command whose requested outcome is to open Browser, Computer, File, or Artifact may open it because that navigation itself was user intent.
+- Coworker/session switch: preserve the panel shell, but only keep an active object when the user remains authorized and there is no dirty-draft conflict. Never show one Coworker's private object as if it belongs to another.
+- App restart: restore layout preference, not stale authority. Re-resolve the object/provider before rendering content.
+
+### Empty Start view
+
+Header: semantic title **Start**; back/forward only when real panel history exists; right-side controls for split-ratio preset, maximize/restore, and close. Close restores focus to the control that opened the panel. The body uses one vertical launcher list with generous whitespace, not nested dashboards.
+
+Default launch rows, shown only when actually supported:
+
+1. **Workspace files** — browse/search authorized Resource roots and pinned Library items.
+2. **Browser** — opens the qualified built-in/controlled browser. If no browser provider is ready, keep the row discoverable only when repair is useful and name the reason.
+3. **Computer** — shown when a qualified desktop/computer-use Environment exists. It opens live view and Take control; it is not synonymous with Browser.
+4. **Terminal** — advanced/developer capability. Hide from the ordinary Start list unless the selected native harness/Workspace exposes a qualified terminal, or place it under **More**.
+5. **Recent outputs** — optional compact row when actual authorized Artifacts exist; never fabricate recents.
+
+Connections, MCP servers, Skills, and permissions are NOT Start-view launchers. They belong to Discover/Connections & Tools or appear as a task-time repair card.
+
+### Geometry and responsiveness
+
+- First explicit desktop open: target roughly 42% of usable content width, clamped to a comfortable tokenized minimum and about 72% maximum.
+- Pointer and keyboard resize; remember width per window/Workspace.
+- Maximize makes Workbench the content surface while retaining global app chrome; Restore returns the exact prior width.
+- Below the responsive breakpoint, Workbench becomes a full-screen route/sheet rather than crushing chat beside it.
+- No nested horizontal scrolling in the shell.
+
+### Surface contract
+
+One shell hosts File/Artifact, Browser, Computer, Terminal, MCP App, and generated App views. Surface-specific toolbars appear below the common header. Do not create a second right sidebar for Inspector or Context. Multiple Workbench objects use bounded back/forward history rather than browser-like tab sprawl by default.
+
+Every surface declares authoritative object/provider identity and freshness, read-only/edit/control mode, actual save/publish state, loading/offline/revoked/reconnect state, dirty-draft close semantics, keyboard focus target, and whether human or agent owns the control lease.
+
+The Workbench is a presentation and interaction host, never an authority source. It cannot turn a preview into a grant, infer browser success, or mark a Task verified because an Artifact rendered.
+
+### Screenshot-specific decision
+
+Adopt: compact **Start** header, spacious neutral dark/light surface, 3–5 large launcher rows, shortcut hints on the right, maximize/close controls, and clear icon + title + one-line description. Do not copy: an always-visible Terminal card for every user, unexplained layout glyphs, or a permanently open panel. Every icon control needs a tooltip and accessible name.
+
+
+## Competitor-derived Coworker details refinements
+
+- Coworker details are secondary to chat and may expose compact **Responsibilities**, **Library**, **Memory & Knowledge**, **Connections & Tools**, and **Settings** destinations. Do not turn them into a dashboard landing page.
+- Responsibility row context actions: **Test run**, **Run now**, **Pause/Resume**, **Edit**, **History**, and **Delete/Archive** according to real API capability. Test run explicitly warns that it performs real work.
+- A task blocked by an unconnected app shows one inline **Connect <app>** repair card. On successful auth, the card settles and the original Task revalidates/resumes; no new duplicate chat/task is created.
+- Per-Coworker notifications are compact settings, not a wall of switches in creation.
+- Coworker Library groups exact files/pages/Artifacts by Today / This week / Older only when those refs exist; it never implies all computer files are shared among Coworkers.
+- Optional Inspector/Trace is for technical users. Default activity remains sentence-first (`Read Drive`, `Ran tests`, `Drafted report`) with duration/outcome; raw invocation payload and native reasoning are not default UI.

@@ -293,7 +293,7 @@ Do not override currently documented concrete API paths, IDL or contracts; exact
 ## 11. Documentation and implementation change map
 
 **Rewrite/extend normatively:**
-1. `docs/PRODUCT.md` — session-first ordinary Home and optional Coworkers, desktop autonomy promise and restrictions.
+1. `docs/PRODUCT.md` — session-first ordinary Conversation and optional Coworkers, desktop autonomy promise and restrictions.
 2. `docs/EXPERIENCE.md` — replace dashboard-first Coworker page and required default-Coworker composer; add full Create/Chat/Responsibility/Connections/Memory UI, notifications/quiet behavior, Workbench invariants.
 3. `docs/DESIGN-SYSTEM.md`, `docs/PRESENTATION-RUNTIME.md`, `docs/MOTION.md` — detailed sidebar/header/composer/Workbench tokens and truthful progress/activity.
 4. `docs/RESPONSIBILITIES.md` — add StandingResponsibility grouping and admissions, Coworker conversation association, scoped automatic memory policies, source learning rules, assignment ceilings.
@@ -376,3 +376,9 @@ Users need global `What is running?` and `Stop unattended work` controls with an
 - Channel identity spoof and weak-origin remote approvals fail closed; notification delivery idempotency verified.
 - Creating/deleting/archiving a Coworker has no destructive effect on independently owned linked resources or globally installed connectors unless the owner explicitly selects such actions.
 - Distinguish automatic memory learning from proactive execution: turning one on doesn't turn the other on.
+
+## 14. Final Workbench decision — 2026-10-10
+
+The right-side Workbench is **not always open by default**. New chats start with maximum conversational width. The shell restores a prior explicit user pane preference, or opens because the user directly chose File/Artifact/Browser/Computer/Terminal/MCP App. Background tool completion alone cannot steal focus or open it.
+
+When open with no active object, Workbench uses a calm Start launcher modeled on the reviewed desktop reference: Workspace files, Browser, qualified Computer, conditional advanced Terminal, and optional Recent outputs. The panel is resizable, maximizable, closable, and becomes a full-screen sheet on narrow layouts. It is one common shell for rich outputs and interactive tools, while each surface retains its own authority, lease, freshness, and dirty-state semantics. See implementation/UI.md for the control-level contract.

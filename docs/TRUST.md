@@ -283,3 +283,10 @@ operator or a narrowly authorized service may exercise those transitions.
 ## Consumer-friendly Coworker connection and autonomy policy target
 
 The default Add Connection UX skips per-operation permission switches; provider OAuth scopes and Core Trust enforce reality. An assignment to a Coworker only restricts eligibility, never creates a Grant, ApprovalUse, SecretLease or native-harness permission. Routine preauthorization may avoid repetitive prompts only within explicit bounded recipients/resources/operations and exact authenticated origin; a new consequential action, changed target, provider policy, expired grant, stale approval or weakly authenticated channel must ask or block. Source documents, MCP tool descriptions, Skills and generated code never self-authorize monitoring, memory-sharing, tool use or delegation. Core must explicitly label operations it cannot mediate/enforce. Removing access fences future calls and safe resume; previously dispatched Effects reconcile before any repeated attempt.
+
+
+## Plain-language standing rules
+
+Advanced users may create reusable plain-language rules for a Coworker/responsibility, but they compile only into bounded existing policy dimensions; they are never free-form authorization executable by the model. The consumer vocabulary may offer **Allow within this approved routine**, **Ask before acting**, **Hand off to me**, and **Not allowed**. A rule is bound to exact principal/account/resource/action classes and cannot override hard Workspace/admin/provider restrictions.
+
+Routine Test runs use the same rules and approvals as normal execution. A changed recipient, destination, account, capability digest, source scope, or consequential action invalidates stale standing approval. User-friendly rules reduce repeated prompts; they do not weaken the atomic grant/lease/Effect boundary.

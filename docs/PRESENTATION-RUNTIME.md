@@ -458,3 +458,10 @@ browser component test does not qualify the Tauri desktop shell or its OS integr
 ## Coworker chat/Workbench and rich results target
 
 A Coworker conversation uses the identical ConversationMessage semantic truth and optional validated RichPresentation contract as ordinary sessions. Running Automations and child Tasks generate concise linked updates under the Coworker and distinct Run timelines; they must not inject whole native agent transcripts into chat history. The right Workbench opens exact committed ArtifactVersions, preserves unsaved edits across Coworker navigation, and shows honest fallback for unsupported editors/preview types. Optional rich blocks cannot implement permissions, approve a connection, start a responsibility, fake Work, store memory or replace authoritative Tasks. All add-connection and confirmation controls are host-owned and attached to real action endpoints only.
+
+
+## Unified Workbench host contract — 2026-10-10
+
+The right Workbench shell is the common host for exact ArtifactVersion/File previews, validated RichPresentation expansions, Browser/Computer control surfaces, eligible Terminal sessions, and sandboxed MCP Apps. Opening a Workbench surface is a user navigation decision, not proof that the associated capability was invoked. Background results remain inline until the user opens them.
+
+The shell maintains bounded navigation history of exact object/provider refs and remembers layout separately from authorization. Reopen/restart re-resolves each ref and may fall back to Start, Locked, or Revoked. Surface providers cannot add global toolbar commands outside the host allowlist. Dirty editable Artifact state blocks destructive navigation with Save/Discard/Stay; Browser/Computer control uses actual lease epoch; Terminal shows real process identity/state; MCP Apps retain sandbox/origin constraints.

@@ -811,7 +811,7 @@ UI: show last verified backup time, restore point, and any missing artifact/effe
 | F52 | Quota-low observation and speculative prewarm | Never invoke fallback model or display prewarm as work |
 | F53 | Confirmed lead quota exhaustion and policy-governed handoff | No silent lead switch; new lead gets a fresh session and bounded handoff packet |
 | F54 | Changed native configuration digest and re-probe | Preserve user config; reject unsupported/stale overrides |
-| F55 | Coworker created, selected primary, then first Task | Identity persists across lead changes; Task pins Coworker revision |
+| F55 | Optional Coworker created, then explicit Coworker-owned work | Ordinary work remains Coworker-free; Coworker-origin Task pins exact revision |
 | F56 | Suggestion acceptance creates ordinary Task or opens editor | No direct execution, scheduling, or authority grant |
 | F57 | Goal links verified Task outcomes, Evidence, and pinned Artifact versions | Progress remains derived; only owner changes Goal completion status |
 | F58 | Concurrent ContextDocument Resource revisions | Preserve both changes and require explicit merge/rebase |
@@ -1311,18 +1311,12 @@ configuration or silently select another model.
 
 ## F55 — Create a Coworker and start its first Task
 
-**Actors/preconditions:** Workspace owner; agent setup may be complete or deferred.
+**Actors/preconditions:** Workspace owner; agent setup may be complete or deferred. Ordinary Conversation/Task use does NOT require a Coworker.
 
-1. First-run setup creates/selects the primary Coworker with the neutral defaults
-   (“Assistant”, “General-purpose assistant”); renaming/role customization can be skipped
-   and edited later. Optional context, notification, and worker preferences remain
-   explicit; avatar is optional.
+1. The user explicitly chooses New Coworker. Quick Create asks only for name and purpose; avatar, chief/model/effort, workers, context, connections, and responsibilities are optional Customize stages and may be skipped. A legacy Workspace primary Coworker may still prefill the interim Task composer, but it is not a first-run requirement and never owns an ordinary Conversation by default.
 2. CoworkerService creates the identity and revision; it provisions no host and creates
    no background work.
-3. The Operator sends the selected Coworker ID (normally prefilled from Workspace primary)
-   and optional expected Coworker version with the ordinary Task request. TaskService
-   snapshots the current Coworker revision in the same transaction as TaskSpec and source
-   message creation. The client cannot submit a historical revision as current authority.
+3. A Coworker-origin Task sends the explicitly selected Coworker ID and optional expected version; ordinary work may omit Coworker origin. TaskService snapshots the current Coworker revision in the same transaction as TaskSpec and source message creation. The client cannot submit a historical revision as current authority. Coworker-owned Conversation association is a separate target contract and must never be inferred from the legacy Workspace primary setting.
 4. Lead binding resolution is explicit Task choice, then Coworker revision default, then
    Workspace default. The first configured choice must be usable; an unavailable choice
    fails without silent fallback. Lead eligibility, enabled profiles, context/resource

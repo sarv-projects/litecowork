@@ -354,3 +354,14 @@ These are required conformance cases, not claims that an implementation already 
 ## Coworker desktop V1 integration and adversarial acceptance target
 
 In addition to existing contract validators, qualify: zero-Coworker ordinary chat; Quick Create in two fields; opted Customize with zero integrations; reconnecting existing connectors; scoped MCP/Skill/app discovery with 100+ configured tools and no eager schema flood; safe task-time Connect; Coworker last-active conversation after restart; stale list navigation; no private-memory leaks after chief switch; temporary chats never queued; candidate freshness/dedup/correction and retrieval receipts; enabled standing recurrence, duplicate events, DST and wake catch-up; pause new vs pause all; AMBIGUOUS external Effects; consent/approval under spoofed source and changed account; Workbench draft preservation; correct Task/Evidence-driven completion; inaccessible backend controls disabled with explanations. Every supported platform needs actual background close/lock/sleep/resume/restart evidence. Test owner workflows and native app, not only JS snapshots; never mark a new capability implemented based on a document.
+
+
+## Competitor-benchmark UX acceptance additions — 2026-10-10
+
+- **Workbench:** brand-new chat has no forced right panel; explicit Open in Workbench shows Start or exact object; background completion cannot steal focus; width/maximize/close survive restart without restoring stale authority.
+- **Task-time connection repair:** blocked Task presents Connect, cancellation preserves the Task, successful sign-in revalidates and resumes exactly once, expired account/changed scope remains blocked.
+- **Routine Test run:** test creates a real occurrence/Task, shows side-effect warning, preserves approvals, produces run history, and cannot enable a paused recurring schedule.
+- **Coworker Library:** only canonical authorized Resource/Artifact refs appear; revocation removes future reads; no shared-computer/file assumption leaks across Coworkers.
+- **Root mount modes:** read-only/read-write/no-delete are enforced by provider-level tests where advertised; symlink escape and delete attempts fail closed.
+- **Large capability inventory:** 10k catalog/tool metadata entries remain searchable without eager process launch/schema injection.
+- **Optional technical trace:** nontechnical flow completes without Inspector; technical user can expand exact Task/Attempt/Invocation/Effect evidence without hidden model reasoning.

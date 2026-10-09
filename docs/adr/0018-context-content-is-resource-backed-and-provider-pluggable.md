@@ -22,3 +22,8 @@ and lower priority than current Task/user input. No first-party vector database 
 Users can inspect and edit durable context using ordinary Resource revision semantics.
 Provider indexes are rebuildable. A provider cannot change TaskSpec, grants, Approvals,
 or SecretLeases.
+
+
+## Relationship to ADR 0024 (2026-10-10)
+
+This ADR's Resource-backed provenance, authorization, revision and revocation decision remains active. ADR 0024 expands the accepted TARGET beyond manual owner-authored ContextDocuments: qualified agent-backed extraction may produce bounded `MemoryCandidate` records and quiet Coworker-private memory under explicit source eligibility. That candidate/policy pipeline is not yet implemented. It does not make vector/index state canonical, create a first-party semantic planner, or permit connected sources to self-authorize durable memory.
