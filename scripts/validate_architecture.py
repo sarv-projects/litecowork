@@ -656,14 +656,18 @@ def check_resource_contract() -> None:
     services = (DOCS / "SERVICES.md").read_text(encoding="utf-8")
     tests = (DOCS / "TESTING.md").read_text(encoding="utf-8")
     api_doc = (DOCS / "API.md").read_text(encoding="utf-8")
+    api_doc_normalized = " ".join(api_doc.split())
     if "ResourceTextMatchSpan = {" not in schema_text or "source_matches: ResourceTextMatchSpan[]" not in schema_text:
         fail("SCHEMAS.md: Resource search must define its canonical source-match span contract")
     if "source_matches" not in api_doc or "half-open UTF-8 byte offsets" not in api_doc:
         fail("API.md: Resource search must document revision-pinned source match offsets")
     if "source_content_digest" not in world or "never be applied to a newer" not in world:
         fail("WORLD-RESOURCES.md: indexed source spans must remain bound to the exact revision/digest")
-    if "response mapper has not yet been updated to" not in api_doc:
-        fail("API.md: document that daemon serialization of indexed source matches remains pending")
+    if (
+        "mounted daemon route serializes the pinned digest and spans" not in api_doc_normalized
+        or "does not expose durable citation anchors" not in api_doc_normalized
+    ):
+        fail("API.md: document the mounted indexed-span path and its preview-only UI use")
     if "acyclic" not in model or "RESOURCE_CONFLICT" not in model or "multiple heads" not in world:
         fail("Resource model must specify acyclic revision ancestry and conflict behavior")
     if "provenance.source_inputs" not in model or "provenance.transformations[].inputs" not in model:

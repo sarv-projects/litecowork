@@ -4204,7 +4204,7 @@ fn valid_indexed_source_match_bundle(row: &storage_core::ResourceTextSearchRecor
         && row.matched_spans.len() <= 32
         && row.matched_spans.iter().all(|span| {
             !span.term.is_empty()
-                && span.term.len() <= 128
+                && span.term.chars().count() <= 128
                 && span.start_utf8_byte < span.end_utf8_byte_exclusive
                 && span.end_utf8_byte_exclusive <= row.result.summary.size_bytes
         })
@@ -6545,6 +6545,21 @@ mod indexed_resource_source_match_tests {
         let mut mismatch = record();
         mismatch.matched_spans[0].end_utf8_byte_exclusive = 33;
         assert!(!valid_indexed_source_match_bundle(&mismatch));
+    }
+
+    #[test]
+    fn indexed_result_accepts_multibyte_terms_within_character_limit() {
+        let mut indexed = record();
+        let term = "界".repeat(50);
+        indexed.result.summary.size_bytes = 256;
+        indexed.matched_spans = vec![ResourceTextMatchSpan {
+            term,
+            start_utf8_byte: 8,
+            end_utf8_byte_exclusive: 158,
+        }];
+        indexed.matched_term_count = 1;
+
+        assert!(valid_indexed_source_match_bundle(&indexed));
     }
 }
 

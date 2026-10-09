@@ -228,10 +228,12 @@ current revision, source digest, and ContextDocument active status after reading
 snapshot. An unavailable/lost index key disables indexed search and never falls back to
 plaintext indexing.
 
-The storage result computes these spans, but the daemon's ResourceSearchResult serializer
-has not yet mapped them to the Operator API. Until that implementation step is complete,
-the mounted route does not satisfy the documented `source_content_digest` and
-`source_matches` response fields; no client may derive citation offsets from a snippet.
+The mounted daemon route returns these fields and checks their revision/digest binding
+before serialization. The desktop accepts spans only when they match the normalized
+query, then verifies the exact-revision preview digest before highlighting. A mismatch
+falls back to an unmarked exact-revision preview with an explanatory status. These spans
+support Library preview highlighting only; the UI does not expose durable citation
+anchors or call a search result a citation.
 
 Index preparation happens before the Resource SQLite writer transaction; the index row
 and keyed-term rows are committed with initial Resource creation/upload. An owner can

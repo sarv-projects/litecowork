@@ -1301,11 +1301,13 @@ original revision bytes. The offsets are meaningful only with that result's exac
 `resource_ref.revision_id` and `source_content_digest`; they do not address a newer head
 or the normalized display snippet. On-demand snippets currently have no offset provenance.
 
-**Implementation gap:** the storage search result now computes these revision/digest-bound
-spans, but the daemon's `ResourceSearchResult` response mapper has not yet been updated to
-serialize `source_content_digest` and `source_matches`. Until that owner integration is
-completed, the mounted route does not satisfy this response contract; clients must not
-infer source offsets from snippets.
+The mounted daemon route serializes the pinned digest and spans and fails closed if the
+storage result's Resource revision, digest, matched-term count, or span bounds disagree.
+The desktop validates the result against the normalized query, then fetches the exact
+revision and verifies its digest before applying highlights. If verification fails, it
+shows the exact-revision preview without highlights and reports that they could not be
+verified. The Library uses spans only for preview highlighting; it does not expose durable
+citation anchors or present these search hits as citations.
 
 The revision endpoint returns immutable revisions in ancestry order with parent IDs and
 head markers. If multiple heads exist, the Resource projection has a null
