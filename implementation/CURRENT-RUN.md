@@ -3,9 +3,38 @@
 Update this file when the active story, implementation state, or handoff changes. It is
 operational context; architecture and owning domain contracts remain authoritative.
 
-## Active desktop/local status snapshot (2026-10-09)
+## Current integration status (2026-10-10)
 
-This is the current desktop/local V1 status; older chronological entries below record
+All three formerly dirty local implementation worktrees were committed, cherry-picked
+onto main, and verified at their own bounded interfaces:
+
+- `6030a57` adds a fail-closed private Trust evaluator (19 targeted Rust tests passed).
+  No evaluator result is a reusable dispatch permit; the storage-backed atomic
+  authorization/ApprovalUse/Effect admission transaction is not implemented.
+- `d598189` adds attempted process-scope identity journaling and startup blockers
+  (4 targeted Rust tests passed). Live Task-to-process dispatch and cgroup/sandbox
+  end-to-end qualification are still unavailable.
+- `b8d393b` adds durable Invocation status transitions and SQLite migrations 14/15.
+  Migration 15 explicitly rejects Invocation creation and dispatch until combined
+  Trust/grant/lease/Effect/ApprovalUse admission is implemented. The domain Invocation
+  tests (3), targeted Invocation storage tests (7), and full SQLite suite (115) passed
+  in the source worktree, including migration rollback and negative authorization tests.
+  Real provider actions remain disabled.
+
+Clean historical worktrees were detached with `git worktree remove`; branch references
+are retained. Local development build outputs are generated separately. These increments
+do not close a backlog story or meet the native-agent Task acceptance gate. The
+remaining critical path is the combined admission writer, qualified isolated launch,
+native-agent Task/Attempt execution, Effect reconciliation, and verified completion.
+After cherry-picking onto `main`, `cargo check --locked -p litecoworkd` passed,
+architecture validation passed (141 typed events), and implementation-plan and coverage
+validation passed (60 stories, 5,317 coverage rows). Existing Rust unused-code/import
+warnings remain. These checks prove compilability and contract consistency only,
+not Task/provider execution or owner acceptance.
+
+## Historical desktop/local status snapshot (2026-10-09)
+
+This was the desktop/local V1 status at that date; older chronological entries below record
 what was true at their timestamps. V1 is the complete desktop/local product. Cloud
 continuation and remote Runtime are post-V1 and excluded from the V1 release gate; local
 capabilities already committed in the architecture remain in V1 scope.
