@@ -26,9 +26,14 @@ There is no Operator/API/provider caller or lifecycle for retaining the prepared
 this is an adapter seam, not a user-visible or production execution flow.
 
 Focused verification passed: `cargo test -p local-environment-staging` (16 tests) and the
-SQLite exact-historical-revision/staging integration test (1 test). Final workspace and
-validator results for this slice are recorded after the complete checks run below. Existing
-compiler warnings in unrelated unfinished modules remain.
+SQLite exact-historical-revision/staging integration test (1 test). A workspace test run
+was started, but its final output/exit status was not captured, so the workspace suite is
+not reported as passing. Architecture validation passed (140 typed events), implementation-
+plan validation passed (60 stories, 5,310 traceability rows), generated coverage is current
+(79 documents, 1,096 sections, 5,310 rows), and `git diff --check` passed. Existing
+compiler warnings in unrelated unfinished modules remain. These checks are code/contract
+evidence only: the adapter has no product caller, Linux-only staging does not qualify a
+sandbox, and no OS/provider or owner real-user acceptance was performed.
 
 ### Latest implementation checkpoint — Environment lifecycle, staging, and RichPresentation read path (2026-10-09)
 
@@ -3359,3 +3364,56 @@ Verified on 2026-10-09:
 This closes only Task pin shape validation. Exact ResourceStore-to-staging resolution,
 historical-revision staging, cleanup/restart behavior, a user inspection surface, and all
 Environment isolation and dispatch gates remain open.
+
+## Linux transient-scope quiescence qualification — 2026-10-09
+
+The first live tests reproduced a real race: systemd can remove an empty transient scope
+cgroup before a post-exit read observes `populated 0`. A file descriptor opened before
+worker launch does not always solve this for hard cancellation; the kernel may return
+`ENODEV` after systemd removes the cgroup. Treating that missing state as empty would be
+unsafe.
+
+The process-scope primitive now creates a uniquely named, explicitly active parent slice per
+Attempt before starting the transient worker scope. It monitors that stable parent slice's
+recursive `cgroup.events`, rather than the transient scope's event file. The worker scope can
+be removed by systemd while the parent slice remains available for an explicit
+`populated 0` read. Only after positive empty-state evidence and direct-child reap does the
+provider stop the parent slice. Missing/unreadable cgroup state and active/failed/unknown
+systemd states are not accepted as quiescence proof. The parent slice is stopped after
+normal completion and cancellation; pre-GO cleanup retains its slice identity in
+`PendingCleanup`.
+
+Verified on the current Ubuntu host (systemd 255.4, delegated cgroup v2):
+
+- `cargo test -p linux-process-scope --test systemd_scope -- --ignored --nocapture` — both
+  live cases passed after switching to the stable parent-slice observer.
+- Before the latest strict parent/worker ancestry guard, the ignored systemd suite was run
+  20 times (40 executions) against the stable parent-slice observer. That stress result is
+  not claimed for the final ancestry-guard change; after that change the two live cases
+  passed once each, and both assert that the per-Attempt slice is stopped.
+- The cases verify configured cgroup limits before gate release, native stdin/stdout/stderr
+  preservation, normal exit quiescence, and descendant cancellation/quiescence.
+- `cargo test -p linux-process-scope` and `cargo test --workspace` remain pending after this
+  final parent-slice/ancestry-guard change.
+
+This only qualifies a process-scope primitive on one Linux/systemd host. It does not prove
+filesystem/network confinement, same-user systemd-bus isolation, package delivery, Windows/
+macOS behavior, Effect/lease reconciliation, Runtime restart identity, product Task/Attempt
+integration, or production-safe switching. E07-S00 stays in progress and Task dispatch stays
+closed.
+
+## Desktop UI preview and empty-Workspace startup — 2026-10-09
+
+Captured the current React/Vite UI in a clean browser context across Home, Work, Library,
+Needs You, Ideas, and Settings. This is a browser-served frontend preview, not a qualified
+Tauri desktop launch; no local daemon/Workspace/agent data is attached, and unavailable
+runtime-backed actions are shown as unavailable. The preview exposed an Ideas startup crash
+when no Workspace was selected: App constructed a Workspace-scoped Suggestions API with an
+empty ID. API construction is now deferred until selection, and Ideas shows an explicit
+Workspace empty state.
+
+Verified with `pnpm --config.verifyDepsBeforeRun=false build` and
+`node --experimental-transform-types --test tests/*.test.ts` (57 passed, 0 failed). The
+build emits a Vite warning that its main JS chunk is 705.75 kB minified (194.52 kB gzip);
+code splitting remains open. Chrome DevTools reported no console errors in the no-Workspace
+startup/Ideas path. The visible Tauri shell and daemon launch path remain unqualified here.
