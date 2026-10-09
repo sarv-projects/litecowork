@@ -2,11 +2,11 @@
 //!
 //! This keeps OpenCode's native harness and configuration intact. LiteCowork
 //! launches `opencode serve` on IPv4 loopback with a generated Basic-auth
-//! password, then speaks only the stable documented session/message/abort/event API.
+//! password, then speaks only the version-qualified V2 HTTP API.
 //! It is transport only: it does not admit a Task/Attempt, authorize tools,
 //! mediate Effects, or establish child-process writer quiescence.
 //!
-//! API reference: https://opencode.ai/docs/server/ . Server routes and request
+//! API reference: https://dev.opencode.ai/v2/docs/api/ . Server routes and request
 //! shapes are taken from the OpenCode Server/SDK documentation. This adapter
 //! deliberately does not expose arbitrary URLs, headers, methods, or JSON-RPC.
 
@@ -76,6 +76,11 @@ pub(crate) enum OpenCodeProcessState {
     ObservationFailed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenCodeServerProtocol {
+    V2_0_26,
+}
+
 /// Safe transport configuration. The executable and working directory must be
 /// selected by an admitted Runtime-local endpoint binding.
 pub(crate) struct OpenCodeServerConfig {
@@ -85,6 +90,7 @@ pub(crate) struct OpenCodeServerConfig {
     pub environment: OpenCodeEnvironment,
     pub startup_timeout: Duration,
     pub request_timeout: Duration,
+    pub protocol: OpenCodeServerProtocol,
 }
 
 /// Non-secret process settings required to let OpenCode find its native
@@ -185,12 +191,23 @@ impl OpenCodeServerConfig {
             environment: OpenCodeEnvironment::default(),
             startup_timeout: Duration::from_secs(15),
             request_timeout: Duration::from_secs(30),
+            protocol: OpenCodeServerProtocol::V2_0_26,
         }
     }
 
     pub(crate) fn with_environment(mut self, environment: OpenCodeEnvironment) -> Self {
         self.environment = environment;
         self
+    }
+
+    fn is_valid(&self) -> bool {
+        self.executable.is_absolute()
+            && self.working_directory.is_absolute()
+            && self.environment.is_valid()
+            && !self.startup_timeout.is_zero()
+            && self.startup_timeout <= Duration::from_secs(60)
+            && !self.request_timeout.is_zero()
+            && self.request_timeout <= Duration::from_secs(60)
     }
 }
 
@@ -203,20 +220,15 @@ pub(crate) struct OpenCodeServer {
     password: Vec<u8>,
     request_timeout: Duration,
     stopped: bool,
+    protocol: OpenCodeServerProtocol,
+    working_directory: PathBuf,
 }
 
 impl OpenCodeServer {
     /// Launch OpenCode bound strictly to 127.0.0.1. The native OpenCode
     /// configuration/auth state is read by OpenCode itself and never copied.
     pub(crate) fn spawn(config: OpenCodeServerConfig) -> Result<Self, OpenCodeError> {
-        if !config.executable.is_absolute()
-            || !config.working_directory.is_absolute()
-            || !config.environment.is_valid()
-            || config.startup_timeout.is_zero()
-            || config.startup_timeout > Duration::from_secs(60)
-            || config.request_timeout.is_zero()
-            || config.request_timeout > Duration::from_secs(60)
-        {
+        if !config.is_valid() {
             return Err(OpenCodeError::InvalidConfiguration);
         }
 
@@ -265,6 +277,8 @@ impl OpenCodeServer {
             password,
             request_timeout: config.request_timeout,
             stopped: false,
+            protocol: config.protocol,
+            working_directory: config.working_directory.clone(),
         };
 
         let stdout = server
@@ -290,9 +304,7 @@ impl OpenCodeServer {
                     return Err(OpenCodeError::ProcessObservationFailed);
                 }
             }
-            // Use the stable Server API surface consistently. `/api/health` is
-            // part of OpenCode's experimental V2 API and is not mixed into this
-            // legacy `/session` + `/event` adapter.
+            // Routes are selected from the exact CLI version qualification.
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(OpenCodeError::StartupTimeout);
@@ -304,7 +316,7 @@ impl OpenCodeServer {
             server.request_timeout = config.request_timeout.min(remaining);
             match server.request_with_response_limit(
                 "GET",
-                "/global/health",
+                "/api/health",
                 None,
                 "application/json",
                 MAX_HEALTH_RESPONSE_BYTES,
@@ -313,7 +325,12 @@ impl OpenCodeServer {
                     if response.status == 200
                         && serde_json::from_slice::<Value>(&response.body)
                             .ok()
-                            .and_then(|body| body.get("healthy").and_then(Value::as_bool))
+                            .and_then(|body| {
+                                body.get("data")
+                                    .unwrap_or(&body)
+                                    .get("healthy")
+                                    .and_then(Value::as_bool)
+                            })
                             == Some(true) =>
                 {
                     server.request_timeout = config.request_timeout;
@@ -349,9 +366,12 @@ impl OpenCodeServer {
     /// restricted to the documented read-only route; callers must whitelist
     /// fields before exposing any observation outside this module.
     pub(super) fn read_provider_status(&mut self) -> Result<Value, OpenCodeError> {
+        let path = match self.protocol {
+            OpenCodeServerProtocol::V2_0_26 => "/api/provider",
+        };
         let response = self.request_with_response_limit(
             "GET",
-            "/provider",
+            path,
             None,
             "application/json",
             MAX_PROFILE_RESPONSE_BYTES,
@@ -359,12 +379,15 @@ impl OpenCodeServer {
         response_json(response)
     }
 
-    /// Reads the native configured provider/model catalogue without invoking
+    /// Reads the native model catalogue without invoking
     /// a model or changing OpenCode configuration.
     pub(super) fn read_configured_provider_catalog(&mut self) -> Result<Value, OpenCodeError> {
+        let path = match self.protocol {
+            OpenCodeServerProtocol::V2_0_26 => "/api/model",
+        };
         let response = self.request_with_response_limit(
             "GET",
-            "/config/providers",
+            path,
             None,
             "application/json",
             MAX_PROFILE_RESPONSE_BYTES,
@@ -375,22 +398,29 @@ impl OpenCodeServer {
     /// Creates one native OpenCode session. Session IDs are treated as opaque
     /// values but are validated before they can become URL path segments.
     pub(crate) fn create_session(&mut self, title: Option<&str>) -> Result<String, OpenCodeError> {
-        let mut body = serde_json::Map::new();
-        if let Some(title) = title {
-            if title.len() > 256 || title.chars().any(char::is_control) {
-                return Err(OpenCodeError::InvalidConfiguration);
-            }
-            body.insert("title".to_owned(), Value::String(title.to_owned()));
+        if title.is_some() {
+            // V2 session creation has no title field; silently dropping the
+            // caller's label would make session identity ambiguous.
+            return Err(OpenCodeError::InvalidConfiguration);
         }
+        let body = serde_json::Map::new();
         let response = self.request(
             "POST",
-            "/session",
-            Some(Value::Object(body)),
+            "/api/session",
+            Some({
+                let mut body = body;
+                body.insert(
+                    "location".to_owned(),
+                    json!({"directory": self.working_directory.to_string_lossy()}),
+                );
+                Value::Object(body)
+            }),
             "application/json",
         )?;
         let value = response_json(response)?;
         let id = value
-            .get("id")
+            .get("data")
+            .and_then(|data| data.get("id"))
             .and_then(Value::as_str)
             .ok_or(OpenCodeError::InvalidResponse)?;
         validate_session_id(id)?;
@@ -398,28 +428,30 @@ impl OpenCodeServer {
     }
 
     /// Sends a bounded text prompt through the documented session prompt API.
-    /// Model selection is an opaque provider/model pair and is omitted unless
-    /// an adapter-negotiated caller supplies it.
+    /// Native response data is discarded after its bounded admission envelope
+    /// is checked. Model selection remains unqualified and is rejected.
     pub(crate) fn send_message(
         &mut self,
         session_id: &str,
         text: &str,
         model: Option<(&str, &str)>,
-    ) -> Result<Value, OpenCodeError> {
+    ) -> Result<(), OpenCodeError> {
         validate_session_id(session_id)?;
         if text.trim().is_empty() || text.len() > 256 * 1024 || text.chars().any(|c| c == '\0') {
             return Err(OpenCodeError::InvalidConfiguration);
         }
-        let mut body = json!({"parts":[{"type":"text","text":text}]});
-        if let Some((provider_id, model_id)) = model {
-            if !valid_option(provider_id, 128) || !valid_option(model_id, 128) {
-                return Err(OpenCodeError::InvalidConfiguration);
-            }
-            body["model"] = json!({"providerID":provider_id,"modelID":model_id});
+        if model.is_some() {
+            return Err(OpenCodeError::InvalidConfiguration);
         }
-        let path = format!("/session/{session_id}/message");
+        let body = json!({"prompt":{"text":text}});
+        let path = format!("/api/session/{session_id}/prompt");
         let response = self.request("POST", &path, Some(body), "application/json")?;
-        response_json(response)
+        let value = response_json(response)?;
+        if value.get("data").and_then(Value::as_object).is_some() {
+            Ok(())
+        } else {
+            Err(OpenCodeError::InvalidResponse)
+        }
     }
 
     /// Admits one prompt without holding the caller until inference completes.
@@ -439,19 +471,17 @@ impl OpenCodeServer {
         if text.trim().is_empty() || text.len() > 256 * 1024 || text.chars().any(|c| c == '\0') {
             return Err(OpenCodeError::InvalidConfiguration);
         }
-        let mut body = json!({
-            "messageID": message_id,
-            "parts": [{"type": "text", "text": text}],
-        });
-        if let Some((provider_id, model_id)) = model {
-            if !valid_option(provider_id, 128) || !valid_option(model_id, 128) {
-                return Err(OpenCodeError::InvalidConfiguration);
-            }
-            body["model"] = json!({"providerID":provider_id,"modelID":model_id});
+        if model.is_some() {
+            return Err(OpenCodeError::InvalidConfiguration);
         }
-        let path = format!("/session/{session_id}/prompt_async");
+        let body = json!({
+            "id": message_id,
+            "prompt": {"text": text},
+        });
+        let path = format!("/api/session/{session_id}/prompt");
         let response = self.request("POST", &path, Some(body), "application/json")?;
-        if response.status == 204 {
+        let value = response_json(response)?;
+        if value.get("data").and_then(Value::as_object).is_some() {
             Ok(())
         } else {
             Err(OpenCodeError::InvalidResponse)
@@ -463,10 +493,9 @@ impl OpenCodeServer {
     /// evidence and must not by itself authorize Attempt replacement.
     pub(crate) fn abort_session(&mut self, session_id: &str) -> Result<bool, OpenCodeError> {
         validate_session_id(session_id)?;
-        let path = format!("/session/{session_id}/abort");
+        let path = format!("/api/session/{session_id}/interrupt");
         let response = self.request("POST", &path, None, "application/json")?;
-        let value = response_json(response)?;
-        value.as_bool().ok_or(OpenCodeError::InvalidResponse)
+        Ok(response.status == 204)
     }
 
     /// Opens the native server-instance SSE event stream. OpenCode scopes it
@@ -479,7 +508,7 @@ impl OpenCodeServer {
             stream,
             self.address,
             "GET",
-            "/event",
+            "/api/event",
             &self.authorization(),
             None,
             "text/event-stream",
@@ -1067,7 +1096,7 @@ fn write_request(
         // as if earlier transfer codings had already been decoded.
         Some(_) => return Err(OpenCodeError::InvalidHttpFraming),
     };
-    if content_length.is_some_and(|length| length > max_response_bytes as u64) {
+    if content_length.is_some_and(|length| response_exceeds_limit(length, max_response_bytes)) {
         return Err(OpenCodeError::ResponseTooLarge);
     }
     let mut body_stream = BodyStream {
@@ -1122,7 +1151,15 @@ fn connect(address: SocketAddr, timeout: Duration) -> Result<TcpStream, OpenCode
 }
 
 fn response_json(response: HttpResponse) -> Result<Value, OpenCodeError> {
-    serde_json::from_slice(&response.body).map_err(|_| OpenCodeError::InvalidResponse)
+    parse_json_response(&response.body)
+}
+
+fn parse_json_response(bytes: &[u8]) -> Result<Value, OpenCodeError> {
+    serde_json::from_slice(bytes).map_err(|_| OpenCodeError::InvalidResponse)
+}
+
+fn response_exceeds_limit(content_length: u64, max_response_bytes: usize) -> bool {
+    content_length > max_response_bytes as u64
 }
 
 fn read_body_line(
@@ -1216,5 +1253,40 @@ mod tests {
             None,
         );
         assert_eq!(parse_server_listening_line(b"ready"), None);
+    }
+
+    #[test]
+    fn server_configuration_bounds_startup_and_request_timeouts() {
+        let config = OpenCodeServerConfig::bounded("/usr/bin/opencode", "/tmp/workspace");
+        assert!(config.is_valid());
+
+        let mut zero_timeout = OpenCodeServerConfig::bounded("/usr/bin/opencode", "/tmp/workspace");
+        zero_timeout.request_timeout = Duration::ZERO;
+        assert!(!zero_timeout.is_valid());
+
+        let mut excessive_timeout =
+            OpenCodeServerConfig::bounded("/usr/bin/opencode", "/tmp/workspace");
+        excessive_timeout.startup_timeout = Duration::from_secs(61);
+        assert!(!excessive_timeout.is_valid());
+    }
+
+    #[test]
+    fn response_content_length_is_bounded_before_body_allocation() {
+        assert!(!response_exceeds_limit(
+            MAX_RESPONSE_BYTES as u64,
+            MAX_RESPONSE_BYTES
+        ));
+        assert!(response_exceeds_limit(
+            (MAX_RESPONSE_BYTES + 1) as u64,
+            MAX_RESPONSE_BYTES
+        ));
+    }
+
+    #[test]
+    fn html_fallback_is_rejected_as_invalid_json_without_retaining_body() {
+        assert_eq!(
+            parse_json_response(b"<html><body>desktop app</body></html>"),
+            Err(OpenCodeError::InvalidResponse)
+        );
     }
 }

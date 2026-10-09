@@ -1546,7 +1546,7 @@ paths:
             schema: {$ref: '#/components/schemas/ProbeLocalAgentProfileRequest'}
       responses:
         '200':
-          description: Explicit owner-triggered, bounded local adapter observation. Each request performs a new probe and records a refreshed expiring Runtime offer; it is not an idempotent domain mutation. Requires the selected Workspace owner and an active local RuntimeWorkspaceBinding. Codex and OpenCode are accepted. OpenCode returns only bounded sanitized provider/model IDs and display names plus reported connected-provider IDs; it never returns native provider/model objects, options, headers, keys, URLs, or raw responses. OpenCode session-model selection is NOT_QUALIFIED and its offer is always incompatible, so the profile cannot be bound or enabled. Raw native messages, endpoint locators, account identifiers, and private configuration are omitted.
+          description: Explicit owner-triggered, bounded local adapter observation. Each request performs a new probe and records a refreshed expiring Runtime offer; it is not an idempotent domain mutation. Requires the selected Workspace owner and an active local RuntimeWorkspaceBinding. Codex and OpenCode are accepted. OpenCode currently accepts only qualified CLI 2.0.26 and reads /api/provider plus /api/model; it returns bounded sanitized catalog IDs and display names, never native provider/model objects, options, headers, keys, URLs, raw responses, or location paths. Catalog provider IDs are not connected-provider or authentication evidence. Unsupported versions fail closed without route fallback. OpenCode session-model selection is NOT_QUALIFIED and its offer is always incompatible, so the profile cannot be bound or enabled. Raw native messages, endpoint locators, account identifiers, and private configuration are omitted.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AgentProfileView'}
@@ -4306,18 +4306,24 @@ components:
       type: object
       additionalProperties: false
       description: Sanitized OpenCode profile-probe observation. At most 32 providers, 64 models per provider, and 256 models total are returned. Catalog metadata is display-only; authentication, inference entitlement, model selection, and Task admission are not established.
-      required: [agent_id, protocol, probe_readiness, failure, reported_provider_status, reported_connected_provider_ids, reported_connected_provider_ids_truncated, reported_model_catalog, configured_providers, catalog_truncated, authentication_observation, session_model_selection, inference_access_verified, host_process_stopped, writer_quiescence_proven, profile_admission_supported]
+      required: [agent_id, protocol, protocol_version, probe_readiness, failure, reported_provider_status, reported_connected_provider_ids, reported_connected_provider_ids_truncated, reported_provider_ids, reported_provider_ids_truncated, reported_model_catalog, configured_providers, catalog_truncated, authentication_observation, session_model_selection, inference_access_verified, host_process_stopped, writer_quiescence_proven, profile_admission_supported]
       properties:
         agent_id: {const: opencode}
         protocol: {const: OPENCODE_SERVER}
+        protocol_version: {type: [string, 'null'], maxLength: 48, pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'}
         probe_readiness: {type: string, enum: [COMPLETE, PARTIAL, FAILED]}
-        failure: {type: [string, 'null'], enum: [INVALID_ADMISSION, HOST_UNAVAILABLE, PROVIDER_STATUS_UNAVAILABLE, CATALOG_UNAVAILABLE, HOST_STOP_UNOBSERVED, null]}
+        failure: {type: [string, 'null'], enum: [INVALID_ADMISSION, HOST_UNAVAILABLE, PROVIDER_STATUS_UNAVAILABLE, CATALOG_UNAVAILABLE, HOST_STOP_UNOBSERVED, UNSUPPORTED_VERSION, null]}
         reported_provider_status: {type: string, enum: [OBSERVED, UNKNOWN, NOT_PROBED]}
         reported_connected_provider_ids:
           type: array
           maxItems: 32
           items: {type: string, maxLength: 128, pattern: '^[A-Za-z0-9_.:/-]+$'}
         reported_connected_provider_ids_truncated: {type: boolean}
+        reported_provider_ids:
+          type: array
+          maxItems: 32
+          items: {type: string, maxLength: 128, pattern: '^[A-Za-z0-9_.:/-]+$'}
+        reported_provider_ids_truncated: {type: boolean}
         reported_model_catalog: {type: string, enum: [OBSERVED, UNKNOWN, NOT_PROBED]}
         configured_providers:
           type: array

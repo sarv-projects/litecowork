@@ -72,12 +72,15 @@ inventory. The selected Workspace must already authorize the exact current local
 incarnation through an ACTIVE `LOCAL_ENROLLMENT` RuntimeWorkspaceBinding carrying
 `EXECUTOR` and `OPERATOR_ENDPOINT`; serving the authenticated Operator does not imply this
 enrollment. The Codex probe performs bounded App Server initialization, account-state
-read without refresh, and one bounded model-catalog page. The OpenCode probe starts the
-owned local Server and reads only the documented `/provider` connection summary and
-`/config/providers` catalog routes. Its projection contains bounded provider/model IDs and
-display names plus explicitly labeled reported connected-provider IDs; it never returns
-native provider/model objects, options, headers, keys, URLs, or raw responses. A reported
-connected provider is not proof of authentication, entitlement, or inference success.
+read without refresh, and one bounded model-catalog page. The OpenCode probe runs a
+bounded `--version` check and currently accepts only the specifically qualified
+`opencode 2.0.26` Server protocol. It reads `/api/provider` and `/api/model`; these V2
+routes return location-bearing `data` envelopes, so the adapter projects only bounded
+provider/model IDs and safe display names. Provider IDs from `/api/provider` are labeled
+as catalog IDs, never as connected/authenticated providers. Native provider/model objects,
+location paths, options, headers, keys, URLs, and raw responses are discarded. A mismatched
+or unsupported CLI version fails closed without probing legacy routes. Neither catalog
+route proves authentication, entitlement, or inference success.
 OpenCode's catalog is display-only: session model selection is `NOT_QUALIFIED`, and its
 RuntimeOffer is always incompatible until session-option semantics, Task admission,
 Environment isolation, native capability mediation, process-tree containment, Effect
@@ -154,7 +157,11 @@ This is a process-origin bind-success signal, not general OS peer authentication
 process containment, or proof that OpenCode's descendants stopped writing. It depends on
 the installed CLI's startup output contract and must be covered by the supported-version
 qualification matrix ([OpenCode Server documentation](https://opencode.ai/docs/server/)).
-This transport remains unusable for Task/Attempt execution until
+The V2 routes are taken from the [OpenCode V2 HTTP API documentation](https://dev.opencode.ai/v2/docs/api/). The V2 session transport uses `/api/session`, `/api/session/{id}/prompt`,
+`/api/session/{id}/interrupt`, and `/api/event`; those adapter methods are not called by
+Task admission and do not provide durable LiteCowork AgentSession ownership, output
+sanitization/projection, Trust grants, or an authorized Environment. They remain unusable
+for Task/Attempt execution until
 Task admission, isolated Environment, native capability mediation, process-tree
 containment, Effect reconciliation, and lease fencing are integrated and qualified.
 

@@ -46,6 +46,7 @@ pub(crate) enum OpenCodeProbeFailure {
     ProviderStatusUnavailable,
     CatalogUnavailable,
     HostStopUnobserved,
+    UnsupportedVersion,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -65,15 +66,21 @@ pub(crate) struct OpenCodeProviderOption {
 pub(crate) struct OpenCodeProfileProbe {
     pub agent_id: &'static str,
     pub protocol: &'static str,
+    pub protocol_version: Option<String>,
     pub probe_readiness: OpenCodeProbeReadiness,
     pub failure: Option<OpenCodeProbeFailure>,
-    /// This means `/provider` returned a valid `connected` list. It is not an
-    /// authentication, entitlement, or inference-success claim.
+    /// This means the V2 provider catalog route returned a valid data array. It
+    /// is not a connected-provider, authentication, entitlement, or inference
+    /// success claim.
     pub reported_provider_status: OpenCodeObservation,
     pub reported_connected_provider_ids: Vec<String>,
     pub reported_connected_provider_ids_truncated: bool,
-    /// Display-only metadata from `/config/providers`; it is not a universal
-    /// model registry and does not imply that OpenCode can select an override.
+    /// Provider identifiers reported by the V2 catalog. This is not a
+    /// connectivity, authentication, or entitlement observation.
+    pub reported_provider_ids: Vec<String>,
+    pub reported_provider_ids_truncated: bool,
+    /// Display-only metadata from `/api/model`; it is not a universal model
+    /// registry and does not imply qualified session model selection.
     pub reported_model_catalog: OpenCodeObservation,
     pub configured_providers: Vec<OpenCodeProviderOption>,
     pub catalog_truncated: bool,
@@ -92,11 +99,14 @@ impl OpenCodeProfileProbe {
         Self {
             agent_id: "opencode",
             protocol: "OPENCODE_SERVER",
+            protocol_version: None,
             probe_readiness: OpenCodeProbeReadiness::Failed,
             failure: None,
             reported_provider_status: OpenCodeObservation::NotProbed,
             reported_connected_provider_ids: Vec::new(),
             reported_connected_provider_ids_truncated: false,
+            reported_provider_ids: Vec::new(),
+            reported_provider_ids_truncated: false,
             reported_model_catalog: OpenCodeObservation::NotProbed,
             configured_providers: Vec::new(),
             catalog_truncated: false,
@@ -124,7 +134,18 @@ pub(crate) fn probe_opencode_profile(
         return result;
     }
 
+    let Some(version) = read_opencode_version(executable) else {
+        result.failure = Some(OpenCodeProbeFailure::UnsupportedVersion);
+        return result;
+    };
+    result.protocol_version = Some(version.clone());
+    if !is_supported_opencode_version(&version) {
+        result.failure = Some(OpenCodeProbeFailure::UnsupportedVersion);
+        return result;
+    }
+
     let mut config = OpenCodeServerConfig::bounded(executable, cwd).with_environment(environment);
+    config.protocol = super::OpenCodeServerProtocol::V2_0_26;
     config.startup_timeout = Duration::from_secs(8);
     config.request_timeout = Duration::from_secs(5);
     let mut server = match OpenCodeServer::spawn(config) {
@@ -135,8 +156,8 @@ pub(crate) fn probe_opencode_profile(
         }
     };
 
-    observe_provider_status(&mut result, server.read_provider_status());
-    observe_catalog(&mut result, server.read_configured_provider_catalog());
+    observe_v2_provider_catalog(&mut result, server.read_provider_status());
+    observe_v2_model_catalog(&mut result, server.read_configured_provider_catalog());
 
     result.host_process_stopped = server.stop() == OpenCodeProcessState::Exited;
     if !result.host_process_stopped {
@@ -158,30 +179,165 @@ pub(crate) fn probe_opencode_profile(
     result
 }
 
-fn observe_provider_status(
+fn read_opencode_version(executable: &Path) -> Option<String> {
+    use std::{
+        io::Read,
+        process::{Command, Stdio},
+        sync::mpsc,
+        thread,
+        time::Instant,
+    };
+    let mut child = Command::new(executable)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .env_clear()
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::sync_channel(1);
+    let _reader = thread::spawn(move || {
+        let mut bytes = Vec::with_capacity(32);
+        let _ = stdout.by_ref().take(129).read_to_end(&mut bytes);
+        let _ = tx.send(bytes);
+    });
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) | Err(_) => return None,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let bytes = rx.recv_timeout(Duration::from_millis(100)).ok()?;
+    if bytes.len() > 128 {
+        return None;
+    }
+    let text = std::str::from_utf8(&bytes).ok()?;
+    parse_opencode_version_output(text)
+}
+
+fn parse_opencode_version_output(output: &str) -> Option<String> {
+    let trimmed = output.trim();
+    let value = trimmed.strip_prefix("opencode ").unwrap_or(trimmed);
+    let value = value.strip_prefix('v').unwrap_or(value);
+    let mut segments = value.split('.');
+    let valid = (0..3).all(|_| {
+        segments.next().is_some_and(|segment| {
+            !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    }) && segments.next().is_none();
+    valid.then(|| value.to_owned())
+}
+
+fn is_supported_opencode_version(version: &str) -> bool {
+    // This is the exact version whose V2 route behavior was observed and
+    // qualified. Do not assume later releases preserve experimental routes.
+    version == "2.0.26"
+}
+
+fn observe_v2_provider_catalog(
     result: &mut OpenCodeProfileProbe,
     response: Result<Value, OpenCodeError>,
 ) {
-    match response
-        .ok()
-        .and_then(|native| connected_provider_ids(&native))
-    {
+    let projected = response.ok().and_then(|value| {
+        let entries = value.get("data")?.as_array()?;
+        let mut truncated = entries.len() > MAX_PROVIDERS;
+        let mut ids = entries
+            .iter()
+            .take(MAX_PROVIDERS)
+            .filter_map(|entry| {
+                let Some(id) = entry
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .and_then(safe_identifier)
+                else {
+                    truncated = true;
+                    return None;
+                };
+                Some(id)
+            })
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids.dedup();
+        Some((ids, truncated))
+    });
+    match projected {
         Some((ids, truncated)) => {
             result.reported_provider_status = OpenCodeObservation::Observed;
-            result.reported_connected_provider_ids = ids;
-            result.reported_connected_provider_ids_truncated = truncated;
+            result.reported_provider_ids = ids;
+            result.reported_provider_ids_truncated = truncated;
         }
         None => {
             result.reported_provider_status = OpenCodeObservation::Unknown;
-            if result.failure.is_none() {
-                result.failure = Some(OpenCodeProbeFailure::ProviderStatusUnavailable);
-            }
+            result
+                .failure
+                .get_or_insert(OpenCodeProbeFailure::ProviderStatusUnavailable);
         }
     }
 }
 
-fn observe_catalog(result: &mut OpenCodeProfileProbe, response: Result<Value, OpenCodeError>) {
-    match response.ok().and_then(|native| configured_catalog(&native)) {
+fn observe_v2_model_catalog(
+    result: &mut OpenCodeProfileProbe,
+    response: Result<Value, OpenCodeError>,
+) {
+    let projected = response.ok().and_then(|value| {
+        let entries = value.get("data")?.as_array()?;
+        let mut truncated = entries.len() > MAX_MODELS_TOTAL;
+        let mut grouped = std::collections::BTreeMap::<String, Vec<OpenCodeModelOption>>::new();
+        for entry in entries.iter().take(MAX_MODELS_TOTAL) {
+            let (Some(provider), Some(id)) = (
+                entry
+                    .get("providerID")
+                    .and_then(Value::as_str)
+                    .and_then(safe_identifier),
+                entry
+                    .get("modelID")
+                    .and_then(Value::as_str)
+                    .and_then(safe_identifier),
+            ) else {
+                truncated = true;
+                continue;
+            };
+            if !result
+                .reported_provider_ids
+                .iter()
+                .any(|observed| observed == &provider)
+            {
+                truncated = true;
+                continue;
+            }
+            let display_name = entry.get("name").and_then(safe_display_name);
+            if entry.get("name").is_some() && display_name.is_none() {
+                truncated = true;
+            }
+            let models = grouped.entry(provider).or_default();
+            if models.len() < MAX_MODELS_PER_PROVIDER {
+                models.push(OpenCodeModelOption { id, display_name });
+            } else {
+                truncated = true;
+            }
+        }
+        let providers = grouped
+            .into_iter()
+            .map(|(id, mut models)| {
+                models.sort_by(|a, b| a.id.cmp(&b.id));
+                OpenCodeProviderOption {
+                    id,
+                    display_name: None,
+                    models,
+                }
+            })
+            .collect::<Vec<_>>();
+        Some((providers, truncated))
+    });
+    match projected {
         Some((providers, truncated)) => {
             result.reported_model_catalog = OpenCodeObservation::Observed;
             result.configured_providers = providers;
@@ -189,87 +345,11 @@ fn observe_catalog(result: &mut OpenCodeProfileProbe, response: Result<Value, Op
         }
         None => {
             result.reported_model_catalog = OpenCodeObservation::Unknown;
-            if result.failure.is_none() {
-                result.failure = Some(OpenCodeProbeFailure::CatalogUnavailable);
-            }
+            result
+                .failure
+                .get_or_insert(OpenCodeProbeFailure::CatalogUnavailable);
         }
     }
-}
-
-fn connected_provider_ids(value: &Value) -> Option<(Vec<String>, bool)> {
-    let connected = value.get("connected")?.as_array()?;
-    let mut truncated = connected.len() > MAX_PROVIDERS;
-    let mut result = Vec::with_capacity(connected.len().min(MAX_PROVIDERS));
-    for entry in connected.iter().take(MAX_PROVIDERS) {
-        if let Some(id) = entry.as_str().and_then(safe_identifier) {
-            result.push(id);
-        } else {
-            truncated = true;
-        }
-    }
-    result.sort();
-    result.dedup();
-    Some((result, truncated))
-}
-
-fn configured_catalog(value: &Value) -> Option<(Vec<OpenCodeProviderOption>, bool)> {
-    let providers = value.get("providers")?.as_array()?;
-    let mut truncated = providers.len() > MAX_PROVIDERS;
-    let mut projected = Vec::with_capacity(providers.len().min(MAX_PROVIDERS));
-    let mut total_models = 0;
-
-    for provider in providers.iter().take(MAX_PROVIDERS) {
-        let Some(provider_id) = provider
-            .get("id")
-            .and_then(Value::as_str)
-            .and_then(safe_identifier)
-        else {
-            truncated = true;
-            continue;
-        };
-        let display_name = provider.get("name").and_then(safe_display_name);
-        if provider.get("name").is_some() && display_name.is_none() {
-            truncated = true;
-        }
-        let Some(models) = provider.get("models").and_then(Value::as_object) else {
-            truncated = true;
-            continue;
-        };
-        if models.len() > MAX_MODELS_PER_PROVIDER {
-            truncated = true;
-        }
-
-        let mut model_options = Vec::with_capacity(
-            models
-                .len()
-                .min(MAX_MODELS_PER_PROVIDER)
-                .min(MAX_MODELS_TOTAL.saturating_sub(total_models)),
-        );
-        for (model_key, model) in models.iter().take(MAX_MODELS_PER_PROVIDER) {
-            if total_models >= MAX_MODELS_TOTAL {
-                truncated = true;
-                break;
-            }
-            let Some(id) = safe_identifier(model_key) else {
-                truncated = true;
-                continue;
-            };
-            let display_name = model.get("name").and_then(safe_display_name);
-            if model.get("name").is_some() && display_name.is_none() {
-                truncated = true;
-            }
-            total_models += 1;
-            model_options.push(OpenCodeModelOption { id, display_name });
-        }
-        model_options.sort_by(|left, right| left.id.cmp(&right.id));
-        projected.push(OpenCodeProviderOption {
-            id: provider_id,
-            display_name,
-            models: model_options,
-        });
-    }
-    projected.sort_by(|left, right| left.id.cmp(&right.id));
-    Some((projected, truncated))
 }
 
 fn safe_identifier(value: &str) -> Option<String> {
@@ -350,147 +430,169 @@ mod tests {
     use super::*;
 
     #[test]
-    fn attempted_provider_read_failure_is_unknown_not_not_probed() {
+    fn v2_provider_and_model_envelopes_project_only_bounded_display_fields() {
+        let providers = serde_json::json!({
+            "location": {"directory":"/private/project"},
+            "data": [{"id":"openai","name":"OpenAI","disabled":false,
+                "settings":{"apiKey":"private"},"headers":{"Authorization":"private"},
+                "package":"provider-package"}]
+        });
+        let models = serde_json::json!({
+            "location": {"directory":"/private/project"},
+            "data": [{"id":"openai/gpt-safe","providerID":"openai","modelID":"gpt-safe",
+                "name":"GPT Safe","headers":{"api-key":"private"},"settings":{"token":"private"},
+                "enabled":true}]
+        });
         let mut result = OpenCodeProfileProbe::initial();
-        observe_provider_status(&mut result, Err(OpenCodeError::Timeout));
-
-        assert_eq!(
-            result.reported_provider_status,
-            OpenCodeObservation::Unknown
-        );
-        assert_eq!(
-            result.failure,
-            Some(OpenCodeProbeFailure::ProviderStatusUnavailable)
-        );
-    }
-
-    #[test]
-    fn malformed_provider_status_is_unknown_not_connected() {
-        let mut result = OpenCodeProfileProbe::initial();
-        observe_provider_status(&mut result, Ok(serde_json::json!({"connected": "invalid"})));
-
-        assert_eq!(
-            result.reported_provider_status,
-            OpenCodeObservation::Unknown
-        );
-        assert!(result.reported_connected_provider_ids.is_empty());
-        assert_eq!(
-            result.failure,
-            Some(OpenCodeProbeFailure::ProviderStatusUnavailable)
-        );
-    }
-
-    #[test]
-    fn attempted_catalog_failure_is_unknown_not_not_probed() {
-        let mut result = OpenCodeProfileProbe::initial();
-        observe_catalog(&mut result, Err(OpenCodeError::Timeout));
-
-        assert_eq!(result.reported_model_catalog, OpenCodeObservation::Unknown);
-        assert_eq!(
-            result.failure,
-            Some(OpenCodeProbeFailure::CatalogUnavailable)
-        );
-    }
-
-    #[test]
-    fn provider_status_is_not_authentication_or_entitlement_evidence() {
-        let mut result = OpenCodeProfileProbe::initial();
-        observe_provider_status(
-            &mut result,
-            Ok(serde_json::json!({"connected": ["openai", "local-provider"]})),
-        );
+        observe_v2_provider_catalog(&mut result, Ok(providers));
+        observe_v2_model_catalog(&mut result, Ok(models));
 
         assert_eq!(
             result.reported_provider_status,
             OpenCodeObservation::Observed
         );
-        assert_eq!(
-            result.reported_connected_provider_ids,
-            vec!["local-provider", "openai"]
-        );
-        assert_eq!(result.authentication_observation, "UNKNOWN");
-        assert_eq!(result.session_model_selection, "NOT_QUALIFIED");
-        assert!(!result.inference_access_verified);
-        assert!(!result.profile_admission_supported);
+        assert_eq!(result.reported_model_catalog, OpenCodeObservation::Observed);
+        assert_eq!(result.reported_connected_provider_ids, Vec::<String>::new());
+        assert_eq!(result.configured_providers[0].id, "openai");
+        assert_eq!(result.configured_providers[0].models[0].id, "gpt-safe");
+        let serialized = serde_json::to_string(&result).unwrap();
+        for secret in [
+            "/private/project",
+            "private",
+            "Authorization",
+            "provider-package",
+        ] {
+            assert!(!serialized.contains(secret));
+        }
     }
 
     #[test]
-    fn catalog_projection_is_bounded_and_drops_native_options() {
-        let catalog = serde_json::json!({
-            "providers": [{
-                "id": "openai",
-                "name": "OpenAI",
-                "models": {
-                    "z-model": {"name":"Z model", "options":{"api_key":"not-retained"}},
-                    "a-model": {"name":"A model"}
-                }
-            }]
-        });
+    fn v2_malformed_envelopes_and_html_fallback_fail_closed() {
         let mut result = OpenCodeProfileProbe::initial();
-        observe_catalog(&mut result, Ok(catalog));
+        observe_v2_provider_catalog(&mut result, Ok(serde_json::json!({"providers":[]})));
+        observe_v2_model_catalog(&mut result, Ok(serde_json::json!({"data":"not-an-array"})));
+        assert_eq!(
+            result.reported_provider_status,
+            OpenCodeObservation::Unknown
+        );
+        assert_eq!(result.reported_model_catalog, OpenCodeObservation::Unknown);
+        assert!(result.configured_providers.is_empty());
+        observe_v2_model_catalog(&mut result, Err(OpenCodeError::InvalidResponse));
+        assert_eq!(result.reported_model_catalog, OpenCodeObservation::Unknown);
+    }
 
-        assert_eq!(result.reported_model_catalog, OpenCodeObservation::Observed);
-        assert_eq!(result.configured_providers[0].id, "openai");
-        assert_eq!(result.configured_providers[0].models[0].id, "a-model");
-        let serialized = serde_json::to_string(&result).expect("safe projected DTO");
-        assert!(!serialized.contains("options"));
-        assert!(!serialized.contains("not-retained"));
+    #[test]
+    fn exact_version_qualification_rejects_mismatch_without_inference() {
+        assert!(is_supported_opencode_version("2.0.26"));
+        for unsupported in ["2.0.25", "2.0.27", "1.1.0", "unknown"] {
+            assert!(!is_supported_opencode_version(unsupported));
+        }
+        let result = OpenCodeProfileProbe::initial();
+        assert_eq!(result.authentication_observation, "UNKNOWN");
+        assert!(!result.inference_access_verified);
+        assert!(!result.profile_admission_supported);
+        assert_eq!(result.session_model_selection, "NOT_QUALIFIED");
+    }
+
+    #[test]
+    fn version_output_parser_accepts_only_bounded_semver_line() {
+        assert_eq!(
+            parse_opencode_version_output("opencode v2.0.26\n"),
+            Some("2.0.26".to_owned())
+        );
+        assert_eq!(
+            parse_opencode_version_output("2.0.27"),
+            Some("2.0.27".to_owned())
+        );
+        for malformed in ["2.0", "v2.0.26-beta", "2.0.26\nsecret output", "unknown"] {
+            assert_eq!(
+                parse_opencode_version_output(malformed),
+                None,
+                "{malformed}"
+            );
+        }
+    }
+
+    #[test]
+    fn v2_provider_catalog_never_promotes_provider_ids_to_connected_ids() {
+        let mut result = OpenCodeProfileProbe::initial();
+        observe_v2_provider_catalog(
+            &mut result,
+            Ok(serde_json::json!({
+                "data": [{"id":"openai","name":"OpenAI","disabled":false}]
+            })),
+        );
+        assert_eq!(result.reported_provider_ids, ["openai"]);
+        assert!(result.reported_connected_provider_ids.is_empty());
+        assert_eq!(result.authentication_observation, "UNKNOWN");
+        assert!(!result.inference_access_verified);
     }
 
     #[test]
     fn provider_and_model_catalog_limits_are_reported_as_truncated() {
-        let connected: Vec<_> = (0..MAX_PROVIDERS + 1)
-            .map(|index| serde_json::Value::String(format!("provider-{index:02}")))
+        let provider_rows: Vec<_> = (0..MAX_PROVIDERS + 1)
+            .map(|index| serde_json::json!({"id": format!("provider-{index:02}")}))
             .collect();
-        let (provider_ids, connected_truncated) =
-            connected_provider_ids(&serde_json::json!({"connected": connected}))
-                .expect("connected list is present");
-        assert_eq!(provider_ids.len(), MAX_PROVIDERS);
-        assert!(connected_truncated);
+        let mut provider_result = OpenCodeProfileProbe::initial();
+        observe_v2_provider_catalog(
+            &mut provider_result,
+            Ok(serde_json::json!({"data": provider_rows})),
+        );
+        assert_eq!(provider_result.reported_provider_ids.len(), MAX_PROVIDERS);
+        assert!(provider_result.reported_provider_ids_truncated);
 
-        let models: serde_json::Map<_, _> = (0..MAX_MODELS_PER_PROVIDER + 1)
+        let one_provider_models: Vec<_> = (0..MAX_MODELS_PER_PROVIDER + 1)
             .map(|index| {
-                (
-                    format!("model-{index:02}"),
-                    serde_json::json!({"name": format!("Model {index}")}),
-                )
-            })
-            .collect();
-        let native_catalog = serde_json::json!({
-            "providers": [{"id":"provider", "models":models}]
-        });
-        let (providers, catalog_truncated) =
-            configured_catalog(&native_catalog).expect("provider catalog is present");
-        assert_eq!(providers[0].models.len(), MAX_MODELS_PER_PROVIDER);
-        assert!(catalog_truncated);
-
-        let many_providers: Vec<_> = (0..5)
-            .map(|provider_index| {
-                let provider_models: serde_json::Map<_, _> = (0..64)
-                    .map(|model_index| {
-                        (
-                            format!("model-{model_index:02}"),
-                            serde_json::json!({"name":format!("Model {model_index}")}),
-                        )
-                    })
-                    .collect();
                 serde_json::json!({
-                    "id": format!("provider-{provider_index}"),
-                    "models": provider_models
+                    "providerID":"provider-0", "modelID":format!("model-{index:02}"),
+                    "name":format!("Model {index}")
                 })
             })
             .collect();
-        let (providers, catalog_truncated) =
-            configured_catalog(&serde_json::json!({"providers":many_providers}))
-                .expect("provider catalog is present");
+        let mut one_provider_result = OpenCodeProfileProbe::initial();
+        one_provider_result.reported_provider_ids = vec!["provider-0".to_owned()];
+        observe_v2_model_catalog(
+            &mut one_provider_result,
+            Ok(serde_json::json!({"data": one_provider_models})),
+        );
         assert_eq!(
-            providers
+            one_provider_result.configured_providers[0].models.len(),
+            MAX_MODELS_PER_PROVIDER
+        );
+        assert!(one_provider_result.catalog_truncated);
+
+        let many_providers: Vec<_> = (0..5)
+            .map(|provider_index| format!("provider-{provider_index}"))
+            .collect();
+        let many_models: Vec<_> = many_providers
+            .iter()
+            .flat_map(|provider| {
+                (0..MAX_MODELS_PER_PROVIDER).map(move |index| {
+                    serde_json::json!({
+                        "providerID":provider, "modelID":format!("model-{index:02}"),
+                        "name":format!("Model {index}")
+                    })
+                })
+            })
+            .chain(std::iter::once(serde_json::json!({
+                "providerID":"provider-4", "modelID":"model-over-total", "name":"Overflow"
+            })))
+            .collect();
+        let mut total_result = OpenCodeProfileProbe::initial();
+        total_result.reported_provider_ids = many_providers;
+        observe_v2_model_catalog(
+            &mut total_result,
+            Ok(serde_json::json!({"data":many_models})),
+        );
+        assert_eq!(
+            total_result
+                .configured_providers
                 .iter()
                 .map(|provider| provider.models.len())
                 .sum::<usize>(),
             MAX_MODELS_TOTAL
         );
-        assert!(catalog_truncated);
+        assert!(total_result.catalog_truncated);
     }
 
     #[test]

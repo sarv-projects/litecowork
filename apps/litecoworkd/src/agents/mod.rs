@@ -25,7 +25,7 @@ pub(crate) use opencode_profile_probe::{
 };
 pub(crate) use opencode_server::{
     OpenCodeEnvironment, OpenCodeError, OpenCodeEvent, OpenCodeEventStream, OpenCodeProcessState,
-    OpenCodeServer, OpenCodeServerConfig,
+    OpenCodeServer, OpenCodeServerConfig, OpenCodeServerProtocol,
 };
 
 use serde::Serialize;

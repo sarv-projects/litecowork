@@ -1225,7 +1225,7 @@
       "method": "POST",
       "operationId": "probeLocalAgentProfile",
       "path": "/agent-profiles/probe",
-      "sha256": "f8df609e04663fc59bfbdbce8369da0a291825c2eb350810e75c2e4868c6914b"
+      "sha256": "22e3eca4c743653540c8c4e72a1f5b96fff570e4db0c4d381a29ebd884f13460"
     },
     {
       "method": "GET",
@@ -4016,7 +4016,7 @@
     },
     {
       "name": "OpenCodeProfileProbeConstraints",
-      "sha256": "5d69c68ec8933dc83ee0756ae753b08f54570274618601a4b52326de04f8114a"
+      "sha256": "9ed307e69e094c75eab804ed1148520e440017a861163b080ef12f1b1806fc8c"
     },
     {
       "name": "OpenCodeProviderOption",
