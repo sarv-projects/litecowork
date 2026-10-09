@@ -63,7 +63,10 @@ over stdin, and returns only a bounded metadata manifest. Bubblewrap gives the w
 user/PID/network/IPC/UTS/mount namespaces, a read-only runtime and code view, no host home or
 workspace mount, and a 1 MiB private `/tmp`. Inherited limits bound CPU to 8 seconds,
 address space to 512 MiB, file size to zero, file descriptors to 32, and the parent kills
-the process group after 12 seconds. The worker uses no filesystem extraction path. `qualified()`
+the process group after 12 seconds. The parent streams at most 24 MiB of request JSON and
+reads at most 8 MiB plus one sentinel byte from stdout before killing an over-producing
+child; stderr is discarded because it is not part of the safe protocol. The worker uses no
+filesystem extraction path. `qualified()`
 executes a real round-trip probe and returns false if required Linux commands, mounts,
 namespace, or parser execution fail.
 

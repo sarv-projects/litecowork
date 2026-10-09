@@ -13,9 +13,11 @@ import base64
 import json
 import os
 from pathlib import Path
+import selectors
 import signal
 import subprocess
 import sys
+import time
 from typing import Any
 
 from .provider import ArchiveRejected, Limits, SourceRevision
@@ -31,6 +33,10 @@ class WorkerFailed(RuntimeError):
 
 class WorkerTimedOut(WorkerFailed):
     """The worker exceeded its wall-clock deadline and was terminated."""
+
+
+class WorkerOutputLimit(WorkerFailed):
+    """The worker exceeded the bounded metadata response size and was terminated."""
 
 
 _MAX_INPUT_BYTES = 24 * 1024 * 1024
@@ -117,6 +123,92 @@ class ZipWorker:
             *sandbox_command,
         ]
 
+    def _terminate(self, process: subprocess.Popen[bytes]) -> None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+
+    def _communicate_bounded(self, process: subprocess.Popen[bytes], payload: bytes) -> bytes:
+        """Send bounded input and read bounded output without communicate() buffering."""
+        if process.stdin is None or process.stdout is None:
+            raise WorkerFailed("isolated ZIP worker pipes are unavailable")
+
+        selector = selectors.DefaultSelector()
+        output = bytearray()
+        payload_offset = 0
+        deadline = time.monotonic() + self.wall_timeout_seconds
+        stdin_fd = process.stdin.fileno()
+        stdout_fd = process.stdout.fileno()
+        os.set_blocking(stdin_fd, False)
+        os.set_blocking(stdout_fd, False)
+        selector.register(stdin_fd, selectors.EVENT_WRITE, "stdin")
+        selector.register(stdout_fd, selectors.EVENT_READ, "stdout")
+        try:
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._terminate(process)
+                    raise WorkerTimedOut("isolated ZIP worker exceeded its deadline")
+                if process.poll() is not None and stdin_fd in selector.get_map():
+                    # A dead child cannot consume more input. Close our side so an
+                    # exited child can never leave this pump waiting for stdin space.
+                    selector.unregister(stdin_fd)
+                    process.stdin.close()
+                for key, _mask in selector.select(remaining):
+                    if key.data == "stdin":
+                        try:
+                            written = os.write(stdin_fd, payload[payload_offset:payload_offset + 65536])
+                        except BlockingIOError:
+                            continue
+                        except BrokenPipeError:
+                            written = 0
+                            payload_offset = len(payload)
+                        payload_offset += written
+                        if payload_offset >= len(payload):
+                            selector.unregister(stdin_fd)
+                            process.stdin.close()
+                    else:
+                        remaining_output = _MAX_OUTPUT_BYTES + 1 - len(output)
+                        try:
+                            chunk = os.read(stdout_fd, min(65536, remaining_output))
+                        except BlockingIOError:
+                            continue
+                        if not chunk:
+                            selector.unregister(stdout_fd)
+                            process.stdout.close()
+                            continue
+                        output.extend(chunk)
+                        if len(output) > _MAX_OUTPUT_BYTES:
+                            self._terminate(process)
+                            raise WorkerOutputLimit("isolated ZIP worker exceeded its response limit")
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._terminate(process)
+                raise WorkerTimedOut("isolated ZIP worker exceeded its deadline")
+            try:
+                process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                self._terminate(process)
+                raise WorkerTimedOut("isolated ZIP worker exceeded its deadline") from None
+            return bytes(output)
+        except BaseException:
+            if process.poll() is None:
+                self._terminate(process)
+            raise
+        finally:
+            selector.close()
+            if process.stdin is not None and not process.stdin.closed:
+                process.stdin.close()
+            if process.stdout is not None and not process.stdout.closed:
+                process.stdout.close()
+
     def _run(self, request: dict[str, Any]) -> dict[str, Any]:
         command = self._command()
         payload = json.dumps(request, separators=(",", ":"), ensure_ascii=True).encode("ascii")
@@ -127,7 +219,9 @@ class ZipWorker:
                 command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                # Diagnostics are intentionally not returned. Discard them so a
+                # compromised or noisy parser cannot fill an unbounded parent buffer.
+                stderr=subprocess.DEVNULL,
                 cwd="/",
                 env={},
                 close_fds=True,
@@ -137,16 +231,12 @@ class ZipWorker:
             raise WorkerUnavailable("isolated ZIP worker could not be started") from None
 
         try:
-            stdout, _stderr = process.communicate(payload, timeout=self.wall_timeout_seconds)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.communicate()
-            raise WorkerTimedOut("isolated ZIP worker exceeded its deadline") from None
-        if len(stdout) > _MAX_OUTPUT_BYTES:
-            raise WorkerFailed("isolated ZIP worker exceeded its response limit")
+            stdout = self._communicate_bounded(process, payload)
+        except (WorkerTimedOut, WorkerOutputLimit):
+            raise
+        except OSError:
+            self._terminate(process)
+            raise WorkerFailed("isolated ZIP worker failed") from None
         if process.returncode != 0:
             raise WorkerFailed("isolated ZIP worker failed")
         try:

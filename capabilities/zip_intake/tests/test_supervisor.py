@@ -3,6 +3,7 @@
 from hashlib import sha256
 from io import BytesIO
 import os
+import time
 import stat
 import struct
 import sys
@@ -12,7 +13,7 @@ from unittest.mock import patch
 import zipfile
 
 from capabilities.zip_intake import ArchiveRejected, SourceRevision
-from capabilities.zip_intake.supervisor import ZipWorker, WorkerUnavailable, WorkerTimedOut
+from capabilities.zip_intake.supervisor import ZipWorker, WorkerFailed, WorkerOutputLimit, WorkerUnavailable, WorkerTimedOut
 
 
 def archive(entries):
@@ -115,6 +116,42 @@ class ZipWorkerIntegrationTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 manifest = self.worker.preview(source(data), data)
                 self.assertEqual(manifest["entries"][0]["reason"], reason)
+
+
+@unittest.skipUnless(sys.platform == "linux", "process-group output containment requires Linux")
+class ZipWorkerPipeSystemTests(unittest.TestCase):
+    def test_stdout_limit_terminates_a_chatty_child_before_wall_deadline(self):
+        worker = ZipWorker(wall_timeout_seconds=5.0)
+        command = [
+            sys.executable,
+            "-c",
+            "import os; chunk=b'x'*65536; exec('while True: os.write(1, chunk)')",
+        ]
+        started = time.monotonic()
+        with patch.object(worker, "_command", return_value=command):
+            with self.assertRaises(WorkerOutputLimit):
+                worker._run({})
+        self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_unneeded_child_stderr_is_discarded_without_blocking_response(self):
+        worker = ZipWorker(wall_timeout_seconds=2.0)
+        command = [
+            sys.executable,
+            "-c",
+            "import os; os.write(2, b'x' * (2 * 1024 * 1024)); os.write(1, b'{\\\"ok\\\":true,\\\"manifest\\\":{}}')",
+        ]
+        with patch.object(worker, "_command", return_value=command):
+            self.assertEqual(worker._run({}), {})
+
+    def test_child_exit_while_request_pipe_is_open_fails_without_waiting_for_wall_timeout(self):
+        worker = ZipWorker(wall_timeout_seconds=2.0)
+        command = [sys.executable, "-c", "pass"]
+        started = time.monotonic()
+        with patch.object(worker, "_command", return_value=command):
+            with self.assertRaises(WorkerFailed) as error:
+                worker._run({"large": "x" * (1024 * 1024)})
+        self.assertNotIsInstance(error.exception, WorkerTimedOut)
+        self.assertLess(time.monotonic() - started, 1.0)
 
 
 if __name__ == "__main__":

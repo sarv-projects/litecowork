@@ -73,6 +73,24 @@ idempotent Operator submit API, session admission, native provider dispatch, str
 and UI submission remain unimplemented. The persistence store does not start an agent
 session.
 
+### ZIP metadata worker output containment (2026-10-09)
+
+The standalone Linux ZIP metadata worker no longer uses `Popen.communicate()` with an
+unbounded stdout/stderr buffer. Its parent sends a bounded request through nonblocking
+stdin, reads no more than the 8 MiB response limit plus a sentinel byte, discards unused
+stderr, and kills/reaps the process group on timeout, excess output, or pump failure.
+The daemon readiness projection is regression-tested to remain
+`UNAVAILABLE / ISOLATED_WORKER_NOT_QUALIFIED`; no preview endpoint, Resource read,
+provider integration, extraction, or child Resource creation was enabled.
+
+Verification on 2026-10-09: `python3 -m unittest capabilities.zip_intake.tests.test_supervisor -v`
+passed (13 tests, Linux integration cases included); the focused daemon readiness test
+passed (`cargo test --locked -p litecoworkd zip_intake_operator::tests::readiness_remains_opaque_and_disabled_until_runtime_integration_is_qualified`),
+`python3 -m compileall -q capabilities/zip_intake`, and `git diff --check` passed. This
+verifies Linux worker containment and fail-closed readiness only. It does not qualify
+packaged worker deployment, non-Linux platforms, authenticated Resource-pinned preview,
+extraction, or E06-S01 acceptance.
+
 ### ResourceStore-to-staging adapter slice (2026-10-09)
 
 `local-environment-staging` now has a bounded Task input adapter over the narrow exact

@@ -44,23 +44,28 @@ async fn zip_intake_status(
         ));
     }
 
+    Ok(unavailable_zip_intake_response())
+}
+
+fn unavailable_zip_intake_response() -> Response {
     let mut response = Json(ZipIntakeStatus {
         capability_id: "litecowork.zip-intake",
         status: "UNAVAILABLE",
         resource_behavior: "OPAQUE_RESOURCE_ONLY",
-        // The repository contains parser source, but the Runtime has no usable provider
-        // until process isolation, transport and resource limits are qualified.
+        // A standalone worker is not a Runtime integration: exact Resource revision
+        // resolution, owner authorization, cancellation, and platform qualification
+        // are not part of this status route.
         provider_integrated: false,
         extraction_enabled: false,
         reason_code: "ISOLATED_WORKER_NOT_QUALIFIED",
-        reason: "ZIP extraction is disabled until a supervised isolated worker enforces hard resource limits and passes platform qualification.",
+        reason: "ZIP preview remains disabled until the isolated worker is integrated with authenticated exact-Resource resolution, bounded transport, and supported-platform qualification.",
     })
     .into_response();
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         axum::http::HeaderValue::from_static("no-store"),
     );
-    Ok(response)
+    response
 }
 
 fn unavailable() -> Response {
@@ -69,4 +74,37 @@ fn unavailable() -> Response {
         "DEPENDENCY_UNAVAILABLE",
         "ZIP-intake status is unavailable",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unavailable_zip_intake_response;
+    use axum::{
+        body::to_bytes,
+        http::{StatusCode, header},
+    };
+    use serde_json::Value;
+
+    #[tokio::test]
+    async fn readiness_remains_opaque_and_disabled_until_runtime_integration_is_qualified() {
+        let response = unavailable_zip_intake_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
+        let body = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("readiness body remains bounded");
+        let body: Value = serde_json::from_slice(&body).expect("valid readiness JSON");
+        assert_eq!(body["capability_id"], "litecowork.zip-intake");
+        assert_eq!(body["status"], "UNAVAILABLE");
+        assert_eq!(body["resource_behavior"], "OPAQUE_RESOURCE_ONLY");
+        assert_eq!(body["provider_integrated"], false);
+        assert_eq!(body["extraction_enabled"], false);
+        assert_eq!(body["reason_code"], "ISOLATED_WORKER_NOT_QUALIFIED");
+    }
 }
