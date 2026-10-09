@@ -267,7 +267,11 @@ impl OpenCodeServer {
             stopped: false,
         };
 
-        let stdout = server.child.stdout.take().ok_or(OpenCodeError::SpawnFailed)?;
+        let stdout = server
+            .child
+            .stdout
+            .take()
+            .ok_or(OpenCodeError::SpawnFailed)?;
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         thread::Builder::new()
             .name("litecowork-opencode-startup".to_owned())
@@ -357,9 +361,7 @@ impl OpenCodeServer {
 
     /// Reads the native configured provider/model catalogue without invoking
     /// a model or changing OpenCode configuration.
-    pub(super) fn read_configured_provider_catalog(
-        &mut self,
-    ) -> Result<Value, OpenCodeError> {
+    pub(super) fn read_configured_provider_catalog(&mut self) -> Result<Value, OpenCodeError> {
         let response = self.request_with_response_limit(
             "GET",
             "/config/providers",
@@ -629,7 +631,10 @@ fn wait_for_bound_server(
 
 /// Consume the child's bounded startup output. Only a documented listening
 /// marker is sent to the startup waiter; all later output is discarded.
-fn drain_startup_output<R: Read>(mut reader: R, startup: SyncSender<Result<SocketAddr, OpenCodeError>>) {
+fn drain_startup_output<R: Read>(
+    mut reader: R,
+    startup: SyncSender<Result<SocketAddr, OpenCodeError>>,
+) {
     let mut announced = false;
     let mut total = 0_usize;
     let mut line = Vec::new();
@@ -852,7 +857,9 @@ impl BodyStream {
             if remaining.is_zero() {
                 return Err(OpenCodeError::Timeout);
             }
-            self.reader.get_ref().set_read_timeout(Some(remaining))
+            self.reader
+                .get_ref()
+                .set_read_timeout(Some(remaining))
                 .map_err(|_| OpenCodeError::Io)?;
         }
         self.reader.read(output).map_err(map_read_error)
@@ -1151,7 +1158,9 @@ fn read_bounded_line(
         if remaining.is_zero() {
             return Err(OpenCodeError::Timeout);
         }
-        reader.get_ref().set_read_timeout(Some(remaining))
+        reader
+            .get_ref()
+            .set_read_timeout(Some(remaining))
             .map_err(|_| OpenCodeError::Io)?;
         let available = reader.fill_buf().map_err(map_read_error)?;
         if available.is_empty() {

@@ -466,8 +466,14 @@ fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, TransportErr
     Ok(PeerCredentials {
         uid: credentials.uid(),
         gid: credentials.gid(),
-        pid: credentials.pid(),
+        // rustix exposes peer PIDs as signed because some platforms use -1 for
+        // unavailable. The public transport type uses an unsigned optional PID.
+        pid: normalize_peer_pid(credentials.pid()),
     })
+}
+
+fn normalize_peer_pid(pid: Option<i32>) -> Option<u32> {
+    pid.and_then(|pid| u32::try_from(pid).ok())
 }
 
 fn effective_uid() -> u32 {
@@ -548,6 +554,16 @@ fn remove_owned_socket(
         return Err(TransportError::UnsafeEndpoint);
     }
     std::fs::remove_file(path).map_err(TransportError::Io)
+}
+
+#[cfg(test)]
+mod peer_credential_tests {
+    #[test]
+    fn signed_peer_pid_is_exposed_only_when_nonnegative() {
+        assert_eq!(super::normalize_peer_pid(Some(17)), Some(17));
+        assert_eq!(super::normalize_peer_pid(Some(-1)), None);
+        assert_eq!(super::normalize_peer_pid(None), None);
+    }
 }
 
 #[derive(Clone, Copy)]

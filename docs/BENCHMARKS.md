@@ -567,7 +567,7 @@ Do not collapse to one leaderboard score. Record:
 Record these separately from implementation throughput benchmarks; a successful outcome
 without correct ownership, deduplication and truthful UI fails the scenario.
 
-### B73 Atomic TASK Suggestion acceptance
+### B81 Atomic TASK Suggestion acceptance
 
 Accept a pinned TASK Suggestion through the desktop UI, then inject/lab-simulate response
 loss, concurrent duplicate acceptance, stale Suggestion version, Coworker-head change,
@@ -577,3 +577,91 @@ the Task/Suggestion events and snapshots share one transaction. Replays return t
 Task without duplicate events. Every rejected/aborted case leaves no partial Task and no
 agent/session/plan/effect side effect; the UI opens the saved Task without implying it is
 running.
+
+### B82 Simple Conversation responsiveness and native baseline
+
+Run the same bounded conversational task directly in the selected native agent and
+through LiteCowork's desktop Conversation path. Record p50/p95 submit-to-first-useful-text
+and submit-to-committed-message latency, daemon/Operator overhead, retries, and reported
+usage. The simple-answer path must not load rich-response guidance or create a
+RichPresentation unless the versioned policy selects it. Confirm a stalled optional
+renderer cannot delay the semantic answer. Compare equivalent provider/model/session
+settings and report the native baseline rather than attributing provider latency to
+LiteCowork.
+
+### B83 Delegation worth decision
+
+For one fixed corpus of bounded research/coding subtasks, compare lead-only, deterministic
+capability, one qualified lower-cost worker, and independent parallel workers. Record
+measured end-to-end latency, handoff/start overhead, verifier pass rate, recovery/retry
+cost, human intervention, and provider-reported usage/cost coverage. The selector must
+remain with the lead when delegation's estimated benefit is below policy threshold or
+confidence is insufficient; it must never silently substitute a user-pinned REQUIRE
+profile. Cost and latency objectives are scored separately.
+
+### B84 100-file Resource task critical path
+
+Import a fixed 100-file permitted folder containing text, PDFs, spreadsheets, images, and
+unsupported formats. Measure intake/index readiness, retrieval, first useful activity,
+first answer, verification, and final Artifact publication separately. Verify unsupported
+files remain explicitly unavailable, citations pin exact revisions, index work does not
+block the composer, and each returned file remains within Workspace scope. Record p50/p95,
+peak memory, disk use, and parser/provider versions.
+
+### B85 Native coding task overhead
+
+Run the same deterministic code-change corpus directly in the native coding agent and
+through LiteCowork Task/Attempt execution with equivalent Environment, permissions, and
+acceptance tests. Measure admission/startup/planning/execution/verification/rendering
+separately, compare final diffs and tests, and report p50/p95 total latency and overhead.
+No claim of improved coding speed is valid unless the same task and agent configuration
+show it; successful native behavior must not be attributed to LiteCowork orchestration.
+
+### B86 Mid-task handover recovery
+
+For each qualified source/receiver agent pair, interrupt the source at pre-effect,
+in-flight-effect, and post-checkpoint boundaries. Require process quiescence, lease fencing,
+Effect reconciliation, exact checkpoint provenance, fresh receiver authorization, and
+independent acceptance verification. Measure time from handover request to receiver's
+first useful action and final verified completion. Any unresolved writer/effect blocks the
+handover; do not count a prompt-only transcript transfer as a successful handover.
+
+### B87 Rich output latency and memory
+
+Render a response with 20 committed artifacts, 1,000 source citations, a bounded table,
+chart, diagram, and 20 images on the supported desktop webview. Measure message-to-first
+paint, enhancement-to-first-render, scroll/input responsiveness, peak memory, and lazy-load
+behavior at p50/p95. Rich failure falls back without losing answer or actions. Commit and
+expose the semantic message without waiting for optional
+composition; render it immediately when the rich document is not already validated, and
+allow a validated rich view to upgrade the same message in place while keeping the full
+semantic answer accessible. Large collections are virtualized and no binary payload enters
+the RichPresentation document.
+
+### B88 Long-running local Task workload
+
+Run a multi-hour local Task with periodic process restart, daemon restart, machine sleep,
+provider throttling, file edits, and one owner interruption. Record verified completion,
+duplicate/ambiguous Effects, recovery time, worker usage, resource freshness, and owner
+interventions. Every continuation must use current authorization and a higher valid fence;
+no live process/session state is presumed to survive restart.
+
+### B89 Rich Response security and recovery gauntlet
+
+Execute RR security and recovery cases in `TESTING.md`, including forged host status,
+cross-Workspace or revoked Resources, hostile Markdown/Mermaid/media, unsupported renderer,
+missing/tampered blobs, stale retries, stream gaps, exact-version downloads, and backup
+restore with missing optional presentation data. The semantic message remains available;
+no model-authored block gains authority or causes an unapproved network fetch. Record
+renderer/browser versions and all rejected/fallback cases.
+
+### B90 Local Environment containment and restart recovery
+
+Run the Task-scoped local Environment CODE/SYSTEM cases in E07-S00 on each claimed OS
+and exact OS build. Use adversarial child processes to test reads and writes outside
+declared roots, symlink/traversal escapes, network denial, input digest preservation,
+descendant-writer quiescence, daemon restart, stale Runtime incarnation, and ambiguous
+provider cleanup. Record launch and preparation p50/p95 latency, CPU/memory/disk cost,
+provider/OS versions, and every unavailable control. A worktree-only or mock-only run does
+not pass. Any unqualified OS/provider combination remains unavailable for native Task
+execution regardless of results on other platforms.

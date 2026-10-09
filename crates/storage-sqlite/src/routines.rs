@@ -6,6 +6,121 @@
 use super::*;
 use domain_responsibility::*;
 use serde::{Deserialize, Serialize};
+use storage_core::{RoutineTaskAdmission, TaskCreateCommit};
+
+/// Revalidates a manual Routine materialization while Task creation's IMMEDIATE SQLite
+/// transaction is held. This closes the race with Routine archive/revision changes and
+/// makes the pinned definition, inputs, and READY Task one admission decision.
+pub(super) fn validate_task_admission(
+    connection: &Connection,
+    commit: &TaskCreateCommit,
+) -> Result<(), StoreError> {
+    let task = &commit.task;
+    let request = commit
+        .request
+        .request_payload
+        .as_object()
+        .ok_or_else(|| StoreError::Invalid("Task request must be an object".into()))?;
+    match (
+        &commit.routine_admission,
+        task.routine_id.as_deref(),
+        task.routine_revision,
+    ) {
+        (None, None, None) => {
+            if request.contains_key("routine_id")
+                || request.contains_key("routine_revision")
+                || request.contains_key("routine_inputs")
+            {
+                return Err(StoreError::Invalid(
+                    "Routine provenance requires atomic Routine admission".into(),
+                ));
+            }
+            Ok(())
+        }
+        (Some(admission), Some(task_routine_id), Some(task_revision)) => {
+            let invalid =
+                || StoreError::Invalid("Routine run inputs or pinned revision are invalid".into());
+            if admission.routine_id.trim().is_empty()
+                || admission.routine_revision == 0
+                || task_routine_id != admission.routine_id
+                || task_revision != admission.routine_revision
+                || request.get("routine_id").and_then(Value::as_str)
+                    != Some(admission.routine_id.as_str())
+                || request.get("routine_revision").and_then(Value::as_u64)
+                    != Some(admission.routine_revision)
+                || request.get("routine_inputs") != Some(&admission.inputs)
+                || task.conversation_id.is_some()
+                || task.automation_id.is_some() != task.automation_occurrence_id.is_some()
+                || task.automation_id.is_some() != commit.automation_admission.is_some()
+            {
+                return Err(invalid());
+            }
+            let status: Option<(String, i64)> = connection.query_row(
+                "SELECT status, current_revision FROM routines WHERE workspace_id = ?1 AND routine_id = ?2",
+                params![task.workspace_id, admission.routine_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional().map_err(map_database_error)?;
+            let Some((status, current_revision)) = status else {
+                return Err(StoreError::NotFound);
+            };
+            let current_revision = from_sql_i64(current_revision, "Routine current revision")?;
+            if status != "ACTIVE"
+                || (commit.automation_admission.is_none()
+                    && current_revision != admission.routine_revision)
+            {
+                return Err(StoreError::Conflict {
+                    expected: Some(admission.routine_revision),
+                    actual: Some(current_revision),
+                });
+            }
+            let revision = load_revision(
+                connection,
+                &task.workspace_id,
+                &admission.routine_id,
+                admission.routine_revision,
+            )
+            .map_err(|error| StoreError::Invalid(error.to_string()))?
+            .ok_or(StoreError::NotFound)?;
+            let materialized =
+                materialize_routine_inputs(&revision, &admission.inputs, &task.workspace_id)
+                    .map_err(|_| invalid())?;
+            let spec = &commit.initial_spec_revision;
+            if spec.objective != materialized.objective
+                || spec.constraints != materialized.constraints
+                || spec.non_goals != materialized.non_goals
+                || spec.input_refs != materialized.input_refs
+                || spec.required_outputs != materialized.required_outputs
+                || spec.acceptance_criteria != materialized.acceptance_criteria
+                || spec.approvals_required != materialized.approvals_required
+                || spec.placement_preference != materialized.placement_preference
+                || spec.budget != materialized.budget_ceiling
+            {
+                return Err(invalid());
+            }
+            let workspace_default: Option<String> = connection
+                .query_row(
+                    "SELECT default_agent_binding_id FROM workspaces WHERE workspace_id = ?1",
+                    [&task.workspace_id],
+                    |row| row.get(0),
+                )
+                .map_err(map_database_error)?;
+            if commit.automation_admission.is_none() {
+                let expected_lead = revision
+                    .definition
+                    .preferred_agent_binding_id
+                    .as_deref()
+                    .or(workspace_default.as_deref());
+                if expected_lead != Some(task.lead_agent_binding_id.as_str()) {
+                    return Err(invalid());
+                }
+            }
+            Ok(())
+        }
+        _ => Err(StoreError::Invalid(
+            "Task Routine ID and revision must be supplied with Routine admission".into(),
+        )),
+    }
+}
 
 pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 type Decision = Box<dyn Fn(&mut dyn RoutineTransaction) -> Result<Routine, RoutineError> + Send>;
@@ -40,13 +155,23 @@ pub struct SqliteRoutineStore {
 }
 
 impl SqliteRoutineStore {
-    pub fn new(store: SqliteWorkspaceStore, mut context: RoutineEventContext) -> Result<Self, RoutineError> {
-        if [&context.event_id, &context.origin_runtime_id, &context.hlc_timestamp, &context.correlation_id]
-            .iter().any(|value| value.trim().is_empty())
+    pub fn new(
+        store: SqliteWorkspaceStore,
+        mut context: RoutineEventContext,
+    ) -> Result<Self, RoutineError> {
+        if [
+            &context.event_id,
+            &context.origin_runtime_id,
+            &context.hlc_timestamp,
+            &context.correlation_id,
+        ]
+        .iter()
+        .any(|value| value.trim().is_empty())
         {
             return Err(RoutineError::InvalidDefinition);
         }
-        context.recorded_at = canonicalize_utc_timestamp(&context.recorded_at).map_err(map_error)?;
+        context.recorded_at =
+            canonicalize_utc_timestamp(&context.recorded_at).map_err(map_error)?;
         Ok(Self { store, context })
     }
 
@@ -56,16 +181,29 @@ impl SqliteRoutineStore {
         F: FnOnce(&mut Connection) -> Result<T, RoutineError> + Send + 'static,
     {
         let (reply, receive) = mpsc::channel();
-        self.store.execute_command(
-            Command::RoutineOperation { operation: Box::new(move |connection| {
-                let _ = reply.send(operation(connection));
-            }) },
-            receive,
-        ).map_err(map_error)?
+        self.store
+            .execute_command(
+                Command::RoutineOperation {
+                    operation: Box::new(move |connection| {
+                        let _ = reply.send(Ok(operation(connection)));
+                    }),
+                },
+                receive,
+            )
+            .map_err(map_error)?
     }
 
-    pub fn get(&self, principal_id: &str, workspace_id: &str, routine_id: &str) -> Result<Option<(Routine, RoutineRevision)>, RoutineError> {
-        let (principal, workspace, id) = (principal_id.to_owned(), workspace_id.to_owned(), routine_id.to_owned());
+    pub fn get(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        routine_id: &str,
+    ) -> Result<Option<(Routine, RoutineRevision)>, RoutineError> {
+        let (principal, workspace, id) = (
+            principal_id.to_owned(),
+            workspace_id.to_owned(),
+            routine_id.to_owned(),
+        );
         self.run(move |connection| {
             let tx = connection.transaction().map_err(sql_error)?;
             authorize(&tx, &principal, &workspace)?;
@@ -73,9 +211,21 @@ impl SqliteRoutineStore {
         })
     }
 
-    pub fn get_revision(&self, principal_id: &str, workspace_id: &str, routine_id: &str, revision: u64) -> Result<Option<RoutineRevision>, RoutineError> {
-        if revision == 0 { return Err(RoutineError::InvalidDefinition); }
-        let (principal, workspace, id) = (principal_id.to_owned(), workspace_id.to_owned(), routine_id.to_owned());
+    pub fn get_revision(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        routine_id: &str,
+        revision: u64,
+    ) -> Result<Option<RoutineRevision>, RoutineError> {
+        if revision == 0 {
+            return Err(RoutineError::InvalidDefinition);
+        }
+        let (principal, workspace, id) = (
+            principal_id.to_owned(),
+            workspace_id.to_owned(),
+            routine_id.to_owned(),
+        );
         self.run(move |connection| {
             let tx = connection.transaction().map_err(sql_error)?;
             authorize(&tx, &principal, &workspace)?;
@@ -94,7 +244,14 @@ impl SqliteRoutineStore {
         if !(1..=200).contains(&limit) || after_revision == Some(0) {
             return Err(RoutineError::InvalidDefinition);
         }
-        let (principal, workspace, id) = (principal_id.to_owned(), workspace_id.to_owned(), routine_id.to_owned());
+        let (principal, workspace, id) = (
+            principal_id.to_owned(),
+            workspace_id.to_owned(),
+            routine_id.to_owned(),
+        );
+        let after_revision = after_revision
+            .map(|value| sql_u64(value, "Routine revision"))
+            .transpose()?;
         self.run(move |connection| {
             let tx = connection.transaction().map_err(sql_error)?;
             authorize(&tx, &principal, &workspace)?;
@@ -103,7 +260,7 @@ impl SqliteRoutineStore {
             ).map_err(sql_error)?;
             let revisions = statement.query_map(
                 params![workspace, id, after_revision, (limit + 1) as i64],
-                |row| row.get::<_, u64>(0),
+                |row| from_row_u64(row, 0),
             ).map_err(sql_error)?.collect::<rusqlite::Result<Vec<_>>>().map_err(sql_error)?;
             let more = revisions.len() > limit;
             let mut items = Vec::new();
@@ -123,11 +280,18 @@ impl SqliteRoutineStore {
         after: Option<(String, String)>,
         limit: usize,
     ) -> Result<RoutinePage, RoutineError> {
-        if !(1..=200).contains(&limit) || after.as_ref().is_some_and(|(time, id)| time.is_empty() || id.is_empty()) {
+        if !(1..=200).contains(&limit)
+            || after
+                .as_ref()
+                .is_some_and(|(time, id)| time.is_empty() || id.is_empty())
+        {
             return Err(RoutineError::InvalidDefinition);
         }
         let (principal, workspace) = (principal_id.to_owned(), workspace_id.to_owned());
-        let after = after.map(|(time, id)| canonicalize_utc_timestamp(&time).map(|time| (time, id))).transpose().map_err(map_error)?;
+        let after = after
+            .map(|(time, id)| canonicalize_utc_timestamp(&time).map(|time| (time, id)))
+            .transpose()
+            .map_err(map_error)?;
         self.run(move |connection| {
             let tx = connection.transaction().map_err(sql_error)?;
             authorize(&tx, &principal, &workspace)?;
@@ -150,33 +314,70 @@ impl SqliteRoutineStore {
 }
 
 impl RoutineStore for SqliteRoutineStore {
-    fn transaction<F>(&mut self, scope: &RoutineOwnerScope, fingerprint: &str, operation: F) -> Result<Routine, RoutineError>
+    fn transaction<F>(
+        &mut self,
+        scope: &RoutineOwnerScope,
+        fingerprint: &str,
+        operation: F,
+    ) -> Result<Routine, RoutineError>
     where
         F: Fn(&mut dyn RoutineTransaction) -> Result<Routine, RoutineError> + Send + 'static,
     {
         let scope = scope.clone();
-        let fingerprint = digest(&canonical_json(&json!({"workspace_id": scope.workspace_id, "command_digest": fingerprint})).map_err(map_error)?);
+        let fingerprint = digest(
+            &canonical_json(
+                &json!({"workspace_id": scope.workspace_id, "command_digest": fingerprint}),
+            )
+            .map_err(map_error)?,
+        );
         let context = self.context.clone();
         let blobs = Arc::clone(&self.store.inner.blobs);
-        self.run(move |connection| execute_transaction(connection, &scope, &fingerprint, &context, blobs.as_ref(), Box::new(operation)))
+        self.run(move |connection| {
+            execute_transaction(
+                connection,
+                &scope,
+                &fingerprint,
+                &context,
+                blobs.as_ref(),
+                Box::new(operation),
+            )
+        })
     }
 }
 
-fn authorize(connection: &Connection, principal: &str, workspace: &str) -> Result<(), RoutineError> {
-    if principal.trim().is_empty() || workspace.trim().is_empty() { return Err(RoutineError::Unauthorized); }
+fn authorize(
+    connection: &Connection,
+    principal: &str,
+    workspace: &str,
+) -> Result<(), RoutineError> {
+    if principal.trim().is_empty() || workspace.trim().is_empty() {
+        return Err(RoutineError::Unauthorized);
+    }
     let owned: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id = ?1 AND owner_principal_id = ?2)",
         params![workspace, principal], |row| row.get(0),
     ).map_err(sql_error)?;
-    if owned { Ok(()) } else { Err(RoutineError::Unauthorized) }
+    if owned {
+        Ok(())
+    } else {
+        Err(RoutineError::Unauthorized)
+    }
 }
 
-fn authorize_active(connection: &Connection, principal: &str, workspace: &str) -> Result<(), RoutineError> {
+fn authorize_active(
+    connection: &Connection,
+    principal: &str,
+    workspace: &str,
+) -> Result<(), RoutineError> {
     authorize(connection, principal, workspace)?;
-    let status: Option<String> = connection.query_row(
-        "SELECT status FROM workspaces WHERE workspace_id = ?1 AND owner_principal_id = ?2",
-        params![workspace, principal], |row| row.get(0),
-    ).optional().map_err(sql_error)?;
+    let status: Option<String> = connection
+        .query_row(
+            "SELECT status FROM workspaces WHERE workspace_id = ?1 AND owner_principal_id = ?2",
+            params![workspace, principal],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(sql_error)?;
     match status.as_deref() {
         Some("ACTIVE") => Ok(()),
         Some("ARCHIVED") => Err(RoutineError::WorkspaceArchived),
@@ -192,54 +393,116 @@ fn map_error(error: StoreError) -> RoutineError {
         _ => RoutineError::Storage,
     }
 }
-fn sql_error(error: rusqlite::Error) -> RoutineError { map_error(map_database_error(error)) }
+fn sql_error(error: rusqlite::Error) -> RoutineError {
+    map_error(map_database_error(error))
+}
+fn sql_u64(value: u64, field: &str) -> Result<i64, RoutineError> {
+    to_sql_i64(value, field).map_err(map_error)
+}
 fn encode<T: Serialize>(value: &T) -> Result<String, RoutineError> {
-    String::from_utf8(canonical_json(value).map_err(map_error)?).map_err(|_| RoutineError::InvalidDefinition)
+    String::from_utf8(canonical_json(value).map_err(map_error)?)
+        .map_err(|_| RoutineError::InvalidDefinition)
 }
 fn decode<T: serde::de::DeserializeOwned>(value: String) -> Result<T, RoutineError> {
     serde_json::from_str(&value).map_err(|_| RoutineError::Storage)
 }
 fn status_str(status: RoutineStatus) -> &'static str {
-    match status { RoutineStatus::Active => "ACTIVE", RoutineStatus::Archived => "ARCHIVED" }
+    match status {
+        RoutineStatus::Active => "ACTIVE",
+        RoutineStatus::Archived => "ARCHIVED",
+    }
 }
 fn parse_status(status: &str) -> Result<RoutineStatus, RoutineError> {
-    match status { "ACTIVE" => Ok(RoutineStatus::Active), "ARCHIVED" => Ok(RoutineStatus::Archived), _ => Err(RoutineError::Storage) }
+    match status {
+        "ACTIVE" => Ok(RoutineStatus::Active),
+        "ARCHIVED" => Ok(RoutineStatus::Archived),
+        _ => Err(RoutineError::Storage),
+    }
 }
 
-fn load_routine(connection: &Connection, workspace: &str, id: &str) -> Result<Option<(Routine, RoutineRevision)>, RoutineError> {
+fn load_routine(
+    connection: &Connection,
+    workspace: &str,
+    id: &str,
+) -> Result<Option<(Routine, RoutineRevision)>, RoutineError> {
     let raw: Option<(String, u64, String, String, String, u64)> = connection.query_row(
         "SELECT name, current_revision, status, created_at, updated_at, version FROM routines WHERE workspace_id = ?1 AND routine_id = ?2",
-        params![workspace, id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        params![workspace, id], |row| Ok((row.get(0)?, from_row_u64(row, 1)?, row.get(2)?, row.get(3)?, row.get(4)?, from_row_u64(row, 5)?)),
     ).optional().map_err(sql_error)?;
-    let Some((name, current_revision, status, created_at, updated_at, version)) = raw else { return Ok(None); };
-    let routine = Routine {
-        routine_id: id.to_owned(), workspace_id: workspace.to_owned(), name, current_revision,
-        status: parse_status(&status)?, created_at, updated_at, version,
+    let Some((name, current_revision, status, created_at, updated_at, version)) = raw else {
+        return Ok(None);
     };
-    let revision = load_revision(connection, workspace, id, current_revision)?.ok_or(RoutineError::Storage)?;
+    let routine = Routine {
+        routine_id: id.to_owned(),
+        workspace_id: workspace.to_owned(),
+        name,
+        current_revision,
+        status: parse_status(&status)?,
+        created_at,
+        updated_at,
+        version,
+    };
+    let revision =
+        load_revision(connection, workspace, id, current_revision)?.ok_or(RoutineError::Storage)?;
     Ok(Some((routine, revision)))
 }
 
-fn load_revision(connection: &Connection, workspace: &str, id: &str, revision: u64) -> Result<Option<RoutineRevision>, RoutineError> {
+fn load_revision(
+    connection: &Connection,
+    workspace: &str,
+    id: &str,
+    revision: u64,
+) -> Result<Option<RoutineRevision>, RoutineError> {
+    let revision_sql = sql_u64(revision, "Routine revision")?;
     let raw: Option<(String, String, String, String, String, String, String, String, String, Option<String>, String, Option<String>, String, String, String)> = connection.query_row(
         "SELECT objective_template, instructions, input_schema_json, constraints_json, non_goals_json, required_outputs_json, acceptance_criteria_json, approvals_required_json, input_bindings_json, preferred_agent_binding_id, placement_preference_json, budget_ceiling_json, required_capabilities_json, verification_policy_json, authored_by_json FROM routine_revisions WHERE workspace_id = ?1 AND routine_id = ?2 AND revision = ?3",
-        params![workspace, id, revision], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?)),
+        params![workspace, id, revision_sql], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?)),
     ).optional().map_err(sql_error)?;
-    let Some((objective_template, instructions, input_schema, constraints, non_goals, outputs, criteria, approvals, bindings, preferred_agent_binding_id, placement, budget, capabilities, verification, authored_by)) = raw else { return Ok(None); };
+    let Some((
+        objective_template,
+        instructions,
+        input_schema,
+        constraints,
+        non_goals,
+        outputs,
+        criteria,
+        approvals,
+        bindings,
+        preferred_agent_binding_id,
+        placement,
+        budget,
+        capabilities,
+        verification,
+        authored_by,
+    )) = raw
+    else {
+        return Ok(None);
+    };
     let created_at: String = connection.query_row(
         "SELECT created_at FROM routine_revisions WHERE workspace_id = ?1 AND routine_id = ?2 AND revision = ?3",
-        params![workspace, id, revision], |row| row.get(0),
+        params![workspace, id, revision_sql], |row| row.get(0),
     ).map_err(sql_error)?;
     Ok(Some(RoutineRevision {
-        routine_id: id.to_owned(), revision,
+        routine_id: id.to_owned(),
+        revision,
         definition: RoutineRevisionInput {
-            objective_template, instructions, input_schema: decode(input_schema)?, constraints: decode(constraints)?,
-            non_goals: decode(non_goals)?, required_outputs: decode(outputs)?, acceptance_criteria: decode(criteria)?,
-            approvals_required: decode(approvals)?, input_bindings: decode(bindings)?, required_capabilities: decode(capabilities)?,
-            preferred_agent_binding_id, placement_preference: decode(placement)?, budget_ceiling: budget.map(decode).transpose()?,
+            objective_template,
+            instructions,
+            input_schema: decode(input_schema)?,
+            constraints: decode(constraints)?,
+            non_goals: decode(non_goals)?,
+            required_outputs: decode(outputs)?,
+            acceptance_criteria: decode(criteria)?,
+            approvals_required: decode(approvals)?,
+            input_bindings: decode(bindings)?,
+            required_capabilities: decode(capabilities)?,
+            preferred_agent_binding_id,
+            placement_preference: decode(placement)?,
+            budget_ceiling: budget.map(decode).transpose()?,
             verification_policy: decode(verification)?,
         },
-        authored_by: decode(authored_by)?, created_at,
+        authored_by: decode(authored_by)?,
+        created_at,
     }))
 }
 
@@ -250,87 +513,171 @@ struct RoutineBoundary<'a> {
     pending: Option<RoutineMutation>,
 }
 impl RoutineTransaction for RoutineBoundary<'_> {
-    fn now(&self) -> String { self.context.recorded_at.clone() }
+    fn now(&self) -> String {
+        self.context.recorded_at.clone()
+    }
     fn routine(&mut self, id: &str) -> Result<Option<(Routine, RoutineRevision)>, RoutineError> {
         load_routine(self.connection, &self.scope.workspace_id, id)
     }
-    fn validate_references(&mut self, workspace: &str, revision: &RoutineRevisionInput) -> Result<(), RoutineError> {
-        if workspace != self.scope.workspace_id { return Err(RoutineError::Unauthorized); }
+    fn validate_references(
+        &mut self,
+        workspace: &str,
+        revision: &RoutineRevisionInput,
+    ) -> Result<(), RoutineError> {
+        if workspace != self.scope.workspace_id {
+            return Err(RoutineError::Unauthorized);
+        }
         if let Some(binding_id) = &revision.preferred_agent_binding_id {
             let exists: bool = self.connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM agent_bindings WHERE workspace_id = ?1 AND agent_binding_id = ?2)",
                 params![workspace, binding_id], |row| row.get(0),
             ).map_err(sql_error)?;
-            if !exists { return Err(RoutineError::InvalidDefinition); }
+            if !exists {
+                return Err(RoutineError::InvalidDefinition);
+            }
         }
         Ok(())
     }
-    fn has_enabled_automation_references(&mut self, routine_id: &str) -> Result<bool, RoutineError> {
+    fn has_enabled_automation_references(
+        &mut self,
+        routine_id: &str,
+    ) -> Result<bool, RoutineError> {
         self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM automation_revisions r JOIN automations a ON a.workspace_id = r.workspace_id AND a.automation_id = r.automation_id WHERE r.workspace_id = ?1 AND r.routine_id = ?2 AND a.status = 'ENABLED')",
             params![self.scope.workspace_id, routine_id], |row| row.get(0),
         ).map_err(sql_error)
     }
     fn commit(&mut self, mutation: RoutineMutation) -> Result<Routine, RoutineError> {
-        if self.pending.is_some() { return Err(RoutineError::InvalidDefinition); }
+        if self.pending.is_some() {
+            return Err(RoutineError::InvalidDefinition);
+        }
         let routine = mutation.routine.clone();
         self.pending = Some(mutation);
         Ok(routine)
     }
 }
 
-fn prepare(connection: &Connection, scope: &RoutineOwnerScope, context: &RoutineEventContext, decision: &Decision) -> Result<RoutineMutation, RoutineError> {
-    let mut boundary = RoutineBoundary { connection, scope, context, pending: None };
+fn prepare(
+    connection: &Connection,
+    scope: &RoutineOwnerScope,
+    context: &RoutineEventContext,
+    decision: &Decision,
+) -> Result<RoutineMutation, RoutineError> {
+    let mut boundary = RoutineBoundary {
+        connection,
+        scope,
+        context,
+        pending: None,
+    };
     let result = decision(&mut boundary)?;
     let mutation = boundary.pending.ok_or(RoutineError::InvalidDefinition)?;
-    if result != mutation.routine { return Err(RoutineError::InvalidDefinition); }
+    if result != mutation.routine {
+        return Err(RoutineError::InvalidDefinition);
+    }
     Ok(mutation)
 }
 
-fn replay(connection: &Connection, scope: &RoutineOwnerScope, fingerprint: &str) -> Result<Option<Routine>, RoutineError> {
+fn replay(
+    connection: &Connection,
+    scope: &RoutineOwnerScope,
+    fingerprint: &str,
+) -> Result<Option<Routine>, RoutineError> {
     let prior: Option<(String, Option<String>, Option<String>)> = connection.query_row(
         "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
         params![scope.principal_id, scope.request_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional().map_err(sql_error)?;
-    let Some((actual, response, response_digest)) = prior else { return Ok(None); };
-    if actual != fingerprint { return Err(RoutineError::IdempotencyConflict); }
+    let Some((actual, response, response_digest)) = prior else {
+        return Ok(None);
+    };
+    if actual != fingerprint {
+        return Err(RoutineError::IdempotencyConflict);
+    }
     let response = response.ok_or(RoutineError::Storage)?;
-    if response_digest.as_deref() != Some(digest(response.as_bytes()).as_str()) { return Err(RoutineError::Storage); }
+    if response_digest.as_deref() != Some(digest(response.as_bytes()).as_str()) {
+        return Err(RoutineError::Storage);
+    }
     let routine: Routine = serde_json::from_str(&response).map_err(|_| RoutineError::Storage)?;
-    if routine.workspace_id != scope.workspace_id { return Err(RoutineError::Storage); }
+    if routine.workspace_id != scope.workspace_id {
+        return Err(RoutineError::Storage);
+    }
     Ok(Some(routine))
 }
 
-fn state_value(connection: &Connection, scope: &RoutineOwnerScope, mutation: &RoutineMutation) -> Result<Value, RoutineError> {
+fn state_value(
+    connection: &Connection,
+    scope: &RoutineOwnerScope,
+    mutation: &RoutineMutation,
+) -> Result<Value, RoutineError> {
     let revision = match &mutation.append_revision {
         Some(revision) => revision.clone(),
-        None => load_revision(connection, &scope.workspace_id, &mutation.routine.routine_id, mutation.routine.current_revision)?.ok_or(RoutineError::Storage)?,
+        None => load_revision(
+            connection,
+            &scope.workspace_id,
+            &mutation.routine.routine_id,
+            mutation.routine.current_revision,
+        )?
+        .ok_or(RoutineError::Storage)?,
     };
-    if mutation.routine.workspace_id != scope.workspace_id || mutation.routine.version == 0
-        || revision.routine_id != mutation.routine.routine_id || revision.revision != mutation.routine.current_revision
-    { return Err(RoutineError::InvalidDefinition); }
+    if mutation.routine.workspace_id != scope.workspace_id
+        || mutation.routine.version == 0
+        || revision.routine_id != mutation.routine.routine_id
+        || revision.revision != mutation.routine.current_revision
+    {
+        return Err(RoutineError::InvalidDefinition);
+    }
     Ok(json!({"routine": mutation.routine, "revision": revision}))
 }
 
-fn execute_transaction(connection: &mut Connection, scope: &RoutineOwnerScope, fingerprint: &str, context: &RoutineEventContext, blobs: &dyn BlobStore, decision: Decision) -> Result<Routine, RoutineError> {
+fn execute_transaction(
+    connection: &mut Connection,
+    scope: &RoutineOwnerScope,
+    fingerprint: &str,
+    context: &RoutineEventContext,
+    blobs: &dyn BlobStore,
+    decision: Decision,
+) -> Result<Routine, RoutineError> {
     let (first, state_bytes) = {
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql_error)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(sql_error)?;
         authorize_active(&tx, &scope.principal_id, &scope.workspace_id)?;
-        if let Some(prior) = replay(&tx, scope, fingerprint)? { return Ok(prior); }
+        if let Some(prior) = replay(&tx, scope, fingerprint)? {
+            return Ok(prior);
+        }
         let prepared = prepare(&tx, scope, context, &decision)?;
-        let state_bytes = canonical_json(&state_value(&tx, scope, &prepared)?).map_err(map_error)?;
+        let state_bytes =
+            canonical_json(&state_value(&tx, scope, &prepared)?).map_err(map_error)?;
         (prepared, state_bytes)
     };
-    let blob = blobs.put(&scope.workspace_id, BlobPurpose::AggregateState, &state_bytes, "application/vnd.litecowork.routine+json").map_err(map_error)?;
-    if blob.digest != digest(&state_bytes) || blob.size_bytes != state_bytes.len() as u64
-        || blobs.get(&scope.workspace_id, BlobPurpose::AggregateState, &blob).map_err(map_error)? != state_bytes
-    { return Err(RoutineError::Storage); }
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(sql_error)?;
+    let blob = blobs
+        .put(
+            &scope.workspace_id,
+            BlobPurpose::AggregateState,
+            &state_bytes,
+            "application/vnd.litecowork.routine+json",
+        )
+        .map_err(map_error)?;
+    if blob.digest != digest(&state_bytes)
+        || blob.size_bytes != state_bytes.len() as u64
+        || blobs
+            .get(&scope.workspace_id, BlobPurpose::AggregateState, &blob)
+            .map_err(map_error)?
+            != state_bytes
+    {
+        return Err(RoutineError::Storage);
+    }
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sql_error)?;
     authorize_active(&tx, &scope.principal_id, &scope.workspace_id)?;
-    if let Some(prior) = replay(&tx, scope, fingerprint)? { return Ok(prior); }
+    if let Some(prior) = replay(&tx, scope, fingerprint)? {
+        return Ok(prior);
+    }
     let mutation = prepare(&tx, scope, context, &decision)?;
     let final_state = canonical_json(&state_value(&tx, scope, &mutation)?).map_err(map_error)?;
-    if mutation != first || final_state != state_bytes || digest(&final_state) != blob.digest { return Err(RoutineError::VersionConflict); }
+    if mutation != first || final_state != state_bytes || digest(&final_state) != blob.digest {
+        return Err(RoutineError::VersionConflict);
+    }
     let result = persist(&tx, scope, context, &mutation, blob)?;
     let response = encode(&result)?;
     tx.execute("INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)", params![scope.principal_id, scope.request_id, fingerprint, response, digest(response.as_bytes()), context.recorded_at]).map_err(sql_error)?;
@@ -338,59 +685,160 @@ fn execute_transaction(connection: &mut Connection, scope: &RoutineOwnerScope, f
     Ok(result)
 }
 
-fn persist(tx: &Transaction<'_>, scope: &RoutineOwnerScope, context: &RoutineEventContext, mutation: &RoutineMutation, blob: BlobRef) -> Result<Routine, RoutineError> {
+fn persist(
+    tx: &Transaction<'_>,
+    scope: &RoutineOwnerScope,
+    context: &RoutineEventContext,
+    mutation: &RoutineMutation,
+    blob: BlobRef,
+) -> Result<Routine, RoutineError> {
     let head = &mutation.routine;
-    if head.workspace_id != scope.workspace_id || head.updated_at != context.recorded_at { return Err(RoutineError::InvalidDefinition); }
+    if head.workspace_id != scope.workspace_id || head.updated_at != context.recorded_at {
+        return Err(RoutineError::InvalidDefinition);
+    }
     let actual = load_routine(tx, &scope.workspace_id, &head.routine_id)?;
     let expected_event = match (&actual, &mutation.append_revision) {
-        (None, Some(revision)) if head.created_at == context.recorded_at && head.current_revision == 1 && head.version == 1 && head.status == RoutineStatus::Active && revision.revision == 1 =>
-            ("routine.created.v1", json!({"routine_id": head.routine_id, "workspace_id": head.workspace_id, "current_revision": 1, "status": "ACTIVE", "aggregate_version": 1})),
-        (Some((current, _)), Some(revision)) if current.status == RoutineStatus::Active && head.status == current.status && head.current_revision == current.current_revision.checked_add(1).ok_or(RoutineError::RevisionOverflow)? && head.version == current.version.checked_add(1).ok_or(RoutineError::VersionOverflow)? => {
-            let digest_value = revision_digest(revision)?;
-            ("routine.revision.created.v1", json!({"routine_id": head.routine_id, "revision": revision.revision, "definition_digest": digest_value, "authored_by": revision.authored_by, "aggregate_version": head.version}))
+        (None, Some(revision))
+            if head.created_at == context.recorded_at
+                && head.current_revision == 1
+                && head.version == 1
+                && head.status == RoutineStatus::Active
+                && revision.revision == 1 =>
+        {
+            (
+                "routine.created.v1",
+                json!({"routine_id": head.routine_id, "current_revision": 1, "status": "ACTIVE", "aggregate_version": 1}),
+            )
         }
-        (Some((current, _)), None) if current.status == RoutineStatus::Active && head.status == RoutineStatus::Archived && head.current_revision == current.current_revision && head.version == current.version.checked_add(1).ok_or(RoutineError::VersionOverflow)? =>
-            ("routine.status.changed.v1", json!({"routine_id": head.routine_id, "from": "ACTIVE", "to": "ARCHIVED", "aggregate_version": head.version})),
+        (Some((current, _)), Some(revision))
+            if current.status == RoutineStatus::Active
+                && head.status == current.status
+                && head.current_revision
+                    == current
+                        .current_revision
+                        .checked_add(1)
+                        .ok_or(RoutineError::RevisionOverflow)?
+                && head.version
+                    == current
+                        .version
+                        .checked_add(1)
+                        .ok_or(RoutineError::VersionOverflow)? =>
+        {
+            let digest_value = revision_digest(revision)?;
+            (
+                "routine.revision.created.v1",
+                json!({"routine_id": head.routine_id, "revision": revision.revision, "definition_digest": digest_value, "authored_by": revision.authored_by}),
+            )
+        }
+        (Some((current, _)), None)
+            if current.status == RoutineStatus::Active
+                && head.status == RoutineStatus::Archived
+                && head.current_revision == current.current_revision
+                && head.version
+                    == current
+                        .version
+                        .checked_add(1)
+                        .ok_or(RoutineError::VersionOverflow)? =>
+        {
+            (
+                "routine.status.changed.v1",
+                json!({"routine_id": head.routine_id, "from": "ACTIVE", "to": "ARCHIVED", "aggregate_version": head.version}),
+            )
+        }
         _ => return Err(RoutineError::InvalidDefinition),
     };
-    if mutation.event.kind != expected_event.0 || mutation.event.payload != expected_event.1 { return Err(RoutineError::InvalidDefinition); }
+    if mutation.event.kind != expected_event.0 || mutation.event.payload != expected_event.1 {
+        return Err(RoutineError::InvalidDefinition);
+    }
     match (mutation.expected_version, &actual) {
-        (None, None) if head.version == 1 && head.current_revision == 1 && head.status == RoutineStatus::Active => {
-            tx.execute("INSERT INTO routines(routine_id, workspace_id, name, current_revision, status, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![head.routine_id, head.workspace_id, head.name, head.current_revision, status_str(head.status), head.created_at, head.updated_at, head.version]).map_err(sql_error)?;
+        (None, None)
+            if head.version == 1
+                && head.current_revision == 1
+                && head.status == RoutineStatus::Active =>
+        {
+            tx.execute("INSERT INTO routines(routine_id, workspace_id, name, current_revision, status, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)", params![head.routine_id, head.workspace_id, head.name, sql_u64(head.current_revision, "Routine revision")?, status_str(head.status), head.created_at, head.updated_at, sql_u64(head.version, "Routine version")?]).map_err(sql_error)?;
         }
-        (Some(expected), Some((current, _))) if current.version == expected && head.version == expected.checked_add(1).ok_or(RoutineError::VersionOverflow)? => {
-            if current.status != RoutineStatus::Active || current.created_at != head.created_at || current.name != head.name { return Err(RoutineError::Archived); }
-            let changed = tx.execute("UPDATE routines SET current_revision = ?1, status = ?2, updated_at = ?3, version = ?4 WHERE workspace_id = ?5 AND routine_id = ?6 AND version = ?7", params![head.current_revision, status_str(head.status), head.updated_at, head.version, scope.workspace_id, head.routine_id, expected]).map_err(sql_error)?;
-            if changed != 1 { return Err(RoutineError::VersionConflict); }
+        (Some(expected), Some((current, _)))
+            if current.version == expected
+                && head.version
+                    == expected
+                        .checked_add(1)
+                        .ok_or(RoutineError::VersionOverflow)? =>
+        {
+            if current.status != RoutineStatus::Active
+                || current.created_at != head.created_at
+                || current.name != head.name
+            {
+                return Err(RoutineError::Archived);
+            }
+            let changed = tx.execute("UPDATE routines SET current_revision = ?1, status = ?2, updated_at = ?3, version = ?4 WHERE workspace_id = ?5 AND routine_id = ?6 AND version = ?7", params![sql_u64(head.current_revision, "Routine revision")?, status_str(head.status), head.updated_at, sql_u64(head.version, "Routine version")?, scope.workspace_id, head.routine_id, sql_u64(expected, "expected Routine version")?]).map_err(sql_error)?;
+            if changed != 1 {
+                return Err(RoutineError::VersionConflict);
+            }
         }
         _ => return Err(RoutineError::VersionConflict),
     }
     if let Some(revision) = &mutation.append_revision {
-        if revision.routine_id != head.routine_id || revision.revision != head.current_revision
-            || revision.authored_by != (PrincipalRef { principal_id: scope.principal_id.clone(), kind: PrincipalKind::User })
+        if revision.routine_id != head.routine_id
+            || revision.revision != head.current_revision
+            || revision.authored_by
+                != (PrincipalRef {
+                    principal_id: scope.principal_id.clone(),
+                    kind: PrincipalKind::User,
+                })
             || revision.created_at != context.recorded_at
-        { return Err(RoutineError::InvalidDefinition); }
+        {
+            return Err(RoutineError::InvalidDefinition);
+        }
         validate_routine_revision(&revision.definition)?;
         let d = &revision.definition;
-        tx.execute("INSERT INTO routine_revisions(workspace_id, routine_id, revision, objective_template, instructions, input_schema_json, constraints_json, non_goals_json, required_outputs_json, acceptance_criteria_json, approvals_required_json, input_bindings_json, required_capabilities_json, preferred_agent_binding_id, placement_preference_json, budget_ceiling_json, verification_policy_json, authored_by_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)", params![scope.workspace_id, revision.routine_id, revision.revision, d.objective_template, d.instructions, encode(&d.input_schema)?, encode(&d.constraints)?, encode(&d.non_goals)?, encode(&d.required_outputs)?, encode(&d.acceptance_criteria)?, encode(&d.approvals_required)?, encode(&d.input_bindings)?, encode(&d.required_capabilities)?, d.preferred_agent_binding_id, encode(&d.placement_preference)?, d.budget_ceiling.as_ref().map(encode).transpose()?, encode(&d.verification_policy)?, encode(&revision.authored_by)?, revision.created_at]).map_err(sql_error)?;
+        tx.execute("INSERT INTO routine_revisions(workspace_id, routine_id, revision, objective_template, instructions, input_schema_json, constraints_json, non_goals_json, required_outputs_json, acceptance_criteria_json, approvals_required_json, input_bindings_json, required_capabilities_json, preferred_agent_binding_id, placement_preference_json, budget_ceiling_json, verification_policy_json, authored_by_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)", params![scope.workspace_id, revision.routine_id, sql_u64(revision.revision, "Routine revision")?, d.objective_template, d.instructions, encode(&d.input_schema)?, encode(&d.constraints)?, encode(&d.non_goals)?, encode(&d.required_outputs)?, encode(&d.acceptance_criteria)?, encode(&d.approvals_required)?, encode(&d.input_bindings)?, encode(&d.required_capabilities)?, d.preferred_agent_binding_id, encode(&d.placement_preference)?, d.budget_ceiling.as_ref().map(encode).transpose()?, encode(&d.verification_policy)?, encode(&revision.authored_by)?, revision.created_at]).map_err(sql_error)?;
     }
-    let persisted = load_routine(tx, &scope.workspace_id, &head.routine_id)?.ok_or(RoutineError::Storage)?;
-    if persisted.0 != *head || mutation.append_revision.as_ref().is_some_and(|revision| *revision != persisted.1) { return Err(RoutineError::Storage); }
+    let persisted =
+        load_routine(tx, &scope.workspace_id, &head.routine_id)?.ok_or(RoutineError::Storage)?;
+    if persisted.0 != *head
+        || mutation
+            .append_revision
+            .as_ref()
+            .is_some_and(|revision| *revision != persisted.1)
+    {
+        return Err(RoutineError::Storage);
+    }
     write_event(tx, scope, context, head.version, &mutation.event, blob)?;
     Ok(head.clone())
 }
 
 fn revision_digest(revision: &RoutineRevision) -> Result<String, RoutineError> {
-    let bytes = serde_json_canonicalizer::to_vec(revision).map_err(|_| RoutineError::InvalidDefinition)?;
+    let bytes =
+        serde_json_canonicalizer::to_vec(revision).map_err(|_| RoutineError::InvalidDefinition)?;
     Ok(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
 }
 
-fn write_event(tx: &Transaction<'_>, scope: &RoutineOwnerScope, context: &RoutineEventContext, version: u64, event: &RoutineEvent, blob: BlobRef) -> Result<(), RoutineError> {
-    if !["routine.created.v1", "routine.revision.created.v1", "routine.status.changed.v1"].contains(&event.kind.as_str()) { return Err(RoutineError::InvalidDefinition); }
+fn write_event(
+    tx: &Transaction<'_>,
+    scope: &RoutineOwnerScope,
+    context: &RoutineEventContext,
+    version: u64,
+    event: &RoutineEvent,
+    blob: BlobRef,
+) -> Result<(), RoutineError> {
+    if ![
+        "routine.created.v1",
+        "routine.revision.created.v1",
+        "routine.status.changed.v1",
+    ]
+    .contains(&event.kind.as_str())
+    {
+        return Err(RoutineError::InvalidDefinition);
+    }
     tx.execute("INSERT INTO workspace_origin_sequences(workspace_id, origin_runtime_id, last_sequence) VALUES (?1, ?2, 1) ON CONFLICT(workspace_id, origin_runtime_id) DO UPDATE SET last_sequence = last_sequence + 1", params![scope.workspace_id, context.origin_runtime_id]).map_err(sql_error)?;
     let sequence: i64 = tx.query_row("SELECT last_sequence FROM workspace_origin_sequences WHERE workspace_id = ?1 AND origin_runtime_id = ?2", params![scope.workspace_id, context.origin_runtime_id], |row| row.get(0)).map_err(sql_error)?;
     let payload = encode(&event.payload)?;
-    let state_ref = AggregateStateRef { blob, entity_revision: version, record_schema_version: 1 };
-    tx.execute("INSERT INTO domain_events(event_id, workspace_id, entity_type, entity_id, origin_runtime_id, origin_sequence, entity_revision, hlc_timestamp, correlation_id, causation_id, schema_version, type, payload_json, aggregate_state_ref_json, recorded_at, payload_digest) VALUES (?1, ?2, 'Routine', ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12, ?13, ?14)", params![context.event_id, scope.workspace_id, event.payload.get("routine_id").and_then(Value::as_str).ok_or(RoutineError::InvalidDefinition)?, context.origin_runtime_id, sequence, version, context.hlc_timestamp, context.correlation_id, context.causation_id, event.kind, payload, encode(&state_ref)?, context.recorded_at, digest(payload.as_bytes())]).map_err(sql_error)?;
+    let state_ref = AggregateStateRef {
+        blob,
+        entity_revision: version,
+        record_schema_version: 1,
+    };
+    tx.execute("INSERT INTO domain_events(event_id, workspace_id, entity_type, entity_id, origin_runtime_id, origin_sequence, entity_revision, hlc_timestamp, correlation_id, causation_id, schema_version, type, payload_json, aggregate_state_ref_json, recorded_at, payload_digest) VALUES (?1, ?2, 'Routine', ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12, ?13, ?14)", params![context.event_id, scope.workspace_id, event.payload.get("routine_id").and_then(Value::as_str).ok_or(RoutineError::InvalidDefinition)?, context.origin_runtime_id, sequence, sql_u64(version, "Routine version")?, context.hlc_timestamp, context.correlation_id, context.causation_id, event.kind, payload, encode(&state_ref)?, context.recorded_at, digest(payload.as_bytes())]).map_err(sql_error)?;
     Ok(())
 }

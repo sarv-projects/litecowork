@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { ArtifactApi, supportsTextPreview } from "./artifact-api";
+import { ArtifactApi, ArtifactApiError, supportsTextPreview } from "./artifact-api";
 import type { Artifact, ArtifactTextEditHead, ArtifactTextVersionInput, ArtifactTextVersionReceipt, ArtifactVersion, PinnedResourceRef } from "./artifact-api";
 import { StructuredTextPreview } from "./StructuredTextPreview";
+import { TextVersionDiff } from "./TextVersionDiff";
 import "./artifact-workbench.css";
 
 const PREVIEW_LIMIT = 1024 * 1024;
@@ -14,10 +15,12 @@ type Props = {
   onClose?: () => void;
   /** The host must resolve this exact revision through current source authorization. */
   onOpenSource?: (ref: PinnedResourceRef) => void;
+  onLibraryChanged?: (artifact: Artifact) => void;
 };
-type Preview = { text: string; previous: { text: string; version: ArtifactVersion } | null };
+type Preview = { text: string; comparison: { text: string; version: ArtifactVersion } | null };
 type LoadedEditHead = { head: ArtifactTextEditHead; text: string };
 type PendingTextSave = { requestId: string; input: ArtifactTextVersionInput; expectedArtifactVersion: number };
+type PendingLibraryCommand = { snapshot: Artifact; action: "promote" | "archive"; requestId: string };
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "Artifact service is unavailable.";
 }
@@ -27,7 +30,7 @@ function isAuthorizationFailure(error: unknown): boolean {
 }
 
 /** Artifact versions stay immutable; supported text edits publish a new version. */
-export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpenSource }: Props) {
+export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpenSource, onLibraryChanged }: Props) {
   const headingId = useId();
   const [refresh, setRefresh] = useState(0);
   const [artifact, setArtifact] = useState<Artifact | null>(null);
@@ -39,7 +42,12 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
   const [history, setHistory] = useState<ArtifactVersion[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyFailure, setHistoryFailure] = useState<string | null>(null);
-  const [compare, setCompare] = useState(false);
+  const [comparisonVersion, setComparisonVersion] = useState<number | null>(null);
+  const [comparisonInput, setComparisonInput] = useState("");
+  const [comparisonMode, setComparisonMode] = useState<"SIDE_BY_SIDE" | "LINE_DIFF">("SIDE_BY_SIDE");
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const [comparisonRetry, setComparisonRetry] = useState(0);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
@@ -64,13 +72,67 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
   const [publishedReceipt, setPublishedReceipt] = useState<ArtifactTextVersionReceipt | null>(null);
   const [publishedRestoreFromVersion, setPublishedRestoreFromVersion] = useState<number | null>(null);
   const downloadController = useRef<AbortController | null>(null);
+  const libraryGeneration = useRef(0);
+  const libraryInFlight = useRef(false);
+  const [libraryBusy, setLibraryBusy] = useState(false);
+  const [pendingLibrary, setPendingLibrary] = useState<PendingLibraryCommand | null>(null);
+  const [libraryFailure, setLibraryFailure] = useState<string | null>(null);
+  const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
+  const [libraryNeedsRefresh, setLibraryNeedsRefresh] = useState(false);
+
+  useEffect(() => {
+    libraryGeneration.current += 1;
+    libraryInFlight.current = false; setLibraryBusy(false); setPendingLibrary(null); setLibraryFailure(null); setLibraryNotice(null); setLibraryNeedsRefresh(false);
+    return () => { libraryGeneration.current += 1; };
+  }, [api, workspaceId, artifactId]);
+
+  async function changeLibrary(action: "promote" | "archive") {
+    if (!artifact || editing || editLoading || editSaving || libraryInFlight.current || libraryNeedsRefresh) return;
+    const pending = pendingLibrary ?? { snapshot: artifact, action, requestId: crypto.randomUUID() };
+    if (pending.action !== action) return;
+    if (!pendingLibrary && !window.confirm(action === "promote"
+      ? `Save “${artifact.display_name}” to the Library? This changes its Library status and preserves every content version. Linked content stays with its provider.`
+      : `Archive “${artifact.display_name}”? It will leave the Saved Library and cannot receive new versions. History remains readable while authorized. Linked provider content is not deleted.`)) return;
+    const generation = libraryGeneration.current;
+    libraryInFlight.current = true; setLibraryBusy(true); setLibraryFailure(null); setLibraryNotice(null); setPendingLibrary(pending);
+    try {
+      const committed = await api.libraryCommand(pending.snapshot, pending.action, pending.requestId);
+      if (generation !== libraryGeneration.current) return;
+      setPendingLibrary(null); setArtifact(committed);
+      setLibraryNotice(action === "promote" ? "Saved to the Library. Content history is unchanged." : "Archived. Content history remains readable while authorized.");
+      onLibraryChanged?.(committed);
+      // A retry may return an older committed receipt after a different client has
+      // advanced the Artifact. Re-read its current head rather than calling that
+      // historical response the current Library status.
+      try {
+        const current = await api.get(artifactId);
+        if (generation !== libraryGeneration.current) return;
+        if (current.workspace_id !== workspaceId || current.version < committed.version) throw new Error("Artifact current head does not match its confirmed receipt.");
+        setArtifact(current); setLibraryNeedsRefresh(false); onLibraryChanged?.(current);
+      } catch (refreshError) {
+        if (generation !== libraryGeneration.current) return;
+        setLibraryFailure(`The Library command is confirmed, but its latest status could not be refreshed. ${message(refreshError)} Refresh before another action.`);
+        setLibraryNeedsRefresh(true);
+        if (isAuthorizationFailure(refreshError)) { setArtifact(null); setVersion(null); setPreview(null); }
+      }
+    } catch (error) {
+      if (generation !== libraryGeneration.current) return;
+      const rejected = error instanceof ArtifactApiError && [400, 401, 403, 404, 409, 412, 422].includes(error.status);
+      if (rejected) setPendingLibrary(null);
+      if (rejected) setLibraryNeedsRefresh(true);
+      setLibraryFailure(`${message(error)} ${rejected ? "Refresh and review its current status before trying again." : "The result is unconfirmed. Retry the same command to resolve it using its original request ID."}`);
+      if (isAuthorizationFailure(error)) { setArtifact(null); setVersion(null); setPreview(null); }
+    } finally {
+      if (generation === libraryGeneration.current) { libraryInFlight.current = false; setLibraryBusy(false); }
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController();
     downloadController.current?.abort();
     setArtifact(null); setSelected(null); setVersionInput(""); setVersionSelectionError(null); setVersion(null); setPreview(null);
     setShowHistory(false); setHistory([]); setHistoryLoading(false); setHistoryFailure(null);
-    setFailure(null); setPreviewFailure(null); setDownloadFailure(null); setCompare(false); setLoading(true); setDownloading(false);
+    setFailure(null); setPreviewFailure(null); setDownloadFailure(null); setComparisonVersion(null); setComparisonInput(""); setComparisonMode("SIDE_BY_SIDE"); setComparisonError(null); setLoading(true); setDownloading(false);
     setSaveNotice(null);
     setEditing(false); setEditHead(null); setEditBase(""); setEditDraft(""); setEditFailure(null); setEditConflict(false);
     setLatestEdit(null); setEditRebased(false); setRestoreSourceVersion(null); setPendingSave(null); setEditLoading(false); setEditSaving(false);
@@ -78,6 +140,8 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       if (controller.signal.aborted) return;
       if (item.workspace_id !== workspaceId) throw new Error("Artifact belongs to another Workspace.");
       setArtifact(item); setSelected(item.current_version); setVersionInput(String(item.current_version));
+      setLibraryNeedsRefresh(false); setLibraryFailure(null);
+      setComparisonInput(String(item.current_version > 1 ? item.current_version - 1 : 1));
     }).catch(error => {
       if (!controller.signal.aborted) { setFailure(message(error)); setLoading(false); }
     });
@@ -109,6 +173,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
   useEffect(() => {
     const controller = new AbortController();
     downloadController.current?.abort(); setDownloading(false); setDownloadFailure(null);
+    setComparisonLoading(false);
     setVersion(null); setPreview(null); setPreviewFailure(null); setCopyFailure(null);
     if (selected === null || !artifact) return () => controller.abort();
     setLoading(true); setFailure(null);
@@ -122,34 +187,37 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
         const bytes = await api.content(item, PREVIEW_LIMIT, controller.signal);
         const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
         if (controller.signal.aborted) return;
-        // Keep the selected authorized version readable even if its comparison
-        // predecessor is missing or no longer authorized.
-        setPreview({ text, previous: null });
+        // Keep the selected authorized version readable even if the comparison
+        // target is missing or no longer authorized.
+        setPreview({ text, comparison: null });
         setPreviewFailure(null);
-        if (!compare || selected <= 1) return;
+        if (comparisonVersion === null) return;
+        setComparisonLoading(true);
         try {
-          const previousVersion = await api.getVersion(artifactId, selected - 1, controller.signal);
-          if (previousVersion.artifact_id !== artifactId || previousVersion.version !== selected - 1) throw new Error("Prior Artifact version identity mismatch.");
-          if (previousVersion.content.kind !== "MANAGED_BLOB" || !supportsTextPreview(previousVersion.content.media_type) || previousVersion.content.size_bytes > PREVIEW_LIMIT) throw new Error("The prior version does not support text comparison.");
-          const previousBytes = await api.content(previousVersion, PREVIEW_LIMIT, controller.signal);
-          const previousText = new TextDecoder("utf-8", { fatal: true }).decode(previousBytes);
-          if (!controller.signal.aborted) setPreview({ text, previous: { text: previousText, version: previousVersion } });
+          const target = await api.getVersion(artifactId, comparisonVersion, controller.signal);
+          if (target.artifact_id !== artifactId || target.version !== comparisonVersion) throw new Error("Comparison Artifact version identity mismatch.");
+          if (target.content.kind !== "MANAGED_BLOB" || !supportsTextPreview(target.content.media_type) || target.content.size_bytes > PREVIEW_LIMIT) throw new Error(`Version ${comparisonVersion} does not support text comparison up to 1 MiB.`);
+          const targetBytes = await api.content(target, PREVIEW_LIMIT, controller.signal);
+          const targetText = new TextDecoder("utf-8", { fatal: true }).decode(targetBytes);
+          if (!controller.signal.aborted) setPreview({ text, comparison: { text: targetText, version: target } });
         } catch (error) {
           if (!controller.signal.aborted) {
-            setPreviewFailure(message(error));
+            setComparisonError(`Could not compare version ${comparisonVersion}: ${message(error)}`);
           }
+        } finally {
+          if (!controller.signal.aborted) setComparisonLoading(false);
         }
       } catch (error) {
         if (!controller.signal.aborted) {
           setFailure(message(error)); setLoading(false);
           // The selected version is the Workbench's primary authorized object.
-          // A denied read invalidates its metadata; predecessor denial does not.
+          // A denied read invalidates its metadata; comparison denial does not.
           if (isAuthorizationFailure(error)) { setArtifact(null); setVersion(null); setPreview(null); }
         }
       }
     })();
     return () => controller.abort();
-  }, [api, artifactId, artifact, selected, compare]);
+  }, [api, artifactId, artifact, selected, comparisonVersion, comparisonRetry]);
 
   async function download() {
     if (!version || !artifact || downloading) return;
@@ -205,7 +273,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
   }
 
   async function beginTextEdit() {
-    if (editLoading || editing) return;
+    if (editLoading || editing || libraryBusy || pendingLibrary || libraryNeedsRefresh) return;
     setEditLoading(true); setEditFailure(null); setEditConflict(false); setLatestEdit(null); setEditRebased(false); setRestoreSourceVersion(null);
     try {
       const loaded = await loadEditableHead();
@@ -217,7 +285,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
   async function beginRestoreTextVersion() {
     const source = version;
     const sourceText = preview?.text;
-    if (editLoading || editing || !artifact || !source || sourceText === undefined
+    if (editLoading || editing || libraryBusy || pendingLibrary || libraryNeedsRefresh || !artifact || !source || sourceText === undefined
       || source.version !== selected || source.version >= artifact.current_version || source.artifact_id !== artifactId
       || source.content.kind !== "MANAGED_BLOB"
       || source.content.media_type.trim().toLowerCase() !== "text/plain"
@@ -312,10 +380,31 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
     selectVersion(value);
   }
 
-  function selectVersion(value: number, compareWithPrevious = false) {
+  function compareVersions(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!artifact || selected === null || editing || editLoading || loading) return;
+    const value = Number(comparisonInput);
+    if (!Number.isSafeInteger(value) || value < 1 || value > artifact.current_version) {
+      setComparisonError(`Choose a committed version from 1 to ${artifact.current_version}.`);
+      return;
+    }
+    if (value === selected) {
+      setComparisonError("Choose a different version from the one you are viewing.");
+      return;
+    }
+    setComparisonError(null);
+    setComparisonVersion(value);
+    setComparisonMode("SIDE_BY_SIDE");
+    setComparisonRetry(current => current + 1);
+  }
+
+  function selectVersion(value: number) {
     setVersionSelectionError(null);
     setVersionInput(String(value));
-    setCompare(compareWithPrevious);
+    setComparisonVersion(null);
+    setComparisonMode("SIDE_BY_SIDE");
+    setComparisonInput(String(value > 1 ? value - 1 : Math.min(2, artifact?.current_version ?? 1)));
+    setComparisonError(null);
     setVersion(null);
     setPreview(null);
     setPreviewFailure(null);
@@ -340,10 +429,22 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       <div><p className="artifact-workbench-eyebrow">Artifact Workbench</p><h2 id={headingId}>{artifact?.display_name ?? "Artifact"}</h2>
         {artifact && <p>Viewing version {selected} · Current version {artifact.current_version} · {artifact.library_status.toLowerCase()}</p>}
       </div>
-      <div className="artifact-workbench-actions"><button type="button" disabled={editing || editLoading || editSaving} onClick={() => setRefresh(value => value + 1)}>Refresh</button>{onClose && <button type="button" disabled={editLoading || editSaving} onClick={closeWorkbench}>Close</button>}</div>
+      <div className="artifact-workbench-actions"><button type="button" disabled={editing || editLoading || editSaving || libraryBusy || pendingLibrary !== null} onClick={() => setRefresh(value => value + 1)}>Refresh</button>{onClose && <button type="button" disabled={editLoading || editSaving || pendingSave !== null || libraryBusy || pendingLibrary !== null} onClick={closeWorkbench}>Close</button>}</div>
     </header>
     <p role="status" aria-live="polite">{loading ? "Loading committed version…" : editing ? `Editing a draft based on version ${editHead?.content_version}.` : version ? `Version ${version.version} loaded. Read only.` : "Artifact unavailable."}</p>
     {failure && <p role="alert">{failure}</p>}
+    {artifact && <section className="artifact-workbench-library" aria-label="Library status">
+      <p>{libraryNeedsRefresh ? "Last confirmed Library status" : "Library status"}: {artifact.library_status.toLowerCase()}. Actions apply to the named Artifact and preserve all content versions.</p>
+      <div className="artifact-workbench-actions">
+        {artifact.library_status === "TRANSIENT" && <button type="button" disabled={loading || editing || editLoading || editSaving || libraryBusy || pendingLibrary !== null || libraryNeedsRefresh} onClick={() => void changeLibrary("promote")}>Save to Library…</button>}
+        {artifact.library_status === "SAVED" && <button type="button" disabled={loading || editing || editLoading || editSaving || libraryBusy || pendingLibrary !== null || libraryNeedsRefresh} onClick={() => void changeLibrary("archive")}>Archive Artifact…</button>}
+        {pendingLibrary && <button type="button" disabled={libraryBusy} onClick={() => void changeLibrary(pendingLibrary.action)}>Retry unchanged {pendingLibrary.action === "promote" ? "Library save" : "archive"}</button>}
+      </div>
+      {artifact.library_status === "ARCHIVED" && <p>Archive is terminal. This Artifact cannot receive new versions.</p>}
+      {libraryBusy && <p role="status">Confirming {pendingLibrary?.action === "promote" ? "Library save" : "archive"} with the Runtime…</p>}
+      {libraryNotice && <p role="status">{libraryNotice}</p>}
+    </section>}
+    {libraryFailure && <p role="alert">{libraryFailure}</p>}
     {saveNotice && <p className="artifact-workbench-published" role="status">{saveNotice}</p>}
     {publishedReceipt && <p className="artifact-workbench-published" role="status">{publishedRestoreFromVersion === null ? "Published" : `Restored the text from version ${publishedRestoreFromVersion} as`} version {publishedReceipt.version.version}{publishedReceipt.replayed ? " (confirmed from the original save request)" : ""}. This is a new immutable version; the current Artifact contract records it as a user text edit without a separate restored-from link.</p>}
     {artifact && <nav className="artifact-workbench-actions" aria-label="Version history">
@@ -354,12 +455,28 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       </form>
       <button type="button" disabled={loading || editLoading || editing || !selected || selected <= 1} onClick={() => { if (selected !== null) selectVersion(selected - 1); }}>Older version</button>
       <button type="button" disabled={loading || editLoading || editing || selected === null || selected >= artifact.current_version} onClick={() => { if (selected !== null) selectVersion(selected + 1); }}>Newer version</button>
-      {textSupported && selected !== null && selected > 1 && <button type="button" disabled={loading || editLoading || editing} aria-pressed={compare} onClick={() => selectVersion(selected, !compare)}>{compare ? "Show selected version" : "Compare with prior version"}</button>}
       <button type="button" disabled={editLoading || editing} aria-pressed={showHistory} onClick={() => setShowHistory(value => !value)}>{showHistory ? "Hide version history" : "Show version history"}</button>
       {api.supportsNativeSaveAs
         ? <button type="button" disabled={!version || version.content.kind !== "MANAGED_BLOB" || version.content.size_bytes > DOWNLOAD_LIMIT || downloading || editLoading} onClick={() => void saveVersionAs()}>{downloading ? "Saving…" : "Save this version…"}</button>
         : <button type="button" disabled={!version || downloading || editLoading} onClick={() => void download()}>{downloading ? "Downloading…" : "Download this version"}</button>}
     </nav>}
+    {artifact && textSupported && artifact.current_version > 1 && <form className="artifact-workbench-version-picker artifact-workbench-comparison-picker" onSubmit={compareVersions}>
+      <label htmlFor={`${headingId}-comparison`}>Compare with version</label>
+      <input id={`${headingId}-comparison`} inputMode="numeric" type="number" min="1" max={artifact.current_version} step="1"
+        value={comparisonInput} disabled={loading || editLoading || editing} aria-invalid={comparisonError !== null}
+        aria-describedby={`${headingId}-comparison-help${comparisonError ? ` ${headingId}-comparison-error` : ""}`}
+        onChange={event => { setComparisonInput(event.target.value); setComparisonError(null); }} />
+      <button type="submit" disabled={loading || comparisonLoading || editLoading || editing || (comparisonVersion === Number(comparisonInput) && preview?.comparison != null)}>{comparisonLoading ? "Loading comparison…" : "Compare"}</button>
+      {comparisonVersion !== null && <button type="button" disabled={editLoading || editing} onClick={() => { setComparisonVersion(null); setComparisonError(null); }}>Stop comparison</button>}
+      <p id={`${headingId}-comparison-help`}>Choose another committed version. Both text previews are limited to 1 MiB.</p>
+    </form>}
+    {comparisonLoading && <p role="status">Loading exact comparison version {comparisonVersion}…</p>}
+    {comparisonError && <p id={`${headingId}-comparison-error`} role="alert">{comparisonError}</p>}
+    {preview?.comparison && <div className="artifact-workbench-comparison-mode" role="group" aria-label="Comparison display">
+      <span>Compare view</span>
+      <button type="button" disabled={editing || editLoading} aria-pressed={comparisonMode === "SIDE_BY_SIDE"} onClick={() => setComparisonMode("SIDE_BY_SIDE")}>Side by side</button>
+      <button type="button" disabled={editing || editLoading} aria-pressed={comparisonMode === "LINE_DIFF"} onClick={() => setComparisonMode("LINE_DIFF")}>Line comparison</button>
+    </div>}
     {showHistory && artifact && <section className="artifact-version-history" aria-label="Recent Artifact versions">
       <h3>Recent versions</h3>
       <p>Records are loaded from the authorized immutable version route. Select one to open its exact saved content.</p>
@@ -388,8 +505,8 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       {api.supportsNativeSaveAs && version.content.kind === "MANAGED_BLOB" && version.content.size_bytes > DOWNLOAD_LIMIT && <p>This version exceeds the desktop Save As limit of 10 MiB.</p>}
       {copyFailure && <p role="alert">{copyFailure}</p>}
       {preview && !editing && <div className="artifact-workbench-actions"><button type="button" disabled={copying || editLoading} onClick={() => void copyText()}>{copying ? "Copying…" : "Copy selected text"}</button>
-        {canEditCurrentText && <button type="button" disabled={editLoading} onClick={() => void beginTextEdit()}>{editLoading ? "Opening editor…" : "Edit text"}</button>}
-        {canRestoreTextVersion && <button type="button" disabled={editLoading} onClick={() => void beginRestoreTextVersion()}>{editLoading ? "Preparing restore…" : "Restore as new version"}</button>}
+        {canEditCurrentText && <button type="button" disabled={editLoading || libraryBusy || pendingLibrary !== null || libraryNeedsRefresh} onClick={() => void beginTextEdit()}>{editLoading ? "Opening editor…" : "Edit text"}</button>}
+        {canRestoreTextVersion && <button type="button" disabled={editLoading || libraryBusy || pendingLibrary !== null || libraryNeedsRefresh} onClick={() => void beginRestoreTextVersion()}>{editLoading ? "Preparing restore…" : "Restore as new version"}</button>}
       </div>}
       {editFailure && !editing && <p role="alert">Could not prepare the text draft: {editFailure}</p>}
       {editing && editHead && <section className="artifact-text-editor" aria-labelledby={`${headingId}-editor-title`}>
@@ -398,9 +515,11 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
         </header>
         {editRebased && <p role="status">Draft rebased on version {editHead.content_version}. Review the updated base and draft before saving.</p>}
         <label htmlFor={`${headingId}-text-draft`}>Text content</label>
-        <textarea id={`${headingId}-text-draft`} spellCheck={false} value={editDraft} disabled={editSaving}
+        <textarea id={`${headingId}-text-draft`} spellCheck={false} value={editDraft} disabled={editSaving || pendingSave !== null}
           aria-describedby={`${headingId}-editor-help`} onChange={event => { setEditDraft(event.target.value); setPendingSave(null); setEditFailure(null); }} />
-        <p id={`${headingId}-editor-help`}>Only managed UTF-8 text/plain Artifacts up to 1 MiB can be edited here. Other formats stay read-only.</p>
+        <p id={`${headingId}-editor-help`}>{pendingSave
+          ? "The last publish result is unconfirmed. The draft and its original request are locked; retry unchanged to learn whether that immutable version was committed."
+          : "Only managed UTF-8 text/plain Artifacts up to 1 MiB can be edited here. Other formats stay read-only."}</p>
         <details><summary>Show the base version used for this draft</summary><pre className="artifact-text-editor-base" tabIndex={0}>{editBase}</pre></details>
         {editFailure && <p role="alert">{editFailure}</p>}
         {editConflict && <div className="artifact-text-editor-conflict">
@@ -416,21 +535,23 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
           <button type="button" disabled={editSaving || editLoading || editConflict || draftBytes > PREVIEW_LIMIT || (editDraft === editBase && restoreSourceVersion === null && !pendingSave)} onClick={() => void saveTextVersion()}>
             {editSaving ? "Publishing…" : pendingSave ? "Retry unchanged save" : "Publish new version"}
           </button>
-          <button type="button" disabled={editSaving} onClick={discardTextDraft}>Discard draft</button>
+          <button type="button" disabled={editSaving || pendingSave !== null} onClick={discardTextDraft}>Discard draft</button>
         </div>
       </section>}
-      {preview ? <div className={`artifact-workbench-preview ${preview.previous !== null ? "artifact-workbench-compare" : ""}`}>
-        {preview.previous !== null && <div className="artifact-workbench-version-pane">
-          <h3>Version {preview.previous.version.version}</h3>
-          <p>Output revision <code>{preview.previous.version.resource_revision_id}</code></p>
-          <StructuredTextPreview text={preview.previous.text} mediaType={preview.previous.version.content.kind === "MANAGED_BLOB" ? preview.previous.version.content.media_type : "text/plain"} />
+      {preview ? comparisonMode === "LINE_DIFF" && preview.comparison !== null
+        ? <TextVersionDiff comparedText={preview.comparison.text} selectedText={preview.text} comparedVersion={preview.comparison.version.version} selectedVersion={version.version} comparedRevisionId={preview.comparison.version.resource_revision_id} selectedRevisionId={version.resource_revision_id} />
+        : <div className={`artifact-workbench-preview ${preview.comparison !== null ? "artifact-workbench-compare" : ""}`}>
+        {preview.comparison !== null && <div className="artifact-workbench-version-pane">
+          <h3>Comparison · Version {preview.comparison.version.version}</h3>
+          <p>Output revision <code>{preview.comparison.version.resource_revision_id}</code></p>
+          <StructuredTextPreview text={preview.comparison.text} mediaType={preview.comparison.version.content.kind === "MANAGED_BLOB" ? preview.comparison.version.content.media_type : "text/plain"} />
         </div>}
         <div className="artifact-workbench-version-pane">
-          <h3>Version {version.version}</h3>
+          <h3>{preview.comparison !== null ? "Selected · " : ""}Version {version.version}</h3>
           <p>Output revision <code>{version.resource_revision_id}</code></p>
           <StructuredTextPreview text={preview.text} mediaType={version.content.kind === "MANAGED_BLOB" ? version.content.media_type : "text/plain"} />
         </div>
-        {preview.previous !== null && <p className="artifact-workbench-compare-note">Side-by-side read-only previews of these exact immutable versions. This view does not mark changed lines or publish changes.</p>}
+        {preview.comparison !== null && <p className="artifact-workbench-compare-note" role="status">Comparing immutable version {preview.comparison.version.version} with selected version {version.version}. This view publishes nothing.</p>}
       </div> : !previewFailure && <p>{textSupported ? "Loading text preview…" : version.content.kind === "EXTERNAL_RESOURCE" ? "Linked source. Content availability depends on its provider." : "Preview unavailable for this format or size. Download the immutable version to open it."}</p>}
       <details open><summary>Provenance and sources</summary>
         <dl><dt>Published</dt><dd>{version.created_at}</dd><dt>Source Task</dt><dd>{artifact?.task_id ?? "No source Task recorded"}</dd>

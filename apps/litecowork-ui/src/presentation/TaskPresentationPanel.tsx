@@ -12,6 +12,25 @@ type Snapshot = {
   items: unknown[];
 };
 
+type TaskProgress = {
+  task_id: string;
+  computed_at: string;
+  last_activity_at: string | null;
+  last_activity_source: "TASK_EVENT" | "STEP_EVENT" | "ATTEMPT_EVENT" | null;
+  last_evidence_at: string | null;
+  activity_summary: string | null;
+  active_workstreams: Array<{
+    step_id: string;
+    title: string;
+    step_status: string;
+    active_attempt_ids: string[];
+    worker_labels: string[];
+    last_activity_at: string | null;
+  }>;
+  blockers: Array<{ code: string; safe_message: string; resolution_hint: string }>;
+  newest_artifact: { workspace_id: string; artifact_id: string; version: number } | null;
+};
+
 function validateSnapshot(value: unknown, workspaceId: string, taskId: string): Snapshot {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Task presentation is invalid.");
   const row = value as Record<string, unknown>;
@@ -21,6 +40,49 @@ function validateSnapshot(value: unknown, workspaceId: string, taskId: string): 
     throw new Error("Task presentation does not match the selected Task.");
   }
   return row as unknown as Snapshot;
+}
+
+function validateProgress(value: unknown, workspaceId: string, taskId: string): TaskProgress {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Task progress is invalid.");
+  const row = value as Record<string, unknown>;
+  const nullableText = (field: unknown) => field === null || typeof field === "string";
+  if (row.task_id !== taskId || typeof row.computed_at !== "string"
+    || !nullableText(row.last_activity_at) || !nullableText(row.last_activity_source)
+    || !nullableText(row.last_evidence_at) || !nullableText(row.activity_summary)
+    || !Array.isArray(row.active_workstreams) || row.active_workstreams.length > 100
+    || !Array.isArray(row.blockers) || row.blockers.length > 100
+    || !(row.newest_artifact === null || (row.newest_artifact && typeof row.newest_artifact === "object"))) {
+    throw new Error("Task progress does not match the selected Task.");
+  }
+  const sources = ["TASK_EVENT", "STEP_EVENT", "ATTEMPT_EVENT"];
+  if (row.last_activity_source !== null && !sources.includes(String(row.last_activity_source))) {
+    throw new Error("Task progress contains an unsupported activity source.");
+  }
+  for (const workstream of row.active_workstreams) {
+    if (!workstream || typeof workstream !== "object" || Array.isArray(workstream)) throw new Error("Task workstream is invalid.");
+    const item = workstream as Record<string, unknown>;
+    if (typeof item.step_id !== "string" || typeof item.title !== "string"
+      || typeof item.step_status !== "string" || !Array.isArray(item.active_attempt_ids)
+      || !item.active_attempt_ids.every(id => typeof id === "string")
+      || !Array.isArray(item.worker_labels) || !item.worker_labels.every(label => typeof label === "string")
+      || !nullableText(item.last_activity_at)) throw new Error("Task workstream is invalid.");
+  }
+  for (const blocker of row.blockers) {
+    if (!blocker || typeof blocker !== "object" || Array.isArray(blocker)) throw new Error("Task blocker is invalid.");
+    const item = blocker as Record<string, unknown>;
+    if (typeof item.code !== "string" || typeof item.safe_message !== "string" || typeof item.resolution_hint !== "string") {
+      throw new Error("Task blocker is invalid.");
+    }
+  }
+  const artifact = row.newest_artifact;
+  if (artifact !== null) {
+    const item = artifact as Record<string, unknown>;
+    if (item.workspace_id !== workspaceId || typeof item.artifact_id !== "string"
+      || !Number.isSafeInteger(item.version) || (item.version as number) < 1) {
+      throw new Error("Task progress Artifact is invalid.");
+    }
+  }
+  return row as unknown as TaskProgress;
 }
 
 function taskStatusLabel(status: string | undefined): string {
@@ -60,6 +122,48 @@ function savedTime(value: string | undefined): string | null {
   if (!value) return null;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : null;
+}
+
+function eventSourceLabel(source: TaskProgress["last_activity_source"]): string {
+  if (source === "TASK_EVENT") return "Task update";
+  if (source === "STEP_EVENT") return "Step update";
+  if (source === "ATTEMPT_EVENT") return "Work attempt update";
+  return "Saved activity";
+}
+
+function workStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    PENDING: "Queued", READY: "Ready", BLOCKED: "Blocked",
+    RUNNING: "Working", WAITING_USER: "Waiting for you",
+    VERIFYING: "Checking the result", COMPLETED: "Completed",
+    FAILED: "Failed", CANCEL_REQUESTED: "Stopping",
+    CANCELLED: "Cancelled", SUPERSEDED: "Replaced",
+  };
+  return labels[status] ?? "Status unavailable";
+}
+
+function TaskProgressSummary({ progress }: { progress: TaskProgress }) {
+  return <section className="task-progress-summary" aria-label="Latest saved progress">
+    <div className="task-progress-summary-heading">
+      <h4>Latest saved progress</h4>
+      {progress.last_activity_at && <small>{eventSourceLabel(progress.last_activity_source)} · {savedTime(progress.last_activity_at)}</small>}
+    </div>
+    {progress.activity_summary && <p>{progress.activity_summary}</p>}
+    {progress.active_workstreams.length > 0
+      ? <ul>{progress.active_workstreams.map(workstream => <li key={workstream.step_id}>
+        <strong>{workstream.title}</strong>
+        <span>{workStatusLabel(workstream.step_status)}{workstream.worker_labels.length ? ` · ${workstream.worker_labels.join(", ")}` : ""}</span>
+      </li>)}</ul>
+      : <p className="task-progress-muted">No active persisted work attempts.</p>}
+    <p className="task-progress-evidence">{progress.last_evidence_at
+      ? `Latest saved evidence · ${savedTime(progress.last_evidence_at)}`
+      : "No saved evidence is available yet."}</p>
+    {progress.blockers.length > 0 && <ul className="task-progress-blockers">
+      {progress.blockers.map((blocker, index) => <li key={`${blocker.code}:${index}`}>
+        <strong>{blocker.safe_message}</strong><span>{blocker.resolution_hint}</span>
+      </li>)}
+    </ul>}
+  </section>;
 }
 
 function TaskSnapshotView({ items }: { items: readonly PresentationItem[] }) {
@@ -156,10 +260,14 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
 }) {
   const [items, setItems] = useState<readonly PresentationItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-  const [savedSnapshotNotice, setSavedSnapshotNotice] = useState<string | null>(null);
+  // Keep transient UI state tied to the Task that produced it. The panel can be
+  // reused while the user switches Tasks, before the next effect has reset state.
+  const [failure, setFailure] = useState<{ identity: string; message: string } | null>(null);
+  const [savedSnapshotNotice, setSavedSnapshotNotice] = useState<{ identity: string; message: string } | null>(null);
   const [snapshotAt, setSnapshotAt] = useState<string | null>(null);
   const [freshness, setFreshness] = useState<Snapshot["freshness"]>("UNKNOWN");
+  const [progress, setProgress] = useState<TaskProgress | null>(null);
+  const [progressFailure, setProgressFailure] = useState<string | null>(null);
   const [invalidItemCount, setInvalidItemCount] = useState(0);
   const [savedSnapshotIdentity, setSavedSnapshotIdentity] = useState<string | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
@@ -180,6 +288,8 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
       setItems([]);
       setSnapshotAt(null);
       setFreshness("UNKNOWN");
+      setProgress(null);
+      setProgressFailure(null);
       setInvalidItemCount(0);
       setSavedSnapshotIdentity(null);
       hasSnapshot.current = false;
@@ -190,9 +300,9 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
     if (!workspaceId || !taskId || !operatorReady) {
       setLoading(false);
       if (workspaceId && taskId && hasSnapshot.current) {
-        setSavedSnapshotNotice("The local Runtime is offline. Showing the last saved snapshot, which may be out of date.");
+        setSavedSnapshotNotice({ identity, message: "The local Runtime is offline. Showing the last saved snapshot, which may be out of date." });
       } else if (workspaceId && taskId) {
-        setFailure("Task presentation is unavailable while the local Runtime is offline.");
+        setFailure({ identity, message: "Task presentation is unavailable while the local Runtime is offline." });
       }
       return () => { active = false; };
     }
@@ -207,7 +317,13 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
       }
       requestInFlight.current = true;
       if (!hasSnapshot.current) setLoading(true);
-      void invoke<unknown>("get_task_presentation", { workspaceId, taskId }).then(raw => {
+      void Promise.all([
+        invoke<unknown>("get_task_presentation", { workspaceId, taskId }),
+        invoke<unknown>("get_task_progress", { workspaceId, taskId }).then(
+          raw => ({ progress: validateProgress(raw, workspaceId, taskId), failure: null as string | null }),
+          error => ({ progress: null, failure: typeof error === "string" ? error : error instanceof Error ? error.message : "Saved progress is unavailable." }),
+        ),
+      ]).then(([raw, progressResult]) => {
         const snapshot = validateSnapshot(raw, workspaceId, taskId);
         if (!mayRefresh()) return;
         // Validate each projected item at the IPC boundary. Invalid records stay out of
@@ -218,6 +334,8 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
         setInvalidItemCount(parsed.length - valid.length);
         setSnapshotAt(snapshot.computed_at);
         setFreshness(snapshot.freshness);
+        setProgress(progressResult.progress);
+        setProgressFailure(progressResult.failure);
         setFailure(null);
         setSavedSnapshotNotice(null);
         setSavedSnapshotIdentity(identity);
@@ -226,11 +344,11 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
         if (!mayRefresh()) return;
         if (hasSnapshot.current) {
           setFailure(null);
-          setSavedSnapshotNotice(operatorReady
+          setSavedSnapshotNotice({ identity, message: operatorReady
             ? "The latest snapshot could not be refreshed. Showing saved data, which may be out of date."
-            : "The local Runtime is offline. Showing the last saved snapshot, which may be out of date.");
+            : "The local Runtime is offline. Showing the last saved snapshot, which may be out of date." });
         } else {
-          setFailure(typeof error === "string" ? error : error instanceof Error ? error.message : "Task presentation could not be loaded.");
+          setFailure({ identity, message: typeof error === "string" ? error : error instanceof Error ? error.message : "Task presentation could not be loaded." });
         }
       }).finally(() => {
         requestInFlight.current = false;
@@ -269,23 +387,30 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
     };
   }, [workspaceId, taskId, taskVersion, operatorReady]);
 
+  const selectedIdentity = `${workspaceId}\u0000${taskId}`;
+  const hasSelectedSnapshot = savedSnapshotIdentity === selectedIdentity;
+  const selectedFailure = failure?.identity === selectedIdentity ? failure.message : null;
+  const selectedSnapshotNotice = savedSnapshotNotice?.identity === selectedIdentity ? savedSnapshotNotice.message : null;
+
   return <section ref={panelRef} className="task-presentation-panel" aria-label="Task outcome and activity">
     <div className="task-presentation-heading"><div><h3>Outcome and activity</h3><p>Read-only details derived from saved Task records.</p></div>
       <div className="task-presentation-actions">
-        {snapshotAt && <small>{freshness === "UNKNOWN"
+        {hasSelectedSnapshot && snapshotAt && <small>{freshness === "UNKNOWN"
           ? `Source freshness unknown · snapshot ${new Date(snapshotAt).toLocaleString()}`
           : freshness === "STALE"
             ? `Saved snapshot may be stale · ${new Date(snapshotAt).toLocaleString()}`
-            : `${savedSnapshotNotice ? "Last saved snapshot" : "Saved snapshot"} · ${new Date(snapshotAt).toLocaleString()}`}</small>}
+            : `${selectedSnapshotNotice ? "Last saved snapshot" : "Saved snapshot"} · ${new Date(snapshotAt).toLocaleString()}`}</small>}
         <button type="button" className="quiet-button" disabled={loading || !operatorReady || !workspaceId || !taskId} onClick={() => refreshNow.current?.()} aria-label="Refresh saved Task activity">
           {loading ? "Refreshing…" : "Refresh"}
         </button>
       </div>
     </div>
     {loading && <p role="status">Loading saved Task activity…</p>}
-    {failure && <p role="status" className="task-presentation-note">{failure}</p>}
-    {savedSnapshotNotice && <p role="status" className="task-presentation-note">{savedSnapshotNotice}</p>}
-    {invalidItemCount > 0 && <p role="status" className="task-presentation-note">{invalidItemCount} unsupported or invalid presentation item{invalidItemCount === 1 ? " was" : "s were"} hidden. The saved Task remains available.</p>}
-    {!loading && !failure && savedSnapshotIdentity === `${workspaceId}\u0000${taskId}` && <TaskSnapshotView items={items} />}
+    {selectedFailure && <p role="status" className="task-presentation-note">{selectedFailure}</p>}
+    {selectedSnapshotNotice && <p role="status" className="task-presentation-note">{selectedSnapshotNotice}</p>}
+    {hasSelectedSnapshot && progressFailure && <p role="status" className="task-presentation-note">Latest saved progress is unavailable. The presentation snapshot remains available.</p>}
+    {hasSelectedSnapshot && invalidItemCount > 0 && <p role="status" className="task-presentation-note">{invalidItemCount} unsupported or invalid presentation item{invalidItemCount === 1 ? " was" : "s were"} hidden. The saved Task remains available.</p>}
+    {hasSelectedSnapshot && progress && <TaskProgressSummary progress={progress} />}
+    {!loading && !selectedFailure && hasSelectedSnapshot && <TaskSnapshotView items={items} />}
   </section>;
 }

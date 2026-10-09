@@ -1,0 +1,23 @@
+.task-attention-page { display: grid; gap: 16px; }
+.task-attention-heading { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
+.task-attention-heading h1 { margin: 0; }
+.task-attention-heading p { margin: 6px 0 0; color: var(--color-text-subtle); font-size: 13px; }
+.task-attention-scope-note, .task-attention-notice { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--color-surface-subtle); color: var(--color-text-subtle); font-size: 12px; line-height: 1.45; }
+.task-attention-notice { border: 1px solid var(--color-warning-border, #ead6a6); }
+.task-attention-empty { padding: 28px 18px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-surface); text-align: center; }
+.task-attention-empty h2 { margin: 0 0 6px; font-size: 16px; }
+.task-attention-empty p { max-width: 520px; margin: 0 auto; color: var(--color-text-subtle); font-size: 13px; line-height: 1.5; }
+.task-attention-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.task-attention-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: 68px; padding: 12px 15px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); color: var(--color-text); text-align: left; cursor: pointer; }
+.task-attention-row:hover { border-color: var(--color-border-strong, #aeb8c6); background: var(--color-surface-hover, #fafbfc); }
+.task-attention-row:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.task-attention-marker { width: 9px; height: 9px; border-radius: 50%; background: var(--color-warning, #a87512); }
+.task-attention-marker.status-blocked { background: var(--color-danger, #a22d28); }
+.task-attention-copy { display: grid; gap: 4px; min-width: 0; }
+.task-attention-copy strong { overflow-wrap: anywhere; font-size: 14px; font-weight: 620; }
+.task-attention-copy span { color: var(--color-text-subtle); font-size: 12px; }
+.task-attention-more { justify-self: center; }
+@media (max-width: 680px) {
+  .task-attention-heading { align-items: flex-start; flex-direction: column; }
+  .task-attention-row { padding: 12px; }
+}

@@ -12,9 +12,7 @@ use std::{path::Path, time::Duration};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::{
-    OpenCodeEnvironment, OpenCodeProcessState, OpenCodeServer, OpenCodeServerConfig,
-};
+use super::{OpenCodeEnvironment, OpenCodeProcessState, OpenCodeServer, OpenCodeServerConfig};
 
 const MAX_PROVIDERS: usize = 32;
 const MAX_MODELS_TOTAL: usize = 256;
@@ -124,8 +122,7 @@ pub(crate) fn probe_opencode_profile(
         return result;
     }
 
-    let mut config = OpenCodeServerConfig::bounded(executable, cwd)
-        .with_environment(environment);
+    let mut config = OpenCodeServerConfig::bounded(executable, cwd).with_environment(environment);
     config.startup_timeout = Duration::from_secs(8);
     config.request_timeout = Duration::from_secs(5);
     let mut server = match OpenCodeServer::spawn(config) {
@@ -211,7 +208,11 @@ fn configured_catalog(value: &Value) -> Option<(Vec<OpenCodeProviderOption>, boo
     let mut total_models = 0;
 
     for provider in providers.iter().take(MAX_PROVIDERS) {
-        let Some(provider_id) = provider.get("id").and_then(safe_identifier) else {
+        let Some(provider_id) = provider
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(safe_identifier)
+        else {
             truncated = true;
             continue;
         };

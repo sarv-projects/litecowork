@@ -42,7 +42,7 @@ impl OsWorkspaceBlobKeyProvider {
             .ok_or_else(|| StoreError::Blob("workspace key version exhausted".to_owned()))?;
 
         let key = create_random_key()?;
-        self.store_version(workspace_id, purpose, next_version, key.as_ref())?;
+        self.store_version(workspace_id, purpose, next_version, &*key)?;
         self.store_current_version(workspace_id, purpose, next_version)?;
 
         Ok(WorkspaceBlobKey {
@@ -95,7 +95,11 @@ impl OsWorkspaceBlobKeyProvider {
         purpose: BlobPurpose,
         version: u32,
     ) -> Result<bool, StoreError> {
-        match read_secret(&entry_for(workspace_id, purpose, &format!("key-{version}"))?)? {
+        match read_secret(&entry_for(
+            workspace_id,
+            purpose,
+            &format!("key-{version}"),
+        )?)? {
             Some(_) => Ok(true),
             None => Ok(false),
         }
@@ -177,7 +181,7 @@ impl WorkspaceBlobKeyProvider for OsWorkspaceBlobKeyProvider {
         }
 
         let key = create_random_key()?;
-        self.store_version(workspace_id, purpose, 1, key.as_ref())?;
+        self.store_version(workspace_id, purpose, 1, &*key)?;
         // The active pointer is written last. A crash before this point leaves only an
         // unreachable credential; it cannot make a partially initialized key active.
         self.store_current_version(workspace_id, purpose, 1)?;

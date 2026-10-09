@@ -338,7 +338,6 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
   }
 
   const eligibleLeadBindings = leadBindings?.filter(item => item.enabled && item.lead_eligible) ?? [];
-  const selectedSummary = selectedId ? items.find(item => item.coworker_id === selectedId) : null;
   const activeForm = form;
 
   return <main className="coworker-settings" aria-labelledby="coworker-settings-title">
@@ -364,8 +363,8 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
       </nav>
 
       <section className="coworker-detail" aria-label={mode === "create" ? "Create Coworker" : "Coworker details"}>
-        {mode === "create" && activeForm ? <CoworkerEditor form={activeForm} mode="create" leadBindings={leadBindings} eligibleLeadBindings={eligibleLeadBindings} workerProfiles={workerProfiles} busy={operation === "save"} message={formMessage} onChange={changeForm} onInteractionChange={updatePolicy} onCancel={cancelEdit} onSubmit={saveRevision} />
-          : mode === "edit" && activeForm && selected ? <CoworkerEditor form={activeForm} mode="edit" leadBindings={leadBindings} eligibleLeadBindings={eligibleLeadBindings} workerProfiles={workerProfiles} busy={operation === "save"} message={formMessage} onChange={changeForm} onInteractionChange={updatePolicy} onCancel={cancelEdit} onSubmit={saveRevision} />
+        {mode === "create" && activeForm ? <CoworkerEditor form={activeForm} mode="create" leadBindings={leadBindings} eligibleLeadBindings={eligibleLeadBindings} workerProfiles={workerProfiles} workerProfilesError={workerProfilesError} busy={operation === "save"} message={formMessage} onChange={changeForm} onInteractionChange={updatePolicy} onCancel={cancelEdit} onSubmit={saveRevision} />
+          : mode === "edit" && activeForm && selected ? <CoworkerEditor form={activeForm} mode="edit" leadBindings={leadBindings} eligibleLeadBindings={eligibleLeadBindings} workerProfiles={workerProfiles} workerProfilesError={workerProfilesError} busy={operation === "save"} message={formMessage} onChange={changeForm} onInteractionChange={updatePolicy} onCancel={cancelEdit} onSubmit={saveRevision} />
             : selectedId ? detailLoading && !selected ? <p role="status" className="coworker-muted">Loading Coworker…</p>
               : selected ? <>
                 <div className="coworker-identity">
@@ -395,7 +394,7 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
                   {workerProfiles === undefined && <p className="coworker-helper">Enabling profiles happens separately in Settings → Agents. Assignment here only allows this Coworker to consider an enabled profile; it does not start an agent or grant app access.</p>}
                 </section>
                 <section className="coworker-summary-section"><h3>Interaction defaults</h3><p className="coworker-helper">These preferences never create a Grant or override a stricter Trust rule.</p>
-                  <dl className="coworker-summary-list">{interactionRows(selected.revision.interaction_policy).map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{interactionLabel(value)}</dd></div>)}</dl>
+                  <dl className="coworker-summary-list">{interactionRows().map(([label, key]) => <div key={key}><dt>{label}</dt><dd>{interactionLabel(selected.revision.interaction_policy[key])}</dd></div>)}</dl>
                 </section>
                 <section className="coworker-summary-section coworker-control-row">
                   <div><h3>Workspace default</h3><p className="coworker-helper">New work can start with the primary Coworker. Existing Tasks keep their recorded origin.</p></div>
@@ -411,15 +410,16 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
                   {!archiveConfirm ? <button type="button" className="coworker-danger-action" disabled={operation !== null || selected.is_primary} title={selected.is_primary ? "Clear the primary selection before archiving." : undefined} onClick={() => setArchiveConfirm(true)}>Archive</button>
                     : <div className="coworker-archive-confirm" role="group" aria-label="Confirm archive"><p>Archiving retains history. Active Coworker Automations or Tasks can block this action.</p><button type="button" className="coworker-secondary-action" onClick={() => setArchiveConfirm(false)} disabled={operation !== null}>Keep Coworker</button><button type="button" className="coworker-danger-action" onClick={() => void transition("ARCHIVED")} disabled={operation !== null}>{operation === "archive" ? "Archiving…" : "Confirm archive"}</button></div>}
                 </section>}
-              </> : detailFailure ? <div className="coworker-error" role="alert"><p>{detailFailure}</p><button type="button" onClick={() => void reloadSelected()}>Retry</button></div> : <p className="coworker-muted">Choose a Coworker to view its settings.</p>
+              </> : detailFailure ? <div className="coworker-error" role="alert"><p>{detailFailure}</p><button type="button" onClick={() => void reloadSelected()}>Retry</button></div> : <p className="coworker-muted">Coworker details are unavailable.</p>
+              : <p className="coworker-muted">Choose a Coworker to view its settings.</p>
         }
       </section>
     </div>}
   </main>;
 }
 
-function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, workerProfiles, busy, message, onChange, onInteractionChange, onCancel, onSubmit }: {
-  form: CoworkerRevisionInput; mode: "create" | "edit"; leadBindings?: CoworkerLeadBindingOption[]; eligibleLeadBindings: CoworkerLeadBindingOption[]; workerProfiles?: CoworkerWorkerProfileOption[]; busy: boolean; message: string | null;
+function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, workerProfiles, workerProfilesError, busy, message, onChange, onInteractionChange, onCancel, onSubmit }: {
+  form: CoworkerRevisionInput; mode: "create" | "edit"; leadBindings?: CoworkerLeadBindingOption[]; eligibleLeadBindings: CoworkerLeadBindingOption[]; workerProfiles?: CoworkerWorkerProfileOption[]; workerProfilesError?: string | null; busy: boolean; message: string | null;
   onChange: <K extends keyof CoworkerRevisionInput>(key: K, value: CoworkerRevisionInput[K]) => void;
   onInteractionChange: (key: keyof CoworkerRevisionInput["interaction_policy"], value: CoworkerInteractionDefault) => void;
   onCancel: () => void; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
@@ -466,7 +466,7 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
     </section>
 
     <section className="coworker-form-section"><h3>Interaction defaults</h3><p className="coworker-helper">These preferences do not create Grants or bypass stricter Workspace, provider, or Trust requirements.</p>
-      {interactionRows(form.interaction_policy).map(([label, key]) => <label className="coworker-field" key={label}>{label}<select value={form.interaction_policy[key]} onChange={event => onInteractionChange(key, event.currentTarget.value as CoworkerInteractionDefault)}>{INTERACTION_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>)}
+      {interactionRows().map(([label, key]) => <label className="coworker-field" key={key}>{label}<select value={form.interaction_policy[key]} onChange={event => onInteractionChange(key, event.currentTarget.value as CoworkerInteractionDefault)}>{INTERACTION_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>)}
     </section>
 
     <details className="coworker-advanced"><summary>More settings</summary>
@@ -508,7 +508,7 @@ function strategyLabel(strategy: CoworkerDelegationStrategy): string {
 function interactionLabel(value: CoworkerInteractionDefault): string {
   return INTERACTION_OPTIONS.find(item => item.value === value)?.label ?? "Standard Trust checks";
 }
-function interactionRows(policy: CoworkerRevisionInput["interaction_policy"]): [string, keyof CoworkerRevisionInput["interaction_policy"]][] {
+function interactionRows(): [string, keyof CoworkerRevisionInput["interaction_policy"]][] {
   return [
     ["Read-only work", "read_only_work"], ["Create drafts", "draft_creation"], ["External changes", "external_mutation"],
     ["Destructive actions", "destructive_action"], ["Financial commitments", "financial_commitment"],

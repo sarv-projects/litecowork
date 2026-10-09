@@ -32,6 +32,11 @@ Responsibilities:
 
 Operator protocol never exposes raw database tables.
 
+The authenticated Operator exposes bounded Conversation presentation snapshot/document
+reads. Rich documents are optional, immutable, digest-verified read models; snapshot
+readers remain usable from semantic messages alone. Stream `rich.draft` frames are
+ephemeral and distinct from `projection_types`, DomainEvents, and Agent-native streams.
+
 ## 2. Mesh Protocol
 
 Purpose: trusted LiteCowork runtimes coordinate.
@@ -66,6 +71,13 @@ TaskPacket, ResultEnvelope, and failure rules are in `DELEGATION.md` and their c
 envelope schemas are in `schemas/delegation.schema.json`. Agent-native tools
 that spawn native subagents remain harness-owned and are not intercepted or represented as
 LiteCowork Attempts unless a qualified adapter explicitly reports them.
+
+For an active human-facing Conversation turn, the Gateway may additionally expose
+`litecowork.presentation.propose(RichPresentationIntent)`. It is a bounded, ephemeral,
+zero-authority composition hint with no CapabilityInvocation, Effect, or DomainEvent.
+It cannot publish Artifacts or assert Task/Approval/Verification state; the host compiler
+revalidates every referenced source. It is not available to Task planners or worker
+Attempts by default.
 
 Delegated communication has two planes. Durable control changes (admission, user
 steering, cancellation, result settlement, Effect, Artifact, Evidence, lease) use domain

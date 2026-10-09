@@ -82,7 +82,7 @@
         "docs/PROTOCOLS.md",
         "docs/NETWORK-SECURITY.md"
       ],
-      "implementation": "Partial: litecoworkd run/status now acquires a cross-process single-instance file lock, persists local bootstrap Runtime/incarnation identity and lifecycle state atomically, opens LocalWorkspaceStorage, serves initial authenticated Workspace Operator routes, reports DEGRADED until Task recovery/execution exists, and closes storage on Ctrl-C. Remaining: durable Mesh RuntimeIncarnation registration after Workspace bootstrap, domain recovery, authenticated start/stop controls, native service-manager integration, sleep/wake, dependency-aware drain preview, and process identity reconciliation. Current code has not been built or tested.",
+      "implementation": "Partial: litecoworkd run/status acquires a cross-process single-instance file lock, persists local bootstrap Runtime/incarnation identity and lifecycle state atomically, opens LocalWorkspaceStorage, serves authenticated local Operator routes, reports DEGRADED until Task recovery/execution exists, and closes storage on shutdown. If Operator initialization fails after incarnation registration, the catalog is already DEGRADED; the specific OPERATOR_API_START_FAILED blocker is stored in private local status and the daemon exits nonzero to release the lock for bounded supervisor/manual retry. Remaining: full domain recovery, authenticated start/stop controls, native service-manager qualification, sleep/wake, dependency-aware drain preview, and process identity reconciliation. Current source has not been built or tested.",
       "acceptance": "Closing Operator leaves daemon running; reboot changes incarnation; stale process cannot own a lease; workers lazy-start.",
       "negative_cases": "Duplicate startup, SIGKILL/restart, corrupted/symlinked state, lock-file symlink/broad permissions, sleep during write, invalid state directory permissions, storage/key-store recovery failure, and shutdown signal during drain.",
       "demo": "Start the daemon twice against one state directory, inspect DEGRADED status, stop gracefully, restart and inspect incarnation/recovery state. This demonstrates bootstrap lifecycle only; Task recovery and authenticated control remain pending.",
@@ -208,7 +208,7 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Unverified slices: desktop multi-file/folder selection; resumable local upload sessions up to 100 MiB/file using encrypted 4 MiB chunks, 24-hour expiry, durable progress, reselected-file hash checks before resume, zero-byte commit and atomic Resource/revision/location/event/session-commit transaction; keyset-paginated Workspace-scoped catalog; authenticated current-revision content retrieval and Tauri plain-text preview capped at 1 MiB. Session creation, final-chunk CONTENT_RECEIVED, TTL EXPIRED, and COMMITTED transitions append aggregate-state-backed domain events. Lifecycle version is separate from chunk progress_version. Encrypted orphan cleanup is implemented in source using durable reservations and GC fences; it remains unbuilt/untested and requires race/crash/provider deletion qualification. Metadata search is Workspace-wide and keyset-paginated; exact kind/freshness filters are now exposed in the Library and retained across cursor paging. Metadata mode supports filter-only browsing with an empty query; content modes still require search terms. Optional ON_DEMAND_CONTENT search scans at most 20 current managed candidates, 1 MiB per Resource, and 8 MiB total in request memory for allowlisted UTF-8 plain text, with a pinned-revision recheck and bounded excerpt. No extracted plaintext, search terms, or snippets are persisted. Source now adds a v7 revision-scoped encrypted lexical projection for allowlisted UTF-8 text up to 1 MiB: encrypted RESOURCE_INDEX snapshots, Workspace/purpose-scoped OS-keystore keys, versioned HMAC term tokens, deterministic AND matching, bounded snippets with pinned ResourceRevision provenance, and commit hooks for direct Resource creation and upload commit. Missing retained keys fail indexed search closed; a new Resource revision does not reuse old terms. Storage, Operator, Tauri command, and Library search-mode source now expose INDEXED_CONTENT; all are unbuilt and untested. Physical derived-index blob purge and durable indexing failure state/retry are not integrated. A storage reindex operation exists, but there is no background migration/reindex worker or user-facing reindex control. ZIPs, rich documents and WorkspaceRoots remain excluded; PDF/Office parsing, OCR, embeddings, semantic RAG and local-model retrieval are not implemented. Remaining: persistent WorkspaceRoots, safe ZIP inspection/extraction, physical index/blob cleanup and rebuild lifecycle, binary preview/download, watcher-based identity/freshness/invalidation, and qualified local semantic retrieval. Persistent roots additionally require authenticated OS-peer IPC and an explicit mapping from a desktop Runtime installation to its Workspace-scoped Runtime catalog entries; raw selected paths must remain outside WebView-visible/public Operator data. Empty files are accepted. Exact Resource revisions can now be selected from Library and pinned to a saved Task through the existing TaskSpec input_refs contract; this reads no Resource bytes for an agent and grants no access. The Library additionally supports pausing multi-file uploads client-side between requests while retaining resumable sessions; no server cancellation is sent. This UI/IPC source remains unbuilt and untested. This does not satisfy E02-S03 acceptance.",
+      "implementation": "Unverified desktop/local slices: multi-file/folder intake and resumable upload sessions up to 100 MiB/file using encrypted 4 MiB chunks, 24-hour expiry, durable progress, reselected-file hash checks, zero-byte commit, atomic Resource/revision/location/event/session-commit, and encrypted orphan cleanup with durable reservations/GC fences. Workspace-scoped Resource catalog is keyset paginated. Authenticated exact-revision reads and Tauri text preview are bounded to 1 MiB. A ContextDocument editor supports immutable Resource revision upload/history and explicit ACTIVE/REVOKED transitions; exact Resource revisions can be pinned to saved Task inputs without reading content or granting agent access. The Library supports metadata filters, filter-only metadata browse, bounded ON_DEMAND_CONTENT search, and INDEXED_CONTENT search. The encrypted v7 lexical projection stores encrypted text snapshots and Workspace/purpose-scoped HMAC tokens, matches deterministic Unicode terms with AND, returns bounded snippets with revision provenance, and fails closed if the key is unavailable. Explicit rebuild of the exact current managed Resource revision is available through authenticated Operator/Tauri/UI routes; it pins revision/digest and commits projection plus idempotency receipt after revalidation. A failed eligible-text rebuild exposes a session-only retry pinned to the same Workspace/Resource/revision/digest and reuses its RequestId; it is not durable indexing health or durable failure/retry state. Query tokens over 128 normalized Unicode characters are rejected rather than silently dropped from AND semantics. Persistent WorkspaceRoots have create/list/pause/resume/revoke source paths, private authenticated folder selection, and startup identity revalidation for supported Linux/macOS; they are not OS-qualified and have no watcher. ZIPs and rich documents remain opaque/unparsed. Physical index/blob purge and cleanup integration, durable indexing failure state/retry, background migration/reindex, binary preview, watcher-based freshness/invalidation, bounded supervised ZIP inspection/extraction with Core-owned Resource publication, PDF/Office parsing/OCR, embeddings, semantic RAG, and local-model retrieval remain unimplemented or unqualified. Root handling still needs complete cross-platform identity and Desktop Runtime catalog qualification; raw selected paths remain outside WebView/public Operator data. Multi-file upload can pause client-side between requests while retaining resumable sessions; no server cancellation is sent. All source is unbuilt/unverified and E02-S03 acceptance is open.",
       "acceptance": "Cancel/restart upload resumes verified chunks; rename preserves correct identity; search metadata does not silently attach content; supported text indexes are encrypted, pinned to the exact current revision and Workspace, return bounded provenance-backed snippets, survive daemon restart, and fail closed when a required key is unavailable.",
       "negative_cases": "Symlink/TOCTOU, duplicate digest, deleted root, watcher overflow, unsupported encoding, crash between upload blob reservation/blob write/receipt, shared digest retained while referenced, concurrent collector/reservation fencing, restart with DELETING fence, missing-object idempotency, deletion-provider failure retry, ZIP/PDF/Office and oversized inputs never indexed, malformed UTF-8/control-heavy text skipped, stale revision excluded, cross-Workspace token mismatch, lost retained key, rotation with old and active key versions, snapshot tampering, context revocation while searching, query term/byte bounds, and failed v7 migration rollback/retry.",
       "demo": "Import a project folder, rename/edit files, search and inspect exact revisions.",
@@ -226,7 +226,7 @@
       "epic": "E02",
       "title": "Needs You and truthful UI state",
       "gate": "G1",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E02-S03"
       ],
@@ -238,10 +238,10 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Derived inbox for Approval/UserRequest/blockers, stable routing, stale action protection; implement motion after committed states only.",
+      "implementation": "Partial unverified source: the desktop Needs You page queries the existing authenticated Task list independently for WAITING_USER, NEEDS_USER, and BLOCKED; validates status matches, merges/deduplicates, orders by persisted updated_at, and pages each status cursor separately. Same-Workspace refresh failures retain prior rows with an unavailable notice; Workspace changes clear old data and fence late results. Selecting a row opens Work/Task detail for a fresh read without mutating the Task. The page explicitly says Approval/UserRequest inbox actions and blocker resolution are not connected. The normative GET /v1/needs-you aggregate route remains unimplemented; no actual inbox aggregation or owner action handling has been added.",
       "acceptance": "Resolving source removes one item; activity and verified Evidence labels differ; no token heartbeat implies completion.",
-      "negative_cases": "Duplicate event, already-resolved item, unauthorized notification click, reduced motion.",
-      "demo": "Create two blockers, resolve one, replay event and observe unchanged inbox.",
+      "negative_cases": "Wrong-status Task returned for filter, duplicate IDs across pages, one status query fails, same-Workspace stale refresh, Workspace switch with late response, stale status before Task detail, unavailable initial load not shown as empty, duplicate event, already-resolved item, unauthorized notification click, reduced motion.",
+      "demo": "Open persisted WAITING_USER, NEEDS_USER, and BLOCKED Tasks from Needs You; verify status, refresh detail, then confirm opening did not change Task state. Full blocker/Approval/UserRequest resolution remains a later acceptance gate.",
       "tests": [
         "E02-S04-CODE",
         "E02-S04-SYSTEM",
@@ -357,7 +357,8 @@
       "gate": "G1",
       "status": "PLANNED",
       "depends_on": [
-        "E03-S03"
+        "E03-S03",
+        "E07-S00"
       ],
       "authorities": [
         "docs/AGENT-FABRIC.md",
@@ -896,11 +897,43 @@
       ]
     },
     {
+      "id": "E07-S00",
+      "epic": "E07",
+      "title": "Task-scoped local Environment isolation",
+      "gate": "G1",
+      "status": "IN_PROGRESS",
+      "depends_on": [
+        "E02-S03"
+      ],
+      "authorities": [
+        "docs/ENVIRONMENTS.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/TRUST.md",
+        "docs/WORLD-RESOURCES.md",
+        "docs/NETWORK-SECURITY.md",
+        "docs/FLOWS.md"
+      ],
+      "implementation": "In progress, preparation-only: `local-environment-staging` materializes caller-resolved exact-pinned Resource bytes into a Unix mode-restricted root with read-only inputs and a separate writable outputs directory, verifying Workspace/pin/digest/path/count/byte limits and rejecting traversal/case-fold collisions. Non-Unix staging fails closed until owner-only ACLs are qualified. It creates no Environment/provider binding/Attempt/AgentSession/lease and is not connected to ResourceStore, Task admission or an enforcing provider. Remaining: connect exact ResourceStore resolution, enforce output quotas and filesystem/process/network isolation through a qualified OS provider, persist private Runtime-local provider identity/attestation, revalidate after restart, and prove process-tree quiescence before lease release/cleanup. Keep Agent dispatch disabled until this provider and the separate Trust/Effect/lease gates pass. A local directory or Git worktree alone is not containment.",
+      "acceptance": "A real child process can read only exact authorized staged inputs, write only declared output roots, cannot access forbidden home/workspace paths or unapproved network, and cannot leave descendant writers after quiescence is reported. Missing/unknown OS guarantees fail closed. Provider preparation itself creates no Attempt, AgentSession, or lease.",
+      "negative_cases": "Foreign/missing/stale/digest-mismatched Resource pins; path traversal; symlink escape; source mutation during staging; permission denial; network escape; surviving child writer; lost create response; stale Runtime incarnation; provider timeout; unsupported OS mechanism; concurrent cleanup/use; unknown quiescence.",
+      "demo": "Import a small real project Resource, prepare a local Environment, verify exact visible inputs and separate output location, attempt harmless out-of-scope access, restart litecoworkd, revalidate identity, and verify cleanup after positive quiescence.",
+      "tests": [
+        "E07-S00-CODE",
+        "E07-S00-SYSTEM",
+        "E07-S00-USER"
+      ],
+      "sources": [
+        "R-MUSE-SAFETY",
+        "R-TAURI"
+      ]
+    },
+    {
       "id": "E07-S01",
       "epic": "E07",
       "title": "Persistent environment management",
       "gate": "G2",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E05-S05",
         "E06-S05"
@@ -1064,7 +1097,7 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Implemented source remains partial and unverified: revisioned Coworker/default lead/interaction defaults/primary selection, presence projection, enabled worker-profile assignment, and Coworker/Goal/Automation settings are mounted. Home now shows the selected Coworker, paginates the active roster, allows explicit Workspace defaults, pins the exact Coworker ID/version into Task creation, and rejects stale/archived/unavailable selections without silently falling back; retry matching includes the selection. Remaining: ordinary Conversation turns, the full Home hierarchy, primary Coworker creation/onboarding, and final presentation behavior. No source here establishes agent Task execution. Complete only after E05/E06 dependencies and the full owner scenario pass. UI source is unbuilt and unverified.",
+      "implementation": "Implemented source remains partial and unverified: revisioned Coworker/default lead/interaction defaults/primary selection, presence projection, enabled worker-profile assignment, and Coworker/Goal/Automation settings are mounted. Home now shows the selected Coworker, paginates the active roster, allows explicit Workspace defaults, pins the exact Coworker ID/version into Task creation, and rejects stale/archived/unavailable selections without silently falling back; retry matching includes the selection. Home also offers optional, explicit neutral Assistant creation and a separate versioned primary selection, preserving drafts and unchanged retry IDs; no settings are created implicitly. Remaining: ordinary Conversation turns, the full Home hierarchy, lead discovery/full guided onboarding and worker setup, navigation/restart command recovery, and final presentation behavior. No source here establishes agent Task execution. Complete only after E05/E06 dependencies and the full owner scenario pass. UI source is unbuilt and unverified.",
       "acceptance": "Pause blocks new proactive work not existing Tasks; archive guards primary/responsibilities; named composer with advanced controls; first-run can start with a neutral default Coworker without requiring name/avatar/personalization.",
       "negative_cases": "Archived lead, multiple active Tasks, offline default path, stale assignment, abandoned onboarding before optional Coworker personalization.",
       "demo": "Start with the neutral default Coworker without entering a name, complete a useful Task, then optionally rename it and assign a worker. Verify future Tasks use the new revision and existing Task provenance stays pinned.",
@@ -1095,7 +1128,7 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Partial desktop slice: authenticated Workspace-scoped Suggestions list with VISIBLE/SNOOZED/ALL views, bounded filter-bound cursors, and provenance display; authenticated retry-safe dismiss, snooze, unsnooze, and accept commands; atomic acceptance to an ordinary READY Task with pinned inputs, criteria, Goal/Coworker provenance, and Coworker failover policy. The desktop preserves each unresolved mutation RequestId and the original snooze target after response loss. Bounded event-backed expiry settlement is wired and refuses to serve the page while due transitions remain. Versioned Workspace kind preferences have virtual unmuted defaults (version 0), authenticated read/update routes, and atomic preference change plus dismissal of current proposed items; the Ideas page exposes mute/unmute controls. Producers/proposal admission, Routine/Automation draft acceptance, and Task planning/execution remain unavailable, so no producer-backed Ideas are generated and acceptance only saves a READY Task. Source is unverified.",
+      "implementation": "Partial desktop slice: authenticated Workspace-scoped Suggestions list with VISIBLE/SNOOZED/ALL views, bounded filter-bound cursors, and provenance display; authenticated retry-safe dismiss, snooze, unsnooze, and accept commands; atomic acceptance to an ordinary READY Task with pinned inputs, criteria, Goal/Coworker provenance, and Coworker failover policy. Task acceptance returns a bounded CREATED/REPLAYED receipt tied to the original Task request receipt; the desktop preserves the exact Workspace/Suggestion/version/RequestId across route changes in a bounded process-local registry and requires a matching receipt before clearing it. Explicit discard warns the Task may already exist. Other unresolved mutations preserve the exact request and snooze target. Bounded event-backed expiry settlement is wired and refuses to serve the page while due transitions remain. Versioned Workspace kind preferences have virtual unmuted defaults (version 0), authenticated read/update routes, and atomic preference change plus dismissal of current proposed items; the Ideas page exposes mute/unmute controls. Producers/proposal admission, Routine/Automation draft acceptance, and Task planning/execution remain unavailable, so no producer-backed Ideas are generated and acceptance only saves a READY Task. Source is unverified and process restart loses UI retry metadata.",
       "acceptance": "Goal never executes; Suggestion accept makes reviewed Task/draft; max one prominent idea; producer cannot self-authorize.",
       "negative_cases": "Duplicate proposal, stale source, snoozed/muted suggestion, goal archive race.",
       "demo": "Link verified Tasks to goal, surface and accept/dismiss a provenance-backed idea.",
@@ -1158,7 +1191,7 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Partial source: the saved Task presentation panel foregrounds the pinned objective/status, committed Artifact outputs, and a short activity summary; full activity/source IDs are collapsed. It labels stale/unknown snapshot freshness, keeps the last selected-Task snapshot visible with an out-of-date notice when the Runtime disconnects or refresh fails, and uses a presentation-item count rather than claiming every item is a Step. This consumes a finite five-second authenticated snapshot and does not implement Work filters, live event streaming, blocker details absent from the projection, or Task execution. Unbuilt and unverified.",
+      "implementation": "Partial, unverified source: the saved Task presentation panel foregrounds the pinned objective/status and committed Artifact outputs, with full activity/source IDs collapsed. It labels stale/unknown snapshot freshness and retains the last selected-Task snapshot with an out-of-date notice after disconnect/refresh failure. The lazy committed-Outputs disclosure now permits retry after a failed read while Runtime-ready; retry aborts superseded reads and remains unavailable while Runtime-offline. Task presentation and Outputs components are keyed by Workspace/Task identity, and the presentation gates saved progress/timestamps/transient errors by selected identity to prevent stale prior-Task state from rendering. Goal details expose read-only navigation from a linked Task to the existing Work detail route. Work list rows display TaskSummary.updatedAt as `Task updated`, not as observed activity; after an initial-page refresh failure they remain available with an explicit stale-list notice and last successful load time. A Load more failure does not incorrectly mark already-loaded rows stale. Task detail validates Workspace/Task identity, rejects mismatched responses, and offers a same-read retry after failure (disabled while Runtime is offline). Authenticated GET /v1/tasks/{task_id}/progress now projects Task/current-plan Step/current Attempt events, latest Evidence time, blockers, and newest resolvable ArtifactVersion from one bounded SQLite snapshot through Operator/Tauri/UI. Terminal current Attempts may provide latest historical activity; only nonterminal current Attempts form active workstreams. Step status is displayed as Step status. Event summaries are allowlisted; provider, CapabilityInvocation, and Environment activity is not integrated. Over-cap sets fail instead of truncating. The current list exposes an exact Task-status selector; semantic Active/Waiting/Scheduled/Done filters, stream/cursor resync, live provider observations, Task execution, and acceptance are not implemented. No tests/builds/validators/provider/OS checks were run.",
       "acceptance": "Every lane/output references committed state/version; activity timestamps and verified Evidence remain distinct; stale/missing projections are labeled; advanced IDs stay out of the default flow.",
       "negative_cases": "Late/out-of-order projection, cursor expiry/resync, duplicate committed event, worker state reversal, stale Task deep link, Artifact changing while activity is open.",
       "demo": "Follow an ordinary Task without Inspector, expand activity, reconnect after projection refresh, then inspect worker/Evidence detail in Inspector.",
@@ -1257,14 +1290,48 @@
         "docs/STATE-MACHINES.md",
         "docs/RUNTIME-LIFECYCLE.md"
       ],
-      "implementation": "Partial desktop definition slice: authenticated create/revise writes now pin an exact Routine revision and explicitly select an exact Coworker revision or null. The editor loads Workspace-scoped Coworkers, defaults edits to preserving the current immutable pin, and saves only PAUSED definitions. Trigger hosting, occurrence-to-Task admission, cursor/misfire/dedupe/concurrency, and resume/run remain unimplemented and unavailable.",
+      "implementation": "Partial desktop/local slice: authenticated create/revise writes pin an exact Routine revision and explicitly select an exact Coworker revision or null. The local owner ManualTrigger route atomically commits occurrence PENDING v1 -> CLAIMED v2 -> STARTED v3 with an ordinary READY Task, immutable revision pins, events/snapshots and owner RequestId receipt; it requires the current local TRIGGER_HOST binding/incarnation and does not activate recurring triggers or start planning. The desktop editor now offers Manual trigger selection, bounded TEXT and exact same-Workspace ResourceRef inputs from the pinned Routine revision, receipt identity validation, same-session exact retry, and Task detail navigation. Scheduled/provider trigger hosting, cursor/misfire settlement, and all build/test/OS/user acceptance remain open.",
       "acceptance": "Every occurrence ordinary Task; edit never resets logical cursor; current Coworker ACTIVE checked; local unavailable waits.",
-      "negative_cases": "DST gap/fold, restart catch-up, duplicate webhook, no-change poll, cursor race; Coworker head changes before selection recheck, exact Coworker revision missing/foreign, stale Automation version, explicit pin preserve/change/clear, idempotent replay, and all mutations remain paused with no occurrence or Task admission.",
-      "demo": "Save a paused Automation pinned to a Coworker revision, edit the Coworker and verify the old pin remains unchanged, explicitly revise to the new Coworker revision, then confirm no trigger or Task starts. Occurrence hosting across daemon restart remains a later system/user gate.",
+      "negative_cases": "DST gap/fold, restart catch-up, duplicate webhook, no-change poll, cursor race; Coworker head changes before selection recheck, exact Coworker revision missing/foreign, stale Automation version, explicit pin preserve/change/clear; ManualTrigger rejects DISABLED/stale/foreign-host definitions, invalid inputs and changed RequestId payload, with exact retry after mutable dependency changes; definition create/revise remain PAUSED and do not implicitly activate recurring triggers.",
+      "demo": "Save a paused Automation with one ManualTrigger and an active pinned Routine, enter supported text inputs, create one READY Task, open it in Work, and confirm no Plan or agent execution starts and recurring status remains PAUSED. Simulate an ambiguous response and retry the exact RequestId to confirm the same receipt. Then edit the Coworker and verify the Automation pin remains unchanged; scheduled hosting across daemon restart remains a later system/user gate.",
       "tests": [
         "E09-S02-CODE",
         "E09-S02-SYSTEM",
         "E09-S02-USER"
+      ],
+      "sources": [
+        "R-OPENCLAW",
+        "R-GOOSE"
+      ]
+    },
+    {
+      "id": "E09-S05",
+      "epic": "E09",
+      "title": "Manual Routine run creates a READY Task",
+      "gate": "G2",
+      "status": "IN_PROGRESS",
+      "depends_on": [
+        "E07-S05",
+        "E08-S05",
+        "E09-S01"
+      ],
+      "authorities": [
+        "docs/ROUTINES.md",
+        "docs/TASK-RUNTIME.md",
+        "docs/STORAGE.md",
+        "docs/API.md",
+        "docs/EVENTS.md",
+        "docs/STATE-MACHINES.md",
+        "docs/EXPERIENCE.md"
+      ],
+      "implementation": "Source path now materializes one ordinary READY Task from an exact active Routine revision through owner-authenticated local admission, bounded TEXT and same-Workspace ResourceRef inputs, atomic Routine/Resource/lead rechecks, and idempotent receipt; it creates no Plan or execution records. Verification remains open.",
+      "acceptance": "One READY Task and TaskSpec(1) pinned to the selected Routine revision; unchanged retry replays exactly; invalid or stale admission has no partial Task; UI clearly says planning and execution have not started.",
+      "negative_cases": "Unsupported or unbound inputs, stale/cross-Workspace Resource, Routine head/status race, lead ineligible, owner mismatch, changed payload with same RequestId, ambiguous retry, and archived Workspace.",
+      "demo": "Create a READY Task from a Routine with optional/required text and exact ResourceRef inputs, inspect exact Task/Routine/Resource pins, and confirm no Plan, Step, AgentSession, Attempt, lease, Environment, Effect, grant, or agent activity exists.",
+      "tests": [
+        "E09-S05-CODE",
+        "E09-S05-SYSTEM",
+        "E09-S05-USER"
       ],
       "sources": [
         "R-OPENCLAW",
@@ -1288,7 +1355,7 @@
         "docs/STATE-MACHINES.md",
         "docs/RUNTIME-LIFECYCLE.md"
       ],
-      "implementation": "BLOCKED / PLANNED: only an internal TestRunIdentity fingerprint exists. There is no authenticated test-run route, atomic reservation with ordinary Task admission, or Task provenance field distinguishing an Automation test Task from an occurrence Task. The local Automation router exposes no run route and the desktop page correctly discloses that Automations cannot run. Do not add a Test button or claim dry-run behavior until exact AutomationRevision pinning, normal authorization/Task admission, idempotency, explicit test provenance, and a no-occurrence/no-trigger-cursor-mutation guarantee are implemented together. Then add the create-preview-test-enable wizard, health projection and drift repair proposal.",
+      "implementation": "BLOCKED / PLANNED: only an internal TestRunIdentity fingerprint exists. There is no authenticated Automation test-run route, atomic reservation with ordinary Task admission, or Task provenance field distinguishing an Automation test Task from an occurrence Task. The local Automation router and desktop UI support owner ManualTrigger Run once, but this is a real occurrence/READY Task path, not a test. Do not reuse that route as a test or claim dry-run behavior until exact AutomationRevision pinning, normal authorization/Task admission, idempotency, explicit test provenance, and a no-occurrence/no-trigger-cursor-mutation guarantee are implemented together. Then add the create-preview-test-enable wizard, health projection and drift repair proposal.",
       "acceptance": "Test can perform only authorized actions; no implicit dry-run fiction; enable separate; repair immutable draft revision.",
       "negative_cases": "Failed test, stale revision on enable, broken source layout, auth revoked.",
       "demo": "Test a saved routine, inspect health, simulate source drift and repair draft.",
@@ -1782,7 +1849,7 @@
         "docs/CONTEXT.md",
         "docs/API.md"
       ],
-      "implementation": "Partial: Artifact Workbench exposes a native Save As action for the exact selected managed ArtifactVersion up to 10 MiB. Its registered Tauri command checks expected Artifact/Workspace/version, ResourceRevision, digest, media type and size; the authenticated daemon content route verifies stored bytes and the native bridge checks response media/length before a same-directory staged write. Cancel does not read content; only Saved/Cancelled returns through WebView IPC. It also exposes an on-demand list of the latest 10 immutable versions through the existing authenticated exact-version read route, bounded text editing through the mounted append route, and a managed text/plain restore-as-new-version draft. Restore requires explicit confirmation and separate publication against a freshly loaded current head; stale conflicts preserve the draft. The append contract records user.text_edit but does not persist a distinct restored_from relation. Adjacent managed text versions can be opened by exact version metadata/content routes and compared side-by-side with the same bounded safe renderer; each pane labels its exact ResourceRevision. The comparison is read-only and does not identify changed lines or publish content. Recent history exposes exact output revision plus source-count/provider/Attempt provenance when recorded. Full qualified renderers, external/non-text restore, Library provenance, renderer sandboxing, and owner/system/code acceptance remain open. Current source has not been built or verified. Managed Markdown preview also supports a bounded safe subset (headings, paragraphs, lists, quotes, fenced code, inline emphasis/code, confirmed HTTPS links) using React text nodes; unsupported or malformed syntax falls back to source text and no remote images load. This is not full CommonMark or an editor. Source remains unbuilt/unverified.",
+      "implementation": "Partial: Artifact Workbench exposes a native Save As action for the exact selected managed ArtifactVersion up to 10 MiB. Its registered Tauri command checks expected Artifact/Workspace/version, ResourceRevision, digest, media type and size; the authenticated daemon content route verifies stored bytes and the native bridge checks response media/length before a same-directory staged write. Cancel does not read content; only Saved/Cancelled returns through WebView IPC. It also exposes an on-demand list of the latest 10 immutable versions through the existing authenticated exact-version read route, bounded text editing through the mounted append route, and a managed text/plain restore-as-new-version draft. Restore requires explicit confirmation and separate publication against a freshly loaded current head; stale conflicts preserve the draft. The append contract records user.text_edit but does not persist a distinct restored_from relation. An unconfirmed text-version publish locks the in-memory draft and original RequestId, disables edit/discard/close, and offers unchanged retry; it is not restart-persistent. Adjacent managed text versions can be opened by exact version metadata/content routes and compared side-by-side with the same bounded safe renderer; each pane labels its exact ResourceRevision. The comparison is read-only and does not identify changed lines or publish content. Recent history exposes exact output revision plus source-count/provider/Attempt provenance when recorded. Full qualified renderers, external/non-text restore, Library provenance, renderer sandboxing, and owner/system/code acceptance remain open. Current source has not been built or verified. Managed Markdown preview also supports a bounded safe subset (headings, paragraphs, lists, quotes, fenced code, inline emphasis/code, confirmed HTTPS links) using React text nodes; unsupported or malformed syntax falls back to source text and no remote images load. This is not full CommonMark or an editor. Source remains unbuilt/unverified.",
       "acceptance": "No immutable version is overwritten; conflicts are recoverable; restore appends a new ArtifactVersion; renderer failure preserves download/provenance; revoked sources are not represented as currently authorized context.",
       "negative_cases": "Concurrent edits, stale compare input, restore racing a new version, linked/external or non-plain-text restore request, text over 1 MiB, missing historical blob, unchanged-content restore, incompatible renderer, hostile document, revoked source while open, dirty close/navigation; native Save As cancel without content fetch, selected-version/ResourceRevision/digest/media/size mismatch, external or >10 MiB content, daemon digest rejection, response media/length mismatch, temporary-write/rename failure preserving the destination, and no bytes/full path crossing WebView IPC.",
       "demo": "Review a generated document/spreadsheet and coding diff; compare, save the exact selected version to a chosen path, edit, resolve a version conflict, restore a prior version as a new version, restart, and inspect provenance.",
@@ -1794,6 +1861,51 @@
       "sources": [
         "R-MUSE",
         "R-CLAUDE-USE"
+      ]
+    },
+    {
+      "id": "E08-S08",
+      "epic": "E08",
+      "title": "Semantic-first RichPresentation and Host Guidance",
+      "gate": "G2",
+      "status": "IN_PROGRESS",
+      "depends_on": [
+        "E03-S02",
+        "E04-S05",
+        "E08-S04",
+        "E08-S06"
+      ],
+      "authorities": [
+        "ARCHITECTURE.md",
+        "docs/RICH-RESPONSE.md",
+        "docs/PRESENTATION-RUNTIME.md",
+        "docs/HOST-GUIDANCE.md",
+        "docs/DATA-MODEL.md",
+        "docs/EVENTS.md",
+        "docs/API.md",
+        "docs/schemas/rich-presentation.schema.json",
+        "docs/schemas/presentation-intent.schema.json",
+        "docs/schemas/operator-stream.schema.json",
+        "docs/schemas/sqlite-v12.sql",
+        "docs/EXPERIENCE.md",
+        "docs/DESIGN-SYSTEM.md",
+        "docs/MOTION.md",
+        "docs/SECURITY.md",
+        "docs/BENCHMARKS.md"
+      ],
+      "implementation": "Commit semantic ConversationMessage and settle its turn without waiting for optional rich compilation. Add immutable RichPresentation publication/read paths, closed schema validation, bounded model intent, exact semantic/Artifact/Resource/source bindings, deterministic tool/result renderers, safe fallback, and Conversation-only negotiated HostSkill guidance. Keep host-bound system blocks sourced only from Core projections. Add bounded retry-fenced rich draft transport only after semantic streaming is stable. This story does not add arbitrary React plugins, side chats, cloud sync, or remote Runtime behavior.",
+      "acceptance": "Simple answers use no extra model call; complete semantic text is visible before any enhancement. Rich content is independently immutable/digest-bound and optional. Unsupported adapters still work. No model-generated status/approval/verification/download authority is rendered. Missing/invalid blobs, schema, renderer, or stream frames preserve semantic history. Exact ArtifactVersion deliverables and owner-requested deterministic ZIP work with digest-verified downloads. Rich UI passes accessibility, reduced-motion, responsive, and local-only desktop qualification.",
+      "negative_cases": "Hostile/invalid intent; forged host-bound block; cross-Workspace Resource/Artifact ref; message digest mismatch; missing/corrupt blob; unsupported renderer/version; stale retry frame; stream overflow/gap; direct media URL; unsafe Markdown/Mermaid/URL; bundle path traversal/duplicate path; missing source version; reduced-motion and high-zoom failures.",
+      "demo": "Run plain and rich Conversation requests with a qualified native Agent; disconnect during semantic and rich streaming; force compiler and blob failures; produce a Task report with exact Artifact cards and a reproducible ZIP; show semantic fallback, screen-reader/reduced-motion states, and direct-native comparison timing.",
+      "tests": [
+        "E08-S08-CODE",
+        "E08-S08-SYSTEM",
+        "E08-S08-USER"
+      ],
+      "sources": [
+        "R-MUSE",
+        "R-CLAUDE-USE",
+        "R-CHATGPT-WORK"
       ]
     }
   ]

@@ -1,6 +1,7 @@
 -- Extend ResourceLocation availability for fail-closed local WorkspaceRoot recovery.
--- Applied with foreign-key enforcement disabled before BEGIN IMMEDIATE; the migration
--- runner restores enforcement and checks every dependent FK before accepting the schema.
+-- Applied with foreign_keys and legacy_alter_table enabled before BEGIN IMMEDIATE; the
+-- migration runner restores both PRAGMAs and checks every dependent FK before accepting
+-- the schema. This preserves immutable triggers while ResourceLocation is rebuilt.
 
 CREATE TABLE resource_locations_v6 (
   location_id TEXT PRIMARY KEY,

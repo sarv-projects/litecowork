@@ -244,6 +244,15 @@ h1 { margin: 9px 0 8px; font-size: 32px; line-height: 1.2; letter-spacing: -.035
 .resource-intake-facts { display: flex; flex-wrap: wrap; grid-column: 1 / -1; gap: 5px 20px; margin: 0; padding: 12px 0 0; border-top: 1px solid var(--color-border); list-style: none; color: var(--color-text-subtle); font-size: 11px; line-height: 1.45; }
 .resource-intake-facts li { display: flex; align-items: flex-start; gap: 7px; }
 .resource-intake-facts li::before { content: "•"; color: var(--color-primary); }
+.context-note-create { display: grid; grid-column: 1 / -1; gap: 8px; padding-top: 15px; border-top: 1px solid var(--color-border); }
+.context-note-create h3 { margin: 0; font-size: 14px; font-weight: 650; }
+.context-note-create > p { max-width: 760px; margin: 0 0 2px; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
+.context-note-create label { margin-top: 2px; color: var(--color-text-subtle); font-size: 12px; font-weight: 600; }
+.context-note-create input, .context-note-create textarea { width: min(100%, 760px); padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface); color: var(--color-text); font: inherit; }
+.context-note-create textarea { min-height: 92px; resize: vertical; line-height: 1.5; }
+.context-note-create input:focus-visible, .context-note-create textarea:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.context-note-footer { display: flex; width: min(100%, 760px); align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.context-note-footer small { color: var(--color-text-subtle); font-size: 11px; }
 .resource-intake-status { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--color-primary-soft); }
 .library-search-block { display: grid; gap: 4px; max-width: 540px; margin-top: 26px; }
 .library-search-block label { font-size: 13px; font-weight: 600; }

@@ -71,7 +71,7 @@ for path,items in cur_api.get('paths',{}).items():
             cur_ops.append({'method':method.upper(),'path':path,'operationId':spec.get('operationId')})
 cur_events=(ROOT/'docs/EVENTS.md').read_text()
 reg=re.search(r'Minimum v1 registry:\s*```\s*(.*?)```',cur_events,re.S)
-cur_types=re.findall(r'^[a-z][a-z0-9_.-]+\.v\d+$',reg.group(1),re.M) if reg else []
+cur_types=re.findall(r'^([a-z][a-z0-9_.-]+\.v\d+)(?:\s*(?:#|—).*)?$',reg.group(1),re.M) if reg else []
 cur_objects={
  'operator_operations':sorted(cur_ops,key=lambda x:(x['path'],x['method'])),
  'event_schema_definitions':sorted(cur_event.get('$defs',{})),

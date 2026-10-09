@@ -7,7 +7,7 @@ function decodeBase64(encoded: string): Uint8Array {
   return Uint8Array.from(binary, character => character.charCodeAt(0));
 }
 
-/** Narrow bridge to saved-Routine routes only; no Task execution or scheduling operation. */
+/** Narrow bridge to saved-Routine routes and save-only manual Task materialization. */
 function desktopTransport(workspaceId: string): RoutineTransport {
   return async (path, init) => {
     if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -17,7 +17,7 @@ function desktopTransport(workspaceId: string): RoutineTransport {
     if (headers.get("X-Workspace-ID") !== workspaceId) throw new Error("Routine Workspace context changed.");
     const requestId = headers.get("Idempotency-Key");
     const rawVersion = headers.get("If-Match");
-    const match = /^\/v1\/routines(?:\/([^/]+)(?:\/(revisions|archive))?)?$/.exec(url.pathname);
+    const match = /^\/v1\/routines(?:\/([^/]+)(?:\/(revisions|archive|run))?)?$/.exec(url.pathname);
     if (!match) throw new Error("Unsupported Routine path.");
     const routineId = match[1] ? decodeURIComponent(match[1]) : null;
     const child = match[2] ?? null;
@@ -30,6 +30,7 @@ function desktopTransport(workspaceId: string): RoutineTransport {
     else if (method === "POST" && !routineId && !child) operation = "create";
     else if (method === "POST" && routineId && child === "revisions") operation = "revise";
     else if (method === "POST" && routineId && child === "archive") operation = "archive";
+    else if (method === "POST" && routineId && child === "run") operation = "run";
     else throw new Error("Unsupported Routine operation.");
 
     let expectedVersion: number | null = null;
@@ -38,7 +39,8 @@ function desktopTransport(workspaceId: string): RoutineTransport {
       expectedVersion = Number(rawVersion.replace(/^\"|\"$/g, ""));
       if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new Error("Routine version is invalid.");
     }
-    if (operation === "create" && (!requestId || requestId.length > 128)) throw new Error("Routine request identity is missing.");
+    if (["create", "run"].includes(operation) && (!requestId || requestId.length > 128)) throw new Error("Routine request identity is missing.");
+    if (operation === "run" && rawVersion) throw new Error("Routine request is invalid.");
     const body = typeof init.body === "string" ? init.body : null;
     if (body && body.length > 128 * 1024) throw new Error("Routine definition exceeds its size limit.");
     const response = await invoke<BridgeResponse>("routine_request", {

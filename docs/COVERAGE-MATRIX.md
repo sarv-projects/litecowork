@@ -63,6 +63,7 @@ decision.
 | Installation-scoped Runtime identity, per-Workspace enrollment/pairing/revocation, and readiness separation | [`DATA-MODEL.md`](DATA-MODEL.md), [`RUNTIME-MESH.md`](RUNTIME-MESH.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`NETWORK-SECURITY.md`](NETWORK-SECURITY.md), [`STATE-MACHINES.md`](STATE-MACHINES.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md), [`FLOWS.md`](FLOWS.md), [`STORAGE.md`](STORAGE.md), `schemas/operator-api.openapi.yaml`, ADR [0020](adr/0020-runtime-identity-is-installation-scoped.md) |
 | Authenticated RuntimeIncarnation registration/order and local-only OS boot observations | [`RUNTIME-MESH.md`](RUNTIME-MESH.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STORAGE.md`](STORAGE.md) |
 | Execution substrates and cleanup | [`ENVIRONMENTS.md`](ENVIRONMENTS.md) |
+| Local Task Environment containment, exact Resource pinning, OS isolation attestations, and writer quiescence | [`ENVIRONMENTS.md`](ENVIRONMENTS.md), [`ARCHITECTURE.md`](../ARCHITECTURE.md), [`TRUST.md`](TRUST.md), [`FLOWS.md`](FLOWS.md), [`TESTING.md`](TESTING.md), [`BENCHMARKS.md`](BENCHMARKS.md), [`implementation/epics/E07.md`](../implementation/epics/E07.md) |
 | Provider-private Environment locators/checkpoint handles and portable checkpoint policy | [`ENVIRONMENTS.md`](ENVIRONMENTS.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STORAGE.md`](STORAGE.md), [`EVENTS.md`](EVENTS.md) |
 | Resource location indirection and local pseudonymous file identity | [`WORLD-RESOURCES.md`](WORLD-RESOURCES.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STORAGE.md`](STORAGE.md), [`NETWORK-SECURITY.md`](NETWORK-SECURITY.md) |
 | Agent endpoint identity versus Runtime-local locator/readiness | [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`RUNTIME-LIFECYCLE.md`](RUNTIME-LIFECYCLE.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`STORAGE.md`](STORAGE.md), [`API.md`](API.md) |
@@ -81,11 +82,13 @@ decision.
 | Failure matrix, retry, reconcile, failover | [`FAILURE-RECOVERY.md`](FAILURE-RECOVERY.md) |
 | Navigation, screens, interaction and UI states | [`EXPERIENCE.md`](EXPERIENCE.md) |
 | Typed Operator presentation items, renderers, transient stream/reconnect behavior, context-use disclosure, Artifact workbench/version interactions | [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md), [`EXPERIENCE.md`](EXPERIENCE.md), [`API.md`](API.md), [`SERVICES.md`](SERVICES.md), [`ARTIFACTS-EVIDENCE.md`](ARTIFACTS-EVIDENCE.md) |
+| Semantic-message authority, optional RichPresentation schema/compiler/bindings/fallbacks, citations and exact Artifact deliverables | [`RICH-RESPONSE.md`](RICH-RESPONSE.md), [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md), [`DATA-MODEL.md`](DATA-MODEL.md), [`SCHEMAS.md`](SCHEMAS.md), [`EVENTS.md`](EVENTS.md), [`API.md`](API.md), [`STORAGE.md`](STORAGE.md), ADR [0022](adr/0022-rich-presentation-is-optional.md) |
+| Built-in zero-authority HostSkills and negotiated instruction delivery | [`HOST-GUIDANCE.md`](HOST-GUIDANCE.md), [`AGENT-FABRIC.md`](AGENT-FABRIC.md), [`CAPABILITY-FABRIC.md`](CAPABILITY-FABRIC.md), ADR [0023](adr/0023-host-guidance-is-not-capability-authority.md) |
 | Coworker/Home/Work/Subagents onboarding and cost/quota/error/mobile projection | [`EXPERIENCE.md`](EXPERIENCE.md), [`RESPONSIBILITIES.md`](RESPONSIBILITIES.md) |
 | Deduplicated Needs You inbox projection and actions | [`EXPERIENCE.md`](EXPERIENCE.md), [`SERVICES.md`](SERVICES.md), [`API.md`](API.md) |
 | Component anatomy, tokens and accessibility | [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md) |
 | Semantic motion and timing | [`MOTION.md`](MOTION.md) |
-| Presentation Runtime item model, RendererRegistry, stream lifecycle, artifact/context rendering | [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md), [`API.md`](API.md), [`SERVICES.md`](SERVICES.md), [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md) |
+| Presentation Runtime item model, RendererRegistry, rich snapshot/stream/publication lifecycle, artifact/context rendering | [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md), [`RICH-RESPONSE.md`](RICH-RESPONSE.md), [`HOST-GUIDANCE.md`](HOST-GUIDANCE.md), [`API.md`](API.md), [`SERVICES.md`](SERVICES.md), [`DESIGN-SYSTEM.md`](DESIGN-SYSTEM.md), [`MOTION.md`](MOTION.md) |
 | Worker/profile/Goal/Suggestion/takeover motion triggers | [`MOTION.md`](MOTION.md), [`EVENTS.md`](EVENTS.md), [`STATE-MACHINES.md`](STATE-MACHINES.md) |
 | Logs, metrics, traces, audit and SLO categories | [`OBSERVABILITY.md`](OBSERVABILITY.md) |
 | Threat model and mandatory controls | [`SECURITY.md`](SECURITY.md) |

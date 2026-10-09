@@ -15,18 +15,17 @@ mod planning;
 // Explicit profile probing is intentionally kept separate from the bounded
 // executable inventory above. Only an authenticated owner-triggered caller may
 // invoke this operation with a Runtime-admitted endpoint binding.
-pub(crate) use codex_profile_probe::{
-    AuthenticationObservation, CodexProfileProbe, ListedModelOption,
-    ModelCatalogObservation, Observation, ProbeFailure, ProbeReadiness,
-    probe_codex_profile,
-};
 pub(crate) use codex_app_server::NativeEnvironment;
-pub(crate) use opencode_server::{
-    OpenCodeError, OpenCodeEvent, OpenCodeEventStream, OpenCodeProcessState,
-    OpenCodeEnvironment, OpenCodeServer, OpenCodeServerConfig,
+pub(crate) use codex_profile_probe::{
+    AuthenticationObservation, CodexProfileProbe, ListedModelOption, ModelCatalogObservation,
+    Observation, ProbeFailure, ProbeReadiness, probe_codex_profile,
 };
 pub(crate) use opencode_profile_probe::{
     OpenCodeProbeReadiness, opencode_native_environment, probe_opencode_profile,
+};
+pub(crate) use opencode_server::{
+    OpenCodeEnvironment, OpenCodeError, OpenCodeEvent, OpenCodeEventStream, OpenCodeProcessState,
+    OpenCodeServer, OpenCodeServerConfig,
 };
 
 use serde::Serialize;
@@ -69,7 +68,9 @@ pub enum SessionReadiness {
 
 pub fn discover_local_installations() -> Vec<AgentInstallation> {
     let cache = INVENTORY_CACHE.get_or_init(|| Mutex::new(None));
-    let mut cache = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some((observed_at, entries)) = cache.as_ref()
         && observed_at.elapsed() < INVENTORY_CACHE_TTL
     {

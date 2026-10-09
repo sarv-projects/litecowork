@@ -13,6 +13,7 @@ sqlite-rusqlite-defaults = ["rusqlite/cache", "rusqlite/ffi-sqlite-wasm-rs"]
 [dependencies]
 domain-responsibility = { path = "../domain-responsibility" }
 domain-effects = { path = "../domain-effects" }
+domain-environment = { path = "../domain-environment" }
 chacha20poly1305 = "0.10.1"
 ed25519-dalek = { version = "2.1", features = ["zeroize"] }
 getrandom = "0.3"
@@ -43,6 +44,7 @@ rustix = { version = "1.1", features = ["process"] }
 
 [dev-dependencies]
 domain-workspace = { path = "../domain-workspace" }
+local-environment-staging = { path = "../local-environment-staging" }
 tempfile = "3.20"
 
 [lints]

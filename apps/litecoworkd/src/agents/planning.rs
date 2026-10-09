@@ -46,8 +46,12 @@ pub(crate) struct LocalPlanningPreflight {
 }
 
 impl LocalPlanningPreflight {
-    pub(crate) fn view(&self) -> &LocalPlanningPreflightView { &self.view }
-    pub(crate) fn packet(&self) -> &TaskPlanningPacket { &self.packet }
+    pub(crate) fn view(&self) -> &LocalPlanningPreflightView {
+        &self.view
+    }
+    pub(crate) fn packet(&self) -> &TaskPlanningPacket {
+        &self.packet
+    }
 
     /// A mandatory check before session reservation, not after process startup.
     /// Readiness probes and installed executables cannot satisfy these boundaries.
@@ -108,6 +112,8 @@ mod tests {
             assert!(blockers.contains(&PlanningDispatchBlocker::SessionSettlementUnavailable));
             assert!(!blockers.contains(&PlanningDispatchBlocker::ProviderUnsupported));
         }
-        assert!(dispatch_blockers("UNKNOWN").contains(&PlanningDispatchBlocker::ProviderUnsupported));
+        assert!(
+            dispatch_blockers("UNKNOWN").contains(&PlanningDispatchBlocker::ProviderUnsupported)
+        );
     }
 }

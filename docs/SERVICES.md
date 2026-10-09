@@ -115,6 +115,7 @@ ChannelHost ownership later.
 create_conversation(CreateConversationRequest) -> Conversation
 append_message(AppendMessageRequest) -> ConversationMessage
 submit_turn(SubmitConversationTurnRequest) -> ConversationTurnReceipt
+publish_rich_presentation(PreparedRichPresentation) -> RichPresentation
 retry_turn(turn_id, expected_version, request_id) -> ConversationTurnReceipt
 cancel_turn(turn_id, expected_version, request_id) -> ConversationTurnReceipt
 get_conversation(ConversationId) -> ConversationView
@@ -139,6 +140,12 @@ The AgentTurnCoordinator uses a Conversation-scoped session when no Task is mate
 `retry_turn(turn_id, expected_version, request_id)` is allowed only for a FAILED turn; it
 creates a fresh session, increments `retry_ordinal`, and leaves earlier response messages
 and their provenance intact.
+`publish_rich_presentation` is an optional post-message commit. It accepts only a
+compiler-prepared, digest-verified document bound to an existing same-Workspace AGENT
+message from a settled/committed turn. It revalidates the message digest, source identities,
+schema/size bound, uniqueness, and presentation policy, then atomically inserts the
+immutable RichPresentation aggregate, snapshot, event, and blob reference. Failure does
+not alter the ConversationMessage or turn outcome.
 `cancel_turn(turn_id, expected_version, request_id)` requests adapter interruption and
 settles only after stop is observed; a completion/failure that wins the stop race remains
 the recorded outcome.
@@ -379,8 +386,12 @@ Core-owned.
 `PersonalContextProvider` v1 does not expose `propose_memory`; derived memory proposals
 remain deferred until Suggestion/Needs You review can pin content, sources, expiry,
 redaction, and owner resolution. `ResourceService.revise_context_document` uses the normal
-Resource revision DAG. `set_context_document_status` revokes or starts deletion; the purge
-worker first seals a `ContextDocumentPurgePlan` over the exact registered Core-managed
+Resource revision DAG. The current local V1 implementation of
+`set_context_document_status` accepts only `ACTIVE -> REVOKED` and `REVOKED -> ACTIVE`;
+it atomically commits the Resource metadata/version, aggregate snapshot, status event, and
+idempotency receipt. It does not invalidate content already delivered to an agent session,
+and no session-revocation integration is currently wired. Deletion remains a separate
+target contract: the purge worker first seals a `ContextDocumentPurgePlan` over the exact registered Core-managed
 blob/index replicas, then marks `DELETION_PENDING` and creates one pending receipt per
 target in the same transaction. It marks `DELETED` only after the acknowledged receipt set
 equals that plan, including a verified empty plan. A provider-backed replica remains
@@ -390,7 +401,7 @@ become deletion authorities.
 ```text
 ResourceService.create_revision_upload(ResourceId, parent_revision_ids, if_match, RequestId) -> ResourceUploadSession
 ResourceService.commit_revision_upload(ResourceUploadId, RequestId) -> ResourceRevision
-ResourceService.set_context_document_status(ResourceId, status, if_match, RequestId) -> Resource
+ResourceService.set_context_document_status(ResourceId, ACTIVE|REVOKED, if_match, RequestId) -> Resource
 ContextDocumentPurgeReconciler.seal_plan(ResourceId, exact_targets, if_match, RequestId) -> ContextDocumentPurgePlan
 ContextDocumentPurgeReconciler.record_ack(ResourceId, replica_ref, RuntimeIncarnationId, receipt_digest) -> PurgeStatus
 ContextDocumentPurgeReconciler.complete(ResourceId, expected_version) -> Resource
@@ -398,9 +409,10 @@ ContextDocumentPurgeReconciler.complete(ResourceId, expected_version) -> Resourc
 
 Revision uploads enforce Workspace/Resource ownership, current version, exact parent
 revision ancestry, byte/digest integrity, and atomic head update. Content resolution rejects
-revoked or deletion-pending ContextDocuments. A status change invalidates active context
-attachments; the Session owner stops or replaces a session at a safe boundary and cannot
-reuse its old native history. Purge receipts are durable, non-secret recovery records.
+revoked or deletion-pending ContextDocuments. The target session contract invalidates active
+context attachments; the Session owner stops or replaces a session at a safe boundary and
+cannot reuse its old native history. That session behavior is not implemented by the current
+local V1 status route. Purge receipts are durable, non-secret recovery records.
 The purge plan is immutable, pins a canonical digest and target count, and lists exact
 revision IDs for each target. Receipt admission must match one plan target exactly, and a
 duplicate or extra acknowledgement is rejected. Only the reconciler can transition
@@ -774,14 +786,17 @@ create(CreateRoutineRequest) -> Routine
 revise(ReviseRoutineRequest) -> RoutineRevision
 get(RoutineId) -> RoutineView
 list(WorkspaceId, Cursor?, Limit) -> Page<RoutineSummary>
-run_now(RunRoutineRequest) -> Task
+run_now(RunRoutineRequest) -> TaskView
 archive(ArchiveRoutineRequest) -> Routine
 ```
 
-Owns Routine lifecycle and append-only RoutineRevision records. Run-now validates typed
-inputs and creates an ordinary Task with pinned Routine provenance, then normal Task
-admission resolves current Agent/Capabilities/Runtime/Environment/authorization. A Routine
-cannot carry grants, credentials, approvals, or process/session handles from earlier runs.
+Owns Routine lifecycle and append-only RoutineRevision records. Run-now validates the
+exact active/current Routine revision and typed bounded inputs, then commits one ordinary
+standalone `READY` Task through TaskStore's atomic admission boundary. It never starts
+planning or execution. A non-null Conversation origin is rejected until message and Task
+admission can be atomic. The Task keeps the Routine ID/revision; later planning/Trust/
+verification re-resolves requirements not represented in TaskSpec. A Routine cannot carry
+grants, credentials, approvals, or process/session handles from earlier runs.
 Archiving is rejected while enabled Automations still point to the RoutineRevision unless
 the caller pauses/disables or explicitly rebinds them.
 
@@ -1114,6 +1129,14 @@ frames are not persisted, replicated, or emitted as EventStore events. A settled
 ConversationMessage replaces them. Renderer selection and local panel/scroll state belong
 to the Operator; they cannot mutate a domain aggregate.
 
+`RichResponsePolicyEvaluator`, `HostSkillRegistry`, and `RichPresentationCompiler` are
+small components at existing Conversation/Operator boundaries, not a new orchestration
+service stack. The evaluator is deterministic and adds no model call. HostSkillRegistry
+loads only digest-verified bundled zero-authority assets. The compiler validates typed
+model intent and binds it to semantic-message slices, real Artifact/Resource refs,
+registered tool-result renderers, and authorized Core projections. ProjectionService
+continues to own factual system projections; the rich compiler cannot synthesize them.
+
 ### TriggerCoordinator
 
 ```text
@@ -1139,6 +1162,12 @@ Task execution. Run-now requires a ManualTrigger; direct Routine runs use Routin
 TriggerCoordinator is defined above; AutomationService owns the immutable definition and
 RoutineService owns the reusable work template. Trigger processing does not create a
 second Task executor.
+
+The current local owner ManualTrigger slice is narrower than the full TriggerCoordinator:
+the authenticated Operator resolves exact revisions and the one-shot request identity,
+then TaskService/TaskStore atomically admits the occurrence plus READY Task. It does not
+claim scheduled/provider trigger hosting, cursor advancement/recovery, or Task-outcome
+settlement support.
 
 ### NotificationService
 
@@ -1310,6 +1339,10 @@ ChannelService -> TrustService, ConversationService, TaskService, NotificationSe
 ConnectionService -> TrustService, SecretStorePort, external provider adapter
 AuditService -> StateStore, EventStore
 ProjectionService -> event stream + Coworker/Goal/Suggestion/WorkerPerformance/TaskProgress/Presentation projection reducers
+RichPresentation compiler -> ConversationService read/publish ports, BlobStore,
+  authorized Resource/Artifact/Capability-result resolvers, RichPresentation schema validator
+ConversationService -> RichPresentation persistence through StateStore/EventStore in the
+  existing aggregate transaction boundary
 ```
 
 `ResourceAggregatePort` and `ResourceLocationProvider` are Resource-domain ports. The

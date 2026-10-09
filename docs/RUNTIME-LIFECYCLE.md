@@ -80,6 +80,15 @@ Runtime remains `DEGRADED` because Task recovery and execution are not implement
 authenticated Operator response is not execution readiness. Windows IPC and cross-platform
 package install/uninstall integration remain open.
 
+On Unix, bootstrap also requires the Runtime state directory and lifecycle files to be owned
+by the current effective user. State and lock files are opened through no-follow file
+descriptors and validated as regular files before reading or locking, so the path check is
+not the security boundary and a final-component symlink swap cannot redirect lifecycle I/O.
+The directory must remain private; these descriptor checks do not defend against arbitrary
+malicious code running as the same OS user. This source hardening has not been built or
+qualified on Linux/macOS. Non-Unix lifecycle-file handling is not a substitute for the
+missing authenticated Windows Operator transport.
+
 On Linux, the desktop's current lifecycle slice installs or refreshes a marked, user-owned
 `systemd/user/litecoworkd.service` under Tauri's resolved user configuration directory
 (typically `~/.config`, subject to XDG configuration). The unit uses `Delegate=yes`,
@@ -157,6 +166,16 @@ missing or invalid, the current bootstrap stops before root revalidation and doe
 WorkspaceRoot UNAVAILABLE transitions; startup remains fail-closed to preserve authenticated
 IPC. Handling that key-loss case while keeping unrelated local Runtime services available
 requires a separately designed recovery/storage path and is deferred, not claimed here.
+
+If the authenticated Operator endpoint fails to bind or initialize after the Runtime
+incarnation has already transitioned to `DEGRADED`, startup records the specific
+`OPERATOR_API_START_FAILED` blocker in private local status and keeps the Runtime catalog's
+already-durable availability at `DEGRADED`. It then exits nonzero and releases the
+single-instance lock. The configured service manager may apply its bounded restart policy;
+manual startup reports the error for an explicit retry. If writing the local status fails,
+the returned startup error includes that persistence failure; the catalog still records
+the prior degraded state but does not contain the specific local blocker. This recovery
+does not claim the endpoint failure is transient or that repeated retries will succeed.
 
 ## Runtime incarnation
 

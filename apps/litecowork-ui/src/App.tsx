@@ -5,6 +5,7 @@ import { TaskArtifactOutputs } from "./artifacts/TaskArtifactOutputs";
 import { desktopArtifactApi } from "./artifacts/desktop-artifact-api";
 import type { PinnedResourceRef } from "./artifacts/artifact-api";
 import { CoworkerSettings, type CoworkerLeadBindingOption } from "./coworkers/CoworkerSettings";
+import { HomeCoworkerOnboarding } from "./coworkers/HomeCoworkerOnboarding";
 import { desktopCoworkerApi } from "./coworkers/desktop-coworker-api";
 import { desktopDelegationProfileCatalogApi } from "./coworkers/desktop-delegation-profile-api";
 import type { DelegationProfileCatalogItem } from "./coworkers/delegation-profile-api";
@@ -24,6 +25,15 @@ import type { AgentProviderKey } from "./agents/agent-catalog-api";
 import { desktopAgentCatalogApi } from "./agents/desktop-agent-catalog-api";
 import { ZipIntakeNotice } from "./resources/ZipIntakeNotice";
 import { ResourceRevisionEditor } from "./resources/ResourceRevisionEditor";
+import { TaskResourceTextPreview } from "./resources/TaskResourceTextPreview";
+import { validateResourceSourceHighlights, type ResourceSourceMatch, type SourceHighlightResult } from "./resources/source-span-highlights";
+import { TaskAttentionPage } from "./needs-you/TaskAttentionPage";
+import {
+  isTaskPlanningReadinessFor,
+  planningReadinessNoBlockersMessage,
+  type PlanningBlocker,
+  type TaskPlanningReadinessView,
+} from "./tasks/planning-readiness";
 
 type Page = "Home" | "Work" | "Library" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Routines" | "Automations" | "Settings";
 type RuntimeStatus = {
@@ -63,7 +73,7 @@ type AgentProfileObservationView = {
   readiness: string;
   observedAt: string;
   offerExpiresAt: string;
-  constraints: Record<string, unknown>;
+  constraints?: Record<string, unknown>;
 };
 type AgentEndpointView = { endpointId: string; agentProfileId: string; protocol: string; topology: string; protocolVersion: string | null; capabilities: Record<string, unknown> };
 type AgentProfileView = {
@@ -135,7 +145,9 @@ type WorkspaceRootPageView = { items: WorkspaceRootView[]; nextCursor: string | 
 type PinnedResourceRefView = { workspaceId: string; resourceId: string; revisionId: string };
 type TaskInputSelection = PinnedResourceRefView & { displayName: string };
 type ResourcePageView = { items: ResourceView[]; nextCursor: string | null };
-type ResourceSearchResultView = { resourceId: string; resourceRevisionId: string; displayName: string; freshness: string; matchReasons: string[]; snippet: string | null };
+type ResourceSearchResultView = { resourceId: string; resourceRevisionId: string; sourceContentDigest: string; sourceMatches: ResourceSourceMatch[]; displayName: string; freshness: string; matchReasons: string[]; snippet: string | null };
+type ResourceSearchPreviewView = { text: string; resourceRevisionId: string; contentDigest: string };
+type PreviewSearchPin = { contentDigest: string; matches: ResourceSourceMatch[] };
 type ResourceContentScanView = { candidatesScanned: number; textResourcesChecked: number; skippedUnsupportedType: number; skippedOverFileLimit: number; skippedRevisionChanged: number; byteBudgetExhausted: boolean; candidateBudgetExhausted: boolean; maxCandidates: number; maxFileBytes: number; maxTotalBytes: number };
 type ResourceSearchPageView = { items: ResourceSearchResultView[]; nextCursor: string | null; mode: string; contentScan: ResourceContentScanView | null };
 type TaskStatus = "READY" | "RUNNING" | "WAITING_USER" | "BLOCKED" | "VERIFYING" | "NEEDS_USER" | "INCOMPLETE" | "PAUSE_REQUESTED" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCEL_REQUESTED" | "CANCELLED";
@@ -143,8 +155,6 @@ type TaskSummaryView = { taskId: string; status: TaskStatus; objective: string; 
 type TaskPageView = { items: TaskSummaryView[]; nextCursor: string | null };
 type PlannedStepView = { stepId: string; logicalKey: string; title: string; objective: string; status: string };
 type TaskDetailView = { taskId: string; workspaceId: string; originCoworkerId: string | null; originCoworkerRevision: number | null; currentSpecRevision: number; currentPlanRevision: number | null; status: TaskStatus; taskVersion: number; objective: string; inputRefs: PinnedResourceRefView[]; planSpecRevision: number | null; planIsStale: boolean; plannedSteps: PlannedStepView[]; createdAt: string; updatedAt: string };
-type PlanningBlocker = "TASK_STATE_NOT_ELIGIBLE" | "PLAN_ALREADY_ACCEPTED" | "CURRENT_LEAD_OR_ENDPOINT_UNAVAILABLE" | "TASK_ISOLATION_UNAVAILABLE" | "NATIVE_CAPABILITIES_UNMEDIATED" | "PROTOCOL_UNQUALIFIED" | "PROCESS_CONTAINMENT_UNQUALIFIED" | "PLANNING_CONTEXT_RESOURCE_UNAVAILABLE" | "SESSION_SETTLEMENT_UNAVAILABLE" | "PROVIDER_UNSUPPORTED";
-type TaskPlanningReadinessView = { taskId: string; taskVersion: number; taskSpecRevision: number; taskStatus: TaskStatus; observedAt: string; dispatchAvailable: false; planningStarted: false; agentSessionStarted: false; planCreated: false; blockers: PlanningBlocker[] };
 type TaskSpecRevisionReceiptView = { taskId: string; revision: number; objective: string };
 type UploadRangeView = { startOffset: number; endOffsetInclusive: number; sha256: string };
 type ResourceUploadView = {
@@ -154,6 +164,7 @@ type ResourceUploadView = {
   mediaType: string;
   expectedSizeBytes: number;
   expectedDigest: string | null;
+  contextDocument: ContextDocumentCreateMetadata | null;
   folderRelativePath: string | null;
   committedResourceId: string | null;
   chunkSizeBytes: number;
@@ -161,6 +172,10 @@ type ResourceUploadView = {
   nextMissingOffset: number;
   state: string;
   expiresAt: string;
+};
+type ContextDocumentCreateMetadata = {
+  kind: "WORKSPACE_NOTES";
+  owner_ref: { kind: "WORKSPACE"; workspace_id: string };
 };
 type LocalUploadResume = {
   workspaceId: string;
@@ -299,6 +314,20 @@ function fileResumeKey(workspaceId: string, file: File): string {
   return JSON.stringify([workspaceId, relative, file.size, file.lastModified]);
 }
 
+function resourceContextDocumentMatches(
+  actual: ResourceUploadView["contextDocument"] | undefined,
+  expected: ContextDocumentCreateMetadata | null,
+): boolean {
+  if (!expected) return actual == null;
+  return actual != null
+    && Object.keys(actual).length === 2
+    && Object.prototype.hasOwnProperty.call(actual, "kind")
+    && Object.prototype.hasOwnProperty.call(actual, "owner_ref")
+    && actual.kind === expected.kind
+    && actual.owner_ref.kind === expected.owner_ref.kind
+    && actual.owner_ref.workspace_id === expected.owner_ref.workspace_id;
+}
+
 async function digestHex(bytes: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -366,7 +395,6 @@ function App() {
   const [pendingWorkspaceRequest, setPendingWorkspaceRequest] = useState<{ name: string; requestId: string } | null>(null);
   const [resources, setResources] = useState<ResourceView[]>([]);
   const [resourceCatalogRefreshNonce, setResourceCatalogRefreshNonce] = useState(0);
-  const [resourceIndexRefreshNonce, setResourceIndexRefreshNonce] = useState(0);
   const [resourceNextCursor, setResourceNextCursor] = useState<string | null>(null);
   const [resourcePageBusy, setResourcePageBusy] = useState(false);
   const [resourceBusy, setResourceBusy] = useState(false);
@@ -376,6 +404,7 @@ function App() {
   const [previewResourceId, setPreviewResourceId] = useState<string | null>(null);
   const [previewResourceName, setPreviewResourceName] = useState<string | null>(null);
   const [resourcePreview, setResourcePreview] = useState<string | null>(null);
+  const [resourcePreviewHighlights, setResourcePreviewHighlights] = useState<SourceHighlightResult | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const previewGeneration = useRef(0);
   const resourceListGeneration = useRef(0);
@@ -646,6 +675,7 @@ function App() {
     setPreviewResourceId(null);
     setPreviewResourceName(null);
     setResourcePreview(null);
+    setResourcePreviewHighlights(null);
     setPreviewError(null);
     setResourceNextCursor(null);
     if (!selectedWorkspaceId) { setResources([]); return; }
@@ -1043,7 +1073,7 @@ function App() {
     }
   };
 
-  const importFiles = async (files: FileList | null) => {
+  const importFiles = async (files: FileList | File[] | null, contextDocument: ContextDocumentCreateMetadata | null = null) => {
     const workspaceId = selectedWorkspaceIdRef.current;
     if (!files || !workspaceId) return;
     const requested = Array.from(files);
@@ -1076,7 +1106,8 @@ function App() {
         const folderRelativePath = resourceFolderRelativePath(file);
         if (displayName.length > 240) throw new Error("A selected file path is too long to save.");
         const mediaType = file.type || "application/octet-stream";
-        const resumeKey = fileResumeKey(workspaceId, file);
+        const baseResumeKey = fileResumeKey(workspaceId, file);
+        const resumeKey = contextDocument ? JSON.stringify([baseResumeKey, contextDocument]) : baseResumeKey;
         const saved = readUploadResumes()[resumeKey];
         let resume: LocalUploadResume = saved && saved.workspaceId === workspaceId && saved.displayName === displayName && (saved.folderRelativePath ?? null) === folderRelativePath && saved.mediaType === mediaType && saved.sizeBytes === file.size && saved.lastModified === file.lastModified
           ? saved
@@ -1114,14 +1145,16 @@ function App() {
           && session.displayName === displayName
           && session.mediaType === mediaType
           && session.folderRelativePath === folderRelativePath
-          && session.expectedSizeBytes === file.size;
+          && session.expectedSizeBytes === file.size
+          && resourceContextDocumentMatches(session.contextDocument, contextDocument);
         const sessionMatches = sessionIdentityMatches
-          && session!.expectedDigest === expectedDigest
+          && session !== null
+          && session.expectedDigest === expectedDigest
           && session.chunkSizeBytes > 0
           && session.chunkSizeBytes <= 4_194_304
           && session.chunkSizeBytes <= 4 * 1024 * 1024
-          && ["OPEN", "CONTENT_RECEIVED"].includes(session!.state)
-          && Date.parse(session!.expiresAt) > Date.now();
+          && ["OPEN", "CONTENT_RECEIVED"].includes(session.state)
+          && Date.parse(session.expiresAt) > Date.now();
         if (session?.state === "COMMITTED") {
           if (sessionIdentityMatches && session.expectedDigest === null) {
             const recordedResource = session.committedResourceId ? ` Recorded Resource ID: ${session.committedResourceId}.` : " Its Resource mapping is unavailable.";
@@ -1196,6 +1229,7 @@ function App() {
             sizeBytes: file.size,
             expectedDigest,
             folderRelativePath,
+            contextDocument,
             requestId: resume.createRequestId,
           });
           resume.uploadId = session.uploadId;
@@ -1323,14 +1357,49 @@ function App() {
     }
   };
 
-  const previewText = async (resourceId: string, displayName: string, revisionId: string) => {
+  const previewText = async (resourceId: string, displayName: string, revisionId: string, searchPin?: PreviewSearchPin) => {
     if (!selectedWorkspaceId) return;
     const generation = ++previewGeneration.current;
     setPreviewResourceId(resourceId);
     setPreviewResourceName(displayName);
     setResourcePreview(null);
+    setResourcePreviewHighlights(null);
     setPreviewError(null);
     try {
+      if (searchPin && searchPin.matches.length > 0) {
+        try {
+          const preview = await invoke<ResourceSearchPreviewView>("preview_resource_text_with_provenance", {
+            workspaceId: selectedWorkspaceId,
+            resourceId,
+            revisionId,
+            expectedContentDigest: searchPin.contentDigest,
+          });
+          const validation = await validateResourceSourceHighlights({
+            preview,
+            expectedRevisionId: revisionId,
+            expectedContentDigest: searchPin.contentDigest,
+            matches: searchPin.matches,
+          });
+          if (generation === previewGeneration.current) {
+            setResourcePreview(preview.text);
+            setResourcePreviewHighlights(validation);
+          }
+          return;
+        } catch {
+          // A provenance mismatch may still permit a plain exact-revision preview.
+          // The ordinary path never applies search spans or claims a match.
+          const plainText = await invoke<string>("preview_resource_text", {
+            workspaceId: selectedWorkspaceId,
+            resourceId,
+            revisionId,
+          });
+          if (generation === previewGeneration.current) {
+            setResourcePreview(plainText);
+            setResourcePreviewHighlights({ kind: "plain", reason: "Search matches could not be verified against this exact preview." });
+          }
+          return;
+        }
+      }
       const content = await invoke<string>("preview_resource_text", {
         workspaceId: selectedWorkspaceId,
         resourceId,
@@ -1340,6 +1409,7 @@ function App() {
     } catch (error) {
       if (generation === previewGeneration.current) {
         setPreviewError(typeof error === "string" ? error : "Text preview is unavailable.");
+        setResourcePreviewHighlights(null);
       }
     }
   };
@@ -1438,11 +1508,13 @@ function App() {
         </header>
 
         {page === "Home" ? (
-          <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => setPage("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => setPage("Settings")} onOpenWork={() => { setOpenedTask(null); setPage("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); setPage("Work"); }} />
+          <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => setPage("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => setPage("Settings")} onOpenCoworkers={() => setPage("Coworkers")} onWorkspaceUpdated={(updated) => setWorkspaces(current => current.map(item => item.workspaceId === updated.workspace_id && item.version <= updated.version ? { ...item, primaryCoworkerId: updated.primary_coworker_id, version: updated.version } : item))} onOpenWork={() => { setOpenedTask(null); setPage("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); setPage("Work"); }} />
         ) : page === "Work" ? (
-          <WorkPage key={selectedWorkspaceId} selectedWorkspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} resourceNameCache={resourceNameCache} artifactApi={artifactApi} operatorReady={runtime?.operatorReady === true} initialTaskId={openedTask?.workspaceId === selectedWorkspaceId ? openedTask.taskId : null} />
+          <WorkPage key={selectedWorkspaceId} selectedWorkspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={runtime?.operatorReady === true} initialTaskId={openedTask?.workspaceId === selectedWorkspaceId ? openedTask.taskId : null} />
         ) : page === "Library" ? (
-          <LibraryPage selectedWorkspaceId={selectedWorkspaceId} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item))} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => setPage("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewError={previewError} />
+          <LibraryPage selectedWorkspaceId={selectedWorkspaceId} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item))} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => setPage("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
+        ) : page === "Needs You" ? (
+          <TaskAttentionPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} operatorReady={runtime?.operatorReady === true} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); setPage("Work"); }} />
         ) : page === "Coworkers" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
           <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE</div><h1>Coworkers</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">◉</div><h2>Local Operator unavailable</h2><p>Start the local Runtime before loading or changing Coworker settings. No Coworker state is cached in this view.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Coworkers" ? (
@@ -1472,7 +1544,10 @@ function App() {
             }}
           />
         ) : page === "Goals" ? (
-          <GoalsPage key={selectedWorkspaceId} api={goalApi} workspaceId={selectedWorkspaceId} />
+          <GoalsPage key={selectedWorkspaceId} api={goalApi} workspaceId={selectedWorkspaceId} onOpenTask={(taskId) => {
+            setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
+            setPage("Work");
+          }} />
         ) : page === "Ideas" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
           <div className="page-content subpage-content"><div className="eyebrow">IDEAS</div><h1>Ideas</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">✦</div><h2>Local Operator unavailable</h2><p>Start the local Runtime to load saved Suggestions. This view never starts work.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Ideas" ? (
@@ -1481,13 +1556,20 @@ function App() {
             setPage("Work");
           }} />
         ) : page === "Routines" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
-          <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE RESPONSIBILITIES</div><h1>Routines</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">↻</div><h2>Local Operator unavailable</h2><p>Start the local Runtime before loading or changing Routine definitions. Saved Routines do not run until a supported execution path is implemented.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
+          <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE RESPONSIBILITIES</div><h1>Routines</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">↻</div><h2>Local Operator unavailable</h2><p>Start the local Runtime to load or change Routine definitions. Run now can save a Task in READY state; planning and agent execution are not available yet.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Routines" ? (
-          <RoutinesPage key={selectedWorkspaceId} api={routineApi} workspaceId={selectedWorkspaceId} />
+          <RoutinesPage key={selectedWorkspaceId} api={routineApi} workspaceId={selectedWorkspaceId} resources={resources} resourcesNextCursor={resourceNextCursor} resourcesPageBusy={resourcePageBusy} onLoadMoreResources={loadMoreResources} onOpenTask={(task) => {
+            if (task.workspace_id !== selectedWorkspaceId || task.status !== "READY" || !task.task_id) return;
+            setOpenedTask({ workspaceId: task.workspace_id, taskId: task.task_id });
+            setPage("Work");
+          }} />
         ) : page === "Automations" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
           <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE RESPONSIBILITIES</div><h1>Automations</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">◷</div><h2>Local Operator unavailable</h2><p>Start the local Runtime before loading Automation definitions. No Automation state is cached in this view.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Automations" ? (
-          <AutomationsPage key={selectedWorkspaceId} api={automationApi} workspaceId={selectedWorkspaceId} />
+          <AutomationsPage key={selectedWorkspaceId} api={automationApi} workspaceId={selectedWorkspaceId} resources={resources} resourcesNextCursor={resourceNextCursor} resourcesPageBusy={resourcePageBusy} onLoadMoreResources={loadMoreResources} onOpenTask={(taskId) => {
+            setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
+            setPage("Work");
+          }} />
         ) : page === "Settings" ? (
           <SettingsPage runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} agents={agentInstallations} agentError={agentInstallationError} refreshAgents={refreshAgentInstallations} agentProfiles={agentProfiles} agentProfileError={agentProfileError} agentBindings={agentBindings} agentBindingError={agentBindingError} agentActionMessage={agentActionMessage} agentActionError={agentActionError} agentActionBusy={agentActionBusy} onProbeCodex={probeCodexProfile} onProbeOpenCode={probeOpenCodeProfile} onRefreshAgentProfiles={() => refreshAgentProfiles(selectedWorkspaceId)} onRefreshAgentBindings={() => refreshAgentBindings(selectedWorkspaceId)} onCreateAgentBinding={createAgentBinding} onEnableAgentBinding={enableAgentBinding} runtimeBindings={runtimeBindings} runtimeBindingError={runtimeBindingError} runtimeBindingsLoading={runtimeBindingsLoading} runtimeEnrollmentBusy={runtimeEnrollmentBusy} runtimeEnrollmentMessage={runtimeEnrollmentMessage} runtimeEnrollmentError={runtimeEnrollmentError} onEnrollLocalRuntime={enrollLocalRuntime} onRefreshRuntimeBindings={() => refreshRuntimeBindings(selectedWorkspaceId)} workspaces={workspaces} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} setWorkspaceName={setWorkspaceName} createWorkspace={createWorkspace} workspaceCreateBusy={workspaceCreateBusy} selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={setSelectedWorkspaceId} onUpdatePolicy={updateWorkspacePolicy} policyBusy={workspacePolicyBusy} onSetDefaultAgentBinding={setWorkspaceDefaultAgent} defaultAgentBusy={workspaceDefaultAgentBusy} instructions={instructionText} onInstructionsChange={setInstructionText} instructionHistory={workspaceInstructions} instructionMessage={instructionMessage} instructionBusy={instructionBusy} onSaveInstructions={saveWorkspaceInstructions} latestInstructionsAfterConflict={latestInstructionsAfterConflict} onUseLatestInstructions={() => { setInstructionText(latestInstructionsAfterConflict ?? ""); setLatestInstructionsAfterConflict(null); }} />
         ) : (
@@ -1498,7 +1580,7 @@ function App() {
   );
 }
 
-function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, startRuntime, workspace, coworkerApi, coworkerSelection, onCoworkerSelectionChange, taskInputs, onRemoveTaskInput, onOpenLibrary, operatorReady, taskSaving, taskSaveError, hasPendingTaskSave, pendingTaskRetryMatches, onOpenPendingTask, onClearPendingTaskAfterReview, onSaveTask, onSettings, onOpenWork, onOpenTask }: { draft: string; onDraftChange: (value: string) => void; runtime: RuntimeStatus | null; runtimeError: string | null; runtimeBusy: boolean; startRuntime: () => Promise<void>; workspace: WorkspaceView | null; coworkerApi: ReturnType<typeof desktopCoworkerApi>; coworkerSelection: HomeCoworkerSelection | null; onCoworkerSelectionChange: (selection: HomeCoworkerSelection) => void; taskInputs: TaskInputSelection[]; onRemoveTaskInput: (resourceId: string) => void; onOpenLibrary: () => void; operatorReady: boolean; taskSaving: boolean; taskSaveError: string | null; hasPendingTaskSave: boolean; pendingTaskRetryMatches: boolean; onOpenPendingTask: () => void; onClearPendingTaskAfterReview: () => void; onSaveTask: (selection: HomeCoworkerSelection) => Promise<void>; onSettings: () => void; onOpenWork: () => void; onOpenTask: (taskId: string) => void }) {
+function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, startRuntime, workspace, coworkerApi, coworkerSelection, onCoworkerSelectionChange, taskInputs, onRemoveTaskInput, onOpenLibrary, operatorReady, taskSaving, taskSaveError, hasPendingTaskSave, pendingTaskRetryMatches, onOpenPendingTask, onClearPendingTaskAfterReview, onSaveTask, onSettings, onOpenCoworkers, onWorkspaceUpdated, onOpenWork, onOpenTask }: { draft: string; onDraftChange: (value: string) => void; runtime: RuntimeStatus | null; runtimeError: string | null; runtimeBusy: boolean; startRuntime: () => Promise<void>; workspace: WorkspaceView | null; coworkerApi: ReturnType<typeof desktopCoworkerApi>; coworkerSelection: HomeCoworkerSelection | null; onCoworkerSelectionChange: (selection: HomeCoworkerSelection) => void; taskInputs: TaskInputSelection[]; onRemoveTaskInput: (resourceId: string) => void; onOpenLibrary: () => void; operatorReady: boolean; taskSaving: boolean; taskSaveError: string | null; hasPendingTaskSave: boolean; pendingTaskRetryMatches: boolean; onOpenPendingTask: () => void; onClearPendingTaskAfterReview: () => void; onSaveTask: (selection: HomeCoworkerSelection) => Promise<void>; onSettings: () => void; onOpenCoworkers: () => void; onWorkspaceUpdated: (updated: WorkspacePrimaryReceipt) => void; onOpenWork: () => void; onOpenTask: (taskId: string) => void }) {
   const primaryCoworkerId = workspace?.primaryCoworkerId ?? null;
   const workspaceId = workspace?.workspaceId ?? "";
   const primaryCoworkerKey = workspace && primaryCoworkerId ? `${workspace.workspaceId}:${primaryCoworkerId}` : null;
@@ -1689,6 +1771,19 @@ function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, st
         <p>Save work in this Workspace. Saved Tasks are not sent to an agent yet.</p>
       </div>
 
+      {workspace?.status === "ACTIVE" && !primaryCoworkerId && operatorReady && coworkerRoster?.key === workspaceId && coworkerRoster.status === "READY" && <HomeCoworkerOnboarding
+        key={workspaceId}
+        api={coworkerApi}
+        workspaceId={workspaceId}
+        workspaceVersion={workspace.version}
+        items={coworkerRoster.items}
+        hasMore={coworkerRoster.nextCursor !== null}
+        disabled={taskSaving || hasPendingTaskSave}
+        onCreated={coworker => setCoworkerRoster(current => current?.key === workspaceId ? { ...current, items: [...current.items.filter(item => item.coworker_id !== coworker.coworker_id), coworker] } : current)}
+        onPrimary={onWorkspaceUpdated}
+        onManage={onOpenCoworkers}
+      />}
+
       <form className="composer-card" aria-label="Save a Task" onSubmit={(event) => { event.preventDefault(); if (currentSelection && selectionReady) void onSaveTask(currentSelection); }}>
         <div className="composer-recipient">
           <span>For</span>
@@ -1708,7 +1803,7 @@ function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, st
               {activeCoworkers.map(item => <option key={item.coworker_id} value={item.coworker_id}>{item.revision.name}{item.is_primary ? " · Primary" : ""}</option>)}
             </select>
           ) : <strong>{recipientLabel}</strong>}
-          {(primaryCoworkerId || activeCoworkers.length > 0) && <button type="button" className="text-button" onClick={onSettings}>Manage</button>}
+          {(primaryCoworkerId || activeCoworkers.length > 0) && <button type="button" className="text-button" onClick={onOpenCoworkers}>Manage</button>}
         </div>
         {coworkerRoster?.key === workspaceId && coworkerRoster.status === "LOADING" && <p className="composer-selection-note" role="status">Loading Coworkers in this Workspace…</p>}
         {coworkerRoster?.key === workspaceId && coworkerRoster.status === "UNAVAILABLE" && <p className="composer-selection-note" role="status">{coworkerRoster.error}</p>}
@@ -1770,12 +1865,12 @@ function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, st
         <div><h2>Recent work</h2><p>Persisted Tasks in the selected Workspace.</p></div>
         <button className="quiet-button" type="button" onClick={onOpenWork}>View all</button>
       </div>
-      <TaskListPanel workspaceId={selectedWorkspaceId} operatorReady={operatorReady} status={null} limit={5} compact onOpenTask={onOpenTask} />
+      <TaskListPanel workspaceId={workspaceId} operatorReady={operatorReady} status={null} limit={5} compact onOpenTask={onOpenTask} />
     </div>
   );
 }
 
-function WorkPage({ selectedWorkspaceId, workspaceName, resourceNameCache, artifactApi, operatorReady, initialTaskId }: { selectedWorkspaceId: string; workspaceName: string; resourceNameCache: Record<string, string>; artifactApi: ReturnType<typeof desktopArtifactApi>; operatorReady: boolean; initialTaskId: string | null }) {
+function WorkPage({ selectedWorkspaceId, workspaceName, resourceNameCache, artifactApi, coworkerApi, operatorReady, initialTaskId }: { selectedWorkspaceId: string; workspaceName: string; resourceNameCache: Record<string, string>; artifactApi: ReturnType<typeof desktopArtifactApi>; coworkerApi: ReturnType<typeof desktopCoworkerApi>; operatorReady: boolean; initialTaskId: string | null }) {
   const [status, setStatus] = useState<TaskStatus | "">("");
   const [openTaskId, setOpenTaskId] = useState<string | null>(initialTaskId);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -1809,12 +1904,13 @@ function TaskListPanel({ workspaceId, operatorReady, status, limit, compact = fa
   const [busy, setBusy] = useState(false);
   const [pageBusy, setPageBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshFailed, setRefreshFailed] = useState(false);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const generation = useRef(0);
   const queryKey = JSON.stringify([workspaceId, status, limit]);
   const visibleItems = loadedKey === queryKey ? items : [];
-  const stale = !operatorReady && loadedKey === queryKey && visibleItems.length > 0;
+  const stale = loadedKey === queryKey && visibleItems.length > 0 && (!operatorReady || refreshFailed);
 
   useEffect(() => {
     const currentGeneration = ++generation.current;
@@ -1822,6 +1918,7 @@ function TaskListPanel({ workspaceId, operatorReady, status, limit, compact = fa
     setPageBusy(false);
     setNextCursor(null);
     setError(null);
+    setRefreshFailed(false);
     if (!workspaceId) {
       setLoadedKey(null);
       setItems([]);
@@ -1854,9 +1951,11 @@ function TaskListPanel({ workspaceId, operatorReady, status, limit, compact = fa
       setNextCursor(page.nextCursor);
       setLoadedKey(queryKey);
       setLastLoadedAt(new Date().toISOString());
+      setRefreshFailed(false);
       setError(null);
     }).catch((failure) => {
       if (!active || generation.current !== currentGeneration) return;
+      setRefreshFailed(loadedKey === queryKey && items.length > 0);
       setError(typeof failure === "string" ? failure : "Task list could not be loaded from the local Runtime.");
     }).finally(() => {
       if (active && generation.current === currentGeneration) setBusy(false);
@@ -1885,14 +1984,14 @@ function TaskListPanel({ workspaceId, operatorReady, status, limit, compact = fa
   if (!workspaceId) return <div className="task-empty-state"><h2>Select a Workspace</h2><p>Choose or create a Workspace in Settings to browse its saved Tasks.</p></div>;
   return (
     <section className={`task-list-panel ${compact ? "compact" : ""}`} aria-label={compact ? "Recent Tasks" : "Task list"}>
-      {error && <p className={stale ? "task-stale-note" : "inline-error"} role="status">{error}{stale && lastLoadedAt ? ` Last loaded ${formatTaskTime(lastLoadedAt)}.` : ""}</p>}
+      {error && <p className={stale ? "task-stale-note" : "inline-error"} role="status">{stale ? `Showing the last Task list loaded ${lastLoadedAt ? formatTaskTime(lastLoadedAt) : "earlier"}. ${error}` : error}</p>}
       {busy && visibleItems.length === 0 ? <div className="task-loading" role="status">Loading saved Tasks…</div> : visibleItems.length > 0 ? (
         <>
           <ul className="task-list">
             {visibleItems.map((task) => <li key={task.taskId}>
               <button type="button" className="task-row" onClick={() => onOpenTask(task.taskId)}>
                 <span className={`task-status-mark status-${task.status.toLowerCase()}`} aria-hidden="true" />
-                <span className="task-row-content"><strong>{task.objective || "Untitled Task"}</strong><small>{taskStatusLabel(task.status)} · Updated {formatTaskTime(task.updatedAt)}</small></span>
+                <span className="task-row-content"><strong>{task.objective || "Untitled Task"}</strong><small>{taskStatusLabel(task.status)} · Task updated {formatTaskTime(task.updatedAt)}</small></span>
                 <span className="task-row-arrow" aria-hidden="true">›</span>
               </button>
             </li>)}
@@ -1926,6 +2025,7 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
   const objectiveEditTrigger = useRef<HTMLButtonElement | null>(null);
   const wasEditingObjective = useRef(false);
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
+  const [detailReload, setDetailReload] = useState(0);
   const generation = useRef(0);
   const readinessGeneration = useRef(0);
   const visibleTask = task?.taskId === taskId && task.workspaceId === workspaceId ? task : null;
@@ -1948,6 +2048,9 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
     setBusy(true);
     void invoke<TaskDetailView>("get_task", { workspaceId, taskId }).then((view) => {
       if (!active || generation.current !== currentGeneration) return;
+      if (view.workspaceId !== workspaceId || view.taskId !== taskId) {
+        throw new Error("Task details do not match the selected Workspace and Task.");
+      }
       setTask(view);
       setLastLoadedAt(new Date().toISOString());
       setError(null);
@@ -1959,7 +2062,7 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
       if (active && generation.current === currentGeneration) setBusy(false);
     });
     return () => { active = false; };
-  }, [workspaceId, taskId, operatorReady]);
+  }, [workspaceId, taskId, operatorReady, detailReload]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2023,20 +2126,18 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
     setPlanningReadinessError(null);
     setPlanningReadinessBusy(true);
     try {
-      const result = await invoke<TaskPlanningReadinessView>("get_task_planning_readiness", {
+      const result: unknown = await invoke("get_task_planning_readiness", {
         workspaceId,
         taskId,
         expectedTaskVersion: checkedTask.taskVersion,
       });
       if (readinessGeneration.current !== currentGeneration) return;
-      if (result.taskId !== taskId
-        || result.taskVersion !== checkedTask.taskVersion
-        || result.taskSpecRevision !== checkedTask.currentSpecRevision
-        || result.taskStatus !== checkedTask.status
-        || result.dispatchAvailable !== false
-        || result.planningStarted !== false
-        || result.agentSessionStarted !== false
-        || result.planCreated !== false) {
+      if (!isTaskPlanningReadinessFor(result, {
+        taskId,
+        taskVersion: checkedTask.taskVersion,
+        taskSpecRevision: checkedTask.currentSpecRevision,
+        taskStatus: checkedTask.status,
+      })) {
         throw new Error("Task changed or the Runtime returned an unsupported readiness result. Reload the Task and try again.");
       }
       setPlanningReadiness(result);
@@ -2138,9 +2239,9 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
             {planningReadiness && <div className="task-planning-readiness-result" role="status" aria-live="polite">
               <p>Checked {formatTaskTime(planningReadiness.observedAt)} for Task version {planningReadiness.taskVersion}.</p>
               {planningReadiness.blockers.length === 0
-                ? <p>No local preflight blocker was observed. Planning still cannot be started in this build.</p>
+                ? <p>{planningReadinessNoBlockersMessage(planningReadiness.blockers)}</p>
                 : <ul>{planningReadiness.blockers.map((blocker) => <li key={blocker}>{planningBlockerLabel(blocker)}</li>)}</ul>}
-              <p>Planning dispatch is unavailable; this result does not authorize or start work.</p>
+              {planningReadiness.blockers.length > 0 && <p>Planning dispatch is unavailable; this result does not authorize or start work.</p>}
             </div>}
           </section>}
           <details className="task-work-details">
@@ -2154,6 +2255,12 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
               {visibleTask.inputRefs.length === 0 ? <p>No inputs are pinned to this Task.</p> : <ul>{visibleTask.inputRefs.map((input) => <li key={resourceRefKey(input)}>
                 <strong>{resourceNameCache[resourceRefKey(input)] ?? `Resource ${input.resourceId}`}</strong>
                 <small>Exact revision pinned · {input.revisionId}</small>
+                <TaskResourceTextPreview workspaceId={workspaceId} input={{
+                  workspaceId: input.workspaceId,
+                  resourceId: input.resourceId,
+                  revisionId: input.revisionId,
+                  displayName: resourceNameCache[resourceRefKey(input)] ?? `Resource ${input.resourceId}`,
+                }} />
               </li>)}</ul>}
             </section>
             {visibleTask.currentPlanRevision !== null && <section className="task-plan-list" aria-label="Task plan steps">
@@ -2167,10 +2274,10 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
             </section>}
           </details>
           <TaskSpecRevisionHistory workspaceId={workspaceId} taskId={taskId} currentRevision={visibleTask.currentSpecRevision} operatorReady={operatorReady} taskBusy={busy} taskEditing={editingObjective || objectiveSaving || pendingEdit.current !== null} onRefreshTask={() => void reloadTask()} />
-          <TaskArtifactOutputs api={artifactApi} workspaceId={workspaceId} taskId={taskId} operatorReady={operatorReady} />
-          <TaskPresentationPanel workspaceId={workspaceId} taskId={taskId} taskVersion={visibleTask.taskVersion} operatorReady={operatorReady} />
+          <TaskArtifactOutputs key={`${workspaceId}:${taskId}`} api={artifactApi} workspaceId={workspaceId} taskId={taskId} operatorReady={operatorReady} />
+          <TaskPresentationPanel key={`${workspaceId}:${taskId}`} workspaceId={workspaceId} taskId={taskId} taskVersion={visibleTask.taskVersion} operatorReady={operatorReady} />
         </>
-      ) : busy ? null : <div className="task-empty-state"><h2>Task unavailable</h2><p>The Task could not be found in this Workspace, or the local Runtime could not return it.</p></div>}
+      ) : busy ? null : <div className="task-empty-state"><h2>Task details unavailable</h2><p>{error ?? "The Task could not be loaded from this Workspace."}</p><button className="quiet-button" type="button" onClick={() => setDetailReload(value => value + 1)} disabled={!operatorReady}>Retry Task details</button></div>}
     </section>
   );
 }
@@ -2274,17 +2381,13 @@ function SettingsPage({ runtime, runtimeError, runtimeBusy, startRuntime, refres
         </form>
         {workspaceError && <p className="inline-error" role="status">{workspaceError}</p>}
         {workspaces.length === 0 ? <p className="empty-inline">Create a local Workspace to organize resources and future work.</p> : (
-          <ul className="workspace-list">{workspaces.map((workspace) => <li key={workspace.workspaceId} className={selectedWorkspaceId === workspace.workspaceId ? "selected" : ""}><button type="button" onClick={() => onSelectWorkspace(workspace.workspaceId)} aria-pressed={selectedWorkspaceId === workspace.workspaceId}><strong>{workspace.name}</strong><span>{workspace.status} · {workspace.replicationPolicy.replaceAll("_", " ")}</span></button>{selectedWorkspaceId === workspace.workspaceId && <small>Selected</small>}</li>)}</ul>
+          <ul className="workspace-list">{workspaces.map((workspace) => <li key={workspace.workspaceId} className={selectedWorkspaceId === workspace.workspaceId ? "selected" : ""}><button type="button" onClick={() => onSelectWorkspace(workspace.workspaceId)} aria-pressed={selectedWorkspaceId === workspace.workspaceId}><strong>{workspace.name}</strong><span>{workspace.status} · {workspace.replicationPolicy === "LOCAL_ONLY" ? "this computer only" : "saved sync policy · inactive"}</span></button>{selectedWorkspaceId === workspace.workspaceId && <small>Selected</small>}</li>)}</ul>
         )}
         {selectedWorkspace && <div className="workspace-policy-form">
-          <label htmlFor="workspace-replication-policy">Cloud replication policy</label>
-          <select id="workspace-replication-policy" value={selectedWorkspace.replicationPolicy} disabled={policyBusy || selectedWorkspace.status !== "ACTIVE"} onChange={(event) => void onUpdatePolicy(event.target.value)}>
-            <option value="LOCAL_ONLY">This computer only</option>
-            <option value="METADATA_ONLY">Sync metadata</option>
-            <option value="ACTIVE_TASK_INPUTS">Sync active work inputs</option>
-            <option value="FULL_WORKSPACE">Sync the full Workspace</option>
-          </select>
-          <small>Cloud Runtime transfer is not connected yet. This setting is saved for the later cloud continuation stage.</small>
+          <strong>Workspace storage</strong>
+          {selectedWorkspace.replicationPolicy === "LOCAL_ONLY"
+            ? <><span className="status-pill muted">This computer only</span><small>V1 keeps this Workspace on this computer. Cloud continuation and remote Runtimes are not active.</small></>
+            : <><span className="status-pill muted">Saved policy · {selectedWorkspace.replicationPolicy.replaceAll("_", " ")} · inactive</span><small>This local V1 build does not transfer Workspace data to cloud or remote Runtimes. The saved policy is not being applied.</small><button className="quiet-button" type="button" disabled={policyBusy || selectedWorkspace.status !== "ACTIVE"} onClick={() => void onUpdatePolicy("LOCAL_ONLY")}>{policyBusy ? "Updating…" : "Set this computer only"}</button></>}
         </div>}
         {selectedWorkspace && <div className="workspace-instructions-form">
           <div className="section-heading">
@@ -2358,13 +2461,13 @@ function SettingsPage({ runtime, runtimeError, runtimeBusy, startRuntime, refres
         actionMessage={agentActionMessage}
         actionError={agentActionError}
         busyAction={agentActionBusy}
-        defaultAgentBusy={workspaceDefaultAgentBusy}
+        defaultAgentBusy={defaultAgentBusy}
         onRefresh={() => { void refreshAgents(); void onRefreshAgentProfiles(); void onRefreshAgentBindings(); }}
         onProbeCodex={() => { void onProbeCodex(); }}
         onProbeOpenCode={() => { void onProbeOpenCode(); }}
         onCreateBinding={(profile, leadEligible) => { void onCreateAgentBinding(profile, leadEligible); }}
         onEnableBinding={(binding) => { void onEnableAgentBinding(binding); }}
-        onSetDefaultLead={(agentBindingId) => { void setWorkspaceDefaultAgent(agentBindingId); }}
+        onSetDefaultLead={(agentBindingId) => { void onSetDefaultAgentBinding(agentBindingId); }}
       />
       <p className="settings-note">Operator API serving confirms the authenticated desktop connection only. The Runtime remains degraded until Task recovery and execution services are implemented; it does not yet accept work or start coding agents.</p>
     </div>
@@ -2399,7 +2502,7 @@ function PlaceholderPage({ page, onSettings }: { page: Page; onSettings: () => v
   );
 }
 
-function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, rootStatusRequestKeys, resourceIndexRequestKeys, workspaceVersion, operatorReady, resources, onRevisionCommitted, onRefreshResources, selectedTaskInputs, onToggleTaskInput, onClearTaskInputs, onUseSelectedInTask, nextCursor, pageBusy, onLoadMore, busy, pausePending, onPauseImport, message, onFiles, onPreview, onClosePreview, previewResourceId, previewResourceName, preview, previewError }: { selectedWorkspaceId: string; artifactApi: ReturnType<typeof desktopArtifactApi>; onOpenArtifactSource: (ref: PinnedResourceRef) => void; rootStatusRequestKeys: { current: Map<string, string> }; resourceIndexRequestKeys: { current: Map<string, string> }; workspaceVersion: number | null; operatorReady: boolean; resources: ResourceView[]; onRevisionCommitted: (resource: ResourceView) => void; onRefreshResources: () => void; selectedTaskInputs: TaskInputSelection[]; onToggleTaskInput: (resource: { resourceId: string; resourceRevisionId: string; displayName: string }) => void; onClearTaskInputs: () => void; onUseSelectedInTask: () => void; nextCursor: string | null; pageBusy: boolean; onLoadMore: () => Promise<void>; busy: boolean; pausePending: boolean; onPauseImport: () => void; message: string | null; onFiles: (files: FileList | null) => Promise<void>; onPreview: (resourceId: string, displayName: string, revisionId: string) => Promise<void>; onClosePreview: () => void; previewResourceId: string | null; previewResourceName: string | null; preview: string | null; previewError: string | null }) {
+function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, rootStatusRequestKeys, resourceIndexRequestKeys, workspaceVersion, operatorReady, resources, onRevisionCommitted, onRefreshResources, selectedTaskInputs, onToggleTaskInput, onClearTaskInputs, onUseSelectedInTask, nextCursor, pageBusy, onLoadMore, busy, pausePending, onPauseImport, message, onFiles, onPreview, onClosePreview, previewResourceId, previewResourceName, preview, previewHighlights, previewError }: { selectedWorkspaceId: string; artifactApi: ReturnType<typeof desktopArtifactApi>; onOpenArtifactSource: (ref: PinnedResourceRef) => void; rootStatusRequestKeys: { current: Map<string, string> }; resourceIndexRequestKeys: { current: Map<string, string> }; workspaceVersion: number | null; operatorReady: boolean; resources: ResourceView[]; onRevisionCommitted: (resource: ResourceView) => void; onRefreshResources: () => void; selectedTaskInputs: TaskInputSelection[]; onToggleTaskInput: (resource: { resourceId: string; resourceRevisionId: string; displayName: string }) => void; onClearTaskInputs: () => void; onUseSelectedInTask: () => void; nextCursor: string | null; pageBusy: boolean; onLoadMore: () => Promise<void>; busy: boolean; pausePending: boolean; onPauseImport: () => void; message: string | null; onFiles: (files: FileList | File[] | null, contextDocument?: ContextDocumentCreateMetadata | null) => Promise<void>; onPreview: (resourceId: string, displayName: string, revisionId: string, searchPin?: PreviewSearchPin) => Promise<void>; onClosePreview: () => void; previewResourceId: string | null; previewResourceName: string | null; preview: string | null; previewHighlights: SourceHighlightResult | null; previewError: string | null }) {
   const folderInput = useRef<HTMLInputElement>(null);
   const rootListGeneration = useRef(0);
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRootView[]>([]);
@@ -2411,6 +2514,7 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
   const [rootError, setRootError] = useState<string | null>(null);
   const [rootMessage, setRootMessage] = useState<string | null>(null);
   const searchRequest = useRef(0);
+  const [resourceIndexRefreshNonce, setResourceIndexRefreshNonce] = useState(0);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<ResourceSearchResultView[]>([]);
   const [searchCursor, setSearchCursor] = useState<string | null>(null);
@@ -2426,8 +2530,28 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
   const [saveAsError, setSaveAsError] = useState<string | null>(null);
   const [indexActionMessage, setIndexActionMessage] = useState<string | null>(null);
   const [indexActionError, setIndexActionError] = useState<string | null>(null);
+  const [indexRetryPin, setIndexRetryPin] = useState<{ workspaceId: string; resourceId: string; revisionId: string; contentDigest: string } | null>(null);
   const [dropActive, setDropActive] = useState(false);
+  const [contextNoteTitle, setContextNoteTitle] = useState("");
+  const [contextNoteBody, setContextNoteBody] = useState("");
+  const [contextNoteError, setContextNoteError] = useState<string | null>(null);
   const [revisionResource, setRevisionResource] = useState<ResourceView | null>(null);
+  const createWorkspaceNote = () => {
+    const title = contextNoteTitle.trim();
+    const body = contextNoteBody;
+    if (!selectedWorkspaceId || !title || !body.trim() || busy) return;
+    if (new TextEncoder().encode(body).byteLength > 64 * 1024) {
+      setContextNoteError("Workspace notes are limited to 64 KiB of UTF-8 text.");
+      return;
+    }
+    setContextNoteError(null);
+    const safeTitle = title.normalize("NFKC").replace(/[^\p{L}\p{N} _-]/gu, "-").replace(/\s+/gu, " ").replace(/^[-. ]+|[-. ]+$/gu, "").slice(0, 80) || "Workspace note";
+    const file = new File([body], `${safeTitle}.md`, { type: "text/markdown", lastModified: 0 });
+    void onFiles([file], {
+      kind: "WORKSPACE_NOTES",
+      owner_ref: { kind: "WORKSPACE", workspace_id: selectedWorkspaceId },
+    });
+  };
   useEffect(() => { folderInput.current?.setAttribute("webkitdirectory", ""); }, []);
   useEffect(() => {
     setQuery("");
@@ -2539,6 +2663,10 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
         throw new Error("The local Runtime returned a result for a different Resource revision.");
       }
       resourceIndexRequestKeys.current.delete(pendingKey);
+      setIndexRetryPin((current) => current?.workspaceId === selectedWorkspaceId
+        && current.resourceId === resource.resourceId
+        && current.revisionId === resource.resourceRevisionId
+        && current.contentDigest === resource.contentDigest ? null : current);
       setResourceIndexRefreshNonce((current) => current + 1);
       if (result.outcome === "INDEXED") {
         setIndexActionMessage(`Encrypted local text index rebuilt for “${resource.displayName}”.`);
@@ -2551,7 +2679,18 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
         setIndexActionMessage(`“${resource.displayName}” was not indexed because ${reason}.`);
       }
     } catch (error) {
-      setIndexActionError(typeof error === "string" ? error : error instanceof Error ? error.message : "The local text index could not be rebuilt.");
+      const message = typeof error === "string" ? error : error instanceof Error ? error.message : "The local text index could not be rebuilt.";
+      if (message.includes("Reload the Library")) {
+        setIndexRetryPin(null);
+      } else {
+        setIndexRetryPin({
+          workspaceId: selectedWorkspaceId,
+          resourceId: resource.resourceId,
+          revisionId: resource.resourceRevisionId,
+          contentDigest: resource.contentDigest,
+        });
+      }
+      setIndexActionError(message);
     } finally {
       setRebuildBusyResourceId(null);
     }
@@ -2765,8 +2904,8 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
       <section
         className={`resource-intake${dropActive ? " drop-active" : ""}${!selectedWorkspaceId ? " intake-disabled" : ""}`}
         aria-label="Add files to this Workspace"
-        onDragEnter={(event) => { event.preventDefault(); if (selectedWorkspaceId && !busy && event.dataTransfer.types.contains("Files")) setDropActive(true); }}
-        onDragOver={(event) => { event.preventDefault(); if (selectedWorkspaceId && !busy && event.dataTransfer.types.contains("Files")) event.dataTransfer.dropEffect = "copy"; }}
+        onDragEnter={(event) => { event.preventDefault(); if (selectedWorkspaceId && !busy && Array.from(event.dataTransfer.types).includes("Files")) setDropActive(true); }}
+        onDragOver={(event) => { event.preventDefault(); if (selectedWorkspaceId && !busy && Array.from(event.dataTransfer.types).includes("Files")) event.dataTransfer.dropEffect = "copy"; }}
         onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false); }}
         onDrop={(event) => { event.preventDefault(); setDropActive(false); if (selectedWorkspaceId && !busy && event.dataTransfer.files.length > 0) void onFiles(event.dataTransfer.files); }}
       >
@@ -2793,10 +2932,20 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
           <li>ZIP files are saved intact. Their contents are not unpacked.</li>
           <li>Up to 100 files and 100 MiB per selection; likely secret and generated files are skipped.</li>
         </ul>
+        <div className="context-note-create" aria-label="Create a Workspace note">
+          <h3>Write a Workspace note</h3>
+          <p>This creates a Workspace-scoped text Resource with revision history. It is not automatically sent to agents and does not enable semantic RAG.</p>
+          <label htmlFor="workspace-note-title">Title</label>
+          <input id="workspace-note-title" type="text" maxLength={80} value={contextNoteTitle} onChange={(event) => { setContextNoteTitle(event.currentTarget.value); setContextNoteError(null); }} placeholder="Project conventions" disabled={busy || !selectedWorkspaceId} />
+          <label htmlFor="workspace-note-body">Note</label>
+          <textarea id="workspace-note-body" value={contextNoteBody} onChange={(event) => { setContextNoteBody(event.currentTarget.value); setContextNoteError(null); }} maxLength={64 * 1024} rows={4} placeholder="Write a short note for this Workspace…" disabled={busy || !selectedWorkspaceId} />
+          <div className="context-note-footer"><small>Stored only in this Workspace. Maximum 64 KiB of UTF-8 text.</small><button className="quiet-button" type="button" disabled={!operatorReady || busy || !contextNoteTitle.trim() || !contextNoteBody.trim()} onClick={createWorkspaceNote}>Save Workspace note</button></div>
+          {contextNoteError && <p className="inline-error" role="alert">{contextNoteError}</p>}
+        </div>
       </section>
       {message && <p className="inline-status resource-intake-status" role="status" aria-live="polite">{message}</p>}
       {indexActionMessage && <p className="inline-status" role="status" aria-live="polite">{indexActionMessage}</p>}
-      {indexActionError && <p className="inline-error" role="alert">{indexActionError}</p>}
+      {indexActionError && <p className="inline-error" role="alert">{indexActionError}{indexRetryPin?.workspaceId === selectedWorkspaceId ? " Retry stays pinned to the same Resource revision in this desktop session." : ""}</p>}
       {saveAsMessage && <p className="inline-status" role="status" aria-live="polite">{saveAsMessage}</p>}
       {saveAsError && <p className="inline-error" role="alert">{saveAsError}</p>}
       {indexActionError?.includes("Reload the Library") && <button className="quiet-button" type="button" disabled={!operatorReady} onClick={() => { setIndexActionError(null); onRefreshResources(); }}>Reload files</button>}
@@ -2843,7 +2992,7 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
             {searchPageBusy && searchResults.length === 0 ? <p className="inline-status" role="status">{searchMode === "ON_DEMAND_CONTENT" ? "Scanning bounded local text…" : searchMode === "INDEXED_CONTENT" ? "Searching indexed local text…" : "Searching this Workspace…"}</p> : searchResults.length === 0 && !searchError ? <p className="empty-inline">{query.trim() ? `No saved files match “${query.trim()}” in the checked results.` : searchMode === "METADATA" ? "No saved files match the selected filters." : "Enter search terms to apply filters to content search."}</p> : <ul className="resource-list">{searchResults.map((result) => {
               const attached = selectedTaskInputs.find((input) => input.resourceId === result.resourceId);
               const exactRevisionAttached = attached?.revisionId === result.resourceRevisionId;
-              return <li key={result.resourceId}><span className="resource-file-icon" aria-hidden="true">▤</span><span><strong>{result.displayName}</strong><small>{result.matchReasons.map((reason) => reason === "MEDIA_TYPE" ? "Type match" : reason === "CONTENT_ON_DEMAND" ? "Text match · scanned now" : reason === "CONTENT_INDEXED" ? "Text match · local index" : "Name match").join(" · ") || "Saved Resource"} · {result.freshness.toLocaleLowerCase()}</small></span><span className={result.snippet ? "resource-search-snippet" : "resource-digest"}>{result.snippet ?? "Metadata match"}</span><button className="quiet-button" type="button" onClick={() => void onPreview(result.resourceId, result.displayName, result.resourceRevisionId)} aria-expanded={previewResourceId === result.resourceId}>Preview</button><button className="quiet-button" type="button" aria-pressed={exactRevisionAttached} onClick={() => onToggleTaskInput({ resourceId: result.resourceId, resourceRevisionId: result.resourceRevisionId, displayName: result.displayName })}>{exactRevisionAttached ? "Remove input" : attached ? "Use this revision" : "Add to Task"}</button></li>;
+              return <li key={result.resourceId}><span className="resource-file-icon" aria-hidden="true">▤</span><span><strong>{result.displayName}</strong><small>{result.matchReasons.map((reason) => reason === "MEDIA_TYPE" ? "Type match" : reason === "CONTENT_ON_DEMAND" ? "Text match · scanned now" : reason === "CONTENT_INDEXED" ? "Text match · local index" : "Name match").join(" · ") || "Saved Resource"} · {result.freshness.toLocaleLowerCase()}</small></span><span className={result.snippet ? "resource-search-snippet" : "resource-digest"}>{result.snippet ?? "Metadata match"}</span><button className="quiet-button" type="button" onClick={() => void onPreview(result.resourceId, result.displayName, result.resourceRevisionId, result.sourceMatches.length > 0 ? { contentDigest: result.sourceContentDigest, matches: result.sourceMatches } : undefined)} aria-expanded={previewResourceId === result.resourceId}>Preview</button><button className="quiet-button" type="button" aria-pressed={exactRevisionAttached} onClick={() => onToggleTaskInput({ resourceId: result.resourceId, resourceRevisionId: result.resourceRevisionId, displayName: result.displayName })}>{exactRevisionAttached ? "Remove input" : attached ? "Use this revision" : "Add to Task"}</button></li>;
             })}</ul>}
             {searchCursor && <div className="load-more-row"><button className="quiet-button" type="button" disabled={searchBusy} onClick={() => void loadMoreSearchResults()}>{searchBusy ? "Searching…" : "Load more results"}</button></div>}
           </> : <>
@@ -2852,13 +3001,24 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
               const isZip = resource.displayName.toLowerCase().endsWith(".zip") || resource.mediaType.toLowerCase().includes("zip");
               const attached = selectedTaskInputs.find((input) => input.resourceId === resource.resourceId);
               const exactRevisionAttached = attached?.revisionId === resource.resourceRevisionId;
-              return <li key={resource.resourceId}><span className="resource-file-icon" aria-hidden="true">▤</span><span><strong>{resource.displayName}</strong><small>{formatBytes(resource.sizeBytes)} · {isZip ? "ZIP archive stored intact" : resource.mediaType}</small></span><span className="resource-digest">{resource.contentDigest.slice(0, 19)}…</span>{previewable ? <button className="quiet-button" type="button" onClick={() => void onPreview(resource.resourceId, resource.displayName, resource.resourceRevisionId)} aria-expanded={previewResourceId === resource.resourceId}>Preview text</button> : <span className="resource-preview-unavailable" title={resource.sizeBytes > 1024 * 1024 ? "Text preview is limited to 1 MiB." : isZip ? "ZIP files are stored intact and are not extracted." : "Preview is available for text files only."}>{resource.sizeBytes > 1024 * 1024 ? "Over preview limit" : isZip ? "Not extracted" : "No text preview"}</span>}{resource.sizeBytes <= 10 * 1024 * 1024 ? <button className="quiet-button" type="button" disabled={!operatorReady || saveAsBusyResourceId !== null || busy} onClick={() => void saveResourceAs(resource)}>{saveAsBusyResourceId === resource.resourceId ? "Saving…" : "Save original…"}</button> : <span className="resource-preview-unavailable" title="Desktop Save As is limited to 10 MiB.">Over Save As limit</span>}<button className="quiet-button" type="button" disabled={!operatorReady || rebuildBusyResourceId !== null || busy} onClick={() => void rebuildResourceTextIndex(resource)}>{rebuildBusyResourceId === resource.resourceId ? "Rebuilding index…" : "Rebuild local text index"}</button><button className="quiet-button" type="button" onClick={() => setRevisionResource(resource)} aria-expanded={revisionResource?.resourceId === resource.resourceId}>History &amp; edit</button><button className="quiet-button" type="button" aria-pressed={exactRevisionAttached} onClick={() => onToggleTaskInput({ resourceId: resource.resourceId, resourceRevisionId: resource.resourceRevisionId, displayName: resource.displayName })}>{exactRevisionAttached ? "Remove input" : attached ? "Use this revision" : "Add to Task"}</button></li>;
+              const canRetryIndex = indexRetryPin?.workspaceId === selectedWorkspaceId
+                && indexRetryPin.resourceId === resource.resourceId
+                && indexRetryPin.revisionId === resource.resourceRevisionId
+                && indexRetryPin.contentDigest === resource.contentDigest;
+              return <li key={resource.resourceId}><span className="resource-file-icon" aria-hidden="true">▤</span><span><strong>{resource.displayName}</strong><small>{formatBytes(resource.sizeBytes)} · {isZip ? "ZIP archive stored intact" : resource.mediaType}</small></span><span className="resource-digest">{resource.contentDigest.slice(0, 19)}…</span>{previewable ? <button className="quiet-button" type="button" onClick={() => void onPreview(resource.resourceId, resource.displayName, resource.resourceRevisionId)} aria-expanded={previewResourceId === resource.resourceId}>Preview text</button> : <span className="resource-preview-unavailable" title={resource.sizeBytes > 1024 * 1024 ? "Text preview is limited to 1 MiB." : isZip ? "ZIP files are stored intact and are not extracted." : "Preview is available for text files only."}>{resource.sizeBytes > 1024 * 1024 ? "Over preview limit" : isZip ? "Not extracted" : "No text preview"}</span>}{resource.sizeBytes <= 10 * 1024 * 1024 ? <button className="quiet-button" type="button" disabled={!operatorReady || saveAsBusyResourceId !== null || busy} onClick={() => void saveResourceAs(resource)}>{saveAsBusyResourceId === resource.resourceId ? "Saving…" : "Save original…"}</button> : <span className="resource-preview-unavailable" title="Desktop Save As is limited to 10 MiB.">Over Save As limit</span>}<button className="quiet-button" type="button" disabled={!operatorReady || rebuildBusyResourceId !== null || busy} onClick={() => void rebuildResourceTextIndex(resource)}>{rebuildBusyResourceId === resource.resourceId ? "Rebuilding index…" : canRetryIndex ? "Retry index rebuild" : "Rebuild local text index"}</button><button className="quiet-button" type="button" onClick={() => setRevisionResource(resource)} aria-expanded={revisionResource?.resourceId === resource.resourceId}>History &amp; edit</button><button className="quiet-button" type="button" aria-pressed={exactRevisionAttached} onClick={() => onToggleTaskInput({ resourceId: resource.resourceId, resourceRevisionId: resource.resourceRevisionId, displayName: resource.displayName })}>{exactRevisionAttached ? "Remove input" : attached ? "Use this revision" : "Add to Task"}</button></li>;
             })}</ul>}
             {nextCursor && <div className="load-more-row"><button className="quiet-button" type="button" disabled={pageBusy} onClick={() => void onLoadMore()}>{pageBusy ? "Loading…" : "Load older files"}</button></div>}
           </>}
           {previewResourceId && <section className="resource-preview" aria-label="Resource text preview">
             <div className="section-heading"><h2>{previewResourceName ?? "Preview"}</h2><button className="quiet-button" type="button" onClick={onClosePreview}>Close preview</button></div>
-            {previewError ? <p className="inline-error" role="status">{previewError}</p> : preview === null ? <p className="inline-status" role="status">Loading preview…</p> : <pre className="resource-preview-content">{preview}</pre>}
+            {previewError ? <p className="inline-error" role="status">{previewError}</p> : preview === null ? <p className="inline-status" role="status">Loading preview…</p> : <>
+              {previewHighlights?.kind === "plain" && <p className="inline-status" role="status">Search matches could not be verified, so this exact revision is shown without highlights.</p>}
+              <pre className="resource-preview-content">{previewHighlights?.kind === "highlighted"
+                ? previewHighlights.segments.map((segment, index) => segment.terms.length > 0
+                  ? <mark key={`${segment.terms.join("-")}-${index}`} title={`Indexed term: ${segment.terms.join(", ")}`}>{segment.text}</mark>
+                  : <span key={`plain-${index}`}>{segment.text}</span>)
+                : preview}</pre>
+            </>}
           </section>}
           {revisionResource && <ResourceRevisionEditor resource={revisionResource} onClose={() => setRevisionResource(null)} onCommitted={(updated) => { onRevisionCommitted(updated); setRevisionResource(updated); }} />}
         </>

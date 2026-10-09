@@ -25,3 +25,4 @@ target/
 .venv/
 node_modules/
 dist/
+apps/litecowork-ui/src-tauri/gen/

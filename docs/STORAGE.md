@@ -27,8 +27,52 @@ time. A snapshot reads independent atomics and is best-effort under concurrent l
 cross-field transactional sample. These observations are ephemeral operational state,
 never persisted or replicated.
 
-`ResourceStore::read_resource_content_bounded` requires providers to check indexed
-revision size before reading/decrypting blob bytes. A provider must not implement this by
+### Task admission from a manual Routine run
+
+`SqliteWorkspaceStore::create_task` performs Routine-specific admission inside its existing
+`IMMEDIATE` Task creation transaction. When `TaskCreateCommit.routine_admission` is
+present, storage verifies the paired Task routine ID/revision and request identity, reads
+the Routine head/status and exact immutable revision in the selected Workspace, requires
+`ACTIVE` plus exact current revision, re-materializes bounded inputs from that revision,
+compares the proposed TaskSpec mapping, and then validates each pinned Resource revision
+and selected lead. Only after every guard succeeds can it insert Task, TaskSpecRevision,
+aggregate snapshot, conditional Routine provenance on `task.created.v1`, and the
+idempotency receipt. A conflict or invalid binding aborts the transaction; no partial Task
+or success receipt is retained. Ordinary non-Routine Task creation must not include
+Routine request fields or a Routine admission envelope.
+
+The RunRoutine receipt digest uses the exact `RunRoutine` request payload so retries
+remain identical even if Workspace defaults change after the first commit. Receipt lookup
+remains scoped to the authenticated principal/Workspace command boundary. The route
+authenticates and checks owner scope before replay. An exact retry may replay without
+requiring the Routine to remain current; a new key is revalidated against the current
+ACTIVE head.
+
+### Local Automation ManualTrigger admission
+
+The local owner ManualTrigger operation uses the same Task creation writer transaction,
+but has an AutomationOccurrence admission envelope in addition to the Routine admission.
+An exact owner/request/payload receipt is resolved before mutable dependency checks and is
+checked again inside the `IMMEDIATE` transaction to serialize concurrent submissions. A
+new request rechecks the active Workspace, exact current Automation/version and pinned
+Routine revision, non-DISABLED Automation status, one unambiguous ManualTrigger, Coworker
+state, local Runtime incarnation and active TRIGGER_HOST Workspace-binding version,
+eligible lead, bounded Routine bindings, and exact Resource pins. Any failure leaves no
+Task, occurrence, transition event, or success receipt.
+
+Occurrence snapshots are content-addressed aggregate-state blobs prepared alongside the
+Task snapshot. The transaction inserts PENDING/version 1, claims/version 2 with
+claim_epoch 1, creates the READY Task, then links it at STARTED/version 3/claim_epoch 1;
+all three occurrence events/snapshots, the Task event/snapshot, and request receipt commit
+together. Migration 11 persists the independent occurrence version and SQLite requires
+each later update to increase it exactly once. This path is one-shot only: it does not
+create/advance an AutomationCursor, enable the Automation, create a Plan, or start agent
+execution. The Automation page does not yet expose Run now; recurring TriggerCoordinator
+hosting and occurrence settlement remain unavailable.
+
+`ResourceStore::read_resource_content_bounded` accepts an optional immutable revision pin
+(omitted means current head) and requires providers to resolve that exact same-Resource,
+same-Workspace revision and check its indexed size before reading/decrypting blob bytes. A provider must not implement this by
 calling an unbounded read and checking the returned `Vec`; that would defeat the memory
 bound. Both bounded and trusted unbounded Resource reads check ContextDocument status at
 the SQLite read-admission boundary before returning a BlobRef to the caller: ordinary
@@ -49,8 +93,13 @@ The Operator reports unavailable content as `RESOURCE_LOCATION_UNAVAILABLE` and 
 content-integrity failures as `INTEGRITY_FAILURE`; a failed status recheck does not mask the
 original read failure.
 
-The desktop's bounded `ON_DEMAND_CONTENT` compatibility path reads current managed
-Resource blobs using the digest-verifying bounded read path. The local text-index path
+The desktop's bounded `ON_DEMAND_CONTENT` path reads an exact ResourceRevision from the
+local managed encrypted BlobStore using the digest-verifying bounded read path. For a
+historical revision, immutable revision metadata supplies its digest and length; the
+adapter does not follow the mutable current locator to obtain old bytes. A managed local
+provider must be available for the Resource and the content-addressed object must still
+exist. If not, the read fails as external or unavailable rather than substituting the
+current head. The local text-index path
 uses a distinct `RESOURCE_INDEX` BlobPurpose encrypted with the Workspace/purpose key and
 stores only its digest plus workspace-keyed HMAC term tokens in SQLite migration v7.
 Extracted text, query terms, and snippets are never stored as plaintext in SQLite. The
@@ -413,6 +462,7 @@ UNIQUE goal_task_links(goal_id, revision, task_id)
 UNIQUE goal_artifact_links(goal_id, revision, artifact_id, artifact_version)
 UNIQUE goal_routine_links(goal_id, revision, routine_id, routine_revision)
 UNIQUE automation_occurrences(automation_id, trigger_id, occurrence_key)
+`automation_occurrences.version` starts at 1 and advances exactly once per persisted transition; event/snapshot `entity_revision` equals `version`. `claim_epoch` is an independent worker fence and advances only on claim/reclaim.
 UNIQUE INDEX uq_suggestions_open_dedupe(workspace_id, dedupe_key) WHERE status = 'PROPOSED'
 INDEX suggestions(workspace_id, dedupe_key, resolved_at DESC) WHERE status = 'DISMISSED' # 30-day exact-key cooldown lookup
 PRIMARY KEY automation_cursors(automation_id, trigger_id)
@@ -454,6 +504,14 @@ AgentHostStore persists only Runtime-local AgentHostInstance lifecycle state; cr
 TASK_PLANNING admission commits a version-1 STARTING AgentSession, its complete aggregate-state blob reference, `agent.session.starting.v1`, and RequestId receipt in one transaction after rechecking Task/spec/lead, owner, enabled binding, endpoint binding, and current READY Runtime incarnation
 STARTING claims the unique planner slot but is not ready and cannot authorize planning tools; recovery enumeration includes stranded STARTING sessions across Runtime incarnations
 adapter startup occurs outside SQLite; activation must atomically commit AgentSession ACTIVE and first-planning Task RUNNING only after readiness
+
+The concrete desktop SQLite adapter currently fails closed before either operation. Both
+`start_task_planning_session` and `activate_task_planning_session` return
+`TASK_PLANNING_ISOLATION_UNAVAILABLE` until Runtime-owned isolation admission evidence is
+produced and rechecked at the storage boundary. Start rejection occurs before aggregate
+blob writes, session/event insertion, or RequestId receipt creation; activation rejection
+occurs before session lookup or Task mutation. The rows above describe the eventual storage
+contract and must not be read as evidence that planner admission is enabled.
 FOREIGN KEY capability_activations(runtime_id,runtime_incarnation_id) -> runtime_incarnations
 CapabilityActivation scope tuple must satisfy its tagged-union CHECK and point to the same Workspace as its scope entity
 CapabilityActivation scope, Runtime/incarnation, and CapabilityRef must match the session/invocation at admission
@@ -604,7 +662,7 @@ Atomic boundaries:
 - Artifact row + stable ARTIFACT Resource + initial ArtifactVersion/ResourceRevision v1 + input DependencyEdges + synchronized current-version/head pointers + Resource and Artifact events after content is committed
 - Later ResourceRevision/head + ArtifactVersion + input DependencyEdges + synchronized current-version/head pointers + both events after blob digest commit; update Artifact.current_version last so its trigger checks the matching Resource head
 - VerificationRun creation + paired exact ResourceInput refs/observed digests + reverse DependencyEdges + verification event/state blob
-- Artifact promotion/archive + aggregate version + transition event
+- Artifact promotion/archive + aggregate version + full Artifact state snapshot + transition event + principal-scoped idempotency receipt; an already-archived current-version archive writes only its no-op receipt
 - Approval resolution + policy/audit event
 - AutomationRevision append + current-revision pointer + event
 - AutomationOccurrence claim + pinned revision + Task creation reference
@@ -770,6 +828,39 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   if either contains rows; a dedicated provenance recovery workflow is not yet implemented.
 - migration 10 adds append-only Goal links to exact same-Workspace Artifact versions;
   unlinking is represented by a new Goal revision, never by deleting historical link rows.
+- migration 11 adds `AutomationOccurrence.version`, backfills from the latest durable
+  occurrence event revision (or 1 when none exists), and rejects any row update that does
+  not advance the aggregate version exactly once. This version is independent of
+  `claim_epoch`; only claim/reclaim changes the fencing epoch. Local ManualTrigger
+  admission checks the active TRIGGER_HOST Runtime incarnation and Workspace binding
+  version inside the same Task transaction, then atomically records PENDING v1, CLAIMED
+  v2, and STARTED v3 snapshots/events with matching `entity_revision` values.
+- migration 12 pins `PresentationPreference` on ConversationTurns (legacy rows default to
+  `AUTO`) and creates the immutable one-per-message `rich_presentations` table. Composite
+  Workspace/Conversation ownership and an insert guard require a committed same-Workspace
+  AGENT message. Updates/deletes are rejected. The table stores only bounded metadata and
+  a content-addressed BlobRef; canonical presentation bytes are not stored as SQLite text.
+  Its blob is a Workspace backup/GC reference root when present, but restore may omit a
+  missing enhancement and still restore semantic ConversationMessages.
+  The current isolated SQLite `RichPresentationStore` adapter qualifies only version-1
+  semantic `TEXT_SLICE`, `LAYOUT`, and `DIVIDER` documents with empty source/action
+  references. It checks the current Workspace owner before looking up the committed
+  AGENT message, requires ACTIVE Workspace status for publication (archived Workspace
+  reads remain owner-authorized), validates canonical semantic/document digests, exact UTF-8 slices and
+  per-block provenance, and atomically appends immutable metadata plus the publication
+  event. Document bytes use the distinct encrypted `RICH_PRESENTATION` BlobPurpose;
+  aggregate snapshots use `AGGREGATE_STATE`. Reads verify the document again. Missing
+  bytes leave the semantic Message intact. Host-bound/source-bearing blocks, HostSkill
+  provenance, ConversationMessage publication, Operator endpoints, and backup/GC
+  integration remain separate implementation work. The trusted Core publisher allocates
+  presentation/Event identities; agent intent and external clients cannot choose them.
+  The storage port returns the same opaque identity-unavailable error for ID/message
+  collisions without another Workspace identity or aggregate version.
+- migration 13 replaces `environment_identity_immutable` so Environment sharing scope and
+  Coworker/principal ownership, along with the existing immutable identity/configuration
+  fields, cannot be changed after creation. Lifecycle state (`status`, `health`, and
+  provider-reported `budget_enforcement`), `updated_at`, and `version` remain mutable under
+  their owning transition/version guards. The original migration definitions are unchanged.
 
 ### Routine and trigger Workspace integrity
 

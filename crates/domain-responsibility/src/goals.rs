@@ -167,7 +167,11 @@ pub struct GoalOwnerScope {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "command", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+#[serde(
+    tag = "command",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
 pub enum GoalCommand {
     Create {
         goal_id: String,
@@ -252,17 +256,16 @@ impl<S: GoalStore> GoalService<S> {
         }
         let fingerprint = fingerprint(&command)?;
         let scope = scope.clone();
+        let transaction_scope = scope.clone();
         self.store.transaction(&scope, &fingerprint, move |tx| {
-            decide(tx, &scope, command.clone())
+            decide(tx, &transaction_scope, command.clone())
         })
     }
 }
 
 pub fn validate_goal_revision(input: &GoalRevisionInput) -> Result<(), GoalError> {
     fn reference(value: &str) -> bool {
-        !value.trim().is_empty()
-            && value.len() <= 256
-            && !value.chars().any(char::is_control)
+        !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
     }
     fn strings(values: &[String], max_items: usize, max_chars: usize) -> bool {
         values.len() <= max_items
@@ -284,9 +287,10 @@ pub fn validate_goal_revision(input: &GoalRevisionInput) -> Result<(), GoalError
         || input.related_routine_refs.len() > 500
         || input.related_artifact_refs.len() > 500
         || input.related_task_ids.iter().any(|id| !reference(id))
-        || input.related_routine_refs.iter().any(|routine_ref| {
-            !reference(&routine_ref.routine_id) || routine_ref.revision == 0
-        })
+        || input
+            .related_routine_refs
+            .iter()
+            .any(|routine_ref| !reference(&routine_ref.routine_id) || routine_ref.revision == 0)
         || input.related_artifact_refs.iter().any(|artifact_ref| {
             !reference(&artifact_ref.workspace_id)
                 || !reference(&artifact_ref.artifact_id)
@@ -301,7 +305,9 @@ pub fn validate_goal_revision(input: &GoalRevisionInput) -> Result<(), GoalError
         .iter()
         .map(|reference| (&reference.routine_id, reference.revision))
         .collect();
-    let artifacts: std::collections::HashSet<_> = input.related_artifact_refs.iter()
+    let artifacts: std::collections::HashSet<_> = input
+        .related_artifact_refs
+        .iter()
         .map(|reference| (&reference.workspace_id, &reference.artifact_id))
         .collect();
     if tasks.len() != input.related_task_ids.len()
@@ -488,34 +494,58 @@ mod tests {
         assert_eq!(validate_goal_revision(&revision()), Ok(()));
         let mut duplicate = revision();
         duplicate.related_task_ids.push("task-1".to_owned());
-        assert_eq!(validate_goal_revision(&duplicate), Err(GoalError::InvalidDefinition));
+        assert_eq!(
+            validate_goal_revision(&duplicate),
+            Err(GoalError::InvalidDefinition)
+        );
         let mut invalid_revision = revision();
         invalid_revision.related_routine_refs[0].revision = 0;
-        assert_eq!(validate_goal_revision(&invalid_revision), Err(GoalError::InvalidDefinition));
+        assert_eq!(
+            validate_goal_revision(&invalid_revision),
+            Err(GoalError::InvalidDefinition)
+        );
         let mut invalid_text = revision();
         invalid_text.objective = "\nobjective".to_owned();
-        assert_eq!(validate_goal_revision(&invalid_text), Err(GoalError::InvalidDefinition));
+        assert_eq!(
+            validate_goal_revision(&invalid_text),
+            Err(GoalError::InvalidDefinition)
+        );
     }
 
     #[test]
     fn goal_status_transitions_are_explicit_and_archive_is_terminal() {
-        assert_eq!(check_goal_transition(GoalStatus::Active, GoalStatus::Paused), Ok(()));
-        assert_eq!(check_goal_transition(GoalStatus::Completed, GoalStatus::Active), Ok(()));
-        assert_eq!(check_goal_transition(GoalStatus::Archived, GoalStatus::Active), Err(GoalError::Archived));
-        assert_eq!(check_goal_transition(GoalStatus::Paused, GoalStatus::Paused), Err(GoalError::InvalidTransition));
+        assert_eq!(
+            check_goal_transition(GoalStatus::Active, GoalStatus::Paused),
+            Ok(())
+        );
+        assert_eq!(
+            check_goal_transition(GoalStatus::Completed, GoalStatus::Active),
+            Ok(())
+        );
+        assert_eq!(
+            check_goal_transition(GoalStatus::Archived, GoalStatus::Active),
+            Err(GoalError::Archived)
+        );
+        assert_eq!(
+            check_goal_transition(GoalStatus::Paused, GoalStatus::Paused),
+            Err(GoalError::InvalidTransition)
+        );
     }
 
     #[test]
     fn goal_version_uses_compare_and_swap_and_rejects_overflow() {
         assert_eq!(next_goal_version(4, 4), Ok(5));
         assert_eq!(next_goal_version(4, 3), Err(GoalError::VersionConflict));
-        assert_eq!(next_goal_version(u64::MAX, u64::MAX), Err(GoalError::VersionOverflow));
+        assert_eq!(
+            next_goal_version(u64::MAX, u64::MAX),
+            Err(GoalError::VersionOverflow)
+        );
     }
-
 }
 
 fn fingerprint(command: &GoalCommand) -> Result<String, GoalError> {
-    let bytes = serde_json_canonicalizer::to_vec(command).map_err(|_| GoalError::InvalidDefinition)?;
+    let bytes =
+        serde_json_canonicalizer::to_vec(command).map_err(|_| GoalError::InvalidDefinition)?;
     Ok(format!(
         "sha256:{}",
         hex::encode(sha2::Sha256::digest(bytes))

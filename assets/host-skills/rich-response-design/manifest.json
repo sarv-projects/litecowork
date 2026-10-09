@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "host_skill_id": "rich-response-design",
+  "version": "1.0.0",
+  "purpose": "RESPONSE_DESIGN",
+  "authority_class": "GUIDANCE_ONLY",
+  "content_digest": "sha256:7f6287aab3db6dc5f0a635cb8addf1298fe6ebc7090ad78250e294352ec855e5",
+  "requires_rich_presentation_schema": 1,
+  "allowed_session_scopes": ["CONVERSATION"]
+}

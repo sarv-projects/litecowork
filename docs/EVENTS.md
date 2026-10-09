@@ -144,7 +144,6 @@ workspace.instructions.revision.created.v1
 workspace.root.created.v1
 workspace.root.status.changed.v1
 agent.binding.created.v1
-agent.binding.changed.v1
 resource.created.v1
 resource.created.v2 # versioned provenance may include folder_import
 resource.revision.created.v1 # owner-authored immutable Resource revision append
@@ -159,9 +158,11 @@ resource.upload.status.changed.v1
 conversation.created.v1
 conversation.message.added.v1
 conversation.turn.created.v1
+conversation.turn.created.v2 # includes immutable PresentationPreference
 conversation.turn.retried.v1
 conversation.turn.resumed.v1
 conversation.turn.settled.v1
+rich.presentation.published.v1
 
 task.created.v1
 task.spec.revised.v1
@@ -326,7 +327,6 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `workspace.root.created` | `workspace_root_id`, `workspace_id`, `resource_id`, `location_id`, `added_by`, `aggregate_version` |
 | `workspace.root.status.changed` | `workspace_root_id`, `from`, `to`, `reason_code`, `aggregate_version` |
 | `resource.created` | `resource_id`, `workspace_id`, `kind`, `identity_digest?`, `provenance`, `context_document?` (safe kind/owner/status metadata only; new ContextDocuments start ACTIVE), `aggregate_version` |
-| `resource.created.v2` | Same creation fields; the closed provenance schema may include validated one-time `folder_import` metadata |
 | `resource.revision.created.v1` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `content_digest`, `size_bytes`, `media_type`, `created_by`, `aggregate_version` |
 | `resource.revision.observed` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `provider_revision?`, `content_digest?`, `observed_at` |
 | `resource.context_document.status.changed` | `resource_id`, `from`, `to`, `changed_by`, `purge_manifest_digest?`, `purge_target_count?`, `aggregate_version`; manifest fields are required when status changes to DELETION_PENDING or DELETED |
@@ -357,10 +357,10 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `conversation.created` | `conversation_id`, `created_by` |
 | `conversation.message.added` | `message_id`, `conversation_id`, `author`, `content_digest`, `resource_refs` |
 | `conversation.turn.created` | `turn_id`, `conversation_id`, `user_message_id`, `agent_binding_id`, `aggregate_version` |
+| `rich.presentation.published` | `presentation_id`, `conversation_id`, `message_id`, `schema_version`, `renderer_contract_version`, `semantic_content_digest`, `document_digest`, `document_size_bytes`, `producer_agent_session_id?`, `host_instruction_digest?`, `host_skill_refs[]`, `aggregate_version` |
 | `conversation.turn.retried` | `turn_id`, `prior_agent_session_id?`, `agent_session_id`, `retry_ordinal`, `aggregate_version` |
 | `conversation.turn.resumed` | `turn_id`, `user_request_id`, `prior_agent_session_id?`, `agent_session_id`, `aggregate_version` |
 | `conversation.turn.settled` | `turn_id`, `from`, `to`, `reason_code?`, `agent_session_id?`, `aggregate_version` |
-| `task.created` | `task_id`, `conversation_id?`, `origin_coworker_id` (nullable), `origin_coworker_revision` (nullable; paired with the Coworker ID), `initial_spec_revision`, `created_by` |
 | `task.spec.revised` | `task_id`, `revision`, `parent_revisions[]`, `spec_digest`, `authored_by` |
 | `task.plan.revised` | `task_id`, `revision`, `task_spec_revision`, `produced_by_agent_session_id`, `produced_by_attempt_id?`, `step_ids[]`, `aggregate_version` |
 | `task.lead_agent.changed` | `task_id`, `from_agent_binding_id`, `to_agent_binding_id`, `cause`, `actor`, `task_spec_revision`, `trigger_observation?`, `aggregate_version`; policy failover requires a typed, fresh trigger observation |
@@ -377,7 +377,6 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `attempt.failure.recorded` | `attempt_id`, `failure_code`, `failure_signature`, `retryable` |
 | `agent.session.*` | `agent_session_id`, `scope`, `task_spec_revision`, `agent_binding_id`, `endpoint_id`, `runtime_id`, `runtime_incarnation_id`, `session_state`, `reported_at` |
 | `agent.binding.changed` | `agent_binding_id`, `workspace_id`, `agent_profile_id`, `runtime_id?`, `from_enabled`, `to_enabled`, `aggregate_version`, `requested_by` |
-| `agent.binding.created` | `agent_binding_id`, `workspace_id`, `agent_profile_id`, `runtime_id?`, `from_enabled=false`, `to_enabled=false`, `aggregate_version=1`, `requested_by` |
 | `runtime.*` | `runtime_id`, `device_id?`, `availability`, `offers_digest?`, `key_version?` |
 | `provider.circuit.changed` | `runtime_id`, `provider_kind`, `provider_ref`, `from`, `to`, `failure_window_started_at?`, `consecutive_failures`, `open_until?`, `aggregate_version` |
 | `environment.created` | `environment_id`, `runtime_id`, `to`, `provider_kind`, `lifetime`, `from?`, `reason_code?`, `provision_preview_digest?` (mandatory when the lifetime value is WORKSPACE_PERSISTENT) |
@@ -400,11 +399,6 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `artifact.version.created` | `artifact_id`, `resource_id`, `version`, `resource_revision_id`, `input_refs[]`, `content_kind`, `content_digest?`, `storage_ref?`, `resource_ref?`, `provider_revision?`, `created_by_attempt?`, `aggregate_version` |
 | `artifact.library.promoted` | `artifact_id`, `from`, `to`, `aggregate_version` |
 | `artifact.library.archived` | `artifact_id`, `from`, `to`, `aggregate_version` |
-| `effect.proposed` | `effect_id`, `task_id`, `attempt_id`, `capability_invocation_id`, `execution_method`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal=0` |
-| `effect.observed` | common Effect fields, `observation_evidence_id` |
-| `effect.failed` | common Effect fields, `failure_code`, `failure_retryable`, `failure_digest?` |
-| `effect.ambiguous` | common Effect fields, `ambiguity_reason_digest` |
-| `effect.retry.authorized` | common Effect fields, `retry_evidence_id`, `retry_basis` |
 | other `effect.*` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
 | `evidence.created` | `evidence_id`, `task_id`, `subject_ref`, `level`, `kind`, `producer`, `payload_digest?` |
 | `verification.started` | `verification_run_id`, `task_id`, `criterion_id`, `task_spec_revision`, `criterion_digest`, `verifier_kind`, `verifier_version`, `subject_refs[]`, `inputs[]`, `status`, `evidence_refs[]`, `aggregate_version` |
@@ -424,16 +418,30 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `automation.created` | `automation_id`, `current_revision`, `status`, `aggregate_version` |
 | `automation.revision.created` | `automation_id`, `revision`, `definition_digest`, `authored_by`, `coworker_ref?` |
 | `automation.status.changed` | `automation_id`, `from`, `to`, `aggregate_version` |
-| `automation.occurrence.*` | `occurrence_id`, `automation_id`, `automation_revision`, `routine_id`, `routine_revision`, `trigger_id`, `trigger_host_runtime_id`, `occurrence_key`, `claim_epoch`, `claim_expires_at?`, `trigger_input_ref?`, `trigger_payload_digest?`, `task_id?`, `from?`, `to` |
+| `automation.occurrence.*` | `occurrence_id`, `automation_id`, `automation_revision`, `routine_id`, `routine_revision`, `trigger_id`, `trigger_host_runtime_id`, `occurrence_key`, `version`, `claim_epoch`, `claim_expires_at?`, `trigger_input_ref?`, `trigger_payload_digest?`, `task_id?`, `from?`, `to` |
 | `connection.state.changed` | `connection_id`, `from`, `to`, `provider_ref` |
 | `channel.binding.changed` | `channel_binding_id`, `connection_id?`, `from`, `to`, `assurance_level`, `allowed_actions[]` |
 | `channel.host.assignment.changed.v1` | `channel_binding_id`, `from_runtime_id?`, `runtime_id`, `host_epoch`, `status`, `ingress_continuity`, `ingress_gap_since?`, `aggregate_version` |
-| `channel.host.assignment.changed.v2` | v1 fields plus conditional `source_release_basis?`, `source_drain_proof_ref?`, `source_drain_proof_digest?`, `continuity_proof_ref?`, `continuity_proof_digest?`, `ingress_gap_decision?` |
 | `channel.inbound.received` | `channel_binding_id`, `provider_event_id`, `origin_runtime_id`, `origin_host_epoch`, `ingress_sequence`, `event_kind`, `payload_digest` |
 | `channel.receipt.changed` | `channel_binding_id`, `provider_event_id`, `claim_runtime_id`, `claim_host_epoch`, `from`, `to`, `claim_epoch`, `claim_expires_at?` |
 | `channel.outbound.settled` | `channel_binding_id`, `runtime_id`, `host_epoch`, `delivery_id`, `provider_event_id?`, `state`, `result_digest?` |
 | `handoff.*` | `handoff_id`, `task_id`, `step_id`, `source_attempt_id`, `source_runtime_id`, `target_runtime_id?`, `phase` |
 | `audit.record.created` | `audit_record_id`, `principal`, `action`, `decision`, `reason_code`, `payload_digest?` |
+| `agent.binding.created` | `agent_binding_id`, `workspace_id`, `agent_profile_id`, `runtime_id?`, `from_enabled`, `to_enabled`, `aggregate_version`, `requested_by` |
+| `channel.host.assignment.changed.v2` | `channel_binding_id`, `from_runtime_id?`, `runtime_id`, `host_epoch`, `status`, `ingress_continuity`, `ingress_gap_since?`, `source_release_basis?`, `source_drain_proof_ref?`, `source_drain_proof_digest?`, `continuity_proof_ref?`, `continuity_proof_digest?`, `ingress_gap_decision?`, `aggregate_version` |
+| `conversation.turn.created.v2` | `turn_id`, `conversation_id`, `user_message_id`, `agent_binding_id`, `aggregate_version`, `presentation_preference` |
+| `effect.acknowledged` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
+| `effect.ambiguous` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `ambiguity_reason_digest`, `dispatch_ordinal?` |
+| `effect.failed` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `failure_code`, `failure_digest?`, `failure_retryable`, `dispatch_ordinal?` |
+| `effect.observed` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `observation_evidence_id`, `dispatch_ordinal?` |
+| `effect.proposed` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal`, `capability_invocation_id`, `execution_method` |
+| `effect.reconciliation.started` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
+| `effect.retry.authorized` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `retry_evidence_id`, `retry_basis`, `dispatch_ordinal?` |
+| `effect.started` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
+| `effect.verified` | `effect_id`, `task_id`, `attempt_id`, `from?`, `to`, `operation`, `target_digest`, `dispatch_ordinal?` |
+| `resource.created.v2` | `resource_id`, `workspace_id`, `kind`, `identity_digest?`, `provenance`, `aggregate_version`, `context_document?` |
+| `resource.revision.created` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `content_digest`, `size_bytes`, `media_type`, `created_by`, `aggregate_version` |
+| `task.created` | `task_id`, `conversation_id?`, `initial_spec_revision`, `created_by`, `origin_coworker_id`, `origin_coworker_revision`, `routine_id?`, `routine_revision?`, `automation_id?`, `automation_occurrence_id?` |
 | `workspace.primary_coworker.changed` | `workspace_id`, `from_coworker_id`, `to_coworker_id`, `changed_by`, `aggregate_version` |
 | `suggestion.preference.changed` | `workspace_id`, `kind`, `from_muted`, `to_muted`, `changed_by`, `aggregate_version` |
 | `task.coworker.origin.pinned` | `task_id`, `coworker_id`, `coworker_revision`, `aggregate_version` |
@@ -558,6 +566,11 @@ Accepting a `TASK` Suggestion appends the ordinary `task.created.v1` event and
 transaction and Workspace event-sequence allocation. A receiving Runtime can therefore
 observe the linked Task and terminal Suggestion together; neither event is emitted if the
 transaction aborts. Acceptance creates only a `READY` Task and does not dispatch work.
+The Operator returns a separate bounded `SuggestionTaskAcceptanceReceipt`: the initial
+receipt is constructed from the same transaction's committed aggregate values, while an
+idempotent replay validates the persisted Task request receipt and accepted Suggestion
+together. The receipt is not another event and does not alter event payloads or sequence
+allocation.
 
 The revision digest in `goal.revised.v1` covers the complete immutable GoalRevision,
 including Task IDs, exact RoutineRevision references, and exact `ArtifactVersionRef`
@@ -573,6 +586,22 @@ did not report.
 Payloads never contain raw secret bytes, native hidden prompts, or unbounded terminal,
 video, or token streams. ResourceRef and digest carry large/sensitive payloads by
 reference.
+
+`rich.presentation.published.v1` belongs to the independent immutable RichPresentation
+aggregate. It binds one committed AGENT ConversationMessage using exact Conversation and
+Workspace identities, semantic/document digests, schema versions, bounded document size,
+optional AgentSession provenance, and non-secret HostSkill refs. The canonical document
+and BlobRef are in the aggregate-state record; the event does not duplicate the document.
+It is emitted only after the semantic message exists. It does not update or supersede
+`conversation.message.added.v1`, and may be replicated/applied later. A missing document
+blob leaves the rich aggregate pending/unavailable while semantic Conversation state stays
+usable. Per-token deltas, rich draft operations, renderer state, checklist state, downloads,
+and rendering telemetry are transient or local and never become DomainEvents.
+
+Legacy `conversation.turn.created.v1` records project `presentation_preference=AUTO`.
+New turn admission writes the versioned v2 payload; a preference change is not a later
+mutation of the turn. There is intentionally no message-event v2 for presentation and no
+event for renderer/checklist interaction state.
 
 For `channel.inbound.received.v1`, `ingress_sequence` is monotonic within the binding and
 origin host epoch. For `channel.receipt.changed.v1`, `PROCESSING -> PROCESSING` means only
@@ -660,6 +689,11 @@ ArtifactLibraryTransitionV1 {
   aggregate_version
 }
 ```
+
+Local Library commands append `artifact.library.promoted.v1` or
+`artifact.library.archived.v1` with the post-transition aggregate state and receipt in the
+same transaction. Recorded replay and fresh current-version already-archived archive do
+not append an event. No Resource revision event is produced by a Library-only transition.
 
 ## Event versioning
 

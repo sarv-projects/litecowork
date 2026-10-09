@@ -22,3 +22,5 @@ Superseded decisions remain available with an explicit successor reference.
 | [0019](0019-credential-egress-and-audit-boundaries.md) | Separate policy, approval, credentials, egress, and audit boundaries |
 | [0020](0020-runtime-identity-is-installation-scoped.md) | Runtime identity is installation-scoped; Workspace access uses explicit bindings |
 | [0021](0021-device-signing-identity.md) | Device identity uses OS-keystore-backed Ed25519 signing keys |
+| [0022](0022-rich-presentation-is-optional.md) | Rich presentation is optional; ConversationMessage remains semantic authority |
+| [0023](0023-host-guidance-is-not-capability-authority.md) | Built-in Host guidance is zero-authority context, not a capability |

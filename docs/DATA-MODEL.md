@@ -139,6 +139,7 @@ ConversationTurn {
   agent_session_id: AgentSessionId?  # current/most recent session; messages retain per-response provenance
   status: OPEN | RUNNING | WAITING_USER | WAITING_DEPENDENCY | COMPLETED | FAILED | CANCEL_REQUESTED | CANCELLED
   retry_ordinal: u32
+  presentation_preference: AUTO | SIMPLE | RICH
   created_at: Timestamp
   settled_at: Timestamp?
   version: u64
@@ -149,6 +150,45 @@ Messages are append-only; edits create a replacement/revision event rather than 
 
 Each submitted user turn is durable independently of whether it materializes a Task. The
 turn selects the active Conversation AgentBinding and owns its response lifecycle.
+`presentation_preference` is captured at turn admission, immutable across retries, and
+does not change functional host controls. Rich compilation is optional and does not delay
+ConversationMessage commit or turn settlement.
+
+## RichPresentation
+
+```text
+RichPresentation {
+  presentation_id: PresentationId
+  workspace_id: WorkspaceId
+  conversation_id: ConversationId
+  message_id: MessageId
+
+  schema_version: u32
+  renderer_contract_version: u32
+  semantic_content_digest: Sha256Digest
+
+  document_ref: BlobRef
+  document_digest: Sha256Digest
+  document_size_bytes: u64
+  # HostAssignedBlockProvenance[] is inside the immutable canonical document.
+
+  producer_agent_session_id?: AgentSessionId
+  host_instruction_digest?: Sha256Digest
+  host_skill_refs: HostSkillRef[]
+
+  created_at: Timestamp
+  version: 1
+}
+```
+
+At most one immutable version-1 RichPresentation may bind a committed AGENT
+ConversationMessage. The publisher verifies Workspace and Conversation ownership, message
+role, canonical semantic-content digest, document digest/size/schema, host-assigned
+per-block provenance, and every exact source ref. It is stored and replicated independently
+from ConversationMessage. Missing,
+unsupported, or corrupt presentation bytes never make the semantic message unavailable.
+See [`RICH-RESPONSE.md`](RICH-RESPONSE.md) and
+[`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md).
 
 ## Task
 
@@ -991,6 +1031,10 @@ Artifact {
   version: u64
 }
 
+Library promotion/archive increments `Artifact.version` only on a status transition.
+`current_version`, every ArtifactVersion, and the backing Resource head remain unchanged;
+a no-op archive or recorded retry never creates a content revision.
+
 ArtifactVersion {
   artifact_id: ArtifactId
   version: u64
@@ -1246,6 +1290,7 @@ AutomationRevision {
 
 AutomationOccurrence {
   occurrence_id: OccurrenceId
+  version: u64
   automation_id: AutomationId
   automation_revision: u64
   routine_id: RoutineId
@@ -1265,6 +1310,14 @@ AutomationOccurrence {
   created_at: Timestamp
   updated_at: Timestamp
 }
+
+`AutomationOccurrence.version` is the monotonically increasing aggregate revision and is the
+`aggregate_state_ref.entity_revision` for every occurrence event. Creation starts at
+version 1. Each persisted transition increments it exactly once, including claim,
+claim expiry/requeue, materialization, dependency wait/resume, and terminal settlement.
+`claim_epoch` is independent: it increments only when a PENDING occurrence is claimed
+or reclaimed, and remains unchanged on every other transition. A command must match both
+the expected `version` and (for claim-owned transitions) `claim_epoch`.
 
 AutomationCursor {
   automation_id: AutomationId

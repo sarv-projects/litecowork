@@ -109,6 +109,7 @@
     "ARTIFACT_ARCHIVED",
     "AUTOMATION_DISABLED",
     "AUTOMATION_NOT_FOUND",
+    "AUTOMATION_NOT_PAUSED",
     "AUTOMATION_REVISION_NOT_FOUND",
     "BUDGET_EXCEEDED",
     "CAPABILITY_UNAVAILABLE",
@@ -157,6 +158,7 @@
     "RATE_LIMITED",
     "RECOVERY_EXHAUSTED",
     "RESOURCE_CONFLICT",
+    "RESOURCE_CONTENT_EXTERNAL",
     "RESOURCE_LOCATION_UNAVAILABLE",
     "RESOURCE_REVISION_PARENT_MISMATCH",
     "RESOURCE_STALE",
@@ -201,6 +203,10 @@
     {
       "name": "agent_binding_changed",
       "sha256": "e57537927f3e5b193a4bb015b4850ac48a9c1396c60206c709e84d5ad3d3ec6a"
+    },
+    {
+      "name": "agent_binding_created",
+      "sha256": "e64578345e8b2952f34e2c717b6f6d36caf7bd542c702a769b874d2f2e1b3f30"
     },
     {
       "name": "agent_binding_lead_eligibility_changed",
@@ -280,19 +286,19 @@
     },
     {
       "name": "automation_occurrence_claimed",
-      "sha256": "543d50645c37d77c2304cd0c6e60beb0159d29885817ec528aeb8226c52161c9"
+      "sha256": "4cf98e494ed8e18e6379337f04abbb2547e41a2541ffa10bb2f35d2fe1bed2d3"
     },
     {
       "name": "automation_occurrence_created",
-      "sha256": "543d50645c37d77c2304cd0c6e60beb0159d29885817ec528aeb8226c52161c9"
+      "sha256": "4cf98e494ed8e18e6379337f04abbb2547e41a2541ffa10bb2f35d2fe1bed2d3"
     },
     {
       "name": "automation_occurrence_settled",
-      "sha256": "543d50645c37d77c2304cd0c6e60beb0159d29885817ec528aeb8226c52161c9"
+      "sha256": "4cf98e494ed8e18e6379337f04abbb2547e41a2541ffa10bb2f35d2fe1bed2d3"
     },
     {
       "name": "automation_occurrence_status_changed",
-      "sha256": "543d50645c37d77c2304cd0c6e60beb0159d29885817ec528aeb8226c52161c9"
+      "sha256": "4cf98e494ed8e18e6379337f04abbb2547e41a2541ffa10bb2f35d2fe1bed2d3"
     },
     {
       "name": "automation_revision_created",
@@ -336,7 +342,7 @@
     },
     {
       "name": "capability_invocation_dispatched",
-      "sha256": "25428cae3c9f20cf6600a54f1b2affeb1fdd68279a804fa261e6ab5a3a0167a5"
+      "sha256": "d406ad5563e36974fbb3fe83e66682ee926dbff4ff0b1315a9a7dae30e112dad"
     },
     {
       "name": "capability_invocation_status_changed",
@@ -353,6 +359,10 @@
     {
       "name": "channel_host_assignment_changed",
       "sha256": "5bf554a65fe59b0c2656991f51eacaa7cfba44592d6c1000e34942370b274007"
+    },
+    {
+      "name": "channel_host_assignment_changed_v2",
+      "sha256": "00bdcfe57cd3d09d2f38b9b72dad69b4d8cde179f5cc87cbb77b9305754bb716"
     },
     {
       "name": "channel_inbound_received",
@@ -381,6 +391,10 @@
     {
       "name": "conversation_turn_created",
       "sha256": "8bf35d8bc14f7f697e38d95d505bf4e27c82fb4e9bc054949b8cce110e149da0"
+    },
+    {
+      "name": "conversation_turn_created_v2",
+      "sha256": "1c705c193bcc6e6665c730dc01cbb27125be779b0d26344aae6cf861c066ea28"
     },
     {
       "name": "conversation_turn_resumed",
@@ -432,19 +446,19 @@
     },
     {
       "name": "effect_ambiguous",
-      "sha256": "44d8ab86b7025b866e4e34d88b19e7c9def8bfb4647d681c91495e1bebfddf05"
+      "sha256": "9a25c2056b4f5d5998d1e46d7e7e0638ec18e7c328da9ccad83cb8be739e743f"
     },
     {
       "name": "effect_failed",
-      "sha256": "44d8ab86b7025b866e4e34d88b19e7c9def8bfb4647d681c91495e1bebfddf05"
+      "sha256": "b00d640b64a77e3e66e77fcead081c9cf13834f5ca9400e0df8241511e8b6edf"
     },
     {
       "name": "effect_observed",
-      "sha256": "44d8ab86b7025b866e4e34d88b19e7c9def8bfb4647d681c91495e1bebfddf05"
+      "sha256": "462e3d7bf399b1e861ed17392b1db349748be466ba4ea47a0806a38090d36ce2"
     },
     {
       "name": "effect_proposed",
-      "sha256": "e0a1fbc513e766ad70b7183a06b3e774180dd49da3a00bd5d136ff94df5e8611"
+      "sha256": "3472ec7b15214616ab84dfa978bd2f4555dbd5f0ad36ca1c6e61a0b60e8c9dd6"
     },
     {
       "name": "effect_reconciliation_started",
@@ -452,7 +466,7 @@
     },
     {
       "name": "effect_retry_authorized",
-      "sha256": "44d8ab86b7025b866e4e34d88b19e7c9def8bfb4647d681c91495e1bebfddf05"
+      "sha256": "cc5eaf5598bb8d06e5e2904aaca67b2067952e4394b6c234102bd372136176ed"
     },
     {
       "name": "effect_started",
@@ -547,6 +561,10 @@
       "sha256": "bd43e1677f68696111062c1c662f66dd33c80e7810a1570bfbcdc8461afd7f2e"
     },
     {
+      "name": "resource_created_v2",
+      "sha256": "b58e617bd44ed415d6f341b429461998c80088df8c8d7ce21a1df8af87403bf8"
+    },
+    {
       "name": "resource_edge_created",
       "sha256": "bd52d2e22afa019adf1448910f8800e864eb858be05c38cf056b21c81e454f87"
     },
@@ -556,7 +574,11 @@
     },
     {
       "name": "resource_location_changed",
-      "sha256": "1362a49e448ef7faf74a6cc911649eef032ebc6ca9793a3111583b340933be5d"
+      "sha256": "c7b69a2c6172452978b67d0816eb3d5f96890fd31a66e61844c62d558df1817e"
+    },
+    {
+      "name": "resource_revision_created",
+      "sha256": "93582154fca34a6e5c02aeb719d85f486040b8f7156912d7e8f9740969835f8a"
     },
     {
       "name": "resource_revision_observed",
@@ -564,11 +586,15 @@
     },
     {
       "name": "resource_upload_created",
-      "sha256": "daceddfab864b006fbe710eb39fafa4a201e9109918902ed867f83062fc504a0"
+      "sha256": "de5ccfa72563dafe7d421eec184b0a757e52d7df0d6f957bd9edd4cb3ef7f482"
     },
     {
       "name": "resource_upload_status_changed",
       "sha256": "172afc3b681e50c72620893e93cec4ef22bd77ed6dc9ea103981a674ead997a6"
+    },
+    {
+      "name": "rich_presentation_published",
+      "sha256": "c894db36fe2a94f9d1491177d5d496639e36704c9e0d25bdf79cb1b9d1a44b9f"
     },
     {
       "name": "routine_created",
@@ -648,7 +674,7 @@
     },
     {
       "name": "task_created",
-      "sha256": "391b40c3974da970bcba34c6cdd1a3b934cc35797c17250aaf74e94123d49c3c"
+      "sha256": "82bb1b7d83b4e99efc84d06957fe3d147157d328bd5f423b2d74b028004d7138"
     },
     {
       "name": "task_lead_agent_changed",
@@ -728,7 +754,7 @@
     },
     {
       "name": "workspace_root_status_changed",
-      "sha256": "639071b975fade17be1aed763e41f6e39f1ea27365b21bcb318987140bc76498"
+      "sha256": "cec7cd370fcaf9a3716032ae2bc5f0244ad8c636f20d4391d13fb02bbddce2bc"
     }
   ],
   "event_schema_definition_digests": [
@@ -757,12 +783,24 @@
       "sha256": "89eefef9cd2450067ba47e916b289456b8e0c807099c28d6da16f9962ef87e83"
     },
     {
+      "name": "channel_host_continuity_proof_ref",
+      "sha256": "2a09a17ac0a44f08cbf5058fa193dde79ce864a10f61d5786d8bff1c8e245965"
+    },
+    {
+      "name": "channel_host_drain_proof_ref",
+      "sha256": "b2f16afc7c66fe0048a6077abb653e92d96b17403657bd27723c00a9d51d2409"
+    },
+    {
       "name": "error_code",
-      "sha256": "bcda43e6ebc9f736ada9c5bb232ae55ab8d723ea11da1f7bf1dda4453c08186d"
+      "sha256": "8c5d6b1aec3647b2f6795e04aca7632546d004b52f4b64f17d09fae38d66fd90"
+    },
+    {
+      "name": "folder_import_metadata",
+      "sha256": "2728efd3805166348b2474d33e4a662901d19aab7eb4d529b5e472d88e3386a3"
     },
     {
       "name": "payloads",
-      "sha256": "5724c1de76a46729521e95f121b1b74d6895d61f3ed52ea0d64942af567600bc"
+      "sha256": "dfadef742c4b23b8ae0b05f52ed6fbe34196843716a2e0f2ab91432a24383b2f"
     },
     {
       "name": "pinned_resource_ref",
@@ -779,6 +817,10 @@
     {
       "name": "provenance_record",
       "sha256": "fb9fcf3fa6d7510049699734e2a35ba507f103bd66e011d979b8ab4948323ca5"
+    },
+    {
+      "name": "provenance_record_v2",
+      "sha256": "67ed9ccf034276060704b61e4d89c24951cf9c2a2e767e2d619ea032aa6d4a3d"
     },
     {
       "name": "provenance_transformation",
@@ -812,12 +854,16 @@
     "blocker",
     "capability_grant_scope",
     "capability_ref",
+    "channel_host_continuity_proof_ref",
+    "channel_host_drain_proof_ref",
     "error_code",
+    "folder_import_metadata",
     "payloads",
     "pinned_resource_ref",
     "principal_or_service_ref",
     "principal_ref",
     "provenance_record",
+    "provenance_record_v2",
     "provenance_transformation",
     "resource_input",
     "resource_ref",
@@ -827,6 +873,7 @@
   ],
   "event_schema_payloads": [
     "agent_binding_changed",
+    "agent_binding_created",
     "agent_binding_lead_eligibility_changed",
     "agent_session_closed",
     "agent_session_harness_descriptor_pinned",
@@ -865,6 +912,7 @@
     "capability_lock_created",
     "channel_binding_changed",
     "channel_host_assignment_changed",
+    "channel_host_assignment_changed_v2",
     "channel_inbound_received",
     "channel_outbound_settled",
     "channel_receipt_changed",
@@ -872,6 +920,7 @@
     "conversation_created",
     "conversation_message_added",
     "conversation_turn_created",
+    "conversation_turn_created_v2",
     "conversation_turn_resumed",
     "conversation_turn_retried",
     "conversation_turn_settled",
@@ -913,12 +962,15 @@
     "resource_context_document_purge_acknowledged",
     "resource_context_document_status_changed",
     "resource_created",
+    "resource_created_v2",
     "resource_edge_created",
     "resource_invalidation_created",
     "resource_location_changed",
+    "resource_revision_created",
     "resource_revision_observed",
     "resource_upload_created",
     "resource_upload_status_changed",
+    "rich_presentation_published",
     "routine_created",
     "routine_revision_created",
     "routine_status_changed",
@@ -962,11 +1014,13 @@
   ],
   "event_type_registry": [
     "agent.binding.changed.v1",
+    "agent.binding.created.v1",
     "agent.binding.lead_eligibility.changed.v1",
     "agent.session.closed.v1",
     "agent.session.harness_descriptor.pinned.v1",
     "agent.session.lost.v1",
     "agent.session.started.v1",
+    "agent.session.starting.v1",
     "approval.requested.v1",
     "approval.resolved.v1",
     "approval.use.consumed.v1",
@@ -1000,6 +1054,7 @@
     "capability.lock.created.v1",
     "channel.binding.changed.v1",
     "channel.host.assignment.changed.v1",
+    "channel.host.assignment.changed.v2",
     "channel.inbound.received.v1",
     "channel.outbound.settled.v1",
     "channel.receipt.changed.v1",
@@ -1007,6 +1062,7 @@
     "conversation.created.v1",
     "conversation.message.added.v1",
     "conversation.turn.created.v1",
+    "conversation.turn.created.v2",
     "conversation.turn.resumed.v1",
     "conversation.turn.retried.v1",
     "conversation.turn.settled.v1",
@@ -1048,12 +1104,15 @@
     "resource.context_document.purge.acknowledged.v1",
     "resource.context_document.status.changed.v1",
     "resource.created.v1",
+    "resource.created.v2",
     "resource.edge.created.v1",
     "resource.invalidation.created.v1",
     "resource.location.changed.v1",
+    "resource.revision.created.v1",
     "resource.revision.observed.v1",
     "resource.upload.created.v1",
     "resource.upload.status.changed.v1",
+    "rich.presentation.published.v1",
     "routine.created.v1",
     "routine.revision.created.v1",
     "routine.status.changed.v1",
@@ -1100,7 +1159,7 @@
       "method": "GET",
       "operationId": "listAgentBindings",
       "path": "/agent-bindings",
-      "sha256": "4fff29991e509afa30d7f5db28258fc8397bd706c19f5a1b6d82edf9ef461573"
+      "sha256": "eb72bf587110cd3a0ef5a862e1051471ee83dc1bfd314e7a93458f2759c085e9"
     },
     {
       "method": "POST",
@@ -1146,9 +1205,21 @@
     },
     {
       "method": "GET",
+      "operationId": "listLocalAgentInstallations",
+      "path": "/agent-installations",
+      "sha256": "5692a5af214a9caba5ba860cbe7b95905e4ea4c32e6d843483af35f3e3e262f0"
+    },
+    {
+      "method": "GET",
       "operationId": "listAgentProfiles",
       "path": "/agent-profiles",
-      "sha256": "02a5cb84af2581e71b40ac63971a5e5a7374728f499bdba469dfdde6e95c9c8a"
+      "sha256": "cfd385a7cc91beaba0ee6fb514da49be83a9f3bab907a03a98912878d12ece8f"
+    },
+    {
+      "method": "POST",
+      "operationId": "probeLocalAgentProfile",
+      "path": "/agent-profiles/probe",
+      "sha256": "f8df609e04663fc59bfbdbce8369da0a291825c2eb350810e75c2e4868c6914b"
     },
     {
       "method": "GET",
@@ -1172,37 +1243,49 @@
       "method": "GET",
       "operationId": "listArtifacts",
       "path": "/artifacts",
-      "sha256": "83399c78480a70dd98995c274d50300dbe7b9c82dffcf9e91903a1731a6a3d9c"
+      "sha256": "5299f3c9627a4643d486f2cbe9c4cdf3273ff406bf79c9f88bc3b2fc5f83f35f"
     },
     {
       "method": "GET",
       "operationId": "getArtifact",
       "path": "/artifacts/{artifactId}",
-      "sha256": "48781077a61ac451faa0038ba5c0dcb72092b5e0e78bd76f9d5da92f6bde84f3"
+      "sha256": "aca31d0c2f5aae89ef94f03f6d450d1b094240546b0a4faebb61d105aba1dd05"
     },
     {
       "method": "POST",
       "operationId": "archiveArtifact",
       "path": "/artifacts/{artifactId}/archive",
-      "sha256": "80ff4b2ef321b7f6676eda28b4cd6975c80a34f30beb3afb129fe285b7e8109d"
+      "sha256": "5fe06023b20811fc9fda9b099caead324935ba8a33c6a345c478a2fad562b5c3"
+    },
+    {
+      "method": "GET",
+      "operationId": "getArtifactTextEditHead",
+      "path": "/artifacts/{artifactId}/edit-head",
+      "sha256": "d9c4dc3c8a725c8fdfea4d66b2cb2a972a729339d84aea3c91fba71d2afbbe91"
     },
     {
       "method": "POST",
       "operationId": "promoteArtifact",
       "path": "/artifacts/{artifactId}/promote",
-      "sha256": "ab6e1de4416c6f8b9620c2a476fd3447739233445e2a7adb71f533ff36e26c97"
+      "sha256": "8c82625daab6b4683dac79e509cb0a44b5dc3f0cccc84457c9f212418e06366e"
+    },
+    {
+      "method": "POST",
+      "operationId": "appendArtifactTextVersion",
+      "path": "/artifacts/{artifactId}/text-version",
+      "sha256": "0f8bdee607c1dce0eba349d6cbf448e843f5feef471be419e8e48fa94c12c5fe"
     },
     {
       "method": "GET",
       "operationId": "getArtifactVersion",
       "path": "/artifacts/{artifactId}/versions/{version}",
-      "sha256": "82a9c15426edbfef5e4bf0345cf16ce3898775904dbd852b326c526052d2399b"
+      "sha256": "f1d8f77127b02c287ca64466524d310353fdc25eab47743185cd3305ad39a041"
     },
     {
       "method": "GET",
       "operationId": "downloadArtifactVersion",
       "path": "/artifacts/{artifactId}/versions/{version}/content",
-      "sha256": "8d8f41b813da676e14068618ae150142dbc094ab29aba6367e05e5cf1b00e79c"
+      "sha256": "7cc799e5f017c73457b6b137ceb3f5f5b5ba7a26cdda696acd77ab14f3e87f04"
     },
     {
       "method": "GET",
@@ -1226,7 +1309,7 @@
       "method": "PATCH",
       "operationId": "updateAutomation",
       "path": "/automations/{automationId}",
-      "sha256": "83c5b02905979850d6b4c8bf19bcd22d2d6f52d6053631b23ebf5839b0fbc427"
+      "sha256": "dd582fa69d2828e94d9f9a2e1c684ed8b08bb1ae805e6d996d01f58abd8be9cb"
     },
     {
       "method": "POST",
@@ -1256,13 +1339,19 @@
       "method": "GET",
       "operationId": "listAutomationRevisions",
       "path": "/automations/{automationId}/revisions",
-      "sha256": "ba3f047deb9c3360cd571f0bddab6a0ddd7f4baeb6c59180678ee76730b604f1"
+      "sha256": "6d2d5532ea3cb5023aab9670beafd74a0f5bb2608db55c35b97142c5f822a774"
     },
     {
       "method": "POST",
       "operationId": "runAutomationNow",
       "path": "/automations/{automationId}/run",
-      "sha256": "09acb6826e2c125aa241c307523c821a72527b6fe85b505c756ad3ed9fa99db4"
+      "sha256": "8b864a972a88f321cb22b70262ae9be38e07b18f7680127c8a131c7e9d88219a"
+    },
+    {
+      "method": "GET",
+      "operationId": "getZipIntakeReadiness",
+      "path": "/capabilities/zip-intake",
+      "sha256": "3df6ba917dcba97e2b186265dc77c00bf9425697fb8252609d86dd08f856588e"
     },
     {
       "method": "POST",
@@ -1304,7 +1393,7 @@
       "method": "POST",
       "operationId": "reassignChannelHost",
       "path": "/channel-bindings/{channelBindingId}/host-assignment",
-      "sha256": "a133fb8075a36a9f506fb8c109530c2c792b508ac2128c9e7de3a31d1a26c362"
+      "sha256": "756f2b7da754e78c90eb897573d5f765c84be905dc4765e5a1908dbfca97053e"
     },
     {
       "method": "POST",
@@ -1353,6 +1442,12 @@
       "operationId": "appendConversationMessage",
       "path": "/conversations/{conversationId}/messages",
       "sha256": "6340aeb5560e02289566c3eaa3a18fc99bcd258ad5ca6f95da305d00d7a58102"
+    },
+    {
+      "method": "GET",
+      "operationId": "getConversationPresentation",
+      "path": "/conversations/{conversationId}/presentation",
+      "sha256": "be3cada669d259a08c917b7e03a4fa6e465355be4dd45dc71022db0bd2e7d139"
     },
     {
       "method": "GET",
@@ -1409,6 +1504,12 @@
       "sha256": "e8439cb5b8434862101777261253ccc3f4dc3551153c536eb46e365f44645c05"
     },
     {
+      "method": "GET",
+      "operationId": "getCoworkerRevision",
+      "path": "/coworkers/{coworkerId}/revisions/{revision}",
+      "sha256": "d40762ba81586b4e3c154dcea1dcc43e1d1dfad389ea7547fe1ed1692aadc4fa"
+    },
+    {
       "method": "POST",
       "operationId": "changeCoworkerStatus",
       "path": "/coworkers/{coworkerId}/status",
@@ -1424,7 +1525,7 @@
       "method": "POST",
       "operationId": "createDelegationProfile",
       "path": "/delegation-profiles",
-      "sha256": "fa2fcd309070e81d1222c9fad034bae8ff870ac885d6f5de997f1f3defc85263"
+      "sha256": "14b1d29330d021f6ffe4a1e66e993207ff0804953e40a775ce9a935eec874f08"
     },
     {
       "method": "GET",
@@ -1460,7 +1561,7 @@
       "method": "POST",
       "operationId": "changeDelegationProfileStatus",
       "path": "/delegation-profiles/{delegationProfileId}/status",
-      "sha256": "5d2e534c3ed627569b7dec5e62b007ec60aa528cd1d93f4a4378ebfde98a3fe7"
+      "sha256": "3746a0d8800652b0e35361d4b336c9228988db05f21dd53cb0da97636bd77ed6"
     },
     {
       "method": "POST",
@@ -1514,7 +1615,7 @@
       "method": "GET",
       "operationId": "listGoals",
       "path": "/goals",
-      "sha256": "10b157345059476fb6aed738e81b8aca85ae760b0df58b837073c85fec778397"
+      "sha256": "b7aa7e8c3d55ba691a49fd1775914e8aa2471198d0157c030df5944406576e28"
     },
     {
       "method": "POST",
@@ -1526,7 +1627,7 @@
       "method": "GET",
       "operationId": "getGoal",
       "path": "/goals/{goalId}",
-      "sha256": "ea9b8752cda88988794609234f09b7168172f56088d95a6fae1802359ecbb2c0"
+      "sha256": "2da9c08a9a0880d45ace8beef6da50300893e6f488c60ac8808a630a137e8bd3"
     },
     {
       "method": "POST",
@@ -1544,7 +1645,7 @@
       "method": "GET",
       "operationId": "listLibrary",
       "path": "/library",
-      "sha256": "f9dcdb871728ea19715a9170e8a69c2ea7054b4259797142af894b5b2a7e3142"
+      "sha256": "b8a731e094116cbc10434d97f9593678add9e417b3433661ec0f371dcf6a3e96"
     },
     {
       "method": "GET",
@@ -1571,6 +1672,12 @@
       "sha256": "fc91974ed4e418893ecdd53b2857384efc687f59c749ae974a5b1b04ff9066f6"
     },
     {
+      "method": "GET",
+      "operationId": "getLocalOperatorReadiness",
+      "path": "/operator/readiness",
+      "sha256": "960f631d05ec72d609579af7a09cce9b0a7d0585ae4e3e21ecf7b5b9a62b0338"
+    },
+    {
       "method": "POST",
       "operationId": "restoreWorkspaceBackup",
       "path": "/recovery/backups/{backupId}/restore",
@@ -1580,19 +1687,19 @@
       "method": "GET",
       "operationId": "listLocalResources",
       "path": "/resources",
-      "sha256": "60b06e634638698ea603519e74ae8049a297c16e7f445b18ce45b4e48585c78f"
+      "sha256": "574fdccdc65031039ad29d59bd94a6d91767a0bbb0f020b232a3889c9dbc7393"
     },
     {
       "method": "POST",
       "operationId": "quickImportResource",
       "path": "/resources/quick-import",
-      "sha256": "4426ff33ef08144bf38651eefb8b9d5fa7910dbbcd62244e5ca111fa5e6b5b06"
+      "sha256": "3dba582ba13c8e8241dad46b1d77f285421beec6450bc1cc0f72e9ee3c222c5e"
     },
     {
       "method": "GET",
       "operationId": "searchResources",
       "path": "/resources/search",
-      "sha256": "6c5af1ab893fb5803ab04ffa2360187056ac127f60cdeb5a9f50ef73a7f87233"
+      "sha256": "eaf7d096c737b0ad75ac69ed4391f4f31fc7ef4ef2245bbb30cb281993f95a33"
     },
     {
       "method": "POST",
@@ -1628,7 +1735,7 @@
       "method": "GET",
       "operationId": "readLocalResourceContent",
       "path": "/resources/{resourceId}/content",
-      "sha256": "6e918f0a4a3f5e0cf7f28150b79ae4ee40edce36d4abf698f85fdbf3d2f63967"
+      "sha256": "38f327b4d1bf1e6b2bb5c4b326ab87750688f5cd00e6b888007651e33fb4ffa3"
     },
     {
       "method": "GET",
@@ -1640,7 +1747,7 @@
       "method": "PATCH",
       "operationId": "setContextDocumentStatus",
       "path": "/resources/{resourceId}/context-document/status",
-      "sha256": "f2655242629308fa43f31cf97e70ee35dc4774f8d874d272d7fc4dd2c312a7d7"
+      "sha256": "fc707854e1e30efb189589ca9c022e15daa0cfccb1917f4cdb212eed0bc7e775"
     },
     {
       "method": "GET",
@@ -1664,7 +1771,19 @@
       "method": "GET",
       "operationId": "listResourceRevisions",
       "path": "/resources/{resourceId}/revisions",
-      "sha256": "b7f1887cb16b25544f0fe6f23dd75aed40b5e6306b22e11d87b9a0eefb7a03c7"
+      "sha256": "7f9c3668433e30ec17b24f9935bb3996b3395ce093a41c3c9625176aebb5aa1c"
+    },
+    {
+      "method": "POST",
+      "operationId": "rebuildResourceTextIndex",
+      "path": "/resources/{resourceId}/text-index/rebuild",
+      "sha256": "d846a12d8670bb42442af642d06717cbb869fe4de20b6ee608dfe3004af835fc"
+    },
+    {
+      "method": "GET",
+      "operationId": "getRichPresentation",
+      "path": "/rich-presentations/{presentationId}",
+      "sha256": "d2a83d2c3e7132ea23805c0d5dfa9a35ee626ad7c7a370d4630d19c94636c0f0"
     },
     {
       "method": "GET",
@@ -1712,7 +1831,7 @@
       "method": "POST",
       "operationId": "runRoutine",
       "path": "/routines/{routineId}/run",
-      "sha256": "d13dbffb2328d901dadfe07849a48bda57690a91923d409fac6a58f8ea392e0e"
+      "sha256": "ca7991e846e0ca178848a1d1a38fe6f583555523678aa821ed1dfcc8d873e9b1"
     },
     {
       "method": "GET",
@@ -1806,9 +1925,15 @@
     },
     {
       "method": "POST",
+      "operationId": "acceptSuggestionTask",
+      "path": "/suggestions/{suggestionId}/accept-task",
+      "sha256": "0054760bf6a1d9e2a53a681f885d49f94bf4396101fd4eef5e69b8b73eab3f4e"
+    },
+    {
+      "method": "POST",
       "operationId": "resolveSuggestion",
       "path": "/suggestions/{suggestionId}/resolve",
-      "sha256": "103aa3c5d8d29e6d5dd769727d333815e4fb7e08f2223316e102ba155d6e3715"
+      "sha256": "1a5be0eea2da80128dd12d4a4aa4f38a0eb568817ad7c6b11078812e59797e0e"
     },
     {
       "method": "POST",
@@ -1820,25 +1945,25 @@
       "method": "GET",
       "operationId": "listTasks",
       "path": "/tasks",
-      "sha256": "861d74289a225ab92b527514985dde3b64f9d9bb6b4daf5c955d3ff3b75b7e65"
+      "sha256": "6d3b3926c3142dada1eb2779e43372440fc7cee220ad889d278f2a9d89eb9b87"
     },
     {
       "method": "POST",
       "operationId": "createTask",
       "path": "/tasks",
-      "sha256": "632638d335dde5cda08ae1b00e321c4f9e16224927a1df0ff049e13506054231"
+      "sha256": "d9ae863346f195919950363f41aa35c154e56de57f0a41f9523a3ce01fc33b10"
     },
     {
       "method": "GET",
       "operationId": "getTask",
       "path": "/tasks/{taskId}",
-      "sha256": "5b9bb5fc6be998a81926cb91914e2c71f16178c919bb27df4fdff8b7bc15de48"
+      "sha256": "966fc636604598df281503ac6c4fe7170cfba49f3532df53a81dc4ec5e55a305"
     },
     {
       "method": "GET",
       "operationId": "listTaskArtifacts",
       "path": "/tasks/{taskId}/artifacts",
-      "sha256": "f514fc3a301ddcea6e49066afdb1af35e79584dabcebfa339b6a1ebcd6e7a4c5"
+      "sha256": "ca3b43a5f3380fdf819320c632a6dcd8eff7013a6ef6a049f63815c3880e9227"
     },
     {
       "method": "GET",
@@ -1893,6 +2018,24 @@
       "operationId": "listPlanRevisions",
       "path": "/tasks/{taskId}/plan-revisions",
       "sha256": "e029dce47253e28a9a12a23091bbb7e39b386a01e2f47eb22c42c29eb4a6ba83"
+    },
+    {
+      "method": "POST",
+      "operationId": "submitTaskPlan",
+      "path": "/tasks/{taskId}/plan-revisions",
+      "sha256": "dd279ed9262f591d2979a2fbf30b883773f5e92fc6a9073c7aade98b18e5aec4"
+    },
+    {
+      "method": "GET",
+      "operationId": "getTaskPlanningReadiness",
+      "path": "/tasks/{taskId}/planning-readiness",
+      "sha256": "ae2e42376c1fe72c7d8942039ff1e3426949db7680645ab0ffcfa6984ea72257"
+    },
+    {
+      "method": "GET",
+      "operationId": "getTaskPresentation",
+      "path": "/tasks/{taskId}/presentation",
+      "sha256": "1232f0805bc7a88deb4977e57a2f809d060bafb9a187d2cdb41c20277d74eeb3"
     },
     {
       "method": "GET",
@@ -1994,7 +2137,7 @@
       "method": "GET",
       "operationId": "listWorkspaceRoots",
       "path": "/workspace-roots",
-      "sha256": "bf31256e5c724ba9a0270b4ed777f2c3b9a9d841ee192b9269199b83a27e58eb"
+      "sha256": "0e2f99e2b8383139a60bc709b4e630eed72933498c607219503bdaf6a0d464ea"
     },
     {
       "method": "POST",
@@ -2012,13 +2155,13 @@
       "method": "POST",
       "operationId": "pauseWorkspaceRoot",
       "path": "/workspace-roots/{rootId}/pause",
-      "sha256": "5a697cd7b6d02a3ce5c1ca947212a1b77bd73f2d2ce6e247b6686bdc2d67c982"
+      "sha256": "0b6e0fb9b2ec85b3e0dbc5a00c7f26b405ac5888879819194d023ef4f3788ac4"
     },
     {
       "method": "POST",
       "operationId": "resumeWorkspaceRoot",
       "path": "/workspace-roots/{rootId}/resume",
-      "sha256": "8b6ddc4cb5180a8e1c811adfece44da9d25070f48e6df2bd3fb8ca9a414c1689"
+      "sha256": "0d5a8477bdb10089f5e0e249d4b2a557013afadc2a98dee1221e63073ef13f20"
     },
     {
       "method": "POST",
@@ -2132,7 +2275,7 @@
       "method": "GET",
       "operationId": "listWorkspaceInstructionRevisions",
       "path": "/workspaces/{workspaceId}/instructions/revisions",
-      "sha256": "1841c0804e05c8ccf1d66703a380d06bae9a1f54a52de8963b7e2de9c76d5ff4"
+      "sha256": "731d304f78c3c9cc2f7efebe84a7745d8aa89cfb49e9aea8b0e33d7ce9385cdd"
     },
     {
       "method": "POST",
@@ -2148,15 +2291,39 @@
     },
     {
       "method": "GET",
+      "operationId": "listWorkspaceRuntimeBindings",
+      "path": "/workspaces/{workspaceId}/runtime-bindings",
+      "sha256": "8c9775d0483d3f824a785cc66bb49cf02b58a4a61f9f8ed19ca85376c3a24937"
+    },
+    {
+      "method": "GET",
+      "operationId": "getCurrentLocalRuntimeWorkspaceBinding",
+      "path": "/workspaces/{workspaceId}/runtime-bindings/current-local",
+      "sha256": "dc9fabd96b6fdb8ecc315e2a03626b725fe5eeb59d24a702d2d8a8f858b5344b"
+    },
+    {
+      "method": "POST",
+      "operationId": "enrollLocalRuntimeInWorkspace",
+      "path": "/workspaces/{workspaceId}/runtime-bindings/local-enrollment",
+      "sha256": "8a376ab1433c90d3fbea0ce517ce0089d52437d8ade9173d3f33746c4c0ef7c2"
+    },
+    {
+      "method": "POST",
+      "operationId": "revokeWorkspaceRuntimeBinding",
+      "path": "/workspaces/{workspaceId}/runtime-bindings/{bindingId}/revoke",
+      "sha256": "1808373b4e7b17e6405a6faebd4139b0aa5a8622234c6a7a79ad7050639c4078"
+    },
+    {
+      "method": "GET",
       "operationId": "listSuggestionPreferences",
       "path": "/workspaces/{workspaceId}/suggestion-preferences",
-      "sha256": "3e46d44aa6e0229d3e35cf6e4bdcc96df6ca807c01b2bfa68fc64a5f6646b3a0"
+      "sha256": "274798380ab5c73dc769ab8b23016e86b4fe921d12f24ca314ca802a3ea7589d"
     },
     {
       "method": "PUT",
       "operationId": "setSuggestionPreference",
       "path": "/workspaces/{workspaceId}/suggestion-preferences/{kind}",
-      "sha256": "8f9031865b7684a53e594fbda213d4060fa6e98eb4942a3c29bb85e7fb0d0dc8"
+      "sha256": "5e49ed1214c99398bc9f31f3e9ceab30ec2e2bbf7458a35f1302ae028ec5cad8"
     }
   ],
   "operator_operation_unreachable_schemas": [],
@@ -2203,8 +2370,18 @@
     },
     {
       "method": "GET",
+      "operationId": "listLocalAgentInstallations",
+      "path": "/agent-installations"
+    },
+    {
+      "method": "GET",
       "operationId": "listAgentProfiles",
       "path": "/agent-profiles"
+    },
+    {
+      "method": "POST",
+      "operationId": "probeLocalAgentProfile",
+      "path": "/agent-profiles/probe"
     },
     {
       "method": "GET",
@@ -2237,9 +2414,19 @@
       "path": "/artifacts/{artifactId}/archive"
     },
     {
+      "method": "GET",
+      "operationId": "getArtifactTextEditHead",
+      "path": "/artifacts/{artifactId}/edit-head"
+    },
+    {
       "method": "POST",
       "operationId": "promoteArtifact",
       "path": "/artifacts/{artifactId}/promote"
+    },
+    {
+      "method": "POST",
+      "operationId": "appendArtifactTextVersion",
+      "path": "/artifacts/{artifactId}/text-version"
     },
     {
       "method": "GET",
@@ -2300,6 +2487,11 @@
       "method": "POST",
       "operationId": "runAutomationNow",
       "path": "/automations/{automationId}/run"
+    },
+    {
+      "method": "GET",
+      "operationId": "getZipIntakeReadiness",
+      "path": "/capabilities/zip-intake"
     },
     {
       "method": "POST",
@@ -2378,6 +2570,11 @@
     },
     {
       "method": "GET",
+      "operationId": "getConversationPresentation",
+      "path": "/conversations/{conversationId}/presentation"
+    },
+    {
+      "method": "GET",
       "operationId": "listConversationTasks",
       "path": "/conversations/{conversationId}/tasks"
     },
@@ -2420,6 +2617,11 @@
       "method": "POST",
       "operationId": "reviseCoworker",
       "path": "/coworkers/{coworkerId}/revisions"
+    },
+    {
+      "method": "GET",
+      "operationId": "getCoworkerRevision",
+      "path": "/coworkers/{coworkerId}/revisions/{revision}"
     },
     {
       "method": "POST",
@@ -2557,6 +2759,11 @@
       "path": "/notifications"
     },
     {
+      "method": "GET",
+      "operationId": "getLocalOperatorReadiness",
+      "path": "/operator/readiness"
+    },
+    {
       "method": "POST",
       "operationId": "restoreWorkspaceBackup",
       "path": "/recovery/backups/{backupId}/restore"
@@ -2635,6 +2842,16 @@
       "method": "GET",
       "operationId": "listResourceRevisions",
       "path": "/resources/{resourceId}/revisions"
+    },
+    {
+      "method": "POST",
+      "operationId": "rebuildResourceTextIndex",
+      "path": "/resources/{resourceId}/text-index/rebuild"
+    },
+    {
+      "method": "GET",
+      "operationId": "getRichPresentation",
+      "path": "/rich-presentations/{presentationId}"
     },
     {
       "method": "GET",
@@ -2753,6 +2970,11 @@
     },
     {
       "method": "POST",
+      "operationId": "acceptSuggestionTask",
+      "path": "/suggestions/{suggestionId}/accept-task"
+    },
+    {
+      "method": "POST",
       "operationId": "resolveSuggestion",
       "path": "/suggestions/{suggestionId}/resolve"
     },
@@ -2825,6 +3047,21 @@
       "method": "GET",
       "operationId": "listPlanRevisions",
       "path": "/tasks/{taskId}/plan-revisions"
+    },
+    {
+      "method": "POST",
+      "operationId": "submitTaskPlan",
+      "path": "/tasks/{taskId}/plan-revisions"
+    },
+    {
+      "method": "GET",
+      "operationId": "getTaskPlanningReadiness",
+      "path": "/tasks/{taskId}/planning-readiness"
+    },
+    {
+      "method": "GET",
+      "operationId": "getTaskPresentation",
+      "path": "/tasks/{taskId}/presentation"
     },
     {
       "method": "GET",
@@ -3038,6 +3275,26 @@
     },
     {
       "method": "GET",
+      "operationId": "listWorkspaceRuntimeBindings",
+      "path": "/workspaces/{workspaceId}/runtime-bindings"
+    },
+    {
+      "method": "GET",
+      "operationId": "getCurrentLocalRuntimeWorkspaceBinding",
+      "path": "/workspaces/{workspaceId}/runtime-bindings/current-local"
+    },
+    {
+      "method": "POST",
+      "operationId": "enrollLocalRuntimeInWorkspace",
+      "path": "/workspaces/{workspaceId}/runtime-bindings/local-enrollment"
+    },
+    {
+      "method": "POST",
+      "operationId": "revokeWorkspaceRuntimeBinding",
+      "path": "/workspaces/{workspaceId}/runtime-bindings/{bindingId}/revoke"
+    },
+    {
+      "method": "GET",
       "operationId": "listSuggestionPreferences",
       "path": "/workspaces/{workspaceId}/suggestion-preferences"
     },
@@ -3048,6 +3305,10 @@
     }
   ],
   "operator_schema_digests": [
+    {
+      "name": "AcceptSuggestionTaskRequest",
+      "sha256": "99334726611ccf58a148b0814696bfa6fe08c1b2d027e946beccf5a74331c9aa"
+    },
     {
       "name": "AcceptanceCriterion",
       "sha256": "102914fcb19f2dbf64de1531632a7dd1c78953e2c9158f8e6526a8cf7a1d3ff7"
@@ -3062,7 +3323,7 @@
     },
     {
       "name": "AgentBinding",
-      "sha256": "fdadc983ebb6c94ae0a464f286ae0111a4c7b3b445c16f5f272711e869edcb02"
+      "sha256": "709826c67c11d376c583fc765118098699f11f8fb03b45a4468e36932783ee76"
     },
     {
       "name": "AgentBindingPage",
@@ -3089,12 +3350,20 @@
       "sha256": "e676e0569c186d577caa1d752604a7642ea99728cbb5fffa14ae68252bfc795b"
     },
     {
+      "name": "AgentInstallation",
+      "sha256": "556c7ae74f3ef16b801328a50a6277d4c4dbad1e66b67a4415d577a7112bf5b7"
+    },
+    {
+      "name": "AgentInstallationPage",
+      "sha256": "13806eaa4c3988f3eb7d31b792664b68b4c20182e05c70116b8d707cb11fcdff"
+    },
+    {
       "name": "AgentProfile",
       "sha256": "cfd0439cb526a5064a4314e5067dc6db01ed51ce1b6a46312b30a266bf62c5c6"
     },
     {
       "name": "AgentProfileObservation",
-      "sha256": "9cc20b783e2fc2a4b699d02bb33f741eda4c87cf9e6e6777d9416d9acb653b4e"
+      "sha256": "a14bad93756c7471b4e508fb9e4256123e3638b7049fe3e418e3800b2e534c28"
     },
     {
       "name": "AgentProfilePage",
@@ -3111,6 +3380,10 @@
     {
       "name": "ApiError",
       "sha256": "0b3122d929192cc11ff3cedbcae00e853ae70e66658970ab07319e15b442c58e"
+    },
+    {
+      "name": "AppendArtifactTextVersionRequest",
+      "sha256": "f27a06fd89af0a85cb1bd04be971962ef465748637fb8dfc5d04a668562b3789"
     },
     {
       "name": "AppendMessageRequest",
@@ -3141,6 +3414,14 @@
       "sha256": "315ce43806be941936762a885a6e66e13b2ece146e7c0cc1d87ba5a3227d4e13"
     },
     {
+      "name": "ArtifactTextEditHead",
+      "sha256": "22f7eba1f9a13f90679d46b0f98a169e601f32d13135c9c9b9210a1c3f776855"
+    },
+    {
+      "name": "ArtifactTextVersionAppendResponse",
+      "sha256": "6965630419055325a2018dc16d6205cadce1aed5867ccf32c5475f23a12fbc19"
+    },
+    {
       "name": "ArtifactVersion",
       "sha256": "a98d0dca495730d99d20832ce6f382bdeb3708fb5a77c7c8e154c97c5298afa8"
     },
@@ -3166,7 +3447,7 @@
     },
     {
       "name": "AutomationOccurrence",
-      "sha256": "a0dc70f1dc4a005f4bebaac2d99f58a7438f9924d27a5f8db60e618bcf19dd13"
+      "sha256": "ae14ca338158b0b9bb773d7e33c997d7bfe46f3affda09ed8311f4cc68554c97"
     },
     {
       "name": "AutomationOccurrencePage",
@@ -3242,7 +3523,7 @@
     },
     {
       "name": "ChannelBinding",
-      "sha256": "08e9525c0951874947a538a9a22bc94c92c06b7eb5eb87c48ee01187cd0babd3"
+      "sha256": "7a2a21d5199cef241ffdbd8b60015d4c2b10414dac6bc9d63f057fcb1f16b538"
     },
     {
       "name": "ChannelBindingPage",
@@ -3254,7 +3535,19 @@
     },
     {
       "name": "ChannelHostAssignment",
-      "sha256": "b0a189a19d7ef313901b5f9f3cf7096361cdf3d1d0ab49bec21072bec705b651"
+      "sha256": "6fd982fdd12283e07ebdaeaf4bfe445ba12541a104743b3ae4fcdbc7f112c904"
+    },
+    {
+      "name": "ChannelHostContinuityProofRef",
+      "sha256": "148a692177e755fe3e94186fdc196dcb814caed274b54160157ff1f8e5327e33"
+    },
+    {
+      "name": "ChannelHostDrainProofRef",
+      "sha256": "a9181d2327825d5ea32272c7a3b79018ac664cef4f4511f9aa6970016700f6c1"
+    },
+    {
+      "name": "ChannelIngressGapDecision",
+      "sha256": "3695be83d10b9f2372ad34f225fa9e0897b219708cb1f90893558f80e4a278b1"
     },
     {
       "name": "Choice",
@@ -3321,8 +3614,20 @@
       "sha256": "eff177cf7071a99e55b77112cb2c860032925d33ae284e7acfc5fb9232499354"
     },
     {
+      "name": "ConversationPresentationMessage",
+      "sha256": "a5649f47814c08354769038d619e53e8d3c1f4b860760178ced3926f9f496fc7"
+    },
+    {
+      "name": "ConversationPresentationSnapshot",
+      "sha256": "b85ca32f14de39e2a48420ddbc1704df7cc9757eeccacb085e7de785d60845bd"
+    },
+    {
+      "name": "ConversationTurnPresentation",
+      "sha256": "c9a86ad5d4e2fc66165f4cff2493a3a01706059c7da2ab35b3d932080c1f2c80"
+    },
+    {
       "name": "ConversationTurnReceipt",
-      "sha256": "941bcbbd3c26029bc95cc2af4065a4b94f5f0337ef5471a3627edd5c83781c45"
+      "sha256": "4e7bda5d32ed2221f792342438edf33a089447d65e134d0ff5e7e03500769e54"
     },
     {
       "name": "CostLimit",
@@ -3353,6 +3658,10 @@
       "sha256": "6116be3f505af70c0445d498f976d2a2c3ab0454bb4fa560f7b7585f8c69598f"
     },
     {
+      "name": "CoworkerRevisionRecord",
+      "sha256": "fbe5658c99393ebdddd91c0c20c0b312b323483f2580cd9bfb8bd019facdff61"
+    },
+    {
       "name": "CoworkerRevisionRef",
       "sha256": "737cee82c90b978bac9cb359f668888aa2bce64530b4fc666aaa4b1479ec0070"
     },
@@ -3362,11 +3671,11 @@
     },
     {
       "name": "CreateAgentBindingRequest",
-      "sha256": "300022dd1c4506a23b2ad9625ba2f15d4e0a5a497f7500dc8aec3f515b8e652b"
+      "sha256": "a70ed661688837e0a44fd84c0cafa2bf9d67d598306e7e2bc47d4cdde6255522"
     },
     {
       "name": "CreateAutomationRequest",
-      "sha256": "32feb6ffa73828cdc0ac09d0d51a95031dee72a4f53f5050d4f448200ce746d3"
+      "sha256": "0a89b1572187ba9b9c35ad71c1f4549a433456a558ab5779c8324dbb51437ec8"
     },
     {
       "name": "CreateConversationRequest",
@@ -3394,11 +3703,11 @@
     },
     {
       "name": "CreateResourceRevisionUploadRequest",
-      "sha256": "cf10715e09414a51f6fc0a83b8ee0a6c329df0ece72f59eb291b9e9d873f1578"
+      "sha256": "51312df048f1c7de2d1ec1a2ca8e0de50c3109a9e2ad24c00737ec9085cdf494"
     },
     {
       "name": "CreateResourceUploadRequest",
-      "sha256": "e395bf06f4eb3772f64562915a9dd576a4a44fe032ae9d2ac4d47687b673d042"
+      "sha256": "c3671aa0a835dcfb7d5ad7fea295038cc3b938595049dda35fd8832de05e738e"
     },
     {
       "name": "CreateRoutineRequest",
@@ -3418,7 +3727,7 @@
     },
     {
       "name": "CreateWorkspaceInstructionRevisionRequest",
-      "sha256": "5f3d07c62518730a5fa9ec518802d2e860df6bc61e7577d8d5b2918c047bf4aa"
+      "sha256": "10873adc34f6429580e9e86bd55e27d1ae77c763e418a459fd7fe930cefb00d3"
     },
     {
       "name": "CreateWorkspaceRequest",
@@ -3561,8 +3870,16 @@
       "sha256": "5333fb1736a7dd2cf7ea18edd26a27b2098bac2095a0bd8f16d34a9bf6109f07"
     },
     {
+      "name": "FolderImportMetadata",
+      "sha256": "2959647daac88ec07f37212d97b9c50ce065adc8f90c17a7ad04e19d8170cfef"
+    },
+    {
       "name": "Goal",
-      "sha256": "1fa2da46f13ae44c1e9cbe4d160fc86ee7751608cd7fce2ff4f35ef9ad424a80"
+      "sha256": "1725e7694ecbb022a0549647105b1ac1492f36c96acc8fc4a3bf5d843abfe201"
+    },
+    {
+      "name": "GoalArtifactEvidenceRefs",
+      "sha256": "9c63a692f6fc123e0032824c3c72243fc0c649cabe00e39b75c8e09e8072ee25"
     },
     {
       "name": "GoalPage",
@@ -3570,11 +3887,11 @@
     },
     {
       "name": "GoalProgressProjection",
-      "sha256": "ed3168a51c46b832d1cc891ee5c658b52ef64f3c2301854368144a2cf57dfa0e"
+      "sha256": "e96fa08c94576afe6dbb66ccca2e1c11468b54540709e6dea8ec64fa63e4925e"
     },
     {
       "name": "GoalRevisionInput",
-      "sha256": "35707ee53af46abead91706648a86962d1ceb14e3dd6b90d725a46148271cbe4"
+      "sha256": "14c99b7794592e1700c786d8aa4ba6a7dbb9fc686404a2e940af8d0779ef7c48"
     },
     {
       "name": "GoalStatusRequest",
@@ -3582,7 +3899,7 @@
     },
     {
       "name": "GoalTaskContribution",
-      "sha256": "c2b63191ca122e4622a800d8bfeaca2ecde16e9124da2ffb0b5e9cb349167820"
+      "sha256": "c413ef7ff97bb22bc0c8121a667dc1f191b0d8fbcebc6aa116072e1dad59d766"
     },
     {
       "name": "InvalidationPage",
@@ -3609,12 +3926,20 @@
       "sha256": "749ba5de2cdefdde962441aac9469b4149b116d3e0ef1536da07e57cb4ecad1b"
     },
     {
+      "name": "LocalOperatorReadiness",
+      "sha256": "713a6691c03f8dea8cec48f003a1387671613625043fb20a7116013ad02f2a4e"
+    },
+    {
       "name": "ManagedBlobContent",
       "sha256": "e1b6fb2228d37a761ff56b569ac31136e6b531e09386899bf0574a64715a1a0d"
     },
     {
       "name": "ManualAutomationRunRequest",
-      "sha256": "63053298949fe590a4ee6c7ea767c7eaf8cd86c232cca58a2d88ea8f74936f53"
+      "sha256": "6cb178dbc98e2c4532a22ceda278585a381f2f4d01b6aa0038923e046482e001"
+    },
+    {
+      "name": "ManualAutomationRunResponse",
+      "sha256": "9e60f3ca7f8c201e92a70a7e3f5b568a98c2546225e0a5e1fc48fe16ec709565"
     },
     {
       "name": "ManualTrigger",
@@ -3665,6 +3990,18 @@
       "sha256": "8af00200665d97c733da65a9901673eeb8ffdb04466b17836b64c2e70d411e29"
     },
     {
+      "name": "OpenCodeModelOption",
+      "sha256": "1146bdc14c1270b578d4751e5337cb4139549981d0887c5935d56b491bf06620"
+    },
+    {
+      "name": "OpenCodeProfileProbeConstraints",
+      "sha256": "5d69c68ec8933dc83ee0756ae753b08f54570274618601a4b52326de04f8114a"
+    },
+    {
+      "name": "OpenCodeProviderOption",
+      "sha256": "ac004f117251f46d8a11cb79ab3488a8cf8ce38973a1d6ee42eb0aad357a236d"
+    },
+    {
       "name": "OutputRequirement",
       "sha256": "c9aee32c7cbd35fc1232231fe4f5c4f6ce165f143f2ef0fbfbad1f54c5d1d50c"
     },
@@ -3685,6 +4022,10 @@
       "sha256": "f62df70f5fdc81d725fa318110b280e9118847880a48b6e9a5eed1a771eca67b"
     },
     {
+      "name": "PlanAcceptance",
+      "sha256": "8144aa55ddcffbeefd6fd58328c2b93be52918aa2aaf1d97917ca0d0988c69e0"
+    },
+    {
       "name": "PlanRevision",
       "sha256": "f317a8de83dc9e0bbb3b48a5056c492c9d80398f46b1a1d2843873dd7caca815"
     },
@@ -3697,8 +4038,16 @@
       "sha256": "8bf8a083c83fac99944d2f0f1920c17af2a7e89014efb5c6402dd91e41392cf8"
     },
     {
+      "name": "PresentationItem",
+      "sha256": "c7151391e16b417d39b572a841b3d4ecb6f97bce6c8bec73328876cce4d05a23"
+    },
+    {
       "name": "PrincipalRef",
       "sha256": "85b2ce3f8c580561946d201c8a571f5d427ca8ef69a133785dd74aa418acebf0"
+    },
+    {
+      "name": "ProbeLocalAgentProfileRequest",
+      "sha256": "a6c9140705d4d6593d17cd10fff39ed2af10c913f31fea861834ac86fec171d1"
     },
     {
       "name": "ProcessExitTrigger",
@@ -3706,7 +4055,7 @@
     },
     {
       "name": "ProvenanceRecord",
-      "sha256": "e5ff9c0ac8c44807113e2073d29a3d8dae935f6e768e602812ce4ada53f4a91a"
+      "sha256": "7dfd0ae3068ebad01616dcccb42787d402568a4df240e380413da9a960b38a6c"
     },
     {
       "name": "ProvenanceTransformation",
@@ -3734,7 +4083,11 @@
     },
     {
       "name": "ReassignChannelHostRequest",
-      "sha256": "fee20813a298c0bfbc1bcb7e51f9ddc018c66bb5c8418d177bd395fda3b7d7a2"
+      "sha256": "235784a9515e73a9ed12ac4e6f570bcafada3d0a2a9027967d62f549ac29870e"
+    },
+    {
+      "name": "RebuildResourceTextIndexRequest",
+      "sha256": "b0e38da12b27d2b5582c71b07c8782ecd70318b932f7244692fb5e075be22650"
     },
     {
       "name": "RecoverStepRequest",
@@ -3746,11 +4099,15 @@
     },
     {
       "name": "ResolveSuggestionRequest",
-      "sha256": "bf6ac5d4a73d70ea4b474f3fcf276525158c0c67be48a3fa733be70f644245ff"
+      "sha256": "a0816a1c09cca34ae1684412a9dd4ae59206b667b9324b25699aa0b4a964caa8"
     },
     {
       "name": "Resource",
       "sha256": "bedf9ba364d8e5d6f025f8657503c2e41dab8ffe9f375a113a3657fd3cb34f4a"
+    },
+    {
+      "name": "ResourceContentScan",
+      "sha256": "d6217c88282c7027e535621045b1dfc956972c822f98772b93f4b88a1ac75560"
     },
     {
       "name": "ResourceDependencyPage",
@@ -3782,7 +4139,7 @@
     },
     {
       "name": "ResourceLocationView",
-      "sha256": "43c1883a7cef4d27a2ef08f7f62e24a6fd6d938ad73a241eb274cb09e706c9dd"
+      "sha256": "304d61f1a8a1fe97d8c65b7980c221271d912db8deae00792d39bb882a9f195e"
     },
     {
       "name": "ResourceRef",
@@ -3806,19 +4163,31 @@
     },
     {
       "name": "ResourceSearchPage",
-      "sha256": "53c4594824f4ea1d68b7dc125aa41553ebdaac102617dce890e24c1749880163"
+      "sha256": "84351daf5fe1b1220526269f4dad2bd8a3dc010269522863e7f94eea580c0ff9"
     },
     {
       "name": "ResourceSearchResult",
-      "sha256": "8d0ff60059408eefdb2e78870a21353668632f3ac77628568391fe699cebe5c6"
+      "sha256": "070475135c979a1bb5c6f4739e8abc29c3ebaf992e439193af03e50dd088a671"
     },
     {
       "name": "ResourceSummary",
       "sha256": "9a9ced0c7209ce24a3b8c5583b4432097aeca0dce36e08dc4d81f0db79a4fce5"
     },
     {
+      "name": "ResourceSummaryPage",
+      "sha256": "99d68b8f63e549f5522b3c36723fac5eedb29429cb97821f7bc3e8501a59b81a"
+    },
+    {
+      "name": "ResourceTextIndexRebuildResult",
+      "sha256": "c9c4f382604ef798790910f7bca34dc1044e2c60303d1535fefd4d88033d0efb"
+    },
+    {
+      "name": "ResourceTextMatchSpan",
+      "sha256": "e3eb20fea607a08690a38dd30533b0209887c710bf5cf5c1557a6dd6ef0b6164"
+    },
+    {
       "name": "ResourceUploadSession",
-      "sha256": "7155b9a6338a8dc0f213415156490abc27b931d0263fa7e901b621aef99beb75"
+      "sha256": "3f04516b4a0729282f129a3e67eac2b794cea5add79efd7915fc7894b42cc038"
     },
     {
       "name": "RestoreReceipt",
@@ -3841,6 +4210,14 @@
       "sha256": "564672a0fe12b99b3da2aed06f987299d1c5e63bdc0b2a6b295245b8c3faeb74"
     },
     {
+      "name": "RichPresentationDocumentResponse",
+      "sha256": "56add298b888cf97cfc778e0ef34893d21db51bcd0053bf7d92f8a5c0e490e39"
+    },
+    {
+      "name": "RichPresentationRef",
+      "sha256": "53437d7d7b36483dfa0c057a9bfe1c36869aa3da9aba1c3de41133f6e5958024"
+    },
+    {
       "name": "Routine",
       "sha256": "f5ac1f8b392932e8c27eae7e440a3f4bcc81da6675a51c8e2ed6c8564e1f1026"
     },
@@ -3854,11 +4231,11 @@
     },
     {
       "name": "RoutineRevision",
-      "sha256": "1b1bf8016b1c5a382a8903209f896c3b0d3e3b4f91e8e1ad4ddcc81c5b8da1e5"
+      "sha256": "bbbdf68fa5363761c4da52ce2155d5a4ee110378a668ff2d815a3b997d4537e1"
     },
     {
       "name": "RoutineRevisionInput",
-      "sha256": "9d8649b25ca1e7ad59c3aaa3c88aa3d06d417d019e10650da1bc66b528232a96"
+      "sha256": "d24c7c9dfddd718572449d8e4cdcfc066078e64a2e5b2988ced239701e60e6f3"
     },
     {
       "name": "RoutineRevisionPage",
@@ -3866,11 +4243,11 @@
     },
     {
       "name": "RunRoutineRequest",
-      "sha256": "d209316033c5b6e147fc589798d66969917b557ffa29d2db6bb6fb1b57ffe001"
+      "sha256": "d483a2dc194f8efab5dd98341096039af7d6707ba408e745310d3b2f972d3dd9"
     },
     {
       "name": "RuntimeDescriptor",
-      "sha256": "cd1f39ff9a9e4f180e83b23b70428f7404cc26db3bda6de51893c49492c56965"
+      "sha256": "4ee98c70d74a3e3a2cfcd72bd72388b38ac37d3a05a2e191b22056e12e29e2be"
     },
     {
       "name": "RuntimeDrainReceipt",
@@ -3913,6 +4290,14 @@
       "sha256": "cc00238aaefab6891f45d1139cf7ea915b39f33435f14b82401fa9719df08c57"
     },
     {
+      "name": "RuntimeWorkspaceBinding",
+      "sha256": "2d83305e099ec9be447d124d4792643e93a34c5e3161a8c19bdb3f4229c9e3c7"
+    },
+    {
+      "name": "RuntimeWorkspaceBindingPage",
+      "sha256": "4a8cd0daff626f2ad427b0e8cf7dcd43bbf14b46f38aeecf86338106187d42ba"
+    },
+    {
       "name": "ScheduleTrigger",
       "sha256": "31149001948a90ba697b480d37b70e2a8ca8ced24d3d6d0c5801dc46e1fb5815"
     },
@@ -3926,7 +4311,7 @@
     },
     {
       "name": "SetContextDocumentStatusRequest",
-      "sha256": "1bf17144da5c356d59d425ebdb2349eccf60c2018a6f87315dac0b242b3fc5dd"
+      "sha256": "92bd6e56ff156948169f3cd1e3e02ad755f45de3f873137bb6096f6743b0c0f2"
     },
     {
       "name": "SetPrimaryCoworkerRequest",
@@ -3970,7 +4355,11 @@
     },
     {
       "name": "SubmitConversationTurnRequest",
-      "sha256": "7544c2f7e8551e2466f4c65cd5727bb902089a78cefe7823b58924ee7b52fd19"
+      "sha256": "c9cc3c3870814329a204f7aa15e5288e8abd8bb5f4f241170e899dd46d792692"
+    },
+    {
+      "name": "SubmitPlanRequest",
+      "sha256": "0dbe0e2f4b8ed5e7bebfe9668ec5f639edfdf247c7a2c81fa700609199fa5c55"
     },
     {
       "name": "Suggestion",
@@ -3982,11 +4371,15 @@
     },
     {
       "name": "SuggestionPreference",
-      "sha256": "bc4174dd5985efc7ffc46794804234cd56412e6aaa9c24b89967d2edc6401a07"
+      "sha256": "9979ba3e5b3e2aef4c844cc8727b006fd63ce77871cc5f5cb9ea91b28e1a83c5"
     },
     {
       "name": "SuggestionPreferencePage",
       "sha256": "f52d33464309a60eec1bf77fe0416934b3549c8197f8051f42eb5c8c288b7414"
+    },
+    {
+      "name": "SuggestionTaskAcceptanceReceipt",
+      "sha256": "759f71ebeb13ede657ae056e31f81396340a5082ebc74fd1e358b910260a86cb"
     },
     {
       "name": "TakeEnvironmentControlRequest",
@@ -3994,7 +4387,7 @@
     },
     {
       "name": "Task",
-      "sha256": "09b148aa5cba9c6de26db4782504ecb3f6872e826ae7b1f5b596222ace4ed24d"
+      "sha256": "d4abac7ddad77d894378578118850f29a439b5e8e1183997eeea143fd4081661"
     },
     {
       "name": "TaskEventTrigger",
@@ -4002,11 +4395,23 @@
     },
     {
       "name": "TaskInputBinding",
-      "sha256": "fdcd371002f2c06ffe3640e4bcca4bbf290f8fe74648d89c6543c8c58818b7c0"
+      "sha256": "dee2aaf9df011f0c43f05b2151445d2faa4951f7e8ae668639ad01f437b28f29"
     },
     {
       "name": "TaskPage",
-      "sha256": "14205adbd24c3547ae1c157e2ddde9f7bc08ea9ed6b7c7736d80748ce76a0c12"
+      "sha256": "42e1d4fd7b5281e391ad71e6d0204890d110cdb23583bfd7bf8e076876230d93"
+    },
+    {
+      "name": "TaskPlanningReadiness",
+      "sha256": "2e91cc314ad4800fdf66c9d89c92ce37a70a47309426fef15ab610fdeba85926"
+    },
+    {
+      "name": "TaskPresentationItem",
+      "sha256": "5a348eaf2268b68f27ac08f534e20daeea2b0cfa0b6f6dcdae78e5e956964441"
+    },
+    {
+      "name": "TaskPresentationSnapshot",
+      "sha256": "ead63bd7e6f1af51587e555e444002c0ea542d77daec76ae4907f5c3003130cc"
     },
     {
       "name": "TaskProgressProjection",
@@ -4022,7 +4427,11 @@
     },
     {
       "name": "TaskSummary",
-      "sha256": "10939f2743c0245ab685d780a47c6d6404cadb6f6c87bc1e2b999c175eb82cd9"
+      "sha256": "f76563a7e4a76b9a1e50841f526dd311514132a5c93e67c42db28eead3507731"
+    },
+    {
+      "name": "TaskView",
+      "sha256": "7f971c76f6c88be12e5931c66b067f65a6736a755337bd867998089c6238143e"
     },
     {
       "name": "TaskWorkstreamProjection",
@@ -4050,7 +4459,7 @@
     },
     {
       "name": "UpdateAutomationRequest",
-      "sha256": "30e5bc8c16ef71c3e6e456239ddf710e32016e307f09e3eef0c764845c40cfd7"
+      "sha256": "d884b7fbd7334bafc65337a10337899111d1f0ab0e7e1da63429a79409f9d404"
     },
     {
       "name": "UpdateChannelBindingActionsRequest",
@@ -4130,7 +4539,11 @@
     },
     {
       "name": "WorkspaceInstructionRevision",
-      "sha256": "bfdec242d17ddac362787e4c119a8bd688de0f1eb883eb6c9205c0fec7e17eba"
+      "sha256": "764d76f027408a541917c786653c55c16386b1e57239f06b078f1d46dd305714"
+    },
+    {
+      "name": "WorkspaceInstructionRevisionPage",
+      "sha256": "9884caaf0ec2bff2a8ab88a0cd0057f2643c93e7fb7aee7befc10fa7b74dc3db"
     },
     {
       "name": "WorkspacePage",
@@ -4141,11 +4554,20 @@
       "sha256": "dc22fa21eddcc5417e2c360e85a4cbe21c50c8dbbf858557bc1435f6a552e728"
     },
     {
+      "name": "WorkspaceRootListItem",
+      "sha256": "d9adb48e9e9a665ded38c85934e878d628d8ebe2b6134a5650a58e3aa783d1c4"
+    },
+    {
       "name": "WorkspaceRootPage",
-      "sha256": "85553885836c52c00458d2ecd89fa18b33f8749275d5b86185cb3690052cead4"
+      "sha256": "1e256bbc3128f7783fefa77379ef92c0a3faebd5914e9bdac023e8d93dca53e6"
+    },
+    {
+      "name": "ZipIntakeReadiness",
+      "sha256": "5d61015f15d5d2eb7e539f0fc454b9f8a486563ebee26dbeda0b2d600364a170"
     }
   ],
   "operator_schemas": [
+    "AcceptSuggestionTaskRequest",
     "AcceptanceCriterion",
     "ActionBatchMemberRef",
     "AddWorkspaceRootRequest",
@@ -4156,12 +4578,15 @@
     "AgentEndpointTopology",
     "AgentFeature",
     "AgentHarnessCapabilities",
+    "AgentInstallation",
+    "AgentInstallationPage",
     "AgentProfile",
     "AgentProfileObservation",
     "AgentProfilePage",
     "AgentProfileView",
     "AgentSessionOptions",
     "ApiError",
+    "AppendArtifactTextVersionRequest",
     "AppendMessageRequest",
     "Approval",
     "ApprovalPage",
@@ -4169,6 +4594,8 @@
     "Artifact",
     "ArtifactContent",
     "ArtifactPage",
+    "ArtifactTextEditHead",
+    "ArtifactTextVersionAppendResponse",
     "ArtifactVersion",
     "ArtifactVersionRef",
     "Attempt",
@@ -4198,6 +4625,9 @@
     "ChannelBindingPage",
     "ChannelEventTrigger",
     "ChannelHostAssignment",
+    "ChannelHostContinuityProofRef",
+    "ChannelHostDrainProofRef",
+    "ChannelIngressGapDecision",
     "Choice",
     "CommandExitTrigger",
     "CommandReceipt",
@@ -4214,6 +4644,9 @@
     "Conversation",
     "ConversationInvocationScope",
     "ConversationMessage",
+    "ConversationPresentationMessage",
+    "ConversationPresentationSnapshot",
+    "ConversationTurnPresentation",
     "ConversationTurnReceipt",
     "CostLimit",
     "Coworker",
@@ -4222,6 +4655,7 @@
     "CoworkerPage",
     "CoworkerPresenceProjection",
     "CoworkerRevisionInput",
+    "CoworkerRevisionRecord",
     "CoworkerRevisionRef",
     "CoworkerStatusRequest",
     "CreateAgentBindingRequest",
@@ -4274,7 +4708,9 @@
     "ExternalResourceContent",
     "FailureRecord",
     "FileIdentity",
+    "FolderImportMetadata",
     "Goal",
+    "GoalArtifactEvidenceRefs",
     "GoalPage",
     "GoalProgressProjection",
     "GoalRevisionInput",
@@ -4286,8 +4722,10 @@
     "JsonSchema",
     "JsonValue",
     "LeadFailoverPolicy",
+    "LocalOperatorReadiness",
     "ManagedBlobContent",
     "ManualAutomationRunRequest",
+    "ManualAutomationRunResponse",
     "ManualTrigger",
     "MessageContentBlock",
     "MessagePage",
@@ -4300,15 +4738,21 @@
     "NotificationPolicy",
     "NotificationPreference",
     "OneShotTrigger",
+    "OpenCodeModelOption",
+    "OpenCodeProfileProbeConstraints",
+    "OpenCodeProviderOption",
     "OutputRequirement",
     "PairingToken",
     "PauseTaskRequest",
     "PinnedResourceRef",
     "PlacementPreference",
+    "PlanAcceptance",
     "PlanRevision",
     "PlannedStep",
     "PlanningInvocationScope",
+    "PresentationItem",
     "PrincipalRef",
+    "ProbeLocalAgentProfileRequest",
     "ProcessExitTrigger",
     "ProvenanceRecord",
     "ProvenanceTransformation",
@@ -4318,10 +4762,12 @@
     "QuietHours",
     "QuotaObservation",
     "ReassignChannelHostRequest",
+    "RebuildResourceTextIndexRequest",
     "RecoverStepRequest",
     "ResolveApprovalRequest",
     "ResolveSuggestionRequest",
     "Resource",
+    "ResourceContentScan",
     "ResourceDependencyPage",
     "ResourceDependencyView",
     "ResourceEventTrigger",
@@ -4338,12 +4784,17 @@
     "ResourceSearchPage",
     "ResourceSearchResult",
     "ResourceSummary",
+    "ResourceSummaryPage",
+    "ResourceTextIndexRebuildResult",
+    "ResourceTextMatchSpan",
     "ResourceUploadSession",
     "RestoreReceipt",
     "RestoreWorkspaceBackupRequest",
     "RetryPolicy",
     "ReturnEnvironmentControlRequest",
     "ReviseTaskSpecRequest",
+    "RichPresentationDocumentResponse",
+    "RichPresentationRef",
     "Routine",
     "RoutineHealth",
     "RoutinePage",
@@ -4362,6 +4813,8 @@
     "RuntimeOfferPage",
     "RuntimePage",
     "RuntimeStopPreview",
+    "RuntimeWorkspaceBinding",
+    "RuntimeWorkspaceBindingPage",
     "ScheduleTrigger",
     "SecretRef",
     "ServiceRef",
@@ -4377,19 +4830,25 @@
     "Step",
     "StopRuntimeRequest",
     "SubmitConversationTurnRequest",
+    "SubmitPlanRequest",
     "Suggestion",
     "SuggestionPage",
     "SuggestionPreference",
     "SuggestionPreferencePage",
+    "SuggestionTaskAcceptanceReceipt",
     "TakeEnvironmentControlRequest",
     "Task",
     "TaskEventTrigger",
     "TaskInputBinding",
     "TaskPage",
+    "TaskPlanningReadiness",
+    "TaskPresentationItem",
+    "TaskPresentationSnapshot",
     "TaskProgressProjection",
     "TaskSpecProposal",
     "TaskSpecRevision",
     "TaskSummary",
+    "TaskView",
     "TaskWorkstreamProjection",
     "TestCapabilityRequest",
     "TimelineEntry",
@@ -4417,19 +4876,26 @@
     "WorkspaceBackupManifest",
     "WorkspaceBackupPage",
     "WorkspaceInstructionRevision",
+    "WorkspaceInstructionRevisionPage",
     "WorkspacePage",
     "WorkspaceRoot",
-    "WorkspaceRootPage"
+    "WorkspaceRootListItem",
+    "WorkspaceRootPage",
+    "ZipIntakeReadiness"
   ],
   "shared_schema_definitions": [
     "ActivationHealth",
+    "AgentAuthenticationReadiness",
     "AgentDelegationMode",
     "AgentEndpointTopology",
     "AgentFeature",
     "AgentHostOwnership",
     "AgentHostState",
     "AgentHostingMode",
+    "AgentInstallation",
+    "AgentInstallationState",
     "AgentProtocol",
+    "AgentSessionReadiness",
     "AgentSessionScope",
     "AgentSessionStatus",
     "ApprovalStatus",
@@ -4457,9 +4923,14 @@
     "ChannelBindingStatus",
     "ChannelEventKind",
     "ChannelEventReceiptStatus",
+    "ChannelHostAssignmentProvenance",
     "ChannelHostAssignmentStatus",
+    "ChannelHostContinuityProofRef",
+    "ChannelHostDrainProofRef",
+    "ChannelHostSourceReleaseBasis",
     "ChannelIngressContinuity",
     "ChannelIngressCursorBindingStatus",
+    "ChannelIngressGapDecision",
     "ClaimEpoch",
     "ConnectionStatus",
     "ContextDocumentKind",
@@ -4474,6 +4945,8 @@
     "DemonstrationSensitiveRegionPolicy",
     "DemonstrationSessionStatus",
     "DependencyFreshness",
+    "DeviceIdentity",
+    "Ed25519PublicKey",
     "EffectState",
     "EndpointSelectionMode",
     "EndpointSelectionPolicy",
@@ -4494,9 +4967,14 @@
     "ExecutionMethod",
     "ExpectedRevision",
     "FailoverClass",
+    "FolderImportMetadata",
     "GoalRevisionRef",
     "GoalStatus",
     "HandoffPhase",
+    "HostAssignedBlockProvenance",
+    "HostInstructionDeliveryMode",
+    "HostSkillAuthorityClass",
+    "HostSkillRef",
     "InteractionDefault",
     "InvalidationDependentKind",
     "JsonObject",
@@ -4506,19 +4984,25 @@
     "LeadFailoverTrigger",
     "LeaseStatus",
     "MessageContentBlock",
+    "MessageTextSliceRef",
     "MisfirePolicy",
     "NativeHarnessIntegrityMode",
     "NeedsYouFilter",
     "NeedsYouItemKind",
     "NeedsYouStatus",
     "NetworkPolicy",
+    "NormalizedRelativePath",
     "NotificationDeliveryStatus",
     "OccurrenceStatus",
     "OfferReadiness",
+    "OpenCodeProfileProbeConstraints",
     "OptimizationPreference",
     "PinnedResourceRef",
     "PlacementPreference",
     "PredicateRef",
+    "PresentationPolicyDecision",
+    "PresentationPreference",
+    "ProbeLocalAgentProfileRequest",
     "ProviderCircuitStatus",
     "ProviderContinuationBindingStatus",
     "ProviderInputDeliveryStatus",
@@ -4532,22 +5016,32 @@
     "ResourceLimits",
     "ResourceLocationAvailability",
     "ResourceLocationFreshness",
+    "ResourceSearchMode",
+    "ResourceTextIndexRebuildOutcome",
+    "ResourceTextIndexSkipReason",
+    "ResourceTextMatchSpan",
     "ResourceUploadState",
+    "RichPresentationAvailability",
+    "RichPresentationBlockOrigin",
     "RoutineRevisionRef",
     "RoutineStatus",
     "RuntimeAvailability",
     "RuntimeIncarnationState",
     "RuntimeRole",
     "RuntimeStartupPolicy",
+    "RuntimeWorkspaceBindingStatus",
+    "RuntimeWorkspaceEnrollmentMode",
     "SecretLeaseStatus",
     "SemVer",
     "SensitivityClass",
     "Sha256Digest",
     "SkillProposalStatus",
     "StepStatus",
+    "SuggestionAcceptanceDisposition",
     "SuggestionAction",
     "SuggestionKind",
     "SuggestionStatus",
+    "SuggestionTaskAcceptanceReceipt",
     "SuggestionTrigger",
     "TaskCategory",
     "TaskStatus",
@@ -4587,6 +5081,9 @@
     "CapabilityId",
     "CapabilityInvocationId",
     "ChannelBindingId",
+    "ChannelHostContinuityProofId",
+    "ChannelHostDrainProofId",
+    "CitationId",
     "ConnectionId",
     "ConversationId",
     "ConversationTurnId",
@@ -4596,6 +5093,7 @@
     "DeliveryId",
     "DemonstrationSessionId",
     "DependencyEdgeId",
+    "DeviceId",
     "EffectId",
     "EnvironmentCheckpointId",
     "EnvironmentControlLeaseId",
@@ -4606,10 +5104,12 @@
     "ExecutionLeaseId",
     "GoalId",
     "HandoffId",
+    "HostSkillId",
     "InvalidationRecordId",
     "MessageId",
     "OccurrenceId",
     "PlanRevisionId",
+    "PresentationId",
     "PrincipalId",
     "RequestId",
     "ResourceEdgeId",
@@ -4620,6 +5120,7 @@
     "RoutineId",
     "RuntimeId",
     "RuntimeIncarnationId",
+    "RuntimeWorkspaceBindingId",
     "SecretLeaseId",
     "SecretRefId",
     "ServiceId",

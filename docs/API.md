@@ -68,6 +68,12 @@ GET  /v1/workspaces/{id}/instructions/revisions
 POST /v1/workspaces/{id}/instructions/revisions
 ```
 
+The domain/API contract defines future Workspace replication policies, but the desktop/local
+V1 client operates with `LOCAL_ONLY`. It does not initiate cloud continuation or remote
+Runtime transfer. If a Workspace has a previously saved non-local policy, the local UI
+reports it as inactive and allows an explicit reset to `LOCAL_ONLY`; it never implies that
+the saved policy is currently transferring data.
+
 Instruction revision creation requires the selected Workspace header to match the path,
 the current Workspace `If-Match` version, an idempotency key, and a pinned ResourceRef for
 a same-Workspace UTF-8 text Resource no larger than 64 KiB. The server verifies the
@@ -98,6 +104,11 @@ UserRequests, and actionable Task blockers. If a blocker links to an Approval or
 UserRequest, the linked record supplies the single inbox item; otherwise the item uses
 its stable Task/blocker identity. Answer, approve, dismiss, and resolve operations remain
 on the owning resource routes. Notifications and delivery retries are not inbox items.
+
+This remains the target `GET /v1/needs-you` contract; the desktop/local Operator does not
+currently implement this route. The current Needs You page uses the existing authenticated
+Task-list route for a clearly labeled, narrower view of `WAITING_USER`, `NEEDS_USER`, and
+`BLOCKED` Tasks. It does not claim Approval/UserRequest coverage or provide inbox actions.
 
 ## Workspace-persistent Environments
 
@@ -210,8 +221,27 @@ POST /v1/conversations/{id}/turns
 POST /v1/conversations/{id}/turns/{turn_id}/retry
 POST /v1/conversations/{id}/turns/{turn_id}/cancel
 GET  /v1/conversations/{id}/messages?cursor=
+GET  /v1/conversations/{id}/presentation?cursor=&limit=
+GET  /v1/rich-presentations/{presentation_id}
 GET  /v1/conversations/{id}/tasks?cursor=
 ```
+
+`POST /v1/conversations/{id}/turns` accepts optional
+`presentation_preference: AUTO | SIMPLE | RICH`, default `AUTO`. The preference is pinned
+to the ConversationTurn, returned in its receipt, and reused by retry. New turn creation
+uses `conversation.turn.created.v2`; earlier v1 turns migrate/read as `AUTO`. Preference
+controls optional response layout only and cannot suppress trusted UserRequest, Task, or
+Artifact controls.
+
+The Conversation presentation route returns a bounded authenticated snapshot of committed
+messages, linked trusted items, active-turn state, optional immutable RichPresentation refs,
+and the snapshot cursor. Rich documents are fetched separately and returned `no-store`
+only after same-Workspace authorization and digest verification. The client validates
+message/document binding, schema version, size, and exact host-bound source refs before
+rendering. Semantic ConversationMessage content is always rendered first and remains
+complete if rich data is missing, invalid, or unsupported. See
+[`RICH-RESPONSE.md`](RICH-RESPONSE.md) and
+[`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md).
 
 ## Tasks
 
@@ -417,6 +447,14 @@ Promotion/archive commands require `If-Match` with the current Artifact aggregat
 
 `GET /v1/library` returns SAVED artifacts; `GET /v1/artifacts?library_status=ARCHIVED` backs the Archived filter. Archived Artifacts remain readable but cannot receive new content versions.
 
+The local Operator mounts both Library commands with empty request bodies, Workspace owner
+authorization, If-Match and principal-scoped Idempotency-Key. Responses are the committed
+Artifact representation, use `Cache-Control: no-store`, and preserve `current_version`,
+Resource identity and all immutable metadata. A changed action, Artifact, Workspace or
+expected version under the same key returns `IDEMPOTENCY_CONFLICT`. Fresh writes require
+an ACTIVE Workspace; identical recorded retries remain readable after later archival.
+Linked Artifacts use these commands for local Library metadata only, without provider I/O.
+
 The desktop Workbench's recent-history panel uses the existing exact-version metadata
 route, requesting at most the latest ten committed version numbers from the loaded
 Artifact head. It is a bounded client projection, not a new server-side list endpoint or
@@ -486,6 +524,37 @@ only when that Automation has a ManualTrigger. Occurrences pin AutomationRevisio
 RoutineRevision, `trigger_id`, and TriggerHost. A due occurrence may already have a Task
 while that Task is waiting for a required local Runtime/resource; report it as
 `WAITING_DEPENDENCY`, separately from a not-yet-due occurrence.
+
+For local manual Automation Run now, `POST /v1/automations/{id}/run` requires the selected
+`X-Workspace-ID`, `Idempotency-Key`, `If-Match` Automation version, and body
+`{ "automation_revision": n, "inputs": {} }`. `automation_revision` must be the exact
+current revision on a new command. `inputs` is the bounded Routine input object and is
+validated against the exact RoutineRevision pinned by that Automation. The owner command
+requires a ManualTrigger and an active local TRIGGER_HOST binding. It is valid while the
+Automation is PAUSED and never enables recurring triggers. The daemon atomically creates
+the occurrence at version 1, claims it at version 2/claim epoch 1, and commits an ordinary
+Task in `READY` plus occurrence `STARTED` at version 3. It creates no Plan, Attempt, or
+AgentSession. Exact same-key retries return the original response; changed inputs,
+revision, expected Automation version, or trigger conflict. A disabled Automation,
+stale revision/version, inactive Coworker/Routine, unsupported host placement, or missing
+ManualTrigger fails without a Task or occurrence.
+
+The first successful response is `201`; an exact receipt replay is `200`. Both responses
+describe a saved READY Task and an occurrence whose STARTED state means materialized, not
+that planning or agent execution began. Authentication and immutable AutomationRevision
+lookup still precede receipt resolution; mutable Runtime binding, Resource, Coworker, and
+Automation-head admission checks do not.
+
+For local manual Routine Run now, `POST /v1/routines/{id}/run` requires the selected
+`X-Workspace-ID`, `Idempotency-Key`, and body `{ "routine_revision": n, "inputs": {} }`.
+It returns `201 TaskView` only after atomically committing an ordinary `READY` Task pinned
+to that exact active/current revision and validating all supplied input/resource refs.
+The route rejects non-null `conversation_id`; no Plan or execution starts. Same-key,
+same-command retries return the original committed Task; changed command content conflicts.
+The desktop exposes schema-generated TEXT fields and disables Run when a required Resource
+input cannot be selected safely. Routine `required_capabilities` and `verification_policy`
+remain on the pinned RoutineRevision for future planner/Trust/verifier admission; this
+save-only endpoint does not claim those policies were executed.
 
 `GET /v1/automations/{id}/revisions` is Workspace-scoped and returns immutable revisions
 in descending revision order; its first page contains the current revision for exact
@@ -757,7 +826,7 @@ POST   /v1/goals/{id}/status        # ACTIVE | PAUSED | COMPLETED | ARCHIVED
 
 GET    /v1/suggestions?status=PROPOSED&cursor=&limit=
 POST   /v1/suggestions/{id}/resolve # DISMISSED only
-POST   /v1/suggestions/{id}/accept-task # atomically create a READY Task from a TASK proposal
+POST   /v1/suggestions/{id}/accept-task # atomically create a READY Task; returns a bounded acceptance receipt
 POST   /v1/suggestions/{id}/snooze
 GET    /v1/workspaces/{workspace_id}/suggestion-preferences
 PUT    /v1/workspaces/{workspace_id}/suggestion-preferences/{kind}
@@ -776,8 +845,16 @@ constraints, inputs, outputs, acceptance criteria, budget, and deadline into a n
 TaskSpecRevision; pinned source Resource revisions remain exact Task inputs. If the
 Suggestion has a Coworker origin, the Task pins the current Coworker revision and expected
 head version. SQLite commits the READY Task, its event/snapshot/idempotency receipt, the
-accepted Suggestion, and `suggestion.resolved.v1` in one transaction. A lost-response
-retry returns the already linked Task. The endpoint never creates a plan, starts an agent,
+accepted Suggestion, and `suggestion.resolved.v1` in one transaction. The `201` response
+contains `SuggestionTaskAcceptanceReceipt` with `disposition=CREATED`; the receipt is
+bounded to Workspace identity, Suggestion ID/status/result Task/version, and Task
+ID/Workspace/status/version. Clients require both Workspace IDs to match the selected
+Workspace, Suggestion status `ACCEPTED`, Suggestion result Task ID equal to the Task ID,
+and Task status `READY`. A lost-response retry with the same Idempotency-Key returns the
+same original committed Task link in a `200` receipt with `disposition=REPLAYED`; storage
+validates the accepted Suggestion and immutable Task request receipt together, and does
+not rebuild the Task from a newer Coworker revision. Reusing a different request key is a
+conflict and does not reveal the linked Task. The endpoint never creates a plan, starts an agent,
 or begins execution. Suggestion acceptance for Routine/Automation actions only opens the
 owning editor; saving reusable work remains a separate explicit command. Suggestions
 cannot grant authority or run work.
@@ -819,6 +896,17 @@ memory-proposal path.
 ```text
 GET /v1/tasks/{id}/progress
 ```
+
+The desktop/local route is authenticated and scoped to the selected Workspace owner. It
+returns a `no-store` read model from one bounded persisted Task-presentation snapshot;
+over-cap Step, Artifact, or blocker collections fail rather than returning silently
+truncated progress. `last_activity_at` currently comes from the latest committed Task,
+current-plan Step, or persisted current-Attempt event, including a terminal current
+Attempt. `active_workstreams` include only nonterminal current Attempts. `last_evidence_at`
+is an independent Evidence timestamp. CapabilityInvocation, provider-progress, and
+Environment-observation sources are not yet integrated in this route and must not be
+presented as live observations. This endpoint does not mutate Task state or establish
+process/provider liveness.
 
 Coworker presence, Task progress, Goal contributions, and worker performance are
 read-only rebuildable projections. Presence keeps proactive status, current Task activity,
@@ -928,24 +1016,31 @@ Core publication path are qualified.
 The local desktop uses resumable uploads for file intake:
 
 ```text
+POST /v1/resources/quick-import             # bounded compatibility import for small local files
 POST /v1/resources/uploads
 GET  /v1/resources/uploads/{id}
 PUT  /v1/resources/uploads/{id}/chunks/{chunk_index}
 POST /v1/resources/uploads/{id}/commit
 GET  /v1/resources?limit=100&cursor=...    # requires X-Workspace-ID; keyset-paginated
-GET  /v1/resources/{resource_id}/content?revision_id=...
-                                         # optional pinned revision; mismatch returns RESOURCE_CONFLICT
+GET  /v1/resources/{resource_id}/content?revision_id=...&max_bytes=...
+                                         # optional exact immutable revision pin and read bound
 ```
 
-The optional `revision_id` prevents a preview caller from silently receiving a newer
-Resource head than the one it selected. This endpoint still serves only the current head;
-historical Resource-revision byte reads are not implemented. The current local Operator
-returns at most 10 MiB per content response and rejects larger current revisions with
-`413`; desktop text preview is more restrictive at 1 MiB. Resource intake may accept a
-100 MiB file, but this endpoint is not yet a general large-file download path. A future
-large-file reader must use bounded range/chunk transport rather than increasing the IPC
-response allocation cap. Storage rejects a new content read before BlobStore access when
-the Resource is a non-`ACTIVE` ContextDocument. The owner receives
+When `revision_id` is supplied, the endpoint resolves that exact immutable revision only
+after proving it belongs to the selected Resource and Workspace. It never substitutes the
+current head. Omitting the pin reads the current head. `max_bytes` is an optional positive
+per-read limit no greater than the 10 MiB local Operator ceiling; storage checks the
+selected revision's indexed length before BlobStore access. Historical bytes are available
+only when the selected revision resolves through the local managed encrypted BlobStore;
+external provider revisions return `RESOURCE_CONTENT_EXTERNAL`, while unavailable local
+content returns `RESOURCE_LOCATION_UNAVAILABLE`. Every returned object is verified against
+the immutable revision's exact byte length and SHA-256 digest. Archived Workspaces remain
+readable under the existing owner authorization contract. Desktop text preview/comparison
+requests `max_bytes=1048576` and allow only UTF-8 plain text or Markdown. Resource intake
+may accept a 100 MiB file, but this endpoint is not a general large-file download path. A
+future large-file reader must use bounded range/chunk transport rather than increasing the
+IPC response allocation cap. Storage rejects a new content read before BlobStore access
+when the Resource is a non-`ACTIVE` ContextDocument. The owner receives
 `CONTEXT_DOCUMENT_NOT_ACTIVE` with a status-specific message; Resource metadata remains
 available to show whether content is retained as `REVOKED`, being purged as
 `DELETION_PENDING`, or already `DELETED`. A read admitted while `ACTIVE` may finish if the
@@ -955,6 +1050,17 @@ ContextDocument status: a proven transition returns `CONTEXT_DOCUMENT_NOT_ACTIVE
 status remains active or cannot be proven, it preserves the original content failure:
 BlobStore/location unavailability returns `RESOURCE_LOCATION_UNAVAILABLE` (503), while
 verified-content integrity failures return `INTEGRITY_FAILURE` (500).
+
+The authenticated local owner route
+`PATCH /v1/resources/{resource_id}/context-document/status` accepts only `ACTIVE` or
+`REVOKED`, requires `X-Workspace-ID`, `If-Match` with the current Resource version, and
+`Idempotency-Key`. It commits the Resource status, aggregate snapshot, domain event, and
+replay receipt in one SQLite transaction. Only `ACTIVE -> REVOKED` and `REVOKED -> ACTIVE`
+are legal; same-state requests and stale versions conflict. Revocation blocks subsequent
+content-read admissions and derived-index publication while retaining the bytes. It does
+not recall content already delivered to a native AgentSession, and this route does not
+claim to invalidate such sessions. `DELETION_PENDING`, purge receipts, and `DELETED` are
+not writable through the local desktop Operator yet.
 
 The desktop Library offers **Save original…** only for catalog entries at or below the
 same 10 MiB bound. This is a native Tauri command, not a new logical Operator route: it
@@ -1040,7 +1146,15 @@ First-party user-authored context documents may additionally supply typed
 `context_document` metadata; ResourceService validates that the metadata kind matches its
 USER/Workspace/Coworker/Goal owner and that the owner belongs to the selected Workspace.
 The upload session pins this metadata and applies it to the Resource created at commit.
+The upload-session response echoes `ContextDocumentCreateMetadata` (owner and kind only);
+the committed Resource response exposes full `ContextDocumentMetadata`, initially
+`ACTIVE` without purge fields.
 Omitting the field creates an ordinary Resource.
+The local desktop V1 Library currently creates only `WORKSPACE_NOTES` owned by the selected
+Workspace, through this same resumable upload contract. It does not expose USER, Coworker,
+or Goal ownership until their owner-selection and authorization flows are implemented in
+the desktop. The metadata classifies the Workspace-scoped Resource; it does not attach the
+note to an AgentSession or enable semantic RAG.
 The returned session is size-limited and expires and includes a fixed chunk size. The
 client uploads indexed chunks with `Content-Range`, per-chunk SHA-256, and idempotent
 chunk identity. The server reports the committed offset/ranges; an identical retry is
@@ -1178,6 +1292,20 @@ explicit name/type matches and labels match reasons separately. The response's
 `content_scan` reports limits only for `ON_DEMAND_CONTENT`; it is null for indexed search.
 The cursor is bound to Workspace, query, mode and filters. A result is never an implicit
 Task/Agent context attachment. This is deterministic lexical retrieval, not semantic RAG.
+
+Every `ResourceSearchResult` carries a `PinnedResourceRef` and the exact
+`source_content_digest` of that revision. Its required `source_matches` array is empty
+except for `INDEXED_CONTENT` lexical hits; there it contains one first-occurrence record
+per distinct normalized query term, with zero-based half-open UTF-8 byte offsets into the
+original revision bytes. The offsets are meaningful only with that result's exact
+`resource_ref.revision_id` and `source_content_digest`; they do not address a newer head
+or the normalized display snippet. On-demand snippets currently have no offset provenance.
+
+**Implementation gap:** the storage search result now computes these revision/digest-bound
+spans, but the daemon's `ResourceSearchResult` response mapper has not yet been updated to
+serialize `source_content_digest` and `source_matches`. Until that owner integration is
+completed, the mounted route does not satisfy this response contract; clients must not
+infer source offsets from snippets.
 
 The revision endpoint returns immutable revisions in ancestry order with parent IDs and
 head markers. If multiple heads exist, the Resource projection has a null
@@ -1331,6 +1459,13 @@ authorization material, or arbitrary executable UI payloads; standard output saf
 redaction policy still applies.
 If the adapter cannot replay a sequence gap, the Operator discards the partial text and
 waits for the committed message rather than concatenating across missing content.
+Optional `rich.draft` frames use a separate bounded ephemeral frame schema and bind the
+current `(turn_id, retry_ordinal, agent_session_id, draft_id)`. They are never
+`projection_types`, DomainEvents, or persisted messages. If the Operator cannot replay a
+draft gap, it discards the rich draft and continues with `turn.delta`/committed-message
+handling. Rich compilation/publication runs after semantic-message commit and cannot hold
+turn settlement or Task completion. Frame shapes are defined in
+[`schemas/operator-stream.schema.json`](schemas/operator-stream.schema.json).
 
 Workspace errors include WORKSPACE_ARCHIVED for writes to an archived Workspace and WORKSPACE_NOT_QUIESCENT when archive is requested while a Task is nonterminal or an Automation is enabled. A stale policy update returns STALE_WORKSPACE_VERSION. SELECTED_FOLDERS without one or more active same-Workspace root IDs returns INVALID_ARGUMENT; a missing, revoked, or unavailable selected root returns the corresponding typed resource error.
 

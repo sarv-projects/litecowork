@@ -18,8 +18,18 @@ export type Routine = {
   status: RoutineStatus; created_at: string; updated_at: string; version: number;
 };
 export type RoutinePage = { items: Routine[]; next_cursor: string | null };
-export type RoutineRevision = { routine_id: string; revision: number; objective_template: string };
+export type RoutineRevision = Record<string, unknown> & { routine_id: string; revision: number; objective_template: string };
 export type RevisionPage<T> = { items: T[]; next_cursor: string | null };
+export type MaterializedAutomationTask = {
+  task_id: string;
+  workspace_id: string;
+  automation_id: string;
+  automation_revision: number;
+  routine_revision: number;
+  status: "READY";
+  current_spec_revision: number;
+  occurrence_id: string;
+};
 export type CoworkerRevisionRef = { coworker_id: string; revision: number };
 export type AutomationCoworker = {
   coworker_id: string; workspace_id: string; current_revision: number; name: string;
@@ -55,6 +65,7 @@ export interface AutomationApi {
   listRoutines(cursor?: string, signal?: AbortSignal): Promise<RoutinePage>;
   getRoutine(routineId: string, signal?: AbortSignal): Promise<Routine>;
   listRoutineRevisions(routineId: string, cursor?: string, signal?: AbortSignal): Promise<RevisionPage<RoutineRevision>>;
+  getRoutineRevision(routineId: string, revision: number, signal?: AbortSignal): Promise<RoutineRevision>;
   listCoworkers(cursor?: string, signal?: AbortSignal): Promise<{ items: AutomationCoworker[]; next_cursor: string | null }>;
   getCoworker(coworkerId: string, signal?: AbortSignal): Promise<AutomationCoworker>;
   listRevisions(automationId: string, cursor?: string, signal?: AbortSignal): Promise<RevisionPage<AutomationRevision>>;
@@ -62,6 +73,7 @@ export interface AutomationApi {
   reviseDefinition(automationId: string, expectedVersion: number, input: AutomationDefinitionInput, requestId: string): Promise<Automation>;
   pause(automationId: string, expectedVersion: number, requestId: string): Promise<Automation>;
   disable(automationId: string, expectedVersion: number, requestId: string): Promise<Automation>;
+  run(automation: Automation, revision: AutomationRevision, inputs: Record<string, unknown>, requestId: string): Promise<MaterializedAutomationTask>;
 }
 
 export class AutomationApiError extends Error {
@@ -125,7 +137,40 @@ function decodeRoutine(value: unknown, workspaceId: string): Routine {
 }
 function decodeRoutineRevision(value: unknown): RoutineRevision {
   const row = object(value);
-  return { routine_id: text(row.routine_id), revision: positiveInteger(row.revision), objective_template: text(row.objective_template) };
+  return { ...row, routine_id: text(row.routine_id), revision: positiveInteger(row.revision), objective_template: text(row.objective_template) };
+}
+function decodeManualRun(value: unknown, workspaceId: string, automation: Automation, revision: AutomationRevision): MaterializedAutomationTask {
+  const response = object(value);
+  if (text(response.automation_id) !== automation.automation_id
+    || positiveInteger(response.automation_revision) !== revision.revision
+    || positiveInteger(response.occurrence_version) !== 3
+    || text(response.occurrence_status) !== "STARTED") throw new Error("The Manual Automation receipt does not match the selected definition.");
+  const occurrenceId = text(response.occurrence_id);
+  text(response.trigger_id);
+  const view = object(response.task);
+  const task = object(view.task);
+  const spec = object(view.current_spec_revision);
+  const taskId = text(task.task_id);
+  const specRevision = positiveInteger(spec.revision);
+  if (text(task.workspace_id) !== workspaceId || text(task.status) !== "READY"
+    || text(task.automation_id) !== automation.automation_id
+    || text(task.automation_occurrence_id) !== occurrenceId
+    || text(task.routine_id) !== revision.routine_id
+    || positiveInteger(task.routine_revision) !== revision.routine_revision
+    || positiveInteger(task.current_spec_revision) !== specRevision
+    || text(spec.task_id) !== taskId || text(spec.workspace_id) !== workspaceId) {
+    throw new Error("The saved Task response does not match this Workspace and Automation revision.");
+  }
+  return {
+    task_id: taskId,
+    workspace_id: workspaceId,
+    automation_id: automation.automation_id,
+    automation_revision: revision.revision,
+    routine_revision: revision.routine_revision,
+    status: "READY",
+    current_spec_revision: specRevision,
+    occurrence_id: occurrenceId,
+  };
 }
 function decodeCoworker(value: unknown, workspaceId: string): AutomationCoworker {
   const row = object(value);
@@ -238,6 +283,21 @@ export function createAutomationApi(workspaceId: string, transport: AutomationTr
       const suffix = query.size ? `?${query}` : "";
       return decodePage(await (await request(`/v1/routines/${encodeURIComponent(routineId)}/revisions${suffix}`, { signal })).json(), decodeRoutineRevision);
     },
+    async getRoutineRevision(routineId, revision, signal) {
+      if (!Number.isSafeInteger(revision) || revision < 1) throw new Error("Routine revision is invalid.");
+      let cursor: string | undefined;
+      for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+        const query = new URLSearchParams(); if (cursor) query.set("cursor", cursor);
+        const suffix = query.size ? `?${query}` : "";
+        const page = decodePage(await (await request(`/v1/routines/${encodeURIComponent(routineId)}/revisions${suffix}`, { signal })).json(), decodeRoutineRevision);
+        if (page.items.some(item => item.routine_id !== routineId)) throw new Error("Routine revision page identity mismatch.");
+        const found = page.items.find(item => item.revision === revision);
+        if (found) return found;
+        if (!page.next_cursor) break;
+        cursor = page.next_cursor;
+      }
+      throw new Error("The exact pinned Routine revision could not be loaded.");
+    },
     async listCoworkers(cursor, signal) {
       const query = new URLSearchParams({ limit: "50" }); if (cursor) query.set("cursor", cursor);
       const body = object(await (await request(`/v1/coworkers?${query}`, { signal })).json());
@@ -273,5 +333,25 @@ export function createAutomationApi(workspaceId: string, transport: AutomationTr
     },
     pause: (automationId, expectedVersion, requestId) => statusRequest(automationId, "pause", expectedVersion, requestId),
     disable: (automationId, expectedVersion, requestId) => statusRequest(automationId, "disable", expectedVersion, requestId),
+    async run(automation, revision, inputs, requestId) {
+      // Do not pre-reject a disabled/stale snapshot here: a retry after an ambiguous
+      // response must reach the server's receipt-first exact replay path. New commands
+      // are still checked against current status/version by the Operator transaction.
+      if (revision.automation_id !== automation.automation_id) throw new Error("Automation revision identity is invalid.");
+      if (!Number.isSafeInteger(automation.version) || automation.version < 1 || !requestId || requestId.length > 128) {
+        throw new Error("Manual Automation request identity or version is invalid.");
+      }
+      const response = await request(`/v1/automations/${encodeURIComponent(automation.automation_id)}/run`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": requestId,
+          "If-Match": `\"${automation.version}\"`,
+        },
+        body: JSON.stringify({ automation_revision: revision.revision, inputs }),
+      });
+      if (response.status !== 200 && response.status !== 201) throw new Error("The Manual Automation response status is invalid.");
+      return decodeManualRun(await response.json(), workspaceId, automation, revision);
+    },
   };
 }

@@ -43,6 +43,7 @@ AgentCapabilities {
   session: { resume, steer, interrupt, cancel, fork, model_switch: LIVE | NEW_SESSION | UNSUPPORTED }
   input: { text, image, file, resources }
   extension: { mcp_stdio, mcp_http, skills, plugins, dynamic_attach }
+  host_instruction_delivery: NATIVE_SYSTEM | NATIVE_DEVELOPER | SESSION_GUIDANCE | CONTEXT_ATTACHMENT | UNSUPPORTED
   reporting: { tool_calls, plan, usage, native_subagents, approvals }
   environment: { cwd, extra_directories }
   limits: { max_context_hint?, max_concurrent_sessions? }
@@ -168,11 +169,19 @@ SessionSpec {
   environment?
   capability_attachments[]
   context_attachments[]
+  host_instruction_bundle_ref? # optional, bounded, digest-pinned presentation guidance
+  preloaded_host_skill_refs[]  # zero-authority bundled HostSkills only
   execution_policy
   budget?
   deadline?
 }
 ```
+
+Host guidance is optional and never a required AgentFeature. `UNSUPPORTED` delivery does
+not exclude an otherwise eligible lead/worker; host-side deterministic compilation remains
+available. By default, response-design guidance is sent only to human-facing
+`CONVERSATION` sessions, not Task planners or delegated Attempts. Adapters do not rewrite
+native instruction/config files. See [`HOST-GUIDANCE.md`](HOST-GUIDANCE.md).
 
 Session admission rules:
 - `CONVERSATION {conversation_id, conversation_turn_id}` is authorized by ConversationService and the active
@@ -206,6 +215,12 @@ Session admission rules:
   or writer quiescence. A coordinator must fail closed until the native capability set is
   disabled or individually authorized/mediated and the sandbox payload is qualified for
   the installed Codex protocol version.
+  In the current SQLite implementation, `AgentSessionStore` independently rejects both
+  planning-session reservation and activation with
+  `TASK_PLANNING_ISOLATION_UNAVAILABLE`, before durable session/Task state is written.
+  This protects the storage boundary if an internal caller skips PlanningCoordinator's
+  preflight. It is an implementation gate, not a new authorization proof and not a
+  replacement for the Runtime-owned attestation required by the admission contract.
 - `ATTEMPT_EXECUTION {task_id, attempt_id}` requires one admitted Attempt, its
   Runtime/Environment, active lease, and scoped grants. Its TaskPacket is required and
   names the TaskSpecRevision referenced by the Step's accepted PlanRevision, that

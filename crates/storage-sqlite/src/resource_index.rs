@@ -6,11 +6,12 @@
 
 use std::collections::BTreeSet;
 
-use sha2::Digest;
 use rusqlite::{Connection, params};
+use sha2::Digest;
 use storage_core::{
     BlobPurpose, BlobRef, BlobStore, PreparedResourceTextIndex, ResourceSearchRecord,
-    ResourceSummary, ResourceTextIndexSkipReason, ResourceTextSearchRecord, StoreError,
+    ResourceSummary, ResourceTextIndexSkipReason, ResourceTextMatchSpan, ResourceTextSearchRecord,
+    StoreError,
 };
 
 pub const MAX_INDEXABLE_RESOURCE_BYTES: u64 = 1_048_576;
@@ -66,7 +67,8 @@ pub(crate) fn replace_current(
     source_digest: &str,
     index: Option<&PreparedResourceTextIndex>,
 ) -> Result<bool, StoreError> {
-    let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+    let tx = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(map_index_database_error)?;
     let updated = replace_current_in_transaction(
         &tx,
@@ -112,7 +114,9 @@ pub(crate) fn replace_current_in_transaction(
             || index.resource_revision_id != revision_id
             || index.source_content_digest != source_digest
         {
-            return Err(StoreError::Integrity("reindexed snapshot does not match its source revision".to_owned()));
+            return Err(StoreError::Integrity(
+                "reindexed snapshot does not match its source revision".to_owned(),
+            ));
         }
         insert_prepared(connection, index)?;
     }
@@ -155,12 +159,15 @@ pub(crate) fn list_key_versions(
     let mut statement = connection.prepare(
         "SELECT DISTINCT token_key_version FROM resource_text_indexes WHERE workspace_id = ?1 ORDER BY token_key_version",
     ).map_err(map_index_database_error)?;
-    let rows = statement.query_map([workspace_id], |row| row.get::<_, i64>(0))
+    let rows = statement
+        .query_map([workspace_id], |row| row.get::<_, i64>(0))
         .map_err(map_index_database_error)?;
     rows.map(|row| {
         let value = row.map_err(map_index_database_error)?;
-        u32::try_from(value).map_err(|_| StoreError::Integrity("Resource index key version is invalid".to_owned()))
-    }).collect()
+        u32::try_from(value)
+            .map_err(|_| StoreError::Integrity("Resource index key version is invalid".to_owned()))
+    })
+    .collect()
 }
 
 /// Select only exact current revisions in the requested Workspace and only active
@@ -177,18 +184,31 @@ pub(crate) fn search_candidates(
 ) -> Result<Vec<IndexCandidate>, StoreError> {
     if workspace_id.trim().is_empty()
         || !(1..=201).contains(&limit)
-        || kind.is_some_and(|value| !matches!(value, "FILE" | "FOLDER" | "ARTIFACT" | "CONNECTOR_OBJECT" | "WEB_RESOURCE" | "OTHER"))
-        || freshness.is_some_and(|value| !matches!(value, "CURRENT" | "STALE" | "UNKNOWN" | "UNAVAILABLE"))
+        || kind.is_some_and(|value| {
+            !matches!(
+                value,
+                "FILE" | "FOLDER" | "ARTIFACT" | "CONNECTOR_OBJECT" | "WEB_RESOURCE" | "OTHER"
+            )
+        })
+        || freshness
+            .is_some_and(|value| !matches!(value, "CURRENT" | "STALE" | "UNKNOWN" | "UNAVAILABLE"))
         || after_created_at.is_some() != after_resource_id.is_some()
     {
-        return Err(StoreError::Invalid("indexed Resource search filters are invalid".to_owned()));
+        return Err(StoreError::Invalid(
+            "indexed Resource search filters are invalid".to_owned(),
+        ));
     }
     let mut found = Vec::new();
     for (key_version, terms) in tokens_by_version {
         if terms.is_empty() || terms.len() > MAX_QUERY_TERMS {
-            return Err(StoreError::Invalid("indexed Resource search terms are invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "indexed Resource search terms are invalid".to_owned(),
+            ));
         }
-        let placeholders = (0..terms.len()).map(|index| format!("?{}", index + 3)).collect::<Vec<_>>().join(", ");
+        let placeholders = (0..terms.len())
+            .map(|index| format!("?{}", index + 3))
+            .collect::<Vec<_>>()
+            .join(", ");
         let freshness_expr = "CASE
             WHEN l.availability IN ('OFFLINE', 'REVOKED', 'UNAVAILABLE') THEN 'UNAVAILABLE'
             WHEN l.availability IN ('PLACEHOLDER', 'UNKNOWN') THEN 'UNKNOWN'
@@ -233,58 +253,125 @@ pub(crate) fn search_candidates(
             terms.len() + 7, terms.len() + 8, terms.len() + 9, terms.len() + 10,
             terms.len() + 11,
         );
-        let mut values = vec![rusqlite::types::Value::Text(workspace_id.to_owned()), rusqlite::types::Value::Integer(i64::from(*key_version))];
+        let mut values = vec![
+            rusqlite::types::Value::Text(workspace_id.to_owned()),
+            rusqlite::types::Value::Integer(i64::from(*key_version)),
+        ];
         values.extend(terms.iter().cloned().map(rusqlite::types::Value::Text));
-        values.push(kind.map_or(rusqlite::types::Value::Null, |value| rusqlite::types::Value::Text(value.to_owned())));
-        values.push(kind.map_or(rusqlite::types::Value::Null, |value| rusqlite::types::Value::Text(value.to_owned())));
-        values.push(freshness.map_or(rusqlite::types::Value::Null, |value| rusqlite::types::Value::Text(value.to_owned())));
-        values.push(freshness.map_or(rusqlite::types::Value::Null, |value| rusqlite::types::Value::Text(value.to_owned())));
-        values.push(after_created_at.map_or(rusqlite::types::Value::Null, |value| rusqlite::types::Value::Text(value.to_owned())));
-        values.push(after_created_at.map_or(rusqlite::types::Value::Null, |value| rusqlite::types::Value::Text(value.to_owned())));
-        values.push(after_created_at.map_or(rusqlite::types::Value::Null, |value| rusqlite::types::Value::Text(value.to_owned())));
-        values.push(after_resource_id.map_or(rusqlite::types::Value::Null, |value| rusqlite::types::Value::Text(value.to_owned())));
+        values.push(kind.map_or(rusqlite::types::Value::Null, |value| {
+            rusqlite::types::Value::Text(value.to_owned())
+        }));
+        values.push(kind.map_or(rusqlite::types::Value::Null, |value| {
+            rusqlite::types::Value::Text(value.to_owned())
+        }));
+        values.push(freshness.map_or(rusqlite::types::Value::Null, |value| {
+            rusqlite::types::Value::Text(value.to_owned())
+        }));
+        values.push(freshness.map_or(rusqlite::types::Value::Null, |value| {
+            rusqlite::types::Value::Text(value.to_owned())
+        }));
+        values.push(
+            after_created_at.map_or(rusqlite::types::Value::Null, |value| {
+                rusqlite::types::Value::Text(value.to_owned())
+            }),
+        );
+        values.push(
+            after_created_at.map_or(rusqlite::types::Value::Null, |value| {
+                rusqlite::types::Value::Text(value.to_owned())
+            }),
+        );
+        values.push(
+            after_created_at.map_or(rusqlite::types::Value::Null, |value| {
+                rusqlite::types::Value::Text(value.to_owned())
+            }),
+        );
+        values.push(
+            after_resource_id.map_or(rusqlite::types::Value::Null, |value| {
+                rusqlite::types::Value::Text(value.to_owned())
+            }),
+        );
         values.push(rusqlite::types::Value::Integer(to_sql_i64(limit as u64)?));
         let mut statement = connection.prepare(&sql).map_err(map_index_database_error)?;
-        let rows = statement.query_map(rusqlite::params_from_iter(values.iter()), |row| {
-            let size: i64 = row.get(6)?;
-            let extracted_size: i64 = row.get(18)?;
-            let display_name: String = row.get(3)?;
-            let media_type: String = row.get(4)?;
-            Ok((
-                ResourceSearchRecord {
-                    summary: ResourceSummary {
-                        resource_id: row.get(0)?, workspace_id: row.get(1)?, resource_revision_id: row.get(2)?,
-                        display_name, media_type, content_digest: row.get(5)?,
-                        size_bytes: u64::try_from(size).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(6, size))?,
-                        created_at: row.get(7)?,
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(values.iter()), |row| {
+                let size: i64 = row.get(6)?;
+                let extracted_size: i64 = row.get(18)?;
+                let display_name: String = row.get(3)?;
+                let media_type: String = row.get(4)?;
+                Ok((
+                    ResourceSearchRecord {
+                        summary: ResourceSummary {
+                            resource_id: row.get(0)?,
+                            workspace_id: row.get(1)?,
+                            resource_revision_id: row.get(2)?,
+                            display_name,
+                            media_type,
+                            content_digest: row.get(5)?,
+                            size_bytes: u64::try_from(size)
+                                .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(6, size))?,
+                            created_at: row.get(7)?,
+                        },
+                        kind: row.get(8)?,
+                        location_id: row.get(9)?,
+                        availability: row.get(10)?,
+                        writable: row.get::<_, i64>(11)? != 0,
+                        observed_revision_id: row.get(12)?,
+                        observed_digest: row.get(13)?,
+                        observed_at: row.get(14)?,
+                        last_checked_at: row.get(15)?,
+                        freshness: row.get(16)?,
+                        match_reasons: vec!["CONTENT_INDEXED".to_owned()],
                     },
-                    kind: row.get(8)?, location_id: row.get(9)?, availability: row.get(10)?,
-                    writable: row.get::<_, i64>(11)? != 0, observed_revision_id: row.get(12)?,
-                    observed_digest: row.get(13)?, observed_at: row.get(14)?, last_checked_at: row.get(15)?,
-                    freshness: row.get(16)?, match_reasons: vec!["CONTENT_INDEXED".to_owned()],
-                },
-                BlobRef { digest: row.get(17)?, size_bytes: u64::try_from(extracted_size).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(18, extracted_size))?, media_type: INDEX_MEDIA_TYPE.to_owned() },
-                row.get::<_, String>(19)?, row.get::<_, String>(20)?, row.get::<_, i64>(21)?,
-            ))
-        }).map_err(map_index_database_error)?;
+                    BlobRef {
+                        digest: row.get(17)?,
+                        size_bytes: u64::try_from(extracted_size).map_err(|_| {
+                            rusqlite::Error::IntegralValueOutOfRange(18, extracted_size)
+                        })?,
+                        media_type: INDEX_MEDIA_TYPE.to_owned(),
+                    },
+                    row.get::<_, String>(19)?,
+                    row.get::<_, String>(20)?,
+                    row.get::<_, i64>(21)?,
+                ))
+            })
+            .map_err(map_index_database_error)?;
         for row in rows {
-            let (record, extracted_blob, source_content_digest, parser_id, returned_key_version) = row.map_err(map_index_database_error)?;
+            let (record, extracted_blob, source_content_digest, parser_id, returned_key_version) =
+                row.map_err(map_index_database_error)?;
             if returned_key_version != i64::from(*key_version) {
-                return Err(StoreError::Integrity("Resource index token key version mismatch".to_owned()));
+                return Err(StoreError::Integrity(
+                    "Resource index token key version mismatch".to_owned(),
+                ));
             }
             found.push(IndexCandidate {
-                record, extracted_blob, source_content_digest, parser_id,
+                record,
+                extracted_blob,
+                source_content_digest,
+                parser_id,
                 token_key_version: *key_version,
-                matched_term_count: u32::try_from(terms.len()).map_err(|_| StoreError::Invalid("query has too many terms".to_owned()))?,
+                matched_term_count: u32::try_from(terms.len())
+                    .map_err(|_| StoreError::Invalid("query has too many terms".to_owned()))?,
             });
         }
     }
     found.sort_by(|left, right| {
-        right.record.summary.created_at.cmp(&left.record.summary.created_at)
-            .then_with(|| right.record.summary.resource_id.cmp(&left.record.summary.resource_id))
+        right
+            .record
+            .summary
+            .created_at
+            .cmp(&left.record.summary.created_at)
+            .then_with(|| {
+                right
+                    .record
+                    .summary
+                    .resource_id
+                    .cmp(&left.record.summary.resource_id)
+            })
     });
-    found.dedup_by(|right, left| right.record.summary.resource_id == left.record.summary.resource_id
-        && right.record.summary.resource_revision_id == left.record.summary.resource_revision_id);
+    found.dedup_by(|right, left| {
+        right.record.summary.resource_id == left.record.summary.resource_id
+            && right.record.summary.resource_revision_id == left.record.summary.resource_revision_id
+    });
     found.truncate(limit);
     Ok(found)
 }
@@ -322,30 +409,45 @@ pub(crate) fn materialize_matches(
 ) -> Result<Vec<ResourceTextSearchRecord>, StoreError> {
     let mut matches = Vec::new();
     for candidate in candidates {
-        if candidate.record.summary.workspace_id != workspace_id || candidate.token_key_version == 0 {
-            return Err(StoreError::Integrity("Resource index candidate escaped its Workspace".to_owned()));
+        if candidate.record.summary.workspace_id != workspace_id || candidate.token_key_version == 0
+        {
+            return Err(StoreError::Integrity(
+                "Resource index candidate escaped its Workspace".to_owned(),
+            ));
         }
         let revision_id = candidate.record.summary.resource_revision_id.clone();
-        let text_bytes = blobs.get(workspace_id, BlobPurpose::ResourceIndex, &candidate.extracted_blob)?;
+        let text_bytes = blobs.get(
+            workspace_id,
+            BlobPurpose::ResourceIndex,
+            &candidate.extracted_blob,
+        )?;
         if text_bytes.len() as u64 != candidate.extracted_blob.size_bytes
             || text_bytes.len() as u64 != candidate.record.summary.size_bytes
             || digest(&text_bytes) != candidate.source_content_digest
             || candidate.record.summary.content_digest != candidate.source_content_digest
         {
-            return Err(StoreError::Integrity("Resource index snapshot does not match its source revision".to_owned()));
+            return Err(StoreError::Integrity(
+                "Resource index snapshot does not match its source revision".to_owned(),
+            ));
         }
-        let text = std::str::from_utf8(&text_bytes)
-            .map_err(|_| StoreError::Integrity("Resource index snapshot is no longer valid UTF-8".to_owned()))?;
+        let text = std::str::from_utf8(&text_bytes).map_err(|_| {
+            StoreError::Integrity("Resource index snapshot is no longer valid UTF-8".to_owned())
+        })?;
         if !matches_all(text, query_terms) {
-            return Err(StoreError::Integrity("Resource index terms do not match the encrypted snapshot".to_owned()));
+            return Err(StoreError::Integrity(
+                "Resource index terms do not match the encrypted snapshot".to_owned(),
+            ));
         }
-        let excerpt = snippet(text, query_terms, 320)
-            .ok_or_else(|| StoreError::Integrity("matched Resource index has no matching excerpt".to_owned()))?;
+        let matched_spans = match_spans(text, query_terms)?;
+        let excerpt = snippet(text, query_terms, 320).ok_or_else(|| {
+            StoreError::Integrity("matched Resource index has no matching excerpt".to_owned())
+        })?;
         matches.push(ResourceTextSearchRecord {
             result: candidate.record,
             resource_revision_id: revision_id,
             source_content_digest: candidate.source_content_digest,
             snippet: excerpt,
+            matched_spans,
             matched_term_count: candidate.matched_term_count,
             parser_id: candidate.parser_id,
         });
@@ -373,7 +475,9 @@ pub fn prepare(
         || revision_id.trim().is_empty()
         || indexed_at.trim().is_empty()
     {
-        return Err(StoreError::Invalid("Resource index scope is invalid".to_owned()));
+        return Err(StoreError::Invalid(
+            "Resource index scope is invalid".to_owned(),
+        ));
     }
     if bytes.len() as u64 > MAX_INDEXABLE_RESOURCE_BYTES
         || !is_allowlisted_text(display_name, media_type)
@@ -415,7 +519,12 @@ pub fn prepare(
     term_tokens.sort_unstable();
     term_tokens.dedup();
 
-    let extracted_text = blobs.put(workspace_id, BlobPurpose::ResourceIndex, bytes, INDEX_MEDIA_TYPE)?;
+    let extracted_text = blobs.put(
+        workspace_id,
+        BlobPurpose::ResourceIndex,
+        bytes,
+        INDEX_MEDIA_TYPE,
+    )?;
     if extracted_text.size_bytes != bytes.len() as u64
         || blobs.get(workspace_id, BlobPurpose::ResourceIndex, &extracted_text)? != bytes
     {
@@ -439,13 +548,39 @@ pub fn prepare(
 /// Normalize one bounded query into unique deterministic terms.
 pub fn query_terms(query: &str) -> Result<Vec<String>, StoreError> {
     if query.trim().is_empty() || query.len() > 256 || query.contains('\0') {
-        return Err(StoreError::Invalid("indexed Resource search query is invalid".to_owned()));
+        return Err(StoreError::Invalid(
+            "indexed Resource search query is invalid".to_owned(),
+        ));
+    }
+    if contains_overlong_normalized_term(query) {
+        return Err(StoreError::Invalid(
+            "indexed Resource search term exceeds the normalized character limit".to_owned(),
+        ));
     }
     let terms = unique_terms(query, MAX_QUERY_TERMS + 1);
     if terms.is_empty() || terms.len() > MAX_QUERY_TERMS {
-        return Err(StoreError::Invalid("indexed Resource search query has too many terms".to_owned()));
+        return Err(StoreError::Invalid(
+            "indexed Resource search query has too many terms".to_owned(),
+        ));
     }
-    Ok(terms)
+    Ok(terms.into_iter().collect())
+}
+
+/// Reject overlong query tokens instead of silently dropping them. Dropping an
+/// overlong token from an AND query would weaken the user's requested constraints.
+fn contains_overlong_normalized_term(query: &str) -> bool {
+    let mut term_chars = 0usize;
+    for character in query.chars().flat_map(char::to_lowercase) {
+        if character.is_alphanumeric() {
+            term_chars = term_chars.saturating_add(1);
+            if term_chars > MAX_TERM_CHARS {
+                return true;
+            }
+        } else {
+            term_chars = 0;
+        }
+    }
+    false
 }
 
 /// Search semantics are AND over distinct Unicode alphanumeric tokens. Term equality is
@@ -458,6 +593,57 @@ pub fn matches_all(document: &str, terms: &[String]) -> bool {
     terms.iter().all(|term| document_terms.contains(term))
 }
 
+/// Locate the first exact Unicode-token occurrence of every distinct query term.
+/// Returned offsets address the original UTF-8 bytes, not normalized text. The
+/// materializer calls this only after verifying the encrypted snapshot against the
+/// exact ResourceRevision digest; the caller carries that revision/digest alongside
+/// these transient spans.
+pub fn match_spans(
+    document: &str,
+    terms: &[String],
+) -> Result<Vec<ResourceTextMatchSpan>, StoreError> {
+    if terms.is_empty() || terms.len() > MAX_QUERY_TERMS {
+        return Err(StoreError::Invalid(
+            "indexed Resource search terms are invalid".to_owned(),
+        ));
+    }
+
+    let mut token_ranges = Vec::<(usize, usize, String)>::new();
+    let mut token_start = None;
+    for (offset, character) in document.char_indices() {
+        if character.is_alphanumeric() {
+            token_start.get_or_insert(offset);
+        } else if let Some(start) = token_start.take() {
+            token_ranges.push((start, offset, document[start..offset].to_lowercase()));
+        }
+    }
+    if let Some(start) = token_start {
+        token_ranges.push((start, document.len(), document[start..].to_lowercase()));
+    }
+
+    let mut spans = Vec::with_capacity(terms.len());
+    for term in terms {
+        let Some((start, end, _)) = token_ranges
+            .iter()
+            .find(|(_, _, normalized)| normalized == term)
+        else {
+            return Err(StoreError::Integrity(
+                "matched Resource index term has no source span".to_owned(),
+            ));
+        };
+        spans.push(ResourceTextMatchSpan {
+            term: term.clone(),
+            start_utf8_byte: u64::try_from(*start).map_err(|_| {
+                StoreError::Integrity("Resource source span exceeds supported range".to_owned())
+            })?,
+            end_utf8_byte_exclusive: u64::try_from(*end).map_err(|_| {
+                StoreError::Integrity("Resource source span exceeds supported range".to_owned())
+            })?,
+        });
+    }
+    Ok(spans)
+}
+
 /// Return a bounded plain-text excerpt around the first matching token. Callers must
 /// encode this as text, never HTML, and must recheck the Resource revision before return.
 pub fn snippet(text: &str, terms: &[String], maximum_chars: usize) -> Option<String> {
@@ -467,20 +653,26 @@ pub fn snippet(text: &str, terms: &[String], maximum_chars: usize) -> Option<Str
     let (byte_start, byte_end) = text
         .char_indices()
         .filter(|(_, character)| character.is_alphanumeric())
-        .fold(Vec::<(usize, usize)>::new(), |mut ranges, (start, character)| {
-            if let Some((_, prior_end)) = ranges.last_mut() {
-                if *prior_end == start {
-                    *prior_end = start + character.len_utf8();
-                    return ranges;
+        .fold(
+            Vec::<(usize, usize)>::new(),
+            |mut ranges, (start, character)| {
+                if let Some((_, prior_end)) = ranges.last_mut() {
+                    if *prior_end == start {
+                        *prior_end = start + character.len_utf8();
+                        return ranges;
+                    }
                 }
-            }
-            ranges.push((start, start + character.len_utf8()));
-            ranges
-        })
+                ranges.push((start, start + character.len_utf8()));
+                ranges
+            },
+        )
         .into_iter()
         .find_map(|(start, end)| {
             let token = &text[start..end];
-            terms.iter().any(|term| token.to_lowercase() == *term).then_some((start, end))
+            terms
+                .iter()
+                .any(|term| token.to_lowercase() == *term)
+                .then_some((start, end))
         })?;
     let mut start = byte_start.saturating_sub(maximum_chars / 2);
     while start > 0 && !text.is_char_boundary(start) {
@@ -493,7 +685,13 @@ pub fn snippet(text: &str, terms: &[String], maximum_chars: usize) -> Option<Str
     let mut excerpt = text[start..end]
         .chars()
         .take(maximum_chars)
-        .map(|character| if matches!(character, '\n' | '\r' | '\t') { ' ' } else { character })
+        .map(|character| {
+            if matches!(character, '\n' | '\r' | '\t') {
+                ' '
+            } else {
+                character
+            }
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -516,8 +714,7 @@ pub fn is_allowlisted_text(display_name: &str, media_type: &str) -> bool {
         .trim()
         .to_ascii_lowercase();
     if [
-        ".zip", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-        ".odt", ".ods", ".odp",
+        ".zip", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp",
     ]
     .iter()
     .any(|extension| name.ends_with(extension))
@@ -525,7 +722,10 @@ pub fn is_allowlisted_text(display_name: &str, media_type: &str) -> bool {
         || media == "application/x-zip-compressed"
         || media == "application/pdf"
         || media.contains("officedocument")
-        || matches!(media.as_str(), "application/msword" | "application/vnd.ms-excel" | "application/vnd.ms-powerpoint")
+        || matches!(
+            media.as_str(),
+            "application/msword" | "application/vnd.ms-excel" | "application/vnd.ms-powerpoint"
+        )
         || media.starts_with("image/")
         || media.starts_with("audio/")
         || media.starts_with("video/")
@@ -533,8 +733,23 @@ pub fn is_allowlisted_text(display_name: &str, media_type: &str) -> bool {
         return false;
     }
     let extension_ok = [
-        ".txt", ".md", ".markdown", ".csv", ".json", ".jsonl", ".ndjson", ".rs", ".py",
-        ".toml", ".yaml", ".yml", ".js", ".jsx", ".ts", ".tsx", ".css",
+        ".txt",
+        ".md",
+        ".markdown",
+        ".csv",
+        ".json",
+        ".jsonl",
+        ".ndjson",
+        ".rs",
+        ".py",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".css",
     ]
     .iter()
     .any(|extension| name.ends_with(extension));
@@ -567,18 +782,29 @@ fn validate_prepared(index: &PreparedResourceTextIndex) -> Result<(), StoreError
         || index.resource_revision_id.trim().is_empty()
         || index.source_content_digest.len() != 71
         || !index.source_content_digest.starts_with("sha256:")
-        || index.source_content_digest[7..].bytes().any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase())
+        || index.source_content_digest[7..]
+            .bytes()
+            .any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase())
         || index.extracted_text.size_bytes > MAX_INDEXABLE_RESOURCE_BYTES
         || index.token_key_version == 0
         || index.parser_id != TEXT_PARSER_ID
         || index.term_tokens.len() > MAX_TERM_COUNT
-        || index.term_tokens.iter().any(|token| token.len() != 64 || token.bytes().any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase()))
+        || index.term_tokens.iter().any(|token| {
+            token.len() != 64
+                || token
+                    .bytes()
+                    .any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase())
+        })
         || index.indexed_at.trim().is_empty()
     {
-        return Err(StoreError::Invalid("prepared Resource text index is invalid".to_owned()));
+        return Err(StoreError::Invalid(
+            "prepared Resource text index is invalid".to_owned(),
+        ));
     }
     if index.term_tokens.windows(2).any(|pair| pair[0] >= pair[1]) {
-        return Err(StoreError::Invalid("prepared Resource index terms must be sorted and unique".to_owned()));
+        return Err(StoreError::Invalid(
+            "prepared Resource index terms must be sorted and unique".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -588,15 +814,24 @@ fn digest(bytes: &[u8]) -> String {
 }
 
 fn to_sql_i64(value: u64) -> Result<i64, StoreError> {
-    i64::try_from(value).map_err(|_| StoreError::Invalid("Resource index value exceeds SQLite range".to_owned()))
+    i64::try_from(value)
+        .map_err(|_| StoreError::Invalid("Resource index value exceeds SQLite range".to_owned()))
 }
 
 fn map_index_database_error(error: rusqlite::Error) -> StoreError {
     if let rusqlite::Error::SqliteFailure(code, _) = &error {
         match code.code {
-            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked => return StoreError::Busy,
-            rusqlite::ErrorCode::DiskFull => return StoreError::Io("database disk is full".to_owned()),
-            rusqlite::ErrorCode::ConstraintViolation => return StoreError::Database("Resource index constraint rejected the operation".to_owned()),
+            rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked => {
+                return StoreError::Busy;
+            }
+            rusqlite::ErrorCode::DiskFull => {
+                return StoreError::Io("database disk is full".to_owned());
+            }
+            rusqlite::ErrorCode::ConstraintViolation => {
+                return StoreError::Database(
+                    "Resource index constraint rejected the operation".to_owned(),
+                );
+            }
             _ => {}
         }
     }
@@ -635,12 +870,70 @@ fn unique_terms(text: &str, maximum: usize) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::blob::{FileBlobStore, WorkspaceBlobKey, WorkspaceBlobKeyProvider};
+    use std::sync::Arc;
+    use zeroize::Zeroizing;
+
+    struct StableWorkspaceKeys;
+
+    impl WorkspaceBlobKeyProvider for StableWorkspaceKeys {
+        fn current_key(
+            &self,
+            workspace_id: &str,
+            _purpose: BlobPurpose,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            Ok(WorkspaceBlobKey {
+                version: 1,
+                bytes: Zeroizing::new(sha2::Sha256::digest(workspace_id.as_bytes()).into()),
+            })
+        }
+
+        fn key_by_version(
+            &self,
+            workspace_id: &str,
+            purpose: BlobPurpose,
+            version: u32,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            if version != 1 {
+                return Err(StoreError::Blob("unknown key version".to_owned()));
+            }
+            self.current_key(workspace_id, purpose)
+        }
+    }
+
+    struct MissingWorkspaceKeys;
+
+    impl WorkspaceBlobKeyProvider for MissingWorkspaceKeys {
+        fn current_key(
+            &self,
+            _workspace_id: &str,
+            _purpose: BlobPurpose,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            Err(StoreError::Blob("workspace key unavailable".to_owned()))
+        }
+
+        fn key_by_version(
+            &self,
+            _workspace_id: &str,
+            _purpose: BlobPurpose,
+            _version: u32,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            Err(StoreError::Blob("workspace key unavailable".to_owned()))
+        }
+    }
+
+    fn source_digest(bytes: &[u8]) -> String {
+        format!("sha256:{}", hex::encode(sha2::Sha256::digest(bytes)))
+    }
 
     #[test]
     fn zip_and_rich_documents_are_never_indexed_as_plain_text() {
         assert!(!is_allowlisted_text("archive.zip", "text/plain"));
         assert!(!is_allowlisted_text("report.pdf", "text/plain"));
-        assert!(!is_allowlisted_text("report.docx", "application/octet-stream"));
+        assert!(!is_allowlisted_text(
+            "report.docx",
+            "application/octet-stream"
+        ));
     }
 
     #[test]
@@ -649,6 +942,107 @@ mod tests {
         assert_eq!(terms, vec!["café".to_owned(), "hello".to_owned()]);
         assert!(matches_all("Hello, CAFÉ world", &terms));
         assert!(!matches_all("Hello world", &terms));
+    }
+
+    #[test]
+    fn lexical_matches_return_exact_utf8_byte_spans_in_query_term_order() {
+        let source = "Préface 🧪\nThe café has a mutex. CAFÉ stays Unicode.";
+        let terms = query_terms("MUTEX café").expect("valid query");
+        let spans = match_spans(source, &terms).expect("source spans");
+
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].term, "café");
+        assert_eq!(spans[1].term, "mutex");
+        assert_eq!(
+            &source[spans[0].start_utf8_byte as usize..spans[0].end_utf8_byte_exclusive as usize],
+            "café",
+        );
+        assert_eq!(
+            &source[spans[1].start_utf8_byte as usize..spans[1].end_utf8_byte_exclusive as usize],
+            "mutex",
+        );
+        assert!(
+            spans[0].start_utf8_byte > 0,
+            "offset is measured in UTF-8 bytes after multibyte characters"
+        );
+        assert!(spans[0].end_utf8_byte_exclusive <= spans[1].start_utf8_byte);
+    }
+
+    #[test]
+    fn lexical_match_spans_fail_closed_when_a_query_term_is_absent() {
+        assert!(matches!(
+            match_spans("one term", &["one".to_owned(), "missing".to_owned()]),
+            Err(StoreError::Integrity(_)),
+        ));
+        assert!(matches!(
+            match_spans("one term", &[]),
+            Err(StoreError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn materialized_search_keeps_spans_paired_with_exact_revision_and_digest() {
+        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let blobs = FileBlobStore::new(directory.path(), StableWorkspaceKeys);
+        let bytes = "Résumé 🧭\nThe indexed phrase is durable.".as_bytes();
+        let content_digest = source_digest(bytes);
+        let prepared = prepare(
+            &blobs,
+            "workspace-a",
+            "resource-a",
+            "revision-exact",
+            "notes.md",
+            "text/markdown",
+            &content_digest,
+            "2026-10-09T00:00:00Z",
+            bytes,
+        )
+        .expect("prepare index")
+        .expect("supported text is indexed");
+        let terms = query_terms("DURABLE indexed").expect("valid query");
+        let candidate = IndexCandidate {
+            record: ResourceSearchRecord {
+                summary: ResourceSummary {
+                    resource_id: "resource-a".to_owned(),
+                    workspace_id: "workspace-a".to_owned(),
+                    resource_revision_id: "revision-exact".to_owned(),
+                    display_name: "notes.md".to_owned(),
+                    media_type: "text/markdown".to_owned(),
+                    content_digest: content_digest.clone(),
+                    size_bytes: bytes.len() as u64,
+                    created_at: "2026-10-09T00:00:00Z".to_owned(),
+                },
+                kind: "FILE".to_owned(),
+                location_id: "location-a".to_owned(),
+                availability: "AVAILABLE".to_owned(),
+                writable: false,
+                observed_revision_id: Some("revision-exact".to_owned()),
+                observed_digest: Some(content_digest.clone()),
+                observed_at: "2026-10-09T00:00:00Z".to_owned(),
+                last_checked_at: None,
+                freshness: "CURRENT".to_owned(),
+                match_reasons: vec!["CONTENT_INDEXED".to_owned()],
+            },
+            source_content_digest: content_digest.clone(),
+            extracted_blob: prepared.extracted_text,
+            parser_id: prepared.parser_id,
+            token_key_version: prepared.token_key_version,
+            matched_term_count: terms.len() as u32,
+        };
+
+        let result = materialize_matches(&blobs, "workspace-a", vec![candidate], &terms)
+            .expect("verified candidate materializes");
+        assert_eq!(result.len(), 1);
+        let matched = &result[0];
+        assert_eq!(matched.resource_revision_id, "revision-exact");
+        assert_eq!(matched.source_content_digest, content_digest);
+        assert_eq!(matched.matched_spans.len(), 2);
+        for span in &matched.matched_spans {
+            let source = std::str::from_utf8(bytes).expect("fixture UTF-8");
+            let start = usize::try_from(span.start_utf8_byte).expect("bounded start");
+            let end = usize::try_from(span.end_utf8_byte_exclusive).expect("bounded end");
+            assert_eq!(source[start..end].to_lowercase(), span.term);
+        }
     }
 
     #[test]
@@ -662,7 +1056,114 @@ mod tests {
     #[test]
     fn query_rejects_empty_and_overly_fragmented_input() {
         assert!(query_terms("  ").is_err());
-        let too_many_terms = (0..33).map(|index| format!("term{index}")).collect::<Vec<_>>().join(" ");
+        let too_many_terms = (0..33)
+            .map(|index| format!("term{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         assert!(query_terms(&too_many_terms).is_err());
+    }
+
+    #[test]
+    fn query_rejects_overlong_token_instead_of_broadening_and_search() {
+        let overlong = "a".repeat(MAX_TERM_CHARS + 1);
+        assert!(query_terms(&overlong).is_err());
+        assert!(query_terms(&format!("required {overlong}")).is_err());
+        assert_eq!(
+            query_terms(&"a".repeat(MAX_TERM_CHARS)).unwrap(),
+            vec!["a".repeat(MAX_TERM_CHARS)]
+        );
+    }
+
+    #[test]
+    fn preparation_stores_only_encrypted_snapshot_and_workspace_keyed_tokens() {
+        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let blobs = Arc::new(FileBlobStore::new(directory.path(), StableWorkspaceKeys));
+        let bytes = b"Architecture decisions stay revision scoped.";
+        let prepared = prepare(
+            blobs.as_ref(),
+            "workspace-a",
+            "resource-a",
+            "revision-1",
+            "notes.md",
+            "text/markdown; charset=utf-8",
+            &source_digest(bytes),
+            "2026-10-09T00:00:00Z",
+            bytes,
+        )
+        .expect("supported input is prepared")
+        .expect("supported text gets an index");
+
+        assert_eq!(prepared.token_key_version, 1);
+        assert_eq!(prepared.term_tokens.len(), 5);
+        assert!(prepared.term_tokens.iter().all(|token| token.len() == 64));
+        assert!(
+            prepared
+                .term_tokens
+                .iter()
+                .all(|token| !token.contains("architecture"))
+        );
+        assert_eq!(
+            blobs
+                .get(
+                    "workspace-a",
+                    BlobPurpose::ResourceIndex,
+                    &prepared.extracted_text
+                )
+                .expect("decrypt index snapshot"),
+            bytes,
+        );
+        assert!(
+            blobs
+                .get(
+                    "workspace-b",
+                    BlobPurpose::ResourceIndex,
+                    &prepared.extracted_text
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn missing_workspace_key_fails_closed_without_plaintext_index_fallback() {
+        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let blobs = FileBlobStore::new(directory.path(), MissingWorkspaceKeys);
+        let bytes = b"plain text must not be indexed without its Workspace key";
+        let result = prepare(
+            &blobs,
+            "workspace-a",
+            "resource-a",
+            "revision-1",
+            "notes.txt",
+            "text/plain",
+            &source_digest(bytes),
+            "2026-10-09T00:00:00Z",
+            bytes,
+        );
+
+        assert!(matches!(result, Err(StoreError::Blob(_))));
+    }
+
+    #[test]
+    fn unsupported_and_out_of_bounds_resources_have_specific_skip_reasons() {
+        assert_eq!(
+            not_indexable_reason("archive.zip", "application/zip", b"PK\\x03\\x04"),
+            Some(ResourceTextIndexSkipReason::UnsupportedType),
+        );
+        assert_eq!(
+            not_indexable_reason(
+                "notes.txt",
+                "text/plain",
+                &vec![b'x'; MAX_INDEXABLE_RESOURCE_BYTES as usize + 1]
+            ),
+            Some(ResourceTextIndexSkipReason::OverSizeLimit),
+        );
+        assert_eq!(
+            not_indexable_reason("notes.txt", "text/plain", &[0xff, 0xfe]),
+            Some(ResourceTextIndexSkipReason::InvalidUtf8),
+        );
+        assert_eq!(
+            not_indexable_reason("notes.txt", "text/plain", b"valid\0invalid"),
+            Some(ResourceTextIndexSkipReason::ControlCharacters),
+        );
     }
 }

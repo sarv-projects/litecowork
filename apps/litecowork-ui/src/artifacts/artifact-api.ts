@@ -198,12 +198,16 @@ export class ArtifactApi {
     requestId: string,
     signal?: AbortSignal,
   ): Promise<ArtifactTextVersionReceipt> {
+    // Capture the submitted bytes/heads before awaiting the transport. A receipt
+    // resolves this command only when it identifies the exact published text.
+    input = { ...input };
     integer(input.expected_content_version);
     integer(input.expected_resource_version);
     str(input.expected_parent_resource_revision_id);
     integer(expectedArtifactVersion);
     str(requestId);
-    if (new TextEncoder().encode(input.content).byteLength > 1024 * 1024) {
+    const submittedBytes = new TextEncoder().encode(input.content);
+    if (submittedBytes.byteLength > 1024 * 1024) {
       throw new Error("Text Artifact versions must not exceed 1 MiB.");
     }
     const body = record(await (await this.request(`${this.path(id)}/text-version`, {
@@ -218,8 +222,13 @@ export class ArtifactApi {
     if (artifact.artifact_id !== id || version.artifact_id !== id || version.version !== input.expected_content_version + 1
       || artifact.current_version !== version.version || artifact.version !== expectedArtifactVersion + 1
       || version.content.kind !== "MANAGED_BLOB" || version.content.media_type !== "text/plain"
-      || version.content.size_bytes > 1024 * 1024) {
+      || version.content.size_bytes !== submittedBytes.byteLength) {
       throw new Error("Artifact publication receipt does not match the submitted version.");
+    }
+    const submittedHash = new Uint8Array(await crypto.subtle.digest("SHA-256", submittedBytes));
+    const submittedDigest = `sha256:${Array.from(submittedHash, byte => byte.toString(16).padStart(2, "0")).join("")}`;
+    if (version.content.content_digest !== submittedDigest) {
+      throw new Error("Artifact publication receipt does not match the submitted content.");
     }
     return { artifact, version, replayed: body.replayed };
   }
@@ -270,11 +279,22 @@ export class ArtifactApi {
       media_type: version.content.media_type,
     });
   }
-  async libraryCommand(id: string, command: "promote" | "archive", expectedVersion: number, idempotencyKey: string): Promise<Artifact> {
-    integer(expectedVersion); str(idempotencyKey);
-    return decodeArtifact(await (await this.request(`${this.path(id)}/${command}`, {
-      method: "POST", headers: { "If-Match": `"${expectedVersion}"`, "Idempotency-Key": idempotencyKey },
+  async libraryCommand(snapshot: Artifact, command: "promote" | "archive", idempotencyKey: string): Promise<Artifact> {
+    integer(snapshot.version); str(idempotencyKey);
+    if (command === "promote" && snapshot.library_status !== "TRANSIENT"
+      || command === "archive" && snapshot.library_status === "TRANSIENT") throw new Error("Invalid Artifact Library transition.");
+    const response = decodeArtifact(await (await this.request(`${this.path(snapshot.artifact_id)}/${command}`, {
+      method: "POST", headers: { "If-Match": `"${snapshot.version}"`, "Idempotency-Key": idempotencyKey },
     })).json());
+    const target = command === "promote" ? "SAVED" : "ARCHIVED";
+    const expectedVersion = command === "archive" && snapshot.library_status === "ARCHIVED" ? snapshot.version : snapshot.version + 1;
+    for (const field of ["artifact_id", "workspace_id", "resource_id", "kind", "display_name", "current_version", "created_at"] as const) {
+      if (response[field] !== snapshot[field]) throw new Error("Artifact Library response changed immutable identity or content.");
+    }
+    if ((response.task_id ?? null) !== (snapshot.task_id ?? null) || response.library_status !== target || response.version !== expectedVersion) {
+      throw new Error("Artifact Library response does not match the requested transition.");
+    }
+    return response;
   }
 }
 

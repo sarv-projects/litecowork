@@ -8,6 +8,8 @@ members = [
   "crates/domain-responsibility",
   "crates/domain-workspace",
   "crates/domain-effects",
+  "crates/domain-environment",
+  "crates/local-environment-staging",
   "crates/linux-process-scope",
 ]
 resolver = "3"

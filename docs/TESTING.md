@@ -44,6 +44,36 @@ the frozen `litecowork.*` namespace; execute SQLite DDL and inspect foreign keys
 ### E2E
 Real user workflows from BENCHMARKS.md.
 
+### Rich presentation conformance
+
+The CODE layer validates schemas, canonical digests, closed block variants, source
+authorization, citation locators, size/depth limits, safe rendering, and local-only
+checklist state. The SYSTEM layer uses the desktop Operator and `litecoworkd`, a qualified
+AgentAdapter, authenticated routes, stream reconnect, persistence, and the actual webview.
+The OWNER layer runs a quick prose question, a comparison, a cited folder/ZIP report, and a
+Task that creates exact-version Artifacts and a ZIP; the owner records whether both a
+nontechnical and technical user can find the answer/output without Inspector.
+
+| Case | Expected result |
+|---|---|
+| Short factual question with AUTO | Semantic prose only; no unnecessary HostSkill or rich block |
+| SIMPLE preference | Plain semantic answer; real Artifact/download and host-owned actions remain available |
+| Rich comparison/diagram request | Readable semantic answer commits first; optional enhancement binds to that exact Message |
+| Agent ignores/does not support Host Guidance | Host deterministic rendering still works; agent remains eligible |
+| Forged Approval/Verification/Task status or Artifact ID | Compiler rejects model-authored host state; semantic Message remains |
+| Cross-Workspace, stale, or revoked Resource/Artifact | Binding rejected or reauthorized unavailable; no content leak |
+| Missing/corrupt/unsupported RichPresentation | Semantic Message remains readable/searchable/exportable |
+| Retry-0 or duplicate/out-of-order rich frame | Stale frame rejected; bounded replay/resync or discard of draft |
+| HTML/script, unsafe URL, remote media, hostile diagram | No execution or implicit fetch; safe fallback or rejection |
+| 1,000 citations/large collection | Bounded document and virtualized UI; no giant binary/data payload |
+| Checklist interaction | Local Operator state only; no Task state or DomainEvent mutation |
+| Artifact updated after ZIP creation | Existing ZIP still contains the exact pinned Artifact versions |
+| Backup restored without optional rich blob | Conversation semantic history restores and renders normally |
+| Reduced motion, keyboard, screen reader, 400% zoom | Equivalent information and reachable controls without motion dependency |
+
+The integrated stress scenario is B89. A mock renderer, synthetic browser snapshot, or
+schema-only pass does not satisfy SYSTEM or OWNER acceptance.
+
 ### Performance/soak
 Long Tasks, many events, large artifacts, large file/data corpora, repeated reconnects, hours-long automation/channel operation.
 
@@ -156,11 +186,15 @@ Recurring trigger creates ordinary Task and deduplicates duplicate trigger deliv
   `RESOURCE_INDEX` snapshots; SQLite contains keyed tokens, not source terms or snippets
 - Current Resource-index code-test sources cover allowlist/container exclusion, Unicode
   normalization and AND matching, bounded/sanitized snippets, query limits, stable
-  Workspace-scoped HMAC tokens, and atomic/retryable v7 DDL migration. Before acceptance,
-  add/run conformance cases for retained key-version search, unavailable-key fail-closed
-  behavior, reindex after rotation, stale-revision exclusion, ContextDocument revocation,
-  snapshot tampering, and exact physical index/blob purge. Source tests are not runtime
-  verification evidence until the matching API integration is built and run.
+  Workspace-scoped HMAC tokens, encrypted snapshot round-trip and Workspace isolation,
+  missing-key fail-closed index preparation, explicit unsupported/oversize/invalid-input
+  reasons, and atomic/retryable v7 DDL migration. The current OS key-provider has no
+  injectable credential-store backend, so orphaned version-1 credential/absent active
+  pointer behavior requires a provider/system qualification case. Before acceptance,
+  add/run conformance cases for retained key-version search, unavailable-key search
+  fail-closed behavior, reindex after rotation, stale-revision exclusion, ContextDocument
+  revocation, snapshot tampering, and exact physical index/blob purge. Source tests are not
+  runtime verification evidence until the matching API integration is built and run.
 - ArtifactVersion/VerificationRun inputs pin exact Resource revisions and produce one rebuildable DependencyEdge per input
 - dependency invalidation links the exact edge to the changed revision, is idempotent, and marks downstream projections stale without mutating immutable records
 - a conflicted Resource revision graph never projects a dependency as current

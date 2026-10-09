@@ -18,7 +18,7 @@ const desktopActionTransport: SuggestionActionTransport = async (workspaceId, su
 };
 
 const desktopAcceptTaskTransport: SuggestionAcceptTaskTransport = async (workspaceId, suggestionId, expectedVersion, requestId) => {
-  return invoke<string>("accept_suggestion_task", { workspaceId, suggestionId, expectedVersion, requestId });
+  return invoke<unknown>("accept_suggestion_task", { workspaceId, suggestionId, expectedVersion, requestId });
 };
 
 const desktopPreferenceTransport: SuggestionPreferenceTransport = async workspaceId =>

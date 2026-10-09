@@ -2,8 +2,8 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
 };
-use hmac::{Hmac, Mac};
 use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File},
@@ -281,8 +281,11 @@ impl<K: WorkspaceBlobKeyProvider> BlobStore for FileBlobStore<K> {
         key_version: Option<u32>,
         normalized_term: &str,
     ) -> Result<(u32, String), StoreError> {
-        let (version, mut tokens) = self.resource_index_tokens(workspace_id, key_version, &[normalized_term.to_owned()])?;
-        let token = tokens.pop().ok_or_else(|| StoreError::Integrity("Resource index token is missing".to_owned()))?;
+        let (version, mut tokens) =
+            self.resource_index_tokens(workspace_id, key_version, &[normalized_term.to_owned()])?;
+        let token = tokens
+            .pop()
+            .ok_or_else(|| StoreError::Integrity("Resource index token is missing".to_owned()))?;
         Ok((version, token))
     }
 
@@ -294,28 +297,42 @@ impl<K: WorkspaceBlobKeyProvider> BlobStore for FileBlobStore<K> {
     ) -> Result<(u32, Vec<String>), StoreError> {
         if workspace_id.trim().is_empty()
             || normalized_terms.is_empty()
-            || normalized_terms.iter().any(|term| term.is_empty() || term.len() > 512 || term.contains('\0'))
+            || normalized_terms
+                .iter()
+                .any(|term| term.is_empty() || term.len() > 512 || term.contains('\0'))
         {
-            return Err(StoreError::Invalid("Resource index terms are invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "Resource index terms are invalid".to_owned(),
+            ));
         }
         let key = match key_version {
-            Some(version) if version > 0 => self
+            Some(version) if version > 0 => {
+                self.keys
+                    .key_by_version(workspace_id, BlobPurpose::ResourceIndex, version)?
+            }
+            Some(_) => {
+                return Err(StoreError::Invalid(
+                    "Resource index key version must be nonzero".to_owned(),
+                ));
+            }
+            None => self
                 .keys
-                .key_by_version(workspace_id, BlobPurpose::ResourceIndex, version)?,
-            Some(_) => return Err(StoreError::Invalid("Resource index key version must be nonzero".to_owned())),
-            None => self.keys.current_key(workspace_id, BlobPurpose::ResourceIndex)?,
+                .current_key(workspace_id, BlobPurpose::ResourceIndex)?,
         };
         if key.version == 0 {
-            return Err(StoreError::Blob("Resource index key version must be nonzero".to_owned()));
+            return Err(StoreError::Blob(
+                "Resource index key version must be nonzero".to_owned(),
+            ));
         }
-        let hkdf = Hkdf::<Sha256>::new(Some(b"LiteCowork.ResourceIndex.key.v1"), key.bytes.as_ref());
+        let hkdf =
+            Hkdf::<Sha256>::new(Some(b"LiteCowork.ResourceIndex.key.v1"), key.bytes.as_ref());
         let mut mac_key = Zeroizing::new([0_u8; 32]);
         hkdf.expand(b"term-token-hmac-sha256", mac_key.as_mut())
             .map_err(|_| StoreError::Blob("Resource index key derivation failed".to_owned()))?;
         type HmacSha256 = Hmac<Sha256>;
         let mut tokens = Vec::with_capacity(normalized_terms.len());
         for term in normalized_terms {
-            let mut mac = HmacSha256::new_from_slice(mac_key.as_ref())
+            let mut mac = <HmacSha256 as Mac>::new_from_slice(mac_key.as_ref())
                 .map_err(|_| StoreError::Blob("invalid Resource index key".to_owned()))?;
             mac.update(b"LiteCowork.ResourceIndex.term.v1\0");
             mac.update(term.as_bytes());

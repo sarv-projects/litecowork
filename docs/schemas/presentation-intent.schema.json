@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://litecowork.dev/schemas/presentation-intent-v1.schema.json",
+  "title": "LiteCowork RichPresentationIntent v1",
+  "type": "object",
+  "required": ["schema_version", "strategy", "density", "elements", "submitted_at_sequence"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "strategy": {"enum": ["AUTO", "PROSE", "REPORT", "COMPARISON", "EXPLAINER", "DASHBOARD", "TIMELINE", "DELIVERABLES", "GALLERY"]},
+    "density": {"enum": ["COMPACT", "NORMAL", "DETAILED"]},
+    "elements": {"type": "array", "maxItems": 40, "items": {"oneOf": [
+      {"type": "object", "required": ["kind"], "properties": {"kind": {"enum": ["COMPARISON", "TABLE", "TIMELINE"]}}, "additionalProperties": false},
+      {"type": "object", "required": ["kind", "invocation_id", "result_binding"], "properties": {"kind": {"const": "CHART_FROM_RESULT"}, "invocation_id": {"type": "string", "minLength": 1}, "result_binding": {"type": "string", "minLength": 1, "maxLength": 200}}, "additionalProperties": false},
+      {"type": "object", "required": ["kind", "source", "accessible_summary"], "properties": {"kind": {"const": "DIAGRAM"}, "source": {"type": "string", "maxLength": 50000}, "accessible_summary": {"type": "string", "minLength": 1, "maxLength": 4000}}, "additionalProperties": false},
+      {"type": "object", "required": ["kind", "resource_refs"], "properties": {"kind": {"const": "MEDIA_GROUP"}, "resource_refs": {"type": "array", "maxItems": 50, "items": {"type": "object", "required": ["resource_id", "revision_id"], "properties": {"resource_id": {"type": "string", "minLength": 1}, "revision_id": {"type": "string", "minLength": 1}}, "additionalProperties": false}}}, "additionalProperties": false},
+      {"type": "object", "required": ["kind", "artifact_refs"], "properties": {"kind": {"const": "DELIVERABLE_GROUP"}, "artifact_refs": {"type": "array", "maxItems": 50, "items": {"type": "object", "required": ["artifact_id", "version"], "properties": {"artifact_id": {"type": "string", "minLength": 1}, "version": {"type": "integer", "minimum": 1}}, "additionalProperties": false}}}, "additionalProperties": false},
+      {"type": "object", "required": ["kind", "items"], "properties": {"kind": {"const": "CHECKLIST"}, "items": {"type": "array", "maxItems": 100, "items": {"type": "object", "required": ["id", "label"], "properties": {"id": {"type": "string", "maxLength": 100}, "label": {"type": "string", "maxLength": 500}}, "additionalProperties": false}}}, "additionalProperties": false}
+    ]}},
+    "submitted_at_sequence": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

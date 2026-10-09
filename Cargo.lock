@@ -528,6 +528,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "domain-environment"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "storage-core",
+]
+
+[[package]]
 name = "domain-responsibility"
 version = "0.1.0"
 dependencies = [
@@ -536,20 +544,22 @@ dependencies = [
  "serde_json",
  "serde_json_canonicalizer",
  "sha2",
+ "unicode-casefold",
+ "unicode-normalization",
 ]
 
 [[package]]
 name = "domain-task"
 version = "0.1.0"
 dependencies = [
-	"domain-workspace",
-	"getrandom",
-	"hex",
-	"serde_json",
-	"serde_json_canonicalizer",
-	"sha2",
-	"storage-core",
-	"time",
+ "domain-workspace",
+ "getrandom 0.3.4",
+ "hex",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
+ "storage-core",
+ "time",
 ]
 
 [[package]]
@@ -1060,12 +1070,15 @@ dependencies = [
  "axum",
  "base64",
  "ctrlc",
+ "domain-responsibility",
  "domain-task",
  "domain-workspace",
  "fs2",
  "getrandom 0.3.4",
  "hex",
+ "http-body",
  "operator-ipc",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",
@@ -1075,6 +1088,21 @@ dependencies = [
  "tempfile",
  "time",
  "tokio",
+ "tower",
+ "zeroize",
+]
+
+[[package]]
+name = "local-environment-staging"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde_json",
+ "sha2",
+ "storage-core",
+ "tempfile",
+ "unicode-casefold",
+ "unicode-normalization",
 ]
 
 [[package]]
@@ -1255,8 +1283,13 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 name = "operator-ipc"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "hex",
+ "http-body",
+ "rustix",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
 ]
 
@@ -1740,6 +1773,7 @@ name = "storage-core"
 version = "0.1.0"
 dependencies = [
  "domain-effects",
+ "domain-responsibility",
  "serde",
  "serde_json",
 ]
@@ -1750,6 +1784,8 @@ version = "0.1.0"
 dependencies = [
  "chacha20poly1305",
  "domain-effects",
+ "domain-environment",
+ "domain-responsibility",
  "domain-workspace",
  "ed25519-dalek",
  "getrandom 0.3.4",
@@ -1757,7 +1793,9 @@ dependencies = [
  "hkdf",
  "hmac",
  "keyring",
+ "local-environment-staging",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
@@ -1864,6 +1902,12 @@ dependencies = [
  "num-conv",
  "time-core",
 ]
+
+[[package]]
+name = "tinyvec"
+version = "1.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokio"
@@ -1999,10 +2043,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "unicode-casefold"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7f66b1c8f8caa2ab31dc6d3f35386f16efdab89668f93411e565ac368908e8f"
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "universal-hash"

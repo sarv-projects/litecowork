@@ -1,66 +1,401 @@
 use super::*;
 use serde::Serialize;
 use storage_core::{
-    ArtifactContentRecord, ArtifactReadStore, ArtifactRecord, ArtifactVersionAppendCommit,
-    ArtifactVersionWriteStore, ArtifactVersionRecord, CommittedArtifactVersionAppend,
-    DomainEvent, ResourceRecord, ResourceRevisionRecord, TaskPresentationArtifactVersion,
-    TaskPresentationReadModel, TaskPresentationReadStore, MAX_TASK_PRESENTATION_ARTIFACTS,
-    MAX_TASK_PRESENTATION_STEPS,
+    ArtifactContentRecord, ArtifactLibraryAction, ArtifactLibraryCommand,
+    ArtifactLibraryWriteStore, ArtifactReadStore, ArtifactRecord, ArtifactVersionAppendCommit,
+    ArtifactVersionRecord, ArtifactVersionWriteStore, CommittedArtifactLibraryCommand,
+    CommittedArtifactVersionAppend, DomainEvent, MAX_TASK_PRESENTATION_ARTIFACTS,
+    MAX_TASK_PRESENTATION_STEPS, ResourceRecord, ResourceRevisionRecord,
+    TaskPresentationActivityEvent, TaskPresentationArtifactVersion, TaskPresentationCurrentAttempt,
+    TaskPresentationReadModel, TaskPresentationReadStore,
 };
 
 pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
+impl ArtifactLibraryWriteStore for SqliteWorkspaceStore {
+    fn change_artifact_library(
+        &self,
+        command: ArtifactLibraryCommand,
+    ) -> Result<CommittedArtifactLibraryCommand, StoreError> {
+        validate_nonempty(&[
+            &command.principal_id,
+            &command.workspace_id,
+            &command.artifact_id,
+            &command.request_id,
+        ])?;
+        if command.expected_version == 0
+            || command.request_id.len() > 128
+            || !command
+                .request_id
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic())
+            || command.event.workspace_id != command.workspace_id
+            || command.event.entity_type != "Artifact"
+            || command.event.entity_id != command.artifact_id
+            || command.event.schema_version != 1
+            || command.event.origin_runtime_id.is_empty()
+            || command.event.event_id.is_empty()
+            || command.event.correlation_id.is_empty()
+        {
+            return Err(StoreError::Invalid(
+                "Artifact Library command is invalid".to_owned(),
+            ));
+        }
+        canonicalize_utc_timestamp(&command.event.recorded_at)?;
+        let blobs = Arc::clone(&self.inner.blobs);
+        let (reply, receive) = mpsc::channel();
+        self.execute_command(
+            Command::ArtifactOperation {
+                operation: Box::new(move |connection| {
+                    let result = library_command_transaction(connection, &blobs, command);
+                    let _ = reply.send(result);
+                }),
+            },
+            receive,
+        )
+    }
+}
+
+fn library_owner(
+    connection: &Connection,
+    command: &ArtifactLibraryCommand,
+) -> Result<String, StoreError> {
+    let workspace: Option<(String, String)> = connection
+        .query_row(
+            "SELECT owner_principal_id, status FROM workspaces WHERE workspace_id = ?1",
+            [&command.workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((owner, status)) = workspace else {
+        return Err(StoreError::NotFound);
+    };
+    if owner != command.principal_id {
+        return Err(StoreError::NotFound);
+    }
+    Ok(status)
+}
+
+fn library_replay(
+    connection: &Connection,
+    command: &ArtifactLibraryCommand,
+    request_digest: &str,
+) -> Result<Option<CommittedArtifactLibraryCommand>, StoreError> {
+    let prior: Option<(String, Option<String>, Option<String>)> = connection.query_row(
+        "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+        params![command.principal_id, command.request_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    ).optional().map_err(map_database_error)?;
+    let Some((prior_digest, response_json, response_digest)) = prior else {
+        return Ok(None);
+    };
+    if prior_digest != request_digest {
+        return Err(StoreError::Invalid("IDEMPOTENCY_CONFLICT".to_owned()));
+    }
+    let response_json = response_json.ok_or_else(|| {
+        StoreError::Integrity("Artifact Library receipt is incomplete".to_owned())
+    })?;
+    if response_digest.as_deref() != Some(digest(response_json.as_bytes()).as_str()) {
+        return Err(StoreError::Integrity(
+            "Artifact Library receipt digest is invalid".to_owned(),
+        ));
+    }
+    let mut result: CommittedArtifactLibraryCommand = serde_json::from_str(&response_json)
+        .map_err(|error| StoreError::Integrity(error.to_string()))?;
+    if result.artifact.workspace_id != command.workspace_id
+        || result.artifact.artifact_id != command.artifact_id
+    {
+        return Err(StoreError::Integrity(
+            "Artifact Library receipt identity mismatch".to_owned(),
+        ));
+    }
+    result.replayed = true;
+    Ok(Some(result))
+}
+
+fn library_next(
+    current: &ArtifactRecord,
+    command: &ArtifactLibraryCommand,
+) -> Result<ArtifactRecord, StoreError> {
+    // Stale archive must fail even when the Artifact is already archived.
+    if current.version != command.expected_version {
+        return Err(StoreError::Conflict {
+            expected: Some(command.expected_version),
+            actual: Some(current.version),
+        });
+    }
+    let target = match (command.action, current.library_status.as_str()) {
+        (ArtifactLibraryAction::Promote, "TRANSIENT") => "SAVED",
+        (ArtifactLibraryAction::Archive, "SAVED") => "ARCHIVED",
+        (ArtifactLibraryAction::Archive, "ARCHIVED") => return Ok(current.clone()),
+        _ => {
+            return Err(StoreError::Invalid(
+                "INVALID_ARTIFACT_TRANSITION".to_owned(),
+            ));
+        }
+    };
+    let mut next = current.clone();
+    next.library_status = target.to_owned();
+    next.version = next
+        .version
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Integrity("Artifact version exhausted".to_owned()))?;
+    to_sql_i64(next.version, "Artifact aggregate version")?;
+    Ok(next)
+}
+
+fn library_command_transaction(
+    connection: &mut Connection,
+    blobs: &Arc<dyn BlobStore>,
+    command: ArtifactLibraryCommand,
+) -> Result<CommittedArtifactLibraryCommand, StoreError> {
+    let request_digest = digest(&canonical_json(&json!({
+        "operation":"artifact.library.v1", "workspace_id":command.workspace_id,
+        "artifact_id":command.artifact_id, "expected_version":command.expected_version, "action":command.action,
+    }))?);
+    let status = library_owner(connection, &command)?;
+    if let Some(result) = library_replay(connection, &command, &request_digest)? {
+        return Ok(result);
+    }
+    if status != "ACTIVE" {
+        return Err(StoreError::Invalid("WORKSPACE_ARCHIVED".to_owned()));
+    }
+    let before = get_artifact(connection, &command.workspace_id, &command.artifact_id)?
+        .ok_or(StoreError::NotFound)?;
+    let next = library_next(&before, &command)?;
+    let content = get_artifact_version(
+        connection,
+        &command.workspace_id,
+        &command.artifact_id,
+        before.current_version,
+    )?
+    .ok_or(StoreError::NotFound)?;
+    let resource = load_resource_record(connection, &command.workspace_id, &before.resource_id)?
+        .ok_or(StoreError::NotFound)?;
+    if resource.kind != "ARTIFACT"
+        || resource.current_revision_id.as_deref() != Some(content.resource_revision_id.as_str())
+    {
+        return Err(StoreError::Integrity(
+            "Artifact Resource head mismatch".to_owned(),
+        ));
+    }
+    // The same full immutable aggregate snapshot shape is used by append. No
+    // provider/content fetch is necessary for a local Library metadata transition.
+    let state = if next != before {
+        Some(put_artifact_state(
+            blobs,
+            &command.workspace_id,
+            &ArtifactAggregateSnapshot {
+                artifact: next.clone(),
+                current_version: content,
+            },
+            "application/vnd.litecowork.artifact+json",
+            next.version,
+        )?)
+    } else {
+        None
+    };
+
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let status = library_owner(&tx, &command)?;
+    if let Some(result) = library_replay(&tx, &command, &request_digest)? {
+        return Ok(result);
+    }
+    if status != "ACTIVE" {
+        return Err(StoreError::Invalid("WORKSPACE_ARCHIVED".to_owned()));
+    }
+    let current = get_artifact(&tx, &command.workspace_id, &command.artifact_id)?
+        .ok_or(StoreError::NotFound)?;
+    let authoritative_next = library_next(&current, &command)?;
+    if current != before || authoritative_next != next {
+        return Err(StoreError::Conflict {
+            expected: Some(command.expected_version),
+            actual: Some(current.version),
+        });
+    }
+    let current_resource = load_resource_record(&tx, &command.workspace_id, &before.resource_id)?
+        .ok_or(StoreError::NotFound)?;
+    if current_resource != resource {
+        return Err(StoreError::Integrity(
+            "Artifact Resource changed without its Artifact head".to_owned(),
+        ));
+    }
+    let event = if let Some(state) = state {
+        let mut draft = command.event.clone();
+        draft.entity_revision = next.version;
+        draft.event_type = match command.action {
+            ArtifactLibraryAction::Promote => "artifact.library.promoted.v1",
+            ArtifactLibraryAction::Archive => "artifact.library.archived.v1",
+        }
+        .to_owned();
+        draft.payload = json!({"artifact_id":next.artifact_id, "from":before.library_status, "to":next.library_status, "aggregate_version":next.version});
+        let changed = tx.execute("UPDATE artifacts SET library_status = ?1, version = ?2 WHERE workspace_id = ?3 AND artifact_id = ?4 AND version = ?5 AND library_status = ?6",
+            params![next.library_status, to_sql_i64(next.version, "Artifact version")?, command.workspace_id, command.artifact_id, to_sql_i64(command.expected_version, "Artifact version")?, before.library_status]).map_err(map_database_error)?;
+        if changed != 1 {
+            return Err(StoreError::Conflict {
+                expected: Some(command.expected_version),
+                actual: None,
+            });
+        }
+        Some(insert_domain_event(&tx, &draft, &state)?)
+    } else {
+        None
+    };
+    let result = CommittedArtifactLibraryCommand {
+        artifact: next,
+        event,
+        replayed: false,
+    };
+    let response_json = String::from_utf8(canonical_json(&result)?)
+        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    tx.execute("INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+        params![command.principal_id, command.request_id, request_digest, response_json, digest(response_json.as_bytes()), command.event.recorded_at]).map_err(map_database_error)?;
+    tx.commit().map_err(map_database_error)?;
+    Ok(result)
+}
+
 impl ArtifactReadStore for SqliteWorkspaceStore {
-    fn get_artifact(&self, workspace_id: &str, artifact_id: &str) -> Result<Option<ArtifactRecord>, StoreError> {
+    fn get_artifact(
+        &self,
+        workspace_id: &str,
+        artifact_id: &str,
+    ) -> Result<Option<ArtifactRecord>, StoreError> {
         validate_nonempty(&[workspace_id, artifact_id])?;
         let (reply, receive) = mpsc::channel();
-        self.execute_command(Command::GetArtifact { workspace_id: workspace_id.to_owned(), artifact_id: artifact_id.to_owned(), reply }, receive)
+        self.execute_command(
+            Command::GetArtifact {
+                workspace_id: workspace_id.to_owned(),
+                artifact_id: artifact_id.to_owned(),
+                reply,
+            },
+            receive,
+        )
     }
 
-    fn get_artifact_append_heads(&self, workspace_id: &str, artifact_id: &str) -> Result<Option<storage_core::ArtifactAppendHeads>, StoreError> {
+    fn get_artifact_append_heads(
+        &self,
+        workspace_id: &str,
+        artifact_id: &str,
+    ) -> Result<Option<storage_core::ArtifactAppendHeads>, StoreError> {
         validate_nonempty(&[workspace_id, artifact_id])?;
         let (reply, receive) = mpsc::channel();
-        self.execute_command(Command::GetArtifactAppendHeads {
-            workspace_id: workspace_id.to_owned(), artifact_id: artifact_id.to_owned(), reply,
-        }, receive)
+        self.execute_command(
+            Command::GetArtifactAppendHeads {
+                workspace_id: workspace_id.to_owned(),
+                artifact_id: artifact_id.to_owned(),
+                reply,
+            },
+            receive,
+        )
     }
 
-    fn list_artifacts_page(&self, workspace_id: &str, library_status: Option<&str>, task_id: Option<&str>, after_created_at: Option<&str>, after_artifact_id: Option<&str>, limit: usize) -> Result<Vec<ArtifactRecord>, StoreError> {
+    fn list_artifacts_page(
+        &self,
+        workspace_id: &str,
+        library_status: Option<&str>,
+        task_id: Option<&str>,
+        after_created_at: Option<&str>,
+        after_artifact_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ArtifactRecord>, StoreError> {
         validate_nonempty(&[workspace_id])?;
         if !(1..=201).contains(&limit)
-            || library_status.is_some_and(|status| !["TRANSIENT", "SAVED", "ARCHIVED"].contains(&status))
+            || library_status
+                .is_some_and(|status| !["TRANSIENT", "SAVED", "ARCHIVED"].contains(&status))
             || after_created_at.is_some() != after_artifact_id.is_some()
             || task_id.is_some_and(|id| id.trim().is_empty())
-        { return Err(StoreError::Invalid("Artifact page query is invalid".to_owned())); }
+        {
+            return Err(StoreError::Invalid(
+                "Artifact page query is invalid".to_owned(),
+            ));
+        }
         let (reply, receive) = mpsc::channel();
-        self.execute_command(Command::ListArtifacts {
-            workspace_id: workspace_id.to_owned(), library_status: library_status.map(str::to_owned), task_id: task_id.map(str::to_owned),
-            after_created_at: after_created_at.map(str::to_owned), after_artifact_id: after_artifact_id.map(str::to_owned), limit, reply,
-        }, receive)
+        self.execute_command(
+            Command::ListArtifacts {
+                workspace_id: workspace_id.to_owned(),
+                library_status: library_status.map(str::to_owned),
+                task_id: task_id.map(str::to_owned),
+                after_created_at: after_created_at.map(str::to_owned),
+                after_artifact_id: after_artifact_id.map(str::to_owned),
+                limit,
+                reply,
+            },
+            receive,
+        )
     }
 
-    fn get_artifact_version(&self, workspace_id: &str, artifact_id: &str, version: u64) -> Result<Option<ArtifactVersionRecord>, StoreError> {
+    fn get_artifact_version(
+        &self,
+        workspace_id: &str,
+        artifact_id: &str,
+        version: u64,
+    ) -> Result<Option<ArtifactVersionRecord>, StoreError> {
         validate_nonempty(&[workspace_id, artifact_id])?;
-        if version == 0 { return Err(StoreError::Invalid("Artifact version is invalid".to_owned())); }
+        if version == 0 {
+            return Err(StoreError::Invalid(
+                "Artifact version is invalid".to_owned(),
+            ));
+        }
         to_sql_i64(version, "Artifact version")?;
         let (reply, receive) = mpsc::channel();
-        self.execute_command(Command::GetArtifactVersion { workspace_id: workspace_id.to_owned(), artifact_id: artifact_id.to_owned(), version, reply }, receive)
+        self.execute_command(
+            Command::GetArtifactVersion {
+                workspace_id: workspace_id.to_owned(),
+                artifact_id: artifact_id.to_owned(),
+                version,
+                reply,
+            },
+            receive,
+        )
     }
 
-    fn read_artifact_content_bounded(&self, workspace_id: &str, artifact_id: &str, version: u64, maximum_bytes: u64) -> Result<Option<Vec<u8>>, StoreError> {
-        let Some(version) = self.get_artifact_version(workspace_id, artifact_id, version)? else { return Ok(None) };
-        let ArtifactContentRecord::ManagedBlob { storage_ref, content_digest, media_type, size_bytes } = version.content else {
+    fn read_artifact_content_bounded(
+        &self,
+        workspace_id: &str,
+        artifact_id: &str,
+        version: u64,
+        maximum_bytes: u64,
+    ) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(version) = self.get_artifact_version(workspace_id, artifact_id, version)? else {
+            return Ok(None);
+        };
+        let ArtifactContentRecord::ManagedBlob {
+            storage_ref,
+            content_digest,
+            media_type,
+            size_bytes,
+        } = version.content
+        else {
             // External provider resolution must recheck current source authorization;
             // a pinned locator is not permission to perform a direct fetch.
-            return Err(StoreError::Invalid("ARTIFACT_EXTERNAL_CONTENT_UNAVAILABLE".to_owned()));
+            return Err(StoreError::Invalid(
+                "ARTIFACT_EXTERNAL_CONTENT_UNAVAILABLE".to_owned(),
+            ));
         };
-        if size_bytes > maximum_bytes { return Err(StoreError::Invalid("ARTIFACT_READ_LIMIT_EXCEEDED".to_owned())); }
-        if !storage_core::is_sha256_digest(&content_digest) || storage_ref.digest != content_digest || storage_ref.size_bytes != size_bytes || storage_ref.media_type != media_type {
-            return Err(StoreError::Integrity("Artifact content metadata does not match".to_owned()));
+        if size_bytes > maximum_bytes {
+            return Err(StoreError::Invalid(
+                "ARTIFACT_READ_LIMIT_EXCEEDED".to_owned(),
+            ));
         }
-        let bytes = self.inner.blobs.get(workspace_id, BlobPurpose::Artifact, &storage_ref)?;
+        if !storage_core::is_sha256_digest(&content_digest)
+            || storage_ref.digest != content_digest
+            || storage_ref.size_bytes != size_bytes
+            || storage_ref.media_type != media_type
+        {
+            return Err(StoreError::Integrity(
+                "Artifact content metadata does not match".to_owned(),
+            ));
+        }
+        let bytes = self
+            .inner
+            .blobs
+            .get(workspace_id, BlobPurpose::Artifact, &storage_ref)?;
         if bytes.len() as u64 != size_bytes || digest(&bytes) != content_digest {
-            return Err(StoreError::Integrity("Artifact content failed verification".to_owned()));
+            return Err(StoreError::Integrity(
+                "Artifact content failed verification".to_owned(),
+            ));
         }
         Ok(Some(bytes))
     }
@@ -74,11 +409,14 @@ impl TaskPresentationReadStore for SqliteWorkspaceStore {
     ) -> Result<Option<TaskPresentationReadModel>, StoreError> {
         validate_nonempty(&[workspace_id, task_id])?;
         let (reply, receive) = mpsc::channel();
-        self.execute_command(Command::GetTaskPresentation {
-            workspace_id: workspace_id.to_owned(),
-            task_id: task_id.to_owned(),
-            reply,
-        }, receive)
+        self.execute_command(
+            Command::GetTaskPresentation {
+                workspace_id: workspace_id.to_owned(),
+                task_id: task_id.to_owned(),
+                reply,
+            },
+            receive,
+        )
     }
 }
 
@@ -90,25 +428,64 @@ pub(super) fn read_task_presentation(
     workspace_id: &str,
     task_id: &str,
 ) -> Result<Option<TaskPresentationReadModel>, StoreError> {
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
         .map_err(map_database_error)?;
     let Some(task) = super::load_task_view(&transaction, workspace_id, task_id)? else {
         return Ok(None);
     };
 
     let (steps, steps_overflow) = if let Some(plan_revision) = task.task.current_plan_revision {
-        let mut steps = list_presentation_steps(
-            &transaction,
-            workspace_id,
-            task_id,
-            plan_revision,
-        )?;
+        let mut steps =
+            list_presentation_steps(&transaction, workspace_id, task_id, plan_revision)?;
         let overflow = steps.len() > MAX_TASK_PRESENTATION_STEPS;
-        if overflow { steps.truncate(MAX_TASK_PRESENTATION_STEPS); }
+        if overflow {
+            steps.truncate(MAX_TASK_PRESENTATION_STEPS);
+        }
         (steps, overflow)
     } else {
         (Vec::new(), false)
     };
+
+    // Activity is sourced only from committed domain-event rows. Read the newest
+    // Task/current-Step events, plus the latest event for the exact current Attempt
+    // attached to each current-plan Step, whether terminal or nonterminal. The source
+    // set stays bounded by the published Step cap. Consumers independently decide
+    // whether an Attempt is eligible to appear as an active workstream.
+    let mut activity_events = Vec::with_capacity(1 + steps.len() * 2);
+    if let Some(event) =
+        latest_task_presentation_event(&transaction, workspace_id, "Task", task_id)?
+    {
+        activity_events.push(event);
+    }
+    let mut current_attempts = Vec::new();
+    for step in &steps {
+        if let Some(event) =
+            latest_task_presentation_event(&transaction, workspace_id, "Step", &step.step_id)?
+        {
+            activity_events.push(event);
+        }
+        if let Some(attempt_id) = step.current_attempt_id.as_deref() {
+            if let Some(attempt) = read_task_presentation_current_attempt(
+                &transaction,
+                workspace_id,
+                task_id,
+                &step.step_id,
+                attempt_id,
+            )? {
+                if let Some(event) = attempt.last_event.clone() {
+                    activity_events.push(event);
+                }
+                current_attempts.push(attempt);
+            }
+        }
+    }
+
+    let last_evidence_at: Option<String> = transaction.query_row(
+        "SELECT created_at FROM evidence WHERE task_id = ?1 ORDER BY created_at DESC, evidence_id DESC LIMIT 1",
+        [task_id],
+        |row| row.get(0),
+    ).optional().map_err(map_database_error)?;
 
     let mut artifact_rows = list_artifacts(
         &transaction,
@@ -141,6 +518,65 @@ pub(super) fn read_task_presentation(
         steps_overflow,
         artifacts,
         artifacts_overflow,
+        activity_events,
+        current_attempts,
+        last_evidence_at,
+    }))
+}
+
+fn latest_task_presentation_event(
+    connection: &Connection,
+    workspace_id: &str,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<Option<TaskPresentationActivityEvent>, StoreError> {
+    connection
+        .query_row(
+            "SELECT entity_type, entity_id, type, recorded_at FROM domain_events
+         WHERE workspace_id = ?1 AND entity_type = ?2 AND entity_id = ?3
+         ORDER BY entity_revision DESC LIMIT 1",
+            rusqlite::params![workspace_id, entity_type, entity_id],
+            |row| {
+                Ok(TaskPresentationActivityEvent {
+                    entity_type: row.get(0)?,
+                    entity_id: row.get(1)?,
+                    event_type: row.get(2)?,
+                    recorded_at: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(map_database_error)
+}
+
+fn read_task_presentation_current_attempt(
+    connection: &Connection,
+    workspace_id: &str,
+    task_id: &str,
+    step_id: &str,
+    attempt_id: &str,
+) -> Result<Option<TaskPresentationCurrentAttempt>, StoreError> {
+    let attempt: Option<(String, Option<String>)> = connection.query_row(
+        "SELECT a.status, p.display_name
+         FROM attempts a
+         JOIN tasks t ON t.task_id = a.task_id AND t.workspace_id = ?1
+         LEFT JOIN agent_bindings b ON b.workspace_id = t.workspace_id AND b.agent_binding_id = a.agent_binding_id
+         LEFT JOIN agent_profiles p ON p.agent_profile_id = b.agent_profile_id
+         WHERE a.task_id = ?2 AND a.step_id = ?3 AND a.attempt_id = ?4",
+        rusqlite::params![workspace_id, task_id, step_id, attempt_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional().map_err(map_database_error)?;
+    let Some((status, worker_label)) = attempt else {
+        return Ok(None);
+    };
+    let last_event =
+        latest_task_presentation_event(connection, workspace_id, "Attempt", attempt_id)?;
+    Ok(Some(TaskPresentationCurrentAttempt {
+        step_id: step_id.to_owned(),
+        attempt_id: attempt_id.to_owned(),
+        status,
+        worker_label,
+        last_event,
     }))
 }
 
@@ -150,55 +586,83 @@ fn list_presentation_steps(
     task_id: &str,
     plan_revision: u64,
 ) -> Result<Vec<storage_core::StepRecord>, StoreError> {
-    let mut statement = connection.prepare(
-        "SELECT s.step_id, s.task_id, s.plan_revision, s.logical_key, s.title, s.objective,
+    let mut statement = connection
+        .prepare(
+            "SELECT s.step_id, s.task_id, s.plan_revision, s.logical_key, s.title, s.objective,
                 s.dependencies_json, s.required_capabilities_json, s.acceptance_criteria_json,
                 s.status, s.current_attempt_id, s.created_at, s.updated_at, s.version
          FROM steps s JOIN tasks t ON t.task_id = s.task_id
          WHERE t.workspace_id = ?1 AND s.task_id = ?2 AND s.plan_revision = ?3
          ORDER BY s.created_at ASC, s.step_id ASC LIMIT ?4",
-    ).map_err(map_database_error)?;
-    let rows = statement.query_map(
-        params![
-            workspace_id,
-            task_id,
-            to_sql_i64(plan_revision, "PlanRevision")?,
-            to_sql_i64((MAX_TASK_PRESENTATION_STEPS + 1) as u64, "Task presentation Step limit")?,
-        ],
-        |row| {
-            let parse_json = |index: usize| -> rusqlite::Result<serde_json::Value> {
-                let text: String = row.get(index)?;
-                serde_json::from_str(&text).map_err(|error| rusqlite::Error::FromSqlConversionFailure(
-                    index,
-                    rusqlite::types::Type::Text,
-                    Box::new(error),
-                ))
-            };
-            let dependencies: Vec<String> = serde_json::from_value(parse_json(6)?)
-                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(error)))?;
-            let required_capabilities: Vec<serde_json::Value> = serde_json::from_value(parse_json(7)?)
-                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(error)))?;
-            let acceptance_criteria: Vec<serde_json::Value> = serde_json::from_value(parse_json(8)?)
-                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(error)))?;
-            Ok(storage_core::StepRecord {
-                step_id: row.get(0)?,
-                task_id: row.get(1)?,
-                plan_revision: from_row_u64(row, 2)?,
-                logical_key: row.get(3)?,
-                title: row.get(4)?,
-                objective: row.get(5)?,
-                dependencies,
-                required_capabilities,
-                acceptance_criteria,
-                status: row.get(9)?,
-                current_attempt_id: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
-                version: from_row_u64(row, 13)?,
-            })
-        },
-    ).map_err(map_database_error)?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(map_database_error)
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map(
+            params![
+                workspace_id,
+                task_id,
+                to_sql_i64(plan_revision, "PlanRevision")?,
+                to_sql_i64(
+                    (MAX_TASK_PRESENTATION_STEPS + 1) as u64,
+                    "Task presentation Step limit"
+                )?,
+            ],
+            |row| {
+                let parse_json = |index: usize| -> rusqlite::Result<serde_json::Value> {
+                    let text: String = row.get(index)?;
+                    serde_json::from_str(&text).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            index,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })
+                };
+                let dependencies: Vec<String> =
+                    serde_json::from_value(parse_json(6)?).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            6,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                let required_capabilities: Vec<serde_json::Value> =
+                    serde_json::from_value(parse_json(7)?).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            7,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                let acceptance_criteria: Vec<serde_json::Value> =
+                    serde_json::from_value(parse_json(8)?).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            8,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                Ok(storage_core::StepRecord {
+                    step_id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    plan_revision: from_row_u64(row, 2)?,
+                    logical_key: row.get(3)?,
+                    title: row.get(4)?,
+                    objective: row.get(5)?,
+                    dependencies,
+                    required_capabilities,
+                    acceptance_criteria,
+                    status: row.get(9)?,
+                    current_attempt_id: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    version: from_row_u64(row, 13)?,
+                })
+            },
+        )
+        .map_err(map_database_error)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)
 }
 
 impl ArtifactVersionWriteStore for SqliteWorkspaceStore {
@@ -212,10 +676,16 @@ impl ArtifactVersionWriteStore for SqliteWorkspaceStore {
         validate_nonempty(&[principal_id, workspace_id, request_id])?;
         let request_digest = digest(&canonical_json(request_payload)?);
         let (reply, receive) = mpsc::channel();
-        self.execute_command(Command::ResolveArtifactAppendReplay {
-            workspace_id: workspace_id.to_owned(), principal_id: principal_id.to_owned(),
-            request_id: request_id.to_owned(), request_digest, reply,
-        }, receive)
+        self.execute_command(
+            Command::ResolveArtifactAppendReplay {
+                workspace_id: workspace_id.to_owned(),
+                principal_id: principal_id.to_owned(),
+                request_id: request_id.to_owned(),
+                request_digest,
+                reply,
+            },
+            receive,
+        )
     }
 
     fn stage_text_content(
@@ -226,67 +696,116 @@ impl ArtifactVersionWriteStore for SqliteWorkspaceStore {
         bytes: &[u8],
     ) -> Result<storage_core::BlobRef, StoreError> {
         validate_nonempty(&[principal_id, workspace_id, artifact_id])?;
-        if bytes.len() as u64 > MAX_USER_TEXT_ARTIFACT_BYTES || std::str::from_utf8(bytes).is_err() {
-            return Err(StoreError::Invalid("USER_TEXT_ARTIFACT_LIMIT_OR_ENCODING_INVALID".to_owned()));
+        if bytes.len() as u64 > MAX_USER_TEXT_ARTIFACT_BYTES || std::str::from_utf8(bytes).is_err()
+        {
+            return Err(StoreError::Invalid(
+                "USER_TEXT_ARTIFACT_LIMIT_OR_ENCODING_INVALID".to_owned(),
+            ));
         }
         let (reply, receive) = mpsc::channel();
-        self.execute_command(Command::AuthorizeArtifactAppend {
-            workspace_id: workspace_id.to_owned(), artifact_id: artifact_id.to_owned(),
-            principal_id: principal_id.to_owned(), expected_artifact_version: None, expected_content_version: None,
-            reply,
-        }, receive)?;
-        let blob = self.inner.blobs.put(workspace_id, BlobPurpose::Artifact, bytes, "text/plain")?;
-        if blob.size_bytes != bytes.len() as u64 || blob.digest != digest(bytes)
+        self.execute_command(
+            Command::AuthorizeArtifactAppend {
+                workspace_id: workspace_id.to_owned(),
+                artifact_id: artifact_id.to_owned(),
+                principal_id: principal_id.to_owned(),
+                expected_artifact_version: None,
+                expected_content_version: None,
+                reply,
+            },
+            receive,
+        )?;
+        let blob =
+            self.inner
+                .blobs
+                .put(workspace_id, BlobPurpose::Artifact, bytes, "text/plain")?;
+        if blob.size_bytes != bytes.len() as u64
+            || blob.digest != digest(bytes)
             || blob.media_type != "text/plain"
-            || self.inner.blobs.get(workspace_id, BlobPurpose::Artifact, &blob)? != bytes
+            || self
+                .inner
+                .blobs
+                .get(workspace_id, BlobPurpose::Artifact, &blob)?
+                != bytes
         {
-            return Err(StoreError::Integrity("staged Artifact text failed BlobStore verification".to_owned()));
+            return Err(StoreError::Integrity(
+                "staged Artifact text failed BlobStore verification".to_owned(),
+            ));
         }
         Ok(blob)
     }
 
-    fn append_artifact_version(&self, commit: ArtifactVersionAppendCommit) -> Result<CommittedArtifactVersionAppend, StoreError> {
+    fn append_artifact_version(
+        &self,
+        commit: ArtifactVersionAppendCommit,
+    ) -> Result<CommittedArtifactVersionAppend, StoreError> {
         validate_append_commit_shape(&commit)?;
         let request_fingerprint = append_request_fingerprint(&commit)?;
         let expected_payload = append_request_payload(&commit)?;
         if canonical_json(&commit.request.request_payload)? != canonical_json(&expected_payload)? {
-            return Err(StoreError::Invalid("Artifact append request payload does not match its content and pinned heads".to_owned()));
+            return Err(StoreError::Invalid(
+                "Artifact append request payload does not match its content and pinned heads"
+                    .to_owned(),
+            ));
         }
         let (replay_reply, replay_receive) = mpsc::channel();
-        if let Some(replayed) = self.execute_command(Command::ResolveArtifactAppendReplay {
-            workspace_id: commit.workspace_id.clone(),
-            principal_id: commit.request.principal_id.clone(),
-            request_id: commit.request.request_id.clone(),
-            request_digest: request_fingerprint.clone(),
-            reply: replay_reply,
-        }, replay_receive)? {
+        if let Some(replayed) = self.execute_command(
+            Command::ResolveArtifactAppendReplay {
+                workspace_id: commit.workspace_id.clone(),
+                principal_id: commit.request.principal_id.clone(),
+                request_id: commit.request.request_id.clone(),
+                request_digest: request_fingerprint.clone(),
+                reply: replay_reply,
+            },
+            replay_receive,
+        )? {
             return Ok(replayed);
         }
         let (authorization_reply, authorization_receive) = mpsc::channel();
-        self.execute_command(Command::AuthorizeArtifactAppend {
-            workspace_id: commit.workspace_id.clone(),
-            artifact_id: commit.artifact_id.clone(),
-            principal_id: commit.request.principal_id.clone(),
-            expected_artifact_version: Some(commit.expected_artifact_version),
-            expected_content_version: Some(commit.expected_content_version),
-            reply: authorization_reply,
-        }, authorization_receive)?;
-        let ArtifactContentRecord::ManagedBlob { storage_ref, content_digest, media_type, size_bytes } = &commit.version.content else {
-            return Err(StoreError::Invalid("EXTERNAL_ARTIFACT_PUBLICATION_UNSUPPORTED".to_owned()));
+        self.execute_command(
+            Command::AuthorizeArtifactAppend {
+                workspace_id: commit.workspace_id.clone(),
+                artifact_id: commit.artifact_id.clone(),
+                principal_id: commit.request.principal_id.clone(),
+                expected_artifact_version: Some(commit.expected_artifact_version),
+                expected_content_version: Some(commit.expected_content_version),
+                reply: authorization_reply,
+            },
+            authorization_receive,
+        )?;
+        let ArtifactContentRecord::ManagedBlob {
+            storage_ref,
+            content_digest,
+            media_type,
+            size_bytes,
+        } = &commit.version.content
+        else {
+            return Err(StoreError::Invalid(
+                "EXTERNAL_ARTIFACT_PUBLICATION_UNSUPPORTED".to_owned(),
+            ));
         };
         if media_type != "text/plain" || *size_bytes > MAX_USER_TEXT_ARTIFACT_BYTES {
-            return Err(StoreError::Invalid("USER_TEXT_ARTIFACT_LIMIT_EXCEEDED".to_owned()));
+            return Err(StoreError::Invalid(
+                "USER_TEXT_ARTIFACT_LIMIT_EXCEEDED".to_owned(),
+            ));
         }
 
         // The local text editor is deliberately bounded so verifying the referenced
         // object cannot allocate an unbounded payload. BlobStore I/O occurs before the
         // SQLite writer transaction, as required by the storage contract.
-        let bytes = self.inner.blobs.get(&commit.workspace_id, BlobPurpose::Artifact, storage_ref)?;
-        if bytes.len() as u64 != *size_bytes || digest(&bytes) != *content_digest
-            || storage_ref.digest != *content_digest || storage_ref.size_bytes != *size_bytes
-            || storage_ref.media_type != *media_type || std::str::from_utf8(&bytes).is_err()
+        let bytes =
+            self.inner
+                .blobs
+                .get(&commit.workspace_id, BlobPurpose::Artifact, storage_ref)?;
+        if bytes.len() as u64 != *size_bytes
+            || digest(&bytes) != *content_digest
+            || storage_ref.digest != *content_digest
+            || storage_ref.size_bytes != *size_bytes
+            || storage_ref.media_type != *media_type
+            || std::str::from_utf8(&bytes).is_err()
         {
-            return Err(StoreError::Integrity("text Artifact blob does not match its committed metadata".to_owned()));
+            return Err(StoreError::Integrity(
+                "text Artifact blob does not match its committed metadata".to_owned(),
+            ));
         }
 
         validate_append_provenance(&commit)?;
@@ -301,7 +820,10 @@ impl ArtifactVersionWriteStore for SqliteWorkspaceStore {
         let artifact_state = put_artifact_state(
             &self.inner.blobs,
             &commit.workspace_id,
-            &ArtifactAggregateSnapshot { artifact: commit.artifact.clone(), current_version: commit.version.clone() },
+            &ArtifactAggregateSnapshot {
+                artifact: commit.artifact.clone(),
+                current_version: commit.version.clone(),
+            },
             "application/vnd.litecowork.artifact+json",
             commit.artifact.version,
         )?;
@@ -311,18 +833,21 @@ impl ArtifactVersionWriteStore for SqliteWorkspaceStore {
         let request_id = commit.request.request_id.clone();
         let (reply, receive) = mpsc::channel();
         self.execute_command(
-            Command::ArtifactOperation { operation: Box::new(move |connection| {
-                let result = append_artifact_version_transaction(
-                    connection,
-                    commit,
-                    &request_fingerprint,
-                    resource_state,
-                    artifact_state,
-                );
-                let _ = reply.send(result);
-            }) },
+            Command::ArtifactOperation {
+                operation: Box::new(move |connection| {
+                    let result = append_artifact_version_transaction(
+                        connection,
+                        commit,
+                        &request_fingerprint,
+                        resource_state,
+                        artifact_state,
+                    );
+                    let _ = reply.send(result);
+                }),
+            },
             receive,
-        ).map_err(|error| match error {
+        )
+        .map_err(|error| match error {
             StoreError::NotFound => StoreError::NotFound,
             other => other,
         })
@@ -339,20 +864,35 @@ pub(super) fn authorize_artifact_append(
     expected_artifact_version: Option<u64>,
     expected_content_version: Option<u64>,
 ) -> Result<(), StoreError> {
-    let workspace: Option<(String, String)> = connection.query_row(
-        "SELECT owner_principal_id, status FROM workspaces WHERE workspace_id = ?1",
-        [workspace_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    ).optional().map_err(map_database_error)?;
-    let Some((owner, workspace_status)) = workspace else { return Err(StoreError::NotFound); };
-    if owner != principal_id { return Err(StoreError::NotFound); }
-    if workspace_status != "ACTIVE" { return Err(StoreError::NotFound); }
-    let artifact = get_artifact(connection, workspace_id, artifact_id)?.ok_or(StoreError::NotFound)?;
-    if artifact.library_status == "ARCHIVED" { return Err(StoreError::Invalid("ARTIFACT_ARCHIVED".to_owned())); }
+    let workspace: Option<(String, String)> = connection
+        .query_row(
+            "SELECT owner_principal_id, status FROM workspaces WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((owner, workspace_status)) = workspace else {
+        return Err(StoreError::NotFound);
+    };
+    if owner != principal_id {
+        return Err(StoreError::NotFound);
+    }
+    if workspace_status != "ACTIVE" {
+        return Err(StoreError::NotFound);
+    }
+    let artifact =
+        get_artifact(connection, workspace_id, artifact_id)?.ok_or(StoreError::NotFound)?;
+    if artifact.library_status == "ARCHIVED" {
+        return Err(StoreError::Invalid("ARTIFACT_ARCHIVED".to_owned()));
+    }
     if expected_artifact_version.is_some_and(|expected| artifact.version != expected)
         || expected_content_version.is_some_and(|expected| artifact.current_version != expected)
     {
-        return Err(StoreError::Conflict { expected: expected_artifact_version, actual: Some(artifact.version) });
+        return Err(StoreError::Conflict {
+            expected: expected_artifact_version,
+            actual: Some(artifact.version),
+        });
     }
     Ok(())
 }
@@ -362,9 +902,15 @@ pub(super) fn get_artifact_append_heads(
     workspace_id: &str,
     artifact_id: &str,
 ) -> Result<Option<storage_core::ArtifactAppendHeads>, StoreError> {
-    let Some(artifact) = get_artifact(connection, workspace_id, artifact_id)? else { return Ok(None); };
-    let resource = load_resource_record(connection, workspace_id, &artifact.resource_id)?.ok_or_else(|| StoreError::Integrity("Artifact backing Resource is missing".to_owned()))?;
-    Ok(Some(storage_core::ArtifactAppendHeads { artifact, resource }))
+    let Some(artifact) = get_artifact(connection, workspace_id, artifact_id)? else {
+        return Ok(None);
+    };
+    let resource = load_resource_record(connection, workspace_id, &artifact.resource_id)?
+        .ok_or_else(|| StoreError::Integrity("Artifact backing Resource is missing".to_owned()))?;
+    Ok(Some(storage_core::ArtifactAppendHeads {
+        artifact,
+        resource,
+    }))
 }
 
 pub(super) fn resolve_artifact_append_replay(
@@ -374,25 +920,43 @@ pub(super) fn resolve_artifact_append_replay(
     request_id: &str,
     request_digest: &str,
 ) -> Result<Option<CommittedArtifactVersionAppend>, StoreError> {
-    let owner: Option<String> = connection.query_row(
-        "SELECT owner_principal_id FROM workspaces WHERE workspace_id = ?1",
-        [workspace_id],
-        |row| row.get(0),
-    ).optional().map_err(map_database_error)?;
-    if owner.as_deref() != Some(principal_id) { return Err(StoreError::NotFound); }
+    let owner: Option<String> = connection
+        .query_row(
+            "SELECT owner_principal_id FROM workspaces WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if owner.as_deref() != Some(principal_id) {
+        return Err(StoreError::NotFound);
+    }
     let prior: Option<(String, Option<String>, Option<String>)> = connection.query_row(
         "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
         params![principal_id, request_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional().map_err(map_database_error)?;
-    let Some((prior_digest, response_json, response_digest)) = prior else { return Ok(None); };
-    if prior_digest != request_digest { return Err(StoreError::Conflict { expected: None, actual: None }); }
-    let response_json = response_json.ok_or_else(|| StoreError::Integrity("Artifact append idempotency receipt is incomplete".to_owned()))?;
+    let Some((prior_digest, response_json, response_digest)) = prior else {
+        return Ok(None);
+    };
+    if prior_digest != request_digest {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    let response_json = response_json.ok_or_else(|| {
+        StoreError::Integrity("Artifact append idempotency receipt is incomplete".to_owned())
+    })?;
     if response_digest.as_deref() != Some(digest(response_json.as_bytes()).as_str()) {
-        return Err(StoreError::Integrity("Artifact append idempotency receipt digest is invalid".to_owned()));
+        return Err(StoreError::Integrity(
+            "Artifact append idempotency receipt digest is invalid".to_owned(),
+        ));
     }
     let mut response: CommittedArtifactVersionAppend = serde_json::from_str(&response_json)
-        .map_err(|error| StoreError::Integrity(format!("Artifact append receipt is invalid: {error}")))?;
+        .map_err(|error| {
+            StoreError::Integrity(format!("Artifact append receipt is invalid: {error}"))
+        })?;
     response.replayed = true;
     Ok(Some(response))
 }
@@ -411,27 +975,46 @@ fn put_artifact_state<T: Serialize>(
     entity_revision: u64,
 ) -> Result<storage_core::AggregateStateRef, StoreError> {
     let bytes = canonical_json(state)?;
-    let blob = blobs.put(workspace_id, BlobPurpose::AggregateState, &bytes, media_type)?;
-    if blob.digest != digest(&bytes) || blob.size_bytes != bytes.len() as u64
+    let blob = blobs.put(
+        workspace_id,
+        BlobPurpose::AggregateState,
+        &bytes,
+        media_type,
+    )?;
+    if blob.digest != digest(&bytes)
+        || blob.size_bytes != bytes.len() as u64
         || blobs.get(workspace_id, BlobPurpose::AggregateState, &blob)? != bytes
     {
-        return Err(StoreError::Integrity("Artifact aggregate-state blob failed verification".to_owned()));
+        return Err(StoreError::Integrity(
+            "Artifact aggregate-state blob failed verification".to_owned(),
+        ));
     }
-    Ok(storage_core::AggregateStateRef { blob, entity_revision, record_schema_version: 1 })
+    Ok(storage_core::AggregateStateRef {
+        blob,
+        entity_revision,
+        record_schema_version: 1,
+    })
 }
 
 fn validate_append_commit_shape(commit: &ArtifactVersionAppendCommit) -> Result<(), StoreError> {
     for value in [
-        commit.workspace_id.as_str(), commit.artifact_id.as_str(),
+        commit.workspace_id.as_str(),
+        commit.artifact_id.as_str(),
         commit.expected_parent_resource_revision_id.as_str(),
-        commit.request.principal_id.as_str(), commit.request.request_id.as_str(),
+        commit.request.principal_id.as_str(),
+        commit.request.request_id.as_str(),
     ] {
         if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
-            return Err(StoreError::Invalid("Artifact append identity is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "Artifact append identity is invalid".to_owned(),
+            ));
         }
     }
-    if commit.expected_artifact_version == 0 || commit.expected_content_version == 0 || commit.expected_resource_version == 0
-        || commit.artifact.artifact_id != commit.artifact_id || commit.artifact.workspace_id != commit.workspace_id
+    if commit.expected_artifact_version == 0
+        || commit.expected_content_version == 0
+        || commit.expected_resource_version == 0
+        || commit.artifact.artifact_id != commit.artifact_id
+        || commit.artifact.workspace_id != commit.workspace_id
         || commit.version.artifact_id != commit.artifact_id
         || commit.resource.workspace_id != commit.workspace_id
         || commit.resource.resource_id != commit.artifact.resource_id
@@ -441,30 +1024,60 @@ fn validate_append_commit_shape(commit: &ArtifactVersionAppendCommit) -> Result<
         || commit.artifact.current_version != commit.version.version
         || commit.artifact.version != commit.expected_artifact_version.checked_add(1).unwrap_or(0)
         || commit.resource.version != commit.expected_resource_version.checked_add(1).unwrap_or(0)
-        || commit.resource.current_revision_id.as_deref() != Some(commit.resource_revision.resource_revision_id.as_str())
-        || commit.resource_revision.parent_revision_ids != [commit.expected_parent_resource_revision_id.clone()]
+        || commit.resource.current_revision_id.as_deref()
+            != Some(commit.resource_revision.resource_revision_id.as_str())
+        || commit.resource_revision.parent_revision_ids
+            != [commit.expected_parent_resource_revision_id.clone()]
         || commit.resource.updated_at != commit.resource_revision.observed_at
         || commit.version.created_at != commit.resource_revision.observed_at
-        || commit.resource_revision.created_by.get("principal_id").and_then(Value::as_str) != Some(commit.request.principal_id.as_str())
-        || commit.resource_revision.created_by.get("kind").and_then(Value::as_str) != Some("USER")
+        || commit
+            .resource_revision
+            .created_by
+            .get("principal_id")
+            .and_then(Value::as_str)
+            != Some(commit.request.principal_id.as_str())
+        || commit
+            .resource_revision
+            .created_by
+            .get("kind")
+            .and_then(Value::as_str)
+            != Some("USER")
     {
-        return Err(StoreError::Invalid("Artifact append aggregate identities or expected heads are inconsistent".to_owned()));
+        return Err(StoreError::Invalid(
+            "Artifact append aggregate identities or expected heads are inconsistent".to_owned(),
+        ));
     }
-    let ArtifactContentRecord::ManagedBlob { content_digest, media_type, size_bytes, .. } = &commit.version.content else {
-        return Err(StoreError::Invalid("external Artifact append is unsupported".to_owned()));
+    let ArtifactContentRecord::ManagedBlob {
+        content_digest,
+        media_type,
+        size_bytes,
+        ..
+    } = &commit.version.content
+    else {
+        return Err(StoreError::Invalid(
+            "external Artifact append is unsupported".to_owned(),
+        ));
     };
     if commit.resource_revision.content_digest.as_deref() != Some(content_digest.as_str())
         || commit.resource_revision.size_bytes != Some(*size_bytes)
         || commit.resource_revision.media_type.as_deref() != Some(media_type.as_str())
         || commit.resource_revision.provider_revision.is_some()
     {
-        return Err(StoreError::Invalid("Artifact ResourceRevision metadata does not match the published blob".to_owned()));
+        return Err(StoreError::Invalid(
+            "Artifact ResourceRevision metadata does not match the published blob".to_owned(),
+        ));
     }
-    for timestamp in [&commit.resource_revision.observed_at, &commit.version.created_at, &commit.resource.updated_at,
-        &commit.resource_event.recorded_at, &commit.artifact_event.recorded_at]
-    {
+    for timestamp in [
+        &commit.resource_revision.observed_at,
+        &commit.version.created_at,
+        &commit.resource.updated_at,
+        &commit.resource_event.recorded_at,
+        &commit.artifact_event.recorded_at,
+    ] {
         if canonicalize_utc_timestamp(timestamp)? != timestamp.as_str() {
-            return Err(StoreError::Invalid("Artifact append timestamps must be canonical UTC values".to_owned()));
+            return Err(StoreError::Invalid(
+                "Artifact append timestamps must be canonical UTC values".to_owned(),
+            ));
         }
     }
     to_sql_i64(commit.expected_artifact_version, "Artifact version")?;
@@ -473,9 +1086,19 @@ fn validate_append_commit_shape(commit: &ArtifactVersionAppendCommit) -> Result<
     Ok(())
 }
 
-fn append_request_payload(commit: &ArtifactVersionAppendCommit) -> Result<serde_json::Value, StoreError> {
-    let ArtifactContentRecord::ManagedBlob { content_digest, media_type, size_bytes, .. } = &commit.version.content else {
-        return Err(StoreError::Invalid("external Artifact append is unsupported".to_owned()));
+fn append_request_payload(
+    commit: &ArtifactVersionAppendCommit,
+) -> Result<serde_json::Value, StoreError> {
+    let ArtifactContentRecord::ManagedBlob {
+        content_digest,
+        media_type,
+        size_bytes,
+        ..
+    } = &commit.version.content
+    else {
+        return Err(StoreError::Invalid(
+            "external Artifact append is unsupported".to_owned(),
+        ));
     };
     Ok(json!({
         "workspace_id": commit.workspace_id,
@@ -501,40 +1124,77 @@ fn append_request_fingerprint(commit: &ArtifactVersionAppendCommit) -> Result<St
 }
 
 fn validate_append_provenance(commit: &ArtifactVersionAppendCommit) -> Result<(), StoreError> {
-    let provenance = commit.version.provenance.as_object()
-        .ok_or_else(|| StoreError::Invalid("Artifact provenance must be an object".to_owned()))?;
+    let provenance =
+        commit.version.provenance.as_object().ok_or_else(|| {
+            StoreError::Invalid("Artifact provenance must be an object".to_owned())
+        })?;
     let mut inputs = Vec::<serde_json::Value>::new();
     let mut collect = |value: &serde_json::Value| -> Result<(), StoreError> {
-        let list = value.as_array().ok_or_else(|| StoreError::Invalid("provenance inputs must be arrays".to_owned()))?;
+        let list = value
+            .as_array()
+            .ok_or_else(|| StoreError::Invalid("provenance inputs must be arrays".to_owned()))?;
         for input in list {
-            let reference = input.get("resource_ref").ok_or_else(|| StoreError::Invalid("Artifact ResourceInput is missing resource_ref".to_owned()))?;
-            let workspace = reference.get("workspace_id").and_then(serde_json::Value::as_str);
-            let resource = reference.get("resource_id").and_then(serde_json::Value::as_str);
-            let revision = reference.get("revision_id").and_then(serde_json::Value::as_str);
-            if workspace != Some(commit.workspace_id.as_str()) || resource.map_or(true, str::is_empty) || revision.map_or(true, str::is_empty)
+            let reference = input.get("resource_ref").ok_or_else(|| {
+                StoreError::Invalid("Artifact ResourceInput is missing resource_ref".to_owned())
+            })?;
+            let workspace = reference
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str);
+            let resource = reference
+                .get("resource_id")
+                .and_then(serde_json::Value::as_str);
+            let revision = reference
+                .get("revision_id")
+                .and_then(serde_json::Value::as_str);
+            if workspace != Some(commit.workspace_id.as_str())
+                || resource.map_or(true, str::is_empty)
+                || revision.map_or(true, str::is_empty)
                 || resource == Some(commit.resource.resource_id.as_str())
             {
-                return Err(StoreError::Invalid("Artifact input reference is invalid or self-referential".to_owned()));
+                return Err(StoreError::Invalid(
+                    "Artifact input reference is invalid or self-referential".to_owned(),
+                ));
             }
             inputs.push(reference.clone());
         }
         Ok(())
     };
-    collect(provenance.get("source_inputs").ok_or_else(|| StoreError::Invalid("Artifact provenance source_inputs are required".to_owned()))?)?;
-    let transformations = provenance.get("transformations").and_then(serde_json::Value::as_array)
-        .ok_or_else(|| StoreError::Invalid("Artifact provenance transformations are required".to_owned()))?;
+    collect(provenance.get("source_inputs").ok_or_else(|| {
+        StoreError::Invalid("Artifact provenance source_inputs are required".to_owned())
+    })?)?;
+    let transformations = provenance
+        .get("transformations")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| {
+            StoreError::Invalid("Artifact provenance transformations are required".to_owned())
+        })?;
     for transformation in transformations {
-        collect(transformation.get("inputs").ok_or_else(|| StoreError::Invalid("transformation inputs are required".to_owned()))?)?;
+        collect(transformation.get("inputs").ok_or_else(|| {
+            StoreError::Invalid("transformation inputs are required".to_owned())
+        })?)?;
     }
-    let mut input_keys = inputs.into_iter().map(|value| Ok((canonical_json(&value)?, value)))
+    let mut input_keys = inputs
+        .into_iter()
+        .map(|value| Ok((canonical_json(&value)?, value)))
         .collect::<Result<Vec<_>, StoreError>>()?;
     input_keys.sort_by(|left, right| left.0.cmp(&right.0));
     input_keys.dedup_by(|left, right| left.0 == right.0);
-    let mut declared_keys = commit.version.input_refs.iter().map(canonical_json)
+    let mut declared_keys = commit
+        .version
+        .input_refs
+        .iter()
+        .map(canonical_json)
         .collect::<Result<Vec<_>, _>>()?;
     declared_keys.sort();
-    if declared_keys != input_keys.into_iter().map(|(key, _)| key).collect::<Vec<_>>() {
-        return Err(StoreError::Invalid("Artifact input_refs do not match provenance inputs".to_owned()));
+    if declared_keys
+        != input_keys
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>()
+    {
+        return Err(StoreError::Invalid(
+            "Artifact input_refs do not match provenance inputs".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -548,10 +1208,21 @@ fn validate_append_events(commit: &ArtifactVersionAppendCommit) -> Result<(), St
         "parent_revision_ids": commit.resource_revision.parent_revision_ids,
         "observed_at": commit.resource_revision.observed_at,
     });
-    if let Some(value) = &commit.resource_revision.provider_revision { expected_resource_payload["provider_revision"] = json!(value); }
-    if let Some(value) = &commit.resource_revision.content_digest { expected_resource_payload["content_digest"] = json!(value); }
-    let ArtifactContentRecord::ManagedBlob { storage_ref, content_digest, .. } = &commit.version.content else {
-        return Err(StoreError::Invalid("external Artifact append is unsupported".to_owned()));
+    if let Some(value) = &commit.resource_revision.provider_revision {
+        expected_resource_payload["provider_revision"] = json!(value);
+    }
+    if let Some(value) = &commit.resource_revision.content_digest {
+        expected_resource_payload["content_digest"] = json!(value);
+    }
+    let ArtifactContentRecord::ManagedBlob {
+        storage_ref,
+        content_digest,
+        ..
+    } = &commit.version.content
+    else {
+        return Err(StoreError::Invalid(
+            "external Artifact append is unsupported".to_owned(),
+        ));
     };
     let mut expected_artifact_payload = json!({
         "artifact_id": commit.artifact.artifact_id,
@@ -564,20 +1235,32 @@ fn validate_append_events(commit: &ArtifactVersionAppendCommit) -> Result<(), St
         "storage_ref": storage_ref,
         "aggregate_version": commit.artifact.version,
     });
-    if let Some(value) = &commit.version.created_by_attempt { expected_artifact_payload["created_by_attempt"] = json!(value); }
-    if resource.workspace_id != commit.workspace_id || resource.entity_type != "Resource"
-        || resource.entity_id != commit.resource.resource_id || resource.event_type != "resource.revision.observed.v1"
+    if let Some(value) = &commit.version.created_by_attempt {
+        expected_artifact_payload["created_by_attempt"] = json!(value);
+    }
+    if resource.workspace_id != commit.workspace_id
+        || resource.entity_type != "Resource"
+        || resource.entity_id != commit.resource.resource_id
+        || resource.event_type != "resource.revision.observed.v1"
         || resource.entity_revision != commit.resource.version
-        || artifact.workspace_id != commit.workspace_id || artifact.entity_type != "Artifact"
-        || artifact.entity_id != commit.artifact.artifact_id || artifact.event_type != "artifact.version.created.v1"
-        || artifact.entity_revision != commit.artifact.version || resource.schema_version != 1 || artifact.schema_version != 1
-        || resource.event_id == artifact.event_id || resource.origin_runtime_id != artifact.origin_runtime_id
-        || resource.correlation_id != artifact.correlation_id || resource.recorded_at != artifact.recorded_at
+        || artifact.workspace_id != commit.workspace_id
+        || artifact.entity_type != "Artifact"
+        || artifact.entity_id != commit.artifact.artifact_id
+        || artifact.event_type != "artifact.version.created.v1"
+        || artifact.entity_revision != commit.artifact.version
+        || resource.schema_version != 1
+        || artifact.schema_version != 1
+        || resource.event_id == artifact.event_id
+        || resource.origin_runtime_id != artifact.origin_runtime_id
+        || resource.correlation_id != artifact.correlation_id
+        || resource.recorded_at != artifact.recorded_at
         || resource.recorded_at != commit.version.created_at
         || canonical_json(&resource.payload)? != canonical_json(&expected_resource_payload)?
         || canonical_json(&artifact.payload)? != canonical_json(&expected_artifact_payload)?
     {
-        return Err(StoreError::Invalid("Artifact append events do not match their immutable records".to_owned()));
+        return Err(StoreError::Invalid(
+            "Artifact append events do not match their immutable records".to_owned(),
+        ));
     }
     Ok(())
 }
@@ -589,14 +1272,23 @@ fn append_artifact_version_transaction(
     resource_state: storage_core::AggregateStateRef,
     artifact_state: storage_core::AggregateStateRef,
 ) -> Result<CommittedArtifactVersionAppend, StoreError> {
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(map_database_error)?;
-    let workspace: Option<(String, String)> = tx.query_row(
-        "SELECT owner_principal_id, status FROM workspaces WHERE workspace_id = ?1",
-        [&commit.workspace_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    ).optional().map_err(map_database_error)?;
-    let Some((owner, workspace_status)) = workspace else { return Err(StoreError::NotFound); };
-    if owner != commit.request.principal_id { return Err(StoreError::NotFound); }
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let workspace: Option<(String, String)> = tx
+        .query_row(
+            "SELECT owner_principal_id, status FROM workspaces WHERE workspace_id = ?1",
+            [&commit.workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((owner, workspace_status)) = workspace else {
+        return Err(StoreError::NotFound);
+    };
+    if owner != commit.request.principal_id {
+        return Err(StoreError::NotFound);
+    }
 
     let prior: Option<(String, Option<String>, Option<String>)> = tx.query_row(
         "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
@@ -604,21 +1296,37 @@ fn append_artifact_version_transaction(
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional().map_err(map_database_error)?;
     if let Some((prior_digest, response_json, response_digest)) = prior {
-        if prior_digest != request_digest { return Err(StoreError::Conflict { expected: None, actual: None }); }
-        let response_json = response_json.ok_or_else(|| StoreError::Integrity("Artifact append idempotency receipt is incomplete".to_owned()))?;
+        if prior_digest != request_digest {
+            return Err(StoreError::Conflict {
+                expected: None,
+                actual: None,
+            });
+        }
+        let response_json = response_json.ok_or_else(|| {
+            StoreError::Integrity("Artifact append idempotency receipt is incomplete".to_owned())
+        })?;
         if response_digest.as_deref() != Some(digest(response_json.as_bytes()).as_str()) {
-            return Err(StoreError::Integrity("Artifact append idempotency receipt digest is invalid".to_owned()));
+            return Err(StoreError::Integrity(
+                "Artifact append idempotency receipt digest is invalid".to_owned(),
+            ));
         }
         let mut response: CommittedArtifactVersionAppend = serde_json::from_str(&response_json)
-            .map_err(|error| StoreError::Integrity(format!("Artifact append receipt is invalid: {error}")))?;
+            .map_err(|error| {
+                StoreError::Integrity(format!("Artifact append receipt is invalid: {error}"))
+            })?;
         response.replayed = true;
         return Ok(response);
     }
-    if workspace_status != "ACTIVE" { return Err(StoreError::NotFound); }
+    if workspace_status != "ACTIVE" {
+        return Err(StoreError::NotFound);
+    }
 
-    let current_artifact = get_artifact(&tx, &commit.workspace_id, &commit.artifact_id)?.ok_or(StoreError::NotFound)?;
+    let current_artifact = get_artifact(&tx, &commit.workspace_id, &commit.artifact_id)?
+        .ok_or(StoreError::NotFound)?;
     if current_artifact.library_status == "ARCHIVED" {
-        return Err(StoreError::Invalid("ARCHIVED_ARTIFACT_IMMUTABLE".to_owned()));
+        return Err(StoreError::Invalid(
+            "ARCHIVED_ARTIFACT_IMMUTABLE".to_owned(),
+        ));
     }
     if current_artifact.version != commit.expected_artifact_version
         || current_artifact.current_version != commit.expected_content_version
@@ -636,13 +1344,22 @@ fn append_artifact_version_transaction(
         || current_artifact.created_at != commit.artifact.created_at
         || current_artifact.library_status != commit.artifact.library_status
     {
-        return Err(StoreError::Conflict { expected: Some(commit.expected_artifact_version), actual: Some(current_artifact.version) });
+        return Err(StoreError::Conflict {
+            expected: Some(commit.expected_artifact_version),
+            actual: Some(current_artifact.version),
+        });
     }
-    let current_resource = load_resource_record(&tx, &commit.workspace_id, &commit.resource.resource_id)?.ok_or(StoreError::NotFound)?;
+    let current_resource =
+        load_resource_record(&tx, &commit.workspace_id, &commit.resource.resource_id)?
+            .ok_or(StoreError::NotFound)?;
     if current_resource.version != commit.expected_resource_version
-        || current_resource.current_revision_id.as_deref() != Some(commit.expected_parent_resource_revision_id.as_str())
+        || current_resource.current_revision_id.as_deref()
+            != Some(commit.expected_parent_resource_revision_id.as_str())
     {
-        return Err(StoreError::Conflict { expected: Some(commit.expected_resource_version), actual: Some(current_resource.version) });
+        return Err(StoreError::Conflict {
+            expected: Some(commit.expected_resource_version),
+            actual: Some(current_resource.version),
+        });
     }
     if current_resource.kind != "ARTIFACT"
         || current_resource.provider_identity != commit.resource.provider_identity
@@ -652,14 +1369,20 @@ fn append_artifact_version_transaction(
         || current_resource.provenance != commit.resource.provenance
         || current_resource.created_at != commit.resource.created_at
     {
-        return Err(StoreError::Integrity("Artifact Resource immutable metadata changed".to_owned()));
+        return Err(StoreError::Integrity(
+            "Artifact Resource immutable metadata changed".to_owned(),
+        ));
     }
     let current_parent_exists: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM resource_revisions WHERE resource_id = ?1 AND resource_revision_id = ?2)",
         params![commit.resource.resource_id, commit.expected_parent_resource_revision_id],
         |row| row.get(0),
     ).map_err(map_database_error)?;
-    if !current_parent_exists { return Err(StoreError::Integrity("Artifact Resource head revision is missing".to_owned())); }
+    if !current_parent_exists {
+        return Err(StoreError::Integrity(
+            "Artifact Resource head revision is missing".to_owned(),
+        ));
+    }
 
     validate_source_inputs(&tx, &commit)?;
     if let Some(attempt_id) = &commit.version.created_by_attempt {
@@ -668,22 +1391,45 @@ fn append_artifact_version_transaction(
             [attempt_id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).optional().map_err(map_database_error)?;
-        let Some((attempt_task_id, attempt_workspace_id)) = attempt_task else { return Err(StoreError::NotFound); };
+        let Some((attempt_task_id, attempt_workspace_id)) = attempt_task else {
+            return Err(StoreError::NotFound);
+        };
         if attempt_workspace_id != commit.workspace_id
-            || commit.artifact.task_id.as_deref().is_some_and(|artifact_task_id| artifact_task_id != attempt_task_id)
+            || commit
+                .artifact
+                .task_id
+                .as_deref()
+                .is_some_and(|artifact_task_id| artifact_task_id != attempt_task_id)
         {
-            return Err(StoreError::Invalid("Artifact creating Attempt is outside its Workspace or Task".to_owned()));
+            return Err(StoreError::Invalid(
+                "Artifact creating Attempt is outside its Workspace or Task".to_owned(),
+            ));
         }
     }
-    let new_revision_exists: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM resource_revisions WHERE resource_revision_id = ?1)",
-        [&commit.resource_revision.resource_revision_id],
-        |row| row.get(0),
-    ).map_err(map_database_error)?;
-    if new_revision_exists { return Err(StoreError::Conflict { expected: None, actual: None }); }
+    let new_revision_exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM resource_revisions WHERE resource_revision_id = ?1)",
+            [&commit.resource_revision.resource_revision_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if new_revision_exists {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
 
-    let ArtifactContentRecord::ManagedBlob { storage_ref, content_digest, media_type, size_bytes } = &commit.version.content else {
-        return Err(StoreError::Invalid("EXTERNAL_ARTIFACT_PUBLICATION_UNSUPPORTED".to_owned()));
+    let ArtifactContentRecord::ManagedBlob {
+        storage_ref,
+        content_digest,
+        media_type,
+        size_bytes,
+    } = &commit.version.content
+    else {
+        return Err(StoreError::Invalid(
+            "EXTERNAL_ARTIFACT_PUBLICATION_UNSUPPORTED".to_owned(),
+        ));
     };
     let created_by_json = String::from_utf8(canonical_json(&commit.resource_revision.created_by)?)
         .map_err(|error| StoreError::Invalid(error.to_string()))?;
@@ -706,15 +1452,29 @@ fn append_artifact_version_transaction(
             commit.resource.resource_id, to_sql_i64(commit.expected_resource_version, "Resource version")?,
             commit.expected_parent_resource_revision_id],
     ).map_err(map_database_error)?;
-    if updated_resource != 1 { return Err(StoreError::Conflict { expected: Some(commit.expected_resource_version), actual: None }); }
+    if updated_resource != 1 {
+        return Err(StoreError::Conflict {
+            expected: Some(commit.expected_resource_version),
+            actual: None,
+        });
+    }
 
-    let (content_kind, storage_ref_json, resource_ref_json) = match &commit.version.content {
+    let (content_kind, storage_ref_json, resource_ref_json): (
+        &str,
+        Option<String>,
+        Option<String>,
+    ) = match &commit.version.content {
         ArtifactContentRecord::ManagedBlob { storage_ref, .. } => (
             "MANAGED_BLOB",
-            Some(String::from_utf8(canonical_json(storage_ref)?).map_err(|error| StoreError::Invalid(error.to_string()))?),
+            Some(
+                String::from_utf8(canonical_json(storage_ref)?)
+                    .map_err(|error| StoreError::Invalid(error.to_string()))?,
+            ),
             None,
         ),
-        ArtifactContentRecord::ExternalResource { .. } => unreachable!("external publication rejected before transaction"),
+        ArtifactContentRecord::ExternalResource { .. } => {
+            unreachable!("external publication rejected before transaction")
+        }
     };
     tx.execute(
         "INSERT INTO artifact_versions(artifact_id, resource_id, version, resource_revision_id, created_by_attempt, input_refs_json, content_kind, content_digest, storage_ref_json, resource_ref_json, provider_revision, observed_digest, content_media_type, content_size_bytes, content_observed_at, provenance_json, verification_refs_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL, ?11, ?12, NULL, ?13, ?14, ?15)",
@@ -728,13 +1488,39 @@ fn append_artifact_version_transaction(
             commit.version.created_at],
     ).map_err(map_database_error)?;
 
-    let dependent_ref = format!("artifact://{}/{}@v{}", commit.workspace_id, commit.artifact_id, commit.version.version);
+    let dependent_ref = format!(
+        "artifact://{}/{}@v{}",
+        commit.workspace_id, commit.artifact_id, commit.version.version
+    );
     for input in &commit.version.input_refs {
-        let source_workspace = input.get("workspace_id").and_then(Value::as_str).ok_or_else(|| StoreError::Invalid("Artifact input reference has no workspace_id".to_owned()))?;
-        let source_resource = input.get("resource_id").and_then(Value::as_str).ok_or_else(|| StoreError::Invalid("Artifact input reference has no resource_id".to_owned()))?;
-        let source_revision = input.get("revision_id").and_then(Value::as_str).ok_or_else(|| StoreError::Invalid("Artifact input reference has no revision_id".to_owned()))?;
-        let identity = json!([source_resource, source_revision, "ARTIFACT_VERSION", dependent_ref]);
-        let edge_id = format!("dependency-{}", digest(&canonical_json(&identity)?).trim_start_matches("sha256:"));
+        let source_workspace = input
+            .get("workspace_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                StoreError::Invalid("Artifact input reference has no workspace_id".to_owned())
+            })?;
+        let source_resource = input
+            .get("resource_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                StoreError::Invalid("Artifact input reference has no resource_id".to_owned())
+            })?;
+        let source_revision = input
+            .get("revision_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                StoreError::Invalid("Artifact input reference has no revision_id".to_owned())
+            })?;
+        let identity = json!([
+            source_resource,
+            source_revision,
+            "ARTIFACT_VERSION",
+            dependent_ref
+        ]);
+        let edge_id = format!(
+            "dependency-{}",
+            digest(&canonical_json(&identity)?).trim_start_matches("sha256:")
+        );
         tx.execute(
             "INSERT INTO dependency_edges(dependency_edge_id, workspace_id, source_resource_id, source_revision_id, dependent_kind, dependent_ref, artifact_id, artifact_version, verification_run_id, created_at) VALUES (?1, ?2, ?3, ?4, 'ARTIFACT_VERSION', ?5, ?6, ?7, NULL, ?8)",
             params![edge_id, source_workspace, source_resource, source_revision, dependent_ref,
@@ -745,12 +1531,27 @@ fn append_artifact_version_transaction(
     let invalidation_edges: Vec<(String, String)> = {
         let mut statement = tx.prepare("SELECT dependency_edge_id, source_revision_id FROM dependency_edges WHERE source_resource_id = ?1 AND source_revision_id <> ?2 ORDER BY dependency_edge_id")
             .map_err(map_database_error)?;
-        let rows = statement.query_map(params![commit.resource.resource_id, commit.resource_revision.resource_revision_id],
-            |row| Ok((row.get(0)?, row.get(1)?))).map_err(map_database_error)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_database_error)?
+        let rows = statement
+            .query_map(
+                params![
+                    commit.resource.resource_id,
+                    commit.resource_revision.resource_revision_id
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(map_database_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(map_database_error)?
     };
     for (dependency_edge_id, _source_revision_id) in invalidation_edges {
-        let invalidation_id = format!("invalidation-{}", digest(&canonical_json(&json!([dependency_edge_id, commit.resource_revision.resource_revision_id]))?).trim_start_matches("sha256:"));
+        let invalidation_id = format!(
+            "invalidation-{}",
+            digest(&canonical_json(&json!([
+                dependency_edge_id,
+                commit.resource_revision.resource_revision_id
+            ]))?)
+            .trim_start_matches("sha256:")
+        );
         tx.execute(
             "INSERT OR IGNORE INTO invalidation_records(invalidation_record_id, dependency_edge_id, observed_revision_id, reason_code, created_at) VALUES (?1, ?2, ?3, 'SOURCE_RESOURCE_REVISION_ADVANCED', ?4)",
             params![invalidation_id, dependency_edge_id, commit.resource_revision.resource_revision_id, commit.version.created_at],
@@ -764,7 +1565,12 @@ fn append_artifact_version_transaction(
             commit.artifact_id, to_sql_i64(commit.expected_content_version, "Artifact content version")?,
             to_sql_i64(commit.expected_artifact_version, "Artifact aggregate version")?],
     ).map_err(map_database_error)?;
-    if updated_artifact != 1 { return Err(StoreError::Conflict { expected: Some(commit.expected_artifact_version), actual: None }); }
+    if updated_artifact != 1 {
+        return Err(StoreError::Conflict {
+            expected: Some(commit.expected_artifact_version),
+            actual: None,
+        });
+    }
 
     let resource_event = insert_domain_event(&tx, &commit.resource_event, &resource_state)?;
     let artifact_event = insert_domain_event(&tx, &commit.artifact_event, &artifact_state)?;
@@ -795,43 +1601,98 @@ fn validate_source_inputs(
     commit: &ArtifactVersionAppendCommit,
 ) -> Result<(), StoreError> {
     for input in &commit.version.input_refs {
-        let source_workspace = input.get("workspace_id").and_then(Value::as_str).ok_or_else(|| StoreError::Invalid("Artifact input reference has no workspace_id".to_owned()))?;
-        let source_resource = input.get("resource_id").and_then(Value::as_str).ok_or_else(|| StoreError::Invalid("Artifact input reference has no resource_id".to_owned()))?;
-        let source_revision = input.get("revision_id").and_then(Value::as_str).ok_or_else(|| StoreError::Invalid("Artifact input reference has no revision_id".to_owned()))?;
-        if source_workspace != commit.workspace_id || source_resource == commit.resource.resource_id {
-            return Err(StoreError::Invalid("Artifact input reference is outside the Workspace or self-referential".to_owned()));
+        let source_workspace = input
+            .get("workspace_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                StoreError::Invalid("Artifact input reference has no workspace_id".to_owned())
+            })?;
+        let source_resource = input
+            .get("resource_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                StoreError::Invalid("Artifact input reference has no resource_id".to_owned())
+            })?;
+        let source_revision = input
+            .get("revision_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                StoreError::Invalid("Artifact input reference has no revision_id".to_owned())
+            })?;
+        if source_workspace != commit.workspace_id || source_resource == commit.resource.resource_id
+        {
+            return Err(StoreError::Invalid(
+                "Artifact input reference is outside the Workspace or self-referential".to_owned(),
+            ));
         }
         let source_revision_row: Option<(Option<String>,)> = tx.query_row(
             "SELECT rr.content_digest FROM resources r JOIN resource_revisions rr ON rr.resource_id = r.resource_id WHERE r.workspace_id = ?1 AND r.resource_id = ?2 AND rr.resource_revision_id = ?3",
             params![source_workspace, source_resource, source_revision],
             |row| Ok((row.get(0)?,)),
         ).optional().map_err(map_database_error)?;
-        let Some((source_digest,)) = source_revision_row else { return Err(StoreError::NotFound); };
+        let Some((source_digest,)) = source_revision_row else {
+            return Err(StoreError::NotFound);
+        };
     }
     let provenance = &commit.version.provenance;
-    let source_inputs = provenance.get("source_inputs").and_then(Value::as_array)
-        .ok_or_else(|| StoreError::Invalid("Artifact provenance source_inputs are required".to_owned()))?;
-    let transformations = provenance.get("transformations").and_then(Value::as_array)
-        .ok_or_else(|| StoreError::Invalid("Artifact provenance transformations are required".to_owned()))?;
+    let source_inputs = provenance
+        .get("source_inputs")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            StoreError::Invalid("Artifact provenance source_inputs are required".to_owned())
+        })?;
+    let transformations = provenance
+        .get("transformations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            StoreError::Invalid("Artifact provenance transformations are required".to_owned())
+        })?;
     let mut provenance_inputs: Vec<&Value> = source_inputs.iter().collect();
     for transformation in transformations {
-        let inputs = transformation.get("inputs").and_then(Value::as_array)
-            .ok_or_else(|| StoreError::Invalid("Artifact transformation inputs are required".to_owned()))?;
+        let inputs = transformation
+            .get("inputs")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                StoreError::Invalid("Artifact transformation inputs are required".to_owned())
+            })?;
         provenance_inputs.extend(inputs.iter());
     }
     for input in provenance_inputs {
-        let resource_ref = input.get("resource_ref").ok_or_else(|| StoreError::Invalid("Artifact provenance input has no resource_ref".to_owned()))?;
-        let source_workspace = resource_ref.get("workspace_id").and_then(Value::as_str).ok_or_else(|| StoreError::Invalid("Artifact provenance input has no workspace_id".to_owned()))?;
-        let source_resource = resource_ref.get("resource_id").and_then(Value::as_str).ok_or_else(|| StoreError::Invalid("Artifact provenance input has no resource_id".to_owned()))?;
-        let source_revision = resource_ref.get("revision_id").and_then(Value::as_str).ok_or_else(|| StoreError::Invalid("Artifact provenance input has no revision_id".to_owned()))?;
+        let resource_ref = input.get("resource_ref").ok_or_else(|| {
+            StoreError::Invalid("Artifact provenance input has no resource_ref".to_owned())
+        })?;
+        let source_workspace = resource_ref
+            .get("workspace_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                StoreError::Invalid("Artifact provenance input has no workspace_id".to_owned())
+            })?;
+        let source_resource = resource_ref
+            .get("resource_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                StoreError::Invalid("Artifact provenance input has no resource_id".to_owned())
+            })?;
+        let source_revision = resource_ref
+            .get("revision_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                StoreError::Invalid("Artifact provenance input has no revision_id".to_owned())
+            })?;
         if let Some(observed_digest) = input.get("observed_digest").and_then(Value::as_str) {
             let source_digest: Option<String> = tx.query_row(
                 "SELECT rr.content_digest FROM resources r JOIN resource_revisions rr ON rr.resource_id = r.resource_id WHERE r.workspace_id = ?1 AND r.resource_id = ?2 AND rr.resource_revision_id = ?3",
                 params![source_workspace, source_resource, source_revision],
                 |row| row.get(0),
             ).optional().map_err(map_database_error)?;
-            if source_digest.as_deref().is_some_and(|digest| digest != observed_digest) {
-                return Err(StoreError::Integrity("Artifact provenance input digest does not match its pinned ResourceRevision".to_owned()));
+            if source_digest
+                .as_deref()
+                .is_some_and(|digest| digest != observed_digest)
+            {
+                return Err(StoreError::Integrity(
+                    "Artifact provenance input digest does not match its pinned ResourceRevision"
+                        .to_owned(),
+                ));
             }
         }
     }
@@ -842,39 +1703,86 @@ const ARTIFACT_COLUMNS: &str = "artifact_id, workspace_id, resource_id, task_id,
 
 fn artifact_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArtifactRecord> {
     Ok(ArtifactRecord {
-        artifact_id: row.get(0)?, workspace_id: row.get(1)?, resource_id: row.get(2)?, task_id: row.get(3)?,
-        kind: row.get(4)?, display_name: row.get(5)?, current_version: row.get(6)?, library_status: row.get(7)?, created_at: row.get(8)?, version: row.get(9)?,
+        artifact_id: row.get(0)?,
+        workspace_id: row.get(1)?,
+        resource_id: row.get(2)?,
+        task_id: row.get(3)?,
+        kind: row.get(4)?,
+        display_name: row.get(5)?,
+        current_version: from_row_u64(row, 6)?,
+        library_status: row.get(7)?,
+        created_at: row.get(8)?,
+        version: from_row_u64(row, 9)?,
     })
 }
 
-pub(super) fn get_artifact(connection: &Connection, workspace_id: &str, artifact_id: &str) -> Result<Option<ArtifactRecord>, StoreError> {
+pub(super) fn get_artifact(
+    connection: &Connection,
+    workspace_id: &str,
+    artifact_id: &str,
+) -> Result<Option<ArtifactRecord>, StoreError> {
     connection.query_row(&format!("SELECT {ARTIFACT_COLUMNS} FROM artifacts WHERE workspace_id = ?1 AND artifact_id = ?2"), params![workspace_id, artifact_id], artifact_row)
         .optional().map_err(map_database_error)
 }
 
-pub(super) fn list_artifacts(connection: &Connection, workspace_id: &str, status: Option<&str>, task_id: Option<&str>, after_created_at: Option<&str>, after_id: Option<&str>, limit: usize) -> Result<Vec<ArtifactRecord>, StoreError> {
+pub(super) fn list_artifacts(
+    connection: &Connection,
+    workspace_id: &str,
+    status: Option<&str>,
+    task_id: Option<&str>,
+    after_created_at: Option<&str>,
+    after_id: Option<&str>,
+    limit: usize,
+) -> Result<Vec<ArtifactRecord>, StoreError> {
     let mut statement = connection.prepare(&format!("SELECT {ARTIFACT_COLUMNS} FROM artifacts WHERE workspace_id = ?1 AND (?2 IS NULL OR library_status = ?2) AND (?3 IS NULL OR task_id = ?3) AND (?4 IS NULL OR created_at < ?4 OR (created_at = ?4 AND artifact_id < ?5)) ORDER BY created_at DESC, artifact_id DESC LIMIT ?6")).map_err(map_database_error)?;
-    let rows = statement.query_map(params![workspace_id, status, task_id, after_created_at, after_id, limit as i64], artifact_row).map_err(map_database_error)?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(map_database_error)
+    let rows = statement
+        .query_map(
+            params![
+                workspace_id,
+                status,
+                task_id,
+                after_created_at,
+                after_id,
+                limit as i64
+            ],
+            artifact_row,
+        )
+        .map_err(map_database_error)?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(map_database_error)
 }
 
-fn json_column<T: serde::de::DeserializeOwned>(row: &rusqlite::Row<'_>, index: usize) -> rusqlite::Result<T> {
+fn json_column<T: serde::de::DeserializeOwned>(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> rusqlite::Result<T> {
     let text: String = row.get(index)?;
-    serde_json::from_str(&text).map_err(|error| rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(error)))
+    serde_json::from_str(&text).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(error),
+        )
+    })
 }
 
-pub(super) fn get_artifact_version(connection: &Connection, workspace_id: &str, artifact_id: &str, version: u64) -> Result<Option<ArtifactVersionRecord>, StoreError> {
+pub(super) fn get_artifact_version(
+    connection: &Connection,
+    workspace_id: &str,
+    artifact_id: &str,
+    version: u64,
+) -> Result<Option<ArtifactVersionRecord>, StoreError> {
     connection.query_row(
         "SELECT av.artifact_id, av.version, av.resource_revision_id, av.input_refs_json, av.content_kind, av.storage_ref_json, av.content_digest, av.content_media_type, av.content_size_bytes, av.resource_ref_json, av.provider_revision, av.observed_digest, av.content_observed_at, av.provenance_json, av.created_by_attempt, av.verification_refs_json, av.created_at FROM artifact_versions av JOIN artifacts a ON a.artifact_id = av.artifact_id AND a.resource_id = av.resource_id JOIN resource_revisions rr ON rr.resource_id = av.resource_id AND rr.resource_revision_id = av.resource_revision_id WHERE a.workspace_id = ?1 AND av.artifact_id = ?2 AND av.version = ?3",
         params![workspace_id, artifact_id, to_sql_i64(version, "Artifact version")?],
         |row| {
             let kind: String = row.get(4)?;
             let content = match kind.as_str() {
-                "MANAGED_BLOB" => ArtifactContentRecord::ManagedBlob { storage_ref: json_column(row, 5)?, content_digest: row.get(6)?, media_type: row.get(7)?, size_bytes: row.get(8)? },
+                "MANAGED_BLOB" => ArtifactContentRecord::ManagedBlob { storage_ref: json_column(row, 5)?, content_digest: row.get(6)?, media_type: row.get(7)?, size_bytes: from_row_u64(row, 8)? },
                 "EXTERNAL_RESOURCE" => ArtifactContentRecord::ExternalResource { resource_ref: json_column(row, 9)?, provider_revision: row.get(10)?, observed_digest: row.get(11)?, observed_at: row.get(12)? },
                 _ => return Err(rusqlite::Error::InvalidQuery),
             };
-            Ok(ArtifactVersionRecord { artifact_id: row.get(0)?, version: row.get(1)?, resource_revision_id: row.get(2)?, input_refs: json_column(row, 3)?, content, provenance: json_column(row, 13)?, created_by_attempt: row.get(14)?, verification_refs: json_column(row, 15)?, created_at: row.get(16)? })
+            Ok(ArtifactVersionRecord { artifact_id: row.get(0)?, version: from_row_u64(row, 1)?, resource_revision_id: row.get(2)?, input_refs: json_column(row, 3)?, content, provenance: json_column(row, 13)?, created_by_attempt: row.get(14)?, verification_refs: json_column(row, 15)?, created_at: row.get(16)? })
         },
     ).optional().map_err(map_database_error)
 }

@@ -108,9 +108,20 @@ mod linux {
                 Self::Unsupported(s) => write!(f, "Linux process scope unavailable: {s}"),
                 Self::Io(e) => write!(f, "Linux process scope I/O failed: {e}"),
                 Self::Control(s) => write!(f, "systemd process scope control failed: {s}"),
-                Self::CleanupPending { cause, cleanup_error, .. } => write!(f, "process scope cleanup remains pending after {cause}: {cleanup_error}"),
-                Self::QuiescenceUnobservable => write!(f, "cgroup quiescence could not be observed"),
-                Self::QuiescenceTimeout => write!(f, "cgroup did not become empty before the deadline"),
+                Self::CleanupPending {
+                    cause,
+                    cleanup_error,
+                    ..
+                } => write!(
+                    f,
+                    "process scope cleanup remains pending after {cause}: {cleanup_error}"
+                ),
+                Self::QuiescenceUnobservable => {
+                    write!(f, "cgroup quiescence could not be observed")
+                }
+                Self::QuiescenceTimeout => {
+                    write!(f, "cgroup did not become empty before the deadline")
+                }
             }
         }
     }
@@ -118,7 +129,9 @@ mod linux {
     impl std::error::Error for ScopeError {}
 
     impl From<io::Error> for ScopeError {
-        fn from(value: io::Error) -> Self { Self::Io(value) }
+        fn from(value: io::Error) -> Self {
+            Self::Io(value)
+        }
     }
 
     /// A running worker and its systemd-owned cgroup. Drop does not signal or detach work.
@@ -161,17 +174,31 @@ mod linux {
 
         pub fn retry_kill_and_wait(&mut self, timeout: Duration) -> Result<ExitStatus, ScopeError> {
             match self {
-                Self::PreWorker { commands, unit, child, cgroup_events } => {
+                Self::PreWorker {
+                    commands,
+                    unit,
+                    child,
+                    cgroup_events,
+                } => {
                     let _ = run_control(
                         &commands.systemctl,
-                        ["--user", "--no-pager", "kill", "--kill-whom=all", "--signal=SIGKILL"],
+                        [
+                            "--user",
+                            "--no-pager",
+                            "kill",
+                            "--kill-whom=all",
+                            "--signal=SIGKILL",
+                        ],
                         Some(unit),
                         CONTROL_TIMEOUT,
                     );
                     if !kill_direct_until(child, timeout) {
                         return Err(ScopeError::QuiescenceTimeout);
                     }
-                    let status = child.try_wait().map_err(ScopeError::Io)?.ok_or(ScopeError::QuiescenceTimeout)?;
+                    let status = child
+                        .try_wait()
+                        .map_err(ScopeError::Io)?
+                        .ok_or(ScopeError::QuiescenceTimeout)?;
                     prove_preworker_quiescent(commands, unit, cgroup_events.as_deref(), timeout)?;
                     Ok(status)
                 }
@@ -188,12 +215,16 @@ mod linux {
     }
 
     impl ManagedScope {
-        pub fn unit_name(&self) -> &str { &self.unit }
+        pub fn unit_name(&self) -> &str {
+            &self.unit
+        }
 
         /// Pipe handles are the worker's inherited descriptors after systemd-run execs it.
         /// Callers must drain stdout and stderr concurrently or the worker can block when
         /// either pipe fills.
-        pub fn child_mut(&mut self) -> Result<&mut Child, ScopeError> { Ok(&mut self.child) }
+        pub fn child_mut(&mut self) -> Result<&mut Child, ScopeError> {
+            Ok(&mut self.child)
+        }
 
         pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, ScopeError> {
             self.child.try_wait().map_err(ScopeError::Io)
@@ -202,16 +233,24 @@ mod linux {
         /// Observe the kernel's recursive cgroup-v2 `populated` state and reap the direct
         /// worker process. A missing cgroup file is not treated as proof of quiescence.
         pub fn wait_for_quiescence(&mut self, timeout: Duration) -> Result<ExitStatus, ScopeError> {
-            let deadline = Instant::now().checked_add(timeout).ok_or(ScopeError::InvalidInput("timeout overflow"))?;
+            let deadline = Instant::now()
+                .checked_add(timeout)
+                .ok_or(ScopeError::InvalidInput("timeout overflow"))?;
             loop {
                 match read_populated(&self.cgroup_events) {
                     Ok(false) => return wait_child_until(&mut self.child, deadline),
                     Ok(true) => {}
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(ScopeError::QuiescenceUnobservable),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                        return Err(ScopeError::QuiescenceUnobservable);
+                    }
                     Err(e) => return Err(ScopeError::Io(e)),
                 }
-                if Instant::now() >= deadline { return Err(ScopeError::QuiescenceTimeout); }
-                thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
+                if Instant::now() >= deadline {
+                    return Err(ScopeError::QuiescenceTimeout);
+                }
+                thread::sleep(
+                    POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+                );
             }
         }
 
@@ -221,27 +260,44 @@ mod linux {
         pub fn kill_and_wait(&mut self, timeout: Duration) -> Result<ExitStatus, ScopeError> {
             let _ = run_control(
                 &self.commands.systemctl,
-                ["--user", "--no-pager", "kill", "--kill-whom=all", "--signal=SIGKILL"],
+                [
+                    "--user",
+                    "--no-pager",
+                    "kill",
+                    "--kill-whom=all",
+                    "--signal=SIGKILL",
+                ],
                 Some(&self.unit),
                 CONTROL_TIMEOUT,
             );
-            let deadline = Instant::now().checked_add(timeout).ok_or(ScopeError::InvalidInput("timeout overflow"))?;
+            let deadline = Instant::now()
+                .checked_add(timeout)
+                .ok_or(ScopeError::InvalidInput("timeout overflow"))?;
             loop {
                 match read_populated(&self.cgroup_events) {
                     Ok(false) => return wait_child_until(&mut self.child, deadline),
                     Ok(true) => {}
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(ScopeError::QuiescenceUnobservable),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                        return Err(ScopeError::QuiescenceUnobservable);
+                    }
                     Err(e) => return Err(ScopeError::Io(e)),
                 }
-                if Instant::now() >= deadline { return Err(ScopeError::QuiescenceTimeout); }
-                thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
+                if Instant::now() >= deadline {
+                    return Err(ScopeError::QuiescenceTimeout);
+                }
+                thread::sleep(
+                    POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+                );
             }
         }
 
         /// Re-read limit files; a successful systemd request alone is not treated as proof
         /// that the kernel enforced the values.
         pub fn limits_are_enforced(&self) -> Result<bool, ScopeError> {
-            let dir = self.cgroup_events.parent().ok_or(ScopeError::QuiescenceUnobservable)?;
+            let dir = self
+                .cgroup_events
+                .parent()
+                .ok_or(ScopeError::QuiescenceUnobservable)?;
             let memory = read_trimmed(dir.join("memory.max"))?;
             let pids = read_trimmed(dir.join("pids.max"))?;
             let cpu = read_trimmed(dir.join("cpu.max"))?;
@@ -270,8 +326,14 @@ mod linux {
             .arg("--quiet")
             .arg("--expand-environment=no")
             .arg(format!("--unit={unit}"))
-            .arg(format!("--property=MemoryMax={}", spec.limits.memory_max_bytes))
-            .arg(format!("--property=CPUQuota={}%", spec.limits.cpu_quota_percent))
+            .arg(format!(
+                "--property=MemoryMax={}",
+                spec.limits.memory_max_bytes
+            ))
+            .arg(format!(
+                "--property=CPUQuota={}%",
+                spec.limits.cpu_quota_percent
+            ))
             .arg(format!("--property=TasksMax={}", spec.limits.tasks_max))
             .arg("--property=KillMode=control-group")
             .arg("--property=Delegate=no")
@@ -283,9 +345,13 @@ mod linux {
         for (name, value) in safe_environment(&spec.environment)? {
             cmd.arg(format!("{name}={value}"));
         }
-        cmd.arg(&commands.scope_gate).arg(&spec.executable).args(&spec.args)
+        cmd.arg(&commands.scope_gate)
+            .arg(&spec.executable)
+            .args(&spec.args)
             .current_dir(&spec.working_directory)
-            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
         // Keep the manager's user-bus environment for systemd-run itself. `env -i` clears
         // it before the trusted gate/native agent begins; only explicit non-secret
@@ -309,14 +375,21 @@ mod linux {
                 return Err(fail_before_worker(commands, &unit, child, None, error));
             }
         };
-        let (cgroup, relative) = match resolve_scope_cgroup(commands, &unit, &mount, CONTROL_TIMEOUT) {
-            Ok(path) => path,
-            Err(error) => {
-                return Err(fail_before_worker(commands, &unit, child, None, error));
-            }
-        };
+        let (cgroup, relative) =
+            match resolve_scope_cgroup(commands, &unit, &mount, CONTROL_TIMEOUT) {
+                Ok(path) => path,
+                Err(error) => {
+                    return Err(fail_before_worker(commands, &unit, child, None, error));
+                }
+            };
         if let Err(error) = verify_membership(child.id(), &relative, &mount.root) {
-            return Err(fail_before_worker(commands, &unit, child, Some(cgroup.join("cgroup.events")), error));
+            return Err(fail_before_worker(
+                commands,
+                &unit,
+                child,
+                Some(cgroup.join("cgroup.events")),
+                error,
+            ));
         }
         let managed = ManagedScope {
             commands: commands.clone(),
@@ -330,7 +403,9 @@ mod linux {
             Ok(false) => {
                 return Err(fail_scope(
                     managed,
-                    ScopeError::Unsupported("systemd did not apply all requested cgroup-v2 limits".into()),
+                    ScopeError::Unsupported(
+                        "systemd did not apply all requested cgroup-v2 limits".into(),
+                    ),
                     CONTROL_TIMEOUT,
                 ));
             }
@@ -364,40 +439,81 @@ mod linux {
     }
 
     fn validate_paths(commands: &SystemdCommands, spec: &LaunchSpec) -> Result<(), ScopeError> {
-        for path in [&commands.systemd_run, &commands.systemctl, &commands.env, &commands.scope_gate, &spec.executable, &spec.working_directory, &spec.environment.home] {
-            if !path.is_absolute() || path.components().any(|part| matches!(part, Component::ParentDir)) {
-                return Err(ScopeError::InvalidInput("executable and environment paths must be absolute and normalized"));
+        for path in [
+            &commands.systemd_run,
+            &commands.systemctl,
+            &commands.env,
+            &commands.scope_gate,
+            &spec.executable,
+            &spec.working_directory,
+            &spec.environment.home,
+        ] {
+            if !path.is_absolute()
+                || path
+                    .components()
+                    .any(|part| matches!(part, Component::ParentDir))
+            {
+                return Err(ScopeError::InvalidInput(
+                    "executable and environment paths must be absolute and normalized",
+                ));
             }
         }
-        if spec.executable.as_os_str().is_empty() { return Err(ScopeError::InvalidInput("empty executable")); }
+        if spec.executable.as_os_str().is_empty() {
+            return Err(ScopeError::InvalidInput("empty executable"));
+        }
         Ok(())
     }
 
     fn validate_limits(limits: ResourceLimits) -> Result<(), ScopeError> {
-        if limits.memory_max_bytes == 0 || limits.cpu_quota_percent == 0 || limits.cpu_quota_percent > 10_000 || limits.tasks_max == 0 || limits.tasks_max > 65_536 {
-            return Err(ScopeError::InvalidInput("resource limits are zero or outside supported bounds"));
+        if limits.memory_max_bytes == 0
+            || limits.cpu_quota_percent == 0
+            || limits.cpu_quota_percent > 10_000
+            || limits.tasks_max == 0
+            || limits.tasks_max > 65_536
+        {
+            return Err(ScopeError::InvalidInput(
+                "resource limits are zero or outside supported bounds",
+            ));
         }
         Ok(())
     }
 
-    fn wait_for_marker(stdout: ChildStdout, expected: &'static [u8], timeout: Duration) -> Result<ChildStdout, ScopeError> {
+    fn wait_for_marker(
+        mut stdout: ChildStdout,
+        expected: &'static [u8],
+        timeout: Duration,
+    ) -> Result<ChildStdout, ScopeError> {
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         thread::spawn(move || {
             let mut marker = vec![0; expected.len()];
             let result = stdout.read_exact(&mut marker).and_then(|()| {
-                if marker == expected { Ok(()) } else { Err(io::Error::new(io::ErrorKind::InvalidData, "scope gate emitted an invalid protocol marker")) }
+                if marker == expected {
+                    Ok(())
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "scope gate emitted an invalid protocol marker",
+                    ))
+                }
             });
             let _ = sender.send((stdout, result));
         });
         match receiver.recv_timeout(timeout) {
             Ok((stdout, Ok(()))) => Ok(stdout),
             Ok((_stdout, Err(error))) => Err(ScopeError::Io(error)),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(ScopeError::Control("scope gate did not become ready before the deadline".into())),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(ScopeError::Control("scope gate readiness channel closed".into())),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(ScopeError::Control(
+                "scope gate did not become ready before the deadline".into(),
+            )),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(ScopeError::Control(
+                "scope gate readiness channel closed".into(),
+            )),
         }
     }
 
-    fn abort_scope(mut scope: ManagedScope, timeout: Duration) -> Result<Option<String>, (ManagedScope, ScopeError)> {
+    fn abort_scope(
+        mut scope: ManagedScope,
+        timeout: Duration,
+    ) -> Result<Option<String>, (ManagedScope, ScopeError)> {
         match scope.kill_and_wait(timeout) {
             Ok(_) => Ok(take_stderr_diagnostic(&mut scope.child)),
             Err(cleanup_error) => {
@@ -422,44 +538,98 @@ mod linux {
 
     fn kill_direct_until(child: &mut Child, timeout: Duration) -> bool {
         let _ = child.kill();
-        let deadline = Instant::now().checked_add(timeout).unwrap_or_else(Instant::now);
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .unwrap_or_else(Instant::now);
         loop {
             match child.try_wait() {
                 Ok(Some(_)) => return true,
-                Ok(None) if Instant::now() < deadline => thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now()))),
+                Ok(None) if Instant::now() < deadline => thread::sleep(
+                    POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())),
+                ),
                 Ok(None) | Err(_) => return false,
             }
         }
     }
 
-    fn terminate_scope(commands: &SystemdCommands, unit: &str, mut child: Child, cgroup_events: Option<PathBuf>) -> Result<Option<String>, (PendingCleanup, ScopeError)> {
+    fn terminate_scope(
+        commands: &SystemdCommands,
+        unit: &str,
+        mut child: Child,
+        cgroup_events: Option<PathBuf>,
+    ) -> Result<Option<String>, (PendingCleanup, ScopeError)> {
         let _ = run_control(
             &commands.systemctl,
-            ["--user", "--no-pager", "kill", "--kill-whom=all", "--signal=SIGKILL"],
+            [
+                "--user",
+                "--no-pager",
+                "kill",
+                "--kill-whom=all",
+                "--signal=SIGKILL",
+            ],
             Some(unit),
             CONTROL_TIMEOUT,
         );
         if !kill_direct_until(&mut child, CONTROL_TIMEOUT) {
-            return Err((PendingCleanup::PreWorker {
-                commands: commands.clone(),
-                unit: unit.to_owned(),
-                child,
-                cgroup_events,
-            }, ScopeError::QuiescenceTimeout));
+            return Err((
+                PendingCleanup::PreWorker {
+                    commands: commands.clone(),
+                    unit: unit.to_owned(),
+                    child,
+                    cgroup_events,
+                },
+                ScopeError::QuiescenceTimeout,
+            ));
         }
         let status = match child.try_wait() {
             Ok(Some(status)) => status,
-            Ok(None) => return Err((PendingCleanup::PreWorker { commands: commands.clone(), unit: unit.to_owned(), child, cgroup_events }, ScopeError::QuiescenceTimeout)),
-            Err(error) => return Err((PendingCleanup::PreWorker { commands: commands.clone(), unit: unit.to_owned(), child, cgroup_events }, ScopeError::Io(error))),
+            Ok(None) => {
+                return Err((
+                    PendingCleanup::PreWorker {
+                        commands: commands.clone(),
+                        unit: unit.to_owned(),
+                        child,
+                        cgroup_events,
+                    },
+                    ScopeError::QuiescenceTimeout,
+                ));
+            }
+            Err(error) => {
+                return Err((
+                    PendingCleanup::PreWorker {
+                        commands: commands.clone(),
+                        unit: unit.to_owned(),
+                        child,
+                        cgroup_events,
+                    },
+                    ScopeError::Io(error),
+                ));
+            }
         };
-        if let Err(error) = prove_preworker_quiescent(commands, unit, cgroup_events.as_deref(), CONTROL_TIMEOUT) {
-            return Err((PendingCleanup::PreWorker { commands: commands.clone(), unit: unit.to_owned(), child, cgroup_events }, error));
+        if let Err(error) =
+            prove_preworker_quiescent(commands, unit, cgroup_events.as_deref(), CONTROL_TIMEOUT)
+        {
+            return Err((
+                PendingCleanup::PreWorker {
+                    commands: commands.clone(),
+                    unit: unit.to_owned(),
+                    child,
+                    cgroup_events,
+                },
+                error,
+            ));
         }
         let _ = status;
         Ok(take_stderr_diagnostic(&mut child))
     }
 
-    fn fail_before_worker(commands: &SystemdCommands, unit: &str, child: Child, cgroup_events: Option<PathBuf>, cause: ScopeError) -> ScopeError {
+    fn fail_before_worker(
+        commands: &SystemdCommands,
+        unit: &str,
+        child: Child,
+        cgroup_events: Option<PathBuf>,
+        cause: ScopeError,
+    ) -> ScopeError {
         match terminate_scope(commands, unit, child, cgroup_events) {
             Ok(diagnostic) => with_gate_diagnostic(cause, diagnostic),
             Err((pending, cleanup_error)) => ScopeError::CleanupPending {
@@ -470,31 +640,66 @@ mod linux {
         }
     }
 
-    fn prove_preworker_quiescent(commands: &SystemdCommands, unit: &str, known_events: Option<&Path>, timeout: Duration) -> Result<(), ScopeError> {
-        let deadline = Instant::now().checked_add(timeout).ok_or(ScopeError::InvalidInput("timeout overflow"))?;
+    fn prove_preworker_quiescent(
+        commands: &SystemdCommands,
+        unit: &str,
+        known_events: Option<&Path>,
+        timeout: Duration,
+    ) -> Result<(), ScopeError> {
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or(ScopeError::InvalidInput("timeout overflow"))?;
         let mount = cgroup2_mount().ok();
         let mut saw_observation = false;
         loop {
             let Some(call_timeout) = remaining_control_timeout(deadline) else {
-                return Err(if saw_observation { ScopeError::QuiescenceTimeout } else { ScopeError::QuiescenceUnobservable });
+                return Err(if saw_observation {
+                    ScopeError::QuiescenceTimeout
+                } else {
+                    ScopeError::QuiescenceUnobservable
+                });
             };
-            if let Ok(output) = run_control(&commands.systemctl, ["--user", "--no-pager", "show", "--value", "--property=ActiveState"], Some(unit), call_timeout) {
+            if let Ok(output) = run_control(
+                &commands.systemctl,
+                [
+                    "--user",
+                    "--no-pager",
+                    "show",
+                    "--value",
+                    "--property=ActiveState",
+                ],
+                Some(unit),
+                call_timeout,
+            ) {
                 saw_observation = true;
                 let active_state = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                if matches!(active_state.as_str(), "inactive" | "dead") { return Ok(()); }
+                if matches!(active_state.as_str(), "inactive" | "dead") {
+                    return Ok(());
+                }
             }
 
             let discovered_events = if known_events.is_some() {
                 None
             } else if let Some(mount) = mount.as_ref() {
                 remaining_control_timeout(deadline).and_then(|call_timeout| {
-                    run_control(&commands.systemctl, ["--user", "--no-pager", "show", "--value", "--property=ControlGroup"], Some(unit), call_timeout)
-                        .ok()
-                        .and_then(|output| {
-                            let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                            let relative = cgroup_relative_path(&value, &mount.root)?;
-                            Some(mount.mountpoint.join(relative).join("cgroup.events"))
-                        })
+                    run_control(
+                        &commands.systemctl,
+                        [
+                            "--user",
+                            "--no-pager",
+                            "show",
+                            "--value",
+                            "--property=ControlGroup",
+                        ],
+                        Some(unit),
+                        call_timeout,
+                    )
+                    .ok()
+                    .and_then(|output| {
+                        let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                        let relative = cgroup_relative_path(&value, &mount.root)?;
+                        Some(mount.mountpoint.join(relative).join("cgroup.events"))
+                    })
                 })
             } else {
                 None
@@ -509,7 +714,11 @@ mod linux {
             }
 
             if Instant::now() >= deadline {
-                return Err(if saw_observation { ScopeError::QuiescenceTimeout } else { ScopeError::QuiescenceUnobservable });
+                return Err(if saw_observation {
+                    ScopeError::QuiescenceTimeout
+                } else {
+                    ScopeError::QuiescenceUnobservable
+                });
             }
             thread::sleep(POLL_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
         }
@@ -517,34 +726,55 @@ mod linux {
 
     fn remaining_control_timeout(deadline: Instant) -> Option<Duration> {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() { None } else { Some(remaining.min(CONTROL_TIMEOUT)) }
+        if remaining.is_zero() {
+            None
+        } else {
+            Some(remaining.min(CONTROL_TIMEOUT))
+        }
     }
 
     fn take_stderr_diagnostic(child: &mut Child) -> Option<String> {
         child.stderr.take().and_then(|mut stderr| {
             let (bytes, over_limit) = read_limited(&mut stderr, OUTPUT_LIMIT).ok()?;
             let message = String::from_utf8_lossy(&bytes).trim().to_owned();
-            if message.is_empty() { None }
-            else if over_limit { Some(format!("{} (stderr truncated)", message)) }
-            else { Some(message) }
+            if message.is_empty() {
+                None
+            } else if over_limit {
+                Some(format!("{} (stderr truncated)", message))
+            } else {
+                Some(message)
+            }
         })
     }
 
     fn with_gate_diagnostic(error: ScopeError, diagnostic: Option<String>) -> ScopeError {
         match (error, diagnostic) {
-            (ScopeError::Io(error), Some(detail)) => ScopeError::Control(format!("scope gate failed: {detail} ({error})")),
-            (ScopeError::Control(error), Some(detail)) => ScopeError::Control(format!("{error}: {detail}")),
+            (ScopeError::Io(error), Some(detail)) => {
+                ScopeError::Control(format!("scope gate failed: {detail} ({error})"))
+            }
+            (ScopeError::Control(error), Some(detail)) => {
+                ScopeError::Control(format!("{error}: {detail}"))
+            }
             (error, _) => error,
         }
     }
 
     fn verify_membership(pid: u32, expected: &Path, mount_root: &Path) -> Result<(), ScopeError> {
-        let membership = fs::read_to_string(format!("/proc/{pid}/cgroup")).map_err(ScopeError::Io)?;
-        let observed = membership.lines().find_map(|line| line.strip_prefix("0::"))
+        let membership =
+            fs::read_to_string(format!("/proc/{pid}/cgroup")).map_err(ScopeError::Io)?;
+        let observed = membership
+            .lines()
+            .find_map(|line| line.strip_prefix("0::"))
             .and_then(|path| cgroup_relative_path(path, mount_root))
-            .ok_or_else(|| ScopeError::Unsupported("worker cgroup membership could not be read as unified cgroup-v2".into()))?;
+            .ok_or_else(|| {
+                ScopeError::Unsupported(
+                    "worker cgroup membership could not be read as unified cgroup-v2".into(),
+                )
+            })?;
         if observed != expected {
-            return Err(ScopeError::Unsupported("scope gate process is not in the expected Attempt cgroup".into()));
+            return Err(ScopeError::Unsupported(
+                "scope gate process is not in the expected Attempt cgroup".into(),
+            ));
         }
         Ok(())
     }
@@ -552,23 +782,58 @@ mod linux {
     fn safe_environment(env: &AgentEnvironment) -> Result<Vec<(&'static str, String)>, ScopeError> {
         let home = safe_path_value(&env.home)?;
         let mut result = vec![("HOME", home)];
-        if env.search_path.is_empty() { return Err(ScopeError::InvalidInput("agent PATH must not be empty")); }
+        if env.search_path.is_empty() {
+            return Err(ScopeError::InvalidInput("agent PATH must not be empty"));
+        }
         let mut paths = Vec::with_capacity(env.search_path.len());
         for path in &env.search_path {
-            if !path.is_absolute() || path.components().any(|part| matches!(part, Component::ParentDir)) { return Err(ScopeError::InvalidInput("PATH entries must be absolute and normalized")); }
+            if !path.is_absolute()
+                || path
+                    .components()
+                    .any(|part| matches!(part, Component::ParentDir))
+            {
+                return Err(ScopeError::InvalidInput(
+                    "PATH entries must be absolute and normalized",
+                ));
+            }
             let value = safe_path_value(path)?;
-            if value.contains(':') { return Err(ScopeError::InvalidInput("PATH entries cannot contain colons")); }
+            if value.contains(':') {
+                return Err(ScopeError::InvalidInput(
+                    "PATH entries cannot contain colons",
+                ));
+            }
             paths.push(value);
         }
         result.push(("PATH", paths.join(":")));
-        for (name, value) in [("XDG_CONFIG_HOME", env.config_home.as_ref()), ("XDG_DATA_HOME", env.data_home.as_ref()), ("XDG_CACHE_HOME", env.cache_home.as_ref()), ("TMPDIR", env.temp_dir.as_ref())] {
+        for (name, value) in [
+            ("XDG_CONFIG_HOME", env.config_home.as_ref()),
+            ("XDG_DATA_HOME", env.data_home.as_ref()),
+            ("XDG_CACHE_HOME", env.cache_home.as_ref()),
+            ("TMPDIR", env.temp_dir.as_ref()),
+        ] {
             if let Some(value) = value {
-                if !value.is_absolute() || value.components().any(|part| matches!(part, Component::ParentDir)) { return Err(ScopeError::InvalidInput("XDG and temporary paths must be absolute and normalized")); }
+                if !value.is_absolute()
+                    || value
+                        .components()
+                        .any(|part| matches!(part, Component::ParentDir))
+                {
+                    return Err(ScopeError::InvalidInput(
+                        "XDG and temporary paths must be absolute and normalized",
+                    ));
+                }
                 result.push((name, safe_path_value(value)?));
             }
         }
         if let Some(locale) = env.locale.as_ref() {
-            if locale.is_empty() || !locale.bytes().all(|b| b.is_ascii_alphanumeric() || b"_-.@".contains(&b)) { return Err(ScopeError::InvalidInput("locale contains unsupported characters")); }
+            if locale.is_empty()
+                || !locale
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_-.@".contains(&b))
+            {
+                return Err(ScopeError::InvalidInput(
+                    "locale contains unsupported characters",
+                ));
+            }
             result.push(("LANG", locale.clone()));
         }
         Ok(result)
@@ -576,38 +841,77 @@ mod linux {
 
     fn safe_path_value(path: &Path) -> Result<String, ScopeError> {
         let bytes = path.as_os_str().as_bytes();
-        let text = std::str::from_utf8(bytes).map_err(|_| ScopeError::InvalidInput("environment paths must be UTF-8"))?;
-        if text.contains(['\0', '\n', '\r']) || text.contains('=') { return Err(ScopeError::InvalidInput("environment path contains unsupported characters")); }
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| ScopeError::InvalidInput("environment paths must be UTF-8"))?;
+        if text.contains(['\0', '\n', '\r']) || text.contains('=') {
+            return Err(ScopeError::InvalidInput(
+                "environment path contains unsupported characters",
+            ));
+        }
         Ok(text.to_owned())
     }
 
     fn unit_name(attempt_id: [u8; 16]) -> String {
         let mut out = String::from(PREFIX);
-        for byte in attempt_id { out.push_str(&format!("{byte:02x}")); }
+        for byte in attempt_id {
+            out.push_str(&format!("{byte:02x}"));
+        }
         out.push_str(".scope");
         out
     }
 
-    fn resolve_scope_cgroup(commands: &SystemdCommands, unit: &str, mount: &CgroupMount, timeout: Duration) -> Result<(PathBuf, PathBuf), ScopeError> {
+    fn resolve_scope_cgroup(
+        commands: &SystemdCommands,
+        unit: &str,
+        mount: &CgroupMount,
+        timeout: Duration,
+    ) -> Result<(PathBuf, PathBuf), ScopeError> {
         let deadline = Instant::now() + timeout;
         loop {
-            if let Ok(output) = run_control(&commands.systemctl, ["--user", "--no-pager", "show", "--value", "--property=ControlGroup"], Some(unit), timeout) {
+            if let Ok(output) = run_control(
+                &commands.systemctl,
+                [
+                    "--user",
+                    "--no-pager",
+                    "show",
+                    "--value",
+                    "--property=ControlGroup",
+                ],
+                Some(unit),
+                timeout,
+            ) {
                 let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
                 if let Some(relative) = cgroup_relative_path(&value, &mount.root) {
                     let path = mount.mountpoint.join(&relative);
-                    if path.join("cgroup.events").is_file() { return Ok((path, relative)); }
+                    if path.join("cgroup.events").is_file() {
+                        return Ok((path, relative));
+                    }
                 }
             }
-            if Instant::now() >= deadline { return Err(ScopeError::Unsupported("transient scope cgroup could not be resolved".into())); }
+            if Instant::now() >= deadline {
+                return Err(ScopeError::Unsupported(
+                    "transient scope cgroup could not be resolved".into(),
+                ));
+            }
             thread::sleep(POLL_INTERVAL);
         }
     }
 
-    fn run_control<const N: usize>(program: &Path, prefix: [&str; N], unit: Option<&str>, timeout: Duration) -> Result<Output, ScopeError> {
+    fn run_control<const N: usize>(
+        program: &Path,
+        prefix: [&str; N],
+        unit: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Output, ScopeError> {
         let mut command = Command::new(program);
         command.args(prefix);
-        if let Some(unit) = unit { command.arg(unit); }
-        command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        if let Some(unit) = unit {
+            command.arg(unit);
+        }
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         let mut child = command.spawn().map_err(ScopeError::Io)?;
         let stdout = match child.stdout.take() {
             Some(stdout) => stdout,
@@ -632,15 +936,39 @@ mod linux {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
                 Ok(None) if Instant::now() < deadline => thread::sleep(POLL_INTERVAL),
-                Ok(None) => { let _ = kill_direct_until(&mut child, timeout); return Err(ScopeError::Control("systemd command timed out".into())); }
-                Err(error) => { let _ = kill_direct_until(&mut child, timeout); return Err(ScopeError::Io(error)); }
+                Ok(None) => {
+                    let _ = kill_direct_until(&mut child, timeout);
+                    return Err(ScopeError::Control("systemd command timed out".into()));
+                }
+                Err(error) => {
+                    let _ = kill_direct_until(&mut child, timeout);
+                    return Err(ScopeError::Io(error));
+                }
             }
         };
-        let stdout = out_reader.join().map_err(|_| ScopeError::Control("systemd stdout reader failed".into()))?.map_err(ScopeError::Io)?;
-        let stderr = err_reader.join().map_err(|_| ScopeError::Control("systemd stderr reader failed".into()))?.map_err(ScopeError::Io)?;
-        if stdout.1 || stderr.1 { return Err(ScopeError::Control("systemd response exceeded its output bound".into())); }
-        if !status.success() { return Err(ScopeError::Control(String::from_utf8_lossy(&stderr.0).trim().to_owned())); }
-        Ok(Output { status, stdout: stdout.0, stderr: stderr.0 })
+        let stdout = out_reader
+            .join()
+            .map_err(|_| ScopeError::Control("systemd stdout reader failed".into()))?
+            .map_err(ScopeError::Io)?;
+        let stderr = err_reader
+            .join()
+            .map_err(|_| ScopeError::Control("systemd stderr reader failed".into()))?
+            .map_err(ScopeError::Io)?;
+        if stdout.1 || stderr.1 {
+            return Err(ScopeError::Control(
+                "systemd response exceeded its output bound".into(),
+            ));
+        }
+        if !status.success() {
+            return Err(ScopeError::Control(
+                String::from_utf8_lossy(&stderr.0).trim().to_owned(),
+            ));
+        }
+        Ok(Output {
+            status,
+            stdout: stdout.0,
+            stderr: stderr.0,
+        })
     }
 
     fn read_limited(mut input: impl Read, limit: usize) -> io::Result<(Vec<u8>, bool)> {
@@ -648,27 +976,39 @@ mod linux {
         // contract receives EPIPE/SIGPIPE; it cannot block this bounded control path by
         // filling an undrained pipe.
         let mut bytes = Vec::with_capacity(limit.min(1024));
-        input.by_ref().take((limit + 1) as u64).read_to_end(&mut bytes)?;
+        input
+            .by_ref()
+            .take((limit + 1) as u64)
+            .read_to_end(&mut bytes)?;
         let over = bytes.len() > limit;
         bytes.truncate(limit);
         Ok((bytes, over))
     }
 
     #[derive(Debug)]
-    struct CgroupMount { root: PathBuf, mountpoint: PathBuf }
+    struct CgroupMount {
+        root: PathBuf,
+        mountpoint: PathBuf,
+    }
 
     fn cgroup2_mount() -> Result<CgroupMount, ScopeError> {
         let text = fs::read_to_string("/proc/self/mountinfo").map_err(ScopeError::Io)?;
         for line in text.lines() {
-            let Some((before, after)) = line.split_once(" - ") else { continue };
+            let Some((before, after)) = line.split_once(" - ") else {
+                continue;
+            };
             let pre = before.split_ascii_whitespace().collect::<Vec<_>>();
             let post = after.split_ascii_whitespace().collect::<Vec<_>>();
-            if pre.len() < 5 || post.first() != Some(&"cgroup2") { continue; }
+            if pre.len() < 5 || post.first() != Some(&"cgroup2") {
+                continue;
+            }
             let root = decode_mount_path(pre[3])?;
             let mountpoint = decode_mount_path(pre[4])?;
             return Ok(CgroupMount { root, mountpoint });
         }
-        Err(ScopeError::Unsupported("unified cgroup-v2 mount is not visible".into()))
+        Err(ScopeError::Unsupported(
+            "unified cgroup-v2 mount is not visible".into(),
+        ))
     }
 
     fn decode_mount_path(text: &str) -> Result<PathBuf, ScopeError> {
@@ -677,37 +1017,68 @@ mod linux {
         let mut i = 0;
         while i < bytes.len() {
             if bytes[i] == b'\\' {
-                if i + 3 >= bytes.len() || !bytes[i + 1..i + 4].iter().all(|b| (b'0'..=b'7').contains(b)) { return Err(ScopeError::Unsupported("malformed mountinfo escaping".into())); }
-                let value = (bytes[i + 1] - b'0') * 64 + (bytes[i + 2] - b'0') * 8 + bytes[i + 3] - b'0';
+                if i + 3 >= bytes.len()
+                    || !bytes[i + 1..i + 4]
+                        .iter()
+                        .all(|b| (b'0'..=b'7').contains(b))
+                {
+                    return Err(ScopeError::Unsupported(
+                        "malformed mountinfo escaping".into(),
+                    ));
+                }
+                let value =
+                    (bytes[i + 1] - b'0') * 64 + (bytes[i + 2] - b'0') * 8 + bytes[i + 3] - b'0';
                 out.push(value);
                 i += 4;
-            } else { out.push(bytes[i]); i += 1; }
+            } else {
+                out.push(bytes[i]);
+                i += 1;
+            }
         }
         let path = PathBuf::from(OsStr::from_bytes(&out));
-        if !path.is_absolute() || path.components().any(|p| matches!(p, Component::ParentDir)) { return Err(ScopeError::Unsupported("invalid cgroup mount path".into())); }
+        if !path.is_absolute() || path.components().any(|p| matches!(p, Component::ParentDir)) {
+            return Err(ScopeError::Unsupported("invalid cgroup mount path".into()));
+        }
         Ok(path)
     }
 
     fn cgroup_relative_path(value: &str, mount_root: &Path) -> Option<PathBuf> {
-        if value.is_empty() || !value.starts_with('/') || value.contains('\0') { return None; }
+        if value.is_empty() || !value.starts_with('/') || value.contains('\0') {
+            return None;
+        }
         let path = Path::new(value);
-        if path.components().any(|p| matches!(p, Component::ParentDir)) { return None; }
+        if path.components().any(|p| matches!(p, Component::ParentDir)) {
+            return None;
+        }
         let relative = path.strip_prefix(mount_root).ok()?;
         Some(relative.to_path_buf())
     }
 
     fn read_trimmed(path: PathBuf) -> Result<String, ScopeError> {
-        Ok(fs::read_to_string(path).map_err(ScopeError::Io)?.trim().to_owned())
+        Ok(fs::read_to_string(path)
+            .map_err(ScopeError::Io)?
+            .trim()
+            .to_owned())
     }
 
     fn read_populated(path: &Path) -> io::Result<bool> {
         let value = fs::read_to_string(path)?;
         for line in value.lines() {
             if let Some(value) = line.strip_prefix("populated ") {
-                return match value { "0" => Ok(false), "1" => Ok(true), _ => Err(io::Error::new(io::ErrorKind::InvalidData, "invalid cgroup populated value")) };
+                return match value {
+                    "0" => Ok(false),
+                    "1" => Ok(true),
+                    _ => Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "invalid cgroup populated value",
+                    )),
+                };
             }
         }
-        Err(io::Error::new(io::ErrorKind::InvalidData, "cgroup.events has no populated field"))
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "cgroup.events has no populated field",
+        ))
     }
 
     fn wait_child_until(child: &mut Child, deadline: Instant) -> Result<ExitStatus, ScopeError> {
@@ -721,11 +1092,107 @@ mod linux {
         }
     }
 
-    pub use {AgentEnvironment as PublicAgentEnvironment, LaunchSpec as PublicLaunchSpec, ManagedScope as PublicManagedScope, PendingCleanup as PublicPendingCleanup, ResourceLimits as PublicResourceLimits, ScopeError as PublicScopeError, SystemdCommands as PublicSystemdCommands};
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn valid_spec() -> (SystemdCommands, LaunchSpec) {
+            (
+                SystemdCommands {
+                    systemd_run: PathBuf::from("/usr/bin/systemd-run"),
+                    systemctl: PathBuf::from("/usr/bin/systemctl"),
+                    scope_gate: PathBuf::from("/usr/bin/litecowork-scope-gate"),
+                    env: PathBuf::from("/usr/bin/env"),
+                },
+                LaunchSpec {
+                    attempt_id: [1; 16],
+                    executable: PathBuf::from("/usr/bin/codex"),
+                    args: vec![OsString::from("app-server")],
+                    working_directory: PathBuf::from("/workspace/task"),
+                    environment: AgentEnvironment {
+                        home: PathBuf::from("/workspace/task/home"),
+                        search_path: Vec::new(),
+                        config_home: None,
+                        data_home: None,
+                        cache_home: None,
+                        temp_dir: None,
+                        locale: None,
+                    },
+                    limits: ResourceLimits {
+                        memory_max_bytes: 1024 * 1024 * 1024,
+                        cpu_quota_percent: 200,
+                        tasks_max: 128,
+                    },
+                },
+            )
+        }
+
+        #[test]
+        fn launch_paths_must_be_absolute_and_normalized() {
+            let (commands, spec) = valid_spec();
+            assert!(validate_paths(&commands, &spec).is_ok());
+
+            let mut unsafe_spec = spec.clone();
+            unsafe_spec.working_directory = PathBuf::from("/workspace/../home");
+            assert!(matches!(
+                validate_paths(&commands, &unsafe_spec),
+                Err(ScopeError::InvalidInput(_))
+            ));
+        }
+
+        #[test]
+        fn resource_limits_reject_zero_and_out_of_range_values() {
+            let mut limits = valid_spec().1.limits;
+            assert!(validate_limits(limits).is_ok());
+            limits.cpu_quota_percent = 10_001;
+            assert!(validate_limits(limits).is_err());
+            limits.cpu_quota_percent = 1;
+            limits.tasks_max = 0;
+            assert!(validate_limits(limits).is_err());
+        }
+
+        #[test]
+        fn scope_gate_handshake_accepts_only_the_exact_marker() {
+            let mut child = Command::new("sh")
+                .args(["-c", "printf 'LITECOWORK_SCOPE_GATE_V1\\n'"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("test shell starts");
+            let stdout = child.stdout.take().expect("stdout is piped");
+            let remaining = wait_for_marker(stdout, GATE_READY, Duration::from_secs(1))
+                .expect("exact gate marker is accepted");
+            drop(remaining);
+            assert!(child.wait().expect("shell is reaped").success());
+
+            let mut child = Command::new("sh")
+                .args(["-c", "printf 'UNTRUSTED\\n'"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("test shell starts");
+            let stdout = child.stdout.take().expect("stdout is piped");
+            assert!(matches!(
+                wait_for_marker(stdout, GATE_READY, Duration::from_secs(1)),
+                Err(ScopeError::Io(_))
+            ));
+            assert!(child.wait().expect("shell is reaped").success());
+        }
+    }
+
+    pub use {
+        AgentEnvironment as PublicAgentEnvironment, LaunchSpec as PublicLaunchSpec,
+        ManagedScope as PublicManagedScope, PendingCleanup as PublicPendingCleanup,
+        ResourceLimits as PublicResourceLimits, ScopeError as PublicScopeError,
+        SystemdCommands as PublicSystemdCommands,
+    };
 }
 
 #[cfg(target_os = "linux")]
-pub use linux::{spawn, PublicAgentEnvironment as AgentEnvironment, PublicLaunchSpec as LaunchSpec, PublicManagedScope as ManagedScope, PublicPendingCleanup as PendingCleanup, PublicResourceLimits as ResourceLimits, PublicScopeError as ScopeError, PublicSystemdCommands as SystemdCommands};
+pub use linux::{
+    PublicAgentEnvironment as AgentEnvironment, PublicLaunchSpec as LaunchSpec,
+    PublicManagedScope as ManagedScope, PublicPendingCleanup as PendingCleanup,
+    PublicResourceLimits as ResourceLimits, PublicScopeError as ScopeError,
+    PublicSystemdCommands as SystemdCommands, spawn,
+};
 
 #[cfg(not(target_os = "linux"))]
 mod unsupported {
@@ -737,7 +1204,12 @@ mod unsupported {
     };
 
     #[derive(Clone, Debug)]
-    pub struct SystemdCommands { pub systemd_run: PathBuf, pub systemctl: PathBuf, pub scope_gate: PathBuf, pub env: PathBuf }
+    pub struct SystemdCommands {
+        pub systemd_run: PathBuf,
+        pub systemctl: PathBuf,
+        pub scope_gate: PathBuf,
+        pub env: PathBuf,
+    }
     #[derive(Clone, Debug)]
     pub struct AgentEnvironment {
         pub home: PathBuf,
@@ -749,7 +1221,11 @@ mod unsupported {
         pub locale: Option<String>,
     }
     #[derive(Clone, Copy, Debug)]
-    pub struct ResourceLimits { pub memory_max_bytes: u64, pub cpu_quota_percent: u32, pub tasks_max: u32 }
+    pub struct ResourceLimits {
+        pub memory_max_bytes: u64,
+        pub cpu_quota_percent: u32,
+        pub tasks_max: u32,
+    }
     #[derive(Clone, Debug)]
     pub struct LaunchSpec {
         pub attempt_id: [u8; 16],
@@ -780,9 +1256,20 @@ mod unsupported {
                 Self::Unsupported(s) => write!(f, "Linux process scope unavailable: {s}"),
                 Self::Io(e) => write!(f, "Linux process scope I/O failed: {e}"),
                 Self::Control(s) => write!(f, "systemd process scope control failed: {s}"),
-                Self::CleanupPending { cause, cleanup_error, .. } => write!(f, "process scope cleanup remains pending after {cause}: {cleanup_error}"),
-                Self::QuiescenceUnobservable => f.write_str("cgroup quiescence could not be observed"),
-                Self::QuiescenceTimeout => f.write_str("cgroup did not become empty before the deadline"),
+                Self::CleanupPending {
+                    cause,
+                    cleanup_error,
+                    ..
+                } => write!(
+                    f,
+                    "process scope cleanup remains pending after {cause}: {cleanup_error}"
+                ),
+                Self::QuiescenceUnobservable => {
+                    f.write_str("cgroup quiescence could not be observed")
+                }
+                Self::QuiescenceTimeout => {
+                    f.write_str("cgroup did not become empty before the deadline")
+                }
             }
         }
     }
@@ -791,18 +1278,40 @@ mod unsupported {
     #[derive(Debug)]
     pub struct ManagedScope;
     impl ManagedScope {
-        pub fn unit_name(&self) -> &str { "" }
-        pub fn child_mut(&mut self) -> Result<&mut Child, ScopeError> { Err(unsupported()) }
-        pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, ScopeError> { Err(unsupported()) }
-        pub fn wait_for_quiescence(&mut self, _timeout: Duration) -> Result<ExitStatus, ScopeError> { Err(unsupported()) }
-        pub fn kill_and_wait(&mut self, _timeout: Duration) -> Result<ExitStatus, ScopeError> { Err(unsupported()) }
-        pub fn limits_are_enforced(&self) -> Result<bool, ScopeError> { Err(unsupported()) }
+        pub fn unit_name(&self) -> &str {
+            ""
+        }
+        pub fn child_mut(&mut self) -> Result<&mut Child, ScopeError> {
+            Err(unsupported())
+        }
+        pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, ScopeError> {
+            Err(unsupported())
+        }
+        pub fn wait_for_quiescence(
+            &mut self,
+            _timeout: Duration,
+        ) -> Result<ExitStatus, ScopeError> {
+            Err(unsupported())
+        }
+        pub fn kill_and_wait(&mut self, _timeout: Duration) -> Result<ExitStatus, ScopeError> {
+            Err(unsupported())
+        }
+        pub fn limits_are_enforced(&self) -> Result<bool, ScopeError> {
+            Err(unsupported())
+        }
     }
     #[must_use = "dropping PendingCleanup loses retry ownership of an unsettled process scope"]
     #[derive(Debug)]
     pub enum PendingCleanup {
-        PreWorker { commands: SystemdCommands, unit: String, child: Child, cgroup_events: Option<PathBuf> },
-        ManagedScope { scope: ManagedScope },
+        PreWorker {
+            commands: SystemdCommands,
+            unit: String,
+            child: Child,
+            cgroup_events: Option<PathBuf>,
+        },
+        ManagedScope {
+            scope: ManagedScope,
+        },
     }
     impl PendingCleanup {
         pub fn unit_name(&self) -> &str {
@@ -811,12 +1320,29 @@ mod unsupported {
                 Self::ManagedScope { .. } => "",
             }
         }
-        pub fn retry_kill_and_wait(&mut self, _timeout: Duration) -> Result<ExitStatus, ScopeError> { Err(unsupported()) }
-        pub fn limits_are_enforced(&self) -> Result<bool, ScopeError> { Err(unsupported()) }
+        pub fn retry_kill_and_wait(
+            &mut self,
+            _timeout: Duration,
+        ) -> Result<ExitStatus, ScopeError> {
+            Err(unsupported())
+        }
+        pub fn limits_are_enforced(&self) -> Result<bool, ScopeError> {
+            Err(unsupported())
+        }
     }
-    fn unsupported() -> ScopeError { ScopeError::Unsupported("cgroup-v2 transient scopes require Linux".into()) }
-    pub fn spawn(_commands: &SystemdCommands, _spec: LaunchSpec) -> Result<ManagedScope, ScopeError> { Err(unsupported()) }
+    fn unsupported() -> ScopeError {
+        ScopeError::Unsupported("cgroup-v2 transient scopes require Linux".into())
+    }
+    pub fn spawn(
+        _commands: &SystemdCommands,
+        _spec: LaunchSpec,
+    ) -> Result<ManagedScope, ScopeError> {
+        Err(unsupported())
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
-pub use unsupported::{spawn, AgentEnvironment, LaunchSpec, ManagedScope, PendingCleanup, ResourceLimits, ScopeError, SystemdCommands};
+pub use unsupported::{
+    AgentEnvironment, LaunchSpec, ManagedScope, PendingCleanup, ResourceLimits, ScopeError,
+    SystemdCommands, spawn,
+};

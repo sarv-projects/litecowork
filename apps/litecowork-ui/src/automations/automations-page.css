@@ -43,6 +43,17 @@
 .automation-provenance { margin: 22px 0 0; color: var(--ink-muted, #77838e); font-size: 11px; overflow-wrap: anywhere; }
 .automation-inline-error, .automation-inline-success { color: #8d3731; font-size: 13px; line-height: 1.5; }
 .automation-inline-success { color: #356844; }
+.automation-run-form { display: grid; gap: 13px; margin: 20px 0; padding: 16px; border: 1px solid #d8e3e8; border-radius: 11px; background: #f8fbfc; }
+.automation-run-form h3 { margin: 0; color: var(--ink-strong, #202a35); font-size: 15px; }
+.automation-run-form > p { margin: 0; color: var(--ink-muted, #627080); font-size: 12px; line-height: 1.5; }
+.automation-run-form > .primary-button { justify-self: start; min-height: 38px; padding: 8px 13px; border: 1px solid #385b72; border-radius: 8px; background: #385b72; color: #fff; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.automation-run-form > .primary-button:disabled { opacity: .55; cursor: not-allowed; }
+.automation-run-result, .automation-run-retry { display: grid; gap: 7px; padding: 12px 14px; border: 1px solid #cfe2d1; border-radius: 9px; background: #f2f8f2; color: #315f38; font-size: 12px; }
+.automation-run-result span, .automation-run-result p, .automation-run-retry span { margin: 0; color: #536b58; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.automation-run-result .quiet-button { justify-self: start; }
+.automation-run-retry { grid-template-columns: 1fr auto auto; align-items: center; margin: 0 0 20px; border-color: #ead6b4; background: #fffaf0; color: #614b1c; }
+.automation-run-retry > div { display: grid; gap: 3px; }
+.automation-run-retry > small { grid-column: 1 / -1; color: #755d2c; font-size: 11px; line-height: 1.4; }
 .automation-empty { display: grid; justify-items: center; gap: 9px; min-height: 210px; padding: 35px 20px; text-align: center; }
 .automation-empty h2 { margin: 0; color: var(--ink-strong, #202a35); font-size: 17px; }
 .automation-empty p { max-width: 510px; margin: 0; color: var(--ink-muted, #73808d); font-size: 13px; line-height: 1.55; }
@@ -85,6 +96,8 @@
   .automation-detail-top { flex-direction: column; }
   .automation-actions { align-items: stretch; flex-direction: column; }
   .automation-actions button { width: 100%; }
+  .automation-run-retry { grid-template-columns: 1fr; align-items: stretch; }
+  .automation-run-retry button { width: 100%; }
   .automation-editor { padding: 15px; }
   .automation-editor-header { flex-direction: column; }
   .automation-two-fields { grid-template-columns: 1fr; }

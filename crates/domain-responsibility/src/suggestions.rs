@@ -150,7 +150,9 @@ pub enum SuggestionServiceError {
     Storage,
 }
 impl std::fmt::Display for SuggestionServiceError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{self:?}") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 impl std::error::Error for SuggestionServiceError {}
 
@@ -185,7 +187,11 @@ pub trait SuggestionExpiryStore {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "action", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+#[serde(
+    tag = "action",
+    rename_all = "SCREAMING_SNAKE_CASE",
+    deny_unknown_fields
+)]
 pub enum SuggestionOwnerAction {
     Snooze { snoozed_until: Option<String> },
     Dismiss,
@@ -228,16 +234,27 @@ where
         }
         let as_of = self.now()?;
         let (settled_count, more_due) = self.settle_at(owner_principal_id, workspace_id, &as_of)?;
-        Ok(SuggestionExpiryBatch { as_of, settled_count, more_due })
+        Ok(SuggestionExpiryBatch {
+            as_of,
+            settled_count,
+            more_due,
+        })
     }
 
     fn now(&self) -> Result<String, SuggestionServiceError> {
         let as_of = self.clock.now()?;
-        if as_of.trim().is_empty() { return Err(SuggestionServiceError::ClockUnavailable); }
+        if as_of.trim().is_empty() {
+            return Err(SuggestionServiceError::ClockUnavailable);
+        }
         Ok(as_of)
     }
 
-    fn settle_at(&mut self, owner_principal_id: &str, workspace_id: &str, as_of: &str) -> Result<(usize, bool), SuggestionServiceError> {
+    fn settle_at(
+        &mut self,
+        owner_principal_id: &str,
+        workspace_id: &str,
+        as_of: &str,
+    ) -> Result<(usize, bool), SuggestionServiceError> {
         self.store.settle_expired(
             owner_principal_id,
             workspace_id,
@@ -262,13 +279,20 @@ where
         request_id: &str,
         action: SuggestionOwnerAction,
     ) -> Result<Suggestion, SuggestionServiceError> {
-        if owner_principal_id.trim().is_empty() || workspace_id.trim().is_empty()
-            || suggestion_id.trim().is_empty() || expected_version == 0
-            || request_id.trim().is_empty() || request_id.len() > 128
-        { return Err(SuggestionServiceError::InvalidRequest); }
+        if owner_principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || suggestion_id.trim().is_empty()
+            || expected_version == 0
+            || request_id.trim().is_empty()
+            || request_id.len() > 128
+        {
+            return Err(SuggestionServiceError::InvalidRequest);
+        }
         let as_of = self.now()?;
         let (_, more_due) = self.settle_at(owner_principal_id, workspace_id, &as_of)?;
-        if more_due { return Err(SuggestionServiceError::ExpiryPending); }
+        if more_due {
+            return Err(SuggestionServiceError::ExpiryPending);
+        }
         self.store.apply_owner_action(
             owner_principal_id,
             workspace_id,
@@ -294,7 +318,8 @@ where
         if owner_principal_id.trim().is_empty() || workspace_id.trim().is_empty() {
             return Err(SuggestionServiceError::InvalidRequest);
         }
-        self.store.list_kind_preferences(owner_principal_id, workspace_id)
+        self.store
+            .list_kind_preferences(owner_principal_id, workspace_id)
     }
 
     pub fn set_kind_preference(
@@ -306,15 +331,27 @@ where
         expected_version: u64,
         request_id: &str,
     ) -> Result<SuggestionPreference, SuggestionServiceError> {
-        if owner_principal_id.trim().is_empty() || workspace_id.trim().is_empty()
-            || request_id.trim().is_empty() || request_id.len() > 128
+        if owner_principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || request_id.trim().is_empty()
+            || request_id.len() > 128
             || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
-        { return Err(SuggestionServiceError::InvalidRequest); }
+        {
+            return Err(SuggestionServiceError::InvalidRequest);
+        }
         let as_of = self.now()?;
         let (_, more_due) = self.settle_at(owner_principal_id, workspace_id, &as_of)?;
-        if more_due { return Err(SuggestionServiceError::ExpiryPending); }
+        if more_due {
+            return Err(SuggestionServiceError::ExpiryPending);
+        }
         self.store.set_kind_preference(
-            owner_principal_id, workspace_id, kind, muted, expected_version, request_id, &as_of,
+            owner_principal_id,
+            workspace_id,
+            kind,
+            muted,
+            expected_version,
+            request_id,
+            &as_of,
         )
     }
 }

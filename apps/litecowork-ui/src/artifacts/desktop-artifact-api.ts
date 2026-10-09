@@ -17,11 +17,22 @@ export function desktopArtifactApi(workspaceId: string): ArtifactApi {
     const url = new URL(path, "https://operator.invalid");
     const editHead = /^\/v1\/artifacts\/([^/]+)\/edit-head$/.exec(url.pathname);
     const textVersion = /^\/v1\/artifacts\/([^/]+)\/text-version$/.exec(url.pathname);
+    const libraryCommand = /^\/v1\/artifacts\/([^/]+)\/(promote|archive)$/.exec(url.pathname);
     const match = /^\/v1\/artifacts\/([^/]+)(?:\/versions\/(\d+)(\/content)?)?$/.exec(url.pathname);
     const task = /^\/v1\/tasks\/([^/]+)\/artifacts$/.exec(url.pathname);
     const method = (init.method ?? "GET").toUpperCase();
     let response: { status: number; contentType: string; bodyBase64: string };
-    if (editHead && method === "GET") {
+    if (libraryCommand && method === "POST") {
+      const headers = new Headers(init.headers);
+      const matchVersion = /^"([1-9][0-9]*)"$/.exec(headers.get("If-Match") ?? "");
+      const requestId = headers.get("Idempotency-Key");
+      const expectedVersion = matchVersion ? Number(matchVersion[1]) : 0;
+      if (!matchVersion || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || !requestId || init.body != null) throw new Error("Artifact Library preconditions are invalid.");
+      response = await invoke<typeof response>("artifact_library_command", {
+        workspaceId, artifactId: decodeURIComponent(libraryCommand[1]), action: libraryCommand[2],
+        expectedVersion, idempotencyKey: requestId,
+      });
+    } else if (editHead && method === "GET") {
       response = await invoke<typeof response>("artifact_edit_head", {
         workspaceId, artifactId: decodeURIComponent(editHead[1]),
       });

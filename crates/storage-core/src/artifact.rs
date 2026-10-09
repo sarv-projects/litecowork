@@ -19,6 +19,43 @@ pub struct ArtifactRecord {
     pub version: u64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ArtifactLibraryAction {
+    Promote,
+    Archive,
+}
+
+#[derive(Clone, Debug)]
+pub struct ArtifactLibraryCommand {
+    pub principal_id: String,
+    pub workspace_id: String,
+    pub artifact_id: String,
+    pub expected_version: u64,
+    pub request_id: String,
+    pub action: ArtifactLibraryAction,
+    /// Trusted Runtime event context; storage supplies transition payload/revision.
+    pub event: EventDraft,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CommittedArtifactLibraryCommand {
+    pub artifact: ArtifactRecord,
+    /// None for a fresh archive of an already ARCHIVED Artifact at its current version.
+    pub event: Option<DomainEvent>,
+    pub replayed: bool,
+}
+
+pub trait ArtifactLibraryWriteStore: Send + Sync {
+    /// Owner-scoped replay precedes fresh Workspace/state/version admission. Fresh
+    /// mutations require ACTIVE Workspace and exact aggregate version. Only status
+    /// and aggregate version change; content/head/provenance remain immutable.
+    fn change_artifact_library(
+        &self,
+        command: ArtifactLibraryCommand,
+    ) -> Result<CommittedArtifactLibraryCommand, StoreError>;
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ArtifactAppendHeads {
     pub artifact: ArtifactRecord,
@@ -59,16 +96,40 @@ pub struct ArtifactVersionRecord {
 
 /// Read boundary over already committed Artifact records.
 pub trait ArtifactReadStore: Send + Sync {
-    fn get_artifact(&self, workspace_id: &str, artifact_id: &str) -> Result<Option<ArtifactRecord>, StoreError>;
+    fn get_artifact(
+        &self,
+        workspace_id: &str,
+        artifact_id: &str,
+    ) -> Result<Option<ArtifactRecord>, StoreError>;
     /// Returns the Artifact and backing Resource heads from one storage read turn so
     /// an append command can pin the exact immutable ResourceRevision parent.
-    fn get_artifact_append_heads(&self, workspace_id: &str, artifact_id: &str) -> Result<Option<ArtifactAppendHeads>, StoreError>;
+    fn get_artifact_append_heads(
+        &self,
+        workspace_id: &str,
+        artifact_id: &str,
+    ) -> Result<Option<ArtifactAppendHeads>, StoreError>;
     fn list_artifacts_page(
-        &self, workspace_id: &str, library_status: Option<&str>, task_id: Option<&str>,
-        after_created_at: Option<&str>, after_artifact_id: Option<&str>, limit: usize,
+        &self,
+        workspace_id: &str,
+        library_status: Option<&str>,
+        task_id: Option<&str>,
+        after_created_at: Option<&str>,
+        after_artifact_id: Option<&str>,
+        limit: usize,
     ) -> Result<Vec<ArtifactRecord>, StoreError>;
-    fn get_artifact_version(&self, workspace_id: &str, artifact_id: &str, version: u64) -> Result<Option<ArtifactVersionRecord>, StoreError>;
-    fn read_artifact_content_bounded(&self, workspace_id: &str, artifact_id: &str, version: u64, maximum_bytes: u64) -> Result<Option<Vec<u8>>, StoreError>;
+    fn get_artifact_version(
+        &self,
+        workspace_id: &str,
+        artifact_id: &str,
+        version: u64,
+    ) -> Result<Option<ArtifactVersionRecord>, StoreError>;
+    fn read_artifact_content_bounded(
+        &self,
+        workspace_id: &str,
+        artifact_id: &str,
+        version: u64,
+        maximum_bytes: u64,
+    ) -> Result<Option<Vec<u8>>, StoreError>;
 }
 
 /// Prepared immutable append for an Artifact and its backing ARTIFACT Resource.

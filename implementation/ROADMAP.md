@@ -39,8 +39,11 @@ Work/activity projections; E08-S06 adds typed PresentationItems and reconnect-sa
 transient streaming; E08-S07 delivers the Artifact Workbench and immutable version
 history; E08-S05 validates accessibility and nontechnical/technical end-to-end journeys
 across those surfaces. Context intake and source readiness remain E06-S05; context
-editing/revocation remains E08-S03. These are staged implementations of the finalized
-V1 feature set, not scope cuts.
+editing/revocation remains E08-S03. E08-S08 completes semantic-first optional
+RichPresentation, bounded Host Guidance, safe presentation compilation, and exact-version
+deliverable rendering after the semantic Conversation path and Artifact bindings exist.
+These are staged implementations of the finalized desktop/local V1 feature set, not scope
+cuts. E08-S08 does not pull Cloud continuation or Remote Runtime into the V1 critical path.
 
 E11 and E12 are post-V1: cloud deployment/pairing/handoff/channel, then the same Runtime
 on a remote machine. E13 closes desktop/local V1 production evidence and release before

@@ -119,17 +119,27 @@ TaskWorkstreamProjection {
 }
 ```
 
-`last_activity_at` comes from a committed Task/Step/Attempt event, a stateful
-CapabilityInvocation transition, or a fresh substantive provider/Environment progress
-observation. Heartbeats, token deltas, process liveness, and “still running” status do not
-count as activity. `last_activity_source` identifies the source class. `last_evidence_at`
-is populated only from committed Evidence/Verification state; it is not interchangeable
-with activity.
-Worker labels include only admitted host workers or native children the harness reports.
-`active_workstreams` require a nonterminal Attempt for the Step. `activity_summary` is a
-short safe projection of observed state, not an unbounded transcript or an assertion that
-work continues. Missing/stale observations produce null timestamps/summary. The projection
-contains no percentage or ETA and never changes Task truth/version.
+The current desktop/local implementation reads the Task, its current-plan Steps, the
+latest committed event for each of those aggregates and each Step's persisted
+`current_attempt_id`, latest Evidence creation time, blockers, and current Artifact
+versions from one bounded SQLite read transaction. `last_activity_at` is the newest
+committed Task/Step/current-Attempt event timestamp. A terminal current Attempt can
+therefore be the latest historical activity source; only nonterminal current Attempts
+appear in `active_workstreams`. The read is bounded to 100 Steps and 200 Task Artifacts;
+an over-limit source set returns a bounded error rather than silently truncating the
+progress projection. `last_evidence_at` comes from the newest persisted Evidence row and
+is not interchangeable with activity.
+
+This implementation does not yet read CapabilityInvocation transitions or fresh
+provider/Environment observations, and the progress projection does not imply their
+absence from the underlying Task. Their source fields remain unavailable until those
+producers are integrated. Heartbeats, token deltas, process liveness, and “still running”
+status do not count as activity. `activity_summary` is an allowlisted short label for
+recognized committed event types; an unrecognized newest event may yield a null summary
+while retaining its event timestamp/source. Worker labels are looked up from the current
+Workspace binding/profile when available and do not prove process/provider liveness.
+Missing source rows produce null timestamps/summary. The projection contains no
+percentage or ETA and never changes Task truth/version.
 
 `PlanningAssignment` is an internal, transient dispatch envelope, not a persisted domain
 entity or lifecycle. It contains the Task ID, expected Task version, pinned TaskSpec
@@ -216,6 +226,47 @@ in the Operator until admission succeeds.
 The operator appends the originating ConversationMessage in the same command boundary
 when the Task came from a message. A standalone Task may omit a Conversation.
 
+Every `input_refs[]` item must identify a unique same-Workspace Resource revision and have
+exactly the three `PinnedResourceRef` members
+`workspace_id`, `resource_id`, and `revision_id`; storage rejects non-objects, missing or
+empty members, and unknown fields even though `TaskSpecRevisionRecord` retains the wire
+values as JSON. Task creation and pre-planning TaskSpec revision admission also check the
+current owner status of any ContextDocument in the same SQLite admission transaction; `REVOKED`,
+`DELETION_PENDING`, and `DELETED` documents cannot be newly pinned as Task inputs. This
+check does not reserve the content for the Task: the ResourceResolver repeats scope,
+revision, availability, and ContextDocument status checks whenever content is actually
+resolved, since an owner may revoke a document after Task admission. Existing immutable
+Task provenance remains visible after revocation, but a later execution/context projection
+must not expose the retained bytes.
+
+### Manual Routine Task materialization
+
+The local manual Routine route accepts only standalone creation: a non-null Conversation
+origin is rejected until its message and Task can be admitted atomically. It resolves the
+requested immutable RoutineRevision and materializes its bounded inputs, but SQLite is the
+admission authority. In the same immediate Task transaction as Task, TaskSpecRevision(1),
+`task.created.v1`, and the RequestId receipt, storage rechecks that the Routine remains
+`ACTIVE` at exactly the requested revision, re-renders the supplied inputs from that
+revision, verifies the selected lead and every pinned Resource revision belong to the
+selected Workspace, and compares the resulting TaskSpec fields to the proposed commit.
+Any failed check rolls back all Task/event/receipt writes.
+
+Success leaves the Task `READY` with no PlanRevision, Step, PlanningAssignment,
+AgentSession, Attempt, lease, Environment, CapabilityGrant, or Effect. The exact
+`routine_id`/`routine_revision` are persisted on Task, and the TaskSpec materializes the
+objective, instructions-as-untrusted-context, constraints, non-goals, Resource inputs,
+outputs, acceptance criteria, approvals, placement, and budget. Required capability and
+verification policy remain available through the immutable Task-pinned RoutineRevision;
+future planning/Trust/verifier admission must re-resolve them. This creation transaction
+does not claim that those policies have been enforced or that the Task has begun.
+
+The RequestId digest is based on the owner's exact normalized run command (Workspace,
+Routine, requested revision, input object, standalone origin), not a mutable Workspace
+lead default. The authenticated owner/Workspace check happens before receipt replay. An
+exact retry returns the original Task even after the Routine head changes; a new RequestId
+must pass current ACTIVE/head admission again. A same-key request with changed inputs or
+revision conflicts.
+
 ### Revising a saved Task before planning
 
 An owner may append a new TaskSpecRevision while the Task is `READY`, has no accepted
@@ -238,6 +289,16 @@ admission authority.
 ## Initial planning session
 
 TaskService creates a transient PlanningAssignment for the current lead binding and TaskSpecRevision. PlanningCoordinator asks AgentSessionSupervisor to reserve a durable `STARTING` TASK_PLANNING AgentSession in a short storage transaction. Storage rechecks Task version/status/spec/lead, Workspace ownership, binding eligibility, endpoint binding, and current READY Runtime incarnation while claiming the unique planner slot. The coordinator then starts the native adapter outside the transaction. Only observed adapter readiness permits a serialized activation that transitions the session to `ACTIVE` and a first-planning Task from `READY` to `RUNNING` atomically. A `STARTING` session grants no planning tools or invocation authority. After daemon restart, stranded prior-incarnation `STARTING` sessions are reconciled before another planner is admitted.
+
+That is the target admission contract, not the current desktop implementation status. The
+current SQLite `AgentSessionStore` returns
+`StoreError::Invalid("TASK_PLANNING_ISOLATION_UNAVAILABLE")` from both planner start and
+activation before writing a session snapshot, event, request receipt, host binding, or Task
+transition. This storage-level gate protects direct internal callers as well as the
+readiness route. It may be removed only when a Runtime-owned, current-incarnation
+`IsolationAttestation` and the remaining Trust, native-capability, process containment,
+lease, and session-settlement checks are produced and transactionally revalidated at
+admission; no caller-supplied Boolean or request field can satisfy the gate.
 
 The session has Task read, plan proposal, and user-clarification tools only; it has no Attempt, lease, Environment write access, consequential capability invocation, or artifact publication. Plan acceptance creates/promotes a PlanRevision and materializes Steps; only then can an execution Attempt be admitted. A planning session may be replaced without changing Task identity or fabricating an Attempt. User clarification closes the current planning session; after a valid response, the coordinator builds a new envelope against the current TaskSpec revision and starts a fresh session.
 

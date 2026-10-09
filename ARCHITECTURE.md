@@ -65,7 +65,11 @@ user's Task.
     must be revalidated before reuse.
 12. **Triggers do not own execution.** An Automation TriggerHost records a durable
     occurrence; ordinary Task admission independently chooses an eligible execution
-    Runtime. A due occurrence may wait for a local Runtime or another dependency.
+    Runtime. A due occurrence may wait for a local Runtime or another dependency. Each
+    AutomationOccurrence has its own monotonic aggregate `version`; `claim_epoch` is only
+    claim fencing and must never serve as the aggregate/event revision. An owner-issued
+    ManualTrigger may create one occurrence while an Automation is PAUSED, but it never
+    enables recurring trigger hosting.
 13. **Opaque provider continuation data stays Runtime-local.** MCP task IDs, provider
     cursors, user-input request keys, and native session/process handles are stored only
     in encrypted local bindings. Their ciphertext digests are local integrity values;
@@ -101,7 +105,9 @@ user's Task.
     never stands in for Task state, authorization, fencing, or provider cache guarantees.
 19. **Coworker identity and Goals organize work.** They may supply defaults and context,
     but they do not own execution or issue authority. Suggestions require an explicit
-    user action before they create work or reusable definitions.
+    user action before they create work or reusable definitions. TASK acceptance commits
+    the READY Task and terminal Suggestion together and returns a bounded receipt proving
+    their Workspace-scoped link; idempotent replay returns the original commit receipt.
 20. **Unknown remains unknown.** Unknown cost, quota, progress, or provider readiness is
     never displayed or ranked as zero, exhausted, complete, or ready without evidence.
 21. **Lead failover is versioned Task policy.** A Coworker may supply a default, but each
@@ -120,6 +126,21 @@ user's Task.
     stream frames are derived from authorized domain projections and bounded Agent output.
     They cannot create or settle domain state, carry authority, or replace persisted
     ConversationMessages, Task records, Artifacts, Approvals, Effects, or Evidence.
+26. **Conversation messages remain semantic truth.** An optional immutable `RichPresentation`
+    may improve how a committed ConversationMessage is rendered, but no fact, citation,
+    warning, deliverable, action, or system state may exist only in that presentation.
+    Semantic content is committed and usable without waiting for compilation or rendering.
+27. **Presentation guidance has no authority.** Built-in `HostSkill` guidance is
+    versioned, optional, zero-authority context. It is not a LiteSPM package,
+    `CapabilityRef`, grant, activation, or execution policy. Agents may propose bounded
+    presentation intent; Core binds real Artifacts, Resources, citations, and system
+    projections and rejects forged host-owned state.
+28. **Native Task execution requires qualified OS containment.** A working directory or
+    Git worktree is not a sandbox. The selected Environment provider must enforce exact
+    readable/writable roots, the requested network policy, and process-tree fencing on
+    the current OS/Runtime incarnation. Unknown or unsupported containment blocks native
+    Agent dispatch and replacement writers; prompt rules, harness permissions, and parent
+    process exit are not containment or quiescence evidence.
 
 ## 3. Canonical concepts and ownership
 
@@ -139,6 +160,9 @@ user's Task.
 | Goal / revision | User-authored desired outcome; progress is a projection over verified work. |
 | Suggestion | Expiring proposal with provenance; it cannot execute or authorize itself. |
 | PresentationItem | Ephemeral typed Operator read model sourced from authorized projections; it is not durable domain state. |
+| RichPresentation | Immutable optional rendering enhancement bound to one committed ConversationMessage and its semantic-content digest. |
+| HostSkill | Bundled immutable guidance asset with no capability, authority, network, or secret access. |
+| PresentationIntent | Turn-bound, bounded Agent proposal describing a useful layout; never a trusted system projection. |
 | AgentSession | Agent-specific reasoning session; optional native session handles are optimizations, not Task truth. |
 | Runtime | A running `litecoworkd` instance, with identity, role, presence, and resource offers. |
 | RuntimeIncarnation | One daemon process lifetime under a persistent Runtime identity; process-bound state is scoped to it. |
@@ -385,6 +409,12 @@ execute, resource exposure, optional checkpoint/restore, and destroy operations.
 provider candidates include local workspace, Git worktree, container, VM, remote machine,
 cloud sandbox, browser, and desktop. Only qualified providers are advertised as
 available.
+For desktop/local V1, `LocalWorkspace` and `GitWorktree` describe placement/change
+semantics, not a security boundary. Native Agent execution requires an OS-qualified
+`IsolationAttestation` for exact pinned inputs and declared output roots, plus a
+provider-owned process-tree quiescence observation before a writer fence is released.
+Provider handles and attestations remain Runtime-local and are revalidated after restart;
+an unqualified OS/provider pair remains unavailable for Task dispatch.
 
 ## 8. Durable state, resources, events, and replication
 
@@ -530,6 +560,17 @@ Live Desk shows actual Task/Step/Attempt state, real capability use, Runtime pla
 artifacts, verification, and blocked/needs-user state. It must not invent agent activity,
 fake third-party interfaces, imply that a process teleported, or show verification before
 a verifier ran. Reduced-motion support preserves the same state transitions.
+
+Conversation rendering preserves two distinct layers: the committed semantic
+ConversationMessage and an optional immutable RichPresentation enhancement. The message
+is rendered immediately and remains complete for search, export, channels, old clients,
+and renderer/blob failure. Rich blocks can only bind exact semantic slices, authorized
+Resource/Artifact refs, registered tool results, or trusted Core projections; generated
+presentation cannot create system state or authority. Built-in response-design HostSkills
+are optional zero-authority context, not LiteSPM capabilities. See
+[`docs/RICH-RESPONSE.md`](docs/RICH-RESPONSE.md),
+[`docs/PRESENTATION-RUNTIME.md`](docs/PRESENTATION-RUNTIME.md), and
+[`docs/HOST-GUIDANCE.md`](docs/HOST-GUIDANCE.md).
 
 ## 13. Explicitly outside first-party Core
 

@@ -118,33 +118,51 @@ pub struct EffectRecord {
 impl EffectRecord {
     pub fn validate(&self) -> Result<(), EffectError> {
         for value in [
-            self.effect_id.as_str(), self.task_id.as_str(), self.attempt_id.as_str(),
-            self.operation.as_str(), self.capability_invocation_id.as_str(),
-            self.created_at.as_str(), self.updated_at.as_str(),
+            self.effect_id.as_str(),
+            self.task_id.as_str(),
+            self.attempt_id.as_str(),
+            self.operation.as_str(),
+            self.capability_invocation_id.as_str(),
+            self.created_at.as_str(),
+            self.updated_at.as_str(),
         ] {
-            if value.trim().is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {
+            if value.trim().is_empty() || value.len() > 4096 || value.chars().any(char::is_control)
+            {
                 return Err(EffectError::InvalidRecord);
             }
         }
-        if !valid_digest(&self.request_digest) || self.version == 0 || self.dispatch_ordinal > 1_000_000 {
+        if !valid_digest(&self.request_digest)
+            || self.version == 0
+            || self.dispatch_ordinal > 1_000_000
+        {
             return Err(EffectError::InvalidRecord);
         }
-        if self.verification_ref.as_ref().is_some_and(|reference| invalid_bounded(reference, 256))
+        if self
+            .verification_ref
+            .as_ref()
+            .is_some_and(|reference| invalid_bounded(reference, 256))
             || (self.state == EffectState::Verified && self.verification_ref.is_none())
         {
             return Err(EffectError::InvalidRecord);
         }
-        if self.operation.len() > 512 || self.idempotency_key.as_ref().is_some_and(|key| invalid_bounded(key, 1024)) {
+        if self.operation.len() > 512
+            || self
+                .idempotency_key
+                .as_ref()
+                .is_some_and(|key| invalid_bounded(key, 1024))
+        {
             return Err(EffectError::InvalidRecord);
         }
-        if !valid_target(&self.target) || !self.capability_ref.as_ref().is_none_or(Value::is_object)
+        if !valid_target(&self.target)
+            || !self.capability_ref.as_ref().is_none_or(Value::is_object)
             || !self.result_ref.as_ref().is_none_or(Value::is_object)
             || !self.observed_state.as_ref().is_none_or(Value::is_object)
         {
             return Err(EffectError::InvalidRecord);
         }
         if (self.state == EffectState::Proposed && self.dispatch_ordinal != 0)
-            || (!matches!(self.state, EffectState::Proposed | EffectState::Failed) && self.dispatch_ordinal == 0)
+            || (!matches!(self.state, EffectState::Proposed | EffectState::Failed)
+                && self.dispatch_ordinal == 0)
         {
             return Err(EffectError::InvalidRecord);
         }
@@ -152,7 +170,9 @@ impl EffectRecord {
     }
 
     pub fn transition(&self, next: EffectState, at: String) -> Result<Self, EffectError> {
-        if !self.state.allows(next) { return Err(EffectError::InvalidTransition); }
+        if !self.state.allows(next) {
+            return Err(EffectError::InvalidTransition);
+        }
         if self.state == EffectState::Reconciling && next == EffectState::Started {
             return Err(EffectError::RetryNotAuthorized);
         }
@@ -178,13 +198,21 @@ impl EffectRecord {
     }
 
     fn transition_validated(&self, next: EffectState, at: String) -> Result<Self, EffectError> {
-        if invalid_bounded(&at, 128) { return Err(EffectError::InvalidRecord); }
+        if invalid_bounded(&at, 128) {
+            return Err(EffectError::InvalidRecord);
+        }
         let mut updated = self.clone();
         updated.state = next;
         updated.updated_at = at;
-        updated.version = self.version.checked_add(1).ok_or(EffectError::VersionOverflow)?;
+        updated.version = self
+            .version
+            .checked_add(1)
+            .ok_or(EffectError::VersionOverflow)?;
         if next == EffectState::Started {
-            updated.dispatch_ordinal = self.dispatch_ordinal.checked_add(1).ok_or(EffectError::VersionOverflow)?;
+            updated.dispatch_ordinal = self
+                .dispatch_ordinal
+                .checked_add(1)
+                .ok_or(EffectError::VersionOverflow)?;
         }
         updated.validate()?;
         Ok(updated)
@@ -207,12 +235,26 @@ pub struct EvidenceRecord {
 
 impl EvidenceRecord {
     pub fn validate(&self) -> Result<(), EffectError> {
-        for value in [self.evidence_id.as_str(), self.task_id.as_str(), self.subject_ref.as_str(), self.kind.as_str(), self.created_at.as_str()] {
-            if invalid_bounded(value, 4096) { return Err(EffectError::InvalidRecord); }
+        for value in [
+            self.evidence_id.as_str(),
+            self.task_id.as_str(),
+            self.subject_ref.as_str(),
+            self.kind.as_str(),
+            self.created_at.as_str(),
+        ] {
+            if invalid_bounded(value, 4096) {
+                return Err(EffectError::InvalidRecord);
+            }
         }
         if !valid_producer(&self.producer)
-            || self.payload_ref.as_ref().is_some_and(|value| !valid_resource_ref(value))
-            || self.payload_digest.as_ref().is_some_and(|digest| !valid_digest(digest))
+            || self
+                .payload_ref
+                .as_ref()
+                .is_some_and(|value| !valid_resource_ref(value))
+            || self
+                .payload_digest
+                .as_ref()
+                .is_some_and(|digest| !valid_digest(digest))
         {
             return Err(EffectError::InvalidRecord);
         }
@@ -230,7 +272,9 @@ pub enum EffectError {
 }
 
 impl std::fmt::Display for EffectError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{self:?}") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 impl std::error::Error for EffectError {}
 
@@ -238,28 +282,55 @@ fn invalid_bounded(value: &str, max: usize) -> bool {
     value.trim().is_empty() || value.len() > max || value.chars().any(char::is_control)
 }
 fn valid_digest(value: &str) -> bool {
-    value.len() == 71 && value.starts_with("sha256:") && value[7..].bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 fn valid_target(value: &Value) -> bool {
-    value.as_str().is_some_and(|target| !invalid_bounded(target, 4096)) || value.as_object().is_some_and(|object| {
-        object.keys().all(|key| ["workspace_id", "resource_id", "revision_id"].contains(&key.as_str()))
-            && valid_resource_ref(value)
-    })
+    value
+        .as_str()
+        .is_some_and(|target| !invalid_bounded(target, 4096))
+        || value.as_object().is_some_and(|object| {
+            object
+                .keys()
+                .all(|key| ["workspace_id", "resource_id", "revision_id"].contains(&key.as_str()))
+                && valid_resource_ref(value)
+        })
 }
 fn valid_resource_ref(value: &Value) -> bool {
     value.as_object().is_some_and(|object| {
-        object.keys().all(|key| ["workspace_id", "resource_id", "revision_id"].contains(&key.as_str()))
-            && object.get("workspace_id").and_then(Value::as_str).is_some_and(|s| !invalid_bounded(s, 256))
-            && object.get("resource_id").and_then(Value::as_str).is_some_and(|s| !invalid_bounded(s, 256))
-            && object.get("revision_id").is_none_or(|r| r.is_null() || r.as_str().is_some_and(|s| !invalid_bounded(s, 256)))
+        object
+            .keys()
+            .all(|key| ["workspace_id", "resource_id", "revision_id"].contains(&key.as_str()))
+            && object
+                .get("workspace_id")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !invalid_bounded(s, 256))
+            && object
+                .get("resource_id")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !invalid_bounded(s, 256))
+            && object
+                .get("revision_id")
+                .is_none_or(|r| r.is_null() || r.as_str().is_some_and(|s| !invalid_bounded(s, 256)))
     })
 }
 fn valid_producer(value: &Value) -> bool {
-    let Some(object) = value.as_object() else { return false; };
-    match (object.get("principal_id"), object.get("kind"), object.get("service_id")) {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    match (
+        object.get("principal_id"),
+        object.get("kind"),
+        object.get("service_id"),
+    ) {
         (Some(Value::String(id)), Some(Value::String(kind)), None) => {
-            object.len() == 2 && !invalid_bounded(id, 256)
-                && ["USER", "SERVICE", "RUNTIME", "AGENT", "CHANNEL_IDENTITY"].contains(&kind.as_str())
+            object.len() == 2
+                && !invalid_bounded(id, 256)
+                && ["USER", "SERVICE", "RUNTIME", "AGENT", "CHANNEL_IDENTITY"]
+                    .contains(&kind.as_str())
         }
         (None, None, Some(Value::String(id))) => object.len() == 1 && !invalid_bounded(id, 256),
         _ => false,
@@ -273,41 +344,64 @@ mod tests {
 
     fn proposed() -> EffectRecord {
         EffectRecord {
-            effect_id: "effect-1".into(), task_id: "task-1".into(), attempt_id: "attempt-1".into(),
+            effect_id: "effect-1".into(),
+            task_id: "task-1".into(),
+            attempt_id: "attempt-1".into(),
             capability_ref: Some(json!({"package_id":"mail","capability_id":"send"})),
-            operation: "message.send".into(), target: json!("mailbox:user@example.test"),
-            idempotency_key: Some("stable-1".into()), state: EffectState::Proposed,
-            request_digest: format!("sha256:{}", "a".repeat(64)), capability_invocation_id: "inv-1".into(),
-            execution_method: ExecutionMethod::StructuredApi, dispatch_ordinal: 0, result_ref: None,
-            observed_state: None, verification_ref: None, created_at: "2026-10-08T00:00:00Z".into(),
-            updated_at: "2026-10-08T00:00:00Z".into(), version: 1,
+            operation: "message.send".into(),
+            target: json!("mailbox:user@example.test"),
+            idempotency_key: Some("stable-1".into()),
+            state: EffectState::Proposed,
+            request_digest: format!("sha256:{}", "a".repeat(64)),
+            capability_invocation_id: "inv-1".into(),
+            execution_method: ExecutionMethod::StructuredApi,
+            dispatch_ordinal: 0,
+            result_ref: None,
+            observed_state: None,
+            verification_ref: None,
+            created_at: "2026-10-08T00:00:00Z".into(),
+            updated_at: "2026-10-08T00:00:00Z".into(),
+            version: 1,
         }
     }
 
     #[test]
     fn first_dispatch_follows_persisted_proposal_and_advances_ordinal() {
-        let started = proposed().transition(EffectState::Started, "2026-10-08T00:01:00Z".into()).unwrap();
+        let started = proposed()
+            .transition(EffectState::Started, "2026-10-08T00:01:00Z".into())
+            .unwrap();
         assert_eq!(started.dispatch_ordinal, 1);
         assert_eq!(started.version, 2);
     }
 
     #[test]
     fn proposed_effect_cannot_skip_started_to_observed() {
-        assert_eq!(proposed().transition(EffectState::Observed, "2026-10-08T00:01:00Z".into()), Err(EffectError::InvalidTransition));
+        assert_eq!(
+            proposed().transition(EffectState::Observed, "2026-10-08T00:01:00Z".into()),
+            Err(EffectError::InvalidTransition)
+        );
     }
 
     #[test]
     fn proposal_can_fail_before_dispatch_without_claiming_a_dispatch() {
-        let failed = proposed().transition(EffectState::Failed, "2026-10-08T00:01:00Z".into()).unwrap();
+        let failed = proposed()
+            .transition(EffectState::Failed, "2026-10-08T00:01:00Z".into())
+            .unwrap();
         assert_eq!(failed.dispatch_ordinal, 0);
         assert!(failed.validate().is_ok());
     }
 
     #[test]
     fn retry_requires_reconciliation_proof_and_stable_key_when_using_idempotency_basis() {
-        let started = proposed().transition(EffectState::Started, "2026-10-08T00:01:00Z".into()).unwrap();
-        let ambiguous = started.transition(EffectState::Ambiguous, "2026-10-08T00:02:00Z".into()).unwrap();
-        let reconciling = ambiguous.transition(EffectState::Reconciling, "2026-10-08T00:03:00Z".into()).unwrap();
+        let started = proposed()
+            .transition(EffectState::Started, "2026-10-08T00:01:00Z".into())
+            .unwrap();
+        let ambiguous = started
+            .transition(EffectState::Ambiguous, "2026-10-08T00:02:00Z".into())
+            .unwrap();
+        let reconciling = ambiguous
+            .transition(EffectState::Reconciling, "2026-10-08T00:03:00Z".into())
+            .unwrap();
         assert_eq!(
             reconciling.transition(EffectState::Started, "2026-10-08T00:04:00Z".into()),
             Err(EffectError::RetryNotAuthorized),
@@ -316,16 +410,24 @@ mod tests {
             reconciling.authorize_retry("2026-10-08T00:04:00Z".into(), "evidence-1", false, false),
             Err(EffectError::RetryNotAuthorized),
         );
-        let retried = reconciling.authorize_retry("2026-10-08T00:04:00Z".into(), "evidence-1", true, false).unwrap();
+        let retried = reconciling
+            .authorize_retry("2026-10-08T00:04:00Z".into(), "evidence-1", true, false)
+            .unwrap();
         assert_eq!(retried.dispatch_ordinal, 2);
     }
 
     #[test]
     fn evidence_requires_digest_shape_and_producer_object() {
         let evidence = EvidenceRecord {
-            evidence_id: "ev-1".into(), task_id: "task-1".into(), subject_ref: "effect:effect-1".into(),
-            level: EvidenceLevel::Reported, kind: "provider_result".into(), producer: json!({"kind":"SERVICE","service_id":"adapter"}),
-            payload_ref: None, payload_digest: None, created_at: "2026-10-08T00:00:00Z".into(),
+            evidence_id: "ev-1".into(),
+            task_id: "task-1".into(),
+            subject_ref: "effect:effect-1".into(),
+            level: EvidenceLevel::Reported,
+            kind: "provider_result".into(),
+            producer: json!({"service_id":"adapter"}),
+            payload_ref: None,
+            payload_digest: None,
+            created_at: "2026-10-08T00:00:00Z".into(),
         };
         assert!(evidence.validate().is_ok());
     }

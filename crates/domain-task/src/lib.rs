@@ -1,5 +1,8 @@
 mod execution;
-pub use execution::{ExecutionDecision, ExecutionDenial, StepAttemptCoordinator, decide_attempt_admission, decide_lease_expiry, decide_lease_release, decide_lease_renewal};
+pub use execution::{
+    ExecutionDecision, ExecutionDenial, StepAttemptCoordinator, decide_attempt_admission,
+    decide_lease_expiry, decide_lease_release, decide_lease_renewal,
+};
 
 mod planning;
 
@@ -10,13 +13,11 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use storage_core::{
     ActivateTaskPlanningSession as ActivatePlanningSessionCommit, AgentBindingRecord,
-    AgentCatalogStore, AgentEndpointRecord, AgentSessionRecord,
-    AgentSessionStore, CommittedAgentSession, CommittedPlanningActivation, CommittedTask,
-    CommittedTaskSpecRevision,
+    AgentCatalogStore, AgentEndpointRecord, AgentSessionRecord, AgentSessionStore,
+    CommittedAgentSession, CommittedPlanningActivation, CommittedTask, CommittedTaskSpecRevision,
     EventDraft, PlanAcceptance, PlanAcceptanceCommit, PlanRevisionRecord, PlannedStepRecord,
-    SuggestedTaskCreateCommit, SuggestionTaskAcceptanceStore,
-    StepRecord, StoreError, TaskCreateCommit, TaskRecord, TaskPlanningSessionStart,
-    TaskSpecRevisionCommit,
+    StepRecord, StoreError, SuggestedTaskCreateCommit, SuggestionTaskAcceptanceStore,
+    TaskCreateCommit, TaskPlanningSessionStart, TaskRecord, TaskSpecRevisionCommit,
     TaskSpecRevisionRecord, TaskStore, TaskView, WorkspaceCreateRequest,
 };
 
@@ -183,26 +184,37 @@ impl<S: TaskStore> TaskService<S> {
         let request = &command.request_payload;
         let objective = required_string(request, "objective")?.trim().to_owned();
         if objective.is_empty() || objective.len() > 32 * 1024 {
-            return Err(StoreError::Invalid("Task objective must contain 1 to 32768 bytes".to_owned()));
+            return Err(StoreError::Invalid(
+                "Task objective must contain 1 to 32768 bytes".to_owned(),
+            ));
         }
         if optional_string(request, "conversation_id")?.is_some()
             || !string_array(request, "source_message_refs")?.is_empty()
         {
             return Err(StoreError::Invalid(
-                "Conversation-origin Task creation requires its atomic admission service".to_owned(),
+                "Conversation-origin Task creation requires its atomic admission service"
+                    .to_owned(),
             ));
         }
         let request_coworker_id = optional_string(request, "coworker_id")?.map(str::to_owned);
-        let request_coworker_version = request.get("expected_coworker_version").and_then(Value::as_u64);
+        let request_coworker_version = request
+            .get("expected_coworker_version")
+            .and_then(Value::as_u64);
         if request_coworker_id != command.origin_coworker_id
             || request_coworker_version != command.expected_coworker_version
             || command.origin_coworker_id.is_some() != command.origin_coworker_revision.is_some()
             || (command.expected_coworker_version.is_some() && command.origin_coworker_id.is_none())
         {
-            return Err(StoreError::Invalid("Task Coworker origin does not match the accepted request".to_owned()));
+            return Err(StoreError::Invalid(
+                "Task Coworker origin does not match the accepted request".to_owned(),
+            ));
         }
-        if request.get("workspace_id").and_then(Value::as_str) != Some(command.workspace_id.as_str()) {
-            return Err(StoreError::Invalid("Task Workspace does not match its command".to_owned()));
+        if request.get("workspace_id").and_then(Value::as_str)
+            != Some(command.workspace_id.as_str())
+        {
+            return Err(StoreError::Invalid(
+                "Task Workspace does not match its command".to_owned(),
+            ));
         }
 
         let created_by = json!({ "kind": "USER", "principal_id": command.principal_id });
@@ -223,17 +235,24 @@ impl<S: TaskStore> TaskService<S> {
             approvals_required: value_array(request, "approvals_required")?,
             budget: optional_value(request, "budget"),
             delegation_budget_policy: optional_value(request, "delegation_budget_policy"),
-            lead_failover_policy: request.get("lead_failover_policy").cloned()
+            lead_failover_policy: request
+                .get("lead_failover_policy")
+                .cloned()
                 .or(command.coworker_default_lead_failover_policy)
-                .unwrap_or_else(|| json!({
-                "mode": "DISABLED",
-                "triggers": [],
-                "fallback_agent_binding_ids": [],
-                "max_lead_changes": 0
-            })),
+                .unwrap_or_else(|| {
+                    json!({
+                        "mode": "DISABLED",
+                        "triggers": [],
+                        "fallback_agent_binding_ids": [],
+                        "max_lead_changes": 0
+                    })
+                }),
             deadline: optional_string(request, "deadline")?.map(str::to_owned),
             source_message_refs: Vec::new(),
-            placement_preference: request.get("placement_preference").cloned().unwrap_or_else(|| json!("AUTO")),
+            placement_preference: request
+                .get("placement_preference")
+                .cloned()
+                .unwrap_or_else(|| json!("AUTO")),
             preferred_lead_agent_binding_id: Some(command.lead_agent_binding_id.clone()),
             authored_by: created_by.clone(),
             created_at: timestamp.clone(),
@@ -280,7 +299,7 @@ impl<S: TaskStore> TaskService<S> {
                 "origin_coworker_id": task.origin_coworker_id.clone(),
                 "origin_coworker_revision": task.origin_coworker_revision,
             }),
-            recorded_at: command.event.recorded_at,
+            recorded_at: command.event.recorded_at.clone(),
         };
         Ok(TaskCreateCommit {
             request: WorkspaceCreateRequest {
@@ -288,7 +307,10 @@ impl<S: TaskStore> TaskService<S> {
                 request_id: command.request_id,
                 request_payload: command.request_payload,
             },
+            idempotency_payload: None,
             expected_coworker_version: command.expected_coworker_version,
+            routine_admission: None,
+            automation_admission: None,
             task,
             initial_spec_revision: spec,
             event,
@@ -308,7 +330,9 @@ impl<S: TaskStore> TaskService<S> {
             || command.request_id.trim().is_empty()
             || command.expected_task_version == 0
         {
-            return Err(StoreError::Invalid("Task specification revision identity is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "Task specification revision identity is invalid".to_owned(),
+            ));
         }
         if let Some(receipt) = self.store.get_task_spec_revision_receipt(
             &command.principal_id,
@@ -317,7 +341,9 @@ impl<S: TaskStore> TaskService<S> {
         )? {
             return Ok(receipt);
         }
-        let task = self.store.get_task(&command.workspace_id, &command.task_id)?
+        let task = self
+            .store
+            .get_task(&command.workspace_id, &command.task_id)?
             .ok_or(StoreError::NotFound)?;
         if task.task.version != command.expected_task_version {
             return Err(StoreError::Conflict {
@@ -332,7 +358,8 @@ impl<S: TaskStore> TaskService<S> {
             });
         }
         if command.parent_revisions.len() != 1
-            || command.parent_revisions.first().copied() != Some(task.current_spec_revision.revision)
+            || command.parent_revisions.first().copied()
+                != Some(task.current_spec_revision.revision)
         {
             return Err(StoreError::Conflict {
                 expected: Some(task.current_spec_revision.revision),
@@ -341,34 +368,66 @@ impl<S: TaskStore> TaskService<S> {
         }
         let objective = command.objective.trim().to_owned();
         if objective.is_empty() || objective.len() > 32 * 1024 {
-            return Err(StoreError::Invalid("Task objective must contain 1 to 32768 bytes".to_owned()));
+            return Err(StoreError::Invalid(
+                "Task objective must contain 1 to 32768 bytes".to_owned(),
+            ));
         }
 
         let parent_spec = task.current_spec_revision.clone();
         let mut revision = parent_spec.clone();
-        revision.revision = revision.revision.checked_add(1)
+        revision.revision = revision
+            .revision
+            .checked_add(1)
             .ok_or_else(|| StoreError::Integrity("TaskSpec revision exhausted".to_owned()))?;
         revision.parent_revisions = command.parent_revisions.clone();
         revision.objective = objective;
-        if let Some(value) = command.constraints { validate_task_text_list("constraints", &value)?; revision.constraints = value; }
-        if let Some(value) = command.non_goals { validate_task_text_list("non_goals", &value)?; revision.non_goals = value; }
-        if let Some(value) = command.input_refs { validate_json_list("input_refs", &value, 100)?; revision.input_refs = value; }
-        if let Some(value) = command.required_outputs { validate_json_list("required_outputs", &value, 100)?; revision.required_outputs = value; }
-        if let Some(value) = command.acceptance_criteria { validate_json_list("acceptance_criteria", &value, 100)?; revision.acceptance_criteria = value; }
-        if let Some(value) = command.approvals_required { validate_json_list("approvals_required", &value, 100)?; revision.approvals_required = value; }
-        if let Some(value) = command.placement_preference { revision.placement_preference = value; }
+        if let Some(value) = command.constraints {
+            validate_task_text_list("constraints", &value)?;
+            revision.constraints = value;
+        }
+        if let Some(value) = command.non_goals {
+            validate_task_text_list("non_goals", &value)?;
+            revision.non_goals = value;
+        }
+        if let Some(value) = command.input_refs {
+            validate_json_list("input_refs", &value, 100)?;
+            revision.input_refs = value;
+        }
+        if let Some(value) = command.required_outputs {
+            validate_json_list("required_outputs", &value, 100)?;
+            revision.required_outputs = value;
+        }
+        if let Some(value) = command.acceptance_criteria {
+            validate_json_list("acceptance_criteria", &value, 100)?;
+            revision.acceptance_criteria = value;
+        }
+        if let Some(value) = command.approvals_required {
+            validate_json_list("approvals_required", &value, 100)?;
+            revision.approvals_required = value;
+        }
+        if let Some(value) = command.placement_preference {
+            revision.placement_preference = value;
+        }
         if let Some(value) = command.preferred_lead_agent_binding_id {
             if value.trim().is_empty() || value.len() > 200 || value.chars().any(char::is_control) {
-                return Err(StoreError::Invalid("preferred lead AgentBinding is invalid".to_owned()));
+                return Err(StoreError::Invalid(
+                    "preferred lead AgentBinding is invalid".to_owned(),
+                ));
             }
             if value != task.task.lead_agent_binding_id {
-                return Err(StoreError::Invalid("lead changes require the dedicated Task lead transition".to_owned()));
+                return Err(StoreError::Invalid(
+                    "lead changes require the dedicated Task lead transition".to_owned(),
+                ));
             }
             revision.preferred_lead_agent_binding_id = Some(value);
         }
-        if let Some(value) = command.lead_failover_policy { revision.lead_failover_policy = value; }
+        if let Some(value) = command.lead_failover_policy {
+            revision.lead_failover_policy = value;
+        }
         if same_task_spec_content(&parent_spec, &revision) {
-            return Err(StoreError::Invalid("TaskSpec revision does not change any specification fields".to_owned()));
+            return Err(StoreError::Invalid(
+                "TaskSpec revision does not change any specification fields".to_owned(),
+            ));
         }
         revision.authored_by = json!({"kind":"USER", "principal_id":command.principal_id.clone()});
         revision.created_at = command.event.recorded_at.clone();
@@ -378,7 +437,9 @@ impl<S: TaskStore> TaskService<S> {
         let spec_bytes = serde_json_canonicalizer::to_vec(&spec_value)
             .map_err(|error| StoreError::Invalid(error.to_string()))?;
         let spec_digest = format!("sha256:{}", hex::encode(Sha256::digest(spec_bytes)));
-        let next_task_version = command.expected_task_version.checked_add(1)
+        let next_task_version = command
+            .expected_task_version
+            .checked_add(1)
             .ok_or_else(|| StoreError::Integrity("Task version exhausted".to_owned()))?;
         let event = EventDraft {
             event_id: command.event.event_id,
@@ -399,7 +460,7 @@ impl<S: TaskStore> TaskService<S> {
                 "spec_digest": spec_digest,
                 "authored_by": revision.authored_by.clone(),
             }),
-            recorded_at: command.event.recorded_at,
+            recorded_at: command.event.recorded_at.clone(),
         };
         let mut next_task = task.task;
         next_task.current_spec_revision = revision.revision;
@@ -428,9 +489,13 @@ impl<S: TaskStore> TaskService<S> {
         S: AgentSessionStore,
     {
         if command.expected_task_version == 0 || command.expected_task_spec_revision == 0 {
-            return Err(StoreError::Invalid("planning assignment revision is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "planning assignment revision is invalid".to_owned(),
+            ));
         }
-        let view = self.store.get_task(&command.workspace_id, &command.task_id)?
+        let view = self
+            .store
+            .get_task(&command.workspace_id, &command.task_id)?
             .ok_or(StoreError::NotFound)?;
         if view.task.version != command.expected_task_version
             || view.task.current_spec_revision != command.expected_task_spec_revision
@@ -488,14 +553,15 @@ impl<S: TaskStore> TaskService<S> {
             }),
             recorded_at: command.event.recorded_at,
         };
-        self.store.start_task_planning_session(TaskPlanningSessionStart {
-            principal_id: command.principal_id,
-            request_id: command.request_id,
-            request_payload: command.request_payload,
-            expected_task_version: command.expected_task_version,
-            session,
-            event,
-        })
+        self.store
+            .start_task_planning_session(TaskPlanningSessionStart {
+                principal_id: command.principal_id,
+                request_id: command.request_id,
+                request_payload: command.request_payload,
+                expected_task_version: command.expected_task_version,
+                session,
+                event,
+            })
     }
 
     /// Accepts the first PlanRevision from the active Task-planning session. This
@@ -505,9 +571,13 @@ impl<S: TaskStore> TaskService<S> {
         &self,
         command: SubmitInitialPlan,
     ) -> Result<PlanAcceptance, StoreError> {
-        if command.steps.is_empty() || command.steps.len() > 100
-            || command.steps.len() != command.step_events.len() {
-            return Err(StoreError::Invalid("plan Step/event counts do not match".to_owned()));
+        if command.steps.is_empty()
+            || command.steps.len() > 100
+            || command.steps.len() != command.step_events.len()
+        {
+            return Err(StoreError::Invalid(
+                "plan Step/event counts do not match".to_owned(),
+            ));
         }
         if command.principal_id.trim().is_empty()
             || command.workspace_id.trim().is_empty()
@@ -517,12 +587,21 @@ impl<S: TaskStore> TaskService<S> {
             || command.expected_task_version == 0
             || command.expected_task_spec_revision == 0
         {
-            return Err(StoreError::Invalid("plan submission identity is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "plan submission identity is invalid".to_owned(),
+            ));
         }
-        if command.reason_for_revision.as_ref().is_some_and(|reason| reason.len() > 8192 || reason.chars().any(char::is_control)) {
-            return Err(StoreError::Invalid("plan revision reason is invalid".to_owned()));
+        if command
+            .reason_for_revision
+            .as_ref()
+            .is_some_and(|reason| reason.len() > 8192 || reason.chars().any(char::is_control))
+        {
+            return Err(StoreError::Invalid(
+                "plan revision reason is invalid".to_owned(),
+            ));
         }
-        let step_ids = (0..command.steps.len()).map(|_| new_step_id())
+        let step_ids = (0..command.steps.len())
+            .map(|_| new_step_id())
             .collect::<Result<Vec<_>, _>>()?;
         validate_plan_proposal(&command.steps, &step_ids)?;
         // Bind the idempotency receipt to the typed plan accepted by this method.
@@ -539,39 +618,64 @@ impl<S: TaskStore> TaskService<S> {
                 "acceptance_criteria": &step.acceptance_criteria,
             })).collect::<Vec<_>>(),
         });
-        let logical_ids = command.steps.iter().zip(&step_ids)
+        let logical_ids = command
+            .steps
+            .iter()
+            .zip(&step_ids)
             .map(|(step, id)| (step.logical_key.as_str(), id.as_str()))
             .collect::<std::collections::HashMap<_, _>>();
-        let materialized_steps = command.steps.iter().zip(&step_ids).map(|(step, step_id)| {
-            let dependencies = step.depends_on_logical_keys.iter()
-                .map(|key| logical_ids.get(key.as_str()).copied()
-                    .ok_or_else(|| StoreError::Invalid("plan dependency key is missing".to_owned())))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(StepRecord {
-                step_id: step_id.clone(),
-                task_id: command.task_id.clone(),
-                plan_revision: 1,
-                logical_key: Some(step.logical_key.clone()),
+        let materialized_steps = command
+            .steps
+            .iter()
+            .zip(&step_ids)
+            .map(|(step, step_id)| {
+                let dependencies = step
+                    .depends_on_logical_keys
+                    .iter()
+                    .map(|key| {
+                        logical_ids
+                            .get(key.as_str())
+                            .map(|step_id| (*step_id).to_owned())
+                            .ok_or_else(|| {
+                                StoreError::Invalid("plan dependency key is missing".to_owned())
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(StepRecord {
+                    step_id: step_id.clone(),
+                    task_id: command.task_id.clone(),
+                    plan_revision: 1,
+                    logical_key: Some(step.logical_key.clone()),
+                    title: step.title.clone(),
+                    objective: step.objective.clone(),
+                    dependencies,
+                    required_capabilities: step.required_capabilities.clone(),
+                    acceptance_criteria: step.acceptance_criteria.clone(),
+                    status: if step.depends_on_logical_keys.is_empty() {
+                        "READY"
+                    } else {
+                        "PENDING"
+                    }
+                    .to_owned(),
+                    current_attempt_id: None,
+                    created_at: command.event.recorded_at.clone(),
+                    updated_at: command.event.recorded_at.clone(),
+                    version: 1,
+                })
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
+        let planned_steps = command
+            .steps
+            .iter()
+            .map(|step| PlannedStepRecord {
+                logical_key: step.logical_key.clone(),
                 title: step.title.clone(),
                 objective: step.objective.clone(),
-                dependencies,
+                depends_on_logical_keys: step.depends_on_logical_keys.clone(),
                 required_capabilities: step.required_capabilities.clone(),
                 acceptance_criteria: step.acceptance_criteria.clone(),
-                status: if step.depends_on_logical_keys.is_empty() { "READY" } else { "PENDING" }.to_owned(),
-                current_attempt_id: None,
-                created_at: command.event.recorded_at.clone(),
-                updated_at: command.event.recorded_at.clone(),
-                version: 1,
             })
-        }).collect::<Result<Vec<_>, StoreError>>()?;
-        let planned_steps = command.steps.iter().map(|step| PlannedStepRecord {
-            logical_key: step.logical_key.clone(),
-            title: step.title.clone(),
-            objective: step.objective.clone(),
-            depends_on_logical_keys: step.depends_on_logical_keys.clone(),
-            required_capabilities: step.required_capabilities.clone(),
-            acceptance_criteria: step.acceptance_criteria.clone(),
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         let plan = PlanRevisionRecord {
             task_id: command.task_id.clone(),
             revision: 1,
@@ -582,7 +686,9 @@ impl<S: TaskStore> TaskService<S> {
             reason_for_revision: command.reason_for_revision,
             created_at: command.event.recorded_at.clone(),
         };
-        let updated_task_version = command.expected_task_version.checked_add(1)
+        let updated_task_version = command
+            .expected_task_version
+            .checked_add(1)
             .ok_or_else(|| StoreError::Integrity("Task version exhausted".to_owned()))?;
         let plan_event = EventDraft {
             event_id: command.event.event_id,
@@ -606,27 +712,31 @@ impl<S: TaskStore> TaskService<S> {
             }),
             recorded_at: command.event.recorded_at.clone(),
         };
-        let step_events = materialized_steps.iter().zip(command.step_events).map(|(step, event)| EventDraft {
-            event_id: event.event_id,
-            workspace_id: command.workspace_id.clone(),
-            entity_type: "Step".to_owned(),
-            entity_id: step.step_id.clone(),
-            origin_runtime_id: event.origin_runtime_id,
-            entity_revision: 1,
-            hlc_timestamp: event.hlc_timestamp,
-            correlation_id: event.correlation_id,
-            causation_id: event.causation_id,
-            schema_version: 1,
-            event_type: "step.created.v1".to_owned(),
-            payload: json!({
-                "step_id": step.step_id,
-                "task_id": step.task_id,
-                "plan_revision": step.plan_revision,
-                "logical_key": step.logical_key,
-                "dependencies": step.dependencies,
-            }),
-            recorded_at: event.recorded_at,
-        }).collect();
+        let step_events = materialized_steps
+            .iter()
+            .zip(command.step_events)
+            .map(|(step, event)| EventDraft {
+                event_id: event.event_id,
+                workspace_id: command.workspace_id.clone(),
+                entity_type: "Step".to_owned(),
+                entity_id: step.step_id.clone(),
+                origin_runtime_id: event.origin_runtime_id,
+                entity_revision: 1,
+                hlc_timestamp: event.hlc_timestamp,
+                correlation_id: event.correlation_id,
+                causation_id: event.causation_id,
+                schema_version: 1,
+                event_type: "step.created.v1".to_owned(),
+                payload: json!({
+                    "step_id": step.step_id,
+                    "task_id": step.task_id,
+                    "plan_revision": step.plan_revision,
+                    "logical_key": step.logical_key,
+                    "dependencies": step.dependencies,
+                }),
+                recorded_at: event.recorded_at,
+            })
+            .collect();
         let request_id = format!("task.plan.{}:{}", command.task_id, command.request_id);
         let request_payload = json!({
             "route": "POST /v1/tasks/{task_id}/plan-revisions",
@@ -666,12 +776,17 @@ where
         expected_suggestion_version: u64,
         accepted_at: String,
         suggestion_event: EventContext,
-    ) -> Result<CommittedTask, StoreError> {
-        let commit = self.prepare_standalone(task)?;
+    ) -> Result<storage_core::SuggestionTaskAcceptanceReceipt, StoreError> {
+        let mut commit = self.prepare_standalone(task)?;
+        // The endpoint body is intentionally empty; bind retries to that stable
+        // caller input plus the Suggestion ID/version context, not mutable server-
+        // resolved Coworker defaults.
+        commit.idempotency_payload = Some(json!({}));
         let workspace_id = commit.task.workspace_id.clone();
         let task_id = commit.task.task_id.clone();
         let owner_principal_id = commit.request.principal_id.clone();
-        let next_suggestion_version = expected_suggestion_version.checked_add(1)
+        let next_suggestion_version = expected_suggestion_version
+            .checked_add(1)
             .ok_or_else(|| StoreError::Integrity("Suggestion version exhausted".to_owned()))?;
         let suggestion_event = EventDraft {
             event_id: suggestion_event.event_id,
@@ -707,77 +822,126 @@ where
     }
 }
 
-fn validate_plan_proposal(
-    steps: &[ProposedStep],
-    step_ids: &[String],
-) -> Result<(), StoreError> {
+fn validate_plan_proposal(steps: &[ProposedStep], step_ids: &[String]) -> Result<(), StoreError> {
     if steps.is_empty() || steps.len() > 100 || steps.len() != step_ids.len() {
-        return Err(StoreError::Invalid("a plan must contain 1 to 100 steps with allocated IDs".to_owned()));
+        return Err(StoreError::Invalid(
+            "a plan must contain 1 to 100 steps with allocated IDs".to_owned(),
+        ));
     }
     let mut keys = std::collections::HashSet::new();
     let mut ids = std::collections::HashSet::new();
     let mut serialized_bytes = 16_usize;
     for (step, id) in steps.iter().zip(step_ids) {
-        if step.logical_key.is_empty() || step.logical_key.len() > 128
-            || !step.logical_key.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        if step.logical_key.is_empty()
+            || step.logical_key.len() > 128
+            || !step
+                .logical_key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
             || !keys.insert(step.logical_key.as_str())
-            || id.trim().is_empty() || id.len() > 200 || id.chars().any(char::is_control) || !ids.insert(id.as_str())
-            || step.title.trim().is_empty() || step.title.len() > 512
-            || step.objective.trim().is_empty() || step.objective.len() > 16 * 1024
+            || id.trim().is_empty()
+            || id.len() > 200
+            || id.chars().any(char::is_control)
+            || !ids.insert(id.as_str())
+            || step.title.trim().is_empty()
+            || step.title.len() > 512
+            || step.objective.trim().is_empty()
+            || step.objective.len() > 16 * 1024
             || step.title.chars().any(char::is_control)
             || step.objective.chars().any(char::is_control)
-
         {
-            return Err(StoreError::Invalid("plan step identity or acceptance criteria are invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "plan step identity or acceptance criteria are invalid".to_owned(),
+            ));
         }
         planning::validate_plan_step_content(step)?;
-        serialized_bytes = serialized_bytes.checked_add(planning::plan_step_serialized_size(step)?)
+        serialized_bytes = serialized_bytes
+            .checked_add(planning::plan_step_serialized_size(step)?)
             .ok_or_else(|| StoreError::Invalid("plan exceeds its total size limit".to_owned()))?;
         if serialized_bytes > 256 * 1024 {
-            return Err(StoreError::Invalid("plan exceeds its total size limit".to_owned()));
+            return Err(StoreError::Invalid(
+                "plan exceeds its total size limit".to_owned(),
+            ));
         }
     }
-    let key_set = steps.iter().map(|step| step.logical_key.as_str()).collect::<std::collections::HashSet<_>>();
+    let key_set = steps
+        .iter()
+        .map(|step| step.logical_key.as_str())
+        .collect::<std::collections::HashSet<_>>();
     for step in steps {
         let mut deps = std::collections::HashSet::new();
         if step.depends_on_logical_keys.iter().any(|key| {
-            key == &step.logical_key || !key_set.contains(key.as_str()) || !deps.insert(key.as_str())
+            key == &step.logical_key
+                || !key_set.contains(key.as_str())
+                || !deps.insert(key.as_str())
         }) {
-            return Err(StoreError::Invalid("plan dependencies must be unique, present, and non-self-referential".to_owned()));
+            return Err(StoreError::Invalid(
+                "plan dependencies must be unique, present, and non-self-referential".to_owned(),
+            ));
         }
     }
-    let by_key = steps.iter().map(|step| (step.logical_key.as_str(), step)).collect::<std::collections::HashMap<_, _>>();
+    let by_key = steps
+        .iter()
+        .map(|step| (step.logical_key.as_str(), step))
+        .collect::<std::collections::HashMap<_, _>>();
     fn visit<'a>(
         key: &'a str,
         by_key: &std::collections::HashMap<&'a str, &'a ProposedStep>,
         visiting: &mut std::collections::HashSet<&'a str>,
         visited: &mut std::collections::HashSet<&'a str>,
     ) -> bool {
-        if visited.contains(key) { return true; }
-        if !visiting.insert(key) { return false; }
-        let acyclic = by_key.get(key).is_some_and(|step| step.depends_on_logical_keys.iter().all(|dependency| visit(dependency, by_key, visiting, visited)));
+        if visited.contains(key) {
+            return true;
+        }
+        if !visiting.insert(key) {
+            return false;
+        }
+        let acyclic = by_key.get(key).is_some_and(|step| {
+            step.depends_on_logical_keys
+                .iter()
+                .all(|dependency| visit(dependency, by_key, visiting, visited))
+        });
         visiting.remove(key);
-        if acyclic { visited.insert(key); }
+        if acyclic {
+            visited.insert(key);
+        }
         acyclic
     }
     let mut visiting = std::collections::HashSet::new();
     let mut visited = std::collections::HashSet::new();
-    if !steps.iter().all(|step| visit(&step.logical_key, &by_key, &mut visiting, &mut visited)) {
-        return Err(StoreError::Invalid("plan dependency graph contains a cycle".to_owned()));
+    if !steps
+        .iter()
+        .all(|step| visit(&step.logical_key, &by_key, &mut visiting, &mut visited))
+    {
+        return Err(StoreError::Invalid(
+            "plan dependency graph contains a cycle".to_owned(),
+        ));
     }
     Ok(())
 }
 
 fn validate_task_text_list(name: &str, values: &[String]) -> Result<(), StoreError> {
-    if values.len() > 100 || values.iter().any(|value| value.len() > 8192 || value.chars().any(char::is_control)) {
-        return Err(StoreError::Invalid(format!("Task {name} contains an invalid or oversized value")));
+    if values.len() > 100
+        || values
+            .iter()
+            .any(|value| value.len() > 8192 || value.chars().any(char::is_control))
+    {
+        return Err(StoreError::Invalid(format!(
+            "Task {name} contains an invalid or oversized value"
+        )));
     }
     Ok(())
 }
 
 fn validate_json_list(name: &str, values: &[Value], maximum: usize) -> Result<(), StoreError> {
-    if values.len() > maximum || values.iter().any(|value| value.is_null() || !value.is_object()) {
-        return Err(StoreError::Invalid(format!("Task {name} contains an invalid or oversized value")));
+    if values.len() > maximum
+        || values
+            .iter()
+            .any(|value| value.is_null() || !value.is_object())
+    {
+        return Err(StoreError::Invalid(format!(
+            "Task {name} contains an invalid or oversized value"
+        )));
     }
     Ok(())
 }
@@ -822,9 +986,13 @@ impl<S: TaskStore + AgentCatalogStore> TaskService<S> {
             || request.runtime_incarnation_id.trim().is_empty()
             || request.expected_task_version == 0
         {
-            return Err(StoreError::Invalid("planning assignment identity is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "planning assignment identity is invalid".to_owned(),
+            ));
         }
-        let task = self.store.get_task(&request.workspace_id, &request.task_id)?
+        let task = self
+            .store
+            .get_task(&request.workspace_id, &request.task_id)?
             .ok_or(StoreError::NotFound)?;
         if task.task.version != request.expected_task_version
             || task.task.current_plan_revision.is_some()
@@ -835,46 +1003,81 @@ impl<S: TaskStore + AgentCatalogStore> TaskService<S> {
                 actual: Some(task.task.version),
             });
         }
-        let binding = self.store.get_agent_binding(
-            &request.owner_principal_id,
-            &request.workspace_id,
-            &task.task.lead_agent_binding_id,
-        )?.ok_or(StoreError::NotFound)?;
-        if !binding.enabled || !binding.lead_eligible
-            || binding.runtime_id.as_deref().is_some_and(|runtime| runtime != request.runtime_id)
+        let binding = self
+            .store
+            .get_agent_binding(
+                &request.owner_principal_id,
+                &request.workspace_id,
+                &task.task.lead_agent_binding_id,
+            )?
+            .ok_or(StoreError::NotFound)?;
+        if !binding.enabled
+            || !binding.lead_eligible
+            || binding
+                .runtime_id
+                .as_deref()
+                .is_some_and(|runtime| runtime != request.runtime_id)
         {
-            return Err(StoreError::Invalid("Task lead binding is not eligible on this Runtime".to_owned()));
+            return Err(StoreError::Invalid(
+                "Task lead binding is not eligible on this Runtime".to_owned(),
+            ));
         }
-        let profile = self.store.list_agent_profiles(
-            &request.owner_principal_id,
-            &request.workspace_id,
-            &request.now,
-        )?.into_iter().find(|profile| profile.profile.agent_profile_id == binding.agent_profile_id)
+        let profile = self
+            .store
+            .list_agent_profiles(
+                &request.owner_principal_id,
+                &request.workspace_id,
+                &request.now,
+            )?
+            .into_iter()
+            .find(|profile| profile.profile.agent_profile_id == binding.agent_profile_id)
             .ok_or(StoreError::NotFound)?;
         let policy = &binding.endpoint_selection_policy;
         let mode = policy.get("mode").and_then(Value::as_str).unwrap_or("");
         let pinned_endpoint = match mode {
             "AUTO_COMPATIBLE" => None,
-            "PINNED_ENDPOINT" => Some(policy.get("endpoint_id").and_then(Value::as_str)
-                .ok_or_else(|| StoreError::Integrity("pinned endpoint policy is malformed".to_owned()))?),
-            _ => return Err(StoreError::Integrity("AgentBinding endpoint policy is malformed".to_owned())),
+            "PINNED_ENDPOINT" => Some(
+                policy
+                    .get("endpoint_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        StoreError::Integrity("pinned endpoint policy is malformed".to_owned())
+                    })?,
+            ),
+            _ => {
+                return Err(StoreError::Integrity(
+                    "AgentBinding endpoint policy is malformed".to_owned(),
+                ));
+            }
         };
-        let required_features = policy.get("required_features").and_then(Value::as_array)
-            .ok_or_else(|| StoreError::Integrity("AgentBinding required features are malformed".to_owned()))?;
-        let preferred_topologies = policy.get("preferred_topologies").and_then(Value::as_array)
-            .ok_or_else(|| StoreError::Integrity("AgentBinding topology preferences are malformed".to_owned()))?;
+        let required_features = policy
+            .get("required_features")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                StoreError::Integrity("AgentBinding required features are malformed".to_owned())
+            })?;
+        let preferred_topologies = policy
+            .get("preferred_topologies")
+            .and_then(Value::as_array)
+            .ok_or_else(|| {
+                StoreError::Integrity("AgentBinding topology preferences are malformed".to_owned())
+            })?;
         let mut candidates = Vec::new();
         for view in profile.endpoints {
             let endpoint = view.endpoint;
             if endpoint.agent_profile_id != binding.agent_profile_id
                 || pinned_endpoint.is_some_and(|pinned| pinned != endpoint.endpoint_id)
                 || !capability_enabled(&endpoint.capabilities, "input.text")
-                || !required_features.iter().all(|feature| feature.as_str()
-                    .is_some_and(|feature| capability_enabled(&endpoint.capabilities, feature)))
+                || !required_features.iter().all(|feature| {
+                    feature
+                        .as_str()
+                        .is_some_and(|feature| capability_enabled(&endpoint.capabilities, feature))
+                })
             {
                 continue;
             }
-            let topology_rank = preferred_topologies.iter()
+            let topology_rank = preferred_topologies
+                .iter()
                 .position(|topology| topology.as_str() == Some(endpoint.topology.as_str()))
                 .unwrap_or(usize::MAX);
             for offer in view.offers {
@@ -894,11 +1097,20 @@ impl<S: TaskStore + AgentCatalogStore> TaskService<S> {
             }
         }
         candidates.sort_by(|left, right| {
-            (left.0, left.1, &left.2).cmp(&(right.0, right.1, &right.2))
+            (left.0, left.1, &left.2)
+                .cmp(&(right.0, right.1, &right.2))
                 .then_with(|| left.3.endpoint_id.cmp(&right.3.endpoint_id))
         });
-        let endpoint = candidates.into_iter().next().map(|candidate| candidate.3)
-            .ok_or_else(|| StoreError::Invalid("no fresh compatible planning endpoint is available on the current Runtime".to_owned()))?;
+        let endpoint = candidates
+            .into_iter()
+            .next()
+            .map(|candidate| candidate.3)
+            .ok_or_else(|| {
+                StoreError::Invalid(
+                    "no fresh compatible planning endpoint is available on the current Runtime"
+                        .to_owned(),
+                )
+            })?;
         Ok(PlanningAssignment {
             task,
             binding,
@@ -912,7 +1124,9 @@ impl<S: TaskStore + AgentCatalogStore> TaskService<S> {
 fn capability_enabled(capabilities: &Value, feature: &str) -> bool {
     let mut current = capabilities;
     for segment in feature.split('.') {
-        let Some(next) = current.get(segment) else { return false; };
+        let Some(next) = current.get(segment) else {
+            return false;
+        };
         current = next;
     }
     current.as_bool() == Some(true)
@@ -925,17 +1139,26 @@ impl<S: TaskStore + AgentSessionStore> TaskService<S> {
         &self,
         command: ActivateTaskPlanningSessionCommand,
     ) -> Result<CommittedPlanningActivation, StoreError> {
-        if command.expected_session_version == 0 || command.expected_task_version == 0
+        if command.expected_session_version == 0
+            || command.expected_task_version == 0
             || command.workspace_id.trim().is_empty()
             || command.agent_session_id.trim().is_empty()
             || command.host_instance_id.trim().is_empty()
-            || command.native_session_ref.as_ref().is_some_and(|value| value.is_empty() || value.len() > 4096)
+            || command
+                .native_session_ref
+                .as_ref()
+                .is_some_and(|value| value.is_empty() || value.len() > 4096)
         {
-            return Err(StoreError::Invalid("planning session activation command is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "planning session activation command is invalid".to_owned(),
+            ));
         }
-        let session = self.store.get_agent_session(&command.workspace_id, &command.agent_session_id)?
+        let session = self
+            .store
+            .get_agent_session(&command.workspace_id, &command.agent_session_id)?
             .ok_or(StoreError::NotFound)?;
-        if session.scope_kind != "TASK_PLANNING" || session.status != "STARTING"
+        if session.scope_kind != "TASK_PLANNING"
+            || session.status != "STARTING"
             || session.version != command.expected_session_version
             || session.task_id.is_none()
         {
@@ -945,7 +1168,10 @@ impl<S: TaskStore + AgentSessionStore> TaskService<S> {
             });
         }
         let task_id = session.task_id.as_deref().expect("checked above");
-        let task = self.store.get_task(&command.workspace_id, task_id)?.ok_or(StoreError::NotFound)?;
+        let task = self
+            .store
+            .get_task(&command.workspace_id, task_id)?
+            .ok_or(StoreError::NotFound)?;
         if task.task.version != command.expected_task_version
             || task.task.current_spec_revision != session.task_spec_revision.unwrap_or_default()
             || task.task.lead_agent_binding_id != session.agent_binding_id
@@ -958,13 +1184,20 @@ impl<S: TaskStore + AgentSessionStore> TaskService<S> {
         }
         let event = command.session_event;
         let occurred_at = event.recorded_at.clone();
-        let next_session_version = session.version.checked_add(1)
+        let next_session_version = session
+            .version
+            .checked_add(1)
             .ok_or_else(|| StoreError::Integrity("AgentSession version exhausted".to_owned()))?;
-        let next_task_version = task.task.version.checked_add(1)
+        let next_task_version = task
+            .task
+            .version
+            .checked_add(1)
             .ok_or_else(|| StoreError::Integrity("Task version exhausted".to_owned()))?;
         let task_status_event = if task.task.status == "READY" {
             let task_event = command.task_status_event.ok_or_else(|| {
-                StoreError::Invalid("Task status event is required for first planner activation".to_owned())
+                StoreError::Invalid(
+                    "Task status event is required for first planner activation".to_owned(),
+                )
             })?;
             Some(EventDraft {
                 event_id: task_event.event_id,
@@ -991,7 +1224,9 @@ impl<S: TaskStore + AgentSessionStore> TaskService<S> {
             })
         } else {
             if command.task_status_event.is_some() {
-                return Err(StoreError::Invalid("Task already RUNNING; status event must be absent".to_owned()));
+                return Err(StoreError::Invalid(
+                    "Task already RUNNING; status event must be absent".to_owned(),
+                ));
             }
             None
         };
@@ -1020,45 +1255,63 @@ impl<S: TaskStore + AgentSessionStore> TaskService<S> {
             }),
             recorded_at: occurred_at.clone(),
         };
-        self.store.activate_task_planning_session(ActivatePlanningSessionCommit {
-            workspace_id: command.workspace_id,
-            agent_session_id: command.agent_session_id,
-            expected_session_version: command.expected_session_version,
-            expected_task_version: command.expected_task_version,
-            occurred_at,
-            host_instance_id: command.host_instance_id,
-            native_session_ref: command.native_session_ref,
-            session_event,
-            task_status_event,
-        })
+        self.store
+            .activate_task_planning_session(ActivatePlanningSessionCommit {
+                workspace_id: command.workspace_id,
+                agent_session_id: command.agent_session_id,
+                expected_session_version: command.expected_session_version,
+                expected_task_version: command.expected_task_version,
+                occurred_at,
+                host_instance_id: command.host_instance_id,
+                native_session_ref: command.native_session_ref,
+                session_event,
+                task_status_event,
+            })
     }
 }
 
 fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, StoreError> {
-    value.get(key).and_then(Value::as_str).ok_or_else(|| {
-        StoreError::Invalid(format!("Task field {key} must be a string"))
-    })
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| StoreError::Invalid(format!("Task field {key} must be a string")))
 }
 
 fn optional_string<'a>(value: &'a Value, key: &str) -> Result<Option<&'a str>, StoreError> {
     match value.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(text)) => Ok(Some(text)),
-        Some(_) => Err(StoreError::Invalid(format!("Task field {key} must be a string or null"))),
+        Some(_) => Err(StoreError::Invalid(format!(
+            "Task field {key} must be a string or null"
+        ))),
     }
 }
 
 fn string_array(value: &Value, key: &str) -> Result<Vec<String>, StoreError> {
-    let Some(value) = value.get(key) else { return Ok(Vec::new()) };
-    let values = value.as_array().ok_or_else(|| StoreError::Invalid(format!("Task field {key} must be an array")))?;
-    values.iter().map(|item| item.as_str().map(str::to_owned).ok_or_else(|| {
-        StoreError::Invalid(format!("Task field {key} must contain only strings"))
-    })).collect()
+    let Some(value) = value.get(key) else {
+        return Ok(Vec::new());
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| StoreError::Invalid(format!("Task field {key} must be an array")))?;
+    values
+        .iter()
+        .map(|item| {
+            item.as_str().map(str::to_owned).ok_or_else(|| {
+                StoreError::Invalid(format!("Task field {key} must contain only strings"))
+            })
+        })
+        .collect()
 }
 
 fn value_array(value: &Value, key: &str) -> Result<Vec<Value>, StoreError> {
-    let Some(value) = value.get(key) else { return Ok(Vec::new()) };
-    value.as_array().cloned().ok_or_else(|| StoreError::Invalid(format!("Task field {key} must be an array")))
+    let Some(value) = value.get(key) else {
+        return Ok(Vec::new());
+    };
+    value
+        .as_array()
+        .cloned()
+        .ok_or_else(|| StoreError::Invalid(format!("Task field {key} must be an array")))
 }
 
 fn optional_value(value: &Value, key: &str) -> Option<Value> {

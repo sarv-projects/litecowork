@@ -321,6 +321,104 @@ unknown cost is not zero; for `COST_FIRST`, known-cost candidates rank ahead of 
 ones when all else is equal. The owner may pin a profile; if it is unavailable or
 ineligible, return a typed failure rather than substituting another profile.
 
+### Decide whether to delegate
+
+WorkerSelection runs only after a Step is accepted and its dependencies, authority,
+Environment, and admission predicates are checked. It compares eligible execution
+options; it does not make another model call to plan each click, and it does not replace
+the lead's accepted plan. The options are:
+
+```text
+DETERMINISTIC_CAPABILITY
+CURRENT_LEAD_HARNESS
+ONE_HOST_DELEGATED_WORKER
+PARALLEL_INDEPENDENT_WORKERS
+```
+
+One delegation boundary represents a meaningful bounded result, for example “return five
+products with verified prices and source links.” Individual navigation, typing, or other
+harmless operation boundaries remain inside that worker's authorized invocation/ActionBatch
+when the provider can report each member's outcome. Do not create a child Attempt for every
+browser click or shell command.
+
+The selector first respects an explicit owner choice and pinned profile. It may choose
+among otherwise eligible options only under the Task's pinned optimization preference.
+`QUALITY_FIRST`, `BALANCED`, `COST_FIRST`, and `LATENCY_FIRST` are separate objectives;
+the selector must not claim one objective improved merely because another did.
+
+For a candidate `x`, estimates include queueing, host/session startup, context handoff,
+execution, required verification, expected retry/recovery, and shared-resource contention:
+
+```text
+expected_cost(x) =
+    known_handoff_cost(x)
+  + known_execution_cost(x)
+  + known_verification_cost(x)
+  + failure_probability(x) * known_recovery_cost(x)
+
+expected_latency(x) =
+    queue_and_startup(x)
+  + critical_path_execution(x)
+  + required_verification(x)
+  + expected_recovery_delay(x)
+```
+
+For parallel options, `critical_path_execution` is the bounded dependency-graph critical
+path plus coordination and contention; it is not the sum of nominal worker speedups.
+Expected quality is based on qualified verification outcomes for the bounded Task category,
+not model/provider labels. The quality floor remains a hard eligibility predicate.
+
+The comparison is usable only when estimates are supported by qualified provider
+observations or deterministic cost/latency bounds with sufficient confidence. Missing,
+incomparable, expired, or low-confidence observations remain `UNKNOWN`; they are not
+converted to zero or optimistic completion estimates.
+
+Each released WorkerSelection policy version defines and records its minimum benefit and
+confidence thresholds for the selected objective. Thresholds are fixed from B83 benchmark
+evidence for that release; they are not silently tuned from one user's sparse runtime
+history. If there is no qualified baseline, the confidence floor is not met, or estimated
+benefit is below the threshold, the decision is `STAY_WITH_CURRENT_OPTION`. A user-pinned
+worker remains pinned or returns its typed unavailability error; it is never replaced by
+this automatic decision. A lead that explicitly proposes delegation still goes through the
+same hard eligibility, budget, Trust, and quality checks.
+
+```text
+Decision:
+  stay with the current lead/capability
+    if no other candidate meets the quality floor, or
+    if expected benefit does not exceed the pinned policy threshold, or
+    if the estimate is too uncertain to justify handoff.
+
+  delegate / parallelize
+    only if the option is eligible, the work is independently bounded,
+    and it improves the selected objective without violating another
+    explicitly pinned hard constraint.
+
+  ask / fail with a typed reason
+    if the owner pinned an unavailable or ineligible option, or a required
+    bound cannot be met. Never silently substitute.
+```
+
+For `COST_FIRST`, a savings claim requires comparable known units for the candidate and
+lead-only baseline and includes verification and expected recovery. If cost is unknown,
+the selector may still use the option when the owner explicitly selected it or another
+policy permits it, but must report cost as unknown and must not label the choice “cheaper.”
+For `LATENCY_FIRST`, require measured end-to-end latency including delegation overhead;
+parallel work is not presumed faster. `BALANCED` uses the versioned policy's bounded
+tradeoff and records which objective caused the selection. The decision and estimates are
+admission diagnostics/projections, not new domain authority or a durable model-router
+aggregate. B83 measures these decisions against lead-only and deterministic baselines.
+
+The user-facing Coworker control maps to the existing `DelegationStrategy` vocabulary:
+“Let the lead use its own approach” selects `NATIVE_DEFAULT`, “Balance native and available
+workers” selects `BALANCED`, and “Prefer suitable lower-cost workers” selects `COST_SAVER`.
+The advanced `HOST_DELEGATION_ONLY` option is shown only when the selected harness can
+actually enforce the restriction. These controls set a delegation preference; they do not
+promise lower cost, faster completion, a quality outcome, or provider/model substitution.
+`OptimizationPreference` remains a separate DelegationProfile/DelegateRequest policy.
+`LATENCY_FIRST` and exact selection thresholds remain advanced diagnostics until B83
+supplies qualified measurements.
+
 Provider quota is recorded only from a named observation source:
 
 ```text

@@ -27,8 +27,10 @@ function desktopTransport(workspaceId: string): AutomationTransport {
     let executionPolicy: Record<string, unknown> | null = null;
     let coworkerId: string | null = null;
     let coworkerRef: Record<string, unknown> | null = null;
+    let automationRevision: number | null = null;
+    let inputs: Record<string, unknown> | null = null;
     let expectedVersion: number | null = null;
-    const automationMatch = /^\/v1\/automations(?:\/([^/]+)(?:\/(pause|disable|revisions))?)?$/.exec(url.pathname);
+    const automationMatch = /^\/v1\/automations(?:\/([^/]+)(?:\/(pause|disable|revisions|run))?)?$/.exec(url.pathname);
     const routineMatch = /^\/v1\/routines(?:\/([^/]+)(?:\/(revisions))?)?$/.exec(url.pathname);
     const coworkerMatch = /^\/v1\/coworkers(?:\/([^/]+))?$/.exec(url.pathname);
     if (automationMatch) {
@@ -39,6 +41,14 @@ function desktopTransport(workspaceId: string): AutomationTransport {
       else if (method === "GET" && automationId !== null && suffix === null) operation = "get";
       else if (method === "GET" && automationId !== null && suffix === "revisions") operation = "list_automation_revisions";
       else if (method === "POST" && automationId !== null && (suffix === "pause" || suffix === "disable")) operation = suffix;
+      else if (method === "POST" && automationId !== null && suffix === "run") {
+        operation = "run";
+        const body = parseObject(init.body);
+        if (typeof body.automation_revision !== "number" || !Number.isSafeInteger(body.automation_revision) || body.automation_revision < 1
+          || !isObject(body.inputs)) throw new Error("Manual Automation Run request is invalid.");
+        automationRevision = body.automation_revision;
+        inputs = body.inputs;
+      }
       else if (method === "POST" && automationId === null && suffix === null) {
         operation = "create";
         const body = parseObject(init.body);
@@ -84,7 +94,7 @@ function desktopTransport(workspaceId: string): AutomationTransport {
 
     const response = await invoke<BridgeResponse>("automation_request", {
       workspaceId, operation, automationId, routineId, coworkerId, cursor, expectedVersion, requestId,
-      name, routineRevision, triggers, executionPolicy, coworkerRef,
+      name, routineRevision, triggers, executionPolicy, coworkerRef, automationRevision, inputs,
     });
     if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     return new Response(decodeBase64(response.bodyBase64), {

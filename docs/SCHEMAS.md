@@ -26,7 +26,7 @@ JsonObject = map<string, JsonValue>
 ## Identifiers
 
 ```text
-WorkspaceId WorkspaceInstructionRevisionId ConversationId ConversationTurnId MessageId DeviceId
+WorkspaceId WorkspaceInstructionRevisionId ConversationId ConversationTurnId MessageId PresentationId CitationId HostSkillId DeviceId
 TaskId TaskSpecRevisionId PlanRevisionId StepId AttemptId AgentProfileId
 AgentEndpointId AgentBindingId AgentSessionId AgentHostInstanceId CapabilityHostInstanceId RuntimeId RuntimeIncarnationId RuntimeWorkspaceBindingId
 EnvironmentId EnvironmentCheckpointId EnvironmentControlLeaseId CapabilityId CapabilityGrantId
@@ -84,6 +84,35 @@ GoalStatus = ACTIVE | PAUSED | COMPLETED | ARCHIVED
 SuggestionStatus = PROPOSED | ACCEPTED | DISMISSED | EXPIRED
 SuggestionAction = TASK | OPEN_ROUTINE_EDITOR | OPEN_AUTOMATION_EDITOR
 SuggestionKind = TASK_OPPORTUNITY | ROUTINE_OPPORTUNITY | AUTOMATION_OPPORTUNITY
+SuggestionAcceptanceDisposition = CREATED | REPLAYED
+PresentationPreference = AUTO | SIMPLE | RICH
+PresentationPolicyDecision = PLAIN | RICH_PREFERRED
+RichPresentationAvailability = AVAILABLE | FETCHING | UNAVAILABLE | POLICY_OMITTED | UNSUPPORTED_VERSION | INTEGRITY_FAILED
+HostInstructionDeliveryMode = NATIVE_SYSTEM | NATIVE_DEVELOPER | SESSION_GUIDANCE | CONTEXT_ATTACHMENT | UNSUPPORTED
+HostSkillAuthorityClass = GUIDANCE_ONLY
+RichPresentationBlockOrigin = SEMANTIC_MESSAGE | MODEL_INTENT | TOOL_RESULT_TEMPLATE | ARTIFACT_BINDING | RESOURCE_BINDING | CORE_PROJECTION | MCP_APP
+SuggestionTaskAcceptanceReceipt = {
+  workspace_id: WorkspaceId,
+  disposition: SuggestionAcceptanceDisposition,
+  suggestion: {
+    suggestion_id: SuggestionId,
+    status: ACCEPTED,
+    result_task_id: TaskId,
+    version: u64
+  },
+  task: {
+    task_id: TaskId,
+    workspace_id: WorkspaceId,
+    status: READY,
+    version: u64
+  }
+}
+
+# Acceptance receipt is a bounded API projection, not a domain event or aggregate.
+# Both Workspace IDs equal the selected Workspace; suggestion.result_task_id equals
+# task.task_id. CREATED is built inside the atomic write transaction. REPLAYED comes
+# from the persisted Task request receipt and accepted Suggestion checked in one
+# authorized SQLite transaction; it describes the original READY Task commit.
 SuggestionTrigger = TASK_OUTCOME_COMMITTED | ROUTINE_HEALTH_CHANGED | AUTHORIZED_RESOURCE_CHANGE | OWNER_CONFIGURED_CHECK
 ContextDocumentKind = PERSONAL_PROFILE | COWORKER_NOTES | WORKSPACE_NOTES | GOAL_NOTES
 ContextDocumentStatus = ACTIVE | REVOKED | DELETION_PENDING | DELETED
@@ -227,6 +256,12 @@ ChannelHostAssignmentProvenance = {
 ChannelIngressCursorBindingStatus = AVAILABLE | RECONCILIATION_REQUIRED | UNAVAILABLE
 ConversationTurnStatus = OPEN | RUNNING | WAITING_USER | WAITING_DEPENDENCY | COMPLETED | FAILED |
   CANCEL_REQUESTED | CANCELLED
+PresentationPreference = AUTO | SIMPLE | RICH
+PresentationPolicyDecision = PLAIN | RICH_PREFERRED
+RichPresentationAvailability = AVAILABLE | FETCHING | UNAVAILABLE | POLICY_OMITTED | UNSUPPORTED_VERSION | INTEGRITY_FAILED
+HostInstructionDeliveryMode = NATIVE_SYSTEM | NATIVE_DEVELOPER | SESSION_GUIDANCE | CONTEXT_ATTACHMENT | UNSUPPORTED
+HostSkillAuthorityClass = GUIDANCE_ONLY
+RichPresentationBlockOrigin = SEMANTIC_MESSAGE | MODEL_INTENT | TOOL_RESULT_TEMPLATE | ARTIFACT_BINDING | RESOURCE_BINDING | CORE_PROJECTION | MCP_APP
 # FAILED -> RUNNING is permitted only through AgentTurnCoordinator.retry_turn;
 # the retry increments retry_ordinal and starts a new AgentSession.
 
@@ -244,6 +279,7 @@ AttemptStatus = CREATED | PREPARING | RUNNING | WAITING_APPROVAL |
 AgentSessionStatus = STARTING | ACTIVE | INTERRUPTING | CLOSING | CLOSED | LOST
 RoutineStatus = ACTIVE | ARCHIVED
 AutomationOccurrenceStatus = PENDING | CLAIMED | WAITING_DEPENDENCY | STARTED | COMPLETED | SKIPPED | FAILED
+AutomationOccurrence.version: u64 # aggregate revision; independent of claim_epoch
 RoutineRevisionRef = { routine_id: RoutineId, revision: u64 }
 GoalRevisionRef = { goal_id: GoalId, revision: u64 }
 CoworkerRevisionRef = { coworker_id: CoworkerId, revision: u64 }
@@ -293,6 +329,11 @@ NotificationDeliveryStatus = PENDING | SENDING | SENT | FAILED | AMBIGUOUS | SUP
 SkillProposalStatus = DRAFT | REVIEW | APPROVED | REJECTED | PUBLISHED
 ResourceFreshness = CURRENT | STALE | CONFLICTED | UNKNOWN | UNAVAILABLE
 ResourceSearchMode = METADATA | ON_DEMAND_CONTENT | INDEXED_CONTENT
+ResourceTextMatchSpan = {
+  term: string,                         # distinct normalized Unicode alphanumeric query token
+  start_utf8_byte: u64,                 # zero-based offset in original ResourceRevision bytes
+  end_utf8_byte_exclusive: u64          # half-open end offset in original ResourceRevision bytes
+}
 ResourceTextIndexRebuildOutcome = INDEXED | NOT_INDEXABLE
 ResourceTextIndexSkipReason = UNSUPPORTED_TYPE | OVER_SIZE_LIMIT | INVALID_UTF8 |
   CONTROL_CHARACTERS | TERM_LIMIT_EXCEEDED
@@ -464,6 +505,13 @@ ResourceRef {
 ```text
 PinnedResourceRef = ResourceRef with revision_id required
 
+ResourceSearchResult {
+  resource_ref: PinnedResourceRef
+  source_content_digest: Sha256Digest
+  source_matches: ResourceTextMatchSpan[] # empty except INDEXED_CONTENT lexical matches
+  ...
+}
+
 ArtifactVersionRef {
   workspace_id: WorkspaceId
   artifact_id: ArtifactId
@@ -481,11 +529,35 @@ consumer. It is distinct from the optional provider-observed `ResourceRevision.c
 the ResourceRef identifies only the logical Resource and optional immutable revision. If
 both digests are available, they must match; a mismatch is an input-integrity failure.
 
+For indexed Resource search, `source_matches` is produced only after the encrypted text
+snapshot has been checked against `source_content_digest` and the exact pinned
+`resource_ref.revision_id`. Each span covers the original UTF-8 bytes of that plain-text
+ResourceRevision, not normalized text or the display snippet. The API returns one
+first-occurrence span per distinct normalized query term. These offsets are transient
+retrieval provenance and must never be resolved against a newer Resource head.
+
 `resource://<workspace-id>/<resource-id>@<revision-id?>` is the display form. ResourceRef
 identifies a logical Resource independently of its locations. Paths, Runtime IDs,
 connector handles, browser tabs, secret handles, and blob storage references are not
 Resource identity. Use a revision-pinned reference when correctness depends on exact
 input. A local absolute path is never presumed to exist on another Runtime.
+
+The read-only Operator wire contract is `GET /v1/resources/{resource_id}/content` with
+`X-Workspace-ID` and optional query values:
+
+```text
+revision_id?: ResourceRevisionId  # exact immutable pin; omitted means current head
+max_bytes?: 1..10_485_760         # checked before BlobStore access
+```
+
+Success is binary bytes with `X-Resource-Revision-Id`, `X-Resource-Media-Type`,
+`X-Content-Type-Options: nosniff`, and `Cache-Control: no-store`. The returned revision
+header must equal the requested pin (or the resolved current head when omitted). The
+authenticated store verifies same-Workspace/Resource membership, eligible ContextDocument
+status, local managed content availability, byte count, and digest. `RESOURCE_CONTENT_EXTERNAL`
+means no local managed content provider supports the selected Resource; a missing managed
+blob is `RESOURCE_LOCATION_UNAVAILABLE`; digest/length mismatch is `INTEGRITY_FAILURE`.
+Neither case permits current-head substitution or external provider fetching.
 
 ```text
 CapabilityRef {
@@ -689,6 +761,50 @@ MessageContentBlock =
 
 Content blocks are ordered and immutable after message creation. Binary content is
 always carried by a ResourceRef; the message body never embeds arbitrary binary data.
+
+```text
+HostSkillRef = {
+  host_skill_id: HostSkillId,
+  uri: string,
+  version: SemVer,
+  content_digest: Sha256Digest,
+  purpose: RESPONSE_DESIGN,
+  authority_class: GUIDANCE_ONLY
+}
+
+MessageTextSliceRef = {
+  start_utf8_byte: u32,
+  end_utf8_byte_exclusive: u32,
+  slice_digest: Sha256Digest
+}
+
+HostAssignedBlockProvenance = {
+  block_path: JsonPointer,   # unique pointer into root_blocks
+  origin: RichPresentationBlockOrigin,
+  agent_session_id?: AgentSessionId,
+  invocation_id?: CapabilityInvocationId,
+  resource_refs: PinnedResourceRef[],
+  artifact_refs: ArtifactVersionRef[],
+  evidence_refs: EvidenceId[],
+  verification_refs: VerificationRunId[]
+}
+```
+
+Citation `SourceLocator` uses 1-based page, table row/column, and code line numbers.
+Page-region coordinates are normalized to `[0,1]`. Text byte offsets address the exact
+pinned extraction segment revision and are zero-based half-open UTF-8 byte offsets. End
+values must be within source bounds.
+
+For RichPresentation text binding, `SemanticTextProjection` concatenates message `TEXT`
+blocks in order with exactly one LF between adjacent text blocks and no added leading or
+trailing LF. Slice offsets are zero-based, half-open UTF-8 byte offsets into those exact
+bytes. The renderer verifies both the whole-message and slice digests before using a
+slice.
+
+`HostSkillRef` is separate from `CapabilityRef`. A HostSkill is bundled, immutable,
+zero-authority context: it has no CapabilityGrant, Activation, SecretRef, resource scope,
+network, filesystem, Invocation, or Effect. Skills loaded from LiteSPM/MCP remain under
+the existing CapabilityRef and Trust lifecycle.
 
 ## Referenced values
 
@@ -1046,6 +1162,11 @@ ContextDocumentMetadata {
   purge_target_count?: u32
 }
 
+ContextDocumentCreateMetadata {
+  kind: ContextDocumentKind
+  owner_ref: ContextOwnerRef
+} # upload-session pin only; status/purge fields belong to committed Resource metadata
+
 ContextDocumentPurgeTarget {
   replica_ref: string # stable, non-secret replica identity; never a locator
   replica_kind: BLOB | DERIVED_INDEX
@@ -1186,7 +1307,7 @@ STALE_CLAIM_EPOCH MISFIRE_LIMIT_EXCEEDED OCCURRENCE_CONFLICT
 EFFECT_AMBIGUOUS EFFECT_RECONCILIATION_REQUIRED VERIFICATION_FAILED RATE_LIMITED
 INVOCATION_NOT_FOUND INVOCATION_AMBIGUOUS PROVIDER_INPUT_UNSUPPORTED SENSITIVE_INPUT_UNSUPPORTED
 USER_REQUEST_NOT_FOUND USER_REQUEST_EXPIRED
-APPROVAL_ALREADY_CONSUMED RESOURCE_STALE RESOURCE_LOCATION_UNAVAILABLE
+APPROVAL_ALREADY_CONSUMED RESOURCE_STALE RESOURCE_LOCATION_UNAVAILABLE RESOURCE_CONTENT_EXTERNAL
 UPLOAD_OFFSET_CONFLICT UPLOAD_EXPIRED BUDGET_EXCEEDED
 WORKER_QUALITY_FLOOR_UNMET WORKER_BUDGET_EXCEEDED
 DEADLINE_EXECUTION_PRECONDITION_FAILED COWORKER_PAUSED COWORKER_ARCHIVED COWORKER_HAS_ACTIVE_WORK GOAL_ARCHIVED SUGGESTION_EXPIRED

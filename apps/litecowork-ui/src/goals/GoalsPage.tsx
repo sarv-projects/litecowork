@@ -2,14 +2,93 @@ import { useEffect, useRef, useState } from "react";
 import type { ArtifactVersionRef, Goal, GoalApi, GoalArtifactOption, GoalRevisionInput, GoalStatus, GoalTaskOption, RoutineRevisionRef } from "./goal-api";
 import "./goals-page.css";
 
-type Props = { api: GoalApi; workspaceId: string; coworkerIds?: { id: string; name: string }[] };
+type Props = {
+  api: GoalApi;
+  workspaceId: string;
+  coworkerIds?: { id: string; name: string }[];
+  onOpenTask: (taskId: string) => void;
+};
 type Mode = "view" | "create" | "edit";
 type GoalDraft = {
   objective: string; successCriteria: string; constraints: string; horizon: string; coworkerId: string;
   relatedTaskIds: string[]; relatedRoutineRefs: RoutineRevisionRef[];
   relatedArtifactRefs: ArtifactVersionRef[];
 };
-type PendingRequest = { signature: string; id: string };
+type GoalMutation =
+  | { kind: "CREATE"; coworkerId: string | null; revision: GoalRevisionInput }
+  | { kind: "REVISE"; goalId: string; expectedVersion: number; revision: GoalRevisionInput }
+  | { kind: "STATUS"; goalId: string; expectedVersion: number; status: GoalStatus };
+type PendingGoalMutation = {
+  key: string;
+  workspaceId: string;
+  requestId: string;
+  signature: string;
+  mutation: GoalMutation;
+  createdAt: string;
+};
+const MAX_PENDING_GOAL_MUTATIONS = 32;
+const pendingGoalMutations = new Map<string, PendingGoalMutation>();
+const pendingGoalMutationListeners = new Set<() => void>();
+function publishPendingGoalMutationChange(): void {
+  for (const listener of pendingGoalMutationListeners) listener();
+}
+function subscribePendingGoalMutations(listener: () => void): () => void {
+  pendingGoalMutationListeners.add(listener);
+  return () => pendingGoalMutationListeners.delete(listener);
+}
+function pendingForWorkspace(workspaceId: string): PendingGoalMutation[] {
+  return [...pendingGoalMutations.values()].filter(item => item.workspaceId === workspaceId);
+}
+function cloneMutation(mutation: GoalMutation): GoalMutation {
+  return JSON.parse(JSON.stringify(mutation)) as GoalMutation;
+}
+function mutationKey(workspaceId: string, mutation: GoalMutation): string {
+  const target = mutation.kind === "CREATE" ? "new" : mutation.goalId;
+  return JSON.stringify([workspaceId, mutation.kind === "STATUS" ? "status" : "revision", target]);
+}
+function freshRequestId(): string {
+  const randomUUID = globalThis.crypto?.randomUUID;
+  if (!randomUUID) throw new Error("This desktop session cannot create secure request identities. Restart LiteCowork before changing a Goal.");
+  return randomUUID.call(globalThis.crypto);
+}
+function registerPendingMutation(workspaceId: string, input: GoalMutation): PendingGoalMutation {
+  const mutation = cloneMutation(input);
+  const key = mutationKey(workspaceId, mutation);
+  const signature = JSON.stringify([workspaceId, mutation]);
+  const existing = pendingGoalMutations.get(key);
+  if (existing) {
+    if (existing.signature !== signature) throw new Error("This Goal has an unresolved change. Retry the exact saved request or explicitly discard it before making a different change.");
+    return existing;
+  }
+  if (pendingGoalMutations.size >= MAX_PENDING_GOAL_MUTATIONS) {
+    throw new Error("Too many Goal changes have unresolved responses. Resolve or explicitly discard one before starting another.");
+  }
+  const pending = { key, workspaceId, requestId: freshRequestId(), signature, mutation, createdAt: new Date().toISOString() };
+  pendingGoalMutations.set(key, pending);
+  publishPendingGoalMutationChange();
+  return pending;
+}
+function forgetPendingMutation(pending: PendingGoalMutation): boolean {
+  if (pendingGoalMutations.get(pending.key)?.requestId !== pending.requestId) return false;
+  pendingGoalMutations.delete(pending.key);
+  publishPendingGoalMutationChange();
+  return true;
+}
+function validateMutationReceipt(goal: Goal, pending: PendingGoalMutation): void {
+  if (goal.workspace_id !== pending.workspaceId) throw new Error("The Goal response belongs to a different Workspace; the original request remains saved for retry.");
+  const mutation = pending.mutation;
+  if (mutation.kind === "CREATE") {
+    if (goal.coworker_id !== mutation.coworkerId || goal.status !== "ACTIVE" || JSON.stringify(goal.revision) !== JSON.stringify(mutation.revision)) {
+      throw new Error("The created Goal response does not match the saved request; the original request remains saved for retry.");
+    }
+  } else if (goal.goal_id !== mutation.goalId) {
+    throw new Error("The Goal response identity does not match the saved request; the original request remains saved for retry.");
+  } else if (mutation.kind === "REVISE" && JSON.stringify(goal.revision) !== JSON.stringify(mutation.revision)) {
+    throw new Error("The revised Goal response does not match the saved request; the original request remains saved for retry.");
+  } else if (mutation.kind === "STATUS" && goal.status !== mutation.status) {
+    throw new Error("The Goal status response does not match the saved request; the original request remains saved for retry.");
+  }
+}
 const STATUS_LABEL: Record<GoalStatus, string> = { ACTIVE: "Active", PAUSED: "Paused", COMPLETED: "Completed", ARCHIVED: "Archived" };
 
 function draftFromGoal(goal: Goal): GoalDraft {
@@ -47,7 +126,7 @@ function errorText(error: unknown): string {
 function statusClass(status: GoalStatus): string { return `goal-status goal-status-${status.toLowerCase()}`; }
 
 /** Goals describe durable intent and organize linked work; they never execute Tasks. */
-export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
+export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Props) {
   const [items, setItems] = useState<Goal[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [pageBusy, setPageBusy] = useState(false);
@@ -68,15 +147,25 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
   const [artifactCursor, setArtifactCursor] = useState<string | null>(null);
   const [catalogBusy, setCatalogBusy] = useState(false);
   const [catalogFailure, setCatalogFailure] = useState<string | null>(null);
+  const [activityAnnouncement, setActivityAnnouncement] = useState("");
+  const [pendingMutations, setPendingMutations] = useState<PendingGoalMutation[]>(() => pendingForWorkspace(workspaceId));
+  const [discardingKey, setDiscardingKey] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const generation = useRef(0);
-  const requestIds = useRef(new Map<string, PendingRequest>());
+  const visiblePendingMutations = pendingMutations.filter(item => item.workspaceId === workspaceId);
+
+  useEffect(() => {
+    const update = () => setPendingMutations(pendingForWorkspace(workspaceId));
+    update();
+    return subscribePendingGoalMutations(update);
+  }, [workspaceId]);
 
   useEffect(() => {
     const controller = new AbortController();
     const activeGeneration = ++generation.current;
     setItems([]); setNextCursor(null); setSelected(null); setSelectedId(null); setDraft(null); setMode("view");
     setLoading(Boolean(workspaceId)); setListFailure(null); setFailure(null); setMessage(null); setConfirmArchive(false);
+    setActivityAnnouncement("");
     if (!workspaceId) { setLoading(false); return () => controller.abort(); }
     void api.list(undefined, controller.signal).then(page => {
       if (controller.signal.aborted || activeGeneration !== generation.current) return;
@@ -84,6 +173,7 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
       setItems(page.items);
       setNextCursor(page.next_cursor);
       setSelectedId(page.items[0]?.goal_id ?? null);
+      setActivityAnnouncement(`${page.items.length} ${page.items.length === 1 ? "Goal" : "Goals"} loaded.`);
     }).catch(error => {
       if (!controller.signal.aborted && activeGeneration === generation.current) setListFailure(errorText(error));
     }).finally(() => {
@@ -117,28 +207,54 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
     const activeGeneration = generation.current;
     setSelected(null); setFailure(null);
     setDetailLoading(true);
+    setActivityAnnouncement("Loading Goal details.");
     void api.get(selectedId, controller.signal).then(found => {
       if (controller.signal.aborted || activeGeneration !== generation.current) return;
       if (found.goal_id !== selectedId) throw new Error("Goal detail identity mismatch.");
       if (found.workspace_id !== workspaceId) throw new Error("Goal detail belongs to a different Workspace.");
       setSelected(found);
       setItems(current => current.map(item => item.goal_id === found.goal_id ? found : item));
+      setActivityAnnouncement("Goal details loaded.");
     }).catch(error => {
-      if (!controller.signal.aborted && activeGeneration === generation.current) setFailure(errorText(error));
+      if (!controller.signal.aborted && activeGeneration === generation.current) {
+        setFailure(errorText(error));
+      }
     }).finally(() => { if (!controller.signal.aborted && activeGeneration === generation.current) setDetailLoading(false); });
     return () => controller.abort();
   }, [api, workspaceId, selectedId, mode, reload]);
 
-  function requestId(key: string, signature: string): string {
-    const previous = requestIds.current.get(key);
-    if (previous?.signature === signature) return previous.id;
-    const randomUUID = globalThis.crypto?.randomUUID;
-    if (!randomUUID) throw new Error("This desktop session cannot create secure request identities. Restart LiteCowork before changing a Goal.");
-    const next = { signature, id: randomUUID.call(globalThis.crypto) };
-    requestIds.current.set(key, next);
-    return next.id;
+  async function sendMutation(pending: PendingGoalMutation): Promise<Goal> {
+    if (pending.workspaceId !== workspaceId) throw new Error("This saved Goal change belongs to another Workspace. Switch back to retry it.");
+    const mutation = cloneMutation(pending.mutation);
+    const goal = mutation.kind === "CREATE"
+      ? await api.create(mutation.coworkerId, mutation.revision, pending.requestId)
+      : mutation.kind === "REVISE"
+        ? await api.revise(mutation.goalId, mutation.expectedVersion, mutation.revision, pending.requestId)
+        : await api.changeStatus(mutation.goalId, mutation.expectedVersion, mutation.status, pending.requestId);
+    validateMutationReceipt(goal, pending);
+    return goal;
   }
-  function clearRequest(key: string) { requestIds.current.delete(key); }
+  function applyMutationReceipt(goal: Goal, pending: PendingGoalMutation): void {
+    // A late response after the owner explicitly discarded this envelope must not
+    // masquerade as resolving a newer request for the same Goal.
+    if (!forgetPendingMutation(pending)) return;
+    setItems(current => pending.mutation.kind === "CREATE"
+      ? [goal, ...current.filter(item => item.goal_id !== goal.goal_id)]
+      : current.map(item => item.goal_id === goal.goal_id ? goal : item));
+    setSelectedId(goal.goal_id); setSelected(goal); setMode("view"); setDraft(null);
+    setMessage(pending.mutation.kind === "CREATE" ? "Goal saved. No Task was started." : pending.mutation.kind === "REVISE" ? "Goal details updated." : pending.mutation.status === "COMPLETED" ? "Goal marked complete by you." : `Goal is now ${STATUS_LABEL[pending.mutation.status].toLowerCase()}.`);
+    setConfirmArchive(false);
+  }
+  async function retryPendingMutation(pending: PendingGoalMutation) {
+    if (pending.workspaceId !== workspaceId || busy) return;
+    setBusy(true); setFailure(null); setMessage(null);
+    try {
+      const goal = await sendMutation(pending);
+      applyMutationReceipt(goal, pending);
+    } catch (error) {
+      setFailure(errorText(error));
+    } finally { setBusy(false); }
+  }
   async function loadRelatedCatalog(append = false) {
     if (catalogBusy) return;
     setCatalogBusy(true); setCatalogFailure(null);
@@ -169,19 +285,16 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
     if (!revision.objective) { setMessage("Add an objective before saving."); return; }
     if (revision.success_criteria.length === 0) { setMessage("Add at least one success criterion so this Goal has a clear outcome."); return; }
     if (draft.horizon.trim() && Number.isNaN(Date.parse(draft.horizon))) { setMessage("Enter a valid date and time for the target horizon."); return; }
-    const signature = JSON.stringify({ workspaceId, selectedId, mode, draft });
-    const key = `${mode}:${selectedId ?? "new"}`;
-    let id: string;
-    try { id = requestId(key, signature); } catch (error) { setFailure(errorText(error)); return; }
+    const mutation: GoalMutation | null = mode === "create"
+      ? { kind: "CREATE", coworkerId: draft.coworkerId || null, revision }
+      : selected ? { kind: "REVISE", goalId: selected.goal_id, expectedVersion: selected.version, revision } : null;
+    if (!mutation) return;
+    let pending: PendingGoalMutation;
+    try { pending = registerPendingMutation(workspaceId, mutation); } catch (error) { setFailure(errorText(error)); return; }
     setBusy(true); setFailure(null); setMessage(null);
     try {
-      const saved = mode === "create"
-        ? await api.create(draft.coworkerId || null, revision, id)
-        : selected ? await api.revise(selected.goal_id, selected.version, revision, id) : null;
-      if (!saved) return;
-      clearRequest(key);
-      setItems(current => mode === "create" ? [saved, ...current] : current.map(item => item.goal_id === saved.goal_id ? saved : item));
-      setSelectedId(saved.goal_id); setSelected(saved); setMode("view"); setDraft(null); setMessage(mode === "create" ? "Goal saved. No Task was started." : "Goal details updated.");
+      const saved = await sendMutation(pending);
+      applyMutationReceipt(saved, pending);
     } catch (error) {
       setFailure(errorText(error));
       if (/changed elsewhere|reload the latest/i.test(errorText(error))) setMessage("Reload to review the current Goal before retrying.");
@@ -190,17 +303,13 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
 
   async function changeStatus(status: GoalStatus) {
     if (!selected || busy || selected.status === status) return;
-    const key = `status:${selected.goal_id}:${status}`;
-    const signature = `${workspaceId}:${selected.version}:${status}`;
-    let id: string;
-    try { id = requestId(key, signature); } catch (error) { setFailure(errorText(error)); return; }
+    let pending: PendingGoalMutation;
+    try { pending = registerPendingMutation(workspaceId, { kind: "STATUS", goalId: selected.goal_id, expectedVersion: selected.version, status }); }
+    catch (error) { setFailure(errorText(error)); return; }
     setBusy(true); setFailure(null); setMessage(null);
     try {
-      const changed = await api.changeStatus(selected.goal_id, selected.version, status, id);
-      clearRequest(key);
-      setItems(current => current.map(item => item.goal_id === changed.goal_id ? changed : item));
-      setSelected(changed); setMessage(status === "COMPLETED" ? "Goal marked complete by you." : `Goal is now ${STATUS_LABEL[status].toLowerCase()}.`);
-      setConfirmArchive(false);
+      const changed = await sendMutation(pending);
+      applyMutationReceipt(changed, pending);
     } catch (error) { setFailure(errorText(error)); }
     finally { setBusy(false); }
   }
@@ -214,11 +323,14 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
     try {
       const page = await api.list(nextCursor);
       if (activeGeneration !== generation.current || page.items.some(item => item.workspace_id !== workspaceId)) return;
+      const existing = new Set(items.map(item => item.goal_id));
+      const additions = page.items.filter(item => !existing.has(item.goal_id));
       setItems(current => {
-        const existing = new Set(current.map(item => item.goal_id));
-        return [...current, ...page.items.filter(item => !existing.has(item.goal_id))];
+        const currentIds = new Set(current.map(item => item.goal_id));
+        return [...current, ...additions.filter(item => !currentIds.has(item.goal_id))];
       });
       setNextCursor(page.next_cursor);
+      setActivityAnnouncement(`${additions.length} more ${additions.length === 1 ? "Goal" : "Goals"} loaded. ${items.length + additions.length} shown.`);
     } catch (error) {
       if (activeGeneration === generation.current) setListFailure(errorText(error));
     } finally { if (activeGeneration === generation.current) setPageBusy(false); }
@@ -226,10 +338,25 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
 
   return (
     <div className="goals-page">
+      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{activityAnnouncement}</p>
       <header className="goals-heading">
         <div><p className="goals-kicker">WORKSPACE</p><h1>Goals</h1><p>Keep longer-term outcomes visible and connect them to work already underway.</p></div>
         <button className="goal-primary-action" type="button" disabled={!workspaceId || loading} onClick={beginCreate}>New Goal</button>
       </header>
+      {workspaceId && visiblePendingMutations.length > 0 && <section className="goal-pending-mutations" aria-label="Unconfirmed Goal changes">
+        <h2>Goal changes awaiting confirmation</h2>
+        <p>A previous response was not confirmed. Retry sends the exact saved change with its original request identity. These records last only while LiteCowork stays open.</p>
+        <ul>{visiblePendingMutations.map(pending => <li key={pending.key}>
+          <div><strong>{pending.mutation.kind === "CREATE" ? pending.mutation.revision.objective : pending.mutation.kind === "REVISE" ? `Edit Goal ${pending.mutation.goalId}` : `${STATUS_LABEL[pending.mutation.status]} Goal ${pending.mutation.goalId}`}</strong>
+            <small>{pending.mutation.kind === "CREATE" ? "Create Goal" : pending.mutation.kind === "REVISE" ? `Revision based on version ${pending.mutation.expectedVersion}` : `Status change based on version ${pending.mutation.expectedVersion}`} · saved {new Date(pending.createdAt).toLocaleString()}</small>
+          </div>
+          <div className="goal-pending-actions"><button className="goal-secondary-action" type="button" disabled={busy} onClick={() => void retryPendingMutation(pending)}>Retry exact change</button>
+            {discardingKey !== pending.key
+              ? <button className="goal-text-action" type="button" disabled={busy} onClick={() => setDiscardingKey(pending.key)}>Discard saved change…</button>
+              : <div className="goal-pending-discard"><p>Discarding forgets this retry identity only. The change may already have committed; a new create or revision could duplicate it, and a new status change could supersede it.</p><button className="goal-secondary-action" type="button" disabled={busy} onClick={() => setDiscardingKey(null)}>Keep retry</button><button className="goal-danger-action" type="button" disabled={busy} onClick={() => { forgetPendingMutation(pending); setDiscardingKey(null); }}>Discard retry identity</button></div>}
+          </div>
+        </li>)}</ul>
+      </section>}
       {!workspaceId && <section className="goal-state"><h2>Select a Workspace</h2><p>Goals belong to a Workspace and are only shown after one is selected.</p></section>}
       {workspaceId && loading && <section className="goal-state" role="status"><span className="goal-spinner" aria-hidden="true" /><p>Loading Goals…</p></section>}
       {workspaceId && !loading && listFailure && <section className="goal-state goal-state-error" role="alert"><h2>Goals couldn’t be loaded</h2><p>{listFailure}</p><button className="goal-secondary-action" type="button" onClick={retryLoad}>Reload Goals</button></section>}
@@ -238,17 +365,17 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
       )}
       {workspaceId && !loading && !listFailure && (items.length > 0 || mode === "create") && (
         <div className="goals-layout">
-          {items.length > 0 && <nav className="goals-roster" aria-label="Goals in this Workspace">
+          {items.length > 0 && <nav className="goals-roster" aria-label="Goals in this Workspace" aria-busy={pageBusy}>
             <div className="goals-roster-heading"><h2>Your Goals</h2><span>{items.length}</span></div>
             <ul>{items.map(item => <li key={item.goal_id}><button type="button" className={`goals-roster-item${selectedId === item.goal_id ? " is-selected" : ""}`} aria-current={selectedId === item.goal_id ? "page" : undefined} onClick={() => { setSelectedId(item.goal_id); setMode("view"); setDraft(null); setMessage(null); setFailure(null); setConfirmArchive(false); }}>
               <strong>{item.revision.objective}</strong><span className={statusClass(item.status)}>{STATUS_LABEL[item.status]}</span>
             </button></li>)}</ul>
             {nextCursor && <button className="goal-load-more" type="button" disabled={pageBusy} onClick={() => void loadMore()}>{pageBusy ? "Loading…" : "Load more Goals"}</button>}
           </nav>}
-          <section className="goal-detail" aria-live="polite">
+          <section className="goal-detail" aria-label={mode === "create" ? "Create Goal" : mode === "edit" ? "Edit Goal" : "Goal details"} aria-busy={detailLoading || busy}>
             {mode === "create" || mode === "edit" ? (
-              <GoalEditor mode={mode} draft={draft!} workspaceId={workspaceId} coworkerIds={coworkerIds} taskOptions={taskOptions} artifactOptions={artifactOptions} catalogBusy={catalogBusy} catalogFailure={catalogFailure} hasMoreCatalog={Boolean(taskCursor || artifactCursor)} onLoadMoreCatalog={() => void loadRelatedCatalog(true)} busy={busy} message={message} failure={failure} onChange={setDraft} onSave={() => void save()} onCancel={cancelEdit} />
-            ) : detailLoading ? <div className="goal-detail-loading" role="status"><span className="goal-spinner" aria-hidden="true" /><p>Loading Goal…</p></div> : selected ? <>
+              <GoalEditor mode={mode} draft={draft!} coworkerIds={coworkerIds} taskOptions={taskOptions} artifactOptions={artifactOptions} catalogBusy={catalogBusy} catalogFailure={catalogFailure} hasMoreCatalog={Boolean(taskCursor || artifactCursor)} onLoadMoreCatalog={() => void loadRelatedCatalog(true)} busy={busy} message={message} failure={failure} onChange={setDraft} onSave={() => void save()} onCancel={cancelEdit} />
+            ) : detailLoading ? <div className="goal-detail-loading"><span className="goal-spinner" aria-hidden="true" /><p>Loading Goal…</p></div> : selected ? <>
               <div className="goal-detail-heading"><div><span className={statusClass(selected.status)}>{STATUS_LABEL[selected.status]}</span><h2>{selected.revision.objective}</h2><p>Updated {new Date(selected.updated_at).toLocaleString()}</p></div>
                 {selected.status !== "ARCHIVED" && <button className="goal-secondary-action" type="button" disabled={busy} onClick={beginEdit}>Edit Goal</button>}
               </div>
@@ -256,7 +383,13 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
               <section className="goal-detail-section"><h3>Success criteria</h3><ul className="goal-criteria">{selected.revision.success_criteria.map((criterion, index) => <li key={`${index}-${criterion}`}><span aria-hidden="true">○</span>{criterion}</li>)}</ul></section>
               {selected.revision.constraints.length > 0 && <section className="goal-detail-section"><h3>Constraints</h3><ul>{selected.revision.constraints.map((constraint, index) => <li key={`${index}-${constraint}`}>{constraint}</li>)}</ul></section>}
               {selected.revision.horizon && <section className="goal-detail-section"><h3>Target horizon</h3><p>{new Date(selected.revision.horizon).toLocaleString()}</p></section>}
-              {selected.revision.related_task_ids.length > 0 && <section className="goal-detail-section"><h3>Related Tasks</h3><ul className="goal-linked-tasks">{selected.revision.related_task_ids.map(id => <li key={id}><span>{id}</span><span>Linked work</span></li>)}</ul></section>}
+              {selected.revision.related_task_ids.length > 0 && <section className="goal-detail-section"><h3>Related Tasks</h3><ul className="goal-linked-tasks">{selected.revision.related_task_ids.map(id => {
+                const task = taskOptions.find(option => option.task_id === id);
+                return <li key={id}><button className="goal-linked-task-open" type="button" onClick={() => onOpenTask(id)} aria-label={`Open linked Task ${task?.objective ?? id}`}>
+                  <span className="goal-linked-task-title">{task?.objective ?? `Task ${id}`}</span>
+                  <span className="goal-linked-task-meta">{task ? task.status.toLowerCase().replaceAll("_", " ") : "Open linked work"} <span aria-hidden="true">→</span></span>
+                </button></li>;
+              })}</ul><p className="goal-muted">Opening a linked Task only shows its current Work details. The Goal does not start or revise it.</p></section>}
               {selected.revision.related_artifact_refs.length > 0 && <section className="goal-detail-section"><h3>Related Artifacts</h3><ul className="goal-linked-tasks">{selected.revision.related_artifact_refs.map(ref => <li key={`${ref.artifact_id}:${ref.version}`}><span>{artifactOptions.find(item => item.artifact_id === ref.artifact_id)?.display_name ?? ref.artifact_id}</span><span>Version {ref.version}</span></li>)}</ul></section>}
               {selected.revision.related_routine_refs.length > 0 && <section className="goal-detail-section"><h3>Related routines</h3><ul className="goal-linked-tasks">{selected.revision.related_routine_refs.map(ref => <li key={`${ref.routine_id}:${ref.revision}`}><span>{ref.routine_id}</span><span>Revision {ref.revision}</span></li>)}</ul></section>}
               <section className="goal-detail-section goal-progress-section"><h3>Progress from linked work</h3>{selected.progress
@@ -284,8 +417,8 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [] }: Props) {
   );
 }
 
-function GoalEditor({ mode, draft, workspaceId, coworkerIds, taskOptions, artifactOptions, catalogBusy, catalogFailure, hasMoreCatalog, onLoadMoreCatalog, busy, message, failure, onChange, onSave, onCancel }: {
-  mode: "create" | "edit"; draft: GoalDraft; workspaceId: string; coworkerIds: Props["coworkerIds"];
+function GoalEditor({ mode, draft, coworkerIds, taskOptions, artifactOptions, catalogBusy, catalogFailure, hasMoreCatalog, onLoadMoreCatalog, busy, message, failure, onChange, onSave, onCancel }: {
+  mode: "create" | "edit"; draft: GoalDraft; coworkerIds: Props["coworkerIds"];
   taskOptions: GoalTaskOption[]; artifactOptions: GoalArtifactOption[]; catalogBusy: boolean; catalogFailure: string | null;
   hasMoreCatalog: boolean; onLoadMoreCatalog: () => void; busy: boolean;
   message: string | null; failure: string | null; onChange: (value: GoalDraft) => void; onSave: () => void; onCancel: () => void;

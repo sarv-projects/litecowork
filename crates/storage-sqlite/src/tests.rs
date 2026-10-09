@@ -1,20 +1,143 @@
+#[path = "rich_presentation_tests.rs"]
+mod rich_presentation_tests;
 use super::*;
 #[path = "artifact_tests.rs"]
 mod artifact_tests;
 #[path = "coworker_tests.rs"]
 mod coworker_tests;
+#[path = "environment_tests.rs"]
+mod environment_tests;
 #[path = "goal_tests.rs"]
 mod goal_tests;
 #[path = "routine_tests.rs"]
 mod routine_tests;
-use domain_workspace::{ChangeReplicationPolicy, CreateWorkspace, EventContext, WorkspaceService};
+use domain_workspace::{
+    ChangeReplicationPolicy, CreateWorkspace, EventContext, ResourceService,
+    SetContextDocumentStatus, WorkspaceService,
+};
 use rusqlite::Connection;
 use std::sync::Barrier;
 use storage_core::{
-    AggregateStateRef, BlobPurpose, BlobRef, CommittedWorkspace, EventDraft, ReplicationPolicy,
-    StoreError, Workspace,
+    ActivateTaskPlanningSession, AgentSessionRecord, AggregateStateRef, BlobPurpose, BlobRef,
+    CommittedWorkspace, EventDraft, ReplicationPolicy, StoreError, TaskPlanningSessionStart,
+    Workspace,
 };
 use zeroize::Zeroizing;
+
+#[test]
+fn automation_occurrence_aggregate_version_is_not_claim_fencing() {
+    let connection = Connection::open_in_memory().expect("in-memory SQLite");
+    connection.execute_batch(
+        "CREATE TABLE automation_occurrences(workspace_id TEXT NOT NULL, occurrence_id TEXT PRIMARY KEY);
+         CREATE TABLE domain_events(workspace_id TEXT, entity_type TEXT, entity_id TEXT, entity_revision INTEGER);
+         INSERT INTO automation_occurrences VALUES('workspace', 'existing');
+         INSERT INTO domain_events VALUES('workspace', 'AutomationOccurrence', 'existing', 4);",
+    ).expect("legacy occurrence fixture");
+    connection
+        .execute_batch(include_str!("../../../docs/schemas/sqlite-v11.sql"))
+        .expect("v11 aggregate revision migration");
+    let migrated: i64 = connection
+        .query_row(
+            "SELECT version FROM automation_occurrences WHERE occurrence_id = 'existing'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("migrated occurrence version");
+    assert_eq!(migrated, 4);
+    connection
+        .execute(
+            "UPDATE automation_occurrences SET version = 5 WHERE occurrence_id = 'existing'",
+            [],
+        )
+        .expect("one aggregate transition increments exactly once");
+    assert!(
+        connection
+            .execute(
+                "UPDATE automation_occurrences SET version = 5 WHERE occurrence_id = 'existing'",
+                []
+            )
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute(
+                "UPDATE automation_occurrences SET version = 7 WHERE occurrence_id = 'existing'",
+                []
+            )
+            .is_err()
+    );
+    connection.execute("INSERT INTO automation_occurrences(workspace_id, occurrence_id) VALUES('workspace', 'new')", [])
+        .expect("new aggregate begins with default version one");
+    assert!(
+        connection
+            .execute(
+                "UPDATE automation_occurrences SET version = 3 WHERE occurrence_id = 'new'",
+                []
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn task_create_receipt_resolves_exact_replay_before_admission_state() {
+    let connection = Connection::open_in_memory().expect("in-memory SQLite");
+    connection
+        .execute_batch(
+            "CREATE TABLE request_dedup(
+           principal_id TEXT NOT NULL, request_id TEXT NOT NULL, request_digest TEXT NOT NULL,
+           response_json TEXT, response_digest TEXT, PRIMARY KEY(principal_id, request_id)
+         );",
+        )
+        .expect("idempotency receipt fixture");
+    let payload = json!({
+        "workspace_id": "workspace",
+        "automation_id": "automation",
+        "automation_revision": 3,
+        "expected_automation_version": 7,
+        "trigger_id": "manual",
+        "inputs": {"name": "value"},
+    });
+    let response = json!({"committed": "READY task"});
+    let request_digest = digest(&canonical_json(&payload).expect("canonical request"));
+    let response_json = String::from_utf8(canonical_json(&response).expect("canonical response"))
+        .expect("response JSON is UTF-8");
+    connection.execute(
+        "INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params!["owner", "request-1", request_digest, response_json, digest(response_json.as_bytes())],
+    ).expect("commit receipt");
+
+    assert_eq!(
+        verify_request_receipt::<Value>(
+            &connection,
+            "owner",
+            "request-1",
+            &digest(&canonical_json(&payload).expect("canonical request")),
+        )
+        .expect("exact receipt resolves"),
+        Some(response),
+    );
+    let changed = json!({"workspace_id": "workspace", "inputs": {"name": "changed"}});
+    assert!(matches!(
+        verify_request_receipt::<Value>(
+            &connection,
+            "owner",
+            "request-1",
+            &digest(&canonical_json(&changed).expect("canonical changed request")),
+        ),
+        Err(StoreError::Conflict { .. }),
+    ));
+    assert_eq!(
+        verify_request_receipt::<Value>(
+            &connection,
+            "owner",
+            "missing",
+            &digest(&canonical_json(&payload).expect("canonical request")),
+        )
+        .expect("missing receipt is not a replay"),
+        None,
+    );
+}
 
 #[derive(Clone)]
 struct TestKeys {
@@ -62,6 +185,127 @@ fn test_store(directory: &tempfile::TempDir, busy_timeout: Duration) -> SqliteWo
     .expect("SQLite store opens")
 }
 
+#[test]
+fn sqlite_planning_admission_fails_closed_before_persisting_a_starting_session() {
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    let timestamp = "2026-10-09T10:00:00Z".to_owned();
+    let session = AgentSessionRecord {
+        agent_session_id: "planner-session".to_owned(),
+        workspace_id: "workspace".to_owned(),
+        scope_kind: "TASK_PLANNING".to_owned(),
+        conversation_id: None,
+        conversation_turn_id: None,
+        task_id: Some("task".to_owned()),
+        task_spec_revision: Some(1),
+        attempt_id: None,
+        agent_binding_id: "binding".to_owned(),
+        endpoint_id: "endpoint".to_owned(),
+        runtime_id: "runtime".to_owned(),
+        runtime_incarnation_id: "incarnation".to_owned(),
+        configuration_digest: None,
+        harness_descriptor_digest: None,
+        status: "STARTING".to_owned(),
+        started_at: timestamp.clone(),
+        last_event_at: Some(timestamp.clone()),
+        closed_at: None,
+        version: 1,
+    };
+    let start = TaskPlanningSessionStart {
+        principal_id: "owner".to_owned(),
+        request_id: "request".to_owned(),
+        request_payload: json!({"task":"task"}),
+        expected_task_version: 1,
+        session,
+        event: EventDraft {
+            event_id: "event-start".to_owned(),
+            workspace_id: "workspace".to_owned(),
+            entity_type: "AgentSession".to_owned(),
+            entity_id: "planner-session".to_owned(),
+            origin_runtime_id: "runtime".to_owned(),
+            entity_revision: 1,
+            hlc_timestamp: timestamp.clone(),
+            correlation_id: "correlation".to_owned(),
+            causation_id: None,
+            schema_version: 1,
+            event_type: "agent.session.starting.v1".to_owned(),
+            payload: json!({}),
+            recorded_at: timestamp.clone(),
+        },
+    };
+
+    assert_eq!(
+        store.start_task_planning_session(start).unwrap_err(),
+        StoreError::Invalid("TASK_PLANNING_ISOLATION_UNAVAILABLE".to_owned()),
+    );
+
+    let connection = Connection::open(state_database(&directory)).expect("inspect store");
+    let sessions: i64 = connection
+        .query_row("SELECT COUNT(*) FROM agent_sessions", [], |row| row.get(0))
+        .expect("read session count");
+    let events: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE entity_type = 'AgentSession'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read event count");
+    assert_eq!(sessions, 0);
+    assert_eq!(events, 0);
+}
+
+#[test]
+fn sqlite_planning_activation_fails_closed_before_session_lookup_or_task_transition() {
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    let timestamp = "2026-10-09T10:00:00Z".to_owned();
+
+    assert_eq!(
+        store
+            .activate_task_planning_session(ActivateTaskPlanningSession {
+                workspace_id: "workspace".to_owned(),
+                agent_session_id: "planner-session".to_owned(),
+                expected_session_version: 1,
+                expected_task_version: 1,
+                occurred_at: timestamp,
+                host_instance_id: "host".to_owned(),
+                native_session_ref: None,
+                session_event: EventDraft {
+                    event_id: "event-started".to_owned(),
+                    workspace_id: "workspace".to_owned(),
+                    entity_type: "AgentSession".to_owned(),
+                    entity_id: "planner-session".to_owned(),
+                    origin_runtime_id: "runtime".to_owned(),
+                    entity_revision: 2,
+                    hlc_timestamp: "2026-10-09T10:00:00Z".to_owned(),
+                    correlation_id: "correlation".to_owned(),
+                    causation_id: Some("event-starting".to_owned()),
+                    schema_version: 1,
+                    event_type: "agent.session.started.v1".to_owned(),
+                    payload: json!({}),
+                    recorded_at: "2026-10-09T10:00:00Z".to_owned(),
+                },
+                task_status_event: None,
+            })
+            .unwrap_err(),
+        StoreError::Invalid("TASK_PLANNING_ISOLATION_UNAVAILABLE".to_owned()),
+    );
+
+    let connection = Connection::open(state_database(&directory)).expect("inspect store");
+    let sessions: i64 = connection
+        .query_row("SELECT COUNT(*) FROM agent_sessions", [], |row| row.get(0))
+        .expect("read session count");
+    let events: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE entity_type IN ('AgentSession', 'Task')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read event count");
+    assert_eq!(sessions, 0);
+    assert_eq!(events, 0);
+}
+
 fn state_database(directory: &tempfile::TempDir) -> std::path::PathBuf {
     directory.path().join("state").join("state.sqlite3")
 }
@@ -91,6 +335,34 @@ fn create_workspace(store: &SqliteWorkspaceStore, workspace_id: &str) -> Committ
             event: context("event-create", 0),
         })
         .expect("Workspace creation commits")
+}
+
+fn seed_workspace_notes_resource(directory: &tempfile::TempDir) {
+    const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let mut connection = Connection::open(state_database(directory)).expect("fixture connection");
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("enable constraints");
+    let transaction = connection.transaction().expect("fixture transaction");
+    transaction.execute(
+        "INSERT INTO resources(resource_id,workspace_id,kind,provider_identity_json,display_name,current_revision_id,sensitivity,context_document_json,provenance_json,created_at,updated_at,version)
+         VALUES ('resource-context','workspace-context','FILE','{}','notes.txt','revision-context','PERSONAL',
+                 '{\"kind\":\"WORKSPACE_NOTES\",\"owner_ref\":{\"kind\":\"WORKSPACE\",\"workspace_id\":\"workspace-context\"},\"status\":\"ACTIVE\"}',
+                 '{\"source_inputs\":[],\"transformations\":[],\"tool_reports\":[]}',
+                 '2026-10-06T10:00:00Z','2026-10-06T10:00:00Z',1)",
+        [],
+    ).expect("ContextDocument Resource fixture");
+    transaction.execute(
+        "INSERT INTO resource_revisions(resource_revision_id,resource_id,content_digest,size_bytes,media_type,observed_at,created_by_json)
+         VALUES ('revision-context','resource-context',?1,0,'text/plain','2026-10-06T10:00:00Z','{}')",
+        [DIGEST],
+    ).expect("Resource revision fixture");
+    transaction.execute(
+        "INSERT INTO resource_locations(location_id,resource_id,provider_ref,locator_ref_id,availability,writable,observed_revision_id,observed_digest,observed_at,last_checked_at)
+         VALUES ('location-context','resource-context','litecowork.encrypted_blob',?1,'AVAILABLE',0,'revision-context',?1,'2026-10-06T10:00:00Z','2026-10-06T10:00:00Z')",
+        [DIGEST],
+    ).expect("Resource location fixture");
+    transaction.commit().expect("fixture commits");
 }
 
 #[test]
@@ -124,6 +396,437 @@ fn blob_read_failure_reports_context_document_transition_only_when_proven() {
             Err(StoreError::Database("status read failed".to_owned())),
         ),
         StoreError::Blob("Resource blob unavailable".to_owned()),
+    );
+}
+
+#[test]
+fn pinned_resource_content_reads_exact_historical_revision_without_head_fallback() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_secs(5));
+    create_workspace(&store, "workspace-history");
+    let old_bytes = b"first revision\n";
+    let head_bytes = b"second revision\n";
+    let old_blob = store
+        .inner
+        .blobs
+        .put(
+            "workspace-history",
+            BlobPurpose::Resource,
+            old_bytes,
+            "text/plain",
+        )
+        .expect("store old bytes");
+    let head_blob = store
+        .inner
+        .blobs
+        .put(
+            "workspace-history",
+            BlobPurpose::Resource,
+            head_bytes,
+            "text/plain",
+        )
+        .expect("store head bytes");
+    let mut connection = Connection::open(state_database(&directory)).expect("fixture connection");
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("enable constraints");
+    let transaction = connection.transaction().expect("fixture transaction");
+    transaction.execute(
+        "INSERT INTO resources(resource_id,workspace_id,kind,provider_identity_json,display_name,current_revision_id,sensitivity,context_document_json,provenance_json,created_at,updated_at,version)
+         VALUES ('resource-history','workspace-history','FILE','{}','notes.txt','revision-two','PERSONAL',NULL,'{}','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z',1)",
+        [],
+    ).expect("Resource fixture");
+    transaction.execute(
+        "INSERT INTO resource_revisions(resource_revision_id,resource_id,content_digest,size_bytes,media_type,observed_at,created_by_json)
+         VALUES ('revision-one','resource-history',?1,?2,'text/plain','2026-10-08T00:00:00Z','{}')",
+        params![old_blob.digest, i64::try_from(old_bytes.len()).expect("old size")],
+    ).expect("old revision fixture");
+    transaction.execute(
+        "INSERT INTO resource_revisions(resource_revision_id,resource_id,content_digest,size_bytes,media_type,observed_at,created_by_json)
+         VALUES ('revision-two','resource-history',?1,?2,'text/plain','2026-10-08T00:01:00Z','{}')",
+        params![head_blob.digest, i64::try_from(head_bytes.len()).expect("head size")],
+    ).expect("head revision fixture");
+    transaction.execute(
+        "INSERT INTO resource_revision_parents(resource_id,child_revision_id,parent_revision_id) VALUES ('resource-history','revision-two','revision-one')",
+        [],
+    ).expect("revision ancestry fixture");
+    transaction.execute(
+        "INSERT INTO resource_locations(location_id,resource_id,provider_ref,locator_ref_id,availability,writable,observed_revision_id,observed_digest,observed_at,last_checked_at)
+         VALUES ('location-history','resource-history','litecowork.encrypted_blob',?1,'AVAILABLE',0,'revision-two',?1,'2026-10-08T00:01:00Z','2026-10-08T00:01:00Z')",
+        [&head_blob.digest],
+    ).expect("managed local location fixture");
+    transaction.commit().expect("fixture commits");
+
+    let old = store
+        .read_resource_content_bounded(
+            "workspace-history",
+            "resource-history",
+            Some("revision-one"),
+            1024,
+        )
+        .expect("pinned historical read succeeds")
+        .expect("old Resource exists");
+    assert_eq!(old.summary.resource_revision_id, "revision-one");
+    assert_eq!(old.content, old_bytes);
+    let head = store
+        .read_resource_content_bounded(
+            "workspace-history",
+            "resource-history",
+            Some("revision-two"),
+            1024,
+        )
+        .expect("pinned head read succeeds")
+        .expect("Resource exists");
+    assert_eq!(head.summary.resource_revision_id, "revision-two");
+    assert_eq!(head.content, head_bytes);
+    assert!(
+        store
+            .read_resource_content_bounded(
+                "workspace-history",
+                "resource-history",
+                Some("revision-foreign"),
+                1024
+            )
+            .expect("unknown pin is a normal miss")
+            .is_none()
+    );
+    assert!(
+        store
+            .read_resource_content_bounded(
+                "workspace-other",
+                "resource-history",
+                Some("revision-one"),
+                1024
+            )
+            .expect("cross-Workspace selection is a normal miss")
+            .is_none()
+    );
+    assert_eq!(
+        store
+            .read_resource_content_bounded(
+                "workspace-history",
+                "resource-history",
+                Some("revision-one"),
+                4
+            )
+            .unwrap_err(),
+        StoreError::Invalid("RESOURCE_READ_LIMIT_EXCEEDED".to_owned()),
+        "the metadata bound rejects before any blob fetch",
+    );
+
+    let task = storage_core::TaskView {
+        task: storage_core::TaskRecord {
+            task_id: "task-history".to_owned(),
+            workspace_id: "workspace-history".to_owned(),
+            conversation_id: None,
+            current_spec_revision: 3,
+            current_plan_revision: None,
+            status: "READY".to_owned(),
+            resume_status: None,
+            routine_id: None,
+            routine_revision: None,
+            automation_id: None,
+            automation_occurrence_id: None,
+            origin_coworker_id: None,
+            origin_coworker_revision: None,
+            lead_agent_binding_id: "agent-1".to_owned(),
+            blocking_conditions: Vec::new(),
+            priority: "NORMAL".to_owned(),
+            created_by: json!({"kind": "USER"}),
+            created_at: "2026-10-08T00:00:00Z".to_owned(),
+            updated_at: "2026-10-08T00:00:00Z".to_owned(),
+            completed_at: None,
+            version: 9,
+        },
+        current_spec_revision: storage_core::TaskSpecRevisionRecord {
+            task_id: "task-history".to_owned(),
+            workspace_id: "workspace-history".to_owned(),
+            revision: 3,
+            parent_revisions: vec![2],
+            objective: "Use the immutable selected source".to_owned(),
+            task_category: None,
+            constraints: Vec::new(),
+            non_goals: Vec::new(),
+            input_refs: vec![json!({
+                "workspace_id": "workspace-history",
+                "resource_id": "resource-history",
+                "revision_id": "revision-one"
+            })],
+            workspace_instruction_revision: None,
+            required_outputs: Vec::new(),
+            acceptance_criteria: Vec::new(),
+            approvals_required: Vec::new(),
+            budget: None,
+            delegation_budget_policy: None,
+            lead_failover_policy: json!({"mode": "ASK"}),
+            deadline: None,
+            source_message_refs: Vec::new(),
+            placement_preference: json!({"kind": "LOCAL"}),
+            preferred_lead_agent_binding_id: Some("agent-1".to_owned()),
+            authored_by: json!({"kind": "USER"}),
+            created_at: "2026-10-08T00:01:00Z".to_owned(),
+        },
+    };
+    let staging_parent = directory.path().join("staging");
+    std::fs::create_dir(&staging_parent).expect("staging parent");
+    let prepared = local_environment_staging::stage_task_spec_inputs(
+        &store,
+        &task,
+        "workspace-history",
+        "task-history",
+        9,
+        3,
+        &staging_parent,
+        local_environment_staging::StagingLimits {
+            max_files: 4,
+            max_file_bytes: 1024,
+            max_total_input_bytes: 2048,
+            max_path_bytes: 240,
+        },
+    )
+    .expect("Task's exact historical revision stages from ResourceStore");
+    assert_eq!(
+        prepared.status,
+        local_environment_staging::PreparationStatus::PreparedOnly
+    );
+    assert_eq!(prepared.input_file_count, 1);
+    assert_eq!(prepared.input_bytes, old_bytes.len() as u64);
+    assert_eq!(
+        std::fs::read(prepared.input_root.join("notes.txt")).expect("staged bytes"),
+        old_bytes,
+        "staging must not substitute the newer Resource head",
+    );
+    prepared.cleanup().expect("prepared directory cleanup");
+}
+
+#[test]
+fn task_input_admission_rejects_all_non_active_context_document_states() {
+    assert!(ensure_context_document_content_readable(None).is_ok());
+    assert!(
+        ensure_context_document_content_readable(Some(
+            r#"{"kind":"WORKSPACE_NOTES","status":"ACTIVE"}"#
+        ))
+        .is_ok()
+    );
+    assert_eq!(
+        ensure_context_document_content_readable(Some(
+            r#"{"kind":"WORKSPACE_NOTES","status":"DELETION_PENDING"}"#
+        ))
+        .unwrap_err(),
+        StoreError::Invalid("CONTEXT_DOCUMENT_DELETION_PENDING".to_owned()),
+    );
+    assert_eq!(
+        ensure_context_document_content_readable(Some(
+            r#"{"kind":"WORKSPACE_NOTES","status":"DELETED"}"#
+        ))
+        .unwrap_err(),
+        StoreError::Invalid("CONTEXT_DOCUMENT_DELETED".to_owned()),
+    );
+}
+
+#[test]
+fn context_document_owner_status_guard_allows_only_active_revoked_transitions() {
+    assert!(context_document_owner_transition_allowed(
+        "ACTIVE",
+        ContextDocumentOwnerStatus::Revoked
+    ));
+    assert!(context_document_owner_transition_allowed(
+        "REVOKED",
+        ContextDocumentOwnerStatus::Active
+    ));
+    assert!(!context_document_owner_transition_allowed(
+        "ACTIVE",
+        ContextDocumentOwnerStatus::Active
+    ));
+    assert!(!context_document_owner_transition_allowed(
+        "REVOKED",
+        ContextDocumentOwnerStatus::Revoked
+    ));
+    assert!(!context_document_owner_transition_allowed(
+        "DELETION_PENDING",
+        ContextDocumentOwnerStatus::Active
+    ));
+    assert!(!context_document_owner_transition_allowed(
+        "DELETED",
+        ContextDocumentOwnerStatus::Revoked
+    ));
+}
+
+#[test]
+fn context_document_status_revocation_restore_stale_and_replay_are_atomic() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-context");
+    seed_workspace_notes_resource(&directory);
+    let task_inputs = json!([{
+        "workspace_id": "workspace-context",
+        "resource_id": "resource-context",
+        "revision_id": "revision-context"
+    }]);
+    let admission_connection =
+        Connection::open(state_database(&directory)).expect("Task admission connection");
+    assert!(
+        validate_task_resource_inputs(
+            &admission_connection,
+            "workspace-context",
+            task_inputs.as_array().unwrap()
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        validate_task_resource_inputs(
+            &admission_connection,
+            "workspace-context",
+            &[json!({
+                "workspace_id": "workspace-context",
+                "resource_id": "resource-context",
+                "revision_id": "revision-context",
+                "path": "/etc/passwd"
+            })],
+        )
+        .unwrap_err(),
+        StoreError::Invalid(
+            "Task inputs must be unique, pinned Resource revisions in this Workspace".to_owned()
+        ),
+        "Task pins reject fields outside the closed PinnedResourceRef schema",
+    );
+
+    let revoke = SetContextDocumentStatus {
+        workspace_id: "workspace-context".to_owned(),
+        resource_id: "resource-context".to_owned(),
+        principal_id: "owner-local".to_owned(),
+        request_id: "request-revoke-context".to_owned(),
+        expected_version: 1,
+        target_status: ContextDocumentOwnerStatus::Revoked,
+        event: context("event-revoke-context", 1),
+    };
+    let revoked = ResourceService::new(store.clone())
+        .set_context_document_status(revoke.clone())
+        .expect("owner revocation commits");
+    assert_eq!(revoked.resource.resource.version, 2);
+    assert_eq!(
+        revoked
+            .resource
+            .context_document
+            .as_ref()
+            .and_then(|value| value.get("status"))
+            .and_then(Value::as_str),
+        Some("REVOKED")
+    );
+    assert_eq!(
+        revoked.event.event_type,
+        "resource.context_document.status.changed.v1"
+    );
+    assert_eq!(
+        validate_task_resource_inputs(
+            &admission_connection,
+            "workspace-context",
+            task_inputs.as_array().unwrap()
+        )
+        .unwrap_err(),
+        StoreError::Invalid("CONTEXT_DOCUMENT_REVOKED".to_owned()),
+        "revoked ContextDocuments cannot be newly pinned as Task inputs",
+    );
+    assert_eq!(
+        store
+            .read_resource_content_bounded(
+                "workspace-context",
+                "resource-context",
+                Some("revision-context"),
+                10
+            )
+            .unwrap_err(),
+        StoreError::Invalid("CONTEXT_DOCUMENT_REVOKED".to_owned())
+    );
+
+    let replay = ResourceService::new(store.clone())
+        .set_context_document_status(revoke)
+        .expect("same owner request replays after commit");
+    assert_eq!(replay, revoked);
+    let status_event_count: i64 = Connection::open(state_database(&directory)).expect("inspect database")
+        .query_row("SELECT COUNT(*) FROM domain_events WHERE entity_id='resource-context' AND type='resource.context_document.status.changed.v1'", [], |row| row.get(0))
+        .expect("count status events");
+    assert_eq!(
+        status_event_count, 1,
+        "idempotent replay must not append another event"
+    );
+
+    let stale_restore = SetContextDocumentStatus {
+        workspace_id: "workspace-context".to_owned(),
+        resource_id: "resource-context".to_owned(),
+        principal_id: "owner-local".to_owned(),
+        request_id: "request-stale-restore".to_owned(),
+        expected_version: 1,
+        target_status: ContextDocumentOwnerStatus::Active,
+        event: context("event-stale-restore", 2),
+    };
+    assert!(matches!(
+        ResourceService::new(store.clone()).set_context_document_status(stale_restore),
+        Err(StoreError::Conflict { .. })
+    ));
+
+    let restore = SetContextDocumentStatus {
+        workspace_id: "workspace-context".to_owned(),
+        resource_id: "resource-context".to_owned(),
+        principal_id: "owner-local".to_owned(),
+        request_id: "request-restore-context".to_owned(),
+        expected_version: 2,
+        target_status: ContextDocumentOwnerStatus::Active,
+        event: context("event-restore-context", 3),
+    };
+    let restored = ResourceService::new(store.clone())
+        .set_context_document_status(restore)
+        .expect("owner restores retained ContextDocument");
+    assert_eq!(restored.resource.resource.version, 3);
+    assert_eq!(
+        restored
+            .resource
+            .context_document
+            .as_ref()
+            .and_then(|value| value.get("status"))
+            .and_then(Value::as_str),
+        Some("ACTIVE")
+    );
+    assert!(
+        validate_task_resource_inputs(
+            &admission_connection,
+            "workspace-context",
+            task_inputs.as_array().unwrap()
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        validate_task_resource_inputs(
+            &admission_connection,
+            "workspace-context",
+            &[task_inputs[0].clone(), task_inputs[0].clone()]
+        )
+        .unwrap_err(),
+        StoreError::Invalid(
+            "Task inputs must be unique, pinned Resource revisions in this Workspace".to_owned()
+        ),
+    );
+    assert_eq!(
+        validate_task_resource_inputs(
+            &admission_connection,
+            "another-workspace",
+            task_inputs.as_array().unwrap()
+        )
+        .unwrap_err(),
+        StoreError::Invalid(
+            "Task inputs must be unique, pinned Resource revisions in this Workspace".to_owned()
+        ),
+    );
+    let events = store
+        .read_workspace_events("workspace-context")
+        .expect("read workspace events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.entity_id == "resource-context"
+                && event.event_type == "resource.context_document.status.changed.v1")
+            .count(),
+        2
     );
 }
 
@@ -532,13 +1235,18 @@ fn resource_index_migration_failure_is_atomic_and_retryable() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let mut connection = Connection::open(directory.path().join("migration-v7.sqlite3"))
         .expect("open test database");
-    connection.pragma_update(None, "foreign_keys", true).expect("enable FK");
-    connection.query_row("PRAGMA journal_mode = WAL", [], |row| {
-        row.get::<_, String>(0)
-    }).expect("enable WAL");
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .expect("enable FK");
+    connection
+        .query_row("PRAGMA journal_mode = WAL", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .expect("enable WAL");
 
     assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV7Migration)).is_err());
-    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read schema version after interrupted v7");
     assert_eq!(version, V6_SCHEMA_VERSION);
     let indexes_exist: bool = connection.query_row(
@@ -549,7 +1257,8 @@ fn resource_index_migration_failure_is_atomic_and_retryable() {
     assert!(!indexes_exist);
 
     migrate(&mut connection).expect("retry Resource index migration");
-    let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read final schema version");
     assert_eq!(version, SCHEMA_VERSION);
 }
@@ -583,7 +1292,9 @@ fn schema_drift_and_unknown_newer_versions_fail_closed() {
         TestKeys { key: [19_u8; 32] },
     ));
     let result = SqliteWorkspaceStore::open(&newer_path, blob_store, SqliteConfig::default());
-    assert!(matches!(result, Err(StoreError::UnsupportedSchema(version)) if version == SCHEMA_VERSION + 1));
+    assert!(
+        matches!(result, Err(StoreError::UnsupportedSchema(version)) if version == SCHEMA_VERSION + 1)
+    );
 }
 
 #[test]

@@ -777,6 +777,17 @@ impl TryFrom<TaskPlanningReadinessWire> for TaskPlanningReadinessView {
     }
 }
 
+fn validate_task_planning_readiness_identity(
+    view: TaskPlanningReadinessView,
+    expected_task_id: &str,
+    expected_task_version: u64,
+) -> Result<TaskPlanningReadinessView, String> {
+    if view.task_id != expected_task_id || view.task_version != expected_task_version {
+        return Err("Task changed; reload the latest Task before checking planning readiness".to_owned());
+    }
+    Ok(view)
+}
+
 impl From<TaskViewWire> for TaskDetailView {
     fn from(view: TaskViewWire) -> Self {
         Self {
@@ -909,10 +920,28 @@ struct ResourceListWire {
 struct ResourceSearchResultView {
     resource_id: String,
     resource_revision_id: String,
+    source_content_digest: String,
+    source_matches: Vec<ResourceTextMatchView>,
     display_name: String,
     freshness: String,
     match_reasons: Vec<String>,
     snippet: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceTextMatchView {
+    term: String,
+    start_utf8_byte: u64,
+    end_utf8_byte_exclusive: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceTextPreviewWithProvenanceView {
+    text: String,
+    resource_revision_id: String,
+    content_digest: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -990,6 +1019,8 @@ struct ResourceSearchPageWire {
 #[derive(serde::Deserialize)]
 struct ResourceSearchResultWire {
     resource_ref: ResourceSearchRefWire,
+    source_content_digest: String,
+    source_matches: Vec<ResourceTextMatchWire>,
     display_name: String,
     freshness: String,
     match_reasons: Vec<String>,
@@ -998,8 +1029,16 @@ struct ResourceSearchResultWire {
 
 #[derive(serde::Deserialize)]
 struct ResourceSearchRefWire {
+    workspace_id: String,
     resource_id: String,
     revision_id: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ResourceTextMatchWire {
+    term: String,
+    start_utf8_byte: u64,
+    end_utf8_byte_exclusive: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1019,6 +1058,7 @@ struct ResourceUploadView {
     media_type: String,
     expected_size_bytes: u64,
     expected_digest: Option<String>,
+    context_document: Option<serde_json::Value>,
     folder_relative_path: Option<String>,
     resource_id: Option<String>,
     committed_resource_id: Option<String>,
@@ -1039,6 +1079,7 @@ struct ResourceUploadWire {
     media_type: String,
     expected_size_bytes: u64,
     expected_digest: Option<String>,
+    context_document: Option<serde_json::Value>,
     folder_import: Option<FolderImportWire>,
     resource_id: Option<String>,
     committed_resource_id: Option<String>,
@@ -1072,6 +1113,7 @@ impl From<ResourceUploadWire> for ResourceUploadView {
             media_type: wire.media_type,
             expected_size_bytes: wire.expected_size_bytes,
             expected_digest: wire.expected_digest,
+            context_document: wire.context_document,
             folder_relative_path: wire.folder_import.map(|origin| origin.relative_path),
             resource_id: wire.resource_id,
             committed_resource_id: wire.committed_resource_id,
@@ -1900,10 +1942,7 @@ async fn get_task_planning_readiness(
         let wire: TaskPlanningReadinessWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned an unsupported planning readiness response".to_owned())?;
         let view = TaskPlanningReadinessView::try_from(wire)?;
-        if view.task_id != task_id || view.task_version != expected_task_version {
-            return Err("Task changed; reload the latest Task before checking planning readiness".to_owned());
-        }
-        Ok(view)
+        validate_task_planning_readiness_identity(view, &task_id, expected_task_version)
     })
     .await
     .map_err(|_| "Planning readiness request did not complete".to_owned())?
@@ -2259,10 +2298,10 @@ async fn get_resource_detail(
         let response = client.get(format!("{}/resources/{}", workspace_url.trim_end_matches("/workspaces"), resource_id))
             .header("X-Workspace-ID", &workspace_id)
             .send().map_err(|_| "Resource metadata is unavailable".to_owned())?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
+        if response.status() == 404 {
             return Err("Resource is unavailable in this Workspace".to_owned());
         }
-        if !response.status().is_success() {
+        if !response.is_success() {
             return Err("Resource metadata is unavailable".to_owned());
         }
         let body = read_bounded_response(response)?;
@@ -2284,6 +2323,67 @@ async fn get_resource_detail(
 }
 
 #[tauri::command]
+async fn set_context_document_status(
+    app: AppHandle,
+    workspace_id: String,
+    resource_id: String,
+    expected_version: u64,
+    request_id: String,
+    target_status: String,
+) -> Result<ResourceDetailView, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_resource_selection(&workspace_id, &resource_id)?;
+        if expected_version == 0 || expected_version == u64::MAX
+            || request_id.is_empty()
+            || request_id.len() > 128
+            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !matches!(target_status.as_str(), "ACTIVE" | "REVOKED")
+        {
+            return Err("ContextDocument status request is invalid".to_owned());
+        }
+        let (client, workspace_url) = operator_client(&app)?;
+        let response = client
+            .patch(format!("{}/resources/{}/context-document/status", workspace_url.trim_end_matches("/workspaces"), resource_id))
+            .header("X-Workspace-ID", &workspace_id)
+            .header("If-Match", expected_version.to_string())
+            .header("Idempotency-Key", request_id)
+            .json(&serde_json::json!({ "status": target_status }))
+            .send()
+            .map_err(|_| "ContextDocument status could not be updated. Retry to resolve the same request.".to_owned())?;
+        if response.status() != 200 {
+            let body = read_bounded_response(response)?;
+            let code = serde_json::from_slice::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|value| value.pointer("/error/code").and_then(serde_json::Value::as_str).map(str::to_owned));
+            return Err(match code.as_deref() {
+                Some("RESOURCE_CONFLICT") => "RESOURCE_CONFLICT: Resource changed. Refresh its current status before trying again.".to_owned(),
+                Some("WORKSPACE_ARCHIVED") => "WORKSPACE_ARCHIVED: Archived Workspaces are read-only.".to_owned(),
+                Some("NOT_FOUND") => "ContextDocument is unavailable in this Workspace.".to_owned(),
+                _ => "ContextDocument status could not be updated.".to_owned(),
+            });
+        }
+        let body = read_bounded_response(response)?;
+        let wire: ResourceDetailWire = serde_json::from_slice(&body)
+            .map_err(|_| "Local Runtime returned unsupported ContextDocument metadata".to_owned())?;
+        if wire.resource_id != resource_id || wire.workspace_id != workspace_id
+            || wire.context_document.as_ref().and_then(|value| value.get("status")).and_then(serde_json::Value::as_str) != Some(target_status.as_str())
+            || wire.version != expected_version + 1
+        {
+            return Err("Local Runtime returned a different ContextDocument status".to_owned());
+        }
+        Ok(ResourceDetailView {
+            resource_id: wire.resource_id,
+            workspace_id: wire.workspace_id,
+            kind: wire.kind,
+            display_name: wire.display_name,
+            current_revision_id: wire.current_revision_id,
+            version: wire.version,
+            context_document: wire.context_document,
+        })
+    }).await.map_err(|_| "ContextDocument status request did not complete".to_owned())?
+}
+
+#[tauri::command]
 async fn list_resource_revisions(
     app: AppHandle,
     workspace_id: String,
@@ -2301,7 +2401,7 @@ async fn list_resource_revisions(
             .query(&[("limit", "100")]);
         if let Some(cursor) = cursor { request = request.query(&[("cursor", cursor)]); }
         let response = request.send().map_err(|_| "Resource revision history is unavailable".to_owned())?;
-        if !response.status().is_success() { return Err("Resource revision history is unavailable".to_owned()); }
+        if !response.is_success() { return Err("Resource revision history is unavailable".to_owned()); }
         let body = read_bounded_response(response)?;
         let wire: ResourceRevisionPageWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned unsupported Resource history".to_owned())?;
@@ -2360,10 +2460,10 @@ async fn create_resource_revision_upload(
                 "parent_revision_ids": parent_revision_ids,
             }))
             .send().map_err(|_| "Resource revision upload could not be started".to_owned())?;
-        if response.status() == reqwest::StatusCode::CONFLICT {
+        if response.status() == 409 {
             return Err("RESOURCE_CONFLICT: Resource changed. Reload its current revision and history, then choose the file again to start a new upload.".to_owned());
         }
-        if !response.status().is_success() { return Err("Resource revision upload could not be started".to_owned()); }
+        if !response.is_success() { return Err("Resource revision upload could not be started".to_owned()); }
         let body = read_bounded_response(response)?;
         let wire: ResourceUploadWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned an unsupported revision upload session".to_owned())?;
@@ -2393,10 +2493,10 @@ async fn commit_resource_revision_upload(
             .header("X-Workspace-ID", &workspace_id)
             .header("Idempotency-Key", request_id)
             .send().map_err(|_| "Resource revision could not be committed".to_owned())?;
-        if response.status() == reqwest::StatusCode::CONFLICT {
+        if response.status() == 409 {
             return Err("RESOURCE_CONFLICT: The Resource changed while this upload was in progress. No revision was committed. Reload history and explicitly choose the content to retry.".to_owned());
         }
-        if !response.status().is_success() { return Err("Resource revision could not be committed".to_owned()); }
+        if !response.is_success() { return Err("Resource revision could not be committed".to_owned()); }
         let body = read_bounded_response(response)?;
         let committed: CommittedResourceWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned an unsupported committed revision".to_owned())?;
@@ -2466,6 +2566,7 @@ async fn create_resource_upload(
     size_bytes: u64,
     expected_digest: String,
     folder_relative_path: Option<String>,
+    context_document: Option<serde_json::Value>,
     request_id: String,
 ) -> Result<ResourceUploadView, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -2485,6 +2586,20 @@ async fn create_resource_upload(
         if folder_relative_path.as_deref().is_some_and(|path| path != name) {
             return Err("Folder import path must match the selected Resource display name".to_owned());
         }
+        if let Some(metadata) = &context_document {
+            let valid_workspace_notes = metadata.as_object().is_some_and(|object| {
+                object.len() == 2
+                    && metadata.get("kind").and_then(serde_json::Value::as_str) == Some("WORKSPACE_NOTES")
+                    && metadata.get("owner_ref").and_then(serde_json::Value::as_object).is_some_and(|owner| {
+                        owner.len() == 2
+                            && owner.get("kind").and_then(serde_json::Value::as_str) == Some("WORKSPACE")
+                            && owner.get("workspace_id").and_then(serde_json::Value::as_str) == Some(workspace_id.as_str())
+                    })
+            });
+            if !valid_workspace_notes || folder_relative_path.is_some() {
+                return Err("Only Workspace notes can be created here; choose Workspace notes without folder-import metadata".to_owned());
+            }
+        }
         if request_id.is_empty() || request_id.len() > 128 {
             return Err("Resource upload request identity is invalid".to_owned());
         }
@@ -2492,18 +2607,23 @@ async fn create_resource_upload(
         let expected_folder_relative_path = folder_relative_path.clone();
         let expected_media_type = media_type.clone();
         let expected_digest = expected_digest.clone();
+        let expected_context_document = context_document.clone();
+        let mut upload_request = serde_json::json!({
+            "workspace_id": workspace_id,
+            "display_name": name,
+            "media_type": media_type,
+            "size_bytes": size_bytes,
+            "expected_digest": expected_digest,
+            "folder_import": folder_relative_path.map(|relative_path| serde_json::json!({ "relative_path": relative_path })),
+        });
+        if let Some(metadata) = &context_document {
+            upload_request["context_document"] = metadata.clone();
+        }
         let response = client
             .post(workspace_url.replace("/v1/workspaces", "/v1/resources/uploads"))
             .header("X-Workspace-ID", &workspace_id)
             .header("Idempotency-Key", request_id)
-            .json(&serde_json::json!({
-                "workspace_id": workspace_id,
-                "display_name": name,
-                "media_type": media_type,
-                "size_bytes": size_bytes,
-                "expected_digest": expected_digest,
-                "folder_import": folder_relative_path.map(|relative_path| serde_json::json!({ "relative_path": relative_path })),
-            }))
+            .json(&upload_request)
             .send()
             .map_err(|_| "Local Resource upload could not be started".to_owned())?;
         let body = read_bounded_response(response)?;
@@ -2515,6 +2635,7 @@ async fn create_resource_upload(
             || wire.expected_size_bytes != size_bytes
             || wire.expected_digest.as_deref() != Some(expected_digest.as_str())
             || wire.folder_import.as_ref().map(|origin| origin.relative_path.as_str()) != expected_folder_relative_path.as_deref()
+            || !resource_upload_context_metadata_matches(wire.context_document.as_ref(), expected_context_document.as_ref())
         {
             return Err("Local Runtime returned an upload session for a different request".to_owned());
         }
@@ -2522,6 +2643,26 @@ async fn create_resource_upload(
     })
     .await
     .map_err(|_| "Resource upload session request did not complete".to_owned())?
+}
+
+fn resource_upload_context_metadata_matches(
+    actual: Option<&serde_json::Value>,
+    expected: Option<&serde_json::Value>,
+) -> bool {
+    match (actual, expected) {
+        (None, None) => true,
+        (Some(actual), Some(expected)) => {
+            actual.as_object().is_some_and(|object| object.len() == 2
+                && object.contains_key("kind")
+                && object.contains_key("owner_ref"))
+                && expected.as_object().is_some_and(|object| object.len() == 2
+                    && object.contains_key("kind")
+                    && object.contains_key("owner_ref"))
+                && actual.get("kind") == expected.get("kind")
+                && actual.get("owner_ref") == expected.get("owner_ref")
+        }
+        _ => false,
+    }
 }
 
 #[tauri::command]
@@ -2724,6 +2865,143 @@ async fn list_resources(
     .map_err(|_| "Resource list request did not complete".to_owned())?
 }
 
+const MAX_RESOURCE_INDEX_MATCHES: usize = 32;
+const MAX_INDEXED_RESOURCE_BYTES: u64 = 1_048_576;
+
+fn valid_resource_sha256(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn indexed_query_terms(query: &str) -> Result<Vec<String>, String> {
+    let mut terms = std::collections::BTreeSet::new();
+    let mut current = String::new();
+    for character in query.chars().flat_map(char::to_lowercase) {
+        if character.is_alphanumeric() {
+            current.push(character);
+            if current.chars().count() > 128 {
+                return Err("Resource search query contains an overlong indexed term".to_owned());
+            }
+        } else if !current.is_empty() {
+            terms.insert(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        terms.insert(current);
+    }
+    if terms.is_empty() || terms.len() > MAX_RESOURCE_INDEX_MATCHES {
+        return Err("Resource search query has an invalid indexed term count".to_owned());
+    }
+    Ok(terms.into_iter().collect())
+}
+
+fn map_resource_search_page(
+    selected_workspace_id: &str,
+    requested_mode: &str,
+    query: &str,
+    page: ResourceSearchPageWire,
+) -> Result<ResourceSearchPageView, String> {
+    if page.mode != requested_mode {
+        return Err("Local Runtime returned a Resource search mode mismatch".to_owned());
+    }
+    let expected_terms = if requested_mode == "INDEXED_CONTENT" {
+        Some(indexed_query_terms(query)?)
+    } else {
+        None
+    };
+    let items = page
+        .items
+        .into_iter()
+        .map(|item| {
+            if item.resource_ref.workspace_id != selected_workspace_id
+                || item.resource_ref.resource_id.trim().is_empty()
+            {
+                return Err("Local Runtime returned a Resource search result outside the selected Workspace".to_owned());
+            }
+            let resource_revision_id = item
+                .resource_ref
+                .revision_id
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "Local Runtime returned an unpinned Resource search result".to_owned())?;
+            if !valid_resource_sha256(&item.source_content_digest) {
+                return Err("Local Runtime returned an invalid Resource source digest".to_owned());
+            }
+            if item.source_matches.len() > MAX_RESOURCE_INDEX_MATCHES {
+                return Err("Local Runtime returned too many Resource source matches".to_owned());
+            }
+            if let Some(expected_terms) = expected_terms.as_ref() {
+                if !item.match_reasons.iter().any(|reason| reason == "CONTENT_INDEXED")
+                    || item.source_matches.len() != expected_terms.len()
+                {
+                    return Err("Local Runtime returned incomplete indexed Resource source matches".to_owned());
+                }
+                let mut returned_terms = std::collections::BTreeSet::new();
+                let mut ranges = Vec::with_capacity(item.source_matches.len());
+                for source_match in &item.source_matches {
+                    let term_chars = source_match.term.chars().count();
+                    if term_chars == 0
+                        || term_chars > 128
+                        || !source_match.term.chars().all(char::is_alphanumeric)
+                        || source_match.term.chars().flat_map(char::to_lowercase).collect::<String>() != source_match.term
+                        || !returned_terms.insert(source_match.term.as_str())
+                        || source_match.start_utf8_byte >= source_match.end_utf8_byte_exclusive
+                        || source_match.end_utf8_byte_exclusive > MAX_INDEXED_RESOURCE_BYTES
+                    {
+                        return Err("Local Runtime returned an invalid or duplicate Resource source span".to_owned());
+                    }
+                    ranges.push((source_match.start_utf8_byte, source_match.end_utf8_byte_exclusive));
+                }
+                ranges.sort_unstable();
+                if ranges.windows(2).any(|pair| pair[0].1 > pair[1].0)
+                    || returned_terms.iter().copied().ne(expected_terms.iter().map(String::as_str))
+                {
+                    return Err("Local Runtime returned overlapping or query-mismatched Resource source spans".to_owned());
+                }
+            } else if !item.source_matches.is_empty() {
+                return Err("Local Runtime returned indexed source spans for a non-indexed Resource search".to_owned());
+            }
+            Ok(ResourceSearchResultView {
+                resource_id: item.resource_ref.resource_id,
+                resource_revision_id,
+                source_content_digest: item.source_content_digest,
+                source_matches: item
+                    .source_matches
+                    .into_iter()
+                    .map(|source_match| ResourceTextMatchView {
+                        term: source_match.term,
+                        start_utf8_byte: source_match.start_utf8_byte,
+                        end_utf8_byte_exclusive: source_match.end_utf8_byte_exclusive,
+                    })
+                    .collect(),
+                display_name: item.display_name,
+                freshness: item.freshness,
+                match_reasons: item.match_reasons,
+                snippet: item.snippet,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(ResourceSearchPageView {
+        items,
+        next_cursor: page.next_cursor,
+        mode: page.mode,
+        content_scan: page.content_scan.map(|scan| ResourceContentScanView {
+            candidates_scanned: scan.candidates_scanned,
+            text_resources_checked: scan.text_resources_checked,
+            skipped_unsupported_type: scan.skipped_unsupported_type,
+            skipped_over_file_limit: scan.skipped_over_file_limit,
+            skipped_revision_changed: scan.skipped_revision_changed,
+            byte_budget_exhausted: scan.byte_budget_exhausted,
+            candidate_budget_exhausted: scan.candidate_budget_exhausted,
+            max_candidates: scan.max_candidates,
+            max_file_bytes: scan.max_file_bytes,
+            max_total_bytes: scan.max_total_bytes,
+        }),
+    })
+}
+
 #[tauri::command]
 async fn search_resources(
     app: AppHandle,
@@ -2745,7 +3023,7 @@ async fn search_resources(
         let url = workspace_url.replace("/v1/workspaces", "/v1/resources/search");
         let mut request = client
             .get(&url)
-            .header("X-Workspace-ID", workspace_id)
+            .header("X-Workspace-ID", &workspace_id)
             .query(&[("q", query.as_str()), ("mode", mode.as_str()), ("limit", "100")]);
         if let Some(kind) = kind.as_deref() {
             request = request.query(&[("kind", kind)]);
@@ -2763,36 +3041,7 @@ async fn search_resources(
         let body = read_bounded_response(response)?;
         let page: ResourceSearchPageWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned an unsupported Resource search page".to_owned())?;
-        let items = page.items.into_iter().map(|item| {
-            let resource_revision_id = item.resource_ref.revision_id
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| "Local Runtime returned an unpinned Resource search result".to_owned())?;
-            Ok(ResourceSearchResultView {
-                resource_id: item.resource_ref.resource_id,
-                resource_revision_id,
-                display_name: item.display_name,
-                freshness: item.freshness,
-                match_reasons: item.match_reasons,
-                snippet: item.snippet,
-            })
-        }).collect::<Result<Vec<_>, String>>()?;
-        Ok(ResourceSearchPageView {
-            items,
-            next_cursor: page.next_cursor,
-            mode: page.mode,
-            content_scan: page.content_scan.map(|scan| ResourceContentScanView {
-                candidates_scanned: scan.candidates_scanned,
-                text_resources_checked: scan.text_resources_checked,
-                skipped_unsupported_type: scan.skipped_unsupported_type,
-                skipped_over_file_limit: scan.skipped_over_file_limit,
-                skipped_revision_changed: scan.skipped_revision_changed,
-                byte_budget_exhausted: scan.byte_budget_exhausted,
-                candidate_budget_exhausted: scan.candidate_budget_exhausted,
-                max_candidates: scan.max_candidates,
-                max_file_bytes: scan.max_file_bytes,
-                max_total_bytes: scan.max_total_bytes,
-            }),
-        })
+        map_resource_search_page(&workspace_id, &mode, &query, page)
     })
     .await
     .map_err(|_| "Resource search request did not complete".to_owned())?
@@ -2889,13 +3138,18 @@ async fn preview_resource_text(
     app: AppHandle,
     workspace_id: String,
     resource_id: String,
-    revision_id: Option<String>,
+    revision_id: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if workspace_id.is_empty()
             || resource_id.is_empty()
             || resource_id.len() > 160
             || !resource_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || revision_id.is_empty()
+            || revision_id.len() > 160
+            || !revision_id
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
         {
@@ -2909,25 +3163,19 @@ async fn preview_resource_text(
                 resource_id
             ))
             .header("X-Workspace-ID", workspace_id)
-            .query(&revision_id.map(|value| vec![("revision_id", value)]).unwrap_or_default())
+            .query(&[("revision_id", revision_id.as_str()), ("max_bytes", "1048576")])
             .send()
             .map_err(|_| "Local Resource content is unavailable".to_owned())?;
         if !response.is_success() {
-            if response.status() == 409 {
-                return Err("The Resource revision changed after selection. Refresh before previewing it.".to_owned());
-            }
-            return Err("Local Runtime could not read this Resource".to_owned());
+            return Err(read_bounded_response(response).err().unwrap_or_else(|| "Local Runtime could not read this Resource revision".to_owned()));
+        }
+        if response.header("x-resource-revision-id") != Some(revision_id.as_str()) {
+            return Err("Local Runtime returned content for a different Resource revision".to_owned());
         }
         let media_type = response.header("x-resource-media-type").unwrap_or("");
-        let is_text = media_type.starts_with("text/")
-            || matches!(
-                media_type,
-                "application/json"
-                    | "application/xml"
-                    | "application/yaml"
-                    | "application/x-yaml"
-                    | "application/javascript"
-            );
+        let normalized_media_type = media_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        let is_text = normalized_media_type.starts_with("text/")
+            || matches!(normalized_media_type.as_str(), "application/json" | "application/xml" | "application/yaml" | "application/x-yaml" | "application/javascript");
         if !is_text {
             return Err("Preview is available for text files only".to_owned());
         }
@@ -2937,8 +3185,110 @@ async fn preview_resource_text(
         {
             return Err("Text preview is limited to 1 MiB".to_owned());
         }
-        let bytes = read_bounded_response(response)?;
+        let mut bytes = Vec::new();
+        response
+            .take(1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "Resource text preview could not be read".to_owned())?;
+        if bytes.len() > 1024 * 1024 {
+            return Err("Text preview is limited to 1 MiB".to_owned());
+        }
         String::from_utf8(bytes).map_err(|_| "This text file is not valid UTF-8".to_owned())
+    })
+    .await
+    .map_err(|_| "Resource preview request did not complete".to_owned())?
+}
+
+fn verify_resource_preview_bytes(
+    bytes: Vec<u8>,
+    response_revision_id: Option<&str>,
+    expected_revision_id: &str,
+    expected_content_digest: &str,
+) -> Result<ResourceTextPreviewWithProvenanceView, String> {
+    if response_revision_id != Some(expected_revision_id) {
+        return Err("Local Runtime returned content for a different Resource revision".to_owned());
+    }
+    if !valid_resource_sha256(expected_content_digest) {
+        return Err("The indexed Resource content digest is invalid".to_owned());
+    }
+    use sha2::{Digest, Sha256};
+    let actual_digest = format!("sha256:{:x}", Sha256::digest(&bytes));
+    if actual_digest != expected_content_digest {
+        return Err("Resource content no longer matches the indexed search result".to_owned());
+    }
+    let text = String::from_utf8(bytes)
+        .map_err(|_| "This text file is not valid UTF-8".to_owned())?;
+    Ok(ResourceTextPreviewWithProvenanceView {
+        text,
+        resource_revision_id: expected_revision_id.to_owned(),
+        content_digest: actual_digest,
+    })
+}
+
+/// Search-derived spans must use this exact-revision, digest-verified preview path.
+/// Ordinary Library previews continue to use `preview_resource_text` above.
+#[tauri::command]
+async fn preview_resource_text_with_provenance(
+    app: AppHandle,
+    workspace_id: String,
+    resource_id: String,
+    revision_id: String,
+    expected_content_digest: String,
+) -> Result<ResourceTextPreviewWithProvenanceView, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if workspace_id.is_empty()
+            || resource_id.is_empty()
+            || resource_id.len() > 160
+            || !resource_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || revision_id.is_empty()
+            || revision_id.len() > 160
+            || !revision_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || !valid_resource_sha256(&expected_content_digest)
+        {
+            return Err("Resource search preview selection is invalid".to_owned());
+        }
+        let (client, workspace_url) = operator_client(&app)?;
+        let response = client
+            .get(format!(
+                "{}/resources/{}/content",
+                workspace_url.trim_end_matches("/workspaces"),
+                resource_id
+            ))
+            .header("X-Workspace-ID", &workspace_id)
+            .query(&[("revision_id", revision_id.as_str()), ("max_bytes", "1048576")])
+            .send()
+            .map_err(|_| "Local Resource content is unavailable".to_owned())?;
+        if !response.is_success() {
+            return Err(read_bounded_response(response).err().unwrap_or_else(|| "Local Runtime could not read this Resource revision".to_owned()));
+        }
+        let response_revision_id = response.header("x-resource-revision-id").map(str::to_owned);
+        if response_revision_id.as_deref() != Some(revision_id.as_str()) {
+            return Err("Local Runtime returned content for a different Resource revision".to_owned());
+        }
+        let media_type = response.header("x-resource-media-type").unwrap_or("");
+        let normalized_media_type = media_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        let is_text = normalized_media_type.starts_with("text/")
+            || matches!(normalized_media_type.as_str(), "application/json" | "application/xml" | "application/yaml" | "application/x-yaml" | "application/javascript");
+        if !is_text {
+            return Err("Preview is available for text files only".to_owned());
+        }
+        if response.content_length().is_some_and(|length| length > 1024 * 1024) {
+            return Err("Text preview is limited to 1 MiB".to_owned());
+        }
+        let mut bytes = Vec::new();
+        response
+            .take(1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "Resource text preview could not be read".to_owned())?;
+        if bytes.len() > 1024 * 1024 {
+            return Err("Text preview is limited to 1 MiB".to_owned());
+        }
+        verify_resource_preview_bytes(
+            bytes,
+            response_revision_id.as_deref(),
+            &revision_id,
+            &expected_content_digest,
+        )
     })
     .await
     .map_err(|_| "Resource preview request did not complete".to_owned())?
@@ -3833,6 +4183,7 @@ pub fn run() {
             list_workspace_instructions,
             create_workspace_instruction_revision,
             get_resource_detail,
+            set_context_document_status,
             list_resource_revisions,
             create_resource_revision_upload,
             commit_resource_revision_upload,
@@ -3845,7 +4196,9 @@ pub fn run() {
             search_resources,
             rebuild_resource_text_index,
             preview_resource_text,
+            preview_resource_text_with_provenance,
             artifact_bridge::artifact_read,
+            artifact_bridge::artifact_library_command,
             artifact_bridge::artifact_save_as,
             resource_save_bridge::resource_save_as,
             artifact_bridge::artifact_edit_head,
@@ -3865,6 +4218,7 @@ pub fn run() {
             suggestions_bridge::list_suggestion_preferences,
             suggestions_bridge::set_suggestion_preference,
             presentation_bridge::get_task_presentation,
+            presentation_bridge::get_task_progress,
             routine_bridge::routine_request,
             zip_intake_bridge::get_zip_intake_readiness,
             start_local_runtime
@@ -3881,5 +4235,257 @@ mod bounded_json_tests {
     fn json_serialization_stops_at_the_configured_limit() {
         assert_eq!(bounded_json_bytes(&"abc", 5).unwrap(), br#""abc""#);
         assert!(bounded_json_bytes(&"abcd", 5).is_err());
+    }
+}
+
+#[cfg(test)]
+mod resource_search_provenance_tests {
+    use super::{
+        MAX_INDEXED_RESOURCE_BYTES, ResourceSearchPageWire, ResourceSearchRefWire,
+        ResourceSearchResultWire, ResourceTextMatchWire, map_resource_search_page,
+    };
+
+    fn span(term: &str, start: u64, end: u64) -> ResourceTextMatchWire {
+        ResourceTextMatchWire {
+            term: term.to_owned(),
+            start_utf8_byte: start,
+            end_utf8_byte_exclusive: end,
+        }
+    }
+
+    fn result(source_matches: Vec<ResourceTextMatchWire>) -> ResourceSearchResultWire {
+        ResourceSearchResultWire {
+            resource_ref: ResourceSearchRefWire {
+                workspace_id: "workspace-1".to_owned(),
+                resource_id: "resource-1".to_owned(),
+                revision_id: Some("revision-4".to_owned()),
+            },
+            source_content_digest: format!("sha256:{}", "a".repeat(64)),
+            source_matches,
+            display_name: "notes.md".to_owned(),
+            freshness: "CURRENT".to_owned(),
+            match_reasons: vec!["CONTENT_INDEXED".to_owned()],
+            snippet: Some("mutex and threads".to_owned()),
+        }
+    }
+
+    fn page(mode: &str, item: ResourceSearchResultWire) -> ResourceSearchPageWire {
+        ResourceSearchPageWire {
+            items: vec![item],
+            next_cursor: None,
+            mode: mode.to_owned(),
+            content_scan: None,
+        }
+    }
+
+    #[test]
+    fn indexed_search_preserves_digest_and_validated_source_matches() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let view = map_resource_search_page(
+            "workspace-1",
+            "INDEXED_CONTENT",
+            "mutex THREADS",
+            page("INDEXED_CONTENT", result(vec![span("mutex", 8, 13), span("threads", 18, 25)])),
+        )
+        .expect("valid indexed result");
+
+        assert_eq!(view.items[0].resource_revision_id, "revision-4");
+        assert_eq!(view.items[0].source_content_digest, digest);
+        assert_eq!(view.items[0].source_matches.len(), 2);
+        assert_eq!(view.items[0].source_matches[1].end_utf8_byte_exclusive, 25);
+        let serialized = serde_json::to_value(&view).expect("serialize Tauri view");
+        assert_eq!(serialized["items"][0]["sourceContentDigest"], view.items[0].source_content_digest);
+        assert_eq!(serialized["items"][0]["sourceMatches"][0]["startUtf8Byte"], 8);
+    }
+
+    #[test]
+    fn metadata_and_on_demand_results_keep_an_empty_match_list() {
+        for mode in ["METADATA", "ON_DEMAND_CONTENT"] {
+            let mut item = result(Vec::new());
+            item.match_reasons = vec!["NAME".to_owned()];
+            let view = map_resource_search_page(
+                "workspace-1",
+                mode,
+                "notes",
+                page(mode, item),
+            )
+            .expect("non-indexed search remains usable");
+            assert!(view.items[0].source_matches.is_empty());
+        }
+    }
+
+    #[test]
+    fn malformed_digest_unpinned_or_cross_workspace_result_is_rejected() {
+        let mut item = result(Vec::new());
+        item.source_content_digest = "sha256:ABC".to_owned();
+        assert!(map_resource_search_page("workspace-1", "METADATA", "", page("METADATA", item)).is_err());
+
+        let mut item = result(Vec::new());
+        item.resource_ref.revision_id = None;
+        assert!(map_resource_search_page("workspace-1", "METADATA", "", page("METADATA", item)).is_err());
+
+        let mut item = result(Vec::new());
+        item.resource_ref.workspace_id = "workspace-other".to_owned();
+        assert!(map_resource_search_page("workspace-1", "METADATA", "", page("METADATA", item)).is_err());
+    }
+
+    #[test]
+    fn duplicate_invalid_overlapping_and_out_of_bounds_spans_are_rejected() {
+        for spans in [
+            vec![span("mutex", 1, 4), span("mutex", 8, 11)],
+            vec![span("Mutex", 1, 6), span("threads", 8, 15)],
+            vec![span("mutex", 1, 1), span("threads", 8, 15)],
+            vec![span("mutex", 1, 6), span("threads", 5, 12)],
+            vec![span("mutex", 1, 6), span("threads", 8, MAX_INDEXED_RESOURCE_BYTES + 1)],
+        ] {
+            let mut item = result(spans);
+            item.match_reasons = vec!["CONTENT_INDEXED".to_owned()];
+            assert!(map_resource_search_page(
+                "workspace-1",
+                "INDEXED_CONTENT",
+                "mutex threads",
+                page("INDEXED_CONTENT", item),
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn indexed_spans_must_match_the_query_and_mode_must_match_response() {
+        let item = result(vec![span("mutex", 8, 13)]);
+        assert!(map_resource_search_page(
+            "workspace-1",
+            "INDEXED_CONTENT",
+            "mutex threads",
+            page("INDEXED_CONTENT", item),
+        )
+        .is_err());
+
+        let item = result(vec![span("mutex", 8, 13)]);
+        assert!(map_resource_search_page(
+            "workspace-1",
+            "METADATA",
+            "mutex",
+            page("INDEXED_CONTENT", item),
+        )
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod resource_preview_provenance_tests {
+    use super::verify_resource_preview_bytes;
+    use sha2::{Digest, Sha256};
+
+    fn digest(bytes: &[u8]) -> String {
+        format!("sha256:{:x}", Sha256::digest(bytes))
+    }
+
+    #[test]
+    fn verified_preview_requires_exact_revision_and_content_digest() {
+        let bytes = "hello 🌍".as_bytes().to_vec();
+        let content_digest = digest(&bytes);
+        let preview = verify_resource_preview_bytes(
+            bytes.clone(),
+            Some("revision-7"),
+            "revision-7",
+            &content_digest,
+        )
+        .expect("matching exact revision and bytes");
+        assert_eq!(preview.text, "hello 🌍");
+        assert_eq!(preview.resource_revision_id, "revision-7");
+        assert_eq!(preview.content_digest, content_digest);
+
+        assert!(verify_resource_preview_bytes(
+            bytes.clone(),
+            Some("revision-8"),
+            "revision-7",
+            &content_digest,
+        )
+        .is_err());
+        assert!(verify_resource_preview_bytes(
+            bytes,
+            Some("revision-7"),
+            "revision-7",
+            &format!("sha256:{}", "a".repeat(64)),
+        )
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod task_planning_readiness_tests {
+    use super::{
+        TaskPlanningReadinessView, TaskPlanningReadinessWire,
+        validate_task_planning_readiness_identity,
+    };
+    use serde_json::json;
+
+    fn valid_wire() -> serde_json::Value {
+        json!({
+            "task_id": "task-1",
+            "task_version": 3,
+            "task_spec_revision": 2,
+            "task_status": "READY",
+            "observed_at": "2026-10-09T00:00:00Z",
+            "dispatch_available": false,
+            "planning_started": false,
+            "agent_session_started": false,
+            "plan_created": false,
+            "blockers": ["TASK_ISOLATION_UNAVAILABLE"]
+        })
+    }
+
+    fn parse(value: serde_json::Value) -> Result<TaskPlanningReadinessView, String> {
+        let wire: TaskPlanningReadinessWire = serde_json::from_value(value)
+            .map_err(|_| "wire decode failed".to_owned())?;
+        TaskPlanningReadinessView::try_from(wire)
+    }
+
+    #[test]
+    fn accepts_a_read_only_blocked_readiness_projection() {
+        let view = parse(valid_wire()).expect("valid read-only projection");
+        assert_eq!(view.task_id, "task-1");
+        assert_eq!(view.task_version, 3);
+        assert_eq!(view.blockers.len(), 1);
+        assert!(!view.dispatch_available);
+        assert!(!view.planning_started);
+        assert!(!view.agent_session_started);
+        assert!(!view.plan_created);
+    }
+
+    #[test]
+    fn rejects_unknown_fields_and_unknown_blockers() {
+        let mut extra_field = valid_wire();
+        extra_field["future_authority"] = json!(true);
+        assert!(parse(extra_field).is_err());
+
+        let mut unknown_blocker = valid_wire();
+        unknown_blocker["blockers"] = json!(["SOMETHING_NEW"]);
+        assert!(parse(unknown_blocker).is_err());
+    }
+
+    #[test]
+    fn rejects_duplicate_blockers_and_any_dispatch_claim() {
+        let mut duplicate = valid_wire();
+        duplicate["blockers"] = json!([
+            "TASK_ISOLATION_UNAVAILABLE",
+            "TASK_ISOLATION_UNAVAILABLE"
+        ]);
+        assert!(parse(duplicate).is_err());
+
+        for field in ["dispatch_available", "planning_started", "agent_session_started", "plan_created"] {
+            let mut claims_execution = valid_wire();
+            claims_execution[field] = json!(true);
+            assert!(parse(claims_execution).is_err(), "accepted {field}=true");
+        }
+    }
+
+    #[test]
+    fn rejects_a_projection_for_another_task_or_version() {
+        let view = parse(valid_wire()).expect("valid read-only projection");
+        assert!(validate_task_planning_readiness_identity(view.clone(), "task-2", 3).is_err());
+        assert!(validate_task_planning_readiness_identity(view.clone(), "task-1", 4).is_err());
+        assert!(validate_task_planning_readiness_identity(view, "task-1", 3).is_ok());
     }
 }

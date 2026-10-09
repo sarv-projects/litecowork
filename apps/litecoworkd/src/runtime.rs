@@ -1,31 +1,29 @@
 use crate::{
-    local_filesystem::{
-        LocalDirectoryError, reopen_saved_directory,
-    },
+    local_filesystem::{LocalDirectoryError, reopen_saved_directory},
     operator::OperatorServer,
 };
+use domain_task::StepAttemptCoordinator;
+use domain_workspace::{EventContext, ResumeWorkspaceRoot, WorkspaceRootService};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+#[cfg(not(unix))]
+use std::fs::OpenOptions;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::mpsc,
 };
 use storage_core::{
-    CommittedWorkspaceRootRevalidation, EventDraft, LocalFileIdentityBindingRecord,
-    LocalResourceLocationBindingRecord, WorkspaceCreateRequest,
+    CommittedWorkspaceRootRevalidation, EventDraft, ExecutionEventContext, ExpireExecutionLease,
+    ExpiredAttemptEvents, LocalFileIdentityBindingRecord, LocalResourceLocationBindingRecord,
+    LocalRuntimeWorkspaceBindingLookup, RuntimeIncarnationLocalObservationRecord,
+    RuntimeIncarnationRecord, RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeRecord,
+    RuntimeWorkspaceBindingStore, StateStore, StepAttemptStore, WorkspaceCreateRequest,
     WorkspaceRootRevalidationBindings, WorkspaceRootRevalidationCandidate,
     WorkspaceRootRevalidationCommit, WorkspaceRootRevalidationFailure, WorkspaceRootStore,
-    RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
-    RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeRecord,
-    ExpireExecutionLease, ExpiredAttemptEvents, ExecutionEventContext,
-    RuntimeWorkspaceBindingStore, LocalRuntimeWorkspaceBindingLookup, StateStore,
-    StepAttemptStore,
 };
-use domain_task::StepAttemptCoordinator;
-use domain_workspace::{EventContext, ResumeWorkspaceRoot, WorkspaceRootService};
 use storage_sqlite::{
     LocalWorkspaceStorage, OsRuntimeDeviceIdentityProvider, OsRuntimePrincipalBindingProvider,
     RuntimeOsPrincipalIdentity, SqliteConfig, SqliteStepAttemptStore, SqliteWorkspaceStore,
@@ -86,11 +84,10 @@ impl RuntimeLocalState {
             Some(state) => state.runtime_id.clone(),
             None => random_id("rt")?,
         };
-        let local_principal_id = match previous
-            .as_ref()
-            .and_then(|state| state.local_principal_id.clone())
-        {
-            Some(principal_id) => principal_id,
+        let local_principal_id = match previous.as_ref() {
+            Some(state) => state.local_principal_id.clone().ok_or_else(|| {
+                "existing Runtime state is missing its local Principal identity; explicit local recovery is required".to_owned()
+            })?,
             None => random_id("principal")?,
         };
         let state = Self {
@@ -226,21 +223,22 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
         os_boot_id: None,
         observed_at: started_at,
     };
-    let mut incarnation_version = match storage
-        .store
-        .register_local_incarnation(runtime_record, incarnation, observation)
-    {
-        Ok(incarnation) => incarnation.version,
-        Err(_) => {
-            state.transition(
-                RuntimeState::Degraded,
-                vec!["RUNTIME_REGISTRATION_FAILED".to_owned()],
-            );
-            persist_state(data_directory, &state)?;
-            print_state(&state)?;
-            return Err("durable Runtime registration failed; startup failed closed".to_owned());
-        }
-    };
+    let mut incarnation_version =
+        match storage
+            .store
+            .register_local_incarnation(runtime_record, incarnation, observation)
+        {
+            Ok(incarnation) => incarnation.version,
+            Err(_) => {
+                state.transition(
+                    RuntimeState::Degraded,
+                    vec!["RUNTIME_REGISTRATION_FAILED".to_owned()],
+                );
+                persist_state(data_directory, &state)?;
+                print_state(&state)?;
+                return Err("durable Runtime registration failed; startup failed closed".to_owned());
+            }
+        };
     state.transition(RuntimeState::Recovering, Vec::new());
     persist_state(data_directory, &state)?;
 
@@ -278,7 +276,10 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
 
     match recover_expired_execution_leases(
         &storage.store,
-        state.local_principal_id.as_deref().ok_or_else(|| "local Principal identity is unavailable".to_owned())?,
+        state
+            .local_principal_id
+            .as_deref()
+            .ok_or_else(|| "local Principal identity is unavailable".to_owned())?,
         &state.runtime_id,
         &state.local_incarnation_id,
     ) {
@@ -291,19 +292,34 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
     let operator = OperatorServer::start(
         data_directory,
         storage.store.clone(),
-        state.local_principal_id.clone().ok_or_else(|| "local Principal identity is unavailable".to_owned())?,
+        state
+            .local_principal_id
+            .clone()
+            .ok_or_else(|| "local Principal identity is unavailable".to_owned())?,
         state.runtime_id.clone(),
         state.local_incarnation_id.clone(),
         os_principal.principal.uid(),
         os_principal,
     );
-    let mut operator = OperatorLifecycle::new(match operator {
-        Ok(server) => Some(server),
+    let mut operator = match operator {
+        Ok(server) => OperatorLifecycle::new(Some(server)),
         Err(_) => {
-            blockers.push("OPERATOR_API_START_FAILED".to_owned());
-            None
+            // Do not leave a live, lock-owning daemon waiting for a supervisor signal
+            // when its only Operator endpoint failed to bind or initialize. Persist the
+            // specific local blocker and exit nonzero so the service manager can apply its
+            // bounded restart policy; a later start can then retry endpoint creation.
+            // The durable catalog was already transitioned RECOVERING -> DEGRADED
+            // before this bind. Repeating the same durable transition is forbidden, so
+            // persist the precise blocker in the private local status and leave the
+            // catalog's already-durable availability at DEGRADED.
+            return fail_startup(
+                data_directory,
+                &mut state,
+                "OPERATOR_API_START_FAILED",
+                "authenticated local Operator endpoint failed to initialize",
+            );
         }
-    });
+    };
     state.transition(RuntimeState::Degraded, blockers);
     persist_state(data_directory, &state)?;
     print_state(&state)?;
@@ -374,7 +390,9 @@ fn recover_expired_execution_leases(
 
     let attempt_store = SqliteStepAttemptStore::new(store.clone());
     let coordinator = StepAttemptCoordinator::new(attempt_store.clone());
-    let workspaces = store.list_workspaces().map_err(|_| "local recovery Workspace listing failed".to_owned())?;
+    let workspaces = store
+        .list_workspaces()
+        .map_err(|_| "local recovery Workspace listing failed".to_owned())?;
     let mut recovered = 0usize;
 
     for workspace in workspaces {
@@ -387,8 +405,9 @@ fn recover_expired_execution_leases(
             runtime_id: runtime_id.to_owned(),
             runtime_incarnation_id: runtime_incarnation_id.to_owned(),
         };
-        let Some(binding) = store.get_current_local_binding(lookup)
-            .map_err(|_| "current Runtime Workspace authorization could not be checked".to_owned())?
+        let Some(binding) = store.get_current_local_binding(lookup).map_err(|_| {
+            "current Runtime Workspace authorization could not be checked".to_owned()
+        })?
         else {
             continue;
         };
@@ -397,13 +416,15 @@ fn recover_expired_execution_leases(
         }
 
         loop {
-            let candidates = attempt_store.list_expired_execution_leases(
-                owner_principal_id,
-                &workspace.workspace_id,
-                runtime_id,
-                runtime_incarnation_id,
-                PAGE_SIZE,
-            ).map_err(|_| "expired execution lease inventory failed closed".to_owned())?;
+            let candidates = attempt_store
+                .list_expired_execution_leases(
+                    owner_principal_id,
+                    &workspace.workspace_id,
+                    runtime_id,
+                    runtime_incarnation_id,
+                    PAGE_SIZE,
+                )
+                .map_err(|_| "expired execution lease inventory failed closed".to_owned())?;
             if candidates.is_empty() {
                 break;
             }
@@ -442,7 +463,8 @@ fn recover_expired_execution_leases(
                         task: event(random_id("evt")?),
                     },
                 };
-                coordinator.expire(command)
+                coordinator
+                    .expire(command)
                     .map_err(|_| "expired execution lease transition did not commit".to_owned())?;
                 recovered += 1;
             }
@@ -472,7 +494,10 @@ fn revalidate_workspace_roots(
             return Ok(());
         }
         for candidate in candidates {
-            let next_cursor = (candidate.root.created_at.clone(), candidate.root.workspace_root_id.clone());
+            let next_cursor = (
+                candidate.root.created_at.clone(),
+                candidate.root.workspace_root_id.clone(),
+            );
             commit_root_revalidation(
                 store,
                 runtime_id,
@@ -523,7 +548,8 @@ pub(crate) fn resume_workspace_root_live(
     {
         return Ok(receipt);
     }
-    let current = store.get_workspace_root(workspace_id, workspace_root_id)
+    let current = store
+        .get_workspace_root(workspace_id, workspace_root_id)
         .map_err(|_| WorkspaceRootResumeError::Internal)?
         .ok_or(WorkspaceRootResumeError::NotFound)?;
     if current.version != expected_root_version || current.status != "PAUSED" {
@@ -552,7 +578,9 @@ pub(crate) fn resume_workspace_root_live(
                 if candidate.root.workspace_id != workspace_id {
                     return Err(WorkspaceRootResumeError::NotFound);
                 }
-                if candidate.root.version != expected_root_version || candidate.root.status != "PAUSED" {
+                if candidate.root.version != expected_root_version
+                    || candidate.root.status != "PAUSED"
+                {
                     return Err(WorkspaceRootResumeError::Stale);
                 }
                 break 'candidate candidate;
@@ -561,29 +589,56 @@ pub(crate) fn resume_workspace_root_live(
         }
     };
     let (previous_locator_binding, previous_file_identity_binding) = match &candidate.bindings {
-        WorkspaceRootRevalidationBindings::Previous { locator, file_identity }
-        | WorkspaceRootRevalidationBindings::CurrentIncarnation { locator, file_identity } => (locator, file_identity),
+        WorkspaceRootRevalidationBindings::Previous {
+            locator,
+            file_identity,
+        }
+        | WorkspaceRootRevalidationBindings::CurrentIncarnation {
+            locator,
+            file_identity,
+        } => (locator, file_identity),
         WorkspaceRootRevalidationBindings::Unavailable(_) => {
             if candidate.location.availability == "AVAILABLE" {
-                commit_root_revalidation(store, runtime_id, runtime_incarnation_id, runtime_identity, candidate)
-                    .map_err(|_| WorkspaceRootResumeError::Internal)?;
+                commit_root_revalidation(
+                    store,
+                    runtime_id,
+                    runtime_incarnation_id,
+                    runtime_identity,
+                    candidate,
+                )
+                .map_err(|_| WorkspaceRootResumeError::Internal)?;
             }
             return Err(WorkspaceRootResumeError::Unavailable);
         }
     };
     if !cfg!(any(target_os = "linux", target_os = "macos")) {
         if candidate.location.availability == "AVAILABLE" {
-            commit_root_revalidation(store, runtime_id, runtime_incarnation_id, runtime_identity, candidate)
-                .map_err(|_| WorkspaceRootResumeError::Internal)?;
+            commit_root_revalidation(
+                store,
+                runtime_id,
+                runtime_incarnation_id,
+                runtime_identity,
+                candidate,
+            )
+            .map_err(|_| WorkspaceRootResumeError::Internal)?;
         }
         return Err(WorkspaceRootResumeError::Unavailable);
     }
-    let opened = match reopen_saved_directory(&previous_locator_binding.private_locator, &candidate.root.display_name) {
+    let opened = match reopen_saved_directory(
+        &previous_locator_binding.private_locator,
+        &candidate.root.display_name,
+    ) {
         Ok(opened) => opened,
         Err(_) => {
             if candidate.location.availability == "AVAILABLE" {
-                commit_root_revalidation(store, runtime_id, runtime_incarnation_id, runtime_identity, candidate)
-                    .map_err(|_| WorkspaceRootResumeError::Internal)?;
+                commit_root_revalidation(
+                    store,
+                    runtime_id,
+                    runtime_incarnation_id,
+                    runtime_identity,
+                    candidate,
+                )
+                .map_err(|_| WorkspaceRootResumeError::Internal)?;
             }
             return Err(WorkspaceRootResumeError::Unavailable);
         }
@@ -593,23 +648,46 @@ pub(crate) fn resume_workspace_root_live(
     let identity_matches = live.matches_binding(&previous_file_identity_binding)
         && candidate.resource.identity_digest.as_deref() == Some(identity_digest.as_str())
         && candidate.resource.provider_identity.get("file_identity") == Some(&keyed_identity)
-        && candidate.resource.provider_identity.get("provider_instance_id").and_then(serde_json::Value::as_str)
+        && candidate
+            .resource
+            .provider_identity
+            .get("provider_instance_id")
+            .and_then(serde_json::Value::as_str)
             == Some("litecowork.local_filesystem")
         && opened.revalidate().is_ok();
     if !identity_matches {
         if candidate.location.availability == "AVAILABLE" {
-            commit_root_revalidation(store, runtime_id, runtime_incarnation_id, runtime_identity, candidate)
-                .map_err(|_| WorkspaceRootResumeError::Internal)?;
+            commit_root_revalidation(
+                store,
+                runtime_id,
+                runtime_incarnation_id,
+                runtime_identity,
+                candidate,
+            )
+            .map_err(|_| WorkspaceRootResumeError::Internal)?;
         }
         return Err(WorkspaceRootResumeError::Unavailable);
     }
     let now = timestamp_now().map_err(|_| WorkspaceRootResumeError::Internal)?;
     let location_id = candidate.location.location_id.clone();
-    let WorkspaceRootRevalidationCandidate { resource, location, bindings, .. } = candidate;
+    let WorkspaceRootRevalidationCandidate {
+        resource,
+        location,
+        bindings,
+        ..
+    } = candidate;
     let (previous_locator_binding, previous_file_identity_binding) = match bindings {
-        WorkspaceRootRevalidationBindings::Previous { locator, file_identity }
-        | WorkspaceRootRevalidationBindings::CurrentIncarnation { locator, file_identity } => (locator, file_identity),
-        WorkspaceRootRevalidationBindings::Unavailable(_) => return Err(WorkspaceRootResumeError::Unavailable),
+        WorkspaceRootRevalidationBindings::Previous {
+            locator,
+            file_identity,
+        }
+        | WorkspaceRootRevalidationBindings::CurrentIncarnation {
+            locator,
+            file_identity,
+        } => (locator, file_identity),
+        WorkspaceRootRevalidationBindings::Unavailable(_) => {
+            return Err(WorkspaceRootResumeError::Unavailable);
+        }
     };
     let new_locator_binding = LocalResourceLocationBindingRecord {
         location_id: location_id.clone(),
@@ -625,26 +703,31 @@ pub(crate) fn resume_workspace_root_live(
         runtime_incarnation_id.to_owned(),
         now,
     );
-    let result = service.resume_root(ResumeWorkspaceRoot {
-        workspace_id: workspace_id.to_owned(),
-        workspace_root_id: workspace_root_id.to_owned(),
-        principal_id: principal_id.to_owned(),
-        request_id: request_id.to_owned(),
-        expected_version: expected_root_version,
-        runtime_id: runtime_id.to_owned(),
-        runtime_incarnation_id: runtime_incarnation_id.to_owned(),
-        previous_locator_binding,
-        previous_file_identity_binding,
-        resource,
-        location,
-        locator_binding: new_locator_binding,
-        file_identity_binding: new_file_identity_binding,
-        event,
-    }).map_err(|error| match error {
-        storage_core::StoreError::Conflict { expected: Some(expected), actual: Some(actual) } if expected != actual => WorkspaceRootResumeError::Stale,
-        storage_core::StoreError::NotFound => WorkspaceRootResumeError::NotFound,
-        _ => WorkspaceRootResumeError::Internal,
-    });
+    let result = service
+        .resume_root(ResumeWorkspaceRoot {
+            workspace_id: workspace_id.to_owned(),
+            workspace_root_id: workspace_root_id.to_owned(),
+            principal_id: principal_id.to_owned(),
+            request_id: request_id.to_owned(),
+            expected_version: expected_root_version,
+            runtime_id: runtime_id.to_owned(),
+            runtime_incarnation_id: runtime_incarnation_id.to_owned(),
+            previous_locator_binding,
+            previous_file_identity_binding,
+            resource,
+            location,
+            locator_binding: new_locator_binding,
+            file_identity_binding: new_file_identity_binding,
+            event,
+        })
+        .map_err(|error| match error {
+            storage_core::StoreError::Conflict {
+                expected: Some(expected),
+                actual: Some(actual),
+            } if expected != actual => WorkspaceRootResumeError::Stale,
+            storage_core::StoreError::NotFound => WorkspaceRootResumeError::NotFound,
+            _ => WorkspaceRootResumeError::Internal,
+        });
     // Keep the verified directory handle alive until the atomic owner/status commit has
     // returned. This is a point-in-time proof; no watcher or content read occurs here.
     drop(opened);
@@ -662,10 +745,19 @@ fn commit_root_revalidation(
         return Err("revoked WorkspaceRoot was returned by recovery query".to_owned());
     }
     let mut failure = None;
-    let mut verified_pair: Option<(LocalResourceLocationBindingRecord, LocalFileIdentityBindingRecord)> = None;
+    let mut verified_pair: Option<(
+        LocalResourceLocationBindingRecord,
+        LocalFileIdentityBindingRecord,
+    )> = None;
     let (previous_locator, previous_identity) = match candidate.bindings {
-        WorkspaceRootRevalidationBindings::Previous { locator, file_identity }
-        | WorkspaceRootRevalidationBindings::CurrentIncarnation { locator, file_identity } => (Some(locator), Some(file_identity)),
+        WorkspaceRootRevalidationBindings::Previous {
+            locator,
+            file_identity,
+        }
+        | WorkspaceRootRevalidationBindings::CurrentIncarnation {
+            locator,
+            file_identity,
+        } => (Some(locator), Some(file_identity)),
         WorkspaceRootRevalidationBindings::Unavailable(reason) => {
             failure = Some(reason);
             (None, None)
@@ -679,11 +771,18 @@ fn commit_root_revalidation(
                     if !live.matches_binding(&previous_identity) {
                         failure = Some(WorkspaceRootRevalidationFailure::IdentityChanged);
                     } else {
-                        let (identity_digest, keyed_identity) = live.keyed_projection(runtime_identity);
-                        let stored_identity = candidate.resource.provider_identity.get("file_identity");
-                        if candidate.resource.identity_digest.as_deref() != Some(identity_digest.as_str())
+                        let (identity_digest, keyed_identity) =
+                            live.keyed_projection(runtime_identity);
+                        let stored_identity =
+                            candidate.resource.provider_identity.get("file_identity");
+                        if candidate.resource.identity_digest.as_deref()
+                            != Some(identity_digest.as_str())
                             || stored_identity != Some(&keyed_identity)
-                            || candidate.resource.provider_identity.get("provider_instance_id").and_then(serde_json::Value::as_str)
+                            || candidate
+                                .resource
+                                .provider_identity
+                                .get("provider_instance_id")
+                                .and_then(serde_json::Value::as_str)
                                 != Some("litecowork.local_filesystem")
                         {
                             failure = Some(WorkspaceRootRevalidationFailure::IdentityChanged);
@@ -721,7 +820,9 @@ fn commit_root_revalidation(
     let reason_code = if verified {
         "ROOT_IDENTITY_REVALIDATED"
     } else {
-        workspace_root_failure_code(failure.unwrap_or(WorkspaceRootRevalidationFailure::IdentityUnavailable))
+        workspace_root_failure_code(
+            failure.unwrap_or(WorkspaceRootRevalidationFailure::IdentityUnavailable),
+        )
     };
     let outcome = if verified { "VERIFIED" } else { "UNAVAILABLE" };
     let expected_root_version = candidate.root.version;
@@ -744,7 +845,10 @@ fn commit_root_revalidation(
     if root_changed {
         root.status = next_status.to_owned();
         root.updated_at = observed_at.clone();
-        root.version = root.version.checked_add(1).ok_or_else(|| "WorkspaceRoot version overflow".to_owned())?;
+        root.version = root
+            .version
+            .checked_add(1)
+            .ok_or_else(|| "WorkspaceRoot version overflow".to_owned())?;
     }
     let mut location = candidate.location;
     location.availability = if verified { "AVAILABLE" } else { "UNAVAILABLE" }.to_owned();
@@ -812,27 +916,33 @@ fn commit_root_revalidation(
         }),
         recorded_at: observed_at,
     };
-    store.commit_workspace_root_revalidation(WorkspaceRootRevalidationCommit {
-        request,
-        runtime_id: runtime_id.to_owned(),
-        runtime_incarnation_id: runtime_incarnation_id.to_owned(),
-        expected_root_version,
-        root,
-        resource: candidate.resource,
-        location,
-        locator_binding: verified_pair.as_ref().map(|pair| pair.0.clone()),
-        file_identity_binding: verified_pair.map(|pair| pair.1),
-        root_event,
-        location_event: Some(location_event),
-    }).map_err(|_| "WorkspaceRoot revalidation could not be committed atomically".to_owned())
+    store
+        .commit_workspace_root_revalidation(WorkspaceRootRevalidationCommit {
+            request,
+            runtime_id: runtime_id.to_owned(),
+            runtime_incarnation_id: runtime_incarnation_id.to_owned(),
+            expected_root_version,
+            root,
+            resource: candidate.resource,
+            location,
+            locator_binding: verified_pair.as_ref().map(|pair| pair.0.clone()),
+            file_identity_binding: verified_pair.map(|pair| pair.1),
+            root_event,
+            location_event: Some(location_event),
+        })
+        .map_err(|_| "WorkspaceRoot revalidation could not be committed atomically".to_owned())
 }
 
 fn local_directory_failure(error: LocalDirectoryError) -> WorkspaceRootRevalidationFailure {
     match error {
-        LocalDirectoryError::UnsupportedPlatform => WorkspaceRootRevalidationFailure::UnsupportedPlatform,
+        LocalDirectoryError::UnsupportedPlatform => {
+            WorkspaceRootRevalidationFailure::UnsupportedPlatform
+        }
         LocalDirectoryError::InvalidSelection => WorkspaceRootRevalidationFailure::InvalidLocator,
         LocalDirectoryError::IdentityChanged => WorkspaceRootRevalidationFailure::IdentityChanged,
-        LocalDirectoryError::NotDirectory | LocalDirectoryError::OpenFailed => WorkspaceRootRevalidationFailure::IdentityUnavailable,
+        LocalDirectoryError::NotDirectory | LocalDirectoryError::OpenFailed => {
+            WorkspaceRootRevalidationFailure::IdentityUnavailable
+        }
     }
 }
 
@@ -840,7 +950,9 @@ fn workspace_root_failure_code(failure: WorkspaceRootRevalidationFailure) -> &'s
     match failure {
         WorkspaceRootRevalidationFailure::NoPriorBinding => "NO_PRIOR_BINDING",
         WorkspaceRootRevalidationFailure::LocatorBindingMissing => "LOCATOR_BINDING_MISSING",
-        WorkspaceRootRevalidationFailure::FileIdentityBindingMissing => "FILE_IDENTITY_BINDING_MISSING",
+        WorkspaceRootRevalidationFailure::FileIdentityBindingMissing => {
+            "FILE_IDENTITY_BINDING_MISSING"
+        }
         WorkspaceRootRevalidationFailure::BindingMismatch => "BINDING_MISMATCH",
         WorkspaceRootRevalidationFailure::UnsupportedPlatform => "UNSUPPORTED_PLATFORM",
         WorkspaceRootRevalidationFailure::InvalidLocator => "INVALID_LOCATOR",
@@ -874,12 +986,8 @@ fn fail_registered_startup(
     message: &str,
 ) -> Result<(), String> {
     state.transition(RuntimeState::Degraded, vec![blocker.to_owned()]);
-    let durable_result = persist_incarnation_transition(
-        store,
-        state,
-        incarnation_version,
-        RuntimeState::Degraded,
-    );
+    let durable_result =
+        persist_incarnation_transition(store, state, incarnation_version, RuntimeState::Degraded);
     persist_state(data_directory, state)?;
     print_state(state)?;
     match durable_result {
@@ -1029,7 +1137,7 @@ fn runtime_state_name(state: RuntimeState) -> &'static str {
 fn is_runtime_running(data_directory: &Path) -> Result<bool, String> {
     let lock_path = data_directory.join(LOCK_FILE);
     reject_symlink_if_present(&lock_path)?;
-    let file = match OpenOptions::new().read(true).write(true).open(&lock_path) {
+    let file = match open_runtime_lock_file(&lock_path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(_) => return Err("could not inspect Runtime process lock".to_owned()),
@@ -1066,15 +1174,7 @@ impl InstanceLock {
     fn acquire(data_directory: &Path) -> Result<Self, String> {
         let path = data_directory.join(LOCK_FILE);
         reject_symlink_if_present(&path)?;
-        let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let file = options
-            .open(&path)
+        let file = open_runtime_lock_file(&path)
             .map_err(|_| "could not open the Runtime single-instance lock".to_owned())?;
         restrict_file_permissions(&file)?;
         file.try_lock_exclusive().map_err(|error| {
@@ -1095,23 +1195,12 @@ impl Drop for InstanceLock {
 }
 
 fn read_state(path: &Path) -> Result<Option<RuntimeLocalState>, String> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
+    let mut file = match open_runtime_state_file(path) {
+        Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err("could not inspect Runtime lifecycle state".to_owned()),
+        Err(_) => return Err("could not read Runtime lifecycle state".to_owned()),
     };
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Err("Runtime lifecycle state must be a regular file".to_owned());
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if metadata.permissions().mode() & 0o077 != 0 {
-            return Err("Runtime lifecycle state permissions are too broad".to_owned());
-        }
-    }
-    let mut file =
-        File::open(path).map_err(|_| "could not read Runtime lifecycle state".to_owned())?;
+    validate_private_regular_file(&file, "Runtime lifecycle state")?;
     let mut bytes = Vec::new();
     file.take(1024 * 1024)
         .read_to_end(&mut bytes)
@@ -1151,8 +1240,11 @@ fn ensure_private_state_directory(path: &Path) -> Result<(), String> {
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let mode = metadata.permissions().mode();
+        if metadata.uid() != rustix::process::geteuid().as_raw() {
+            return Err("Runtime state directory must be owned by the current user".to_owned());
+        }
         if existed && mode & 0o077 != 0 {
             return Err("Runtime state directory permissions are too broad".to_owned());
         }
@@ -1165,6 +1257,7 @@ fn ensure_private_state_directory(path: &Path) -> Result<(), String> {
 }
 
 fn restrict_file_permissions(file: &File) -> Result<(), String> {
+    validate_current_user_regular_file(file, "Runtime lock")?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1176,6 +1269,97 @@ fn restrict_file_permissions(file: &File) -> Result<(), String> {
         }
         file.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|_| "could not restrict Runtime lock permissions".to_owned())?;
+    }
+    Ok(())
+}
+
+/// Opens the process lock without following a last-component symlink. The initial
+/// lstat remains useful for a clear error, but security depends on the open flags and
+/// validation of the descriptor actually returned by the kernel.
+fn open_runtime_lock_file(path: &Path) -> Result<File, std::io::Error> {
+    #[cfg(unix)]
+    {
+        use rustix::fs::{Mode, OFlags, open};
+
+        let descriptor = open(
+            path,
+            OFlags::RDWR | OFlags::CREATE | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::from_raw_mode(0o600),
+        )
+        .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        let file = File::from(descriptor);
+        validate_current_user_regular_file(&file, "Runtime lock").map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "unsafe Runtime lock file",
+            )
+        })?;
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)?;
+        validate_current_user_regular_file(&file, "Runtime lock").map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "unsafe Runtime lock file",
+            )
+        })?;
+        Ok(file)
+    }
+}
+
+fn open_runtime_state_file(path: &Path) -> Result<File, std::io::Error> {
+    #[cfg(unix)]
+    {
+        use rustix::fs::{Mode, OFlags, open};
+
+        let descriptor = open(
+            path,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+        .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+        Ok(File::from(descriptor))
+    }
+    #[cfg(not(unix))]
+    {
+        File::open(path)
+    }
+}
+
+fn validate_private_regular_file(file: &File, label: &str) -> Result<(), String> {
+    validate_current_user_regular_file(file, label)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = file
+            .metadata()
+            .map_err(|_| format!("could not inspect {label} permissions"))?;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(format!("{label} permissions are too broad"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_current_user_regular_file(file: &File, label: &str) -> Result<(), String> {
+    let metadata = file
+        .metadata()
+        .map_err(|_| format!("could not inspect {label} file"))?;
+    if !metadata.is_file() {
+        return Err(format!("{label} must be a regular file"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.uid() != rustix::process::geteuid().as_raw() {
+            return Err(format!("{label} must be owned by the current user"));
+        }
     }
     Ok(())
 }
@@ -1205,4 +1389,83 @@ fn sync_directory(path: &Path) -> Result<(), String> {
     #[cfg(not(unix))]
     let _ = path;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        RuntimeLocalState, RuntimeState, StartupPolicy, ensure_private_state_directory,
+        persist_state,
+    };
+
+    #[test]
+    fn existing_state_without_local_principal_fails_closed_instead_of_rotating_identity() {
+        let directory = tempfile::tempdir().expect("temporary Runtime directory");
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            directory.path(),
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .expect("restrict temporary Runtime directory");
+        ensure_private_state_directory(directory.path()).expect("private Runtime directory");
+        let legacy_state = RuntimeLocalState {
+            schema_version: 1,
+            runtime_id: "rt_existing".to_owned(),
+            local_principal_id: None,
+            os_principal_binding_established: true,
+            local_incarnation_id: "rli_previous".to_owned(),
+            startup_policy: StartupPolicy::Manual,
+            recovery_state: RuntimeState::Stopped,
+            recovered_from_unclean_shutdown: false,
+            last_shutdown_clean: true,
+            blockers: Vec::new(),
+            version: 1,
+        };
+        persist_state(directory.path(), &legacy_state).expect("persist existing state");
+
+        let error = RuntimeLocalState::begin(directory.path())
+            .expect_err("existing installation must not receive a replacement Principal");
+
+        assert!(error.contains("missing its local Principal identity"));
+        assert!(error.contains("explicit local recovery is required"));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod lifecycle_file_tests {
+    use super::{RuntimeLocalState, RuntimeState, StartupPolicy, read_state};
+    use std::{
+        fs,
+        os::unix::fs::{PermissionsExt, symlink},
+    };
+
+    #[test]
+    fn lifecycle_state_open_rejects_a_symlink_target() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let target = directory.path().join("state-target.json");
+        let link = directory.path().join("runtime-state.json");
+        let state = RuntimeLocalState {
+            schema_version: 1,
+            runtime_id: "rt_test".to_owned(),
+            local_principal_id: None,
+            os_principal_binding_established: false,
+            local_incarnation_id: "rli_test".to_owned(),
+            startup_policy: StartupPolicy::Manual,
+            recovery_state: RuntimeState::Stopped,
+            recovered_from_unclean_shutdown: false,
+            last_shutdown_clean: true,
+            blockers: Vec::new(),
+            version: 1,
+        };
+        fs::write(
+            &target,
+            serde_json::to_vec(&state).expect("serialize state"),
+        )
+        .expect("write target state");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600))
+            .expect("make target state private");
+        symlink(&target, &link).expect("create state symlink");
+
+        assert!(read_state(&link).is_err());
+    }
 }

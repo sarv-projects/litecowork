@@ -7,13 +7,13 @@ domain owners still apply. Story status tracks planning through owner acceptance
 
 ## Coverage inventory
 
-- 66 source Markdown documents; 890 heading-level sections are digest-pinned.
-- 32 implementation-plan documents and 179 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
-- 57 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
-- 87 flows and 79 benchmarks.
-- 177 OpenAPI operations and 274 component schemas; 0 components are unreachable from every Operator operation.
-- 97 error codes; 212 shared IDs/value definitions.
-- 133 event types and 133 typed event payload schemas.
+- 79 source Markdown documents; 1096 heading-level sections are digest-pinned.
+- 35 implementation-plan documents and 212 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 60 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
+- 137 flows and 90 benchmarks.
+- 195 OpenAPI operations and 315 component schemas; 0 components are unreachable from every Operator operation.
+- 99 error codes; 251 shared IDs/value definitions.
+- 140 event types and 139 typed event payload schemas.
 - 107 SQLite tables, 1172 columns, 475 foreign-key columns, 68 unique constraints, 348 checks, 1 view(s), 140 triggers, and 76 indexes.
 
 Machine-object names and canonical digests are compared to current source contracts by
@@ -31,6 +31,12 @@ USER tests provide that evidence when executed.
 | [`GLOSSARY.md`](../GLOSSARY.md) | E01-S01 | Canonical vocabulary |
 | [`README.md`](../README.md) | E02-S01 | Product overview |
 | [`apps/litecowork-ui/README.md`](../apps/litecowork-ui/README.md) | E02-S01 | Architecture contract |
+| [`apps/litecowork-ui/src/artifacts/README.md`](../apps/litecowork-ui/src/artifacts/README.md) | E08-S07 | Architecture contract |
+| [`apps/litecowork-ui/src/presentation/README.md`](../apps/litecowork-ui/src/presentation/README.md) | E08-S06 | Architecture contract |
+| [`assets/host-instructions/presentation-policy.md`](../assets/host-instructions/presentation-policy.md) | E08-S08 | Architecture contract |
+| [`assets/host-skills/rich-response-design/SKILL.md`](../assets/host-skills/rich-response-design/SKILL.md) | E08-S08 | Architecture contract |
+| [`capabilities/zip_intake/README.md`](../capabilities/zip_intake/README.md) | E06-S01 | Architecture contract |
+| [`crates/domain-responsibility/README.md`](../crates/domain-responsibility/README.md) | E08-S02 | Architecture contract |
 | [`docs/AGENT-FABRIC.md`](../docs/AGENT-FABRIC.md) | E03-S05 | Architecture contract |
 | [`docs/API.md`](../docs/API.md) | E01-S04 | Architecture contract |
 | [`docs/ARTIFACTS-EVIDENCE.md`](../docs/ARTIFACTS-EVIDENCE.md) | E04-S05 | Architecture contract |
@@ -50,7 +56,9 @@ USER tests provide that evidence when executed.
 | [`docs/EXPERIENCE.md`](../docs/EXPERIENCE.md) | E08-S04 | Architecture contract |
 | [`docs/FAILURE-RECOVERY.md`](../docs/FAILURE-RECOVERY.md) | E13-S02 | Architecture contract |
 | [`docs/FLOWS.md`](../docs/FLOWS.md) | E13-S03 | Architecture contract |
+| [`docs/HOST-GUIDANCE.md`](../docs/HOST-GUIDANCE.md) | E08-S08 | Architecture contract |
 | [`docs/IMPLEMENTATION.md`](../docs/IMPLEMENTATION.md) | E01-S01 | Architecture contract |
+| [`docs/LOCAL-OPERATOR-IPC.md`](../docs/LOCAL-OPERATOR-IPC.md) | E01-S04 | Architecture contract |
 | [`docs/MOTION.md`](../docs/MOTION.md) | E08-S05 | Architecture contract |
 | [`docs/NETWORK-SECURITY.md`](../docs/NETWORK-SECURITY.md) | E04-S02 | Architecture contract |
 | [`docs/OBSERVABILITY.md`](../docs/OBSERVABILITY.md) | E13-S02 | Architecture contract |
@@ -58,6 +66,7 @@ USER tests provide that evidence when executed.
 | [`docs/PRODUCT.md`](../docs/PRODUCT.md) | E08-S01 | Architecture contract |
 | [`docs/PROTOCOLS.md`](../docs/PROTOCOLS.md) | E01-S04 | Architecture contract |
 | [`docs/RESPONSIBILITIES.md`](../docs/RESPONSIBILITIES.md) | E08-S02 | Architecture contract |
+| [`docs/RICH-RESPONSE.md`](../docs/RICH-RESPONSE.md) | E08-S08 | Architecture contract |
 | [`docs/ROUTINES.md`](../docs/ROUTINES.md) | E09-S01 | Architecture contract |
 | [`docs/RUNTIME-LIFECYCLE.md`](../docs/RUNTIME-LIFECYCLE.md) | E01-S03 | Architecture contract |
 | [`docs/RUNTIME-MESH.md`](../docs/RUNTIME-MESH.md) | E11-S03 | Architecture contract |
@@ -90,6 +99,10 @@ USER tests provide that evidence when executed.
 | [`docs/adr/0017-deadline-sensitive-is-best-effort.md`](../docs/adr/0017-deadline-sensitive-is-best-effort.md) | E07-S03 | Architecture decision record |
 | [`docs/adr/0018-context-content-is-resource-backed-and-provider-pluggable.md`](../docs/adr/0018-context-content-is-resource-backed-and-provider-pluggable.md) | E08-S03 | Architecture decision record |
 | [`docs/adr/0019-credential-egress-and-audit-boundaries.md`](../docs/adr/0019-credential-egress-and-audit-boundaries.md) | E04-S01 | Architecture decision record |
+| [`docs/adr/0020-runtime-identity-is-installation-scoped.md`](../docs/adr/0020-runtime-identity-is-installation-scoped.md) | E01-S03 | Architecture decision record |
+| [`docs/adr/0021-device-signing-identity.md`](../docs/adr/0021-device-signing-identity.md) | E01-S03 | Architecture decision record |
+| [`docs/adr/0022-rich-presentation-is-optional.md`](../docs/adr/0022-rich-presentation-is-optional.md) | E08-S08 | Architecture decision record |
+| [`docs/adr/0023-host-guidance-is-not-capability-authority.md`](../docs/adr/0023-host-guidance-is-not-capability-authority.md) | E08-S08 | Architecture decision record |
 | [`docs/adr/README.md`](../docs/adr/README.md) | E01-S01 | Architecture decision record |
 
 ## Not covered by this plan yet

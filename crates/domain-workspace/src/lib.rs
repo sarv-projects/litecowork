@@ -1,18 +1,15 @@
 use serde_json::json;
 use storage_core::{
-    CommittedWorkspace, CommittedWorkspaceInstructionRevision, CommittedWorkspaceRoot, EventDraft,
-    IdempotentWorkspaceStore, ReplicationPolicy, StoreError, Workspace, WorkspaceCreateRequest,
-    ResourceUploadSessionRecord, ResourceUploadState, ResourceUploadStore,
-    CommittedContextDocumentStatus, ContextDocumentOwnerStatus, ContextDocumentStatusCommand,
-    ContextDocumentStatusEventContext, ContextDocumentStatusStore,
+    CommittedContextDocumentStatus, CommittedWorkspace, CommittedWorkspaceInstructionRevision,
+    CommittedWorkspaceRoot, ContextDocumentOwnerStatus, ContextDocumentStatusCommand,
+    ContextDocumentStatusEventContext, ContextDocumentStatusStore, EventDraft,
+    FolderImportMetadata, IdempotentWorkspaceStore, LocalFileIdentityBindingRecord,
+    LocalResourceLocationBindingRecord, ReplicationPolicy, ResourceLocationRecord, ResourceRecord,
+    ResourceUploadSessionRecord, ResourceUploadState, ResourceUploadStore, StoreError, Workspace,
+    WorkspaceCreateRequest, WorkspaceInstructionRevisionRecord, WorkspaceRootCreateCommit,
+    WorkspaceRootListRecord, WorkspaceRootRecord, WorkspaceRootResumeCommit,
+    WorkspaceRootStatusAction, WorkspaceRootStatusCommit, WorkspaceRootStore, WorkspaceStore,
     is_sha256_digest,
-    FolderImportMetadata, LocalResourceLocationBindingRecord, ResourceLocationRecord,
-    ResourceRecord, WorkspaceInstructionRevisionRecord, WorkspaceRootCreateCommit,
-    WorkspaceRootRecord, WorkspaceRootStatusAction, WorkspaceRootStatusCommit,
-    WorkspaceRootListRecord,
-    WorkspaceRootResumeCommit,
-    WorkspaceRootStore, WorkspaceStore,
-    LocalFileIdentityBindingRecord,
 };
 
 #[cfg(test)]
@@ -139,7 +136,7 @@ pub struct ResourceService<S> {
 
 impl<S> ResourceService<S>
 where
-    S: ContextDocumentStatusStore + WorkspaceStore,
+    S: ContextDocumentStatusStore,
 {
     pub fn new(store: S) -> Self {
         Self { store }
@@ -156,52 +153,45 @@ where
             ("request_id", command.request_id.as_str()),
         ] {
             require_non_empty(name, value)?;
-            if value.contains('\\0') {
+            if value.contains('\0') {
                 return Err(StoreError::Invalid(format!("{name} contains a NUL byte")));
             }
         }
         if command.expected_version == 0 {
-            return Err(StoreError::Invalid("expected Resource version must be positive".to_owned()));
+            return Err(StoreError::Invalid(
+                "expected Resource version must be positive".to_owned(),
+            ));
         }
         validate_event_context(&command.event)?;
-
-        // This early check avoids disclosing whether another owner's Workspace exists;
-        // storage repeats it atomically with the Resource transition.
-        let workspace = self.store.get_workspace(&command.workspace_id)?.ok_or(StoreError::NotFound)?;
-        if workspace.owner_principal_id != command.principal_id {
-            return Err(StoreError::NotFound);
-        }
-        if workspace.status != "ACTIVE" {
-            return Err(StoreError::Invalid("an archived Workspace is read-only".to_owned()));
-        }
 
         let status = match command.target_status {
             ContextDocumentOwnerStatus::Active => "ACTIVE",
             ContextDocumentOwnerStatus::Revoked => "REVOKED",
         };
         let request_payload = json!({
-            "workspace_id": command.workspace_id,
-            "resource_id": command.resource_id,
+            "workspace_id": &command.workspace_id,
+            "resource_id": &command.resource_id,
             "status": status,
             "expected_version": command.expected_version,
         });
-        self.store.set_context_document_status(ContextDocumentStatusCommand {
-            workspace_id: command.workspace_id,
-            resource_id: command.resource_id,
-            principal_id: command.principal_id,
-            request_id: command.request_id,
-            expected_version: command.expected_version,
-            target_status: command.target_status,
-            request_payload,
-            event: ContextDocumentStatusEventContext {
-                event_id: command.event.event_id,
-                origin_runtime_id: command.event.origin_runtime_id,
-                hlc_timestamp: command.event.hlc_timestamp,
-                correlation_id: command.event.correlation_id,
-                causation_id: command.event.causation_id,
-                recorded_at: command.event.recorded_at,
-            },
-        })
+        self.store
+            .set_context_document_status(ContextDocumentStatusCommand {
+                workspace_id: command.workspace_id,
+                resource_id: command.resource_id,
+                principal_id: command.principal_id,
+                request_id: command.request_id,
+                expected_version: command.expected_version,
+                target_status: command.target_status,
+                request_payload,
+                event: ContextDocumentStatusEventContext {
+                    event_id: command.event.event_id,
+                    origin_runtime_id: command.event.origin_runtime_id,
+                    hlc_timestamp: command.event.hlc_timestamp,
+                    correlation_id: command.event.correlation_id,
+                    causation_id: command.event.causation_id,
+                    recorded_at: command.event.recorded_at,
+                },
+            })
     }
 }
 
@@ -290,7 +280,10 @@ where
         Self { store }
     }
 
-    pub fn add_root(&self, command: AddWorkspaceRoot) -> Result<CommittedWorkspaceRoot, StoreError> {
+    pub fn add_root(
+        &self,
+        command: AddWorkspaceRoot,
+    ) -> Result<CommittedWorkspaceRoot, StoreError> {
         for (name, value) in [
             ("workspace_id", command.workspace_id.as_str()),
             ("principal_id", command.principal_id.as_str()),
@@ -300,7 +293,10 @@ where
             ("locator_ref_id", command.locator_ref_id.as_str()),
             ("workspace_root_id", command.workspace_root_id.as_str()),
             ("runtime_id", command.runtime_id.as_str()),
-            ("runtime_incarnation_id", command.runtime_incarnation_id.as_str()),
+            (
+                "runtime_incarnation_id",
+                command.runtime_incarnation_id.as_str(),
+            ),
             ("private_locator", command.private_locator.as_str()),
             ("display_name", command.display_name.as_str()),
         ] {
@@ -310,23 +306,38 @@ where
             }
         }
         if !storage_core::is_sha256_digest(&command.identity_digest) {
-            return Err(StoreError::Invalid("folder identity digest is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "folder identity digest is invalid".to_owned(),
+            ));
         }
         if command.display_name.chars().any(char::is_control)
             || command.display_name.len() > 255
-            || !matches!(command.watch_policy.as_str(), "METADATA" | "CONTENT_DIGESTS" | "SELECTED_TEXT_EXTRACTION")
-            || !matches!(command.replication_policy.as_str(), "NONE" | "ACTIVE_TASKS" | "SELECTED_WORKSPACE_POLICY")
+            || !matches!(
+                command.watch_policy.as_str(),
+                "METADATA" | "CONTENT_DIGESTS" | "SELECTED_TEXT_EXTRACTION"
+            )
+            || !matches!(
+                command.replication_policy.as_str(),
+                "NONE" | "ACTIVE_TASKS" | "SELECTED_WORKSPACE_POLICY"
+            )
         {
-            return Err(StoreError::Invalid("WorkspaceRoot display name or policy is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "WorkspaceRoot display name or policy is invalid".to_owned(),
+            ));
         }
         validate_event_context(&command.event)?;
 
-        let workspace = self.store.get_workspace(&command.workspace_id)?.ok_or(StoreError::NotFound)?;
+        let workspace = self
+            .store
+            .get_workspace(&command.workspace_id)?
+            .ok_or(StoreError::NotFound)?;
         if workspace.owner_principal_id != command.principal_id {
             return Err(StoreError::NotFound);
         }
         if workspace.status != "ACTIVE" {
-            return Err(StoreError::Invalid("an archived Workspace is read-only".to_owned()));
+            return Err(StoreError::Invalid(
+                "an archived Workspace is read-only".to_owned(),
+            ));
         }
         if workspace.version != command.expected_workspace_version {
             return Err(StoreError::Conflict {
@@ -402,7 +413,7 @@ where
                 "replication_policy": command.replication_policy.clone(),
             }),
         };
-        let resource_event = resource_event(
+        let resource_created_event = resource_event(
             &command.event,
             &format!("{}:resource", command.event.event_id),
             &resource,
@@ -467,7 +478,7 @@ where
             private_binding,
             file_identity_binding: command.file_identity_binding,
             root,
-            resource_created_event: resource_event,
+            resource_created_event,
             location_observed_event: location_event,
             root_created_event: root_event,
         })
@@ -484,7 +495,10 @@ where
     ) -> Result<Vec<WorkspaceRootListRecord>, StoreError> {
         require_non_empty("workspace_id", workspace_id)?;
         require_non_empty("principal_id", principal_id)?;
-        let workspace = self.store.get_workspace(workspace_id)?.ok_or(StoreError::NotFound)?;
+        let workspace = self
+            .store
+            .get_workspace(workspace_id)?
+            .ok_or(StoreError::NotFound)?;
         if workspace.owner_principal_id != principal_id {
             return Err(StoreError::NotFound);
         }
@@ -526,7 +540,10 @@ where
             ("principal_id", command.principal_id.as_str()),
             ("request_id", command.request_id.as_str()),
             ("runtime_id", command.runtime_id.as_str()),
-            ("runtime_incarnation_id", command.runtime_incarnation_id.as_str()),
+            (
+                "runtime_incarnation_id",
+                command.runtime_incarnation_id.as_str(),
+            ),
         ] {
             require_non_empty(name, value)?;
             if value.contains('\0') {
@@ -534,7 +551,10 @@ where
             }
         }
         validate_event_context(&command.event)?;
-        let workspace = self.store.get_workspace(&command.workspace_id)?.ok_or(StoreError::NotFound)?;
+        let workspace = self
+            .store
+            .get_workspace(&command.workspace_id)?
+            .ok_or(StoreError::NotFound)?;
         if workspace.owner_principal_id != command.principal_id {
             return Err(StoreError::NotFound);
         }
@@ -550,9 +570,13 @@ where
             return Ok(receipt);
         }
         if workspace.status != "ACTIVE" {
-            return Err(StoreError::Invalid("an archived Workspace is read-only".to_owned()));
+            return Err(StoreError::Invalid(
+                "an archived Workspace is read-only".to_owned(),
+            ));
         }
-        let mut root = self.store.get_workspace_root(&command.workspace_id, &command.workspace_root_id)?
+        let mut root = self
+            .store
+            .get_workspace_root(&command.workspace_id, &command.workspace_root_id)?
             .ok_or(StoreError::NotFound)?;
         if root.version != command.expected_version || root.status != "PAUSED" {
             return Err(StoreError::Conflict {
@@ -574,21 +598,35 @@ where
             || command.previous_file_identity_binding.location_id != root.location_id
             || command.locator_binding.location_id != root.location_id
             || command.file_identity_binding.location_id != root.location_id
-            || command.previous_locator_binding.private_locator != command.locator_binding.private_locator
-            || command.previous_locator_binding.locator_ref_id != command.locator_binding.locator_ref_id
-            || command.previous_file_identity_binding.raw_filesystem_instance_id != command.file_identity_binding.raw_filesystem_instance_id
-            || command.previous_file_identity_binding.raw_volume_id != command.file_identity_binding.raw_volume_id
-            || command.previous_file_identity_binding.raw_file_id != command.file_identity_binding.raw_file_id
-            || command.previous_file_identity_binding.raw_generation != command.file_identity_binding.raw_generation
-            || command.previous_file_identity_binding.platform_kind != command.file_identity_binding.platform_kind
+            || command.previous_locator_binding.private_locator
+                != command.locator_binding.private_locator
+            || command.previous_locator_binding.locator_ref_id
+                != command.locator_binding.locator_ref_id
+            || command
+                .previous_file_identity_binding
+                .raw_filesystem_instance_id
+                != command.file_identity_binding.raw_filesystem_instance_id
+            || command.previous_file_identity_binding.raw_volume_id
+                != command.file_identity_binding.raw_volume_id
+            || command.previous_file_identity_binding.raw_file_id
+                != command.file_identity_binding.raw_file_id
+            || command.previous_file_identity_binding.raw_generation
+                != command.file_identity_binding.raw_generation
+            || command.previous_file_identity_binding.platform_kind
+                != command.file_identity_binding.platform_kind
             || command.locator_binding.runtime_id != command.runtime_id
             || command.locator_binding.runtime_incarnation_id != command.runtime_incarnation_id
             || command.file_identity_binding.runtime_id != command.runtime_id
-            || command.file_identity_binding.runtime_incarnation_id != command.runtime_incarnation_id
+            || command.file_identity_binding.runtime_incarnation_id
+                != command.runtime_incarnation_id
         {
-            return Err(StoreError::Invalid("fresh WorkspaceRoot identity proof is inconsistent".to_owned()));
+            return Err(StoreError::Invalid(
+                "fresh WorkspaceRoot identity proof is inconsistent".to_owned(),
+            ));
         }
-        let next_version = root.version.checked_add(1)
+        let next_version = root
+            .version
+            .checked_add(1)
             .ok_or_else(|| StoreError::Invalid("WorkspaceRoot version overflow".to_owned()))?;
         root.status = "ACTIVE".to_owned();
         root.updated_at = command.event.recorded_at.clone();
@@ -670,18 +708,22 @@ where
         expected_version: u64,
         action: WorkspaceRootStatusAction,
     ) -> Result<Option<storage_core::CommittedWorkspaceRootStatus>, StoreError> {
-        let workspace = self.store.get_workspace(workspace_id)?.ok_or(StoreError::NotFound)?;
+        let workspace = self
+            .store
+            .get_workspace(workspace_id)?
+            .ok_or(StoreError::NotFound)?;
         if workspace.owner_principal_id != principal_id {
             return Err(StoreError::NotFound);
         }
-        self.store.get_workspace_root_status_receipt(&workspace_root_status_request(
-            workspace_id,
-            workspace_root_id,
-            principal_id,
-            request_id,
-            expected_version,
-            action,
-        ))
+        self.store
+            .get_workspace_root_status_receipt(&workspace_root_status_request(
+                workspace_id,
+                workspace_root_id,
+                principal_id,
+                request_id,
+                expected_version,
+                action,
+            ))
     }
 
     pub fn change_root_status(
@@ -700,20 +742,37 @@ where
             }
         }
         validate_event_context(&command.event)?;
-        let workspace = self.store.get_workspace(&command.workspace_id)?.ok_or(StoreError::NotFound)?;
+        let workspace = self
+            .store
+            .get_workspace(&command.workspace_id)?
+            .ok_or(StoreError::NotFound)?;
         if workspace.owner_principal_id != command.principal_id {
             return Err(StoreError::NotFound);
         }
         let resume_runtime = match command.action {
             WorkspaceRootStatusAction::Resume => {
-                let runtime_id = command.runtime_id.as_deref().filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| StoreError::Invalid("root resume requires a Runtime".to_owned()))?;
-                let incarnation_id = command.runtime_incarnation_id.as_deref().filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| StoreError::Invalid("root resume requires a Runtime incarnation".to_owned()))?;
+                let runtime_id = command
+                    .runtime_id
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        StoreError::Invalid("root resume requires a Runtime".to_owned())
+                    })?;
+                let incarnation_id = command
+                    .runtime_incarnation_id
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        StoreError::Invalid("root resume requires a Runtime incarnation".to_owned())
+                    })?;
                 Some((runtime_id.to_owned(), incarnation_id.to_owned()))
             }
             _ if command.runtime_id.is_none() && command.runtime_incarnation_id.is_none() => None,
-            _ => return Err(StoreError::Invalid("only root resume accepts a Runtime incarnation".to_owned())),
+            _ => {
+                return Err(StoreError::Invalid(
+                    "only root resume accepts a Runtime incarnation".to_owned(),
+                ));
+            }
         };
         // The request digest contains only stable owner intent. Runtime identity
         // is a resume admission precondition, not part of the idempotency key:
@@ -730,12 +789,18 @@ where
             return Ok(receipt);
         }
         if command.action == WorkspaceRootStatusAction::Resume {
-            return Err(StoreError::Invalid("root Resume requires a fresh filesystem identity proof".to_owned()));
+            return Err(StoreError::Invalid(
+                "root Resume requires a fresh filesystem identity proof".to_owned(),
+            ));
         }
         if workspace.status != "ACTIVE" {
-            return Err(StoreError::Invalid("an archived Workspace is read-only".to_owned()));
+            return Err(StoreError::Invalid(
+                "an archived Workspace is read-only".to_owned(),
+            ));
         }
-        let current = self.store.get_workspace_root(&command.workspace_id, &command.workspace_root_id)?
+        let current = self
+            .store
+            .get_workspace_root(&command.workspace_id, &command.workspace_root_id)?
             .ok_or(StoreError::NotFound)?;
         if current.version != command.expected_version {
             return Err(StoreError::Conflict {
@@ -746,7 +811,9 @@ where
         let transition_allowed = match command.action {
             WorkspaceRootStatusAction::Pause => current.status == "ACTIVE",
             WorkspaceRootStatusAction::Resume => current.status == "PAUSED",
-            WorkspaceRootStatusAction::Revoke => matches!(current.status.as_str(), "ACTIVE" | "PAUSED" | "UNAVAILABLE"),
+            WorkspaceRootStatusAction::Revoke => {
+                matches!(current.status.as_str(), "ACTIVE" | "PAUSED" | "UNAVAILABLE")
+            }
         };
         if !transition_allowed {
             return Err(StoreError::Conflict {
@@ -754,7 +821,9 @@ where
                 actual: Some(current.version),
             });
         }
-        let next_version = current.version.checked_add(1)
+        let next_version = current
+            .version
+            .checked_add(1)
             .ok_or_else(|| StoreError::Invalid("WorkspaceRoot version overflow".to_owned()))?;
         let mut root = current;
         let from_status = root.status.clone();
@@ -782,15 +851,16 @@ where
             }),
             recorded_at: command.event.recorded_at,
         };
-        self.store.update_workspace_root_status(WorkspaceRootStatusCommit {
-            request,
-            expected_version: command.expected_version,
-            action: command.action,
-            runtime_id: resume_runtime.as_ref().map(|value| value.0.clone()),
-            runtime_incarnation_id: resume_runtime.map(|value| value.1),
-            root,
-            event,
-        })
+        self.store
+            .update_workspace_root_status(WorkspaceRootStatusCommit {
+                request,
+                expected_version: command.expected_version,
+                action: command.action,
+                runtime_id: resume_runtime.as_ref().map(|value| value.0.clone()),
+                runtime_incarnation_id: resume_runtime.map(|value| value.1),
+                root,
+                event,
+            })
     }
 }
 
@@ -867,7 +937,9 @@ where
             return Err(StoreError::NotFound);
         }
         if workspace.status != "ACTIVE" {
-            return Err(StoreError::Invalid("an archived Workspace is read-only".to_owned()));
+            return Err(StoreError::Invalid(
+                "an archived Workspace is read-only".to_owned(),
+            ));
         }
 
         let session = ResourceUploadSessionRecord {
@@ -902,7 +974,8 @@ where
             )
         }) {
             return Err(StoreError::Invalid(
-                "Context Document metadata does not match the authenticated owner and Workspace".to_owned(),
+                "Context Document metadata does not match the authenticated owner and Workspace"
+                    .to_owned(),
             ));
         }
 
@@ -966,16 +1039,26 @@ where
             || !is_sha256_digest(&command.expected_digest)
             || command.parent_revision_ids.is_empty()
             || command.parent_revision_ids.len() > 16
-            || command.parent_revision_ids.iter().any(|value| value.trim().is_empty())
+            || command
+                .parent_revision_ids
+                .iter()
+                .any(|value| value.trim().is_empty())
         {
-            return Err(StoreError::Invalid("Resource revision upload metadata is invalid".to_owned()));
+            return Err(StoreError::Invalid(
+                "Resource revision upload metadata is invalid".to_owned(),
+            ));
         }
-        let workspace = self.store.get_workspace(&command.workspace_id)?.ok_or(StoreError::NotFound)?;
+        let workspace = self
+            .store
+            .get_workspace(&command.workspace_id)?
+            .ok_or(StoreError::NotFound)?;
         if workspace.owner_principal_id != command.principal_id {
             return Err(StoreError::NotFound);
         }
         if workspace.status != "ACTIVE" {
-            return Err(StoreError::Invalid("an archived Workspace is read-only".to_owned()));
+            return Err(StoreError::Invalid(
+                "an archived Workspace is read-only".to_owned(),
+            ));
         }
 
         let session = ResourceUploadSessionRecord {
@@ -1052,7 +1135,9 @@ fn valid_context_document_metadata(
     workspace_id: &str,
     principal_id: &str,
 ) -> bool {
-    let Some(object) = metadata.as_object() else { return false; };
+    let Some(object) = metadata.as_object() else {
+        return false;
+    };
     if object.len() != 2 || !object.contains_key("kind") || !object.contains_key("owner_ref") {
         return false;
     }
@@ -1060,17 +1145,25 @@ fn valid_context_document_metadata(
     match metadata.get("kind").and_then(serde_json::Value::as_str) {
         Some("PERSONAL_PROFILE") => owner.is_some_and(|owner| {
             owner.as_object().is_some_and(|object| {
-                object.len() == 2 && object.contains_key("kind") && object.contains_key("principal_id")
-            })
-                && owner.get("kind").and_then(serde_json::Value::as_str) == Some("USER")
-                && owner.get("principal_id").and_then(serde_json::Value::as_str) == Some(principal_id)
+                object.len() == 2
+                    && object.contains_key("kind")
+                    && object.contains_key("principal_id")
+            }) && owner.get("kind").and_then(serde_json::Value::as_str) == Some("USER")
+                && owner
+                    .get("principal_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(principal_id)
         }),
         Some("WORKSPACE_NOTES") => owner.is_some_and(|owner| {
             owner.as_object().is_some_and(|object| {
-                object.len() == 2 && object.contains_key("kind") && object.contains_key("workspace_id")
-            })
-                && owner.get("kind").and_then(serde_json::Value::as_str) == Some("WORKSPACE")
-                && owner.get("workspace_id").and_then(serde_json::Value::as_str) == Some(workspace_id)
+                object.len() == 2
+                    && object.contains_key("kind")
+                    && object.contains_key("workspace_id")
+            }) && owner.get("kind").and_then(serde_json::Value::as_str) == Some("WORKSPACE")
+                && owner
+                    .get("workspace_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(workspace_id)
         }),
         // Coworker/Goal ownership requires their authoritative aggregate services.
         _ => false,
@@ -1189,21 +1282,36 @@ impl<S: WorkspaceStore> WorkspaceService<S> {
         require_non_empty("principal_id", &command.principal_id)?;
         require_non_empty("request_id", &command.request_id)?;
         if command.expected_version == 0 {
-            return Err(StoreError::Invalid("expected Workspace version must be positive".to_owned()));
+            return Err(StoreError::Invalid(
+                "expected Workspace version must be positive".to_owned(),
+            ));
         }
-        if command.agent_binding_id.as_ref().is_some_and(|value| value.trim().is_empty()) {
-            return Err(StoreError::Invalid("AgentBinding ID must not be empty".to_owned()));
+        if command
+            .agent_binding_id
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(StoreError::Invalid(
+                "AgentBinding ID must not be empty".to_owned(),
+            ));
         }
         validate_event_context(&command.event)?;
 
-        let mut workspace = self.store.get_workspace(&command.workspace_id)?.ok_or(StoreError::NotFound)?;
+        let mut workspace = self
+            .store
+            .get_workspace(&command.workspace_id)?
+            .ok_or(StoreError::NotFound)?;
         if workspace.status != "ACTIVE" {
-            return Err(StoreError::Invalid("an archived Workspace is read-only".to_owned()));
+            return Err(StoreError::Invalid(
+                "an archived Workspace is read-only".to_owned(),
+            ));
         }
 
         let previous = workspace.default_agent_binding_id.clone();
         workspace.default_agent_binding_id = command.agent_binding_id.clone();
-        workspace.version = workspace.version.checked_add(1)
+        workspace.version = workspace
+            .version
+            .checked_add(1)
             .ok_or_else(|| StoreError::Invalid("Workspace version overflow".to_owned()))?;
         workspace.updated_at = command.event.recorded_at.clone();
         let event = EventDraft {
@@ -1252,21 +1360,36 @@ impl<S: WorkspaceStore> WorkspaceService<S> {
         require_non_empty("principal_id", &command.principal_id)?;
         require_non_empty("request_id", &command.request_id)?;
         if command.expected_version == 0 {
-            return Err(StoreError::Invalid("expected Workspace version must be positive".to_owned()));
+            return Err(StoreError::Invalid(
+                "expected Workspace version must be positive".to_owned(),
+            ));
         }
-        if command.coworker_id.as_ref().is_some_and(|value| value.trim().is_empty()) {
-            return Err(StoreError::Invalid("Coworker ID must not be empty".to_owned()));
+        if command
+            .coworker_id
+            .as_ref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(StoreError::Invalid(
+                "Coworker ID must not be empty".to_owned(),
+            ));
         }
         validate_event_context(&command.event)?;
 
-        let mut workspace = self.store.get_workspace(&command.workspace_id)?.ok_or(StoreError::NotFound)?;
+        let mut workspace = self
+            .store
+            .get_workspace(&command.workspace_id)?
+            .ok_or(StoreError::NotFound)?;
         if workspace.status != "ACTIVE" {
-            return Err(StoreError::Invalid("an archived Workspace is read-only".to_owned()));
+            return Err(StoreError::Invalid(
+                "an archived Workspace is read-only".to_owned(),
+            ));
         }
 
         let previous = workspace.primary_coworker_id.clone();
         workspace.primary_coworker_id = command.coworker_id.clone();
-        workspace.version = workspace.version.checked_add(1)
+        workspace.version = workspace
+            .version
+            .checked_add(1)
             .ok_or_else(|| StoreError::Invalid("Workspace version overflow".to_owned()))?;
         workspace.updated_at = command.event.recorded_at.clone();
         let event = EventDraft {
@@ -1319,13 +1442,19 @@ impl<S: WorkspaceStore> WorkspaceService<S> {
             .get_workspace(&command.workspace_id)?
             .ok_or(StoreError::NotFound)?;
         if workspace.status != "ACTIVE" {
-            return Err(StoreError::Invalid("an archived Workspace is read-only".to_owned()));
+            return Err(StoreError::Invalid(
+                "an archived Workspace is read-only".to_owned(),
+            ));
         }
-        let expected_revision = workspace.current_instruction_revision.unwrap_or(0)
+        let expected_revision = workspace
+            .current_instruction_revision
+            .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(|| StoreError::Invalid("instruction revision overflow".to_owned()))?;
         workspace.current_instruction_revision = Some(expected_revision);
-        workspace.version = workspace.version.checked_add(1)
+        workspace.version = workspace
+            .version
+            .checked_add(1)
             .ok_or_else(|| StoreError::Invalid("Workspace version overflow".to_owned()))?;
         workspace.updated_at = command.event.recorded_at.clone();
         let instruction_revision = WorkspaceInstructionRevisionRecord {

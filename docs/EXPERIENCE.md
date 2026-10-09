@@ -23,6 +23,13 @@ verification requests. Advanced technical detail lives in Inspector/Settings/Dis
 details. A Workspace selector is available in the app shell when more than one Workspace
 exists.
 
+**Current desktop/local implementation boundary:** The mounted page currently queries the
+authenticated Task list for `WAITING_USER`, `NEEDS_USER`, and `BLOCKED`, then links each
+persisted Task to its current detail view. This is a Task-attention view only. It is not
+the full Needs You inbox: Approval/UserRequest aggregation, notification/deep-link
+handling, blocker-specific actions, and resolve/dismiss mutations are not connected to
+this page. It must say so and must not imply that opening a Task resolves anything.
+
 ## V1 client scope
 
 V1 interaction implementation targets the desktop Operator. Responsive layouts inform
@@ -33,7 +40,12 @@ they do not claim mobile rendering or app-store support.
 
 ## Workspace setup and selection
 
-Workspace creation is part of first-run setup and Settings. The user sees the replication scope in plain language before choosing a policy:
+Workspace creation is part of first-run setup and Settings. Desktop/local V1 creates and
+operates Workspaces with `LOCAL_ONLY` storage. Cloud continuation, Workspace replication,
+and remote Runtimes are post-V1; their policy values remain architecture contracts but are
+not selectable in this release.
+
+The future replication values are:
 
 - `LOCAL_ONLY`: stays on this Runtime.
 - `METADATA_ONLY`: syncs Workspace and Task metadata, not file contents.
@@ -41,9 +53,20 @@ Workspace creation is part of first-run setup and Settings. The user sees the re
 - `SELECTED_FOLDERS`: transfers resources under the selected persistent WorkspaceRoots and Task outputs; newly observed revisions remain in scope while the root grant and policy remain active.
 - `FULL_WORKSPACE`: explicit whole-Workspace replication with a clear storage/privacy summary.
 
-Creation defaults to `LOCAL_ONLY`; cloud enablement is a separate explicit action. To use `SELECTED_FOLDERS`, the setup flow first creates the Workspace, then creates the persistent WorkspaceRoots, then saves the selected-root policy. Changing policy applies prospectively and explains that copies already transferred are retained. Archive is a separate, confirmed action available only after Tasks are terminal and Automations disabled. Quiescence also requires Conversation turns and scoped Invocations to be settled, no active grants/SecretLeases/control leases, and persistent Environments with no live workload. Authorized watchers/triggers stop before the read-only transition. Retained Environment state may remain suspended under storage/backup policy; archive never silently destroys it. Unknown provider quiescence blocks archive with `WORKSPACE_NOT_QUIESCENT`. Archived Workspaces remain browsable and show a persistent read-only banner.
+Desktop V1 does not enable replication. If an existing Workspace contains a non-local saved
+policy, Settings labels it inactive and offers an explicit return to `LOCAL_ONLY`; it does
+not silently change the stored policy. Archive is a separate, confirmed action available
+only after Tasks are terminal and Automations disabled. Quiescence also requires
+Conversation turns and scoped Invocations to be settled, no active grants/SecretLeases/control
+leases, and persistent Environments with no live workload. Authorized watchers/triggers stop
+before the read-only transition. Retained Environment state may remain suspended under
+storage/backup policy; archive never silently destroys it. Unknown provider quiescence
+blocks archive with `WORKSPACE_NOT_QUIESCENT`. Archived Workspaces remain browsable and
+show a persistent read-only banner.
 
-States: first-run, create in progress, policy saving, cloud unavailable, archive blocked with named active Tasks/Automations, archived/read-only, stale policy version/conflict.
+States: first-run, create in progress, local-only storage, previously saved replication
+policy inactive, policy reset in progress, archive blocked with named active
+Tasks/Automations, archived/read-only, stale policy version/conflict.
 
 First use also establishes an enabled default AgentBinding. The user chooses it from
 discovered external agents; LiteCowork does not silently select a model or create an
@@ -135,6 +158,9 @@ required local resources/apps, eligible execution locations, cost/permission bou
 the Routine revision that will be pinned.
 
 Advanced popover may expose Agent, Model (when agent exposes it), Reasoning, Execution preference, Budget, Access and Capabilities.
+Response style is a separate preference from execution optimization. It defaults to
+`Auto`; users may choose `Simple` or `Rich` from a low-friction composer menu or Settings.
+Do not prompt for this choice on every turn, and do not label it as Agent/model selection.
 
 ## Conversation
 
@@ -146,6 +172,13 @@ sources resolved for that turn; it never claims that an Agent read every availab
 Transient streamed text is marked in progress until the ConversationMessage commits.
 Reconnect replaces stale local state from the authorized projection and does not replay
 old typing or activity animations. See [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md).
+The committed semantic answer appears as soon as the ConversationMessage is available.
+An optional RichPresentation may upgrade that exact message after validation; while it is
+fetching, unavailable, unsupported, or rejected, show the complete semantic Markdown and
+a quiet non-error fallback. Rich blocks do not replace the message, create Task state,
+perform actions, or delay turn completion. `Simple` suppresses model-composed decoration
+but retains real Artifact, Task, UserRequest, Approval, and other required host controls.
+`Rich` requests composition but cannot require a renderer or block completion.
 Side conversations/branches are not part of v1. If introduced later, they must pin their
 own context snapshot and cannot alter a parent Conversation or Task unless the user
 explicitly applies a reviewed result.
@@ -222,6 +255,15 @@ validated from the authenticated Task/Resource/Plan projections. The view does n
 Attempts, Evidence, verification, or progress from a Plan Step. This disclosure state is a
 local presentation choice and does not change Task state.
 
+A pinned Task input may offer a lazy **Preview pinned text** disclosure. Opening it reads
+only the exact selected Workspace/Resource/revision through the authenticated desktop
+preview command, and renders valid UTF-8 text up to 1 MiB as escaped plain text. The UI
+labels the exact revision and states that previewing does not attach content to an Agent or
+change the saved Task. Unsupported media, invalid UTF-8, oversized content, unavailable
+bytes, or a historical revision that is no longer the Resource's current head produces an
+explicit error and retry for that same pin; the UI never substitutes the newer head. This
+preview is a user-visible read, not agent context construction, semantic RAG, or execution.
+
 The current saved outcome/activity panel uses a finite authenticated snapshot. It shows the
 saved objective/status, committed output records, and a short activity preview; full source
 IDs stay collapsed. It labels `CURRENT` only when the persisted source records were read
@@ -284,10 +326,24 @@ history is never destructively rewound. A renderer/provider failure distinguishe
 preview from unavailable content and retains any unsaved draft. Editing follows the owning
 provider contract and publication creates an ordinary ArtifactVersion.
 
+If publishing a text draft returns an ambiguous result, the Workbench keeps the original
+request identity and exact payload. It locks the draft against editing and ordinary discard,
+and offers **Retry unchanged**; retry sends the same request ID and expected Artifact versions
+so the owner can resolve whether the immutable version committed without creating a duplicate.
+A definitive version conflict instead keeps the draft for review and requires checking the
+latest version and explicitly rebasing before a new publish request. If the owner explicitly
+confirms closing a changed unpublished draft with no pending request, that draft is discarded.
+Close is disabled while a publish request is pending. An application restart or other
+external unmount can still discard the in-memory retry identity; after reopening, the owner
+must inspect Artifact history/current head before composing another edit.
+
 The current desktop Workbench remains narrower than this target: it selects exact
 committed versions, previews supported bounded UTF-8 text as escaped text, copies selected
-text, compares supported text with its exact prior version side by side using the same
-renderer, and offers an authorized immutable
+text, compares supported text with another explicitly selected committed version side by
+side using the same renderer. A second comparison display aligns literal changed lines and
+reports added/removed line counts for small inputs; its bounded diff has a side-by-side
+fallback for larger or unusually long lines. It does not infer semantic changes or publish
+anything. The Workbench also offers an authorized immutable
 native Save As for the exact selected managed ArtifactVersion up to 10 MiB, plus
 content/provenance metadata. Save As checks the selected version identity and digest through
 the authenticated local bridge; the daemon verifies stored bytes and the native process
@@ -302,6 +358,16 @@ restored-from relation. This is not a general document editor; external content,
 office files, and other media remain read-only/download-only.
 
 ## Library
+
+The local Workbench offers owner-confirmed **Save to Library** for TRANSIENT Artifacts
+and **Archive Artifact** for SAVED Artifacts. Confirmation names the Artifact, explains
+that history is preserved, and states that archive prevents future content publication.
+Linked content remains with its provider; these actions neither fetch nor delete it.
+The status changes only after a validated committed response. A stale head asks for refresh
+and review, while an unconfirmed result offers the unchanged request for idempotent retry.
+Library status changes are disabled while a text draft is open or publishing. Archive is
+terminal and has no restore/unarchive action; restoring historical text applies only to
+non-archived Artifacts through ordinary new-version publication.
 
 Filters/resources:
 - Generated
@@ -322,11 +388,40 @@ path. The UI receives only Saved/Cancelled status, never file bytes or the selec
 destination path. Stale, inactive, non-file, external, unavailable, or oversized content is
 not saved. ZIP archives remain opaque and may be saved byte-for-byte as uploaded; Library
 does not extract them. The action creates no new Resource revision or Task history.
+In ContextDocument revision history, the owner can inspect the current status and request
+`ACTIVE -> REVOKED` or `REVOKED -> ACTIVE` with the displayed Resource version. Confirmation
+states that revocation blocks future LiteCowork reads and index updates while retaining
+stored bytes, and cannot recall content already delivered to an agent. Ambiguous failures
+offer a retry using the same idempotency key; a version conflict reloads metadata. This
+control does not edit ordinary Resource metadata, delete or purge bytes, or invalidate
+existing native sessions. Deletion controls remain unavailable. If a replacement file is
+selected or the text draft differs from its loaded baseline, closing the revision editor
+first asks whether to keep editing or discard and close. An unchanged text preview closes
+without a prompt. Closing is unavailable while a revision upload is in progress; upload
+commit/conflict behavior remains owned by the revision protocol. A ContextDocument
+availability change is also blocked while a local draft exists; after an ambiguous status
+response, editing and closing remain paused until the same request is resolved or retried.
+The Library also offers **Write a Workspace note**. The owner supplies a title and up to
+64 KiB of UTF-8 text; the desktop creates an immutable managed `FILE` Resource through the
+normal resumable upload protocol with `WORKSPACE_NOTES` metadata pinned to the selected
+Workspace. The note appears in the ordinary Resource catalog and uses the existing
+revision-history/edit/revoke controls. V1 exposes no personal, Coworker, or Goal scope
+selector. The UI explains that the note is scoped to the Workspace and is not automatically
+attached to agent context; creating one does not claim semantic RAG.
+Resource history offers **Compare text revisions** only for two explicitly selected,
+committed revisions of this same Resource whose recorded media type is `text/plain` or
+Markdown and whose individual size is at most 1 MiB. Both exact pins are read lazily through
+the authenticated local content route. The desktop presents labeled side-by-side escaped
+text, not a generated changed-line diff; it never renders HTML/SVG, chooses a head for the
+owner, or substitutes newer bytes. A failed comparison leaves the existing revision
+history/editor view intact and reports a retryable, revision-specific error. Selection is
+limited to loaded history pages, which must be loaded explicitly for older entries.
 Artifact detail exposes version history, provenance, and verification state; comparisons
-use exact immutable versions and their source ResourceRevisions, and do not imply changed-line
-detection unless a qualified diff renderer provides it. Failure to read a prior comparison
-version preserves the selected authorized preview and Artifact history; denial for the
-selected version itself hides that version's metadata/content. Refresh is disabled while a
+use exact immutable versions and their source ResourceRevisions. Managed text supports an
+optional bounded literal line comparison; unsupported or oversized input keeps the
+side-by-side view and never implies semantic change analysis. Failure to read a prior
+comparison version preserves the selected authorized preview and Artifact history; denial
+for the selected version itself hides that version's metadata/content. Refresh is disabled while a
 draft is open, and closing a dirty Artifact view requires explicit discard confirmation.
 Restore-as-new-version uses the Workbench rules. Unsupported types remain downloadable when
 authorized.
@@ -378,6 +473,10 @@ capability requirements, placement eligibility, and actions to run, revise, dupl
 archive, or create an Automation. Saving work as a Routine opens a redacted Operator
 draft; task-specific paths, records, secrets, and incidental context are removed or
 converted to typed inputs before the user commits it. An unsaved draft is not executable.
+Manual Run renders bounded text/choice inputs and same-Workspace Resource selectors from
+the pinned Routine schema. Selecting a Resource pins its exact immutable revision; the UI
+never asks the owner to type Resource IDs. The action creates one READY Task only and
+clearly says that planning and agent execution have not started.
 
 Automation cards show all triggers, TriggerHost, next occurrence, independent execution
 placement, timezone/misfire policy, dependency blockers (for example “Needs this computer
@@ -395,9 +494,11 @@ publishes a Skill automatically. Updating a Skill or Routine requires the existi
 and revision flow.
 
 Each Automation run creates an ordinary Task from the pinned RoutineRevision. Users must
-confirm schedule creation and material updates. `Run now` is shown for an Automation only
-when it has an enabled MANUAL trigger; otherwise the user can run its pinned Routine
-directly, without creating an AutomationOccurrence.
+confirm schedule creation and material updates. `Run now` is shown when an Automation has
+a ManualTrigger and the local TriggerHost path is available. It works while the Automation
+is PAUSED, creates one request-idempotent occurrence plus a saved READY Task, and never
+enables recurring triggers. Otherwise the user can run its pinned Routine directly,
+without creating an AutomationOccurrence.
 
 ## Discover
 
@@ -670,6 +771,14 @@ Tasks continue under their own policy.
 
 ### Worker settings
 
+Normal users choose how the Coworker delegates: “Let the lead use its own approach”,
+“Balance native and available workers”, or “Prefer suitable lower-cost workers”. These
+map to `NATIVE_DEFAULT`, `BALANCED`, and `COST_SAVER` in `DELEGATION.md`. The advanced
+`HOST_DELEGATION_ONLY` choice appears only when the lead harness can enforce it. These are
+preferences, not cost/speed/quality guarantees. Show “Cost unknown” when usage units are
+not comparable; never imply an automatic model substitution. Exact model/profile rules
+and `LATENCY_FIRST` remain in Advanced worker settings.
+
 `Settings → Agents` has `Main`, `Subagents`, and `Installed` views. Installed shows
 discovered profile/binding connectivity and staleness. Main selects only enabled,
 lead-eligible bindings. Subagents lists every installed/bound agent, including the lead,
@@ -680,6 +789,13 @@ use. Profile rows show `Available to: Alex, Researcher` or `Not assigned`; editi
 assignment creates a new CoworkerRevision. The enable flow asks whether to make a profile
 available to the selected Coworker, so users can distinguish installed, enabled, and
 Coworker-allowed states.
+
+The Workspace default lead can be explicitly cleared from the Agent Catalog after a
+review prompt. Clearing changes only the Workspace fallback: a selected Coworker's pinned
+default lead still takes precedence, while future Tasks with no explicit or Coworker lead
+are rejected as `AGENT_UNAVAILABLE` and preserve the composer draft. Existing Tasks and
+Attempts keep their pinned leads. The clear prompt is scoped to the selected Workspace and
+binding so a Workspace switch or concurrent default change cannot confirm a stale target.
 
 The current Codex profile's expandable probe details show only bounded allowlisted
 observations returned by the Operator: protocol initialization, account-read and
@@ -709,8 +825,9 @@ autonomy level or imply that a preference is a Grant or approval.
 ### Work / Live Desk
 
 Work filters are Active, Waiting, Scheduled, Done, and All. Each row shows outcome title,
-plain-language state, `Last activity` from the observed-activity projection, current blocker, newest Artifact, and
-number of active workstreams only when real child Attempts exist. Task detail defaults to
+plain-language state, `Task updated` from the saved Task summary timestamp, current blocker,
+newest Artifact, and number of active workstreams only when real child Attempts exist. This
+list timestamp is not observed runtime activity. Task detail defaults to
 steps/outcomes and outputs. `Details` exposes the delegation tree and Inspector fields.
 Lead, delegated worker, native-reported worker, capability, and verifier rows use distinct
 labels so the product does not imply Core ownership of native subagents.
@@ -722,6 +839,10 @@ unless a measured and qualified projection contract is added. “No new activity
 is based on observed-activity timestamps. `Last verified evidence` is shown separately and
 only when an Evidence record supports the label; an Invocation heartbeat is not described
 as a verified action.
+
+If the initial Task detail read fails or returns an identity that does not match the
+selected Workspace and Task, show an unavailable state with **Retry Task details**. Retry
+repeats only the same authenticated read; it does not revise, plan, or execute the Task.
 
 ### Lead changes and failover
 
@@ -743,6 +864,11 @@ The owner can add or remove Task and Artifact links while editing a Goal. Removi
 creates a new Goal revision; it does not alter or delete the Task or Artifact. Conflicting
 or stale source records have explicit badges and do not count as verified progress. Only
 the owner can complete or reopen a Goal.
+
+Each linked Task in Goal details is an explicit **Open Task** action that navigates to that
+Task's existing details in Work within the selected Workspace. The action is read-only: it
+does not revise the Goal or Task, start planning or execution, or change link provenance.
+Task creation, linking/unlinking, and Task execution remain separate owner actions.
 
 When the local projection is partial, the Goal page labels the limitation and renders
 unknown verified/stale/conflicted counts as unavailable, never zero. A Task marked

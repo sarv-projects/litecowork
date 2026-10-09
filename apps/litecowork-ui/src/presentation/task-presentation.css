@@ -27,9 +27,20 @@
 .task-source-row time { width: fit-content; }
 .task-source-list { display: grid; gap: 3px; margin: 0; padding-left: 17px; color: var(--color-text-subtle, #687385); font-size: 11px; }
 .task-presentation-empty { margin: 0; color: var(--color-text-muted, #515c6c); font-size: 13px; }
+.task-progress-summary { display: grid; gap: 9px; padding: 14px 16px; border: 1px solid var(--color-border, #dce2ea); border-radius: 10px; background: var(--color-surface-subtle, #f7f8fa); }
+.task-progress-summary-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.task-progress-summary h4 { margin: 0; font-size: 14px; }
+.task-progress-summary-heading small, .task-progress-muted, .task-progress-evidence { color: var(--color-text-muted, #515c6c); font-size: 12px; }
+.task-progress-summary p { margin: 0; font-size: 13px; line-height: 1.45; }
+.task-progress-summary ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.task-progress-summary li { display: grid; gap: 2px; font-size: 13px; }
+.task-progress-summary li span { color: var(--color-text-muted, #515c6c); font-size: 12px; }
+.task-progress-summary .task-progress-blockers { padding-top: 8px; border-top: 1px solid var(--color-border, #dce2ea); }
+.task-progress-blockers li strong { color: var(--color-danger, #a22d28); }
 @media (max-width: 680px) {
   .task-outcome { flex-direction: column; padding: 14px; }
   .task-outcome-status { align-self: flex-start; }
   .task-activity-heading { align-items: flex-start; flex-direction: column; gap: 2px; }
   .task-activity-details li time { grid-column: 1; grid-row: auto; text-align: left; }
+  .task-progress-summary-heading { align-items: flex-start; flex-direction: column; gap: 3px; }
 }

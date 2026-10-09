@@ -46,6 +46,7 @@ Do not include volatile timestamps/random IDs.
 | Lead AgentSession | process/session lost | adapter event/stream EOF | replace session from ResumePacket; new Attempt if ownership changed |
 | Child agent | lost/fails | adapter event | retry child independently or let lead revise plan |
 | Runtime | offline | presence + lease expiry | reconcile Effects; eligible failover only |
+| Authenticated Operator startup | endpoint bind/initialization fails after incarnation registration | `OperatorServer::start` error after catalog registration has already marked the incarnation `DEGRADED` | persist `OPERATOR_API_START_FAILED` in private local status, retain the catalog's already-durable `DEGRADED` availability, release the Runtime lock by exiting nonzero, and let the bounded service-manager policy or explicit owner retry start a later incarnation; do not claim readiness or loop indefinitely in-process |
 | Linux service stop deadline | Operator drain or final lifecycle persistence exceeds systemd `TimeoutStopSec` | service manager sends SIGKILL after the 90-second bound | treat the incarnation as unclean; keep the prior local state non-clean where possible; next startup performs ordinary recovery and does not infer Effects or work settled from process exit |
 | Runtime device identity | OS credential store unavailable, identity malformed, or RuntimeId/key mismatch | identity-provider startup error | fail closed before Operator readiness; do not create replacement key or Runtime identity; preserve only a truthful DEGRADED local status if the local store is available |
 | Environment | provisioning fail | provider error | alternate provider/runtime or fail Step |
@@ -76,6 +77,12 @@ Do not include volatile timestamps/random IDs.
 | Escalation | quality floor fails after bounded candidates | verifier + policy limit | stop, preserve Attempts/Evidence, return unmet criteria to lead/Needs You |
 | Shared Environment | sharing owner/scope mismatch | EnvironmentManager owner check | reject attachment before session start; do not fall back to broader scope |
 | Browser/computer | another actor owns EnvironmentControlLease | epoch check | reject/queue no input and show current controller; never replay stale commands |
+| RichPresentation compiler | timeout, invalid intent, schema/limit failure | deterministic compiler/validator result | commit/show semantic ConversationMessage; omit enhancement and do not fail/extend the turn |
+| RichPresentation blob | unavailable or digest mismatch | BlobStore verification / Operator digest check | keep semantic message; mark enhancement unavailable/integrity-failed and do not render it |
+| Rich renderer | one block throws or is unsupported | renderer error boundary/schema version | isolate that block and use a safe fallback; preserve other blocks and semantic answer |
+| Rich draft stream | sequence gap, overflow, stale retry/session frame | draft cursor/bounds/fencing check | replay a bounded snapshot if supported; otherwise discard ephemeral rich draft and continue semantic text |
+| HostSkill | manifest/digest mismatch or unsupported delivery | HostSkillRegistry/adapter negotiation | do not load partial content; proceed without guidance and use deterministic host renderers |
+| Artifact bundle | unsafe/duplicate member path or source version unavailable | bundle validation and pinned-version read | reject the bundle before publication; preserve existing Artifacts and show exact blocker |
 | Coworker | paused/archived at admission | Coworker revision/status check | block new proactive/scheduled work; existing Tasks continue by their own policy |
 | Goal/Suggestion source | stale/conflicted or expired | Resource/Goal/Suggestion version check | preserve proposal/history; no acceptance/task creation from stale state |
 | ContextDocument | concurrent ResourceRevision edit | expected Resource head | keep both branches and request explicit rebase/merge; no last-writer-wins |

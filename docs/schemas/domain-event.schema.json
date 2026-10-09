@@ -166,11 +166,26 @@
         "host_epoch"
       ],
       "properties": {
-        "proof_id": {"type": "string", "minLength": 1},
-        "channel_binding_id": {"type": "string", "minLength": 1},
-        "workspace_id": {"type": "string", "minLength": 1},
-        "runtime_id": {"type": "string", "minLength": 1},
-        "host_epoch": {"type": "integer", "minimum": 1}
+        "proof_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel_binding_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "host_epoch": {
+          "type": "integer",
+          "minimum": 1
+        }
       },
       "additionalProperties": false,
       "description": "Opaque, scoped reference to an immutable ChannelHostDrainProof row; not a ResourceRef or authority token."
@@ -187,13 +202,34 @@
         "target_host_epoch"
       ],
       "properties": {
-        "proof_id": {"type": "string", "minLength": 1},
-        "channel_binding_id": {"type": "string", "minLength": 1},
-        "workspace_id": {"type": "string", "minLength": 1},
-        "source_runtime_id": {"type": "string", "minLength": 1},
-        "source_host_epoch": {"type": "integer", "minimum": 1},
-        "target_runtime_id": {"type": "string", "minLength": 1},
-        "target_host_epoch": {"type": "integer", "minimum": 2}
+        "proof_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel_binding_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_host_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "target_runtime_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_host_epoch": {
+          "type": "integer",
+          "minimum": 2
+        }
       },
       "additionalProperties": false,
       "description": "Opaque, scoped reference to an immutable ChannelHostContinuityProof row; not a ResourceRef or authority token."
@@ -498,8 +534,12 @@
         },
         "folder_import": {
           "oneOf": [
-            {"$ref": "#/$defs/folder_import_metadata"},
-            {"type": "null"}
+            {
+              "$ref": "#/$defs/folder_import_metadata"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       },
@@ -507,7 +547,9 @@
     },
     "folder_import_metadata": {
       "type": "object",
-      "required": ["relative_path"],
+      "required": [
+        "relative_path"
+      ],
       "properties": {
         "relative_path": {
           "type": "string",
@@ -750,11 +792,20 @@
           },
           "from": {
             "type": "string",
-            "enum": ["ACTIVE", "PAUSED", "UNAVAILABLE"]
+            "enum": [
+              "ACTIVE",
+              "PAUSED",
+              "UNAVAILABLE"
+            ]
           },
           "to": {
             "type": "string",
-            "enum": ["ACTIVE", "PAUSED", "REVOKED", "UNAVAILABLE"]
+            "enum": [
+              "ACTIVE",
+              "PAUSED",
+              "REVOKED",
+              "UNAVAILABLE"
+            ]
           },
           "reason_code": {
             "type": "string",
@@ -1130,14 +1181,45 @@
           "aggregate_version"
         ],
         "properties": {
-          "resource_id": {"type": "string", "minLength": 1},
-          "resource_revision_id": {"type": "string", "minLength": 1},
-          "parent_revision_ids": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-          "content_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
-          "size_bytes": {"type": "integer", "minimum": 0, "maximum": 104857600},
-          "media_type": {"type": "string", "minLength": 1, "maxLength": 160},
-          "created_by": {"$ref": "#/$defs/principal_ref"},
-          "aggregate_version": {"type": "integer", "minimum": 2}
+          "resource_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "resource_revision_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "parent_revision_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "content_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 104857600
+          },
+          "media_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "created_by": {
+            "$ref": "#/$defs/principal_ref"
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 2
+          }
         },
         "additionalProperties": false
       },
@@ -1572,14 +1654,82 @@
             "$ref": "#/$defs/principal_ref"
           },
           "origin_coworker_id": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 1
           },
           "origin_coworker_revision": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1
+          },
+          "routine_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "routine_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "automation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "automation_occurrence_id": {
+            "type": "string",
+            "minLength": 1
           }
         },
+        "allOf": [
+          {
+            "if": {
+              "anyOf": [
+                {
+                  "required": [
+                    "routine_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "routine_revision"
+                  ]
+                }
+              ]
+            },
+            "then": {
+              "required": [
+                "routine_id",
+                "routine_revision"
+              ]
+            }
+          },
+          {
+            "if": {
+              "anyOf": [
+                {
+                  "required": [
+                    "automation_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "automation_occurrence_id"
+                  ]
+                }
+              ]
+            },
+            "then": {
+              "required": [
+                "automation_id",
+                "automation_occurrence_id"
+              ]
+            }
+          }
+        ],
         "additionalProperties": false
       },
       "task_spec_revised": {
@@ -2632,14 +2782,37 @@
           "requested_by"
         ],
         "properties": {
-          "agent_binding_id": {"type": "string", "minLength": 1},
-          "workspace_id": {"type": "string", "minLength": 1},
-          "agent_profile_id": {"type": "string", "minLength": 1},
-          "runtime_id": {"type": "string", "minLength": 1},
-          "from_enabled": {"const": false},
-          "to_enabled": {"const": false},
-          "aggregate_version": {"type": "integer", "const": 1},
-          "requested_by": {"$ref": "#/$defs/principal_ref"}
+          "agent_binding_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workspace_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agent_profile_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runtime_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "from_enabled": {
+            "type": "boolean",
+            "const": false
+          },
+          "to_enabled": {
+            "type": "boolean",
+            "const": false
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "const": 1
+          },
+          "requested_by": {
+            "$ref": "#/$defs/principal_ref"
+          }
         },
         "additionalProperties": false
       },
@@ -4533,7 +4706,10 @@
           },
           "retry_basis": {
             "type": "string",
-            "enum": ["CONFIRMED_NOT_OCCURRED", "SAME_KEY_IDEMPOTENT"]
+            "enum": [
+              "CONFIRMED_NOT_OCCURRED",
+              "SAME_KEY_IDEMPOTENT"
+            ]
           },
           "dispatch_ordinal": {
             "type": "integer",
@@ -5500,6 +5676,7 @@
           "automation_id",
           "automation_revision",
           "occurrence_key",
+          "version",
           "claim_epoch",
           "to",
           "routine_id",
@@ -5581,6 +5758,10 @@
             "minLength": 1
           },
           "routine_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "version": {
             "type": "integer",
             "minimum": 1
           }
@@ -5594,6 +5775,7 @@
           "automation_id",
           "automation_revision",
           "occurrence_key",
+          "version",
           "claim_epoch",
           "to",
           "routine_id",
@@ -5675,6 +5857,10 @@
             "minLength": 1
           },
           "routine_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "version": {
             "type": "integer",
             "minimum": 1
           }
@@ -5688,6 +5874,7 @@
           "automation_id",
           "automation_revision",
           "occurrence_key",
+          "version",
           "claim_epoch",
           "to",
           "routine_id",
@@ -5769,6 +5956,10 @@
             "minLength": 1
           },
           "routine_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "version": {
             "type": "integer",
             "minimum": 1
           }
@@ -6637,6 +6828,7 @@
           "automation_id",
           "automation_revision",
           "occurrence_key",
+          "version",
           "claim_epoch",
           "to",
           "routine_id",
@@ -6718,6 +6910,10 @@
             "minLength": 1
           },
           "routine_revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "version": {
             "type": "integer",
             "minimum": 1
           }
@@ -6991,33 +7187,55 @@
             "if": {
               "properties": {
                 "source_release_basis": {
-                  "enum": ["SAFE_SETTLEMENT_PROOF", "LEASE_EXPIRY_PLUS_SKEW"]
+                  "enum": [
+                    "SAFE_SETTLEMENT_PROOF",
+                    "LEASE_EXPIRY_PLUS_SKEW"
+                  ]
                 },
-                "ingress_continuity": {"const": "CONTINUOUS"}
+                "ingress_continuity": {
+                  "const": "CONTINUOUS"
+                }
               },
-              "required": ["source_release_basis", "ingress_continuity"]
+              "required": [
+                "source_release_basis",
+                "ingress_continuity"
+              ]
             },
             "then": {
-              "required": ["continuity_proof_ref", "continuity_proof_digest"]
+              "required": [
+                "continuity_proof_ref",
+                "continuity_proof_digest"
+              ]
             }
           },
           {
             "if": {
-              "required": ["continuity_proof_ref"]
+              "required": [
+                "continuity_proof_ref"
+              ]
             },
             "then": {
-              "required": ["continuity_proof_digest", "ingress_continuity"],
+              "required": [
+                "continuity_proof_digest",
+                "ingress_continuity"
+              ],
               "properties": {
-                "ingress_continuity": {"const": "CONTINUOUS"}
+                "ingress_continuity": {
+                  "const": "CONTINUOUS"
+                }
               }
             }
           },
           {
             "if": {
-              "required": ["continuity_proof_digest"]
+              "required": [
+                "continuity_proof_digest"
+              ]
             },
             "then": {
-              "required": ["continuity_proof_ref"]
+              "required": [
+                "continuity_proof_ref"
+              ]
             }
           }
         ],
@@ -8224,6 +8442,144 @@
           }
         ],
         "additionalProperties": false
+      },
+      "rich_presentation_published": {
+        "type": "object",
+        "required": [
+          "presentation_id",
+          "conversation_id",
+          "message_id",
+          "schema_version",
+          "renderer_contract_version",
+          "semantic_content_digest",
+          "document_digest",
+          "document_size_bytes",
+          "aggregate_version",
+          "host_skill_refs"
+        ],
+        "properties": {
+          "presentation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conversation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "schema_version": {
+            "type": "integer",
+            "const": 1
+          },
+          "renderer_contract_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "semantic_content_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "document_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "document_size_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1048576
+          },
+          "producer_agent_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "host_instruction_digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "host_skill_refs": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "required": [
+                "host_skill_id",
+                "version",
+                "content_digest"
+              ],
+              "properties": {
+                "host_skill_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "version": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "content_digest": {
+                  "type": "string",
+                  "pattern": "^sha256:[a-f0-9]{64}$"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "const": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "conversation_turn_created_v2": {
+        "type": "object",
+        "required": [
+          "turn_id",
+          "conversation_id",
+          "user_message_id",
+          "agent_binding_id",
+          "aggregate_version",
+          "presentation_preference"
+        ],
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conversation_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "user_message_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agent_binding_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "presentation_preference": {
+            "type": "string",
+            "enum": [
+              "AUTO",
+              "SIMPLE",
+              "RICH"
+            ]
+          }
+        },
+        "additionalProperties": false
       }
     },
     "provenance_transformation": {
@@ -8416,6 +8772,7 @@
         "RESOURCE_STALE",
         "RESOURCE_CONFLICT",
         "RESOURCE_LOCATION_UNAVAILABLE",
+        "RESOURCE_CONTENT_EXTERNAL",
         "UPLOAD_OFFSET_CONFLICT",
         "UPLOAD_EXPIRED",
         "BUDGET_EXCEEDED",
@@ -8684,10 +9041,22 @@
     },
     {
       "if": {
-        "properties": {"type": {"const": "resource.revision.created.v1"}},
-        "required": ["type"]
+        "properties": {
+          "type": {
+            "const": "resource.revision.created.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
       },
-      "then": {"properties": {"payload": {"$ref": "#/$defs/payloads/resource_revision_created"}}}
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/resource_revision_created"
+          }
+        }
+      }
     },
     {
       "if": {
@@ -11079,6 +11448,44 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/resource_context_document_purge_acknowledged"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "rich.presentation.published.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/rich_presentation_published"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "conversation.turn.created.v2"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/conversation_turn_created_v2"
           }
         }
       }

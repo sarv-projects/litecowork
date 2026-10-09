@@ -1,6 +1,6 @@
 //! Persistence port for Core-owned Effects and append-only Evidence.
-use domain_effects::{EffectRecord, EvidenceRecord};
 use crate::{DomainEvent, StoreError};
+use domain_effects::{EffectRecord, EvidenceRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -65,7 +65,10 @@ pub struct EffectRetryAuthorization {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum EffectRetryBasis { ConfirmedNotOccurred, SameKeyIdempotent }
+pub enum EffectRetryBasis {
+    ConfirmedNotOccurred,
+    SameKeyIdempotent,
+}
 
 #[derive(Clone, Debug)]
 pub struct TransitionEffectCommit {
@@ -91,14 +94,16 @@ pub struct AppendEvidenceCommit {
     pub event: EffectEvidenceEventContext,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommittedEffect {
     pub effect: EffectRecord,
     pub event: DomainEvent,
     pub replayed: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommittedEvidence {
     pub evidence: EvidenceRecord,
     pub event: DomainEvent,
@@ -110,9 +115,29 @@ pub struct CommittedEvidence {
 /// separate Trust admission succeeds.
 pub trait EffectEvidenceStore: Send + Sync {
     fn propose_effect(&self, command: ProposeEffectCommit) -> Result<CommittedEffect, StoreError>;
-    fn transition_effect(&self, command: TransitionEffectCommit) -> Result<CommittedEffect, StoreError>;
-    fn append_evidence(&self, command: AppendEvidenceCommit) -> Result<CommittedEvidence, StoreError>;
-    fn get_effect(&self, workspace_id: &str, effect_id: &str) -> Result<Option<EffectRecord>, StoreError>;
-    fn list_effects(&self, workspace_id: &str, task_id: &str, limit: usize) -> Result<Vec<EffectRecord>, StoreError>;
-    fn list_evidence(&self, workspace_id: &str, task_id: &str, limit: usize) -> Result<Vec<EvidenceRecord>, StoreError>;
+    fn transition_effect(
+        &self,
+        command: TransitionEffectCommit,
+    ) -> Result<CommittedEffect, StoreError>;
+    fn append_evidence(
+        &self,
+        command: AppendEvidenceCommit,
+    ) -> Result<CommittedEvidence, StoreError>;
+    fn get_effect(
+        &self,
+        workspace_id: &str,
+        effect_id: &str,
+    ) -> Result<Option<EffectRecord>, StoreError>;
+    fn list_effects(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        limit: usize,
+    ) -> Result<Vec<EffectRecord>, StoreError>;
+    fn list_evidence(
+        &self,
+        workspace_id: &str,
+        task_id: &str,
+        limit: usize,
+    ) -> Result<Vec<EvidenceRecord>, StoreError>;
 }

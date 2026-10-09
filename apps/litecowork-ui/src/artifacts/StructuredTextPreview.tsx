@@ -95,6 +95,18 @@ function parseInline(text: string): InlinePart[] | null {
 }
 
 type Block = { kind: "heading" | "paragraph" | "quote" | "ul" | "ol" | "code"; level?: number; lines: string[] };
+type HeadingTag = "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+function headingTag(level: number | undefined): HeadingTag {
+  switch (level) {
+    case 1: return "h1";
+    case 2: return "h2";
+    case 3: return "h3";
+    case 4: return "h4";
+    case 5: return "h5";
+    case 6: return "h6";
+    default: return "h1";
+  }
+}
 function parseMarkdown(text: string): Block[] | null {
   if (text.length > 1_048_576) return null;
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
@@ -180,7 +192,7 @@ function MarkdownPreview({ text }: { text: string }) {
   return <article className="artifact-markdown-preview" aria-label="Markdown preview">
     {blocks.map((block, index) => {
       const content = block.lines.map((line, lineIndex) => <span key={lineIndex}>{renderInline(line, `${index}-${lineIndex}`)}{lineIndex < block.lines.length - 1 && <br />}</span>);
-      if (block.kind === "heading") { const Tag = `h${block.level}` as const; return <Tag key={index}>{content}</Tag>; }
+      if (block.kind === "heading") { const Tag = headingTag(block.level); return <Tag key={index}>{content}</Tag>; }
       if (block.kind === "paragraph") return <p key={index}>{content}</p>;
       if (block.kind === "quote") return <blockquote key={index}>{content}</blockquote>;
       if (block.kind === "code") return <pre key={index}><code>{block.lines.join("\n")}</code></pre>;

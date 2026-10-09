@@ -4,31 +4,49 @@ use std::fmt;
 
 mod execution;
 pub use execution::{
-    AdmitStepAttempt, AttemptAdmissionChecks, AttemptRecord, AttemptState, ExpireExecutionLease, ExpiredAttemptEvents, ExpiredExecutionLeaseCandidate,
-    AttemptAdmissionEvents, AttemptBudgetAdmission, AttemptBudgetReservationRecord,
-    ExecutionBudgetScope, ExecutionBudgetReservationState, ExecutionEventContext,
-    CommittedExecutionLeaseMutation, CommittedStepAttempt, ExecutionCheck,
-    ExecutionLeaseCommand, ExecutionLeaseMutationSnapshot, ExecutionLeaseRecord,
-    ExecutionLeaseState, LeaseReleasePhase, ReleaseExecutionLease,
-    RenewExecutionLease, StepAttemptAdmissionSnapshot, StepAttemptStore,
+    AdmitStepAttempt, AttemptAdmissionChecks, AttemptAdmissionEvents, AttemptBudgetAdmission,
+    AttemptBudgetReservationRecord, AttemptRecord, AttemptState, CommittedExecutionLeaseMutation,
+    CommittedStepAttempt, ExecutionBudgetReservationState, ExecutionBudgetScope, ExecutionCheck,
+    ExecutionEventContext, ExecutionLeaseCommand, ExecutionLeaseMutationSnapshot,
+    ExecutionLeaseRecord, ExecutionLeaseState, ExpireExecutionLease, ExpiredAttemptEvents,
+    ExpiredExecutionLeaseCandidate, LeaseReleasePhase, ReleaseExecutionLease, RenewExecutionLease,
+    StepAttemptAdmissionSnapshot, StepAttemptStore,
 };
 
 mod artifact;
 pub use artifact::{
-    ArtifactAppendHeads, ArtifactContentRecord, ArtifactReadStore, ArtifactRecord, ArtifactVersionAppendCommit,
-    ArtifactVersionRecord, ArtifactVersionWriteStore, CommittedArtifactVersionAppend,
+    ArtifactAppendHeads, ArtifactContentRecord, ArtifactLibraryAction, ArtifactLibraryCommand,
+    ArtifactLibraryWriteStore, ArtifactReadStore, ArtifactRecord, ArtifactVersionAppendCommit,
+    ArtifactVersionRecord, ArtifactVersionWriteStore, CommittedArtifactLibraryCommand,
+    CommittedArtifactVersionAppend,
 };
 
 mod effect_evidence;
 pub use effect_evidence::{
     AppendEvidenceCommit, CommittedEffect, CommittedEvidence, EffectEvidenceEventContext,
-    EffectEvidenceStore, EffectFenceBinding, ProposeEffectCommit, TransitionEffectCommit,
-    EffectTransitionMetadata, EffectRetryAuthorization, EffectRetryBasis,
+    EffectEvidenceStore, EffectFenceBinding, EffectRetryAuthorization, EffectRetryBasis,
+    EffectTransitionMetadata, ProposeEffectCommit, TransitionEffectCommit,
 };
 mod task_presentation;
 pub use task_presentation::{
-    MAX_TASK_PRESENTATION_ARTIFACTS, MAX_TASK_PRESENTATION_STEPS,
-    TaskPresentationArtifactVersion, TaskPresentationReadModel, TaskPresentationReadStore,
+    MAX_TASK_PRESENTATION_ARTIFACTS, MAX_TASK_PRESENTATION_STEPS, TaskPresentationActivityEvent,
+    TaskPresentationArtifactVersion, TaskPresentationCurrentAttempt, TaskPresentationReadModel,
+    TaskPresentationReadStore,
+};
+pub mod rich_presentation;
+
+mod environment;
+pub use environment::{
+    AttemptId, BudgetCeiling, BudgetEnforcement, BudgetEnforcementPolicy, CommittedEnvironment,
+    CoworkerId, EnvironmentBackupPolicy, EnvironmentClass, EnvironmentConfig,
+    EnvironmentCreateRequest, EnvironmentHealth, EnvironmentId, EnvironmentIdentity,
+    EnvironmentLifecycleRequest, EnvironmentLifetime, EnvironmentListRequest, EnvironmentOwner,
+    EnvironmentRecord, EnvironmentRequestIdentity, EnvironmentSharingScope,
+    EnvironmentSharingScopeChangeRequest, EnvironmentStatus, EnvironmentStore, ExpectedState,
+    FilesystemIsolation, IsolationSpec, LifecycleHolds, NetworkMode, NetworkPolicy,
+    PinnedSourceResource, PrincipalId, ProcessIsolation, ProviderBindingCommit, ResourceId,
+    ResourceLimits, ResourceRevisionId, ResourceScope, RuntimeId, RuntimeIncarnationId, TaskId,
+    WorkspaceId,
 };
 // Domain command values and their transactional write port are defined with the
 // domain service; storage-core re-exports the port as the adapter boundary.
@@ -55,6 +73,7 @@ pub enum BlobPurpose {
     ResourceIndex,
     Checkpoint,
     ResourceUploadChunk,
+    RichPresentation,
 }
 
 impl BlobPurpose {
@@ -66,6 +85,7 @@ impl BlobPurpose {
             Self::ResourceIndex => "RESOURCE_INDEX",
             Self::Checkpoint => "CHECKPOINT",
             Self::ResourceUploadChunk => "RESOURCE_UPLOAD_CHUNK",
+            Self::RichPresentation => "RICH_PRESENTATION",
         }
     }
 }
@@ -94,7 +114,9 @@ pub trait BlobStore: Send + Sync {
         _purpose: BlobPurpose,
         _blob: &BlobRef,
     ) -> Result<(), StoreError> {
-        Err(StoreError::Blob("blob deletion is unsupported by this provider".to_owned()))
+        Err(StoreError::Blob(
+            "blob deletion is unsupported by this provider".to_owned(),
+        ))
     }
 
     fn verify(
@@ -133,15 +155,20 @@ pub trait BlobStore: Send + Sync {
         let mut version = key_version;
         let mut tokens = Vec::with_capacity(normalized_terms.len());
         for term in normalized_terms {
-            let (resolved_version, token) = self.resource_index_token(workspace_id, version, term)?;
+            let (resolved_version, token) =
+                self.resource_index_token(workspace_id, version, term)?;
             if version.is_some_and(|known| known != resolved_version) {
-                return Err(StoreError::Integrity("Resource index key version changed during token derivation".to_owned()));
+                return Err(StoreError::Integrity(
+                    "Resource index key version changed during token derivation".to_owned(),
+                ));
             }
             version = Some(resolved_version);
             tokens.push(token);
         }
         version.map(|value| (value, tokens)).ok_or_else(|| {
-            StoreError::Invalid("cannot derive Resource index tokens for an empty term set".to_owned())
+            StoreError::Invalid(
+                "cannot derive Resource index tokens for an empty term set".to_owned(),
+            )
         })
     }
 }
@@ -685,10 +712,85 @@ pub struct TaskSummaryRecord {
 #[serde(deny_unknown_fields)]
 pub struct TaskCreateCommit {
     pub request: WorkspaceCreateRequest,
+    /// Optional source-command identity when normalized Task materialization contains
+    /// server-resolved defaults. It binds retries to the user's exact Routine request.
+    #[serde(default)]
+    pub idempotency_payload: Option<serde_json::Value>,
     pub expected_coworker_version: Option<u64>,
+    /// Present only for a manual Routine run. SQLite revalidates this exact active
+    /// revision and its materialized bounded inputs in the same Task commit.
+    #[serde(default)]
+    pub routine_admission: Option<RoutineTaskAdmission>,
+    /// Present only for a Task atomically admitted from a claimed Automation
+    /// occurrence. Storage owns the occurrence insert/claim/materialization writes.
+    #[serde(default)]
+    pub automation_admission: Option<AutomationTaskAdmission>,
     pub task: TaskRecord,
     pub initial_spec_revision: TaskSpecRevisionRecord,
     pub event: EventDraft,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutineTaskAdmission {
+    pub routine_id: String,
+    pub routine_revision: u64,
+    pub inputs: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationTaskAdmission {
+    pub automation_id: String,
+    pub automation_revision: u64,
+    pub expected_automation_version: u64,
+    pub routine_id: String,
+    pub routine_revision: u64,
+    pub trigger_id: String,
+    pub trigger_host_runtime_id: String,
+    pub trigger_host_runtime_incarnation_id: String,
+    /// Fences this one-shot admission against revocation/re-enrollment of the local
+    /// Workspace binding. Recurring cursor host_epoch remains a separate fence.
+    pub trigger_host_binding_version: u64,
+    pub occurrence_id: String,
+    pub occurrence_key: String,
+    pub claim_expires_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationOccurrenceRecord {
+    pub workspace_id: String,
+    pub occurrence_id: String,
+    pub automation_id: String,
+    pub automation_revision: u64,
+    pub routine_id: String,
+    pub routine_revision: u64,
+    pub trigger_id: String,
+    pub trigger_host_runtime_id: String,
+    pub occurrence_key: String,
+    pub status: String,
+    pub version: u64,
+    pub claim_epoch: u64,
+    pub claim_expires_at: Option<String>,
+    pub task_id: Option<String>,
+    pub scheduled_for: Option<String>,
+    pub trigger_input_ref: Option<serde_json::Value>,
+    pub trigger_payload_digest: Option<String>,
+    pub covered_misfire_range: Option<serde_json::Value>,
+    pub blockers: Vec<serde_json::Value>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+pub trait AutomationOccurrenceReadStore: Send + Sync {
+    fn get_automation_occurrence(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        automation_id: &str,
+        occurrence_id: &str,
+    ) -> Result<Option<AutomationOccurrenceRecord>, StoreError>;
 }
 
 /// One owner acceptance that must create an ordinary READY Task and resolve the
@@ -705,11 +807,68 @@ pub struct SuggestedTaskCreateCommit {
     pub suggestion_event: EventDraft,
 }
 
+/// Bounded response proof for the atomic Suggestion -> READY Task transition.
+/// The duplicated Task ID is intentional: callers must verify that the accepted
+/// Suggestion's result link names the same READY Task in the same Workspace.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SuggestionAcceptanceDisposition {
+    Created,
+    Replayed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuggestionAcceptanceLink {
+    pub suggestion_id: String,
+    pub status: domain_responsibility::SuggestionStatus,
+    pub result_task_id: String,
+    pub version: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SuggestedTaskAcceptanceStatus {
+    Ready,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuggestedTaskAcceptanceTaskLink {
+    pub task_id: String,
+    pub workspace_id: String,
+    pub status: SuggestedTaskAcceptanceStatus,
+    pub version: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuggestionTaskAcceptanceReceipt {
+    pub workspace_id: String,
+    pub disposition: SuggestionAcceptanceDisposition,
+    pub suggestion: SuggestionAcceptanceLink,
+    pub task: SuggestedTaskAcceptanceTaskLink,
+}
+
 pub trait SuggestionTaskAcceptanceStore: Send + Sync {
     fn create_task_from_suggestion(
         &self,
         commit: SuggestedTaskCreateCommit,
-    ) -> Result<CommittedTask, StoreError>;
+    ) -> Result<SuggestionTaskAcceptanceReceipt, StoreError>;
+
+    /// Read the durable result of a prior acceptance retry in one SQLite read
+    /// transaction. `expected_task_id` is derived from the authenticated principal,
+    /// request id, and Suggestion identity; this prevents a different idempotency key
+    /// from using the accepted Suggestion as a lookup oracle.
+    fn get_suggestion_task_acceptance_receipt(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        suggestion_id: &str,
+        expected_suggestion_version: u64,
+        request_id: &str,
+        expected_task_id: &str,
+    ) -> Result<Option<SuggestionTaskAcceptanceReceipt>, StoreError>;
 }
 
 /// An atomic owner-authored TaskSpec revision. The Task aggregate version is pinned
@@ -813,6 +972,17 @@ pub struct PlanAcceptanceCommit {
 pub trait TaskStore: Send + Sync {
     fn create_task(&self, commit: TaskCreateCommit) -> Result<CommittedTask, StoreError>;
 
+    /// Resolve the original Task-creation receipt before mutable admission checks. The
+    /// caller must still authenticate the principal and verify the Workspace scope.
+    /// A matching payload returns the exact committed response; reusing the RequestId
+    /// with another payload returns Conflict.
+    fn get_task_create_receipt(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        request_payload: &Value,
+    ) -> Result<Option<CommittedTask>, StoreError>;
+
     fn get_task_spec_revision_receipt(
         &self,
         principal_id: &str,
@@ -910,10 +1080,7 @@ pub struct AgentHostInstanceRecord {
 /// Compare-and-set state transition for one Runtime-owned host. This interface
 /// carries no provider handles and never creates domain Events.
 pub trait AgentHostStore: Send + Sync {
-    fn create_agent_host_instance(
-        &self,
-        host: AgentHostInstanceRecord,
-    ) -> Result<(), StoreError>;
+    fn create_agent_host_instance(&self, host: AgentHostInstanceRecord) -> Result<(), StoreError>;
 
     fn transition_agent_host_instance(
         &self,
@@ -995,7 +1162,11 @@ pub struct CommittedPlanningActivation {
 
 /// Storage boundary for claiming durable agent-session identities. Starting a session
 /// claims the unique Task planner slot; it does not mean the native harness is ready.
+/// The current desktop SQLite implementation fails both Task-planning admission methods
+/// closed until Runtime-owned isolation evidence can be revalidated at this boundary.
 pub trait AgentSessionStore: Send + Sync {
+    /// Claims a planner slot only after the implementation's current admission gates pass.
+    /// SQLite currently returns `TASK_PLANNING_ISOLATION_UNAVAILABLE` before persistence.
     fn start_task_planning_session(
         &self,
         start: TaskPlanningSessionStart,
@@ -1014,7 +1185,9 @@ pub trait AgentSessionStore: Send + Sync {
     ) -> Result<CommittedAgentSession, StoreError>;
 
     /// Commits adapter readiness, the Runtime-local host binding, and (for the first
-    /// planner) Task READY -> RUNNING as one transaction.
+    /// planner) Task READY -> RUNNING as one transaction. SQLite currently rejects this
+    /// operation before lookup or mutation because no isolated planning Environment is
+    /// admitted yet.
     fn activate_task_planning_session(
         &self,
         activation: ActivateTaskPlanningSession,
@@ -1453,10 +1626,7 @@ impl FolderImportMetadata {
             && !drive_qualified
             && (1..=128).contains(&segments.len())
             && segments.iter().all(|segment| {
-                !segment.is_empty()
-                    && *segment != "."
-                    && *segment != ".."
-                    && segment.len() <= 255
+                !segment.is_empty() && *segment != "." && *segment != ".." && segment.len() <= 255
             })
             && value == display_name;
         if !valid {
@@ -1509,6 +1679,17 @@ pub struct ResourceSummary {
     pub content_digest: String,
     pub size_bytes: u64,
     pub created_at: String,
+}
+
+/// A Resource revision selected as an immutable input. The closed serde shape matches
+/// the Operator `PinnedResourceRef` schema so storage and preparation boundaries reject
+/// caller-supplied paths or other authority-bearing extensions.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PinnedResourceRef {
+    pub workspace_id: String,
+    pub resource_id: String,
+    pub revision_id: String,
 }
 
 /// Search result for an imported, managed Resource. Search metadata is derived from
@@ -1601,11 +1782,25 @@ pub struct ResourceTextSearchRecord {
     pub resource_revision_id: String,
     pub source_content_digest: String,
     pub snippet: String,
+    /// Exact zero-based, half-open UTF-8 byte spans for the first occurrence of each
+    /// distinct query term in the verified source text. These are transient retrieval
+    /// provenance: callers must keep them paired with `resource_revision_id` and
+    /// `source_content_digest`, and must never resolve them against a newer head.
+    pub matched_spans: Vec<ResourceTextMatchSpan>,
     pub matched_term_count: u32,
     pub parser_id: String,
 }
 
-/// Content resolved from the current local Resource revision. The provider locator
+/// A source-grounded lexical match into the exact immutable UTF-8 Resource revision.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ResourceTextMatchSpan {
+    pub term: String,
+    pub start_utf8_byte: u64,
+    pub end_utf8_byte_exclusive: u64,
+}
+
+/// Content resolved from one immutable local Resource revision. The provider locator
 /// remains inside the storage adapter; callers receive only verified bytes and metadata.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1698,7 +1893,10 @@ impl ResourceUploadSessionRecord {
             || self.media_type.len() > 160
             || self.expected_size_bytes > 104_857_600
             || self.chunk_size_bytes != 4_194_304
-            || !self.expected_digest.as_deref().is_some_and(is_sha256_digest)
+            || !self
+                .expected_digest
+                .as_deref()
+                .is_some_and(is_sha256_digest)
             || self.state != ResourceUploadState::Open
             || self.resource_id.is_some()
             || self.committed_resource_id.is_some()
@@ -1732,7 +1930,7 @@ pub struct ResourceUploadContentRange {
 /// `sha256:<lowercase hex>` storage form; the HTTP adapter normalizes the raw digest
 /// header before constructing this value. `content` is transient input to the local
 /// storage adapter and must be persisted through the encrypted temporary-blob path.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ResourceUploadChunkInput {
     pub upload_id: String,
     pub chunk_index: u64,
@@ -1819,12 +2017,14 @@ pub trait ResourceStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<ResourceRevisionViewRecord>, StoreError>;
 
-    /// Reads Resource bytes only when indexed metadata proves the content is within
-    /// `maximum_bytes`; providers must enforce this before allocating/decrypting content.
+    /// Reads the exact `revision_id` or current head when omitted, only after same-Resource
+    /// metadata proves the content is within `maximum_bytes`; providers enforce this
+    /// before allocating/decrypting content and verify the immutable digest and length.
     fn read_resource_content_bounded(
         &self,
         workspace_id: &str,
         resource_id: &str,
+        revision_id: Option<&str>,
         maximum_bytes: u64,
     ) -> Result<Option<StoredResourceContent>, StoreError>;
 
@@ -1853,7 +2053,9 @@ pub trait ResourceStore: Send + Sync {
         &self,
         _request: ResourceTextIndexRebuildRequest,
     ) -> Result<ResourceTextIndexRebuildResult, StoreError> {
-        Err(StoreError::Blob("Resource text reindexing is unsupported by this provider".to_owned()))
+        Err(StoreError::Blob(
+            "Resource text reindexing is unsupported by this provider".to_owned(),
+        ))
     }
 
     /// Search revision-scoped encrypted local text indexes. Implementations must enforce
@@ -1991,7 +2193,9 @@ pub enum StoreError {
     UnsupportedSchema(i64),
     CorruptSchema(String),
     Integrity(String),
-    LegacyUploadCommitNeedsReview { committed_resource_id: Option<String> },
+    LegacyUploadCommitNeedsReview {
+        committed_resource_id: Option<String>,
+    },
     Blob(String),
     Io(String),
     Database(String),
@@ -2015,7 +2219,9 @@ impl fmt::Display for StoreError {
             }
             Self::CorruptSchema(message) => write!(f, "database schema is inconsistent: {message}"),
             Self::Integrity(message) => write!(f, "stored data failed integrity checks: {message}"),
-            Self::LegacyUploadCommitNeedsReview { committed_resource_id } => write!(
+            Self::LegacyUploadCommitNeedsReview {
+                committed_resource_id,
+            } => write!(
                 f,
                 "legacy committed upload requires review (Resource: {committed_resource_id:?})"
             ),

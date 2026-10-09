@@ -12,6 +12,7 @@ export function TaskArtifactOutputs({ api, workspaceId, taskId, operatorReady }:
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     if (!open) return;
@@ -37,7 +38,7 @@ export function TaskArtifactOutputs({ api, workspaceId, taskId, operatorReady }:
       if (!controller.signal.aborted) setLoading(false);
     });
     return () => controller.abort();
-  }, [api, workspaceId, taskId, operatorReady, open]);
+  }, [api, workspaceId, taskId, operatorReady, open, reload]);
 
   const countLabel = loading ? "Loading…"
     : failure ? "Unavailable"
@@ -49,7 +50,7 @@ export function TaskArtifactOutputs({ api, workspaceId, taskId, operatorReady }:
     <summary><span>Outputs</span><small>{countLabel}</small></summary>
     <div className="task-artifact-outputs-content">
       {loading && <p className="task-loading" role="status">Loading committed outputs…</p>}
-      {failure && <p className="task-stale-note" role="alert">{failure}</p>}
+      {failure && <div className="task-stale-note" role="alert"><p>{failure}</p>{operatorReady && <button type="button" className="text-button" disabled={loading} onClick={() => setReload(value => value + 1)}>Try again</button>}</div>}
       {!loading && !failure && items?.length === 0 && <p className="task-detail-note">This Task has no committed Artifact outputs.</p>}
       {!loading && !failure && items && items.length > 0 && <ul className="task-artifact-output-list" aria-label="Committed Task Artifacts">
         {items.map(item => <li key={item.artifact_id}>

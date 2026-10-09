@@ -23,8 +23,10 @@ fn read_automation_response(response: LocalOperatorResponse) -> Result<Vec<u8>, 
     Ok(body)
 }
 
-/// Finite Workspace-scoped Automation/Routine/Coworker selection bridge. Mutations save
-/// paused definitions or stop trigger admission; this bridge cannot resume hosting or start Tasks.
+/// Finite Workspace-scoped Automation/Routine/Coworker bridge. Definition writes remain
+/// paused; the explicit owner ManualTrigger operation may atomically create one ordinary
+/// READY Task but never starts Task planning or agent execution. This bridge cannot host
+/// recurring triggers.
 #[tauri::command]
 pub(crate) async fn automation_request(
     app: AppHandle,
@@ -38,6 +40,8 @@ pub(crate) async fn automation_request(
     request_id: Option<String>,
     name: Option<String>,
     routine_revision: Option<u64>,
+    automation_revision: Option<u64>,
+    inputs: Option<serde_json::Value>,
     triggers: Option<Vec<serde_json::Value>>,
     execution_policy: Option<serde_json::Value>,
     coworker_ref: serde_json::Value,
@@ -51,6 +55,8 @@ pub(crate) async fn automation_request(
             || request_id.as_deref().is_some_and(|value| !valid_request_id(value))
             || name.as_ref().is_some_and(|value| value.trim().is_empty() || value.chars().count() > 120)
             || routine_revision.is_some_and(|value| value == 0 || value > 9_007_199_254_740_991)
+            || automation_revision.is_some_and(|value| value == 0 || value > 9_007_199_254_740_991)
+            || inputs.as_ref().is_some_and(|value| !value.is_object() || super::bounded_json_bytes(value, 128 * 1024).is_err())
             || triggers.as_ref().is_some_and(|value| value.is_empty() || value.len() > 10 || value.iter().any(|item| !item.is_object()))
             || execution_policy.as_ref().is_some_and(|value| !value.is_object() || super::bounded_json_bytes(value, 32 * 1024).is_err())
             || super::bounded_json_bytes(&coworker_ref, 4096).is_err()
@@ -152,6 +158,22 @@ pub(crate) async fn automation_request(
                     .header("X-Workspace-ID", &workspace_id)
                     .header("If-Match", format!("\"{expected_version}\""))
                     .header("Idempotency-Key", request_id)
+            }
+            "run" => {
+                let id = automation_id.as_deref().ok_or_else(|| "Automation selection is invalid".to_owned())?;
+                let request_id = request_id.as_deref().filter(|value| valid_request_id(value))
+                    .ok_or_else(|| "Automation request identity is invalid".to_owned())?;
+                let version = expected_version.filter(|value| *value > 0)
+                    .ok_or_else(|| "Automation version is invalid".to_owned())?;
+                let revision = automation_revision.filter(|value| *value > 0 && *value <= 9_007_199_254_740_991)
+                    .ok_or_else(|| "Automation revision is invalid".to_owned())?;
+                let inputs = inputs.filter(serde_json::Value::is_object)
+                    .ok_or_else(|| "Manual Automation inputs are invalid".to_owned())?;
+                client.post(format!("/v1/automations/{id}/run"))
+                    .header("X-Workspace-ID", &workspace_id)
+                    .header("If-Match", format!("\"{version}\""))
+                    .header("Idempotency-Key", request_id)
+                    .json(&serde_json::json!({ "automation_revision": revision, "inputs": inputs }))
             }
             _ => return Err("Automation operation is unavailable".to_owned()),
         };

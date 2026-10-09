@@ -151,6 +151,16 @@ clock for in-process timers.
 ## Trigger cursor
 
 ```text
+AutomationOccurrence.version is the aggregate revision. Creation persists PENDING at
+version 1. Every later persisted transition increments version by exactly one: claim,
+expired-claim requeue, reclaim, materialization, dependency wait/resume, and terminal
+settlement. claim_epoch is a separate fencing counter: only acquiring/reacquiring a claim
+increments it; all other transitions preserve it. Every event and aggregate snapshot uses
+the resulting version as entity_revision. Transition requests carry expected version and,
+when acting under a claim, expected claim_epoch.
+```
+
+```text
 AutomationCursor {
   automation_id
   trigger_id
@@ -293,6 +303,27 @@ the explicit ManualTrigger and a request-bound idempotency key. Unchanged
 trigger identity across revisions also cannot rematerialize that already accepted source
 event. Multiple trigger deliveries may physically repeat; the uniqueness key ensures one
 logical occurrence per trigger delivery.
+
+The local owner `POST /v1/automations/{id}/run` command requires the exact current
+Automation revision (`If-Match` aggregate version), a stable `Idempotency-Key`, one
+ManualTrigger, and an input object validated against that Automation's pinned
+RoutineRevision. The authenticated daemon is the local TriggerHost; its exact current
+Runtime incarnation and active Workspace binding version are checked atomically with
+Task admission. The one-shot command is allowed while the Automation is PAUSED and does
+not enable or recreate recurring trigger hosting. A disabled Automation cannot accept a
+new run. The transaction persists PENDING/version 1, claims it as CLAIMED/version 2 with
+claim_epoch 1, and links the ordinary READY Task while advancing the occurrence to
+STARTED/version 3. Task, occurrence events/snapshots, and idempotency receipt commit
+together; no Plan, Step, Attempt, AgentSession, lease, or Environment is created. A retry
+with the same authenticated principal, RequestId, revision, inputs, and expected version
+resolves the exact committed receipt before mutable host/Coworker/Resource checks; the
+transaction repeats the receipt check to serialize concurrent requests. Changed command
+content conflicts. The owner and selected Workspace must still authenticate, and the
+immutable Automation revision must remain readable to identify the ManualTrigger. This
+manual binding-version check is distinct from an AutomationCursor host epoch: a
+never-enabled PAUSED Automation has no recurring cursor and is not implicitly activated.
+`STARTED` means the occurrence and READY Task link were committed; it does not claim that
+planning, agent execution, or uninterrupted Task work has started.
 
 Canonical encoding is ASCII prefix `LiteCowork/AutomationOccurrence/v2`, NUL, then each
 ordered UTF-8 field as a four-byte unsigned big-endian byte length and bytes. Hash the

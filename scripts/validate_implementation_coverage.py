@@ -142,10 +142,16 @@ def current_inventory() -> dict[str, object]:
     events_doc = (ROOT / "docs/EVENTS.md").read_text()
     registry = re.search(r"Minimum v1 registry:\s*```\s*(.*?)```", events_doc, re.S)
     event_types = (
-        re.findall(r"^[a-z][a-z0-9_.-]+\.v\d+$", registry.group(1), re.M)
+        re.findall(r"^([a-z][a-z0-9_.-]+\.v\d+)(?:\s*(?:#|—).*)?$", registry.group(1), re.M)
         if registry
         else []
     )
+    event_type_payloads = {}
+    for branch in event_schema.get("allOf", []):
+        event_type = branch.get("if", {}).get("properties", {}).get("type", {}).get("const")
+        payload_ref = branch.get("then", {}).get("properties", {}).get("payload", {}).get("$ref")
+        if event_type and payload_ref:
+            event_type_payloads[event_type] = payload_ref.rsplit("/", 1)[-1]
 
     operations: list[dict[str, str]] = []
     operation_digests: list[dict[str, str]] = []
@@ -243,9 +249,10 @@ def current_inventory() -> dict[str, object]:
 
     payloads = event_schema.get("$defs", {}).get("payloads", {})
     expected_payload_names = {
-        event_type.rsplit(".v", 1)[0].replace(".", "_").replace("-", "_")
-        for event_type in event_types
+        branch.get("then", {}).get("properties", {}).get("payload", {}).get("$ref", "").rsplit("/", 1)[-1]
+        for branch in event_schema.get("allOf", [])
     }
+    expected_payload_names.discard("")
     if expected_payload_names != set(payloads):
         fail(
             "EVENTS.md registry and domain-event.schema.json payloads differ; "
@@ -268,7 +275,10 @@ def current_inventory() -> dict[str, object]:
     schema_text = (ROOT / "docs/SCHEMAS.md").read_text()
     id_section = re.search(r"## Identifiers\s*```[^\n]*\n(.*?)```", schema_text, re.S)
     shared_ids = sorted(set(re.findall(r"\b[A-Z][A-Za-z0-9]*Id\b", id_section.group(1)))) if id_section else []
-    shared_definitions = sorted(set(re.findall(r"^([A-Z][A-Za-z0-9_]*)\s*=", schema_text, re.M)))
+    shared_definitions = sorted(
+        set(re.findall(r"^([A-Z][A-Za-z0-9_]*)\s*=", schema_text, re.M))
+        - set(shared_ids)
+    )
     error_codes = sorted(error_schema.get("enum", []))
     if set(error_codes) != set(event_schema.get("$defs", {}).get("error_code", {}).get("enum", [])):
         fail("error-codes.schema.json and domain-event.schema.json error enums differ")
@@ -405,6 +415,7 @@ def current_inventory() -> dict[str, object]:
         "delegation_schema_definitions": [item["name"] for item in delegation_definitions],
         "delegation_schema_definition_digests": delegation_definitions,
         "event_type_registry": sorted(event_types),
+        "event_type_payloads": dict(sorted(event_type_payloads.items())),
         "shared_schema_identifiers": shared_ids,
         "shared_schema_definitions": shared_definitions,
         "sqlite_tables": sqlite_tables,
@@ -823,10 +834,13 @@ def build_coverage(previous: list[dict[str, str]], inventory: dict[str, object])
     for name, digest in zip(inventory["event_schema_definitions"], [x["sha256"] for x in inventory["event_schema_definition_digests"]]):
         add("EVENT_DEF", "domain-event.schema.json#" + name, "E01-S02", f"shared event schema definition sha256:{digest}.")
     payload_digests = {item["name"]: item["sha256"] for item in inventory["event_payload_digests"]}
-    event_to_payload = {event_type: event_type.rsplit(".v", 1)[0].replace(".", "_").replace("-", "_") for event_type in inventory["event_type_registry"]}
+    event_to_payload = inventory["event_type_payloads"]
+    seen_event_payloads: set[str] = set()
     for event_type, payload in event_to_payload.items():
         add("EVENT_TYPE", event_type, event_story(event_type), f"registered domain event; paired payload {payload}.")
-        add("EVENT_PAYLOAD", "domain-event.schema.json#payloads/" + payload, event_story(event_type), f"payload sha256:{payload_digests[payload]}; mapped from {event_type}.")
+        if payload not in seen_event_payloads:
+            add("EVENT_PAYLOAD", "domain-event.schema.json#payloads/" + payload, event_story(event_type), f"payload sha256:{payload_digests[payload]}; mapped from {event_type}.")
+            seen_event_payloads.add(payload)
     delegation_digests = {item["name"]: item["sha256"] for item in inventory["delegation_schema_definition_digests"]}
     for name in inventory["delegation_schema_definitions"]:
         add("SCHEMA_DEF", "delegation.schema.json#" + name, schema_story(name), f"delegation wire definition sha256:{delegation_digests[name]}.")

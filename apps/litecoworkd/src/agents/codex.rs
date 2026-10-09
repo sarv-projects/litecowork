@@ -1,6 +1,4 @@
-use super::{
-    AgentInstallation, AuthenticationReadiness, SessionReadiness, discover_version,
-};
+use super::{AgentInstallation, AuthenticationReadiness, SessionReadiness, discover_version};
 
 pub(super) fn discover() -> AgentInstallation {
     let (installation, version) = discover_version("codex", "codex-cli ");

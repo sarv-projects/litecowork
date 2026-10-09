@@ -5,16 +5,26 @@ process and the local `litecoworkd` Runtime. It is a transport adapter for the l
 Operator operations in `API.md`; it does not change their authorization, idempotency,
 Workspace scoping, or response semantics.
 
-## Implementation status (2026-10-08)
+## Implementation status (2026-10-09)
 
-The daemon and Tauri source are now connected through the framed Unix transport on
-Linux/macOS. The daemon validates its installation-scoped OS-principal binding before
-binding the endpoint; both sides compare kernel peer credentials before frame I/O; the
-existing Axum routes remain the single Operator handler path. The Tauri bearer/loopback
-descriptor client has been removed. Windows currently fails closed because its named-pipe
-transport and logon-SID ACL are not implemented. This source change is not built, tested,
-or OS-qualified and is not a production-safety claim. The gates below remain release
-requirements.
+The daemon and Tauri source are connected through the framed Unix transport on Linux/macOS.
+The daemon validates its installation-scoped OS-principal binding before binding the
+endpoint; both sides compare kernel peer credentials before frame I/O; the existing Axum
+routes remain the single Operator handler path. The Tauri bearer/loopback descriptor client
+has been removed. The Rust workspace test suite passed on 2026-10-09, including 18
+`litecoworkd` tests and the `operator-ipc` crate tests. These results establish code-level
+test coverage only: they do not establish real IPC-provider behavior or qualification on
+Linux, macOS, or Windows. Windows currently fails closed because its named-pipe transport
+and logon-SID ACL are not implemented. Platform qualification, keyring/provider behavior,
+and real desktop-to-daemon IPC qualification remain release requirements; this is not a
+production-safety claim.
+
+The focused auth-boundary test also exercises same-process Unix socket dispatch through
+`dispatch_ipc_exchange` into an auth-protected readiness handler. Separate cases verify
+that the middleware rejects a request without its internal authenticated-peer marker and
+that IPC frame validation rejects a caller-supplied bearer header. These are code-level
+tests only; they do not test a second OS identity, a packaged desktop/daemon pair, or
+cross-platform peer authentication.
 
 ## Goals and limits
 

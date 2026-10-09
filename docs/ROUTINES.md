@@ -82,10 +82,52 @@ Channel       → authenticated command resolves a Routine → ordinary Task
 Webhook       → authenticated event binds typed inputs → ordinary Task
 ```
 
-Every run passes ordinary Task admission, resource resolution, placement, TrustService,
+Task materialization passes ordinary Task admission. Once Task planning and execution are
+enabled, those stages must pass ordinary resource resolution, placement, TrustService,
 budget, approval, Attempt, Effect, Artifact, and verification rules. Reusing a Routine
 never reuses a prior Task's AgentSession, grant, secret lease, Environment authority, or
 approval.
+
+### Desktop/local manual Run now admission
+
+`POST /v1/routines/{id}/run` is an authenticated, selected-Workspace command requiring an
+`Idempotency-Key`. The body supplies the exact `routine_revision` and a bounded `inputs`
+object. A non-null `conversation_id` is rejected until Conversation and Task admission can
+commit atomically. The current local implementation supports only top-level `TEXT` and
+exact pinned `RESOURCE_REF` bindings; unsupported schema keywords, nested bindings,
+unbound properties, extra values, malformed resource references, unsafe text controls, and
+over-limit data are rejected. The desktop renders accessible text fields and same-Workspace
+Resource selectors from the saved schema/bindings. Resource choices pin the exact immutable
+revision; users are never asked to type opaque Resource IDs. If a Resource cannot be selected
+from the loaded catalog, Run remains blocked until it is loaded. Task admission still
+rechecks the exact Resource revision atomically.
+
+The route first resolves the immutable revision for bounded materialization, then Task
+storage rechecks Workspace ownership, Routine `ACTIVE` status, exact current revision,
+revision/input binding, lead eligibility, and same-Workspace Resource revision inside the
+same SQLite Task-creation transaction. A failure creates no Task. Success writes an
+ordinary Task with status `READY`, TaskSpecRevision(1), exact `routine_id`/revision pins,
+Task inputs/outputs/criteria/approvals/constraints, event, and idempotency receipt in one
+commit. It creates no Plan, Step, AgentSession, Attempt, lease, Environment, Effect, or
+capability grant. A same-key retry by the same authorized owner returns the originally
+committed Task; reusing that key with changed inputs conflicts. The page calls it a
+“Saved Task · READY” and only opens details after validating returned Workspace, Task,
+Routine revision, TaskSpec identity, and READY status.
+
+The immutable RoutineRevision remains the source for fields that TaskSpec does not
+represent, including `required_capabilities` and `verification_policy`. Future planning,
+Trust, and verifier admission must resolve the exact Task-pinned Routine revision again;
+the save-only Run now operation does not claim those checks have run or grant authority.
+
+Input JSON Schema support is intentionally narrower than general JSON Schema: the
+top-level object has at most 64 declared properties, no unbound properties, and each
+property must bind to one supported top-level TEXT string or exact RESOURCE_REF object.
+TEXT allows bounded `minLength`, `maxLength`, and string `enum`; ResourceRef requires
+exactly `workspace_id`, `resource_id`, and `revision_id`, all strings, with no additional
+properties. Empty `{}` input schema is valid and means no inputs. Requiredness must agree
+between the schema and its binding. Unsupported integer/number/boolean/null/array or
+arbitrary nested object input shapes are rejected when a revision is saved so the saved
+Routine cannot appear runnable while the desktop silently ignores a value.
 
 ## Automation relationship
 

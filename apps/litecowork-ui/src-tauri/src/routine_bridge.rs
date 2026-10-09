@@ -23,7 +23,8 @@ fn read_routine_response(response: LocalOperatorResponse) -> Result<Vec<u8>, Str
     Ok(body)
 }
 
-/// Exposes only bounded saved-Routine CRUD. It deliberately has no run or trigger command.
+/// Exposes bounded Routine CRUD and manual save-only Task materialization. Run creates a
+/// READY Task and never starts planning or execution.
 #[tauri::command]
 pub(crate) async fn routine_request(
     app: AppHandle,
@@ -70,7 +71,7 @@ pub(crate) async fn routine_request(
                 let body = body.as_deref().ok_or_else(|| "Routine definition is missing".to_owned())?;
                 if routine_id.is_some() || expected_version.is_some() || cursor.is_some() { return Err("Routine request is invalid".to_owned()); }
                 client.post("/v1/routines".to_owned()).header("X-Workspace-ID", &workspace_id)
-                    .header("Idempotency-Key", request_id).header("Content-Type", "application/json").body(body.to_owned())
+                    .header("Idempotency-Key", request_id).header("Content-Type", "application/json").body(body.to_owned().into_bytes())
             }
             "revise" => {
                 let id = routine_id.as_deref().ok_or_else(|| "Routine selection is invalid".to_owned())?;
@@ -81,7 +82,7 @@ pub(crate) async fn routine_request(
                 if cursor.is_some() { return Err("Routine request is invalid".to_owned()); }
                 client.post(format!("/v1/routines/{id}/revisions"))
                     .header("X-Workspace-ID", &workspace_id).header("If-Match", format!("\"{version}\""))
-                    .header("Idempotency-Key", request_id).header("Content-Type", "application/json").body(body.to_owned())
+                    .header("Idempotency-Key", request_id).header("Content-Type", "application/json").body(body.to_owned().into_bytes())
             }
             "archive" => {
                 let id = routine_id.as_deref().ok_or_else(|| "Routine selection is invalid".to_owned())?;
@@ -92,6 +93,18 @@ pub(crate) async fn routine_request(
                 client.post(format!("/v1/routines/{id}/archive"))
                     .header("X-Workspace-ID", &workspace_id).header("If-Match", format!("\"{version}\""))
                     .header("Idempotency-Key", request_id)
+            }
+            "run" => {
+                let id = routine_id.as_deref().ok_or_else(|| "Routine selection is invalid".to_owned())?;
+                let request_id = request_id.as_deref().filter(|value| valid_request_id(value))
+                    .ok_or_else(|| "Routine request identity is invalid".to_owned())?;
+                let body = body.as_deref().ok_or_else(|| "Routine inputs are missing".to_owned())?;
+                if cursor.is_some() || expected_version.is_some() { return Err("Routine request is invalid".to_owned()); }
+                client.post(format!("/v1/routines/{id}/run"))
+                    .header("X-Workspace-ID", &workspace_id)
+                    .header("Idempotency-Key", request_id)
+                    .header("Content-Type", "application/json")
+                    .body(body.to_owned().into_bytes())
             }
             _ => return Err("Routine operation is unavailable".to_owned()),
         };

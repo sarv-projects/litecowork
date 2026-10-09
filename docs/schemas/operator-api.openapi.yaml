@@ -289,6 +289,44 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/Conversation'}
         default: {$ref: '#/components/responses/Error'}
+  /conversations/{conversationId}/presentation:
+    get:
+      tags: [conversations, presentation]
+      operationId: getConversationPresentation
+      parameters:
+      - {$ref: '#/components/parameters/ConversationId'}
+      - {$ref: '#/components/parameters/Cursor'}
+      - name: limit
+        in: query
+        required: false
+        schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+      responses:
+        '200':
+          description: Bounded authenticated semantic-message snapshot with optional rich-presentation refs and stream cursor
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConversationPresentationSnapshot'}
+        default: {$ref: '#/components/responses/Error'}
+  /rich-presentations/{presentationId}:
+    get:
+      tags: [conversations, presentation]
+      operationId: getRichPresentation
+      parameters:
+      - name: presentationId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1}
+      responses:
+        '200':
+          description: Exact authorized immutable RichPresentation document; verify digest and message binding before render
+          headers:
+            Cache-Control: {schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RichPresentationDocumentResponse'}
+        default: {$ref: '#/components/responses/Error'}
   /conversations/{conversationId}/messages:
     get:
       tags: [conversations]
@@ -890,7 +928,7 @@ paths:
           description: Artifact or Resource head changed, or Artifact is archived
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Error'}
+              schema: {$ref: '#/components/schemas/ApiError'}
         default: {$ref: '#/components/responses/Error'}
   /artifacts/{artifactId}/versions/{version}:
     get:
@@ -940,6 +978,7 @@ paths:
     post:
       tags: [artifacts]
       operationId: promoteArtifact
+      description: 'Owner-authenticated TRANSIENT to SAVED metadata transition. Empty body; If-Match names the Artifact aggregate version. An identical Idempotency-Key replay returns the original committed Artifact. Linked provider content is not fetched or mutated.'
       parameters:
       - name: artifactId
         in: path
@@ -958,6 +997,7 @@ paths:
     post:
       tags: [artifacts]
       operationId: archiveArtifact
+      description: 'Owner-authenticated SAVED to ARCHIVED metadata transition. Empty body; stale If-Match conflicts even if already archived. A fresh current-version already-archived command returns its representation without an event/version increment. Identical replay returns its original receipt. Content history and linked provider objects remain unchanged.'
       parameters:
       - name: artifactId
         in: path
@@ -1102,10 +1142,10 @@ paths:
             schema: {$ref: '#/components/schemas/RunRoutineRequest'}
       responses:
         '201':
-          description: Ordinary Task created from a pinned RoutineRevision
+          description: Ordinary READY Task saved from the exact active RoutineRevision; no planning or execution is started
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/Task'}
+              schema: {$ref: '#/components/schemas/TaskView'}
         default: {$ref: '#/components/responses/Error'}
   /routines/{routineId}/archive:
     post:
@@ -1208,16 +1248,21 @@ paths:
       - {$ref: '#/components/parameters/IdempotencyKey'}
       - {$ref: '#/components/parameters/IfMatch'}
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/ManualAutomationRunRequest'}
       responses:
-        '202':
-          description: Manual occurrence accepted and pinned to the current revision
+        '200':
+          description: Exact idempotency receipt replay; the original Manual occurrence and READY Task
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/AutomationOccurrence'}
+              schema: {$ref: '#/components/schemas/ManualAutomationRunResponse'}
+        '201':
+          description: Manual occurrence and READY Task atomically admitted; planning has not started
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManualAutomationRunResponse'}
         default: {$ref: '#/components/responses/Error'}
   /automations/{automationId}/revisions:
     get:
@@ -1798,7 +1843,6 @@ paths:
       parameters:
       - {name: coworkerId, in: path, required: true, schema: {type: string}}
       - {name: revision, in: path, required: true, schema: {type: integer, minimum: 1}}
-      - {$ref: '#/components/parameters/WorkspaceId'}
       responses:
         '200':
           description: Exact immutable Coworker revision in the selected Workspace; never resolves the current revision implicitly
@@ -2001,7 +2045,7 @@ paths:
     post:
       tags: [suggestions, tasks]
       operationId: acceptSuggestionTask
-      description: Atomically commits a normal READY Task from the exact pinned proposal and resolves the Suggestion with result_task_id. It does not start planning, an AgentSession, or execution. Repeating the request after a lost response returns the already linked Task.
+      description: Atomically commits a normal READY Task from the exact pinned proposal and resolves the Suggestion with result_task_id. It does not start planning, an AgentSession, or execution. The bounded response receipt proves the Suggestion-to-Task link. Repeating the same idempotency request returns the original committed link.
       parameters:
       - {name: suggestionId, in: path, required: true, schema: {type: string}}
       - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -2016,12 +2060,12 @@ paths:
           description: Task and Suggestion resolution committed atomically; Task remains READY
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/TaskView'}
+              schema: {$ref: '#/components/schemas/SuggestionTaskAcceptanceReceipt'}
         '200':
-          description: Retry returns the already linked Task after the original response was lost
+          description: Idempotent retry returns the original Suggestion and READY Task link
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/TaskView'}
+              schema: {$ref: '#/components/schemas/SuggestionTaskAcceptanceReceipt'}
         default: {$ref: '#/components/responses/Error'}
   /suggestions/{suggestionId}/snooze:
     post:
@@ -2390,8 +2434,6 @@ paths:
       tags: [capabilities]
       operationId: getZipIntakeReadiness
       description: Read-only local readiness observation. It never reads ZIP bytes or invokes the parser. Current status is UNAVAILABLE until isolated worker qualification.
-      parameters:
-      - {$ref: '#/components/parameters/WorkspaceId'}
       responses:
         '200':
           description: ZIP intake readiness and current safe behavior
@@ -2407,7 +2449,6 @@ paths:
       operationId: listLocalResources
       description: Keyset-paginated metadata-only catalog for the selected Workspace. Cursor ordering is descending by created_at then resource_id; content bytes are never returned.
       parameters:
-      - {$ref: '#/components/parameters/WorkspaceId'}
       - {$ref: '#/components/parameters/Cursor'}
       - name: limit
         in: query
@@ -2425,7 +2466,7 @@ paths:
       tags: [resources]
       operationId: quickImportResource
       description: Local desktop first-slice import, limited to 10 MiB. Uses encrypted local blob storage and commits the Resource event/revision atomically. Folder roots, ZIP extraction, resumable sessions, indexing and download use separate contracts.
-      parameters: [{$ref: '#/components/parameters/WorkspaceId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true
         content:
@@ -2442,9 +2483,8 @@ paths:
     get:
       tags: [resources]
       operationId: readLocalResourceContent
-      description: Returns bytes only after selected Workspace ownership and current revision/location checks. Optional revision_id pins the expected current revision and returns RESOURCE_CONFLICT if it changed. Storage rejects new reads of REVOKED, DELETION_PENDING, or DELETED ContextDocuments before BlobStore access; the owner receives CONTEXT_DOCUMENT_NOT_ACTIVE while Resource metadata remains readable. A read admitted while ACTIVE may finish after a concurrent status change. Derived-state commits must recheck status. The local IPC Operator caps a response at 10 MiB and rejects larger Resource revisions before blob decryption. The local desktop renderer limits text previews to 1 MiB and never renders active content; this is not a general large-file download path.
+      description: Returns verified bytes for the exact selected immutable ResourceRevision. Optional revision_id selects a historical revision in this exact Workspace/Resource and never falls back to current head; omission selects current head. Optional max_bytes must be positive and no greater than 10 MiB and is checked against revision metadata before BlobStore access. Historical bytes require a local managed encrypted BlobStore location; unsupported external content returns RESOURCE_CONTENT_EXTERNAL. Storage rejects reads of REVOKED, DELETION_PENDING, or DELETED ContextDocuments before BlobStore access; a read admitted while ACTIVE may finish after a concurrent status change. Derived-state commits must recheck status. The local desktop requests max_bytes=1 MiB for inert text previews; Resource revision comparison further limits both selections to UTF-8 text/plain or Markdown. Active content is never interpreted or rendered. This is not a general large-file download path.
       parameters:
-      - {$ref: '#/components/parameters/WorkspaceId'}
       - name: resourceId
         in: path
         required: true
@@ -2452,12 +2492,18 @@ paths:
       - name: revision_id
         in: query
         required: false
-        description: When supplied, the current Resource revision must still match this selected revision or the Operator returns RESOURCE_CONFLICT.
+        description: When supplied, selects this exact immutable ResourceRevision. It must belong to this Workspace and Resource; it need not be the current head.
         schema: {type: string, minLength: 1, maxLength: 160}
+      - name: max_bytes
+        in: query
+        required: false
+        description: Positive maximum content size for this read; storage rejects larger revisions before BlobStore access. Defaults to the 10 MiB Operator ceiling.
+        schema: {type: integer, minimum: 1, maximum: 10485760}
       responses:
         '200':
-          description: Verified current Resource bytes; content is marked for download and is not browser-rendered
+          description: Verified bytes for the exact immutable ResourceRevision; content is marked for download and is not browser-rendered
           headers:
+            X-Resource-Revision-Id: {required: true, schema: {type: string}}
             X-Resource-Media-Type: {required: true, schema: {type: string}}
             X-Content-Type-Options: {required: true, schema: {type: string, const: nosniff}}
             Cache-Control: {required: true, schema: {type: string, const: no-store}}
@@ -2465,12 +2511,22 @@ paths:
             application/octet-stream:
               schema: {type: string, format: binary}
         '413':
-          description: Current Resource revision exceeds the 10 MiB local Operator read limit
+          description: The selected revision exceeds the requested or 10 MiB default read limit; no BlobStore bytes were fetched
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ApiError'}
         '409':
-          description: Resource revision changed or its ContextDocument is not ACTIVE; the error uses RESOURCE_CONFLICT or CONTEXT_DOCUMENT_NOT_ACTIVE respectively
+          description: The selected ContextDocument is not ACTIVE; returns CONTEXT_DOCUMENT_NOT_ACTIVE
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '404':
+          description: Resource or exact revision is not present in the selected Workspace/Resource; no current-head fallback occurs
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '422':
+          description: Selected revision has no supported local managed content provider; returns RESOURCE_CONTENT_EXTERNAL
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ApiError'}
@@ -2588,6 +2644,7 @@ paths:
     patch:
       tags: [resources]
       operationId: setContextDocumentStatus
+      description: Authenticated local Workspace owner may revoke or restore retained ContextDocument content. Requires current Resource If-Match and an Idempotency-Key. This operation does not purge bytes or invalidate an AgentSession that already received them.
       parameters:
       - name: resourceId
         in: path
@@ -2601,13 +2658,8 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/SetContextDocumentStatusRequest'}
       responses:
-        '202':
-          description: Revocation or deletion accepted; DELETION_PENDING blocks content reads until Core-managed replicas acknowledge purge.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/ContextDocumentDeletionStatus'}
         '200':
-          description: ContextDocument status updated without a purge job.
+          description: Owner revocation or restoration committed with the Resource status event, snapshot, and idempotency receipt. Only ACTIVE and REVOKED are currently accepted; this does not purge content or invalidate sessions that already received it.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Resource'}
@@ -2671,7 +2723,6 @@ paths:
         in: path
         required: true
         schema: {type: string, minLength: 1, maxLength: 160}
-      - {$ref: '#/components/parameters/WorkspaceId'}
       - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
         required: true
@@ -4104,7 +4155,7 @@ components:
         template_variable: {type: string, minLength: 1}
         value_kind: {type: string, enum: [TEXT, RESOURCE_REF]}
         required: {type: boolean}
-        max_bytes: {type: [integer, 'null'], minimum: 1}
+        max_bytes: {type: integer, minimum: 1, maximum: 16384}
     AgentCapabilities:
       type: object
       required: [protocol, session, input, extension, reporting, environment, limits]
@@ -5120,7 +5171,7 @@ components:
       additionalProperties: false
       required: [status]
       properties:
-        status: {type: string, enum: [ACTIVE, REVOKED, DELETION_PENDING], description: DELETED is set only by the Core purge reconciler after every owned replica acknowledges deletion.}
+        status: {type: string, enum: [ACTIVE, REVOKED], description: Owner may revoke or restore retained content. Purge transitions are unavailable in the local desktop V1 Operator.}
     ContextDocumentDeletionStatus:
       type: object
       additionalProperties: false
@@ -5144,7 +5195,7 @@ components:
         media_type: {type: string}
         expected_size_bytes: {type: integer, minimum: 0, description: Newly created sessions are capped at 100 MiB; a migrated legacy session may report a larger original value and is not resumable.}
         expected_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$', description: Null only for an unmigrated legacy session that cannot be resumed or committed.}
-        context_document: {oneOf: [{$ref: '#/components/schemas/ContextDocumentMetadata'}, {type: 'null'}]}
+        context_document: {oneOf: [{$ref: '#/components/schemas/ContextDocumentCreateMetadata'}, {type: 'null'}], description: Pinned create-time owner/kind only; status and purge fields exist on the committed Resource, not the upload session.}
         folder_import: {oneOf: [{$ref: '#/components/schemas/FolderImportMetadata'}, {type: 'null'}], description: Pinned one-time folder attachment provenance; not a filesystem locator or grant.}
         resource_id: {type: [string, 'null']}
         committed_resource_id: {type: [string, 'null'], description: Set only when commit atomically creates the Resource.}
@@ -5213,6 +5264,84 @@ components:
           type: array
           items: {$ref: '#/components/schemas/ResourceRef'}
         created_at: {type: string, format: date-time}
+    RichPresentationRef:
+      type: object
+      additionalProperties: false
+      required: [presentation_id, message_id, schema_version, renderer_contract_version, semantic_content_digest, document_digest, document_size_bytes, availability]
+      properties:
+        presentation_id: {type: string, minLength: 1}
+        message_id: {type: string, minLength: 1}
+        schema_version: {type: integer, const: 1}
+        renderer_contract_version: {type: integer, minimum: 1}
+        semantic_content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        document_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        document_size_bytes: {type: integer, minimum: 1, maximum: 1048576}
+        availability: {type: string, enum: [AVAILABLE, FETCHING, UNAVAILABLE, POLICY_OMITTED, UNSUPPORTED_VERSION, INTEGRITY_FAILED]}
+    ConversationPresentationMessage:
+      type: object
+      additionalProperties: false
+      required: [message, rich_presentation, linked_items]
+      properties:
+        message: {$ref: '#/components/schemas/ConversationMessage'}
+        rich_presentation: {oneOf: [{$ref: '#/components/schemas/RichPresentationRef'}, {type: 'null'}]}
+        linked_items:
+          type: array
+          maxItems: 200
+          items: {$ref: '#/components/schemas/PresentationItem'}
+    PresentationItem:
+      type: object
+      additionalProperties: false
+      required: [item_key, kind, payload_version, source_refs, order_key, freshness, payload]
+      properties:
+        item_key: {type: string, minLength: 1}
+        kind: {type: string, enum: [TEXT, ACTIVITY, TASK_CARD, USER_REQUEST, APPROVAL, ARTIFACT, CITATION, CODE, DIFF, TABLE, CHART, IMAGE, BROWSER, TERMINAL, MCP_APP, ERROR]}
+        payload_version: {type: integer, minimum: 1}
+        source_refs: {type: array, items: {type: object, additionalProperties: true}}
+        occurred_at: {type: [string, 'null'], format: date-time}
+        order_key: {type: string, minLength: 1}
+        status: {type: [string, 'null'], enum: [IN_PROGRESS, WAITING, NEEDS_USER, COMPLETE, INCOMPLETE, FAILED, UNAVAILABLE, UNKNOWN, null]}
+        label: {type: [string, 'null']}
+        freshness: {type: string, enum: [CURRENT, STALE, UNKNOWN]}
+        payload: {type: object}
+    ConversationPresentationSnapshot:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, conversation_id, projection_revision, stream_cursor, items, active_turn]
+      properties:
+        workspace_id: {type: string, minLength: 1}
+        conversation_id: {type: string, minLength: 1}
+        projection_revision: {type: integer, minimum: 1}
+        stream_cursor: {type: string, minLength: 1}
+        items:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/ConversationPresentationMessage'}
+        next_cursor: {type: [string, 'null']}
+        active_turn: {oneOf: [{$ref: '#/components/schemas/ConversationTurnPresentation'}, {type: 'null'}]}
+    ConversationTurnPresentation:
+      type: object
+      additionalProperties: false
+      required: [turn_id, status, retry_ordinal, presentation_preference]
+      properties:
+        turn_id: {type: string, minLength: 1}
+        status: {type: string, enum: [OPEN, RUNNING, WAITING_USER, WAITING_DEPENDENCY, CANCEL_REQUESTED]}
+        retry_ordinal: {type: integer, minimum: 0}
+        presentation_preference: {type: string, enum: [AUTO, SIMPLE, RICH]}
+    RichPresentationDocumentResponse:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, conversation_id, message_id, presentation_id, schema_version, renderer_contract_version, semantic_content_digest, document_digest, document_size_bytes, document]
+      properties:
+        workspace_id: {type: string, minLength: 1}
+        conversation_id: {type: string, minLength: 1}
+        message_id: {type: string, minLength: 1}
+        presentation_id: {type: string, minLength: 1}
+        schema_version: {type: integer, const: 1}
+        renderer_contract_version: {type: integer, minimum: 1}
+        semantic_content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        document_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        document_size_bytes: {type: integer, minimum: 1, maximum: 1048576}
+        document: {type: object, description: 'Must validate against docs/schemas/rich-presentation.schema.json before rendering.'}
     MessagePage:
       type: object
       required: [items]
@@ -5403,6 +5532,14 @@ components:
           properties: {origin_coworker_revision: {type: integer}}
           required: [origin_coworker_revision]
         then: {properties: {origin_coworker_id: {type: string, minLength: 1}}}
+      - if:
+          properties: {routine_id: {type: string}}
+          required: [routine_id]
+        then: {properties: {routine_revision: {type: integer, minimum: 1}}}
+      - if:
+          properties: {routine_revision: {type: integer}}
+          required: [routine_revision]
+        then: {properties: {routine_id: {type: string, minLength: 1}}}
     TaskView:
       type: object
       additionalProperties: false
@@ -5598,9 +5735,10 @@ components:
           type: array
           items: {$ref: '#/components/schemas/ResourceRef'}
         agent_binding_id: {type: [string, 'null']}
+        presentation_preference: {type: string, enum: [AUTO, SIMPLE, RICH], default: AUTO}
     ConversationTurnReceipt:
       type: object
-      required: [turn_id, conversation_id, user_message_id, status, accepted_at, correlation_id]
+      required: [turn_id, conversation_id, user_message_id, status, accepted_at, correlation_id, presentation_preference]
       properties:
         turn_id: {type: string}
         conversation_id: {type: string}
@@ -5608,6 +5746,7 @@ components:
         status: {type: string, enum: [OPEN, RUNNING, WAITING_USER, WAITING_DEPENDENCY, COMPLETED, FAILED, CANCEL_REQUESTED, CANCELLED]}
         accepted_at: {type: string, format: date-time}
         correlation_id: {type: string}
+        presentation_preference: {type: string, enum: [AUTO, SIMPLE, RICH]}
     TimelinePage:
       type: object
       required: [items]
@@ -5905,7 +6044,7 @@ components:
       required: [routine_revision, inputs]
       properties:
         routine_revision: {type: integer, minimum: 1}
-        inputs: {type: object, additionalProperties: true}
+        inputs: {type: object, maxProperties: 64, additionalProperties: true}
         conversation_id: {type: [string, 'null']}
     TriggerSpec:
       type: object
@@ -6089,8 +6228,22 @@ components:
     ManualAutomationRunRequest:
       type: object
       additionalProperties: false
+      required: [automation_revision, inputs]
       properties:
-        trigger_values: {type: object, additionalProperties: true}
+        automation_revision: {type: integer, minimum: 1}
+        inputs: {type: object, additionalProperties: true, description: Bounded values validated against the exact pinned Routine input schema and bindings.}
+    ManualAutomationRunResponse:
+      type: object
+      additionalProperties: false
+      required: [automation_id, automation_revision, trigger_id, occurrence_id, occurrence_version, occurrence_status, task]
+      properties:
+        automation_id: {type: string}
+        automation_revision: {type: integer, minimum: 1}
+        trigger_id: {type: string}
+        occurrence_id: {type: string}
+        occurrence_version: {type: integer, const: 3}
+        occurrence_status: {type: string, const: STARTED}
+        task: {$ref: '#/components/schemas/TaskView'}
     CreateAutomationRequest:
       type: object
       additionalProperties: false
@@ -6141,7 +6294,7 @@ components:
         created_at: {type: string, format: date-time}
     AutomationOccurrence:
       type: object
-      required: [occurrence_id, automation_id, automation_revision, routine_id, routine_revision, trigger_id, occurrence_key, trigger_host_runtime_id, claim_epoch, status, blockers, created_at, updated_at]
+      required: [occurrence_id, automation_id, automation_revision, routine_id, routine_revision, trigger_id, occurrence_key, trigger_host_runtime_id, version, claim_epoch, status, blockers, created_at, updated_at]
       properties:
         occurrence_id: {type: string}
         automation_id: {type: string}
@@ -6151,6 +6304,7 @@ components:
         trigger_id: {type: string}
         trigger_host_runtime_id: {type: string}
         occurrence_key: {type: string, pattern: '^[a-f0-9]{64}$'}
+        version: {type: integer, minimum: 1, description: Monotonic occurrence aggregate revision; event and snapshot entity_revision.}
         claim_epoch: {type: integer, minimum: 0}
         claim_expires_at: {type: [string, 'null'], format: date-time}
         scheduled_for: {type: [string, 'null'], format: date-time}
@@ -6419,9 +6573,15 @@ components:
             enum: [AVAILABLE, OFFLINE, PLACEHOLDER, REVOKED, UNKNOWN, UNAVAILABLE]
     ResourceSearchResult:
       type: object
-      required: [resource_ref, display_name, locations, freshness, match_reasons]
+      required: [resource_ref, source_content_digest, source_matches, display_name, locations, freshness, match_reasons]
       properties:
-        resource_ref: {$ref: '#/components/schemas/ResourceRef'}
+        resource_ref: {$ref: '#/components/schemas/PinnedResourceRef'}
+        source_content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$', description: Digest of the exact immutable ResourceRevision named by resource_ref.revision_id; source_matches offsets are valid only against these bytes.}
+        source_matches:
+          type: array
+          maxItems: 32
+          description: Empty unless an INDEXED_CONTENT result has source-grounded lexical matches. In INDEXED_CONTENT, contains one first-occurrence span per distinct normalized query term, all into the exact pinned ResourceRevision bytes named by resource_ref and source_content_digest.
+          items: {$ref: '#/components/schemas/ResourceTextMatchSpan'}
         display_name: {type: string}
         locations:
           type: array
@@ -6431,6 +6591,15 @@ components:
           type: array
           items: {type: string, enum: [NAME, MEDIA_TYPE, CONTENT_ON_DEMAND, CONTENT_INDEXED]}
         snippet: {type: [string, 'null'], maxLength: 320, description: Bounded plain-text excerpt from a memory scan or digest-verified encrypted local index. It is never rendered as HTML.}
+    ResourceTextMatchSpan:
+      type: object
+      additionalProperties: false
+      required: [term, start_utf8_byte, end_utf8_byte_exclusive]
+      description: A lexical token match in the original UTF-8 bytes of the containing ResourceSearchResult's pinned ResourceRevision. Offsets are zero-based and half-open; consumers must verify the containing source_content_digest and never apply offsets to a newer Resource head.
+      properties:
+        term: {type: string, minLength: 1, maxLength: 128, description: Normalized Unicode alphanumeric query term.}
+        start_utf8_byte: {type: integer, minimum: 0, maximum: 1048576}
+        end_utf8_byte_exclusive: {type: integer, minimum: 1, maximum: 1048576}
     ResourceSearchPage:
       type: object
       required: [items, mode, content_scan]
@@ -6447,7 +6616,7 @@ components:
       required: [resource_revision_id, content_digest]
       properties:
         resource_revision_id: {type: string, minLength: 1, maxLength: 160}
-        content_digest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
     ResourceTextIndexRebuildResult:
       type: object
       additionalProperties: false
@@ -7502,6 +7671,32 @@ components:
           required: [status, proposed_action]
         then:
           properties: {result_task_id: {type: string, minLength: 1}}
+    SuggestionTaskAcceptanceReceipt:
+      type: object
+      additionalProperties: false
+      description: Bounded proof of the atomic Suggestion-to-READY-Task acceptance. CREATED is returned from the write transaction; REPLAYED is returned from the original Task request receipt and accepted Suggestion validated together. Task status describes the originally committed READY Task and does not advance with later Task state.
+      required: [workspace_id, disposition, suggestion, task]
+      properties:
+        workspace_id: {type: string, minLength: 1, maxLength: 256, description: Must equal the selected Workspace and task.workspace_id.}
+        disposition: {type: string, enum: [CREATED, REPLAYED]}
+        suggestion:
+          type: object
+          additionalProperties: false
+          required: [suggestion_id, status, result_task_id, version]
+          properties:
+            suggestion_id: {type: string, minLength: 1, maxLength: 256}
+            status: {type: string, const: ACCEPTED}
+            result_task_id: {type: string, minLength: 1, maxLength: 256, description: Must equal task.task_id.}
+            version: {type: integer, minimum: 1}
+        task:
+          type: object
+          additionalProperties: false
+          required: [task_id, workspace_id, status, version]
+          properties:
+            task_id: {type: string, minLength: 1, maxLength: 256}
+            workspace_id: {type: string, minLength: 1, maxLength: 256}
+            status: {type: string, const: READY}
+            version: {type: integer, minimum: 1}
     ResolveSuggestionRequest:
       type: object
       additionalProperties: false

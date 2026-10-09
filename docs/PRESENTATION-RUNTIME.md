@@ -35,6 +35,12 @@ Workspace-authorized projections. RendererRegistry runs in the desktop Operator.
 providers own specialized editing behavior; LiteCowork owns the shell, source identity,
 version selection, provenance display, and safe fallback behavior.
 
+This document also defines the transport and Operator behavior for optional Rich
+Presentations. Rich-response vocabulary and compilation are owned by
+[`RICH-RESPONSE.md`](RICH-RESPONSE.md); host-only instruction delivery is owned by
+[`HOST-GUIDANCE.md`](HOST-GUIDANCE.md). A `TaskPresentationSnapshot` remains a factual
+read projection and is not a `RichPresentation`.
+
 ## User model
 
 LiteCowork has one experience for technical and nontechnical users. It does not make users
@@ -109,6 +115,18 @@ worker liveness, progress, verification, or external/provider freshness. This en
 is not a substitute for the specified snapshot-plus-stream cursor protocol and does not
 contain transient turn text.
 
+The desktop also exposes `GET /v1/tasks/{task_id}/progress` as a separate authenticated,
+Workspace-owner-scoped, no-store read. Its current source projection is derived in the
+same bounded SQLite snapshot from the Task, current-plan Steps, each Step's persisted
+current Attempt, latest committed Task/Step/Attempt events, latest Evidence timestamp,
+blockers, and newest resolvable ArtifactVersion. Terminal current Attempts can provide
+the latest activity timestamp/source but are excluded from `active_workstreams`; those
+contain only nonterminal current Attempts. The implementation does not yet ingest
+CapabilityInvocation, provider-progress, or Environment-observation sources, so it does
+not claim those are absent or live. Unknown event kinds can supply timestamp/source but
+not a human summary. Over-cap source sets fail instead of silently returning a partial
+progress view. Progress is a projection and does not mutate Task state.
+
 The authenticated Operator stream remains the transport. Presentation subscriptions use
 the same Workspace authentication, opaque resume cursor, resync marker, and projection
 version rules defined in `API.md`.
@@ -181,6 +199,139 @@ ConversationMessage supersedes transient text and remains the durable record.
 The durable event journal does not store per-token updates, renderer state, scroll
 position, panel layout, hover/focus, or animation frames. Domain events drive durable state
 and domain motion. Presentation frames are transport-level projection data.
+
+## RichPresentation transport and publication
+
+`ConversationMessage` is semantic truth. A `RichPresentation` is a separate immutable
+read enhancement keyed to one committed Agent `ConversationMessage`; it is not embedded
+in, or required to read, the message. The semantic answer is committed and exposed first.
+Compilation may consume already validated turn output while streaming, but it must never
+delay message persistence, turn settlement, or the first readable final response. The
+compiler may publish a valid enhancement afterward. Failure, timeout, unsupported schema,
+missing blob, or renderer failure leaves the semantic message complete and readable.
+
+The rich aggregate has exactly one version-1 record per message:
+
+```text
+RichPresentation {
+  presentation_id: PresentationId
+  workspace_id: WorkspaceId
+  conversation_id: ConversationId
+  message_id: MessageId
+
+  schema_version: u32
+  renderer_contract_version: u32
+  semantic_content_digest: Sha256Digest
+
+  document_ref: BlobRef
+  document_digest: Sha256Digest
+  document_size_bytes: u64
+
+  producer_agent_session_id?: AgentSessionId
+  host_instruction_digest?: Sha256Digest
+  host_skill_refs: HostSkillRef[]
+
+  created_at: Timestamp
+  version: 1
+}
+```
+
+The document is canonical JSON using RFC 8785 JCS and a SHA-256 digest. It contains only
+bounded typed blocks and references, never binary payloads or executable UI. Its
+`semantic_content_digest` binds it to the exact message text projection defined in
+`RICH-RESPONSE.md`. The publisher verifies Workspace, Conversation, message role, source
+references, digest, size, and unique message binding in one StateStore transaction before
+appending `rich.presentation.published.v1`. Message creation and RichPresentation
+publication are separate aggregate commits/events: a renderer upgrade can arrive later
+and never changes the Message identity or content. A prepared but unreferenced blob after
+transaction failure is ordinary garbage-collection input.
+
+`GET /v1/conversations/{conversationId}/presentation` returns an authorized bounded
+`ConversationPresentationSnapshot`. The snapshot contains committed message summaries,
+available RichPresentation refs, linked trusted projection refs, active-turn state, and
+the snapshot projection revision/cursor. It does not embed arbitrary presentation blobs.
+`GET /v1/rich-presentations/{presentationId}` authorizes the exact Workspace/message link,
+fetches the bounded document, and verifies its digest before returning it. The response
+uses `no-store`; clients validate Workspace, Conversation, Message, schema version,
+document size, digest, and every host-bound source reference before rendering.
+
+Availability is explicit:
+
+```text
+RichPresentationAvailability =
+    AVAILABLE
+  | FETCHING
+  | UNAVAILABLE
+  | POLICY_OMITTED
+  | UNSUPPORTED_VERSION
+  | INTEGRITY_FAILED
+```
+
+For every state except `AVAILABLE`, the client renders the committed semantic message.
+When the exact immutable document later becomes available, the client upgrades the same
+message in place. Historical hydration, reconnect, and backup restore do not replay typing
+or entrance animations. Missing RichPresentation data does not make a Conversation
+unreadable or unrestorable.
+
+### Durable versus transient frames
+
+The existing `turn.delta` frame remains coalesced semantic text. Optional rich composition
+uses `rich.draft` transport frames, never DomainEvents or projection events. Every draft is
+bound to `(workspace_id, conversation_id, turn_id, retry_ordinal, agent_session_id,
+draft_id)` with monotonically increasing sequence numbers. Frames are accepted only for
+the currently active retry/session. Retry, settlement, cancellation, disconnect, and
+resync fence old drafts. A draft can be discarded at any time without affecting the
+message or turn.
+
+The Operator stream frame union is:
+
+```text
+OperatorStreamFrame =
+    PROJECTION
+  | TURN_DELTA
+  | RICH_DRAFT
+  | RESYNC_REQUIRED
+```
+
+`rich.draft` events are `DRAFT_STARTED`, `BLOCK_OPENED`, `TEXT_APPENDED`,
+`BLOCK_REPLACED`, `BLOCK_CLOSED`, `DRAFT_FINALIZING`, `DRAFT_PUBLISHED`, or
+`DRAFT_FAILED`. Open-block count, nesting depth, total bytes, frame count, queue bytes,
+and block count are bounded. Text fragments are coalesced. A closed block's parent/order
+cannot change; corrections append a replacement block. A sequence gap is replayed only
+from a bounded draft snapshot when supported. Otherwise the client drops the ephemeral
+rich draft and continues with ordinary text/message handling. Slow rendering never blocks
+AgentSession reads or turn settlement.
+
+## Conversation snapshot and commit flow
+
+```mermaid
+sequenceDiagram
+    participant A as Agent turn
+    participant C as ConversationService
+    participant P as RichPresentation compiler
+    participant B as BlobStore
+    participant S as StateStore/EventStore
+    participant O as Operator
+
+    A->>C: semantic response accumulated
+    C->>S: commit ConversationMessage and message event
+    S-->>O: committed message projection
+    O->>O: render semantic response immediately
+    opt optional rich intent or deterministic enhancement
+        A->>P: bounded presentation intent + semantic/source bindings
+        P->>P: compile, validate, enforce policy/limits
+        P->>B: write canonical immutable document
+        B-->>P: verified BlobRef and digest
+        P->>S: commit RichPresentation + publication event
+        S-->>O: presentation available
+        O->>O: validate and upgrade same message in place
+    end
+```
+
+ConversationTurn success is determined by its committed ConversationMessage and existing
+turn lifecycle. Optional RichPresentation compilation is not a prerequisite for turn
+completion and cannot change Task completion, Effect reconciliation, Verification, or
+Artifact state.
 
 ## RendererRegistry
 
@@ -255,7 +406,11 @@ current append provenance has no dedicated restored-from relation. Managed Markd
 a bounded preview-only renderer for headings, paragraphs, simple lists, quotes, fenced
 code, inline emphasis/code, and owner-confirmed HTTPS links. It uses React text nodes,
 does not execute HTML or load remote images, and falls back to the original text for
-unsupported/malformed syntax. It is not a full CommonMark renderer or an editor.
+unsupported/malformed syntax. It is not a full CommonMark renderer or an editor. Managed
+text comparisons also offer a bounded literal line-diff display (400 lines per side,
+160,000 line-pairs, and 16,384 characters per line). Larger inputs retain the existing
+side-by-side renderer. This diff does not claim semantic change analysis and creates no
+Artifact version or other durable state.
 
 ## Context-use presentation
 

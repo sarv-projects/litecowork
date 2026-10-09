@@ -24,6 +24,14 @@ export type RoutineRevision = Record<string, unknown> & {
 
 export type RoutinePage = { items: Routine[]; next_cursor: string | null };
 export type RoutineRevisionPage = { items: RoutineRevision[]; next_cursor: string | null };
+export type MaterializedRoutineTask = {
+  task_id: string;
+  workspace_id: string;
+  routine_id: string;
+  routine_revision: number;
+  status: "READY";
+  current_spec_revision: number;
+};
 export type RoutineTransport = (path: string, init: RequestInit) => Promise<Response>;
 
 export interface RoutineApi {
@@ -33,6 +41,7 @@ export interface RoutineApi {
   create(name: string, revision: Record<string, unknown>, requestId: string): Promise<Routine>;
   revise(routineId: string, expectedVersion: number, revision: Record<string, unknown>, requestId: string): Promise<RoutineRevision>;
   archive(routineId: string, expectedVersion: number, requestId: string): Promise<Routine>;
+  run(routineId: string, routineRevision: number, inputs: Record<string, unknown>, requestId: string): Promise<MaterializedRoutineTask>;
 }
 
 export class RoutineApiError extends Error {
@@ -80,9 +89,33 @@ function decodeRevision(value: unknown, routineId: string): RoutineRevision {
   const row = object(value);
   if (text(row.routine_id) !== routineId) throw new Error("Routine revision belongs to another definition.");
   const revision = positiveInteger(row.revision);
-  text(row.objective_template);
+  const objectiveTemplate = text(row.objective_template);
   if (typeof row.instructions !== "string") throw new Error("Invalid Routine revision.");
-  return { ...row, routine_id: routineId, revision, objective_template: row.objective_template as string, instructions: row.instructions };
+  const authoredBy = object(row.authored_by);
+  const createdAt = text(row.created_at);
+  return {
+    ...row,
+    routine_id: routineId,
+    revision,
+    objective_template: objectiveTemplate,
+    instructions: row.instructions,
+    authored_by: authoredBy,
+    created_at: createdAt,
+  };
+}
+function decodeMaterializedTask(value: unknown, workspaceId: string, routineId: string, routineRevision: number): MaterializedRoutineTask {
+  const view = object(value);
+  const row = object(view.task);
+  const spec = object(view.current_spec_revision);
+  if (text(row.workspace_id) !== workspaceId || text(row.routine_id) !== routineId
+    || positiveInteger(row.routine_revision) !== routineRevision || text(row.status) !== "READY"
+    || text(spec.task_id) !== text(row.task_id) || positiveInteger(spec.revision) !== positiveInteger(row.current_spec_revision)) {
+    throw new Error("The saved Task response did not match this Workspace and Routine revision.");
+  }
+  return {
+    task_id: text(row.task_id), workspace_id: workspaceId, routine_id: routineId,
+    routine_revision: routineRevision, status: "READY", current_spec_revision: positiveInteger(spec.revision),
+  };
 }
 
 /** Finite Workspace-scoped contract for the saved Routine routes currently implemented. */
@@ -149,6 +182,13 @@ export function createRoutineApi(workspaceId: string, transport: RoutineTranspor
         method: "POST", headers: mutationHeaders(requestId, expectedVersion),
       })).json();
       return decodeRoutine(value, workspaceId);
+    },
+    async run(routineId, routineRevision, inputs, requestId) {
+      const value = await (await request(`/v1/routines/${encodeURIComponent(routineId)}/run`, {
+        method: "POST", headers: mutationHeaders(requestId),
+        body: JSON.stringify({ routine_revision: routineRevision, inputs }),
+      })).json();
+      return decodeMaterializedTask(value, workspaceId, routineId, routineRevision);
     },
   };
 }

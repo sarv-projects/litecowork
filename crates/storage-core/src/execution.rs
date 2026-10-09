@@ -8,13 +8,28 @@ use serde_json::Value;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AttemptState {
-    Created, Preparing, Running, WaitingApproval, WaitingResource, Checkpointing,
-    Completed, Failed, Abandoned, CancelRequested, Cancelled,
+    Created,
+    Preparing,
+    Running,
+    WaitingApproval,
+    WaitingResource,
+    Checkpointing,
+    Completed,
+    Failed,
+    Abandoned,
+    CancelRequested,
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ExecutionLeaseState { Active, Releasing, Released, Expired, Revoked }
+pub enum ExecutionLeaseState {
+    Active,
+    Releasing,
+    Released,
+    Expired,
+    Revoked,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -85,11 +100,19 @@ pub struct AttemptAdmissionEvents {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ExecutionBudgetScope { Task, Environment }
+pub enum ExecutionBudgetScope {
+    Task,
+    Environment,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ExecutionBudgetReservationState { Reserved, Committed, Released, Expired }
+pub enum ExecutionBudgetReservationState {
+    Reserved,
+    Committed,
+    Released,
+    Expired,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -113,15 +136,25 @@ pub struct AttemptBudgetReservationRecord {
 /// reservation has exactly one budget owner. Empty Required is not admissible.
 #[derive(Clone, Debug)]
 pub enum AttemptBudgetAdmission {
-    NotRequired { decision_ref: String },
-    Required { decision_ref: String, reservations: Vec<AttemptBudgetReservationRecord> },
+    NotRequired {
+        decision_ref: String,
+    },
+    Required {
+        decision_ref: String,
+        reservations: Vec<AttemptBudgetReservationRecord>,
+    },
     Unsupported,
 }
 
 /// Internal service observations. Never deserialize these from an owner/agent
 /// request. A supported store recomputes each check at the commit authority.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExecutionCheck { Confirmed, Denied, Unknown, Unsupported }
+pub enum ExecutionCheck {
+    Confirmed,
+    Denied,
+    Unknown,
+    Unsupported,
+}
 
 #[derive(Clone, Debug)]
 pub struct AttemptAdmissionChecks {
@@ -259,7 +292,10 @@ pub struct RenewExecutionLease {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LeaseReleasePhase { Begin, Complete }
+pub enum LeaseReleasePhase {
+    Begin,
+    Complete,
+}
 
 #[derive(Clone, Debug)]
 pub struct ReleaseExecutionLease {
@@ -326,7 +362,9 @@ pub struct CommittedExecutionLeaseMutation {
 }
 
 fn unsupported() -> StoreError {
-    StoreError::Invalid("atomic Attempt and ExecutionLease storage guarantees are unsupported".to_owned())
+    StoreError::Invalid(
+        "atomic Attempt and ExecutionLease storage guarantees are unsupported".to_owned(),
+    )
 }
 
 /// LeaseCoordinator / TaskService / AttemptRunner share this atomic authority.
@@ -354,11 +392,50 @@ fn unsupported() -> StoreError {
 /// All mediated mutations recheck the current fence at their own commit authority.
 /// Defaults fail closed: existing stores cannot imply these guarantees by omission.
 pub trait StepAttemptStore: Send + Sync {
-    fn step_attempt_admission_snapshot(&self, _command: &AdmitStepAttempt) -> Result<StepAttemptAdmissionSnapshot, StoreError> { Err(unsupported()) }
-    fn admit_step_attempt(&self, _command: AdmitStepAttempt) -> Result<CommittedStepAttempt, StoreError> { Err(unsupported()) }
-    fn execution_lease_mutation_snapshot(&self, _command: &ExecutionLeaseCommand) -> Result<ExecutionLeaseMutationSnapshot, StoreError> { Err(unsupported()) }
-    fn renew_execution_lease(&self, _command: RenewExecutionLease) -> Result<CommittedExecutionLeaseMutation, StoreError> { Err(unsupported()) }
-    fn release_execution_lease(&self, _command: ReleaseExecutionLease) -> Result<CommittedExecutionLeaseMutation, StoreError> { Err(unsupported()) }
-    fn list_expired_execution_leases(&self, _owner_principal_id: &str, _workspace_id: &str, _recovery_runtime_id: &str, _recovery_runtime_incarnation_id: &str, _limit: usize) -> Result<Vec<ExpiredExecutionLeaseCandidate>, StoreError> { Err(unsupported()) }
-    fn expire_execution_lease(&self, _command: ExpireExecutionLease) -> Result<CommittedExecutionLeaseMutation, StoreError> { Err(unsupported()) }
+    fn step_attempt_admission_snapshot(
+        &self,
+        _command: &AdmitStepAttempt,
+    ) -> Result<StepAttemptAdmissionSnapshot, StoreError> {
+        Err(unsupported())
+    }
+    fn admit_step_attempt(
+        &self,
+        _command: AdmitStepAttempt,
+    ) -> Result<CommittedStepAttempt, StoreError> {
+        Err(unsupported())
+    }
+    fn execution_lease_mutation_snapshot(
+        &self,
+        _command: &ExecutionLeaseCommand,
+    ) -> Result<ExecutionLeaseMutationSnapshot, StoreError> {
+        Err(unsupported())
+    }
+    fn renew_execution_lease(
+        &self,
+        _command: RenewExecutionLease,
+    ) -> Result<CommittedExecutionLeaseMutation, StoreError> {
+        Err(unsupported())
+    }
+    fn release_execution_lease(
+        &self,
+        _command: ReleaseExecutionLease,
+    ) -> Result<CommittedExecutionLeaseMutation, StoreError> {
+        Err(unsupported())
+    }
+    fn list_expired_execution_leases(
+        &self,
+        _owner_principal_id: &str,
+        _workspace_id: &str,
+        _recovery_runtime_id: &str,
+        _recovery_runtime_incarnation_id: &str,
+        _limit: usize,
+    ) -> Result<Vec<ExpiredExecutionLeaseCandidate>, StoreError> {
+        Err(unsupported())
+    }
+    fn expire_execution_lease(
+        &self,
+        _command: ExpireExecutionLease,
+    ) -> Result<CommittedExecutionLeaseMutation, StoreError> {
+        Err(unsupported())
+    }
 }

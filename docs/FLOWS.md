@@ -8,6 +8,12 @@ directly. The listed sequence is normative unless a linked owner contract is str
 
 Actors: User, Operator UI, WorkspaceService, TrustService, RuntimeMesh.
 
+**Desktop/local V1 scope:** creation uses `LOCAL_ONLY`; cloud replication policy choices,
+RuntimeMesh transfer, and remote execution remain post-V1. If a previously stored
+Workspace policy is non-local, Settings reports it as inactive and exposes an explicit
+owner reset to `LOCAL_ONLY`. The generic policy-change steps below describe the future
+replication flow, not an active V1 transfer path.
+
 1. The user creates a Workspace. The desktop retains the same RequestId if the response is lost and the same name/policy is retried. WorkspaceService commits the chosen supported initial policy (default `LOCAL_ONLY`) and an empty selected-root set, then emits `workspace.created`; the idempotency receipt commits with the aggregate, event, and origin sequence. `SELECTED_FOLDERS` is rejected until roots exist.
 2. The user adds persistent WorkspaceRoots for selected folders. A one-time message attachment does not create a root.
 3. The UI explains each replication scope before the user explicitly enables cloud replication. `SELECTED_FOLDERS` requires one or more active WorkspaceRoot IDs in this Workspace; it follows new revisions under each root rather than pinning one snapshot.
@@ -415,6 +421,14 @@ Never permit two workers to mutate same checkout without explicit serialization.
 5. Task identity and prior session/Attempt history remain unchanged.
 
 ## F26 — Artifact Library archive
+
+The desktop also explicitly promotes a TRANSIENT Artifact after confirmation using
+`POST /v1/artifacts/{id}/promote`, If-Match and Idempotency-Key. The same owner-scoped
+writer commits SAVED, one aggregate increment, `artifact.library.promoted.v1`, its state
+snapshot and receipt. Neither promotion nor archive changes immutable content. Unconfirmed
+responses offer an unchanged retry; stale-version rejection requires refresh/review.
+The mounted Library surface removes a changed row from the current status filter only
+after a validated committed response, and keeps the open Workbench/history readable.
 
 Precondition: the Workspace is active and the Artifact is SAVED. The user confirms the named Artifact and understands that archive removes it from the default Library view while preserving authorized version reads.
 
@@ -854,8 +868,19 @@ UI: show last verified backup time, restore point, and any missing artifact/effe
 | F110 | Review saved Task outcome/activity snapshot | Show only committed fields; keep stale freshness distinct from Evidence and no live claim |
 | F111 | Preview managed Markdown Artifact | Safe bounded rendering; malformed syntax falls back to raw text; external HTTPS requires confirmation |
 | F112 | Inspect immutable TaskSpec history | Exact Task-scoped revisions, read-only; preserve cached history when offline |
-| F113 | Compare adjacent Artifact versions | Exact immutable versions through the same safe renderer; no inferred diff or mutation |
+| F113 | Compare immutable Artifact versions | Exact versions through bounded side-by-side or literal line diff; no semantic inference or mutation |
 | F114 | Save an exact Artifact version from desktop | Native Save As for selected managed content up to 10 MiB; verify identity and digest; cancellation writes nothing |
+| F125 | Recover an ambiguous ManualTrigger after navigation | Reuse exact Workspace-scoped request; only confirm a matching READY Task receipt |
+| F126 | Recover ambiguous Goal mutations after navigation | Keep exact request/version/payload in bounded volatile Workspace-scoped recovery |
+| F127 | Recover Suggestion and preference mutations after navigation | Retry exact owner command and validate matching receipt |
+| F128 | Run an active Routine into a READY Task | Validate pinned Routine inputs; preserve exact request after ambiguous response; no execution implied |
+| F129 | Recover Suggestion Task acceptance after navigation | Retry exact command and require an atomic linked READY-Task receipt |
+| F130 | Browse persisted Tasks needing attention | Exact status queries; stale-safe navigation to a fresh Task read; no source mutation |
+| F131 | Compose optional rich Conversation response | Semantic Message commits first; separately validated RichPresentation may upgrade it |
+| F132 | Recover rich compilation, blob, or renderer failure | Preserve complete semantic answer through timeout, invalid schema, missing blob, or unsupported renderer |
+| F133 | Present exact Artifact deliverables and ZIP | Bind committed ArtifactVersions; bundle only explicit immutable inputs |
+| F134 | Stream and fence rich draft frames | Bounded transient layout frames cannot block turns or cross retries |
+| F135 | Render portable rich response on a constrained channel | Flatten safely without adding authority or losing semantic fallback |
 
 
 ## F37 — Runtime boot and incarnation recovery
@@ -1697,6 +1722,14 @@ rebase, or explicit merge. A branch choice alone does not create a merge.
 
 ## F75 — ContextDocument revocation and deletion
 
+**Local V1 implementation status:** the authenticated owner route currently implements
+only `ACTIVE -> REVOKED` and `REVOKED -> ACTIVE`, with Resource-version compare-and-swap,
+idempotency receipt, snapshot, and status event committed atomically. Existing SQLite read
+admission denies new reads while revoked. The daemon does not yet wire Task-context
+attachment invalidation or stop/replace an already-fed native session. Deletion planning,
+`DELETION_PENDING`, replica receipts, and `DELETED` remain target behavior and are not
+available through the local Operator.
+
 **Actors/preconditions:** ResourceService, PersonalContextService, registered replica
 providers, purge reconciler; owner supplies expected Resource version.
 
@@ -1990,32 +2023,32 @@ product support.
 
 **Actors/preconditions:** Workspace owner, desktop Library, authenticated local Operator,
 ResourceStore and encrypted BlobStore; the Resource belongs to the selected owned
-Workspace (active or archived/read-only) and has one current revision with an available
-encrypted-blob location.
+Workspace (active or archived/read-only), and the selected immutable revision has bytes in
+the local managed encrypted BlobStore.
 
 1. The owner requests a preview for a catalog Resource. Tauri authenticates the daemon's
    OS peer over local IPC and sends the selected Workspace header, Resource ID, and the
    revision ID displayed in that catalog result.
 2. Operator verifies Workspace ownership before resolving the Resource; archived Workspaces
-   remain readable under the existing resource-download contract.
-   Storage queries only the current revision/location for that exact Workspace/Resource
-   pair; provider locators are not returned to the client. If `revision_id` was supplied
-   and no longer matches the current revision, Operator returns `RESOURCE_CONFLICT`.
-3. Storage reads through the Resource-purpose BlobStore and verifies byte length and
-   SHA-256 against the pinned current revision before returning content. The current
-   local read path checks indexed size before decrypting and rejects revisions over
-   10 MiB; the text preview UI has its own 1 MiB limit.
+   remain readable under the existing owner-read contract. Storage resolves the exact
+   requested `revision_id` within that Workspace/Resource; omitted pin selects current head.
+   Provider locators are never returned to the client and an exact old revision is never
+   replaced by the current head.
+3. Storage checks ContextDocument status and requested byte bound before decrypting the
+   Resource-purpose BlobStore object, then verifies byte length and SHA-256 against the
+   selected immutable revision. The default local read ceiling is 10 MiB; desktop text
+   preview requests a 1 MiB cap.
 4. The local API sends bytes as `application/octet-stream` with `no-store` and `nosniff`.
    It does not allow a WebView or browser to execute the Resource.
 5. Tauri permits an inline preview only for text-like media types, caps the response at
    1 MiB, and requires valid UTF-8. The UI displays the result as escaped plain text; larger,
-   binary, unavailable, stale, corrupt, or unsupported content remains metadata-only with
+   binary, external, unavailable, corrupt, or unsupported content remains metadata-only with
    an actionable explanation.
 
-**Failure/UI/postcondition:** Foreign Workspace IDs are denied without revealing Resource
-existence. Missing content returns unavailable; a selected-revision mismatch returns
-`RESOURCE_CONFLICT` and no preview; digest/length mismatch returns an integrity error and
-no preview. A read creates no domain event and does not
+**Failure/UI/postcondition:** Foreign Workspace IDs and revisions not belonging to the
+selected Resource are denied without returning bytes. Missing content returns unavailable;
+external content returns `RESOURCE_CONTENT_EXTERNAL`; digest/length mismatch returns an
+integrity error and no preview. A read creates no domain event and does not
 implicitly attach the Resource to an AgentSession. HTML, SVG and other active content is
 never rendered inline. This does not implement general download, binary rendering, content
 indexing/search, folder-root search, or semantic RAG.
@@ -2028,9 +2061,9 @@ and an ACTIVE Workspace. The owner may begin with no instruction revision.
 1. On Workspace selection, the desktop loads immutable instruction history. If a current
    revision exists, it loads the referenced Resource through the bounded text preview path,
    pinning the exact `content_ref.revision_id`, and places the content in the editor. A
-   generation guard discards results from a previously selected Workspace. If that Resource
-   has advanced, the current-head-only endpoint returns `RESOURCE_CONFLICT`; the UI explains
-   that it did not replace the pinned instruction text with newer bytes.
+   generation guard discards results from a previously selected Workspace. A locally
+   managed historical Resource revision remains readable after its head advances; external
+   or unavailable content shows a typed error and is never replaced by newer bytes.
 2. The owner edits the shared guidance and saves. The UI enforces a 64 KiB UTF-8 byte limit
    before any network request and creates a stable request identity for the unchanged draft.
    Editing the draft after a failed request starts a new identity.
@@ -2046,16 +2079,17 @@ and an ACTIVE Workspace. The owner may begin with no instruction revision.
 text Resource remains in the Library and may be unreferenced; the UI reports the failure
 and retains the same request identity for retry of the unchanged draft. Reusing that
 identity replays the Resource import and instruction mutation. The current local slice has
-no atomic cross-command transaction, orphan cleanup, explicit merge editor, historical
-Resource-revision content read, or TaskSpec instruction pinning. A late list/content response
+no atomic cross-command transaction, orphan cleanup, explicit merge editor, or TaskSpec
+instruction pinning. A late list/content response
 from another Workspace cannot replace the current editor contents. A changed backing
-Resource may make older instruction content unavailable until historical revision reads are
-implemented; it must never silently display the newer head.
+Resource may make older instruction content unavailable when its managed bytes are absent;
+it must never silently display the newer head.
 
 **Tests to add in the later verification pass:** every instruction preview sends the pinned
-`content_ref.revision_id`; missing revision refs are not previewed; a Resource head change
-between history load and preview returns `RESOURCE_CONFLICT`; the editor never receives the
-newer unpinned bytes; Workspace switching still discards late content responses.
+`content_ref.revision_id`; missing revision refs are not previewed; after a Resource head
+change, locally managed bytes at the pinned old revision are returned exactly; external or
+missing old content fails without current-head fallback; Workspace switching still discards
+late content responses.
 
 ## F89 — Browse a large local Resource catalog
 
@@ -2661,7 +2695,9 @@ Runtime is serving the current authenticated Operator endpoint.
    the Coworker failover default is also copied into the initial TaskSpec when the request
    does not supply an explicit policy. Storage atomically rechecks Workspace ownership,
    Coworker status/current revision/optional expected version, resolved failover policy,
-   and that the exact lead binding is same-Workspace, enabled and lead-eligible. TaskService
+   that the exact lead binding is same-Workspace, enabled and lead-eligible, and every
+   pinned Resource revision is same-Workspace and unique. ContextDocuments must be `ACTIVE`
+   at admission; Resource resolution checks status again when bytes are requested. TaskService
    and SQLite persist the standalone Task in `READY`, initial TaskSpecRevision,
    `task.created.v1`, snapshots and idempotency receipt.
 4. On a committed response, Tauri verifies the Task belongs to the selected Workspace and
@@ -2705,7 +2741,8 @@ Coworker origin ID/revision in Task and event, pinned Coworker failover default,
 boundary, empty draft, same-key exact replay, same-key changed-objective/input-reference conflict, response loss
 after commit, rapid double-submit, returned Task/TaskSpec identity mismatch, TaskSpec
 revision differing from the Task pointer, returned Workspace/objective/input mismatch, stale or
-foreign Resource revision, no draft or input loss on failure, Workspace-specific input
+foreign Resource revision, revoked/deletion-pending/deleted ContextDocument input rejection,
+no draft or input loss on failure, Workspace-specific input
 selection surviving a Workspace switch, navigation/Workspace switch controls disabled
 during submit, successful draft/input clear only after commit, and assertion that the save
 creates no planner session, Plan,
@@ -2793,7 +2830,9 @@ Operator IPC, active Workspace, and a Task whose current state is `READY`, whose
 3. Operator authenticates the Workspace owner and checks the selected Workspace. The
    TaskService checks the current Task and parent; SQLite repeats owner, active Workspace,
    version, READY/no-Plan, no-live-planner, exact Resource revision and lead eligibility
-   checks inside an immediate transaction.
+   checks inside an immediate transaction. Every pinned input remains unique and
+   same-Workspace; ContextDocuments must be `ACTIVE` when the revision is admitted. The
+   Resolver checks status again when bytes are later read.
 4. On success, SQLite appends the next immutable TaskSpecRevision, advances the Task
    spec pointer/version, stores the complete Task aggregate snapshot, emits
    `task.spec.revised.v1`, and commits the idempotency receipt atomically. Unspecified
@@ -2816,7 +2855,9 @@ and event; unchanged fields remain byte/structure-equivalent; same-key retry aft
 response returns the same revision/event without another aggregate write; changed payload
 with same key conflicts; stale Task version and wrong parent conflict; READY with live
 planner rejects; READY with Plan, RUNNING, terminal, archived Workspace and foreign owner
-reject; missing/foreign Resource revision rejects when inputs are submitted; two concurrent
+reject; missing/foreign Resource revision rejects when inputs are submitted; revoked,
+deletion-pending, and deleted ContextDocuments reject in both Task creation and revision;
+two concurrent
 editors yield one head advance; unchanged objective creates no revision; composer/list/detail
 show the committed revision; no agent process, planning session, Plan, Step, Attempt, lease,
 Environment or Invocation starts.
@@ -2907,8 +2948,10 @@ create an occurrence, or admit a Task.
 5. The UI validates the committed Automation receipt and reports the paused state. Coworker
    selection supplies only the revision-pinned lead/worker/context/interaction defaults for
    a future occurrence; it does not create a Grant, approve an Effect, start a Runtime, or
-   make an Automation executable. Resume, manual run, occurrence hosting, and Task admission
-   remain unavailable until their separate safety prerequisites are implemented.
+   make an Automation executable. Recurring resume/schedule hosting remain unavailable
+   until their separate cursor, TriggerHost, and reconciliation services are implemented.
+   A later owner ManualTrigger command is a one-shot PAUSED-safe path and does not activate
+   recurring triggers (see F121).
 
 **Failure/UI/postcondition:** if the Coworker head has changed before the editor's final
 read, foreign Workspace, missing Coworker revision, stale Automation version, or idempotency
@@ -3016,7 +3059,9 @@ proposal; current `If-Match`; stable `Idempotency-Key`; an enabled lead-eligible
 from the originating Coworker or Workspace default.
 
 1. The owner reviews the proposal's objective and provenance, then selects **Create Task**.
-   The UI retains the same idempotency key if the response is lost and offers retry; it
+   Before dispatch, the UI records the exact Suggestion ID/version, Workspace ID, and
+   idempotency key in its bounded process-local recovery registry. It retains that same
+   request across route navigation and offers exact retry if the response is lost; it
    never starts execution from the Suggestion action.
 2. Operator authenticates the owner and selected Workspace, runs bounded event-backed
    expiry settlement, then checks the current Suggestion status/version/expiry and
@@ -3030,10 +3075,15 @@ from the originating Coworker or Workspace default.
    request receipt, then changes the Suggestion to `ACCEPTED`, records the owner and
    `result_task_id`, and writes its resolution event/snapshot. If either side fails, the
    entire transaction rolls back.
-5. A lost-response retry returns the already linked Task; it does not create another
-   Task or append another Suggestion resolution. A different request payload using the
-   same idempotency key conflicts. Stale version, expiry, changed Coworker head, missing
-   lead, unavailable source revision, or invalid proposal leaves no partial Task.
+5. A created response is `201` with `disposition=CREATED`; an exact replay is `200` with
+   `disposition=REPLAYED`. Both return a bounded `SuggestionTaskAcceptanceReceipt`. The
+   UI requires the receipt Workspace and Task Workspace to match the selected Workspace,
+   the Suggestion identity/status/version to match the submitted request, and the linked
+   Task ID to match the READY Task ID before clearing recovery state. A lost-response
+   retry returns the already linked Task; it does not create another Task or append
+   another Suggestion resolution. A different request payload using the same idempotency
+   key conflicts. Stale version, expiry, changed Coworker head, missing lead, unavailable
+   source revision, or invalid proposal leaves no partial Task.
 6. The desktop opens the committed Task in Work. Its status remains `READY` and the UI
    says it is saved for review. Planning, AgentSession creation, and execution require
    the ordinary independent Task admission flow.
@@ -3048,7 +3098,11 @@ exact inputs/Coworker revision; Task and Suggestion rows/events/snapshots/idempo
 receipt commit together; injected failure between Task insert and Suggestion update rolls
 everything back; concurrent acceptors yield one linked Task; exact request replay returns
 the same Task without duplicate events; same key with changed payload conflicts; response
-loss and retry still opens the linked Task after Coworker revision changes; stale
+loss and retry still opens the linked Task after Coworker revision changes; UI route
+unmount/remount and Workspace A→B→A retain the exact acceptance RequestId; wrong Workspace,
+Suggestion ID/status/version/result link, Task ID/Workspace/status/version, or HTTP
+status/disposition receipts preserve the recovery entry; late response after explicit
+discard cannot clear a different newer entry; stale
 Suggestion version, expired/non-TASK/malformed proposal, foreign Workspace, archived
 Workspace/Coworker, changed Coworker head, disabled lead, missing lead, missing or
 cross-Workspace source Resource revision, and authorization revocation create no Task;
@@ -3188,21 +3242,21 @@ loaded Task; explicit Task reload and history refresh; reload blocked during dir
 unresolved objective edits; offline after successful load; offline before first load;
 refresh/retry; keyboard disclosure; no mutation or restore action.
 
-## F113 — Compare adjacent immutable Artifact versions
+## F113 — Compare immutable Artifact versions
 
 **Actors/preconditions:** Workspace owner has an authorized Artifact open in the Workbench,
-selected an exact version with a preceding version, and both are managed text formats
-within the existing preview bounds.
+selected two distinct committed managed-text versions within the existing preview bounds.
 
-1. The owner explicitly selects “Compare with prior version.” The Workbench requests exact
-metadata/content for the selected version and its immediate predecessor through the
+1. The owner explicitly selects another committed version. The Workbench requests exact
+metadata/content for the selected and compared versions through the
 existing authenticated Artifact routes.
 2. The client checks Artifact identity, selected version numbers, supported managed media
-types, size bounds, strict UTF-8, and content authorization. It renders both sides using
-the same bounded renderer as ordinary preview.
-3. Each pane identifies its exact immutable Artifact version and backing ResourceRevision.
-   The UI says this is a side-by-side read-only view; it does not claim changed-line or
-   semantic-diff detection.
+types, size bounds, strict UTF-8, and content authorization. Side-by-side view uses the
+same bounded renderer as ordinary preview.
+3. For text content, the owner may select a bounded literal line diff: at most 400 lines
+per version, 160,000 LCS line-pairs, and 16,384 characters per line. Each view labels both
+exact immutable Artifact versions and backing ResourceRevisions. Outside these limits, the
+UI retains side-by-side rendering. It does not infer semantic changes.
 4. Unsupported, missing, revoked, oversized, or invalid prior content leaves the selected
    version and history intact, keeps the selected-version preview available where possible,
    and shows a comparison preview error. Authorization failure for the selected version
@@ -3212,12 +3266,14 @@ the same bounded renderer as ordinary preview.
 **Failure/UI/postcondition:** Both panes always correspond to the exact version labels.
 Renderer/API failure does not silently substitute the current head or alter Artifact state.
 
-**Tests for the later verification pass:** current/previous identity mismatch; unsupported
-media; missing or revoked prior version; authorization denial for prior versus selected
-version; invalid UTF-8; size limit; exact ResourceRevision labels; Markdown fallback
-consistency; compare off/on state; refresh/close while editing; dirty-draft preservation;
-no mutation, restore, or changed-line claim; download and provenance remain available after
-comparison preview failure.
+**Tests for the later verification pass:** identity mismatch; unsupported media; missing or
+revoked compared version; authorization denial for compared versus selected version; invalid
+UTF-8; size limit; exact ResourceRevision labels; Markdown fallback consistency; equal,
+empty, insertion, deletion, replacement, reorder, and CRLF-normalized line comparison;
+hostile markup remains literal; every line-diff bound falls back without losing side-by-side
+view; keyboard toggle and accessible summary; refresh/close while editing; dirty-draft
+preservation; no Artifact mutation; download and provenance remain available after compare
+preview failure.
 
 ## F114 — Save an exact Artifact version from desktop
 
@@ -3288,6 +3344,200 @@ after picker; exactly 10 MiB and over-limit; invalid filename sanitization; ZIP 
 byte-for-byte with no extraction; atomic write failure/overwrite behavior; no bytes or
 destination path in IPC response; no domain mutation.
 
+## F116 — Create a Workspace-owned ContextDocument note in Library
+
+**Actors/preconditions:** Workspace owner, desktop Library, authenticated local Operator,
+existing resumable Resource upload protocol, encrypted BlobStore. The selected Workspace is
+active and owned by the local Principal.
+
+1. The Library presents a title and short-text form. V1 offers only `WORKSPACE_NOTES`; the
+   UI identifies the selected Workspace as the owner and does not offer personal, Coworker,
+   or Goal scopes without the corresponding owner-selection and authorization flow.
+2. The desktop normalizes the title into a safe `.md` Resource filename, bounds the note to
+   64 KiB of UTF-8, computes its whole-content SHA-256, and sends the bytes through the
+   existing Tauri resumable upload commands. The create request pins
+   `context_document: {kind: WORKSPACE_NOTES, owner_ref: {kind: WORKSPACE, workspace_id}}`;
+   it has no folder-import metadata. The metadata is part of the resume identity and the
+   returned upload session must echo exactly the same two-field owner/kind create metadata
+   before chunks are accepted by the desktop flow. Upload sessions have no status or purge
+   fields; Resource commit supplies the initial ACTIVE ContextDocument status.
+3. The Operator authenticates the owner, checks the Workspace, validates the metadata, and
+   ResourceService/storage pin it in the upload session. The normal fixed-size chunk,
+   digest, idempotency, expiry, and atomic Resource commit semantics apply. Commit creates
+   an ordinary managed `FILE` Resource with immutable initial ResourceRevision and active
+   ContextDocument metadata.
+4. The desktop adds the committed Resource to the Library. The owner can use its ordinary
+   revision history, append revisions, and ACTIVE/REVOKED controls. The note is not
+   automatically added to an AgentSession and does not imply semantic RAG, memory curation,
+   purge, or deletion.
+
+**Failure/UI/postcondition:** Invalid owner/kind metadata, Workspace mismatch, upload
+conflict, digest mismatch, expiry, or storage failure produces no successful Library item.
+The same stable RequestId and exact content resumes/replays through the existing upload
+contract; a ContextDocument upload cannot resume as an ordinary Resource upload or vice
+versa. Workspace notes remain scoped to that Workspace. No new API route, upload protocol,
+filesystem grant, or semantic retrieval behavior is introduced.
+
+**Tests for the later verification pass:** owner scope/copy is explicit; exact entered body
+bytes are preserved without implicit trim/newline; UTF-8 byte limit including multi-byte
+text and exact 64 KiB boundary; empty note and invalid title; safe filename; metadata passes
+through Tauri without status/purge fields; session echo mismatch fails closed; resume key
+separates ordinary files from ContextDocuments; upload retry preserves request/chunk
+idempotency; Workspace mismatch/archived owner rejection; exact digest/chunk coverage;
+commit visibility only after Resource response; resulting metadata appears in history;
+ordinary uploads remain metadata-free; no automatic agent context attachment or RAG claim.
+
+## F117 — Preserve unsaved Resource revision drafts and require explicit rebasing
+
+**Actors/preconditions:** Workspace owner is viewing a Resource's revision history. A
+replacement file may be staged, or a supported text Resource may be open in the editor.
+
+1. The editor compares text draft content with the exact text loaded from the selected
+   Resource revision. Merely opening an unchanged text preview is not a dirty edit. A
+   staged replacement file or changed text draft is unsaved local work.
+2. If the revision upload returns `RESOURCE_CONFLICT`, the editor preserves the exact
+   staged `File`, text draft, and original text baseline, clears any prior rebase approval,
+   and reloads current Resource detail/history. It does not retry automatically. The owner
+   must inspect the reloaded Resource version/current head and explicitly authorize the
+   preserved complete draft as a new revision on that head. The approval is pinned to that
+   Resource version/head; any later conflict invalidates it and requires review again. For
+   a supported small text Resource, the editor can preview the exact refreshed head through
+   the authenticated bounded text-read command before approval. The preview is pinned to
+   that head and never replaces the owner's draft.
+3. Selecting a different file while another file or changed text draft is staged does not
+   replace it immediately. The new selection is pending until the owner confirms replacing
+   the current draft. Canceling the native file picker changes nothing.
+4. When the owner closes a dirty editor, the UI keeps it open and shows an accessible
+   confirmation with `Keep editing` and `Discard draft and close`. No upload or Resource
+   mutation occurs from opening this prompt.
+5. `Keep editing` dismisses the prompt without changing the draft. `Discard draft and close`
+   clears only the local staged file/text state and closes the panel; it does not alter
+   committed Resource bytes, revisions, ContextDocument status, or upload sessions.
+6. While an upload/commit is in progress, close remains disabled. ContextDocument
+   availability changes are blocked while a local draft exists. If a status response is
+   ambiguous, the existing idempotency request remains available for retry and editing or
+   closing is paused until that status request is resolved; this prevents a committed
+   revocation from silently hiding an unsaved draft.
+
+**Failure/UI/postcondition:** A clean editor closes directly. A dirty editor cannot be
+closed through its close control without an explicit discard decision. The prompt has no
+effect on revision admission or conflict handling.
+
+**Tests for the later verification pass:** unchanged loaded text closes without prompt;
+changed text prompts; reverting text exactly to the loaded baseline clears dirty state;
+selected file prompts; canceled file picker changes nothing; replacing either a staged file
+or changed text requires explicit confirmation; keep editing preserves text/file selection;
+discard clears only local draft and closes; a stale-head conflict preserves exact file,
+text and baseline; no automatic retry; current Resource version/head is reloaded; explicit
+rebase approval pins that exact version/head; text-head preview reads only the exact current
+revision and cannot overwrite the draft; a late preview for a previous head cannot count as
+review of the new head; a subsequent conflict invalidates approval;
+close is disabled during upload/commit or unresolved status retry; availability change is
+blocked while dirty; ambiguous status retry uses the same RequestId; upload conflict
+behavior is unchanged; keyboard and screen-reader dialog operation; reduced motion; no
+Resource/API call when a confirmation opens or when a draft is discarded.
+
+## F118 — Preview an exact pinned Task Resource input
+
+**Actors/preconditions:** Workspace owner viewing a saved Task in the desktop; the Task
+contains a `ResourceRef` pinned to a Resource revision in that Workspace; the local
+authenticated Tauri/Operator path is available.
+
+1. Task detail displays each input's Resource name where available and its exact pinned
+   revision ID. It offers a native `details` disclosure for a read-only text preview; the
+   content read does not happen until the owner opens the disclosure.
+2. The reusable UI sends the selected Workspace ID, Resource ID, and exact revision ID to
+   the existing `preview_resource_text` Tauri command. It rejects a missing/foreign
+   Workspace or incomplete pin before invoking. It does not send a current-head or
+   unpinned request.
+3. Tauri uses the authenticated local Operator content route with `revision_id` and
+   `max_bytes=1048576`. Storage verifies owner scope, exact Workspace/Resource/revision
+   membership, ContextDocument ACTIVE status, local managed provider availability, stored
+   length/digest, and size before BlobStore access. Tauri accepts only its inert UTF-8 text
+   preview allowlist and renders bytes as escaped plain text; it never interprets active
+   content.
+4. A historical local revision is previewed from its own immutable digest; it never retries
+   against or substitutes the Resource's newer head. External, missing, oversized,
+   inactive, invalid-UTF-8, or integrity-failing content reports a typed error. The owner
+   may retry the same exact Workspace/Resource/revision pin.
+5. Changing the input props, closing the disclosure, or unmounting suppresses any late
+   response. A pin-specific key prevents text loaded for a previous Resource revision from
+   appearing under the new label. Previewing does not mutate Task/Resource state, attach
+   content to an AgentSession, create a Grant, or start planning/execution.
+
+**Failure/UI/postcondition:** The exact revision ID stays visible in the disclosure. No
+content is shown for a mismatched Workspace/Resource pin. No fallback to the current
+Resource head occurs. The component is a user preview only and is not a
+ContextPlanner or RAG implementation.
+
+**Tests to add:** valid exact pin; missing/cross-Workspace ResourceRef rejected before
+invoke; text response rendered as text (including HTML-looking strings); non-string
+response; content exactly at 1 MiB and over the cap; unsupported media; invalid UTF-8;
+missing Resource; historical pin returns its own content after a newer head commits;
+cross-Resource revision ID is rejected; transient Runtime error and same-pin retry; disclosure is lazy; closing,
+changing pins, switching Workspace, and unmounting suppress late responses and never show
+prior content; exact revision label remains stable; preview invokes no mutation, Task,
+Attempt, Grant, AgentSession, RAG or semantic retrieval.
+
+**System/user acceptance:** Run against a real local Runtime with a selected Task input,
+verify its exact immutable revision is displayed and previewed, then revise the Resource
+and confirm the old Task pin still returns the old bytes rather than showing new bytes. Confirm a
+nontechnical owner can preview without Inspector, and confirm the preview does not cause
+agent work. Record OS/Runtime versions and sanitized evidence. This component is currently
+mounted in Task detail as a lazy disclosure. This source integration remains unverified and
+is not a ContextPlanner or RAG implementation.
+
+## F119 — Run an active Routine into a saved READY Task
+
+**Actors/preconditions:** Workspace owner, desktop Routine page, authenticated local
+Operator, RoutineService, TaskService, SQLite TaskStore. Selected Workspace is ACTIVE; the
+Routine is ACTIVE and its exact current immutable revision is loaded. The selected lead is
+configured, enabled, and lead-eligible. A Routine with unsupported input bindings cannot
+be run from this UI.
+
+1. The owner opens an active Routine. The form renders only supported schema-bound TEXT
+   inputs and same-Workspace Resource selectors. A Resource selection carries the exact
+   immutable revision; opaque Resource IDs are never requested from the user. If a Resource
+   cannot be selected from the loaded catalog, Run remains blocked until it is loaded.
+2. The owner submits `POST /v1/routines/{id}/run` with `X-Workspace-ID`, stable
+   `Idempotency-Key`, exact `routine_revision`, and the bounded input object. A non-null
+   Conversation origin is rejected until Conversation/Task admission is atomic.
+3. The authenticated route loads that immutable revision and materializes a bounded
+   TaskSpec proposal. SQLite then opens the ordinary Task `IMMEDIATE` transaction and
+   rechecks owner/Workspace, active Routine/current revision, exact input schema and
+   rendered TaskSpec equivalence, lead eligibility, and every pinned same-Workspace
+   Resource revision. These checks and Task/TaskSpec/event/receipt commit are one admission
+   boundary; any failure creates no Task.
+4. Success returns `TaskView` with Task `READY`, TaskSpec revision 1, and exact Routine
+   ID/revision provenance. The UI shows “Saved Task · READY” and states that planning and
+   execution have not started. It may open Task details only after checking Workspace,
+   Task identity, Routine pin, TaskSpec identity, and status in the response.
+5. A retry with the same authorized owner, selected Workspace, RequestId, revision, and
+   normalized inputs returns the original committed Task without another event. Changed
+   content under the same key conflicts. A new key is subject to the current ACTIVE/head
+   checks. No Resource bytes are resolved, no agent session starts, and no Task execution
+   record is created by this flow.
+
+**Failure/UI/postcondition:** Invalid/unbound/extra input, missing lead, archived or stale
+Routine revision, unavailable/cross-Workspace Resource, failed owner admission, or
+idempotency mismatch returns an error with no Task and no success receipt. A stale form is
+refreshed before a new RequestId is submitted; the original RequestId is retained for an
+exact retry after an ambiguous response. Routine required-capability and verification
+policies remain pinned on the source revision and are not claimed as enforced by this
+save-only command.
+
+**Tests for the later verification pass:** empty input schema; valid/invalid required TEXT;
+valid/invalid TEXT enum choice;
+byte/character limits; control characters; invalid/escaped JSON pointers; unsupported
+integer/array/nested shapes rejected at revision admission; required Resource selection is
+available only through the loaded same-Workspace catalog; optional Resource omitted safely;
+cross-Workspace, duplicate, stale, or missing Resource
+rejected; changed Routine head/archive racing the Task transaction; missing/ineligible lead;
+Task status READY and exact spec/provenance; zero Plan/Step/AgentSession/Attempt/lease/
+Environment/Effect/grant; same RequestId returns same Task/event; changed payload conflicts;
+owner/Workspace mismatch denied before replay; restart after lost response; accessible
+input form/result status; task-detail link rejects a mismatched Workspace or response.
+
 ## Shared flow invariants
 
 - Every mutating command has an authenticated principal, RequestId, correlation ID, and
@@ -3300,3 +3550,708 @@ destination path in IPC response; no domain mutation.
   or SecretLeases.
 - Failure preserves committed Conversation, Task, Artifact, Effect, and Evidence history.
   Retries retain explicit provenance rather than rewriting history.
+
+## F120 — Compare two exact Resource text revisions
+
+**Actors/preconditions:** Workspace owner viewing Library revision history for one Resource.
+Both selected revisions are committed members of that same Resource and have allowlisted
+`text/plain`, `text/markdown`, or `text/x-markdown` media types with recorded sizes no
+larger than 1 MiB. Selection is limited to revisions already loaded from that Resource's
+paginated history.
+
+1. The owner opens **Compare text revisions**. Neither revision selector defaults to a
+head; the owner explicitly chooses both different revision IDs. Unsupported or oversized
+revisions are not offered as choices.
+2. On Compare, the UI pins Workspace, Resource, and both exact revision IDs and asks the
+   Tauri native bridge to read each using the authenticated content route with
+   `revision_id` and `max_bytes=1048576`. Both responses must identify the requested
+   revision, meet the allowlisted media type and byte limit, decode as UTF-8, and pass the
+   daemon's stored digest/length verification.
+3. The UI presents the raw escaped text in two labeled panes, including exact revision IDs,
+   observed timestamps, media types, and byte sizes. Markdown is displayed as source text;
+   HTML/SVG and active content are never interpreted. No generated diff, merge, restore,
+   mutation, or claim of semantic change detection is implied.
+4. If either read fails, the existing Resource history/editor and any prior successful
+   comparison remain unchanged; the comparison area shows the failed exact pin and offers
+   retry for the same selections. Changing either selection invalidates in-flight responses
+   so text from old pins cannot appear under new labels.
+
+**Failure/UI/postcondition:** Cross-Resource or cross-Workspace IDs return no bytes. A
+historical pin reads its own immutable managed blob after the head advances; missing or
+external historical content returns a typed unavailable/unsupported error with no fallback
+to current bytes. Inactive ContextDocuments deny both historical reads. The comparison is
+read-only and creates no event, Task, Attempt, Grant, AgentSession, or index/RAG activity.
+
+**Tests to add:** no implicit default selection; same ID rejected; revision IDs must be in
+loaded history and belong to this Resource; unsupported HTML/SVG/JSON/binary and >1 MiB
+entries cannot be selected; exactly 1 MiB accepted; historical content remains exact after
+head advancement; cross-Resource and cross-Workspace pins return no bytes; archived
+Workspace follows owner-read policy; revoked/deletion-pending/deleted ContextDocument
+blocks both pins before BlobStore access; external provider returns
+`RESOURCE_CONTENT_EXTERNAL`; missing local blob returns `RESOURCE_LOCATION_UNAVAILABLE`;
+size bound checked before BlobStore fetch; digest/length mismatch returns
+`INTEGRITY_FAILURE`; one failed pane does not clear current Resource/editor state or a
+prior successful comparison; selection change/unmount suppresses late reads; response
+revision headers must match pins; plain text/Markdown including HTML-looking strings is
+rendered inertly; retry reuses exact pins; no mutation, active-content renderer, diff claim,
+or semantic retrieval.
+
+**System/user acceptance:** Compare two same-Resource Markdown revisions after publishing a
+newer head; confirm both panes show their exact selected historical content and labels.
+Select an external or inactive ContextDocument revision and confirm the existing Library
+view remains available with a clear error. Record sanitized evidence; no tests or OS
+qualification are implied by the UI source change.
+
+## F121 — Owner runs a paused Automation through its local ManualTrigger
+
+**Actors/preconditions:** Workspace owner, authenticated local Operator API, active
+Workspace, exact current Automation version/revision, active pinned RoutineRevision, an
+optional active pinned CoworkerRevision, a ManualTrigger, and the exact current local
+Runtime incarnation with an active `TRIGGER_HOST` Workspace binding. Automation status may
+be PAUSED or ENABLED; DISABLED is terminal. This is one-shot materialization only; it does
+not enable recurring triggers, create a Plan, or start an agent.
+
+1. The owner submits `POST /v1/automations/{id}/run` with selected Workspace,
+   `Idempotency-Key`, `If-Match` Automation aggregate version, and exact
+   `{ automation_revision, inputs }`. `inputs` is treated as the Routine input object and
+   validated by the pinned RoutineRevision schema/bindings, including same-Workspace exact
+   Resource revisions.
+2. The daemon derives occurrence identity from ManualTrigger ID, authenticated Principal,
+   RequestId, and Automation ID. It pins AutomationRevision/RoutineRevision/trigger and
+   the local TriggerHost Runtime/incarnation/binding version. A recurring cursor, if one
+   already exists, must name the same revision and local host; a paused never-enabled
+   definition may have no cursor.
+3. TaskStore opens one `IMMEDIATE` transaction and first checks the owner/request receipt.
+   For a new command it atomically rechecks active Workspace, expected Automation version
+   and current revision, non-DISABLED status, exact ManualTrigger, active Routine/Coworker,
+   eligible lead, current Runtime incarnation/active TriggerHost binding, Routine input
+   schema/bindings, and exact Resource pins. Any failed check rolls back without an
+   occurrence or Task.
+4. The transaction creates PENDING occurrence version 1, claims it as CLAIMED version 2
+   with claim_epoch 1, writes those events and snapshots with matching `entity_revision`,
+   creates ordinary Task/TaskSpecRevision(1) with status READY and exact provenance, then
+   links the Task and advances the occurrence to STARTED version 3/claim_epoch 1. Task,
+   occurrence, snapshots/events, and idempotency receipt commit together.
+5. The API returns the STARTED occurrence identity/version and saved READY Task. The UI says
+   “Saved Task · READY”; it must not display planning/agent work as started. The Automation
+   remains PAUSED if it was paused. A same-key exact retry returns the recorded response;
+   changed revision, expected version, inputs, or trigger conflicts.
+
+**Failure/UI/postcondition:** Missing ManualTrigger, DISABLED Automation, stale head/version,
+unsupported Hub/foreign Runtime placement, absent/revoked/stale local TriggerHost binding,
+stale Runtime incarnation, archived Routine/Coworker, invalid input, or unavailable
+Resource rejects before commit. If the response is lost after commit, retrying the exact
+same request returns the original Task/occurrence even if the local host or dependency
+availability has since changed; changed content under that RequestId never creates another
+run. No recurring cursor is created by Run now, no Automation status changes, and no Plan,
+Step, Attempt, AgentSession, lease, Environment, CapabilityInvocation, Effect, or Evidence
+is created.
+
+**Tests to add:** PAUSED and ENABLED with ManualTrigger; DISABLED rejection; missing or
+duplicate ManualTrigger; Hub/foreign Runtime placement; paused definition with no cursor;
+existing cursor must pin same revision/local host; Runtime incarnation swap and binding
+revocation race; binding version mismatch; exact Automation/Routine/Coworker revision
+pinning; archived Routine/Coworker; valid/invalid/extra inputs; stale/cross-Workspace
+Resource revision; missing/ineligible lead; concurrent same RequestId creates one
+occurrence/Task; same-key retry returns original response after host/dependency changes;
+changed inputs/revision/If-Match conflicts; PENDING v1→CLAIMED v2→STARTED v3 snapshots and
+event entity revisions; claim_epoch 0→1→1; transaction fault at each insert/event/Task/link
+boundary leaves no partial state; Task READY with no execution records; Automation remains
+PAUSED and no cursor is implicitly activated.
+
+**System/user acceptance:** Create a paused Automation with one ManualTrigger and a Routine
+with TEXT and exact Resource inputs. Run it from the desktop, confirm the Automation stays
+paused, a single occurrence appears as STARTED, and its Task is READY with exact pinned
+inputs and no Plan/Attempt. Retry the identical RequestId after simulating a lost response;
+confirm the same Task and occurrence are returned. Change one input under that RequestId
+and confirm conflict with no second Task. Record local OS/runtime version and sanitized
+evidence; no test/build/validator or provider qualification is implied until the owner runs
+the verification pass.
+
+## F122 — Open a Goal-linked Task in Work
+
+**Actors/preconditions:** Authenticated Workspace owner on the desktop Goals page, selected
+Workspace, and a loaded Goal revision containing one or more same-Workspace
+`related_task_ids`. The Goal and Task detail readers are available through the local
+Operator. Each linked Task is an existing Task; Goal links are provenance only.
+
+1. Goal details render each linked Task as an explicit **Open Task** button. If the Task is
+   present in the bounded related-Task catalog, the row shows its objective and current
+   status; otherwise it shows the Task ID and still permits navigation. The selected
+   Workspace and Goal revision remain the source of the link.
+2. The owner activates a Task row. The UI sets its local route target to that Task ID and
+   selected Workspace, then opens Work directly at the Task details. Work requests the Task
+   by that identity and only displays a response that belongs to the selected Workspace and
+   requested Task ID.
+3. The Work detail surface presents the Task's current objective, state, plan/execution
+   projection, and available outputs under the ordinary Task detail contract. Returning to
+   Goals leaves the Goal revision and its links unchanged.
+
+**Durable-state/authority invariants:** This is navigation and a read only. It creates no
+Task, TaskSpecRevision, PlanRevision, Step, Attempt, AgentSession, lease, Effect, Evidence,
+Grant, or Goal revision. It does not submit a planning, execution, or Goal mutation command.
+Task execution authority remains governed by ordinary Task admission and Trust contracts;
+opening a link does not grant it.
+
+**Failure, races, and recovery:** If the Task detail read fails, the Work page shows its
+existing unavailable/error state and retains the Task ID for owner retry; the Goal link is
+unchanged. A missing or cross-Workspace response is not rendered as the requested Task. If a
+Goal link is concurrently removed after the Goal revision was loaded, the owner may still
+open the Task from that loaded historical revision; the newer Goal revision remains
+authoritative on reload. If the Task or Workspace changes while navigation is in flight,
+the detail reader validates the current identity and the owner can return to Goals and retry
+after reloading. No failure path starts or revises the Task.
+
+**Tests to add:** linked Task button opens its exact ID in Work; objective/status display
+when present in the related-Task catalog; ID fallback when absent from the current catalog
+page; selected Workspace is carried into the route; Task response ID/Workspace mismatch is
+rejected; detail read failure leaves Goal and Task unchanged; navigation from an archived or
+completed Goal remains read-only; no mutation/admission command, Task/Goal event, Attempt,
+AgentSession, lease, Effect, or Evidence is produced; returning to Goals leaves its links
+unchanged.
+
+**System/user acceptance:** Create a Goal linked to an existing READY Task, open Goal details,
+activate **Open Task**, and confirm Work displays that Task without changing its status,
+revision, or Goal link. Repeat with a completed Task. Record local OS/Runtime version and
+sanitized evidence. This is a UI navigation flow, not evidence that Task execution is
+available.
+
+## F123 — Resolve an ambiguous Artifact text publish with the original request
+
+**Actors/preconditions:** Authenticated Workspace owner in the desktop Artifact Workbench,
+opening a non-archived Artifact with a managed, editable `text/plain` current version within
+the 1 MiB edit limit. The owner has an open draft based on a freshly loaded edit head, and
+the local Operator's append endpoint enforces Artifact version checks and idempotent request
+receipts.
+
+1. The owner selects **Publish new version**. The Workbench creates a request identity and
+   captures it with the exact draft text, expected content version, expected Resource
+   version, expected parent Resource revision, and expected Artifact aggregate version in a
+   pending-save record. It calls the append API with those unchanged values.
+2. On a committed response, the Workbench shows the returned immutable ArtifactVersion as
+   published and reloads Artifact metadata. If the receipt is an idempotent replay of an
+   earlier commit and another client has since advanced the Artifact, the Workbench reads
+   the latest head before presenting current Artifact state; the replayed version is not
+   mislabeled as the current head.
+3. If the result is ambiguous, the Workbench preserves the pending-save record and exact
+   draft. While it remains open, the editor cannot change text and ordinary **Discard draft**
+   is disabled. The owner can choose **Retry unchanged**; this resends the same request ID,
+   payload, and expected versions, allowing the server receipt to confirm the original
+   commit or the version check to reject an uncommitted stale draft. A new request identity
+   is not generated for this retry.
+4. A definitive version conflict keeps the draft for review. The owner checks the latest
+   version, compares the fresh head, and explicitly rebases the draft before a subsequent
+   publication. Rebasing clears the old pending request and creates a new expected-version
+   basis; it is not an automatic overwrite.
+
+**Durable-state/authority invariants:** A successful publish appends one immutable
+ArtifactVersion under the existing Artifact authorization and expected-version contract.
+The client pending-save record is transient UI recovery state; server-side request receipt,
+Artifact version, and domain event are durable truth. An ambiguous response is not proof of
+success or failure. The retry must retain the original request identity and exact payload.
+No path overwrites or rewinds history, changes the Artifact Library status, or creates a
+Task, Attempt, Grant, AgentSession, or unrelated Effect.
+
+**Failure, races, and recovery:** A transport/server failure with unconfirmed outcome keeps
+the same pending save and presents **Retry unchanged**; editing and ordinary discard stay
+locked until the request resolves. If another writer advanced the Artifact before an
+uncommitted request is admitted, the expected-version check returns a conflict; the owner
+must inspect and explicitly rebase. If the original request committed before its response
+was lost, a same-key retry returns its original receipt rather than appending a second copy.
+While a pending request exists, the Workbench's Close action is disabled; a changed
+unpublished draft with no pending request requires explicit discard confirmation before
+closing. The pending request ID is held only in mounted UI state, so an application restart
+or other external unmount can lose that retry identity. On reopening after such an
+interruption, the owner must inspect Artifact history/current head before composing another
+edit. Authorization or missing-Artifact errors are shown without claiming publication;
+after access is restored the owner refreshes the Artifact and resolves the visible state
+before attempting a new edit.
+
+**Tests to add:** request ID and exact payload are created once per pending save; ambiguous
+failure preserves text and expected versions; textarea and ordinary discard are disabled
+while pending; **Retry unchanged** reuses the identical request ID/payload/expected versions;
+lost response after commit replays the same ArtifactVersion without duplication; retry before
+commit with unchanged head appends once; stale expected version returns conflict without
+overwriting; conflict review preserves draft and requires explicit latest-head read/rebase;
+rebase clears the old pending save and uses the new head on next publish; concurrent advance
+after a replay receipt causes latest-head refresh; Close is disabled while pending; a changed
+draft without a pending request requires explicit close confirmation; external unmount/restart
+recovery requires history inspection; no false success is shown before a receipt.
+
+**System/user acceptance:** Edit a managed text Artifact and simulate a lost append response
+after commit. Confirm the editor locks the draft, retry reuses the original request identity,
+one new ArtifactVersion exists, and the UI shows a confirmed receipt/current head. Repeat with
+a competing edit causing a version conflict; confirm the draft remains intact until the owner
+reviews and explicitly rebases. Record local OS/Runtime version and sanitized evidence. This
+flow does not establish production safety until the owning API, receipt, and concurrency
+behavior are verified against the real local Runtime.
+
+## F124 — Retry an unavailable Task detail read
+
+**Actors/preconditions:** Authenticated Workspace owner opens an existing Task from Work or
+a Goal link. The local Operator read may fail transiently or return an identity that does
+not match the selected Workspace and Task.
+
+1. The desktop requests `get_task` with the selected `workspace_id` and `task_id`.
+2. Before rendering, it checks both identity fields in the response. A mismatch is treated
+   as an unavailable read and is not displayed as the selected Task.
+3. On failure, the owner sees the read error and **Retry Task details**. If Runtime is
+   offline, retry is disabled until readiness returns.
+4. The owner retries. The desktop repeats the same read for the same Workspace/Task; a
+   valid response replaces the unavailable state. A second failure leaves the retry action
+   available.
+
+**Durable-state/authority invariants:** This flow performs no mutation. It creates no
+Conversation, Task revision, Plan, Step, Attempt, lease, Effect, Evidence, AgentSession, or
+Grant. A Goal link is not changed. Task authority remains governed by the normal admission
+and execution contracts.
+
+**Failure/recovery:** Network/Operator failures and identity mismatches are shown without
+rendering an unrelated Task. Retry preserves the selected Workspace/Task identity. Switching
+Workspace or Task mounts the corresponding detail view, so late results from another
+identity are discarded. No automatic retry loop or fake progress is shown.
+
+**Tests to add:** exact identity is sent; mismatched Workspace or Task response is rejected;
+transient failure exposes retry; offline disables retry; successful retry loads only the
+requested Task; late response after identity switch is not rendered; retry invokes only the
+read command and creates no domain records/events.
+
+**System/user acceptance:** With a local Task, inject a transient detail-read failure, use
+**Retry Task details**, and confirm the same Task loads. Repeat with a mismatched response
+fixture and confirm it is rejected, then return a valid response. Capture local OS/Runtime
+versions and sanitized evidence. This proves UI read recovery only, not Task execution.
+
+## F125 — Recover an ambiguous ManualTrigger request after UI navigation
+
+**Actors/preconditions:** Authenticated Workspace owner in the desktop Operator, a saved
+Automation revision with exactly one stable ManualTrigger ID, a pinned Routine revision,
+and an active local Runtime/Workspace TriggerHost binding. The owner submits Run once and
+the response is lost or otherwise leaves the outcome unconfirmed.
+
+1. Before sending the mutation, the desktop stores a bounded volatile request envelope in
+   process memory keyed by `(workspace_id, automation_id, automation_revision, trigger_id)`.
+   It contains the original RequestId, Automation and Routine snapshots, and exact validated
+   input object (text values and ResourceRefs only). No Resource bytes or secret-store
+   material are copied; user-entered text remains only in volatile process memory and is
+   not added to application logs or domain events by this recovery path.
+2. If the owner navigates away and later returns to Automations in the same Workspace and
+   process, the page restores a retry card from the registry. The owner can retry the exact
+   original request; the daemon's idempotency receipt determines whether the original Task
+   was already committed. The UI does not create a new RequestId automatically.
+3. While any unresolved request exists for that Automation, another Run is blocked,
+   including after selecting a newer Automation revision. Editing the visible input form
+   cannot alter the stored request. Other Workspace entries are neither shown nor
+   submitted by the current Workspace page.
+4. A confirmed Task/occurrence receipt removes that registry entry. The owner may instead
+   explicitly discard the retry record; the UI warns that a second Task may result if the
+   first request committed. The registry has a fixed maximum size and rejects a new
+   unresolved run when full; it never evicts an unknown-outcome request.
+
+**Durable-state/authority invariants:** The registry is an in-process recovery optimization,
+not Task truth or a durable receipt. The daemon's atomic occurrence/Task/idempotency
+transaction remains authoritative. An exact retry reuses the original Workspace, version,
+revision, trigger, inputs, and RequestId. Registry keys prevent cross-Workspace reuse. No
+Task, trigger cursor, schedule state, approval, grant, or Effect is created by route
+navigation or by restoring the retry card.
+
+**Failure, races, and recovery:** Route unmount preserves the entry because the module-level
+registry outlives the page component; a late response from the original call may still
+settle it. Concurrent exact retries use the same RequestId and rely on server idempotency.
+If the desktop process exits, volatile recovery is lost; the owner must inspect Work and
+Automation occurrence history before deciding whether to run again. This flow does not
+claim restart-safe recovery. Registry capacity failure is fail-closed. Explicit discard is
+the only user action that abandons the saved retry identity before a confirmed receipt.
+
+**Tests to add:** Route unmount/remount in the same process preserves RequestId and exact
+inputs; TEXT values and ResourceRefs survive unchanged; Resource bytes and secret-store
+material are absent; another
+Workspace cannot read or submit the entry; changed inputs/current revision cannot replace
+an unresolved request; same-key retry resolves the original receipt without a duplicate
+Task; confirmed receipt removes the entry; explicit discard removes it and warns about
+possible duplicate creation; capacity exhaustion retains all existing entries and rejects
+new registration; process restart does not falsely claim recovery; late result after
+unmount clears the entry without rendering state into a different Workspace.
+
+**System/user acceptance:** Start a ManualTrigger run and simulate a lost response, navigate
+to Work and back without closing the desktop process, and verify the original retry card is
+available with the same Task inputs. Retry it and confirm one Task/occurrence receipt. Repeat
+with a Workspace switch and verify the entry is not exposed there. Record local OS/Runtime
+versions and sanitized evidence. This validates UI route recovery only; it does not prove
+process-restart or production-safe Automation execution.
+
+## F126 — Recover an ambiguous Goal mutation after UI navigation
+
+**Actors/preconditions:** Authenticated Workspace owner in the desktop Operator, with a
+Goal create, immutable revision, or status command. The owner submits the command and its
+response is lost, invalid, or otherwise unconfirmed.
+
+1. Before sending the mutation, GoalsPage stores a bounded volatile envelope in the
+   desktop process, keyed by Workspace and logical Goal target. The envelope contains the
+   exact operation, expected Goal version when applicable, full immutable revision/status
+   payload, and original RequestId. Goal text and references remain only in volatile process
+   memory for this recovery path; no browser storage, Resource bytes, or secret material is
+   copied.
+2. A failed or malformed response leaves the envelope unresolved. Returning to Goals in
+   the same Workspace and process displays a retry card. Retrying sends the same exact
+   payload and RequestId; an edited draft, newer version, or different status cannot replace
+   an unresolved operation for the same target. The server idempotency receipt and owner
+   authorization remain authoritative.
+3. A response clears the envelope only after its Workspace and Goal identity and the
+   returned status or revision match the saved operation. A mismatched response remains
+   unresolved. A late response after explicit discard cannot clear a newer envelope.
+4. The owner may explicitly discard the saved retry identity only after a warning explains
+   that the original mutation may already have committed and that issuing another create
+   or revision could duplicate work. Discard forgets local recovery data; it does not undo
+   or cancel a committed Goal mutation. A fixed registry cap rejects a new pending mutation
+   instead of evicting unknown outcomes. Entries from another Workspace are never rendered
+   or submitted by the current Workspace page.
+
+**Durable-state/authority invariants:** The registry is an in-process retry aid, not Goal
+truth, an idempotency receipt, or an execution mechanism. GoalService's version checks,
+owner authorization, immutable revision, and atomic idempotency receipt remain authoritative.
+Goals remain passive; this flow never creates a Task, starts an AgentSession, or changes
+linked Tasks/Routines/Artifacts. Retry identity does not survive desktop process exit.
+
+**Failure, races, and recovery:** Route unmount preserves the request envelope because it
+outlives the component. A Workspace switch filters the pending list by Workspace identity.
+Concurrent exact retries use the same RequestId and depend on daemon idempotency. Revision
+conflicts remain unresolved until the owner retries the exact request or explicitly
+discards it after reviewing current Goal state. If the process exits, the volatile envelope
+is lost; the owner must inspect the Goal list/current state before deciding whether to
+submit a new mutation. This flow does not claim restart-safe recovery.
+
+**Tests to add:** Create/revise/status response loss followed by same-process route
+unmount/remount preserves RequestId, expected version, target, and exact payload; altered
+draft/status cannot obtain a new RequestId while the target has an unresolved mutation;
+same-key retry clears only on a matching same-Workspace receipt; malformed or mismatched
+response preserves the envelope; Workspace switching never displays/submits another
+Workspace's entry; late response after discard cannot remove a newer envelope; explicit
+discard warns about a potentially committed create/revision; capacity exhaustion retains
+all entries and rejects the next registration; process restart does not claim recovery or
+automatically resubmit; Goal mutations never create Tasks or execute work.
+
+**System/user acceptance:** Owner creates or revises a Goal, simulates a lost response,
+navigates away and back without restarting LiteCowork, retries, and confirms the original
+Goal/revision receipt without a duplicate. Repeat for a status command and a Workspace
+switch. Record local OS/Runtime versions and sanitized evidence. This validates desktop
+route recovery only; it does not prove Goal domain durability, process-restart recovery,
+Goal execution, or production readiness.
+
+## F127 — Recover an ambiguous Suggestion or preference mutation after navigation
+
+**Actors/preconditions:** Authenticated Workspace owner on the local desktop; a Suggestion
+owner action (dismiss, snooze, unsnooze) or kind-preference mutation has been submitted and
+its result is not confirmed.
+
+1. Before dispatch, the page stores the bounded exact request payload, expected version,
+   Workspace ID, and RequestId in a process-local registry keyed by stable Workspace ID.
+   Suggestion and preference changes use separate target keys. No browser storage,
+   Resource bytes, or authentication material is written.
+2. Navigating away and returning to the same Workspace restores the retry card, including
+   after the per-Workspace API client is recreated by switching away and back. A different
+   Workspace cannot render or submit the saved command. The retry sends the original
+   request ID and exact payload through the same authenticated local Operator route.
+3. Only a decoded same-Workspace Suggestion/Preference response matching the requested
+   operation can clear that retry entry. A malformed or mismatched response keeps it.
+   Mutations have a fixed per-Workspace and process-wide count bound; a full registry
+   rejects new unresolved mutations without evicting existing entries.
+4. The owner may explicitly discard an unresolved entry after reading a warning that the
+   original change may already have committed. Discard removes only local retry metadata;
+   it neither reverses server state nor cancels the original request.
+
+**Durable-state/authority invariants:** The registry is a UI recovery aid, not durable
+Suggestion/preference state or an idempotency receipt. The server transaction and owner
+authorization remain authoritative. Recovery is process-local; restarting LiteCowork loses
+these pending keys. This flow does not accept a Suggestion into a Task, start work, or add
+authority.
+
+**Failure/races:** Route unmount does not discard an unresolved entry. Workspace A→B→A
+retains A's entry despite API client recreation. A timed-out/malformed response remains
+retryable. A late response cannot authorize an action in another Workspace. Capacity failure
+is closed. Explicit discard may allow a later duplicate logical change; the owner must
+refresh and inspect current state first. Suggestion-to-Task acceptance recovery is covered
+by F108 and F129, using the separate typed atomic receipt.
+
+**Tests to add:** Lose responses after commit for each owner action and preference update;
+remount and A→B→A recovery preserves RequestId/payload; submit to B is rejected; mismatched
+Workspace/entity/status/version receipts retain the entry; matching replay clears it;
+capacity retains all old entries; discard warns and removes only the local retry; app restart
+does not claim or perform recovery; no command bypasses owner authorization.
+
+**System/user acceptance:** Simulate a lost response for snooze and a preference update,
+navigate away/back and across Workspaces without closing LiteCowork, retry and verify the
+server's exact resulting state. Repeat for dismiss/unsnooze. Record OS/Runtime versions and
+sanitized evidence. This validates same-process desktop route recovery only, not restart
+recovery or Suggestion Task acceptance.
+
+## F128 — Run an active Routine into an ordinary READY Task
+
+**Actors/preconditions:** Authenticated Workspace owner; active Routine and immutable
+current RoutineRevision; local Operator/Runtime available; selected lead is eligible; all
+required Routine input bindings are supported; selected Resource inputs are exact
+same-Workspace immutable revision references.
+
+1. The Routine detail screen renders only supported TEXT and ResourceRef fields from the
+   pinned RoutineRevision schema. The owner enters bounded text values and selects
+   Resource revisions from the loaded Workspace catalog. No Resource bytes are copied into
+   the form or command envelope.
+2. Before dispatch, the page validates required values, enum values, character/UTF-8 byte
+   limits, exact ResourceRef shape, and Workspace identity. Unsupported schemas or stale
+   selections fail before a mutation is sent.
+3. The desktop registers the exact Routine ID, revision, input object, and RequestId in a
+   bounded volatile Workspace-scoped registry, then sends `POST /v1/routines/{id}/run`
+   through the authenticated local Operator bridge. The server atomically revalidates
+   Routine status/head, owner, eligible lead, and Resource revision availability while
+   creating an ordinary Task, TaskSpecRevision, and idempotency receipt.
+4. A receipt matching the selected Workspace/Routine/revision and READY Task is displayed
+   and linked to Work. It creates no Plan, Step, AgentSession, Attempt, lease, Environment,
+   CapabilityInvocation, Effect, Evidence, or VerificationRun. Agent planning/execution
+   must be a separate supported path.
+5. If no matching response arrives, the exact request remains in process memory across
+   route unmount/remount. A retry may overlap an earlier hung call after remount but reuses
+   the same Idempotency-Key and payload. Mismatched/malformed receipts remain unresolved.
+   The owner may explicitly discard after a duplicate-risk warning. Process restart loses
+   the retry envelope.
+
+**Durable-state/authority invariants:** The Routine remains passive and unchanged. The
+ordinary Task is durable execution truth and pins the exact Routine definition used for
+materialization. The route does not create an AutomationOccurrence, schedule cursor, Grant,
+Effect, or agent session. This is Task materialization only, not Routine execution.
+
+**Failure/races:** Missing/invalid TEXT; unsupported enum value; overlong UTF-8; unsupported
+input schema; Resource revision from another Workspace; Resource head changes after
+selection; Routine archived/head changed; Workspace archived; lead disabled/ineligible;
+duplicate RequestId with changed payload; response loss after commit; mismatched receipt;
+overlapping exact retry; registry capacity; explicit discard; process restart. Any server
+admission failure creates no partial Task. The UI never labels READY as Working.
+
+**Tests to add:** Every supported/unsupported input schema; required/optional TEXT and
+ResourceRef; exact Resource pin after catalog head change; cross-Workspace/stale references;
+Routine/lead race; Task and receipt exact shape; no execution records; route remount and
+Workspace switch; concurrent same-key replay returns one Task; payload mismatch conflicts;
+capacity fails closed; malformed receipt retains identity; restart does not claim recovery;
+keyboard and screen-reader form/error/retry behavior.
+
+**System/user acceptance:** Create an active Routine with required and optional text and
+Resource inputs, run it once, open its Task, and verify it stays READY with the exact pinned
+Routine/Resource revision and no plan or agent activity. Simulate response loss, navigate
+away/back and retry; verify one Task. Repeat with a Workspace switch, later Resource head,
+invalid input, and app restart. Record local OS/Runtime versions and sanitized evidence.
+This does not qualify Task execution or production-safe switching.
+
+## F129 — Recover Suggestion Task acceptance after desktop navigation
+
+**Actors/preconditions:** Authenticated Workspace owner; desktop Suggestion proposes an
+unexpired actionable TASK; selected Workspace and local Operator are available; the
+acceptance request has been sent but no valid bounded receipt has been confirmed.
+
+1. Before the first send, the desktop stores the exact Workspace ID, Suggestion ID,
+   expected Suggestion version, and RequestId in a bounded process-local registry. The
+   registry is keyed by stable Workspace and Suggestion/version identity, not API client
+   object identity, so route remount and Workspace A→B→A preserve the original command.
+2. The authenticated route accepts the Suggestion through F108. Its atomic SQLite
+   transaction creates the ordinary READY Task, stores the original Task creation
+   response receipt, resolves the Suggestion with the linked Task ID, and appends both
+   domain events. It does not plan or execute the Task.
+3. The initial response is `201 CREATED`; an exact retry is `200 REPLAYED`. Both return
+   `SuggestionTaskAcceptanceReceipt`. The desktop verifies top-level and Task Workspace
+   IDs, Suggestion ID/status/version, Task status/version, matching linked Task IDs, and
+   the HTTP status/disposition pairing before clearing the pending entry.
+4. A valid receipt opens its READY Task. If the response is lost or malformed, the owner
+   may retry the same request or explicitly discard the local retry after a warning that
+   a Task may already exist. Discard never cancels or deletes server state.
+
+**Recovery/authority invariants:** Registry state is volatile and process-local; it is
+not the idempotency record or source of Task truth. SQLite and the authenticated Operator
+remain authoritative. A retry uses the same RequestId and expected version. A different
+Workspace cannot display or submit the entry. A delayed response after discard cannot
+remove a replacement entry. Neither retry nor receipt grants execution authority.
+
+**Failure/race cases:** Response loss after commit; response loss before commit; route
+unmount/remount; Workspace switch away/back; malformed or wrong-Workspace receipt; wrong
+Suggestion/Task link; inconsistent HTTP status/disposition; same-key replay; different
+key conflict; explicit discard during an in-flight request; registry capacity exhausted;
+process restart loses recovery metadata; owner authorization revoked before retry.
+
+**Tests to add:** Assert exact request identity survives route changes and API recreation;
+response loss after commit returns one original READY Task and one Suggestion resolution;
+all mismatched receipt fields preserve the pending record; late response cannot remove a
+new envelope; cap rejects without eviction; discard warns and only removes local state;
+Workspace A entries never render or dispatch in B; process restart does not claim recovery.
+
+**System/user acceptance:** On desktop, create a Task from an actionable Suggestion while
+simulating a lost response after server commit. Navigate away and back, retry, and confirm
+the exact linked Task opens once, remains READY, and appears only once in Work. Repeat with
+Workspace A→B→A. Record OS/Runtime versions and sanitized evidence. This qualifies only
+same-process desktop recovery, not restart-safe recovery or Task execution.
+
+## F130 — Browse persisted Tasks needing attention
+
+**Actors/preconditions:** Workspace owner, desktop Operator, authenticated `list_tasks`
+route; selected Workspace is active for the page.
+
+1. Query each supported exact Task status independently: `WAITING_USER`, `NEEDS_USER`,
+   and `BLOCKED`. The page does not infer these states from provider output, notifications,
+   heartbeats, or cached UI labels.
+2. Validate each response item still has the requested status, merge by Task ID, and order
+   by persisted `updated_at`. Keep one opaque cursor per status and fetch the next page only
+   for statuses with a cursor. Refresh replaces the visible projection only after every
+   first-page query succeeds.
+3. If a same-Workspace refresh fails, retain the prior rows with an unavailable/stale
+   notice. On Workspace change, clear the old Workspace view and ignore late responses.
+   An unavailable first load is never rendered as an empty inbox.
+4. Selecting a Task routes to Work/Task detail, which reloads current Task state. The
+   attention row is read-only and cannot resolve a blocker or change Task state.
+
+**Failure/UI/postcondition:** Explain that this is a Task-attention view. The full
+Approval/UserRequest/actionable-blocker aggregation and its owning-resource resolution
+routes remain unimplemented; do not label this page an Approval inbox or “all caught up.”
+Stale Task state is corrected by the detail reread, not by assuming the old list status is
+still current. Duplicate Tasks from pagination appear once.
+
+## F131 — Compose an optional RichPresentation
+
+**Actors/preconditions:** Owner, active Conversation turn, committed Agent response,
+ConversationService, bounded rich compiler, authorized source resolvers, BlobStore.
+
+1. The turn pins `PresentationPreference` at admission and uses the same value on retries.
+   `SIMPLE` prevents model-composed decoration; `AUTO`/`RICH` may permit an enhancement.
+2. The Agent streams ordinary coalesced semantic text. Optional host guidance/HostSkill
+   delivery is negotiated and never required for Agent eligibility. The Agent may submit
+   one bounded `litecowork.presentation.propose` intent; that intent is turn/session
+   bound, ephemeral, and cannot set host state.
+3. ConversationService commits the complete semantic ConversationMessage and settles the
+   turn without waiting for rendering. The Operator displays the committed message.
+4. RichPresentationCompiler compiles only against that exact message digest and authorized
+   Artifact/Resource/invocation refs. It derives trusted host blocks from current Core
+   projections, validates closed block schemas/limits, and creates canonical JCS bytes.
+5. BlobStore verifies/stores the immutable document. ConversationService rechecks the
+   same-Workspace AGENT message, exact digest, source refs, schema/size bound, and
+   one-per-message constraint, then commits `RichPresentation` and
+   `rich.presentation.published.v1` separately.
+6. The Operator fetches the exact presentation document, verifies identity, digest,
+   schema/size and source authorization, then upgrades that same message in place.
+
+**Failure/UI/postcondition:** Semantic content remains complete and readable at every
+point. An invalid intent, compiler timeout, unsupported renderer, or missing/corrupt blob
+does not change the ConversationMessage or turn outcome, Task, Effect, Artifact, or
+Verification. Presentation cannot be the only place a fact, citation, warning, action, or
+deliverable exists. No Task planner or worker Attempt receives response-design guidance by
+default.
+
+## F132 — Recover RichPresentation failure
+
+**Actors/preconditions:** Committed semantic ConversationMessage; optional presentation is
+being compiled, replicated, fetched, or rendered.
+
+1. On timeout or compile/schema failure, omit publication and retain the semantic response.
+2. If metadata is published but the blob is missing, mark availability UNAVAILABLE and
+   render the semantic response; retry the exact immutable fetch only when blob transfer
+   can make it available.
+3. If digest/semantic binding fails, reject the rich document, mark INTEGRITY_FAILED, and
+   record a sanitized diagnostic; do not render any part of it.
+4. If one block renderer throws, isolate that block with a safe fallback while preserving
+   unrelated blocks and semantic content. Unknown schema versions fall back to the message.
+5. Reconnect replaces ephemeral draft state from the current snapshot. No old typing,
+   draft, or content entrance animation is replayed.
+
+**Recovery invariants:** RichPresentation failure is not a turn failure. The response is
+searchable/exportable as semantic text. Missing presentation bytes do not block restore.
+No client retry bypasses Workspace authorization or digest validation.
+
+## F133 — Present exact Artifacts and ZIP bundle
+
+**Actors/preconditions:** A Task has committed ArtifactVersions; an authorized owner or
+Conversation response references those exact versions; the deterministic bundle builder
+is available.
+
+1. The compiler validates each `ArtifactVersionRef` against the selected Workspace and
+   source Task, then binds the exact version into a DeliverableGroup or paged collection.
+   It never turns an Artifact ID into a mutable “latest” download URL.
+2. Task-generated output exists as ArtifactVersion state before presentation. A
+   Conversation AgentSession cannot publish the file.
+3. An explicit owner request to bundle existing outputs sends selected exact versions and
+   normalized relative paths to BundleBuilder. It rejects duplicates, traversal, unsafe
+   entries, and unavailable source versions before publication.
+4. The deterministic ZIP is published as an ordinary immutable `BUNDLE_ARCHIVE` Artifact
+   with exact input pins and a canonical member manifest in provenance.
+5. Download resolves the exact ArtifactVersion, rechecks owner/scope, and verifies bytes
+   and digest before reporting success. Later source versions do not alter the ZIP.
+
+**Failure/UI/postcondition:** Invalid/stale/missing inputs create no ZIP Artifact. A file
+row is not shown as downloadable until an actual ArtifactVersion exists. Cancelled/failed
+downloads do not change Artifact state or display success.
+
+## F134 — Stream and fence RichPresentation draft frames
+
+**Actors/preconditions:** Active Conversation turn/current retry; authenticated Operator
+stream; optional rich renderer supports the draft version.
+
+1. Frames bind Workspace, Conversation, turn, retry ordinal, AgentSession, draft ID, and
+   monotonic sequence. Only the current active tuple is accepted.
+2. Server coalesces text and enforces finite frame, queue, byte, open-block, block-count,
+   and nesting bounds. A slow renderer does not block AgentSession reads or turn settlement.
+3. Closing a block freezes its order/parent/body. Corrections append a replacement block.
+4. Retry, cancellation, turn settlement, resync, and AgentSession replacement fence old
+   frames; delayed prior-retry frames are discarded.
+5. If replay is supported, a bounded draft snapshot repairs gaps. Otherwise the Operator
+   drops the partial rich draft and continues semantic `turn.delta` handling.
+
+**Failure/UI/postcondition:** Draft frames are not DomainEvents, durable messages,
+replication state, or turn outcomes. No rich-only content is authoritative.
+
+## F135 — Render a portable response on a constrained channel
+
+**Actors/preconditions:** A committed semantic ConversationMessage with optional validated
+RichPresentation and an authorized channel renderer.
+
+1. PortableResponseRenderer starts from the semantic Message. It adds bounded table/card,
+   chart/diagram text summaries, media attachments, Artifact names, and supported exact
+   download/deep links only when the channel supports them.
+2. Unsupported interactive blocks (MCP App, Workbench editor, local checklist state) are
+   replaced by concise text and an Operator deep link when available.
+3. Approval/UserRequest actions are handled only under their owning channel assurance and
+   domain routes; rich formatting does not upgrade assurance.
+
+**Failure/UI/postcondition:** Delivery remains useful if RichPresentation is missing. It
+never exposes arbitrary URLs, local paths, private Artifact data, or stronger authority
+than the authenticated channel supports.
+
+## F136 — Prepare and revalidate an isolated local Task Environment
+
+**Actors/preconditions:** Workspace owner, TaskRuntime, EnvironmentManager, Resource
+reader, and an OS-qualified local EnvironmentProvider; the Task has an accepted Plan and a
+selected Step, but this preparation flow does not admit an Attempt.
+
+1. Resolve only the Task's exact Workspace-scoped Resource revision/digest pins. Reject
+   missing, stale, foreign, duplicate, unsupported, symlinked, or path-traversing inputs
+   before exposing bytes.
+2. Stage verified immutable inputs under a provider-controlled read-only root and create a
+   separate bounded writable output root. Do not expose a home directory, ambient
+   workspace path, credential store, or unpinned Resource head.
+3. Probe the concrete OS/provider implementation against the normalized filesystem,
+   process-tree, network, and resource-limit policy. Produce a private
+   `IsolationAttestation` tied to the exact Environment/Task, Runtime incarnation, provider
+   version, OS build, and policy digest. `UNKNOWN` or unsupported controls fail closed.
+4. Persist the ordinary Environment lifecycle transition and incarnation-local provider
+   binding only after current owner, Task, budget, and Runtime admission checks commit. A
+   lost provider response is reconciled by idempotent provider request identity; never
+   retry an ambiguous allocation blindly.
+5. Return a preparation result only. This flow creates no AgentSession, Attempt,
+   ExecutionLease, Grant, CapabilityActivation, or Effect and does not start an external
+   Agent. The ordinary admission path later revalidates the attestation and independently
+   commits fresh Trust, budget, Environment-use, and lease state before dispatch.
+6. After a process has run, require a current-incarnation positive
+   `QuiescenceObservation` before reusing a writable root, releasing its writer fence, or
+   cleaning the Environment. Timeout, lost identity, or unknown descendants leave it
+   fenced and blocked pending recovery.
+7. After daemon restart, resolve the private provider binding and re-probe the same
+   Environment identity. A changed incarnation, path identity, policy digest, source
+   digest, OS/provider version, or containment result invalidates the attestation and
+   requires re-preparation; it never resumes an external Agent automatically.
+
+**Failure/UI/postcondition:** Show “Environment could not be prepared” with a safe
+reason and recovery action. A prepared Environment is not presented as a running Task.
+No provider start, AgentSession, Attempt, lease, or Agent-side file access occurs from
+preparation alone. If cleanup cannot prove process-tree quiescence, retain the Environment
+and expose an actionable blocker instead of claiming deletion.

@@ -1,0 +1,15 @@
+[package]
+name = "domain-environment"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+storage-core = { path = "../storage-core" }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[lints]
+workspace = true

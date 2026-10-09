@@ -21,7 +21,11 @@ fn main() {
         std::process::exit(126);
     }
 
-    if io::stdout().write_all(READY).and_then(|_| io::stdout().flush()).is_err() {
+    if io::stdout()
+        .write_all(READY)
+        .and_then(|_| io::stdout().flush())
+        .is_err()
+    {
         std::process::exit(126);
     }
     let mut go = [0; GO.len()];
@@ -32,7 +36,11 @@ fn main() {
     // This marker proves only that the gate consumed exactly GO. It is emitted before
     // attempting exec; the parent waits for it before exposing stdin to the caller, so
     // agent protocol bytes cannot be prefetched by the gate's handshake read.
-    if io::stdout().write_all(GO_CONSUMED).and_then(|_| io::stdout().flush()).is_err() {
+    if io::stdout()
+        .write_all(GO_CONSUMED)
+        .and_then(|_| io::stdout().flush())
+        .is_err()
+    {
         std::process::exit(126);
     }
 

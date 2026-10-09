@@ -161,6 +161,13 @@ and remain available for recovery and backup audit. External semantic indexes ar
 targets only when their provider adapter is registered as an owned replica; arbitrary
 retrieval providers cannot extend or override Resource deletion truth.
 
+For a human-facing Conversation response, optional Host Guidance is appended only as
+zero-authority presentation advice after the current Conversation/task context is assembled.
+It is not user-authored context, Workspace instruction, Task planning input, or worker
+execution policy. It is omitted from planning and Attempt sessions by default. The exact
+HostSkill and instruction digest used for a RichPresentation is retained as provenance;
+native agent configuration remains untouched.
+
 The Operator may offer a read-only “Context used” view for a Conversation turn or Task.
 It is derived from the exact ContextAttachments and provider retrieval receipts actually
 resolved for that scope, not a guess about what the Agent considered. It exposes source,

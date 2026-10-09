@@ -1,0 +1,973 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://litecowork.dev/schemas/rich-presentation-v1.schema.json",
+  "title": "LiteCowork RichPresentationDocument v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "renderer_contract_version",
+    "presentation_id",
+    "message_id",
+    "semantic_content_digest",
+    "root_blocks",
+    "block_provenance"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "renderer_contract_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "presentation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "semantic_content_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "root_blocks": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/block"
+      }
+    },
+    "citations": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "$ref": "#/$defs/citation"
+      }
+    },
+    "actions": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/action"
+      }
+    },
+    "accessibility_summary": {
+      "type": "string",
+      "maxLength": 4000
+    },
+    "block_provenance": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/block_provenance"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "slice": {
+      "type": "object",
+      "required": [
+        "start_utf8_byte",
+        "end_utf8_byte_exclusive",
+        "slice_digest"
+      ],
+      "properties": {
+        "start_utf8_byte": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_utf8_byte_exclusive": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "slice_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifact_ref": {
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "version"
+      ],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "resource_ref": {
+      "type": "object",
+      "required": [
+        "resource_id",
+        "revision_id"
+      ],
+      "properties": {
+        "resource_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_digest": {
+          "$ref": "#/$defs/digest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "structured_data_binding": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["source", "invocation_id", "result_binding"],
+          "properties": {
+            "source": {"const": "CAPABILITY_RESULT"},
+            "invocation_id": {"type": "string", "minLength": 1},
+            "result_binding": {"type": "string", "minLength": 1, "maxLength": 200}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["source", "resource_ref"],
+          "properties": {
+            "source": {"const": "PINNED_RESOURCE"},
+            "resource_ref": {"$ref": "#/$defs/resource_ref"}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["source", "semantic_table_slice"],
+          "properties": {
+            "source": {"const": "SEMANTIC_TABLE"},
+            "semantic_table_slice": {"$ref": "#/$defs/slice"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "citation": {
+      "type": "object",
+      "required": [
+        "citation_id",
+        "resource_ref",
+        "locator"
+      ],
+      "properties": {
+        "citation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resource_ref": {
+          "$ref": "#/$defs/resource_ref"
+        },
+        "locator": {
+          "$ref": "#/$defs/locator"
+        },
+        "observed_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "extraction_generation": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "source_label": {
+          "type": "string",
+          "maxLength": 300
+        }
+      },
+      "additionalProperties": false
+    },
+    "action": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "artifact_ref"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "OPEN_ARTIFACT",
+                "DOWNLOAD_ARTIFACT"
+              ]
+            },
+            "artifact_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "resource_ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "OPEN_RESOURCE"
+            },
+            "resource_ref": {
+              "$ref": "#/$defs/resource_ref"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "task_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "OPEN_TASK"
+            },
+            "task_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "conversation_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "OPEN_CONVERSATION"
+            },
+            "conversation_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "url"
+          ],
+          "properties": {
+            "kind": {
+              "const": "EXTERNAL_HTTPS"
+            },
+            "url": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https://[^\\s]+"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "block": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "source"
+          ],
+          "properties": {
+            "kind": {
+              "const": "TEXT_SLICE"
+            },
+            "source": {
+              "$ref": "#/$defs/slice"
+            },
+            "width": {
+              "enum": [
+                "READABLE",
+                "WIDE",
+                "FULL_AVAILABLE"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "layout",
+            "children"
+          ],
+          "properties": {
+            "kind": {
+              "const": "LAYOUT"
+            },
+            "layout": {
+              "enum": [
+                "STACK",
+                "ROW",
+                "GRID"
+              ]
+            },
+            "width": {
+              "enum": [
+                "READABLE",
+                "WIDE",
+                "FULL_AVAILABLE"
+              ]
+            },
+            "children": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/$defs/block"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "title",
+            "children"
+          ],
+          "properties": {
+            "kind": {
+              "const": "CARD"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "children": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "$ref": "#/$defs/block"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "tone",
+            "source",
+            "accessible_summary"
+          ],
+          "properties": {
+            "kind": {
+              "const": "CALLOUT"
+            },
+            "tone": {
+              "enum": [
+                "NEUTRAL",
+                "INFO",
+                "WARNING"
+              ]
+            },
+            "source": {
+              "$ref": "#/$defs/slice"
+            },
+            "accessible_summary": {
+              "type": "string",
+              "maxLength": 1000
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "headers",
+            "rows"
+          ],
+          "properties": {
+            "kind": {
+              "const": "TABLE"
+            },
+            "headers": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "string",
+                "maxLength": 300
+              }
+            },
+            "rows": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "type": "array",
+                "maxItems": 20,
+                "items": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "accessible_summary": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "chart_kind",
+            "binding",
+            "accessible_summary"
+          ],
+          "properties": {
+            "kind": {
+              "const": "CHART"
+            },
+            "chart_kind": {
+              "enum": [
+                "LINE",
+                "BAR",
+                "AREA",
+                "SCATTER",
+                "PIE"
+              ]
+            },
+            "binding": {"$ref": "#/$defs/structured_data_binding"},
+            "accessible_summary": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "fallback_slice": {
+              "$ref": "#/$defs/slice"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "engine",
+            "source",
+            "accessible_summary"
+          ],
+          "properties": {
+            "kind": {
+              "const": "DIAGRAM"
+            },
+            "engine": {
+              "enum": [
+                "MERMAID",
+                "HOST_GRAPH"
+              ]
+            },
+            "source": {
+              "type": "string",
+              "maxLength": 50000
+            },
+            "accessible_summary": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "animation": {
+              "enum": [
+                "NONE",
+                "DRAW_ONCE",
+                "HIGHLIGHT_SEQUENCE"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "resource_ref",
+            "media_kind",
+            "alt_text"
+          ],
+          "properties": {
+            "kind": {
+              "const": "MEDIA"
+            },
+            "resource_ref": {
+              "$ref": "#/$defs/resource_ref"
+            },
+            "media_kind": {
+              "enum": [
+                "IMAGE",
+                "ANIMATED_IMAGE",
+                "VIDEO"
+              ]
+            },
+            "alt_text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            "caption": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "autoplay": {
+              "const": false
+            },
+            "loop": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "items",
+            "state_persistence"
+          ],
+          "properties": {
+            "kind": {
+              "const": "CHECKLIST"
+            },
+            "items": {
+              "type": "array",
+              "maxItems": 100,
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "label"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "label": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "state_persistence": {
+              "enum": [
+                "LOCAL_TRANSIENT",
+                "LOCAL_DURABLE"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "items"
+          ],
+          "properties": {
+            "kind": {
+              "const": "DELIVERABLE_GROUP"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "items": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "required": [
+                  "artifact_ref",
+                  "title",
+                  "actions"
+                ],
+                "properties": {
+                  "artifact_ref": {
+                    "$ref": "#/$defs/artifact_ref"
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "subtitle": {
+                    "type": "string",
+                    "maxLength": 300
+                  },
+                  "actions": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "enum": [
+                        "OPEN",
+                        "PREVIEW",
+                        "DOWNLOAD",
+                        "OPEN_IN_WORKBENCH"
+                      ]
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "artifact_refs"
+          ],
+          "properties": {
+            "kind": {
+              "const": "ARTIFACT_COLLECTION"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "artifact_refs": {
+              "type": "array",
+              "maxItems": 2000,
+              "items": {
+                "$ref": "#/$defs/artifact_ref"
+              }
+            },
+            "initial_page_size": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "bundle_artifact_ref": {
+              "$ref": "#/$defs/artifact_ref"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "projection_ref"
+          ],
+          "properties": {
+            "kind": {
+              "const": "HOST_PROJECTION"
+            },
+            "projection_ref": {
+              "type": "object",
+              "required": [
+                "projection_kind",
+                "source_id"
+              ],
+              "properties": {
+                "projection_kind": {
+                  "enum": [
+                    "TASK",
+                    "ATTEMPT",
+                    "USER_REQUEST",
+                    "APPROVAL",
+                    "ARTIFACT",
+                    "VERIFICATION",
+                    "EFFECT",
+                    "RUNTIME_STATUS",
+                    "COST",
+                    "QUOTA"
+                  ]
+                },
+                "source_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "invocation_id",
+            "capability_ref",
+            "resource_ref",
+            "content_digest"
+          ],
+          "properties": {
+            "kind": {
+              "const": "MCP_APP"
+            },
+            "invocation_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capability_ref": {
+              "type": "object"
+            },
+            "resource_ref": {
+              "$ref": "#/$defs/resource_ref"
+            },
+            "content_digest": {
+              "$ref": "#/$defs/digest"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "block_provenance": {
+      "type": "object",
+      "required": [
+        "block_path",
+        "origin",
+        "resource_refs",
+        "artifact_refs",
+        "evidence_refs",
+        "verification_refs"
+      ],
+      "properties": {
+        "block_path": {
+          "type": "string",
+          "pattern": "^(?:/(?:0|[1-9][0-9]*)(?:/(?:children|[0-9]+))*)+$",
+          "maxLength": 500
+        },
+        "origin": {
+          "enum": [
+            "SEMANTIC_MESSAGE",
+            "MODEL_INTENT",
+            "TOOL_RESULT_TEMPLATE",
+            "ARTIFACT_BINDING",
+            "RESOURCE_BINDING",
+            "CORE_PROJECTION",
+            "MCP_APP"
+          ]
+        },
+        "agent_session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "invocation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resource_refs": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/resource_ref"
+          }
+        },
+        "artifact_refs": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/artifact_ref"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "verification_refs": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "locator": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "start_utf8_byte",
+            "end_utf8_byte_exclusive"
+          ],
+          "properties": {
+            "kind": {
+              "const": "TEXT_SPAN"
+            },
+            "segment_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "start_utf8_byte": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "end_utf8_byte_exclusive": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "page_number"
+          ],
+          "properties": {
+            "kind": {
+              "const": "PAGE"
+            },
+            "page_number": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "page_number",
+            "x",
+            "y",
+            "width",
+            "height"
+          ],
+          "properties": {
+            "kind": {
+              "const": "PAGE_REGION"
+            },
+            "page_number": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "x": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "height": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "start_row",
+            "end_row",
+            "start_col",
+            "end_col"
+          ],
+          "properties": {
+            "kind": {
+              "const": "TABLE_RANGE"
+            },
+            "sheet": {
+              "type": "string",
+              "minLength": 1
+            },
+            "start_row": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end_row": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "start_col": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end_col": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "start_line",
+            "end_line"
+          ],
+          "properties": {
+            "kind": {
+              "const": "CODE_RANGE"
+            },
+            "start_line": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "end_line": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

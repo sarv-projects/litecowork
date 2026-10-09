@@ -18,6 +18,34 @@ fn valid_id(value: &str) -> bool {
     !value.is_empty() && value.len() <= 160 && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
+#[tauri::command]
+pub(crate) async fn artifact_library_command(
+    app: AppHandle, workspace_id: String, artifact_id: String, action: String,
+    expected_version: u64, idempotency_key: String,
+) -> Result<ArtifactReadResponse, String> {
+    if !valid_id(&workspace_id) || !valid_id(&artifact_id)
+        || !matches!(action.as_str(), "promote" | "archive")
+        || expected_version == 0 || expected_version > 9_007_199_254_740_991
+        || idempotency_key.is_empty() || idempotency_key.len() > 128
+        || !idempotency_key.bytes().all(|byte| byte.is_ascii_graphic())
+    { return Err("Artifact Library request is invalid".to_owned()); }
+    tauri::async_runtime::spawn_blocking(move || {
+        let (client, _) = operator_client(&app)?;
+        let response = client.post(format!("/v1/artifacts/{artifact_id}/{action}"))
+            .header("X-Workspace-ID", workspace_id)
+            .header("If-Match", format!("\"{expected_version}\""))
+            .header("Idempotency-Key", idempotency_key)
+            .send().map_err(|_| "Local Artifact Library service is unavailable".to_owned())?;
+        let status = response.status();
+        let content_type = response.header("content-type").unwrap_or("application/json").to_owned();
+        let mut bytes = Vec::new();
+        response.take(MAX_ARTIFACT_METADATA_BYTES as u64 + 1).read_to_end(&mut bytes)
+            .map_err(|_| "Artifact Library response could not be read".to_owned())?;
+        if bytes.len() > MAX_ARTIFACT_METADATA_BYTES { return Err("Artifact Library response exceeds its size limit".to_owned()); }
+        Ok(ArtifactReadResponse { status, content_type, body_base64: BASE64_STANDARD.encode(bytes) })
+    }).await.map_err(|_| "Artifact Library request did not complete".to_owned())?
+}
+
 pub(crate) const MAX_LOCAL_SAVE_BYTES: u64 = 10 * 1024 * 1024;
 const MAX_ARTIFACT_METADATA_BYTES: usize = 1024 * 1024;
 const MAX_RESOURCE_REVISION_PAGES: usize = 100;
@@ -151,7 +179,7 @@ pub(crate) async fn artifact_save_as(
             .header("X-Workspace-ID", &workspace_id)
             .send()
             .map_err(|_| "Artifact content is unavailable from the local Runtime".to_owned())?;
-        if !response.status().is_success() {
+        if !response.is_success() {
             return Err("Artifact content is unavailable from the local Runtime".to_owned());
         }
         if response

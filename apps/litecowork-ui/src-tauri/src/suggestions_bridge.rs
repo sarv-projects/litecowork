@@ -99,7 +99,7 @@ pub(crate) async fn set_suggestion_preference(
             .header("Idempotency-Key", &request_id)
             .json(&serde_json::json!({ "muted": muted }))
             .send().map_err(|_| "Local Suggestion settings are unavailable".to_owned())?;
-        let status = response.status().as_u16();
+        let status = response.status();
         let body = read_bounded_response(response)?;
         Ok(SuggestionActionResponse { status, body_base64: BASE64_STANDARD.encode(body) })
     }).await.map_err(|_| "Suggestion preference update did not complete".to_owned())?
@@ -144,7 +144,7 @@ pub(crate) async fn suggestion_owner_action(
             _ => unreachable!(),
         };
         let response = request.send().map_err(|_| "Local Suggestion service is unavailable".to_owned())?;
-        let status = response.status().as_u16();
+        let status = response.status();
         let body = read_bounded_response(response)?;
         Ok(SuggestionActionResponse { status, body_base64: BASE64_STANDARD.encode(body) })
     }).await.map_err(|_| "Suggestion action request did not complete".to_owned())?
@@ -159,7 +159,7 @@ pub(crate) async fn accept_suggestion_task(
     suggestion_id: String,
     expected_version: u64,
     request_id: String,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let valid_id = |value: &str| !value.trim().is_empty() && value.len() <= 256
             && !value.chars().any(char::is_control);
@@ -177,16 +177,39 @@ pub(crate) async fn accept_suggestion_task(
             .json(&serde_json::json!({}))
             .send()
             .map_err(|_| "Local Suggestion service is unavailable".to_owned())?;
+        let status = response.status();
         let body = read_bounded_response(response)?;
-        let view: serde_json::Value = serde_json::from_slice(&body)
-            .map_err(|_| "Local Runtime returned an invalid accepted Task".to_owned())?;
-        let task = view.get("task").ok_or_else(|| "Local Runtime returned an invalid accepted Task".to_owned())?;
-        if task.get("workspace_id").and_then(serde_json::Value::as_str) != Some(workspace_id.as_str()) {
-            return Err("Accepted Task belongs to a different Workspace".to_owned());
+        if !(200..300).contains(&status) {
+            return Err("Suggestion acceptance could not be confirmed".to_owned());
         }
-        task.get("task_id").and_then(serde_json::Value::as_str)
-            .filter(|value| valid_id(value))
-            .map(str::to_owned)
-            .ok_or_else(|| "Local Runtime returned an invalid accepted Task identity".to_owned())
+        let receipt: serde_json::Value = serde_json::from_slice(&body)
+            .map_err(|_| "Local Runtime returned an invalid Suggestion acceptance receipt".to_owned())?;
+        let suggestion = receipt.get("suggestion")
+            .ok_or_else(|| "Local Runtime returned an invalid Suggestion acceptance receipt".to_owned())?;
+        let task = receipt.get("task")
+            .ok_or_else(|| "Local Runtime returned an invalid Suggestion acceptance receipt".to_owned())?;
+        let suggestion_version = suggestion.get("version").and_then(serde_json::Value::as_u64);
+        let task_version = task.get("version").and_then(serde_json::Value::as_u64);
+        let disposition = receipt.get("disposition").and_then(serde_json::Value::as_str);
+        let task_id = task.get("task_id").and_then(serde_json::Value::as_str);
+        let linked_task_id = suggestion.get("result_task_id").and_then(serde_json::Value::as_str);
+        if receipt.get("workspace_id").and_then(serde_json::Value::as_str) != Some(workspace_id.as_str())
+            || suggestion.get("suggestion_id").and_then(serde_json::Value::as_str) != Some(suggestion_id.as_str())
+            || suggestion.get("status").and_then(serde_json::Value::as_str) != Some("ACCEPTED")
+            || linked_task_id.is_none()
+            || linked_task_id != task_id
+            || task.get("workspace_id").and_then(serde_json::Value::as_str) != Some(workspace_id.as_str())
+            || task.get("status").and_then(serde_json::Value::as_str) != Some("READY")
+            || !task_id.is_some_and(valid_id)
+            || suggestion_version != expected_version.checked_add(1)
+            || !task_version.is_some_and(|version| version > 0)
+            || !matches!(disposition, Some("CREATED") | Some("REPLAYED"))
+            || !matches!(status, 200 | 201)
+            || (status == 201 && disposition != Some("CREATED"))
+            || (status == 200 && disposition != Some("REPLAYED"))
+        {
+            return Err("Local Runtime returned a mismatched Suggestion acceptance receipt".to_owned());
+        }
+        Ok(receipt)
     }).await.map_err(|_| "Suggestion acceptance did not complete".to_owned())?
 }

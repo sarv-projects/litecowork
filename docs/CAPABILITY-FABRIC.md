@@ -264,6 +264,14 @@ their component structure. Each capability actually invoked still receives its o
 compatibility and authorization decision. Package installation or enabling is never a
 blanket Task permission.
 
+Bundled LiteCowork HostSkills are a separate guidance-only facility, not a
+`CapabilityRef`, package, grant, activation, or MCP/LiteSPM Skill. They use a distinct
+`HostSkillId`, are immutable and digest-verified, and have no tools, network, secrets,
+resource scope, invocation, or Effect. A HostSkill load therefore bypasses no Trust
+decision because it cannot perform an operation. External MCP/LiteSPM Skills keep the
+normal pinned capability and authorization lifecycle. See
+[`HOST-GUIDANCE.md`](HOST-GUIDANCE.md).
+
 LiteCowork's current MCP interoperability target is base protocol `2026-07-28`. Its core
 is stateless: do not assume an `initialize` handshake or transport session, and do not
 make durable invocation state depend on a live connection. A legacy provider may be

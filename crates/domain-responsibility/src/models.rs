@@ -12,18 +12,69 @@ macro_rules! string_enum {
         pub enum $name { $($variant),+ }
     };
 }
-string_enum!(CoworkerStatus { Active, Paused, Archived });
-string_enum!(AutomationStatus { Enabled, Paused, Disabled });
-string_enum!(PrincipalKind { User, Service, Runtime, Agent, ChannelIdentity });
-string_enum!(DelegationStrategy { NativeDefault, Balanced, CostSaver, HostDelegationOnly });
-string_enum!(InteractionDefault { StandardTrustPolicy, RequireOwnerApproval, HandoffToOwner });
-string_enum!(ContextDocumentKind { PersonalProfile, CoworkerNotes, WorkspaceNotes, GoalNotes });
+string_enum!(CoworkerStatus {
+    Active,
+    Paused,
+    Archived
+});
+string_enum!(AutomationStatus {
+    Enabled,
+    Paused,
+    Disabled
+});
+string_enum!(PrincipalKind {
+    User,
+    Service,
+    Runtime,
+    Agent,
+    ChannelIdentity
+});
+string_enum!(DelegationStrategy {
+    NativeDefault,
+    Balanced,
+    CostSaver,
+    HostDelegationOnly
+});
+string_enum!(InteractionDefault {
+    StandardTrustPolicy,
+    RequireOwnerApproval,
+    HandoffToOwner
+});
+string_enum!(ContextDocumentKind {
+    PersonalProfile,
+    CoworkerNotes,
+    WorkspaceNotes,
+    GoalNotes
+});
 string_enum!(BinaryNotification { Always, Silent });
-string_enum!(CompletionNotification { Always, OnSuccess, Silent });
-string_enum!(AutomationNotification { Always, OnSuccess, OnFailure, OnCondition, Silent });
-string_enum!(TriggerPlacement { Hub, SpecificRuntime, Auto });
-string_enum!(OverlapPolicy { Skip, Queue, CancelOld, Allow });
-string_enum!(WakePolicy { Never, TryWake, RequireRuntimeAwake });
+string_enum!(CompletionNotification {
+    Always,
+    OnSuccess,
+    Silent
+});
+string_enum!(AutomationNotification {
+    Always,
+    OnSuccess,
+    OnFailure,
+    OnCondition,
+    Silent
+});
+string_enum!(TriggerPlacement {
+    Hub,
+    SpecificRuntime,
+    Auto
+});
+string_enum!(OverlapPolicy {
+    Skip,
+    Queue,
+    CancelOld,
+    Allow
+});
+string_enum!(WakePolicy {
+    Never,
+    TryWake,
+    RequireRuntimeAwake
+});
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecurrenceFormat {
     #[serde(rename = "CRON_5")]
@@ -33,15 +84,25 @@ pub enum RecurrenceFormat {
 }
 string_enum!(AmbiguousLocalTime { Earlier, Later });
 string_enum!(NonexistentLocalTime { Skip, NextValid });
-string_enum!(WebhookAuthentication { Signature, BearerSecret, MutualTls });
+string_enum!(WebhookAuthentication {
+    Signature,
+    BearerSecret,
+    MutualTls
+});
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PrincipalRef { pub principal_id: String, pub kind: PrincipalKind }
+pub struct PrincipalRef {
+    pub principal_id: String,
+    pub kind: PrincipalKind,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CoworkerRevisionRef { pub coworker_id: String, pub revision: u64 }
+pub struct CoworkerRevisionRef {
+    pub coworker_id: String,
+    pub revision: u64,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -107,7 +168,7 @@ pub struct Coworker {
     pub version: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum MisfirePolicy {
     Skip,
@@ -115,9 +176,42 @@ pub enum MisfirePolicy {
     CatchUpBounded { max_occurrences: u32 },
 }
 
+// Serde's internally tagged representation accepts unknown fields for unit
+// variants. These closed policy objects are persisted and validated against the
+// machine schema, so enforce the exact wire shape explicitly on deserialization.
+impl<'de> Deserialize<'de> for MisfirePolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("misfire policy must be an object"))?;
+        let kind = object
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| D::Error::custom("misfire policy kind is required"))?;
+        match kind {
+            "SKIP" if object.len() == 1 => Ok(Self::Skip),
+            "RUN_ONCE_WHEN_AVAILABLE" if object.len() == 1 => Ok(Self::RunOnceWhenAvailable),
+            "CATCH_UP_BOUNDED" if object.len() == 2 => {
+                let max_occurrences = object
+                    .get("max_occurrences")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok())
+                    .ok_or_else(|| D::Error::custom("max_occurrences must be a u32"))?;
+                Ok(Self::CatchUpBounded { max_occurrences })
+            }
+            _ => Err(D::Error::custom("misfire policy shape is invalid")),
+        }
+    }
+}
+
 /// The five V1 trigger definition variants. Remaining schema extension points
 /// require qualified providers and are rejected as unsupported at the API adapter.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
 pub enum TriggerDefinition {
     Schedule {
@@ -131,7 +225,10 @@ pub enum TriggerDefinition {
         ambiguous_local_time: AmbiguousLocalTime,
         nonexistent_local_time: NonexistentLocalTime,
     },
-    OneShot { scheduled_at: String, misfire_policy: MisfirePolicy },
+    OneShot {
+        scheduled_at: String,
+        misfire_policy: MisfirePolicy,
+    },
     Webhook {
         source_identity: String,
         auth_profile_ref: String,
@@ -140,8 +237,125 @@ pub enum TriggerDefinition {
         max_payload_bytes: u64,
         delivery_id_field: Option<String>,
     },
-    ConnectorEvent { connection_id: String, provider_event_type: String, filter_expression: Option<String> },
+    ConnectorEvent {
+        connection_id: String,
+        provider_event_type: String,
+        filter_expression: Option<String>,
+    },
     Manual,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+enum TriggerDefinitionWire {
+    Schedule {
+        recurrence_format: RecurrenceFormat,
+        timezone: String,
+        rrule_or_cron: String,
+        recurrence_semantics_version: u32,
+        start_at: Option<String>,
+        end_at: Option<String>,
+        misfire_policy: MisfirePolicy,
+        ambiguous_local_time: AmbiguousLocalTime,
+        nonexistent_local_time: NonexistentLocalTime,
+    },
+    OneShot {
+        scheduled_at: String,
+        misfire_policy: MisfirePolicy,
+    },
+    Webhook {
+        source_identity: String,
+        auth_profile_ref: String,
+        authentication_mode: WebhookAuthentication,
+        replay_window_ms: u64,
+        max_payload_bytes: u64,
+        delivery_id_field: Option<String>,
+    },
+    ConnectorEvent {
+        connection_id: String,
+        provider_event_type: String,
+        filter_expression: Option<String>,
+    },
+    Manual,
+}
+
+impl<'de> Deserialize<'de> for TriggerDefinition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let object = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("trigger definition must be an object"))?;
+        if object.get("kind").and_then(serde_json::Value::as_str) == Some("MANUAL") {
+            return if object.len() == 1 {
+                Ok(Self::Manual)
+            } else {
+                Err(D::Error::custom(
+                    "manual trigger must not contain extra fields",
+                ))
+            };
+        }
+        let wire: TriggerDefinitionWire =
+            serde_json::from_value(value).map_err(D::Error::custom)?;
+        Ok(match wire {
+            TriggerDefinitionWire::Schedule {
+                recurrence_format,
+                timezone,
+                rrule_or_cron,
+                recurrence_semantics_version,
+                start_at,
+                end_at,
+                misfire_policy,
+                ambiguous_local_time,
+                nonexistent_local_time,
+            } => Self::Schedule {
+                recurrence_format,
+                timezone,
+                rrule_or_cron,
+                recurrence_semantics_version,
+                start_at,
+                end_at,
+                misfire_policy,
+                ambiguous_local_time,
+                nonexistent_local_time,
+            },
+            TriggerDefinitionWire::OneShot {
+                scheduled_at,
+                misfire_policy,
+            } => Self::OneShot {
+                scheduled_at,
+                misfire_policy,
+            },
+            TriggerDefinitionWire::Webhook {
+                source_identity,
+                auth_profile_ref,
+                authentication_mode,
+                replay_window_ms,
+                max_payload_bytes,
+                delivery_id_field,
+            } => Self::Webhook {
+                source_identity,
+                auth_profile_ref,
+                authentication_mode,
+                replay_window_ms,
+                max_payload_bytes,
+                delivery_id_field,
+            },
+            TriggerDefinitionWire::ConnectorEvent {
+                connection_id,
+                provider_event_type,
+                filter_expression,
+            } => Self::ConnectorEvent {
+                connection_id,
+                provider_event_type,
+                filter_expression,
+            },
+            TriggerDefinitionWire::Manual => unreachable!("Manual is handled before wire decoding"),
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -164,10 +378,18 @@ pub struct AutomationExecutionPolicy {
     pub notification_policy: AutomationNotification,
     pub wake_policy: WakePolicy,
 }
-string_enum!(PlacementClass { Auto, LocalOnly, CloudPreferred, CloudOnly });
+string_enum!(PlacementClass {
+    Auto,
+    LocalOnly,
+    CloudPreferred,
+    CloudOnly
+});
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum PlacementPreference { Class(PlacementClass), SpecificRuntime { runtime_id: String } }
+pub enum PlacementPreference {
+    Class(PlacementClass),
+    SpecificRuntime { runtime_id: String },
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -75,6 +75,11 @@ def check_digest_encodings(document, source: str) -> None:
                     if is_string and schema.get("pattern") != SHA256_PATTERN:
                         fail(f"{source}{path}/{name}: digest must use the canonical Sha256Digest pattern")
             for name, value in node.items():
+                # JSON Schema `if` branches commonly test only a discriminant's type;
+                # the corresponding actual value constraints live in the main property
+                # or the `then` branch. Do not treat the predicate as a data schema.
+                if name == "if":
+                    continue
                 walk(value, f"{path}/{name}")
         elif isinstance(node, list):
             for index, value in enumerate(node):
@@ -101,7 +106,7 @@ def check_event_contract() -> None:
         fail("EVENTS.md: missing minimum v1 registry")
         return
     registry_lines = re.findall(
-        r"^[a-z][a-z0-9_.-]+\.v\d+$", registry_match.group(1), re.M
+        r"^([a-z][a-z0-9_.-]+\.v\d+)(?:\s*(?:#|—).*)?$", registry_match.group(1), re.M
     )
     registry = set(registry_lines)
     if len(registry_lines) != len(registry):
@@ -141,6 +146,8 @@ def check_event_contract() -> None:
         return re.sub(r"[^a-zA-Z0-9]+", "_", re.sub(r"\.v\d+$", "", name)).strip("_")
 
     def row_for(event: str) -> list[str] | None:
+        if event in family_rows:
+            return family_rows[event]
         base = re.sub(r"\.v\d+$", "", event)
         if base in family_rows:
             return family_rows[base]
@@ -152,7 +159,7 @@ def check_event_contract() -> None:
         return max(candidates, key=lambda item: item[0])[1] if candidates else None
 
     for event in sorted(registry):
-        key = event_key(event)
+        key = branches.get(event) or event_key(event)
         payload = payloads.get(key)
         family_fields = row_for(event)
         if not payload:
@@ -162,6 +169,7 @@ def check_event_contract() -> None:
             fail(f"EVENTS.md: no payload field contract for {event}")
             continue
         def field_name(field: str) -> str:
+            field = field.split("=", 1)[0].strip()
             if field.endswith("?"):
                 field = field[:-1]
             return field[:-2] if field.endswith("[]") else field
@@ -257,7 +265,9 @@ def check_event_contract() -> None:
                 break
             return out
         if value_type == "array":
-            return []
+            count = value_schema.get("minItems", 0)
+            item_schema = value_schema.get("items", {})
+            return [sample(item_schema, depth + 1) for _ in range(count)]
         if value_type == "integer":
             return value_schema.get("minimum", 0)
         if value_type == "number":
@@ -273,11 +283,13 @@ def check_event_contract() -> None:
                 return "1.0.0"
             if value_schema.get("pattern", "").startswith("^sha256:"):
                 return "sha256:" + "a" * 64
+            if value_schema.get("pattern", "").startswith("^[A-Z]"):
+                return "SAMPLE"
             return "sample"
         return {}
 
     for event in sorted(registry):
-        payload = payloads.get(event_key(event))
+        payload = payloads.get(branches.get(event) or event_key(event))
         if not payload:
             continue
         payload_value = sample(payload)
@@ -538,6 +550,25 @@ def check_resource_contract() -> None:
             fail("OpenAPI: ResourceLocationView must use location freshness, not Resource conflict freshness")
         if schemas.get("ResourceSearchResult", {}).get("properties", {}).get("freshness", {}).get("$ref") != "#/components/schemas/ResourceFreshness":
             fail("OpenAPI: ResourceSearchResult must expose logical Resource freshness")
+        search_result = schemas.get("ResourceSearchResult", {})
+        search_properties = search_result.get("properties", {})
+        if not {"resource_ref", "source_content_digest", "source_matches"} <= set(search_result.get("required", [])):
+            fail("OpenAPI: ResourceSearchResult must require its pinned source and source-match collection")
+        if search_properties.get("resource_ref", {}).get("$ref") != "#/components/schemas/PinnedResourceRef":
+            fail("OpenAPI: ResourceSearchResult source must pin its Resource revision")
+        if search_properties.get("source_content_digest", {}).get("pattern") != SHA256_PATTERN:
+            fail("OpenAPI: ResourceSearchResult must bind source matches to a strict SHA-256 digest")
+        source_matches = search_properties.get("source_matches", {})
+        if source_matches.get("type") != "array" or source_matches.get("maxItems") != 32 or source_matches.get("items", {}).get("$ref") != "#/components/schemas/ResourceTextMatchSpan":
+            fail("OpenAPI: ResourceSearchResult source matches must be bounded typed spans")
+        source_match = schemas.get("ResourceTextMatchSpan", {})
+        source_match_properties = source_match.get("properties", {})
+        if not {"term", "start_utf8_byte", "end_utf8_byte_exclusive"} <= set(source_match.get("required", [])):
+            fail("OpenAPI: ResourceSourceMatch must require a term and half-open byte offsets")
+        if source_match_properties.get("start_utf8_byte", {}).get("minimum") != 0 or source_match_properties.get("end_utf8_byte_exclusive", {}).get("minimum") != 1:
+            fail("OpenAPI: ResourceSourceMatch offsets must be nonnegative zero-based byte positions")
+        if source_match_properties.get("start_utf8_byte", {}).get("maximum") != 1_048_576 or source_match_properties.get("end_utf8_byte_exclusive", {}).get("maximum") != 1_048_576:
+            fail("OpenAPI: ResourceSourceMatch offsets must stay within the indexed Resource byte bound")
         dependent_route = paths.get("/resources/{resourceId}/dependents", {}).get("get", {})
         dependent_schema = (
             dependent_route.get("responses", {})
@@ -624,6 +655,15 @@ def check_resource_contract() -> None:
     artifact_contract = (DOCS / "ARTIFACTS-EVIDENCE.md").read_text(encoding="utf-8")
     services = (DOCS / "SERVICES.md").read_text(encoding="utf-8")
     tests = (DOCS / "TESTING.md").read_text(encoding="utf-8")
+    api_doc = (DOCS / "API.md").read_text(encoding="utf-8")
+    if "ResourceTextMatchSpan = {" not in schema_text or "source_matches: ResourceTextMatchSpan[]" not in schema_text:
+        fail("SCHEMAS.md: Resource search must define its canonical source-match span contract")
+    if "source_matches" not in api_doc or "half-open UTF-8 byte offsets" not in api_doc:
+        fail("API.md: Resource search must document revision-pinned source match offsets")
+    if "source_content_digest" not in world or "never be applied to a newer" not in world:
+        fail("WORLD-RESOURCES.md: indexed source spans must remain bound to the exact revision/digest")
+    if "response mapper has not yet been updated to" not in api_doc:
+        fail("API.md: document that daemon serialization of indexed source matches remains pending")
     if "acyclic" not in model or "RESOURCE_CONFLICT" not in model or "multiple heads" not in world:
         fail("Resource model must specify acyclic revision ancestry and conflict behavior")
     if "provenance.source_inputs" not in model or "provenance.transformations[].inputs" not in model:
@@ -1331,6 +1371,20 @@ def check_storage() -> None:
     try:
         db = sqlite3.connect(":memory:")
         db.executescript(storage_sql)
+        migrations = sorted(
+            (DOCS / "schemas").glob("sqlite-v[0-9]*.sql"),
+            key=lambda item: int(re.search(r"sqlite-v(\d+)\.sql$", item.name).group(1)),
+        )
+        for migration in migrations:
+            number = int(re.search(r"sqlite-v(\d+)\.sql$", migration.name).group(1))
+            if number > 1:
+                if number in (4, 6):
+                    # v4/v6 rebuild tables while immutable earlier triggers still
+                    # reference those names. Match the migration-runner PRAGMAs.
+                    db.executescript("PRAGMA foreign_keys = OFF; PRAGMA legacy_alter_table = ON;")
+                db.executescript(migration.read_text(encoding="utf-8"))
+                if number in (4, 6):
+                    db.executescript("PRAGMA legacy_alter_table = OFF;")
         db.execute("PRAGMA foreign_keys = ON")
         problems = db.execute("PRAGMA foreign_key_check").fetchall()
         if problems:
@@ -2696,6 +2750,23 @@ def check_runtime_routine_contract() -> None:
         required = set(payloads[name]["required"])
         if not {"routine_id", "routine_revision", "trigger_id", "trigger_host_runtime_id"} <= required:
             fail(f"{name}: missing pinned Routine/trigger provenance")
+        if "version" not in required:
+            fail(f"{name}: AutomationOccurrence event must record the aggregate version")
+
+    occurrence = schemas.get("AutomationOccurrence", {})
+    occurrence_properties = occurrence.get("properties", {})
+    if "version" not in occurrence.get("required", []) or occurrence_properties.get("version", {}).get("minimum") != 1:
+        fail("OpenAPI AutomationOccurrence must expose its positive aggregate version")
+    occurrence_sql_v11 = (DOCS / "schemas" / "sqlite-v11.sql").read_text(encoding="utf-8")
+    if "ADD COLUMN version INTEGER NOT NULL DEFAULT 1" not in occurrence_sql_v11 or "NEW.version <> OLD.version + 1" not in occurrence_sql_v11:
+        fail("SQLite v11 must add and guard the independent AutomationOccurrence aggregate revision")
+    model = (DOCS / "DATA-MODEL.md").read_text(encoding="utf-8")
+    state_machines = (DOCS / "STATE-MACHINES.md").read_text(encoding="utf-8")
+    if "AutomationOccurrence.version" not in model or "claim_epoch` is independent" not in model or "`entity_revision` equal the resulting occurrence `version`" not in state_machines:
+        fail("AutomationOccurrence aggregate version and claim fencing must remain distinct across model/state-machine contracts")
+    manual_run = api.get("paths", {}).get("/automations/{automationId}/run", {}).get("post", {})
+    if manual_run.get("operationId") != "runAutomationNow" or not any(parameter.get("$ref", "").endswith("/IfMatch") for parameter in manual_run.get("parameters", [])):
+        fail("Manual Automation run must remain an idempotent owner command guarded by expected Automation version")
 
 
 def check_channel_reply_contract() -> None:
@@ -3160,6 +3231,104 @@ def check_vnext_responsibility_contract() -> None:
         fail("Experience must define the Coworker-facing primary composer")
 
 
+def check_rich_presentation_contract() -> None:
+    """Keep optional RichPresentation, Host Guidance, API, event, and storage aligned."""
+    rich_schema = load_json(DOCS / "schemas" / "rich-presentation.schema.json")
+    intent_schema = load_json(DOCS / "schemas" / "presentation-intent.schema.json")
+    stream_schema = load_json(DOCS / "schemas" / "operator-stream.schema.json")
+    event_schema = load_json(DOCS / "schemas" / "domain-event.schema.json")
+    api = yaml.safe_load((DOCS / "schemas" / "operator-api.openapi.yaml").read_text(encoding="utf-8"))
+    api_schemas = api.get("components", {}).get("schemas", {})
+    paths = api.get("paths", {})
+    data_model = (DOCS / "DATA-MODEL.md").read_text(encoding="utf-8")
+    schema_doc = (DOCS / "SCHEMAS.md").read_text(encoding="utf-8")
+    runtime_doc = (DOCS / "PRESENTATION-RUNTIME.md").read_text(encoding="utf-8")
+    rich_doc = (DOCS / "RICH-RESPONSE.md").read_text(encoding="utf-8")
+    host_doc = (DOCS / "HOST-GUIDANCE.md").read_text(encoding="utf-8")
+    storage_doc = (DOCS / "STORAGE.md").read_text(encoding="utf-8")
+    events_doc = (DOCS / "EVENTS.md").read_text(encoding="utf-8")
+    api_doc = (DOCS / "API.md").read_text(encoding="utf-8")
+    migration = (DOCS / "schemas" / "sqlite-v12.sql").read_text(encoding="utf-8")
+    payloads = event_schema.get("$defs", {}).get("payloads", {})
+
+    for name, schema in (("RichPresentation", rich_schema), ("PresentationIntent", intent_schema), ("OperatorStream", stream_schema)):
+        try:
+            jsonschema.Draft202012Validator.check_schema(schema)
+        except Exception as exc:  # noqa: BLE001
+            fail(f"{name}: invalid Draft 2020-12 schema: {exc}")
+
+    rich_required = set(rich_schema.get("required", []))
+    if not {"semantic_content_digest", "root_blocks", "block_provenance"} <= rich_required:
+        fail("RichPresentation schema must bind semantic content and host-generated block provenance")
+    block_variants = rich_schema.get("$defs", {}).get("block", {}).get("oneOf", [])
+    if not block_variants or any(branch.get("additionalProperties") is not False for branch in block_variants):
+        fail("RichPresentation block variants must be closed schemas")
+    if any("HOST_PROJECTION" in json.dumps(branch) for branch in intent_schema.get("$defs", {}).values()):
+        fail("PresentationIntent must not let an Agent submit host-trusted projection blocks")
+    try:
+        validator = jsonschema.Draft202012Validator(rich_schema)
+        digest = "sha256:" + "a" * 64
+        valid_document = {
+            "schema_version": 1,
+            "renderer_contract_version": 1,
+            "presentation_id": "presentation-test",
+            "message_id": "message-test",
+            "semantic_content_digest": digest,
+            "root_blocks": [{"kind": "TEXT_SLICE", "source": {"start_utf8_byte": 0, "end_utf8_byte_exclusive": 2, "slice_digest": digest}}],
+            "block_provenance": [{"block_path": "/0", "origin": "SEMANTIC_MESSAGE", "resource_refs": [], "artifact_refs": [], "evidence_refs": [], "verification_refs": []}],
+        }
+        if list(validator.iter_errors(valid_document)):
+            fail("RichPresentation schema rejects its minimum valid semantic document")
+        forged = json.loads(json.dumps(valid_document))
+        forged["root_blocks"][0]["html"] = "<script>alert(1)</script>"
+        if not list(validator.iter_errors(forged)):
+            fail("RichPresentation schema accepts executable/arbitrary HTML properties")
+    except Exception as exc:  # noqa: BLE001
+        fail(f"RichPresentation schema examples could not be checked: {exc}")
+
+    for route, method in (("/conversations/{conversationId}/presentation", "get"), ("/rich-presentations/{presentationId}", "get")):
+        if method not in paths.get(route, {}):
+            fail(f"OpenAPI missing RichPresentation read route: {method.upper()} {route}")
+    snapshot = api_schemas.get("ConversationPresentationSnapshot", {})
+    active_turn = snapshot.get("properties", {}).get("active_turn", {})
+    if "ConversationTurnPresentation" not in json.dumps(active_turn):
+        fail("ConversationPresentationSnapshot active_turn must be a state projection, not an admission receipt")
+    preference = api_schemas.get("SubmitConversationTurnRequest", {}).get("properties", {}).get("presentation_preference", {})
+    if set(preference.get("enum", [])) != {"AUTO", "SIMPLE", "RICH"}:
+        fail("Conversation turn creation must expose the pinned AUTO/SIMPLE/RICH presentation preference")
+
+    if not {"conversation_turn_created_v2", "rich_presentation_published"} <= set(payloads):
+        fail("domain-event schema must define v2 turn preference and RichPresentation publication")
+    published = payloads.get("rich_presentation_published", {})
+    if not {"semantic_content_digest", "document_digest", "document_size_bytes", "host_skill_refs"} <= set(published.get("required", [])):
+        fail("rich.presentation.published.v1 must bind bounded document and host-guidance provenance")
+    if "rich.presentation.published.v1" not in events_doc or "conversation.turn.created.v2" not in events_doc:
+        fail("EVENTS.md must register both presentation preference and optional publication events")
+    if "message-event v2" in runtime_doc.lower() or "conversation.message.added.v2" in events_doc:
+        fail("RichPresentation must not evolve semantic ConversationMessage event solely for UI")
+
+    for required in (
+        "presentation_preference",
+        "CREATE TABLE rich_presentations",
+        "message_id TEXT NOT NULL UNIQUE",
+        "rich_presentation_no_update",
+        "rich_presentation_no_delete",
+        "CONVERSATION_TURN_PRESENTATION_PREFERENCE_IMMUTABLE",
+    ):
+        if required not in migration:
+            fail(f"sqlite-v12.sql is missing RichPresentation immutability/turn preference guard: {required}")
+    if "migration 12" not in storage_doc.lower() or "## RichPresentation" not in data_model:
+        fail("STORAGE.md and DATA-MODEL.md must describe migration 12 and the independent rich aggregate")
+    if "GET  /v1/conversations/{id}/presentation" not in api_doc or "GET  /v1/rich-presentations/{presentation_id}" not in api_doc:
+        fail("API.md route inventory must match the RichPresentation OpenAPI routes")
+    if "GUIDANCE_ONLY" not in host_doc or "not a CapabilityRef" not in host_doc:
+        fail("Host Guidance must remain explicit zero-authority context, separate from capabilities")
+    if "semantic answer is committed and exposed first" not in runtime_doc:
+        fail("Presentation Runtime must preserve semantic-first publication")
+    if "E08-S08" not in (IMPLEMENTATION / "ROADMAP.md").read_text(encoding="utf-8"):
+        fail("implementation roadmap must include RichPresentation desktop/local V1 delivery")
+
+
 def main() -> int:
     check_json_schemas()
     check_event_contract()
@@ -3177,6 +3346,7 @@ def main() -> int:
     check_runtime_routine_contract()
     check_channel_reply_contract()
     check_vnext_responsibility_contract()
+    check_rich_presentation_contract()
     check_openapi()
     check_storage()
     check_attempt_lease_contract()
@@ -3191,7 +3361,7 @@ def main() -> int:
     registry_block = re.search(
         r"Minimum v1 registry:\s*```\s*(.*?)```", registry_text, re.S
     )
-    event_count = len(re.findall(r"^[a-z][a-z0-9_.-]+\.v\d+$", registry_block.group(1), re.M))
+    event_count = len(re.findall(r"^([a-z][a-z0-9_.-]+\.v\d+)(?:\s*(?:#|—).*)?$", registry_block.group(1), re.M))
     print(f"Architecture validation passed: JSON Schemas, {event_count} typed events, error codes, OpenAPI, SQLite, Gateway names, product naming, and Markdown links.")
     return 0
 

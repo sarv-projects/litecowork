@@ -80,7 +80,7 @@ export type AgentCatalogSettingsProps = {
   onProbeOpenCode: () => void;
   onCreateBinding: (profile: AgentProfile, leadEligible: boolean) => void;
   onEnableBinding: (binding: AgentBinding) => void;
-  onSetDefaultLead: (agentBindingId: string) => void;
+  onSetDefaultLead: (agentBindingId: string | null) => void;
 };
 
 type WorkerProfileForm = { bindingId: string; profileId: string | null; baseVersion: number | null; name: string; routing: string; instructions: string };
@@ -327,6 +327,7 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
     onProbeOpenCode, onCreateBinding, onEnableBinding, onSetDefaultLead,
   } = props;
   const [leadEligibleByProfile, setLeadEligibleByProfile] = useState<Record<string, boolean>>({});
+  const [clearDefaultPrompt, setClearDefaultPrompt] = useState<{ workspaceId: string; bindingId: string } | null>(null);
   const profileApi = useMemo(() => workspaceId ? desktopDelegationProfileCatalogApi(workspaceId) : null, [workspaceId]);
   const [workerProfiles, setWorkerProfiles] = useState<DelegationProfile[]>([]);
   const [workerProfilesError, setWorkerProfilesError] = useState<string | null>(null);
@@ -463,6 +464,8 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
   const canProbeOpenCode = canProbe && openCodeProbeAvailable;
   const canConfigureBinding = hasWorkspace && workspaceActive && runtimeReady && runtimeEnrolled && busyAction == null;
   const defaultBinding = workspaceBindings.find((binding) => binding.agentBindingId === selectedDefaultLeadBindingId);
+  const confirmingDefaultClear = clearDefaultPrompt?.workspaceId === workspaceId
+    && clearDefaultPrompt.bindingId === selectedDefaultLeadBindingId;
 
   return (
     <section className="agent-catalog" aria-labelledby="agent-catalog-title">
@@ -657,11 +660,24 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
           })}
         </ul>}
         <div className="agent-catalog__default-note">
-          <strong>Default lead</strong>
-          <span>{defaultBinding
-            ? `${profilesById.get(defaultBinding.agentProfileId)?.displayName ?? "Selected binding"} · ${defaultBinding.enabled && defaultBinding.leadEligible ? "eligible for new work" : "currently unavailable"}`
-            : selectedDefaultLeadBindingId ? "Saved lead selection is unavailable in the current binding list" : "No Workspace default lead selected"}</span>
-          <small>Changing the default affects future Task admission only. Active Tasks and Attempts stay pinned to their current lead.</small>
+          <div className="agent-catalog__default-copy">
+            <strong>Workspace default lead</strong>
+            <span>{defaultBinding
+              ? `${profilesById.get(defaultBinding.agentProfileId)?.displayName ?? "Selected binding"} · ${defaultBinding.enabled && defaultBinding.leadEligible ? "eligible for new work" : "currently unavailable"}`
+              : selectedDefaultLeadBindingId ? "Saved lead selection is unavailable in the current binding list" : "No Workspace default lead selected"}</span>
+            <small>Changing or clearing this default affects future Task admission only. Active Tasks and Attempts stay pinned to their current lead. A Coworker's explicit lead remains higher priority; without any configured lead, new Task creation is rejected and the composer draft is preserved.</small>
+          </div>
+          {selectedDefaultLeadBindingId && !confirmingDefaultClear && <button
+            type="button"
+            className="agent-catalog__secondary"
+            disabled={!canConfigureBinding || defaultAgentBusy}
+            onClick={() => setClearDefaultPrompt({ workspaceId: workspaceId!, bindingId: selectedDefaultLeadBindingId })}
+          >Clear Workspace default…</button>}
+          {confirmingDefaultClear && <div className="agent-catalog__clear-default-confirm" role="group" aria-label="Confirm clearing Workspace default lead">
+            <span>Clear this default for future work? Tasks without an explicit or Coworker lead will be rejected as unavailable.</span>
+            <button type="button" className="agent-catalog__secondary" disabled={defaultAgentBusy} onClick={() => setClearDefaultPrompt(null)}>Keep default</button>
+            <button type="button" className="agent-catalog__primary" disabled={!canConfigureBinding || defaultAgentBusy} onClick={() => { setClearDefaultPrompt(null); onSetDefaultLead(null); }}>{defaultAgentBusy ? "Clearing…" : "Confirm clear"}</button>
+          </div>}
         </div>
       </section>}
 

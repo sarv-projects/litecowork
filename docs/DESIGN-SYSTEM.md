@@ -194,6 +194,8 @@ semantic tokens but may not introduce hard-coded hex values in component styles.
 | Profile editor group | Routing, native options, instructions, enforced limits, budget, environment | Guidance and enforceable policy have separate headings and validation states |
 | Presentation item | Typed content, source identity, freshness, status, accessible label | Stable source ordering; safe text/download fallback; no arbitrary HTML or authority in payload |
 | Context-used disclosure | Source groups, scope, exact revision/freshness, retrieval limitation | Read-only; never claims all history/resources were read; opens authorized source only |
+| Pinned Task Resource preview | Native disclosure, exact Resource revision, escaped text preview or typed unavailable reason | Lazy read only after open; text-only and capped at 1 MiB; never substitutes the current head or grants agent access |
+| Resource revision comparison | Two explicit same-Resource revision selectors and labeled side-by-side escaped text panes | Only committed `text/plain`/Markdown revisions up to 1 MiB each; exact pins; unsupported/unavailable comparison preserves the surrounding history/editor; no HTML/SVG renderer and no changed-line claim |
 | Artifact version panel | Current version, version list, source Task/author, verification, compare/restore/Save As actions | Save As is a native owner action for exact managed versions up to 10 MiB; cancel writes nothing; restore appends a new version; stale publish preserves draft and requires explicit resolution |
 | Activity summary | Plain-language current action, observed time, expandable details | Shows actual projection/observation only; stale/offline state textual; no fake percentage/ETA |
 | Task outcome/activity panel | Saved objective/status, committed output records, short activity preview, collapsed sources | Snapshot freshness is labeled; output is not a verified outcome unless a VerificationRun says so; count reflects presentation items, not presumed Steps |
@@ -255,6 +257,11 @@ distinguish delivery acknowledgement from Task state. `ControlOwnerBadge` names 
 Human control and the current input epoch without implying ExecutionLease ownership.
 
 ## Background-work components
+
+`ArtifactLibraryActions` names Save to Library and Archive explicitly, confirms the named
+Artifact, and keeps status textual. Pending commands show response confirmation separately
+from a committed result. Conflicts require refresh/review; unconfirmed responses retain an
+unchanged retry action. Archive explains retained history and has no unarchive affordance.
 
 `RecentConversationList` retains stable Conversation identity and current Workspace scope;
 keyboard selection reopens the existing exchange. `NeedsYouBadge` exposes a textual pending
@@ -322,3 +329,39 @@ The global visual hierarchy remains outcome → workstreams → machinery. Home 
 Needs You, work being handled, upcoming work, one Idea, and recent Artifacts. Agent
 configuration and Inspector use the same component tokens at a denser layout; no new
 palette, font family, or decorative animation is introduced for the delegation feature.
+
+## Rich response composition
+
+Rich responses use the existing semantic and component tokens. The response root is a
+document flow, not one giant card: prose remains on the conversation surface and individual
+cards/tables/charts use existing card and panel components. Initial content measures are
+`--rich-readable-max: 48rem` and `--rich-wide-max: 72rem`; section gap uses `--space-6`,
+block gap `--space-4`, inline gap `--space-2`. A block declares READABLE, WIDE, or
+FULL_AVAILABLE; ordinary paragraphs remain readable width even next to a wide chart.
+
+The registered model-safe component set is RichText, Layout (Stack/Row/Grid), RichCard,
+Callout, MediaFrame/Gallery, CodePanel, DataTable, ChartFrame, DiagramFrame, Timeline,
+Checklist, DeliverableGroup, and ArtifactCollection. Host-bound Task/Attempt, UserRequest,
+Approval, ArtifactViewer, Verification, Effect, Runtime, Cost/Quota, capability activity,
+and MCP App blocks are rendered by trusted adapters from authorized projections. A
+model-safe renderer cannot impersonate those components through labels, icons, or color.
+
+| Component | Required anatomy and fallback |
+|---|---|
+| RichCard | Existing 12px card radius, semantic border/surface, title and body; no nested card wall |
+| DeliverableRow | Icon hint, title, exact version/provenance where useful, permitted actions, minimum 44px action target |
+| CitationChip | Accessible source label, keyboard-open action, exact pinned revision on source detail |
+| MediaFrame | Pinned Resource only, required alt text, optional caption; no implicit remote fetch/autoplay |
+| ChartFrame | Title, plot, legend when needed, accessible summary and textual/table fallback |
+| DiagramFrame | Diagram plus accessible node/edge or text representation and user-controlled playback |
+| CodePanel | Language/name, highlighted inert text, copy control; never executes code |
+| Checklist | Ordinary checkbox semantics, visually distinct from Task and Verification status |
+| ArtifactCollection | Count, paged/virtualized rows, show-all and ZIP only for exact existing versions |
+| MCP App frame | Provider/app provenance and sandbox framing; permission path remains host-owned |
+
+At desktop widths, ROW may lay out side-by-side at 900 CSS px and above; below that it
+stacks, and below 600 CSS px it becomes one column. These are layout defaults; usability
+and focus order must be checked at narrow windows, 200% zoom, and 400% zoom. A chart and
+diagram always have a screen-reader-accessible text equivalent. Unknown/future block kinds
+fall back to a safe explanation and semantic message; arbitrary HTML/JS/renderer packages
+never enter the Operator DOM.

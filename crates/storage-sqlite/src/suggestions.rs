@@ -6,7 +6,13 @@
 //! proposal generation remains outside this adapter.
 
 use super::*;
-use domain_responsibility::{PrincipalKind, PrincipalRef, Suggestion, SuggestionAction, SuggestionExpiryStore, SuggestionGoalRef, SuggestionKind, SuggestionLatencyClass, SuggestionOwnerAction, SuggestionOwnerActionStore, SuggestionPage, SuggestionPreference, SuggestionPreferenceStore, SuggestionResourceRef, SuggestionServiceError, SuggestionServiceRef, SuggestionStatus, SuggestionVisibility, SUGGESTION_SERVICE_PRINCIPAL_ID};
+use domain_responsibility::{
+    PrincipalKind, PrincipalRef, SUGGESTION_SERVICE_PRINCIPAL_ID, Suggestion, SuggestionAction,
+    SuggestionExpiryStore, SuggestionGoalRef, SuggestionKind, SuggestionLatencyClass,
+    SuggestionOwnerAction, SuggestionOwnerActionStore, SuggestionPage, SuggestionPreference,
+    SuggestionPreferenceStore, SuggestionResourceRef, SuggestionServiceError, SuggestionServiceRef,
+    SuggestionStatus, SuggestionVisibility,
+};
 
 pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
@@ -18,7 +24,9 @@ pub enum SuggestionReadError {
     Storage,
 }
 impl std::fmt::Display for SuggestionReadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{self:?}") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
 }
 impl std::error::Error for SuggestionReadError {}
 
@@ -35,16 +43,26 @@ pub struct SqliteSuggestionStore {
 }
 
 impl SqliteSuggestionStore {
-    pub fn new(store: SqliteWorkspaceStore) -> Self { Self { store, event_context: None } }
+    pub fn new(store: SqliteWorkspaceStore) -> Self {
+        Self {
+            store,
+            event_context: None,
+        }
+    }
 
     pub fn with_event_context(
         store: SqliteWorkspaceStore,
         event_context: SuggestionEventContext,
     ) -> Result<Self, SuggestionServiceError> {
-        if event_context.origin_runtime_id.trim().is_empty() || event_context.correlation_id.trim().is_empty() {
+        if event_context.origin_runtime_id.trim().is_empty()
+            || event_context.correlation_id.trim().is_empty()
+        {
             return Err(SuggestionServiceError::InvalidRequest);
         }
-        Ok(Self { store, event_context: Some(event_context) })
+        Ok(Self {
+            store,
+            event_context: Some(event_context),
+        })
     }
 
     pub fn list(
@@ -57,13 +75,25 @@ impl SqliteSuggestionStore {
         after: Option<(String, String)>,
         limit: usize,
     ) -> Result<SuggestionPage, SuggestionReadError> {
-        if principal_id.trim().is_empty() || workspace_id.trim().is_empty() || now.trim().is_empty()
+        if principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || now.trim().is_empty()
             || !(1..=200).contains(&limit)
-            || after.as_ref().is_some_and(|(time, id)| time.is_empty() || id.is_empty())
-        { return Err(SuggestionReadError::InvalidRequest); }
-        let (principal, workspace, now) = (principal_id.to_owned(), workspace_id.to_owned(), now.to_owned());
-        let after = after.map(|(time, id)| canonicalize_utc_timestamp(&time).map(|time| (time, id)))
-            .transpose().map_err(|_| SuggestionReadError::InvalidRequest)?;
+            || after
+                .as_ref()
+                .is_some_and(|(time, id)| time.is_empty() || id.is_empty())
+        {
+            return Err(SuggestionReadError::InvalidRequest);
+        }
+        let (principal, workspace, now) = (
+            principal_id.to_owned(),
+            workspace_id.to_owned(),
+            now.to_owned(),
+        );
+        let after = after
+            .map(|(time, id)| canonicalize_utc_timestamp(&time).map(|time| (time, id)))
+            .transpose()
+            .map_err(|_| SuggestionReadError::InvalidRequest)?;
         let status = status.map(status_name);
         let visibility = visibility_name(visibility);
         let (reply, receive) = mpsc::channel();
@@ -93,30 +123,45 @@ impl SqliteSuggestionStore {
                     let next = if more { items.last().map(|item| (item.created_at.clone(), item.suggestion_id.clone())) } else { None };
                     Ok(SuggestionPage { items, next })
                 })();
-                let _ = reply.send(result);
+                let _ = reply.send(Ok(result));
             }) },
             receive,
         ).map_err(|_| SuggestionReadError::Storage)?
     }
 
-    pub fn get(&self, principal_id: &str, workspace_id: &str, suggestion_id: &str) -> Result<Option<Suggestion>, SuggestionReadError> {
-        if principal_id.trim().is_empty() || workspace_id.trim().is_empty() || suggestion_id.trim().is_empty() {
+    pub fn get(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        suggestion_id: &str,
+    ) -> Result<Option<Suggestion>, SuggestionReadError> {
+        if principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || suggestion_id.trim().is_empty()
+        {
             return Err(SuggestionReadError::InvalidRequest);
         }
         let principal = principal_id.to_owned();
         let workspace = workspace_id.to_owned();
         let id = suggestion_id.to_owned();
         let (reply, receive) = mpsc::channel();
-        self.store.execute_command(
-            Command::SuggestionOperation { operation: Box::new(move |connection| {
-                let result = (|| {
-                    let tx = connection.transaction().map_err(|_| SuggestionReadError::Storage)?;
-                    authorize_owner(&tx, &principal, &workspace)?;
-                    load_suggestion_optional(&tx, &workspace, &id)
-                })();
-                let _ = reply.send(result);
-            }) }, receive,
-        ).map_err(|_| SuggestionReadError::Storage)?
+        self.store
+            .execute_command(
+                Command::SuggestionOperation {
+                    operation: Box::new(move |connection| {
+                        let result = (|| {
+                            let tx = connection
+                                .transaction()
+                                .map_err(|_| SuggestionReadError::Storage)?;
+                            authorize_owner(&tx, &principal, &workspace)?;
+                            load_suggestion_optional(&tx, &workspace, &id)
+                        })();
+                        let _ = reply.send(Ok(result));
+                    }),
+                },
+                receive,
+            )
+            .map_err(|_| SuggestionReadError::Storage)?
     }
 }
 
@@ -145,7 +190,7 @@ impl SuggestionPreferenceStore for SqliteSuggestionStore {
                         "SELECT kind, muted, updated_at, version FROM suggestion_preferences WHERE workspace_id = ?1",
                     ).map_err(|_| SuggestionServiceError::Storage)?;
                     let rows = statement.query_map(params![workspace], |row| Ok((
-                        row.get::<_, String>(0)?, row.get::<_, bool>(1)?, row.get::<_, String>(2)?, row.get::<_, u64>(3)?,
+                        row.get::<_, String>(0)?, row.get::<_, bool>(1)?, row.get::<_, String>(2)?, from_row_u64(row, 3)?,
                     ))).map_err(|_| SuggestionServiceError::Storage)?
                         .collect::<rusqlite::Result<Vec<_>>>().map_err(|_| SuggestionServiceError::Storage)?;
                     for (kind, muted, updated_at, version) in rows {
@@ -156,7 +201,7 @@ impl SuggestionPreferenceStore for SqliteSuggestionStore {
                     }
                     Ok(preferences)
                 })();
-                let _ = reply.send(result);
+                let _ = reply.send(Ok(result));
             }) }, receive,
         ).map_err(|_| SuggestionServiceError::Storage)?
     }
@@ -171,33 +216,58 @@ impl SuggestionPreferenceStore for SqliteSuggestionStore {
         request_id: &str,
         as_of: &str,
     ) -> Result<SuggestionPreference, SuggestionServiceError> {
-        if owner_principal_id.trim().is_empty() || workspace_id.trim().is_empty()
-            || request_id.trim().is_empty() || request_id.len() > 128
+        if owner_principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || request_id.trim().is_empty()
+            || request_id.len() > 128
             || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
-        { return Err(SuggestionServiceError::InvalidRequest); }
-        let context = self.event_context.clone().ok_or(SuggestionServiceError::InvalidRequest)?;
-        let as_of = canonicalize_utc_timestamp(as_of).map_err(|_| SuggestionServiceError::InvalidRequest)?;
+        {
+            return Err(SuggestionServiceError::InvalidRequest);
+        }
+        let context = self
+            .event_context
+            .clone()
+            .ok_or(SuggestionServiceError::InvalidRequest)?;
+        let as_of = canonicalize_utc_timestamp(as_of)
+            .map_err(|_| SuggestionServiceError::InvalidRequest)?;
         let owner = owner_principal_id.to_owned();
         let workspace = workspace_id.to_owned();
         let request_id = request_id.to_owned();
         let kind_name = kind_name(kind).to_owned();
-        let fingerprint = digest(&canonical_json(&json!({
-            "workspace_id": workspace,
-            "kind": kind_name,
-            "muted": muted,
-            "expected_version": expected_version,
-        })).map_err(|_| SuggestionServiceError::InvalidRequest)?);
+        let fingerprint = digest(
+            &canonical_json(&json!({
+                "workspace_id": workspace,
+                "kind": kind_name,
+                "muted": muted,
+                "expected_version": expected_version,
+            }))
+            .map_err(|_| SuggestionServiceError::InvalidRequest)?,
+        );
         let blobs = Arc::clone(&self.store.inner.blobs);
         let (reply, receive) = mpsc::channel();
-        self.store.execute_command(
-            Command::SuggestionOperation { operation: Box::new(move |connection| {
-                let result = execute_preference_change(
-                    connection, blobs.as_ref(), &owner, &workspace, kind, muted,
-                    expected_version, &request_id, &fingerprint, &as_of, &context,
-                );
-                let _ = reply.send(result);
-            }) }, receive,
-        ).map_err(|_| SuggestionServiceError::Storage)?
+        self.store
+            .execute_command(
+                Command::SuggestionOperation {
+                    operation: Box::new(move |connection| {
+                        let result = execute_preference_change(
+                            connection,
+                            blobs.as_ref(),
+                            &owner,
+                            &workspace,
+                            kind,
+                            muted,
+                            expected_version,
+                            &request_id,
+                            &fingerprint,
+                            &as_of,
+                            &context,
+                        );
+                        let _ = reply.send(Ok(result));
+                    }),
+                },
+                receive,
+            )
+            .map_err(|_| SuggestionServiceError::Storage)?
     }
 }
 
@@ -205,36 +275,52 @@ impl storage_core::SuggestionTaskAcceptanceStore for SqliteWorkspaceStore {
     fn create_task_from_suggestion(
         &self,
         mut commit: storage_core::SuggestedTaskCreateCommit,
-    ) -> Result<storage_core::CommittedTask, StoreError> {
-        if commit.suggestion_id.trim().is_empty() || commit.expected_suggestion_version == 0
+    ) -> Result<storage_core::SuggestionTaskAcceptanceReceipt, StoreError> {
+        if commit.suggestion_id.trim().is_empty()
+            || commit.expected_suggestion_version == 0
             || commit.task.request.principal_id.trim().is_empty()
             || commit.task.request.request_id.trim().is_empty()
-        { return Err(StoreError::Invalid("Suggestion acceptance identity is invalid".to_owned())); }
+        {
+            return Err(StoreError::Invalid(
+                "Suggestion acceptance identity is invalid".to_owned(),
+            ));
+        }
 
         super::canonicalize_task_timestamps(&mut commit.task)?;
         commit.accepted_at = super::canonicalize_utc_timestamp(&commit.accepted_at)?;
-        commit.suggestion_event.recorded_at = super::canonicalize_utc_timestamp(&commit.suggestion_event.recorded_at)?;
+        commit.suggestion_event.recorded_at =
+            super::canonicalize_utc_timestamp(&commit.suggestion_event.recorded_at)?;
         super::validate_task_create_commit(&commit.task)?;
         validate_suggestion_acceptance_commit(&commit)?;
 
         let workspace = commit.task.task.workspace_id.clone();
         let owner = commit.task.request.principal_id.clone();
         let suggestion_id = commit.suggestion_id.clone();
-        let current = SqliteSuggestionStore::new(self.clone()).get(&owner, &workspace, &suggestion_id)
+        let current = SqliteSuggestionStore::new(self.clone())
+            .get(&owner, &workspace, &suggestion_id)
             .map_err(|error| match error {
-                SuggestionReadError::Unauthorized => StoreError::Invalid("authenticated Principal does not own this Workspace".to_owned()),
-                SuggestionReadError::InvalidRequest => StoreError::Invalid("Suggestion acceptance is invalid".to_owned()),
+                SuggestionReadError::Unauthorized => StoreError::Invalid(
+                    "authenticated Principal does not own this Workspace".to_owned(),
+                ),
+                SuggestionReadError::InvalidRequest => {
+                    StoreError::Invalid("Suggestion acceptance is invalid".to_owned())
+                }
                 _ => StoreError::NotFound,
-            })?.ok_or(StoreError::NotFound)?;
-        // A retry may arrive after the first transaction committed but before its
-        // response reached the desktop. Keep the persisted accepted value around so
-        // the transaction can validate the Task receipt and return the original Task.
-        // Any fresh request against an already accepted Suggestion will fail inside
-        // the same transaction and roll back its newly attempted Task insert.
+            })?
+            .ok_or(StoreError::NotFound)?;
+        // A retry may race the first commit after reading a PROPOSED Suggestion.
+        // Keep the accepted snapshot so the transaction can validate the stored Task
+        // request receipt and return its original READY link. A different request key
+        // conflicts before another Task is admitted.
         let accepted = match current.status {
             SuggestionStatus::Proposed => prepare_task_acceptance(&current, &commit)?,
             SuggestionStatus::Accepted => current.clone(),
-            _ => return Err(StoreError::Conflict { expected: Some(commit.expected_suggestion_version), actual: Some(current.version) }),
+            _ => {
+                return Err(StoreError::Conflict {
+                    expected: Some(commit.expected_suggestion_version),
+                    actual: Some(current.version),
+                });
+            }
         };
 
         let task_snapshot = storage_core::TaskAggregateSnapshot {
@@ -244,25 +330,60 @@ impl storage_core::SuggestionTaskAcceptanceStore for SqliteWorkspaceStore {
             current_steps: Vec::new(),
         };
         let task_state_bytes = super::canonical_json(&task_snapshot)?;
-        let task_blob = self.inner.blobs.put(&workspace, BlobPurpose::AggregateState, &task_state_bytes, super::TASK_STATE_MEDIA_TYPE)?;
+        let task_blob = self.inner.blobs.put(
+            &workspace,
+            BlobPurpose::AggregateState,
+            &task_state_bytes,
+            super::TASK_STATE_MEDIA_TYPE,
+        )?;
         if task_blob.size_bytes != task_state_bytes.len() as u64
-            || self.inner.blobs.get(&workspace, BlobPurpose::AggregateState, &task_blob)? != task_state_bytes
-        { return Err(StoreError::Integrity("Task aggregate state failed blob verification".to_owned())); }
-        let task_state_ref = AggregateStateRef { blob: task_blob, entity_revision: commit.task.task.version, record_schema_version: 1 };
+            || self
+                .inner
+                .blobs
+                .get(&workspace, BlobPurpose::AggregateState, &task_blob)?
+                != task_state_bytes
+        {
+            return Err(StoreError::Integrity(
+                "Task aggregate state failed blob verification".to_owned(),
+            ));
+        }
+        let task_state_ref = AggregateStateRef {
+            blob: task_blob,
+            entity_revision: commit.task.task.version,
+            record_schema_version: 1,
+        };
 
         let suggestion_state_bytes = super::canonical_json(&accepted)?;
-        let suggestion_blob = self.inner.blobs.put(&workspace, BlobPurpose::AggregateState, &suggestion_state_bytes, "application/vnd.litecow.suggestion+json")?;
+        let suggestion_blob = self.inner.blobs.put(
+            &workspace,
+            BlobPurpose::AggregateState,
+            &suggestion_state_bytes,
+            "application/vnd.litecow.suggestion+json",
+        )?;
         if suggestion_blob.digest != super::digest(&suggestion_state_bytes)
             || suggestion_blob.size_bytes != suggestion_state_bytes.len() as u64
-            || self.inner.blobs.get(&workspace, BlobPurpose::AggregateState, &suggestion_blob)? != suggestion_state_bytes
-        { return Err(StoreError::Integrity("Suggestion aggregate state failed blob verification".to_owned())); }
+            || self
+                .inner
+                .blobs
+                .get(&workspace, BlobPurpose::AggregateState, &suggestion_blob)?
+                != suggestion_state_bytes
+        {
+            return Err(StoreError::Integrity(
+                "Suggestion aggregate state failed blob verification".to_owned(),
+            ));
+        }
 
         let event = commit.suggestion_event.clone();
         let expected_version = commit.expected_suggestion_version;
         let accepted_at = commit.accepted_at.clone();
-        let context = SuggestionEventContext { origin_runtime_id: event.origin_runtime_id.clone(), correlation_id: event.correlation_id.clone() };
+        let context = SuggestionEventContext {
+            origin_runtime_id: event.origin_runtime_id.clone(),
+            correlation_id: event.correlation_id.clone(),
+        };
         let state_blob = suggestion_blob;
         let current_before = current;
+        let accepted_for_receipt = accepted.clone();
+        let requested_task_id = commit.task.task.task_id.clone();
         let task_commit = commit.task;
         let idempotency_context = serde_json::json!({
             "operation": "suggestion.accept_task.v1",
@@ -274,20 +395,30 @@ impl storage_core::SuggestionTaskAcceptanceStore for SqliteWorkspaceStore {
             Command::SuggestionOperation { operation: Box::new(move |connection| {
                 let result = (|| {
                     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(map_database_error)?;
-                    super::authorize_active_suggestion_owner(&tx, &owner, &workspace).map_err(map_suggestion_store_error)?;
+                    authorize_active_suggestion_owner(&tx, &owner, &workspace).map_err(map_suggestion_store_error)?;
                     let current = load_suggestion_optional(&tx, &workspace, &suggestion_id)
                         .map_err(|error| map_suggestion_store_error(map_read_error(error)))?.ok_or(StoreError::NotFound)?;
-                    let created = super::create_task_in_transaction(&tx, task_commit, task_state_ref, Some(idempotency_context))?;
 
                     // The idempotency receipt is sufficient only because Task and Suggestion
                     // transition share this transaction. A replay must prove the linked state.
                     if current.status == SuggestionStatus::Accepted {
-                        if current.result_task_id.as_deref() != Some(created.view.task.task_id.as_str())
+                        if current.result_task_id.as_deref() != Some(requested_task_id.as_str())
                             || Some(current.version) != expected_version.checked_add(1)
-                        { return Err(StoreError::Integrity("Suggestion acceptance receipt does not match its durable Task".to_owned())); }
+                        { return Err(StoreError::Conflict { expected: Some(expected_version), actual: Some(current.version) }); }
+                        let created = super::create_task_in_transaction(&tx, task_commit, task_state_ref, Some(idempotency_context), None)?;
+                        if current.result_task_id.as_deref() != Some(created.view.task.task_id.as_str()) {
+                            return Err(StoreError::Integrity("Suggestion acceptance receipt does not match its durable Task".to_owned()));
+                        }
+                        let receipt = build_suggestion_task_acceptance_receipt(
+                            &workspace,
+                            &current,
+                            &created,
+                            storage_core::SuggestionAcceptanceDisposition::Replayed,
+                        )?;
                         tx.commit().map_err(map_database_error)?;
-                        return Ok(created);
+                        return Ok(receipt);
                     }
+                    let created = super::create_task_in_transaction(&tx, task_commit, task_state_ref, Some(idempotency_context), None)?;
                     if current != current_before || current.status != SuggestionStatus::Proposed
                         || current.version != expected_version || current.expires_at <= accepted_at
                     {
@@ -296,23 +427,179 @@ impl storage_core::SuggestionTaskAcceptanceStore for SqliteWorkspaceStore {
                     let resolved_by = json!({ "principal_id": owner, "kind": "USER" });
                     let changed = tx.execute(
                         "UPDATE suggestions SET status = 'ACCEPTED', snoozed_until = NULL, resolved_at = ?1, resolved_by_json = ?2, resolution_reason = 'ACCEPTED_BY_OWNER', result_task_id = ?3, version = ?4 WHERE workspace_id = ?5 AND suggestion_id = ?6 AND status = 'PROPOSED' AND version = ?7 AND expires_at > ?1",
-                        params![accepted_at, encode(&resolved_by).map_err(map_suggestion_store_error)?, created.view.task.task_id, accepted.version, workspace, suggestion_id, expected_version],
+                        params![accepted_at, encode(&resolved_by).map_err(map_suggestion_store_error)?, created.view.task.task_id, to_sql_i64(accepted.version, "Suggestion version")?, workspace, suggestion_id, to_sql_i64(expected_version, "expected Suggestion version")?],
                     ).map_err(map_database_error)?;
                     if changed != 1 { return Err(StoreError::Conflict { expected: Some(expected_version), actual: Some(current.version) }); }
                     let persisted = load_suggestion(&tx, &workspace, &suggestion_id)
                         .map_err(|error| map_suggestion_store_error(map_read_error(error)))?;
-                    if persisted != accepted { return Err(StoreError::Integrity("accepted Suggestion does not match its snapshot".to_owned())); }
+                    if persisted != accepted_for_receipt { return Err(StoreError::Integrity("accepted Suggestion does not match its snapshot".to_owned())); }
                     write_suggestion_event(
                         &tx, &workspace, &context, &accepted_at, &event.event_id, &suggestion_id,
                         accepted.version, "suggestion.resolved.v1", event.payload.clone(), state_blob,
                     ).map_err(|_| StoreError::Integrity("Suggestion event could not be committed".to_owned()))?;
+                    let receipt = build_suggestion_task_acceptance_receipt(
+                        &workspace,
+                        &persisted,
+                        &created,
+                        storage_core::SuggestionAcceptanceDisposition::Created,
+                    )?;
                     tx.commit().map_err(map_database_error)?;
-                    Ok(created)
+                    Ok(receipt)
                 })();
-                let _ = reply.send(result);
+                let _ = reply.send(Ok(result));
             }) }, receive,
         )?
     }
+
+    fn get_suggestion_task_acceptance_receipt(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        suggestion_id: &str,
+        expected_suggestion_version: u64,
+        request_id: &str,
+        expected_task_id: &str,
+    ) -> Result<Option<storage_core::SuggestionTaskAcceptanceReceipt>, StoreError> {
+        if principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || suggestion_id.trim().is_empty()
+            || expected_suggestion_version == 0
+            || request_id.trim().is_empty()
+            || request_id.len() > 128
+            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || expected_task_id.trim().is_empty()
+            || expected_task_id.len() > 256
+            || expected_task_id.chars().any(char::is_control)
+        {
+            return Err(StoreError::Invalid(
+                "Suggestion acceptance replay identity is invalid".to_owned(),
+            ));
+        }
+
+        let (principal, workspace, suggestion_id, request_id, expected_task_id) = (
+            principal_id.to_owned(),
+            workspace_id.to_owned(),
+            suggestion_id.to_owned(),
+            request_id.to_owned(),
+            expected_task_id.to_owned(),
+        );
+        let expected_request_digest = super::digest(&super::canonical_json(&json!({
+            "request": {},
+            "context": {
+                "operation": "suggestion.accept_task.v1",
+                "suggestion_id": suggestion_id.clone(),
+                "expected_suggestion_version": expected_suggestion_version,
+            },
+        }))?);
+        let (reply, receive) = mpsc::channel();
+        self.execute_command(
+            Command::SuggestionOperation { operation: Box::new(move |connection| {
+                let result = (|| {
+                    let tx = connection.transaction().map_err(map_database_error)?;
+                    authorize_active_suggestion_owner(&tx, &principal, &workspace)
+                        .map_err(map_suggestion_store_error)?;
+                    let Some(suggestion) = load_suggestion_optional(&tx, &workspace, &suggestion_id)
+                        .map_err(|error| map_suggestion_store_error(map_read_error(error)))? else {
+                        return Ok(None);
+                    };
+                    let expected_next = expected_suggestion_version.checked_add(1);
+                    if suggestion.status != SuggestionStatus::Accepted
+                        || Some(suggestion.version) != expected_next
+                        || suggestion.result_task_id.as_deref() != Some(expected_task_id.as_str())
+                    { return Ok(None); }
+
+                    // The original Task response is stored with its request id and digest
+                    // in the same transaction as Task creation. Read that immutable receipt
+                    // rather than the Task's current projection, which may have advanced.
+                    let prior: Option<(String, Option<String>, Option<String>)> = tx.query_row(
+                        "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+                        params![principal, request_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    ).optional().map_err(map_database_error)?;
+                    let Some((request_digest, response_json, response_digest)) = prior else {
+                        return Ok(None);
+                    };
+                    if request_digest != expected_request_digest { return Ok(None); }
+                    let response_json = response_json.ok_or_else(|| StoreError::Integrity(
+                        "Task idempotency receipt is incomplete".to_owned(),
+                    ))?;
+                    if response_digest.as_deref() != Some(super::digest(response_json.as_bytes()).as_str()) {
+                        return Err(StoreError::Integrity("Task idempotency response digest does not match".to_owned()));
+                    }
+                    let committed: storage_core::CommittedTask = serde_json::from_str(&response_json)
+                        .map_err(|error| StoreError::Integrity(format!("Task idempotency receipt is invalid: {error}")))?;
+                    if committed.view.task.task_id != expected_task_id
+                        || committed.view.task.workspace_id != workspace
+                        || committed.view.task.status != "READY"
+                        || committed.event.event_type != "task.created.v1"
+                        || committed.event.workspace_id != workspace
+                        || committed.event.entity_id != expected_task_id
+                    { return Err(StoreError::Integrity("Task idempotency receipt does not match the accepted Suggestion".to_owned())); }
+                    let receipt = build_suggestion_task_acceptance_receipt_from_view(
+                        &workspace,
+                        &suggestion,
+                        &committed.view,
+                        storage_core::SuggestionAcceptanceDisposition::Replayed,
+                    )?;
+                    tx.commit().map_err(map_database_error)?;
+                    Ok(Some(receipt))
+                })();
+                let _ = reply.send(Ok(result));
+            }) }, receive,
+        )?
+    }
+}
+
+fn build_suggestion_task_acceptance_receipt(
+    workspace_id: &str,
+    suggestion: &Suggestion,
+    task: &storage_core::CommittedTask,
+    disposition: storage_core::SuggestionAcceptanceDisposition,
+) -> Result<storage_core::SuggestionTaskAcceptanceReceipt, StoreError> {
+    build_suggestion_task_acceptance_receipt_from_view(
+        workspace_id,
+        suggestion,
+        &task.view,
+        disposition,
+    )
+}
+
+fn build_suggestion_task_acceptance_receipt_from_view(
+    workspace_id: &str,
+    suggestion: &Suggestion,
+    task: &storage_core::TaskView,
+    disposition: storage_core::SuggestionAcceptanceDisposition,
+) -> Result<storage_core::SuggestionTaskAcceptanceReceipt, StoreError> {
+    if suggestion.workspace_id != workspace_id
+        || suggestion.status != SuggestionStatus::Accepted
+        || suggestion.result_task_id.as_deref() != Some(task.task.task_id.as_str())
+        || task.task.workspace_id != workspace_id
+        || task.task.status != "READY"
+        || suggestion.version == 0
+        || task.task.version == 0
+    {
+        return Err(StoreError::Integrity(
+            "Suggestion acceptance receipt links do not match".to_owned(),
+        ));
+    }
+    Ok(storage_core::SuggestionTaskAcceptanceReceipt {
+        workspace_id: workspace_id.to_owned(),
+        disposition,
+        suggestion: storage_core::SuggestionAcceptanceLink {
+            suggestion_id: suggestion.suggestion_id.clone(),
+            status: suggestion.status,
+            result_task_id: suggestion.result_task_id.clone().ok_or_else(|| {
+                StoreError::Integrity("accepted Suggestion has no result Task".to_owned())
+            })?,
+            version: suggestion.version,
+        },
+        task: storage_core::SuggestedTaskAcceptanceTaskLink {
+            task_id: task.task.task_id.clone(),
+            workspace_id: task.task.workspace_id.clone(),
+            status: storage_core::SuggestedTaskAcceptanceStatus::Ready,
+            version: task.task.version,
+        },
+    })
 }
 
 struct PreparedPreferenceChange {
@@ -337,23 +624,41 @@ fn execute_preference_change(
     context: &SuggestionEventContext,
 ) -> Result<SuggestionPreference, SuggestionServiceError> {
     let prepared = {
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| SuggestionServiceError::Storage)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| SuggestionServiceError::Storage)?;
         authorize_active_suggestion_owner(&tx, owner, workspace)?;
-        if let Some(prior) = preference_receipt(&tx, owner, request_id, fingerprint, workspace, kind)? {
+        if let Some(prior) =
+            preference_receipt(&tx, owner, request_id, fingerprint, workspace, kind)?
+        {
             return Ok(prior);
         }
         let current = load_preference(&tx, workspace, kind)?;
         let current_version = current.as_ref().map(|value| value.version).unwrap_or(0);
-        if current_version != expected_version { return Err(SuggestionServiceError::VersionConflict); }
-        let next_version = expected_version.checked_add(1).ok_or(SuggestionServiceError::Storage)?;
+        if current_version != expected_version {
+            return Err(SuggestionServiceError::VersionConflict);
+        }
+        let next_version = expected_version
+            .checked_add(1)
+            .ok_or(SuggestionServiceError::Storage)?;
         let preference = SuggestionPreference {
-            workspace_id: workspace.to_owned(), kind, muted, updated_at: Some(as_of.to_owned()), version: next_version,
+            workspace_id: workspace.to_owned(),
+            kind,
+            muted,
+            updated_at: Some(as_of.to_owned()),
+            version: next_version,
         };
         let prior_muted = current.as_ref().is_some_and(|value| value.muted);
         let prior_suggestions = load_proposed_kind(&tx, workspace, kind, as_of)?;
         let resolved_suggestions = if muted {
-            prior_suggestions.iter().cloned().map(|item| prepare_muted_suggestion(item, owner, as_of)).collect::<Result<Vec<_>, _>>()?
-        } else { Vec::new() };
+            prior_suggestions
+                .iter()
+                .cloned()
+                .map(|item| prepare_muted_suggestion(item, owner, as_of))
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
         PreparedPreferenceChange {
             preference,
             prior_preference_version: current_version,
@@ -363,31 +668,59 @@ fn execute_preference_change(
         }
     };
 
-    let preference_bytes = canonical_json(&prepared.preference).map_err(|_| SuggestionServiceError::Storage)?;
-    let preference_blob = blobs.put(workspace, BlobPurpose::AggregateState, &preference_bytes, "application/vnd.litecow.suggestion-preference+json")
+    let preference_bytes =
+        canonical_json(&prepared.preference).map_err(|_| SuggestionServiceError::Storage)?;
+    let preference_blob = blobs
+        .put(
+            workspace,
+            BlobPurpose::AggregateState,
+            &preference_bytes,
+            "application/vnd.litecow.suggestion-preference+json",
+        )
         .map_err(|_| SuggestionServiceError::Storage)?;
-    if preference_blob.digest != digest(&preference_bytes) || preference_blob.size_bytes != preference_bytes.len() as u64
-        || blobs.get(workspace, BlobPurpose::AggregateState, &preference_blob).map_err(|_| SuggestionServiceError::Storage)? != preference_bytes
-    { return Err(SuggestionServiceError::Storage); }
+    if preference_blob.digest != digest(&preference_bytes)
+        || preference_blob.size_bytes != preference_bytes.len() as u64
+        || blobs
+            .get(workspace, BlobPurpose::AggregateState, &preference_blob)
+            .map_err(|_| SuggestionServiceError::Storage)?
+            != preference_bytes
+    {
+        return Err(SuggestionServiceError::Storage);
+    }
 
     let mut suggestion_blobs = Vec::with_capacity(prepared.resolved_suggestions.len());
     for suggestion in &prepared.resolved_suggestions {
         let bytes = canonical_json(suggestion).map_err(|_| SuggestionServiceError::Storage)?;
-        let blob = blobs.put(workspace, BlobPurpose::AggregateState, &bytes, "application/vnd.litecow.suggestion+json")
+        let blob = blobs
+            .put(
+                workspace,
+                BlobPurpose::AggregateState,
+                &bytes,
+                "application/vnd.litecow.suggestion+json",
+            )
             .map_err(|_| SuggestionServiceError::Storage)?;
-        if blob.digest != digest(&bytes) || blob.size_bytes != bytes.len() as u64
-            || blobs.get(workspace, BlobPurpose::AggregateState, &blob).map_err(|_| SuggestionServiceError::Storage)? != bytes
-        { return Err(SuggestionServiceError::Storage); }
+        if blob.digest != digest(&bytes)
+            || blob.size_bytes != bytes.len() as u64
+            || blobs
+                .get(workspace, BlobPurpose::AggregateState, &blob)
+                .map_err(|_| SuggestionServiceError::Storage)?
+                != bytes
+        {
+            return Err(SuggestionServiceError::Storage);
+        }
         suggestion_blobs.push(blob);
     }
 
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| SuggestionServiceError::Storage)?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| SuggestionServiceError::Storage)?;
     authorize_active_suggestion_owner(&tx, owner, workspace)?;
     if let Some(prior) = preference_receipt(&tx, owner, request_id, fingerprint, workspace, kind)? {
         return Ok(prior);
     }
     let current = load_preference(&tx, workspace, kind)?;
-    if current.as_ref().map(|value| value.version).unwrap_or(0) != prepared.prior_preference_version {
+    if current.as_ref().map(|value| value.version).unwrap_or(0) != prepared.prior_preference_version
+    {
         return Err(SuggestionServiceError::VersionConflict);
     }
     let current_suggestions = load_proposed_kind(&tx, workspace, kind, as_of)?;
@@ -399,29 +732,50 @@ fn execute_preference_change(
         Some(_) => {
             let changed = tx.execute(
                 "UPDATE suggestion_preferences SET muted = ?1, updated_by_json = ?2, updated_at = ?3, version = ?4 WHERE workspace_id = ?5 AND kind = ?6 AND version = ?7",
-                params![muted, encode(&PrincipalRef { principal_id: owner.to_owned(), kind: PrincipalKind::User })?, as_of, prepared.preference.version, workspace, kind_name(kind), expected_version],
+                params![muted, encode(&PrincipalRef { principal_id: owner.to_owned(), kind: PrincipalKind::User })?, as_of, sql_suggestion_version(prepared.preference.version)?, workspace, kind_name(kind), sql_suggestion_version(expected_version)?],
             ).map_err(|_| SuggestionServiceError::Storage)?;
-            if changed != 1 { return Err(SuggestionServiceError::VersionConflict); }
+            if changed != 1 {
+                return Err(SuggestionServiceError::VersionConflict);
+            }
         }
         None => {
-            if expected_version != 0 { return Err(SuggestionServiceError::VersionConflict); }
+            if expected_version != 0 {
+                return Err(SuggestionServiceError::VersionConflict);
+            }
             tx.execute(
                 "INSERT INTO suggestion_preferences(workspace_id, kind, muted, updated_by_json, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![workspace, kind_name(kind), muted, encode(&PrincipalRef { principal_id: owner.to_owned(), kind: PrincipalKind::User })?, as_of, prepared.preference.version],
+                params![workspace, kind_name(kind), muted, encode(&PrincipalRef { principal_id: owner.to_owned(), kind: PrincipalKind::User })?, as_of, sql_suggestion_version(prepared.preference.version)?],
             ).map_err(|_| SuggestionServiceError::VersionConflict)?;
         }
     }
 
-    for ((suggestion, expected), blob) in prepared.resolved_suggestions.iter().zip(&prepared.prior_suggestions).zip(&suggestion_blobs) {
-        let resolved_by = suggestion.resolved_by.as_ref().ok_or(SuggestionServiceError::Storage)?;
+    for ((suggestion, expected), blob) in prepared
+        .resolved_suggestions
+        .iter()
+        .zip(&prepared.prior_suggestions)
+        .zip(&suggestion_blobs)
+    {
+        let resolved_by = suggestion
+            .resolved_by
+            .as_ref()
+            .ok_or(SuggestionServiceError::Storage)?;
         let changed = tx.execute(
             "UPDATE suggestions SET status = 'DISMISSED', snoozed_until = NULL, resolved_at = ?1, resolved_by_json = ?2, resolution_reason = 'MUTED_KIND', version = ?3 WHERE workspace_id = ?4 AND suggestion_id = ?5 AND status = 'PROPOSED' AND version = ?6 AND expires_at > ?1 AND kind = ?7",
-            params![as_of, encode(resolved_by)?, suggestion.version, workspace, suggestion.suggestion_id, expected.version, kind_name(kind)],
+            params![as_of, encode(resolved_by)?, sql_suggestion_version(suggestion.version)?, workspace, suggestion.suggestion_id, sql_suggestion_version(expected.version)?, kind_name(kind)],
         ).map_err(|_| SuggestionServiceError::Storage)?;
-        if changed != 1 { return Err(SuggestionServiceError::VersionConflict); }
-        let persisted = load_suggestion(&tx, workspace, &suggestion.suggestion_id).map_err(map_read_error)?;
-        if persisted != *suggestion { return Err(SuggestionServiceError::Storage); }
-        let event_id = deterministic_preference_event_id(owner, request_id, &format!("suggestion:{}", suggestion.suggestion_id));
+        if changed != 1 {
+            return Err(SuggestionServiceError::VersionConflict);
+        }
+        let persisted =
+            load_suggestion(&tx, workspace, &suggestion.suggestion_id).map_err(map_read_error)?;
+        if persisted != *suggestion {
+            return Err(SuggestionServiceError::Storage);
+        }
+        let event_id = deterministic_preference_event_id(
+            owner,
+            request_id,
+            &format!("suggestion:{}", suggestion.suggestion_id),
+        );
         let payload = json!({
             "suggestion_id": suggestion.suggestion_id,
             "from": "PROPOSED",
@@ -430,11 +784,25 @@ fn execute_preference_change(
             "resolution_reason": "MUTED_KIND",
             "aggregate_version": suggestion.version,
         });
-        write_suggestion_event(&tx, workspace, context, as_of, &event_id, &suggestion.suggestion_id, suggestion.version,
-            "suggestion.resolved.v1", payload, blob.clone())?;
+        write_suggestion_event(
+            &tx,
+            workspace,
+            context,
+            as_of,
+            &event_id,
+            &suggestion.suggestion_id,
+            suggestion.version,
+            "suggestion.resolved.v1",
+            payload,
+            blob.clone(),
+        )?;
     }
 
-    let preference_event_id = deterministic_preference_event_id(owner, request_id, &format!("preference:{}", kind_name(kind)));
+    let preference_event_id = deterministic_preference_event_id(
+        owner,
+        request_id,
+        &format!("preference:{}", kind_name(kind)),
+    );
     let preference_entity_id = preference_entity_id(kind);
     let preference_payload = json!({
         "workspace_id": workspace,
@@ -444,8 +812,19 @@ fn execute_preference_change(
         "changed_by": PrincipalRef { principal_id: owner.to_owned(), kind: PrincipalKind::User },
         "aggregate_version": prepared.preference.version,
     });
-    write_domain_event(&tx, workspace, context, as_of, &preference_event_id, "SuggestionPreference", &preference_entity_id,
-        prepared.preference.version, "suggestion.preference.changed.v1", preference_payload, preference_blob)?;
+    write_domain_event(
+        &tx,
+        workspace,
+        context,
+        as_of,
+        &preference_event_id,
+        "SuggestionPreference",
+        &preference_entity_id,
+        prepared.preference.version,
+        "suggestion.preference.changed.v1",
+        preference_payload,
+        preference_blob,
+    )?;
 
     let response = encode(&prepared.preference)?;
     tx.execute(
@@ -456,55 +835,105 @@ fn execute_preference_change(
     Ok(prepared.preference)
 }
 
-fn prepare_muted_suggestion(mut suggestion: Suggestion, owner: &str, as_of: &str) -> Result<Suggestion, SuggestionServiceError> {
+fn prepare_muted_suggestion(
+    mut suggestion: Suggestion,
+    owner: &str,
+    as_of: &str,
+) -> Result<Suggestion, SuggestionServiceError> {
     suggestion.status = SuggestionStatus::Dismissed;
     suggestion.snoozed_until = None;
     suggestion.resolved_at = Some(as_of.to_owned());
-    suggestion.resolved_by = Some(PrincipalRef { principal_id: owner.to_owned(), kind: PrincipalKind::User });
+    suggestion.resolved_by = Some(PrincipalRef {
+        principal_id: owner.to_owned(),
+        kind: PrincipalKind::User,
+    });
     suggestion.resolution_reason = Some("MUTED_KIND".to_owned());
     suggestion.result_task_id = None;
-    suggestion.version = suggestion.version.checked_add(1).ok_or(SuggestionServiceError::Storage)?;
+    suggestion.version = suggestion
+        .version
+        .checked_add(1)
+        .ok_or(SuggestionServiceError::Storage)?;
     Ok(suggestion)
 }
 
-fn load_proposed_kind(tx: &Transaction<'_>, workspace: &str, kind: SuggestionKind, as_of: &str) -> Result<Vec<Suggestion>, SuggestionServiceError> {
+fn load_proposed_kind(
+    tx: &Transaction<'_>,
+    workspace: &str,
+    kind: SuggestionKind,
+    as_of: &str,
+) -> Result<Vec<Suggestion>, SuggestionServiceError> {
     let mut statement = tx.prepare("SELECT suggestion_id FROM suggestions WHERE workspace_id = ?1 AND kind = ?2 AND status = 'PROPOSED' AND expires_at > ?3 ORDER BY created_at, suggestion_id")
         .map_err(|_| SuggestionServiceError::Storage)?;
-    let ids = statement.query_map(params![workspace, kind_name(kind), as_of], |row| row.get::<_, String>(0))
+    let ids = statement
+        .query_map(params![workspace, kind_name(kind), as_of], |row| {
+            row.get::<_, String>(0)
+        })
         .map_err(|_| SuggestionServiceError::Storage)?
-        .collect::<rusqlite::Result<Vec<_>>>().map_err(|_| SuggestionServiceError::Storage)?;
-    ids.into_iter().map(|id| load_suggestion(tx, workspace, &id).map_err(map_read_error)).collect()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|_| SuggestionServiceError::Storage)?;
+    ids.into_iter()
+        .map(|id| load_suggestion(tx, workspace, &id).map_err(map_read_error))
+        .collect()
 }
 
-fn load_preference(connection: &Connection, workspace: &str, kind: SuggestionKind) -> Result<Option<SuggestionPreference>, SuggestionServiceError> {
+fn load_preference(
+    connection: &Connection,
+    workspace: &str,
+    kind: SuggestionKind,
+) -> Result<Option<SuggestionPreference>, SuggestionServiceError> {
     let row: Option<(bool, String, u64)> = connection.query_row(
         "SELECT muted, updated_at, version FROM suggestion_preferences WHERE workspace_id = ?1 AND kind = ?2",
-        params![workspace, kind_name(kind)], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        params![workspace, kind_name(kind)], |row| Ok((row.get(0)?, row.get(1)?, from_row_u64(row, 2)?)),
     ).optional().map_err(|_| SuggestionServiceError::Storage)?;
-    Ok(row.map(|(muted, updated_at, version)| SuggestionPreference { workspace_id: workspace.to_owned(), kind, muted, updated_at: Some(updated_at), version }))
+    Ok(
+        row.map(|(muted, updated_at, version)| SuggestionPreference {
+            workspace_id: workspace.to_owned(),
+            kind,
+            muted,
+            updated_at: Some(updated_at),
+            version,
+        }),
+    )
 }
 
 fn preference_receipt(
-    tx: &Transaction<'_>, owner: &str, request_id: &str, fingerprint: &str,
-    workspace: &str, kind: SuggestionKind,
+    tx: &Transaction<'_>,
+    owner: &str,
+    request_id: &str,
+    fingerprint: &str,
+    workspace: &str,
+    kind: SuggestionKind,
 ) -> Result<Option<SuggestionPreference>, SuggestionServiceError> {
     let prior: Option<(String, Option<String>, Option<String>)> = tx.query_row(
         "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
         params![owner, request_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional().map_err(|_| SuggestionServiceError::Storage)?;
-    let Some((actual, response, response_digest)) = prior else { return Ok(None); };
-    if actual != fingerprint { return Err(SuggestionServiceError::IdempotencyConflict); }
+    let Some((actual, response, response_digest)) = prior else {
+        return Ok(None);
+    };
+    if actual != fingerprint {
+        return Err(SuggestionServiceError::IdempotencyConflict);
+    }
     let response = response.ok_or(SuggestionServiceError::Storage)?;
     if response_digest.as_deref() != Some(digest(response.as_bytes()).as_str()) {
         return Err(SuggestionServiceError::Storage);
     }
-    let preference: SuggestionPreference = serde_json::from_str(&response).map_err(|_| SuggestionServiceError::Storage)?;
-    if preference.workspace_id != workspace || preference.kind != kind { return Err(SuggestionServiceError::Storage); }
+    let preference: SuggestionPreference =
+        serde_json::from_str(&response).map_err(|_| SuggestionServiceError::Storage)?;
+    if preference.workspace_id != workspace || preference.kind != kind {
+        return Err(SuggestionServiceError::Storage);
+    }
     Ok(Some(preference))
 }
 
 fn default_preference(workspace: &str, kind: SuggestionKind) -> SuggestionPreference {
-    SuggestionPreference { workspace_id: workspace.to_owned(), kind, muted: false, updated_at: None, version: 0 }
+    SuggestionPreference {
+        workspace_id: workspace.to_owned(),
+        kind,
+        muted: false,
+        updated_at: None,
+        version: 0,
+    }
 }
 
 fn preference_entity_id(kind: SuggestionKind) -> String {
@@ -512,7 +941,12 @@ fn preference_entity_id(kind: SuggestionKind) -> String {
 }
 
 fn deterministic_preference_event_id(owner: &str, request_id: &str, key: &str) -> String {
-    format!("ev_{}", &digest(format!("LiteCowork/SuggestionPreference/v1\0{owner}\0{request_id}\0{key}").as_bytes())[7..])
+    format!(
+        "ev_{}",
+        &digest(
+            format!("LiteCowork/SuggestionPreference/v1\0{owner}\0{request_id}\0{key}").as_bytes()
+        )[7..]
+    )
 }
 
 fn prepare_task_acceptance(
@@ -526,20 +960,33 @@ fn prepare_task_acceptance(
         || suggestion.status != SuggestionStatus::Proposed
         || suggestion.version != commit.expected_suggestion_version
         || suggestion.expires_at <= commit.accepted_at
-    { return Err(StoreError::Conflict { expected: Some(commit.expected_suggestion_version), actual: Some(suggestion.version) }); }
+    {
+        return Err(StoreError::Conflict {
+            expected: Some(commit.expected_suggestion_version),
+            actual: Some(suggestion.version),
+        });
+    }
 
     let spec = &commit.task.initial_spec_revision;
-    let proposal = suggestion.proposed_task_spec.as_ref().and_then(serde_json::Value::as_object)
-        .ok_or_else(|| StoreError::Invalid("TASK Suggestion has no valid TaskSpec proposal".to_owned()))?;
+    let proposal = suggestion
+        .proposed_task_spec
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            StoreError::Invalid("TASK Suggestion has no valid TaskSpec proposal".to_owned())
+        })?;
     let proposed_string = |field: &str| proposal.get(field).and_then(serde_json::Value::as_str);
     let proposed_array = |field: &str| proposal.get(field).and_then(serde_json::Value::as_array);
-    let expected_array = |field: &str, actual: serde_json::Value| {
-        proposed_array(field).is_some_and(|value| value == &actual)
-    };
+    let expected_array =
+        |field: &str, actual: serde_json::Value| proposed_array(field) == actual.as_array();
     let proposed_category = match proposal.get("task_category") {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(value)) => Some(value.as_str()),
-        _ => return Err(StoreError::Invalid("Task proposal category is invalid".to_owned())),
+        _ => {
+            return Err(StoreError::Invalid(
+                "Task proposal category is invalid".to_owned(),
+            ));
+        }
     };
     let proposed_budget = match proposal.get("budget") {
         None | Some(serde_json::Value::Null) => None,
@@ -552,7 +999,11 @@ fn prepare_task_acceptance(
     let proposed_deadline = match proposal.get("deadline") {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(value)) => Some(super::canonicalize_utc_timestamp(value)?),
-        _ => return Err(StoreError::Invalid("Task proposal deadline is invalid".to_owned())),
+        _ => {
+            return Err(StoreError::Invalid(
+                "Task proposal deadline is invalid".to_owned(),
+            ));
+        }
     };
     if proposed_string("objective") != Some(spec.objective.as_str())
         || proposed_category != spec.task_category.as_deref()
@@ -563,20 +1014,35 @@ fn prepare_task_acceptance(
         || proposed_budget != spec.budget.as_ref()
         || proposed_delegation_budget != spec.delegation_budget_policy.as_ref()
         || proposed_deadline != spec.deadline
-    { return Err(StoreError::Invalid("Task does not preserve the exact accepted proposal".to_owned())); }
+    {
+        return Err(StoreError::Invalid(
+            "Task does not preserve the exact accepted proposal".to_owned(),
+        ));
+    }
 
     // Source references are pinned explanatory provenance and must remain exact Task inputs.
     for source in &suggestion.source_refs {
         if source.workspace_id != suggestion.workspace_id
             || !spec.input_refs.iter().any(|value| {
-                value.get("workspace_id").and_then(serde_json::Value::as_str) == Some(source.workspace_id.as_str())
-                    && value.get("resource_id").and_then(serde_json::Value::as_str) == Some(source.resource_id.as_str())
-                    && value.get("revision_id").and_then(serde_json::Value::as_str) == Some(source.revision_id.as_str())
+                value
+                    .get("workspace_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(source.workspace_id.as_str())
+                    && value.get("resource_id").and_then(serde_json::Value::as_str)
+                        == Some(source.resource_id.as_str())
+                    && value.get("revision_id").and_then(serde_json::Value::as_str)
+                        == Some(source.revision_id.as_str())
             })
-        { return Err(StoreError::Invalid("Task inputs do not preserve every pinned Suggestion source".to_owned())); }
+        {
+            return Err(StoreError::Invalid(
+                "Task inputs do not preserve every pinned Suggestion source".to_owned(),
+            ));
+        }
     }
 
-    let next_version = commit.expected_suggestion_version.checked_add(1)
+    let next_version = commit
+        .expected_suggestion_version
+        .checked_add(1)
         .ok_or_else(|| StoreError::Integrity("Suggestion version exhausted".to_owned()))?;
     let event = &commit.suggestion_event;
     let expected_payload = json!({
@@ -588,20 +1054,31 @@ fn prepare_task_acceptance(
         "result_task_id": commit.task.task.task_id,
         "aggregate_version": next_version,
     });
-    if event.workspace_id != suggestion.workspace_id || event.entity_type != "Suggestion"
-        || event.entity_id != suggestion.suggestion_id || event.entity_revision != next_version
-        || event.schema_version != 1 || event.event_type != "suggestion.resolved.v1"
-        || event.payload != expected_payload || event.recorded_at != commit.accepted_at
+    if event.workspace_id != suggestion.workspace_id
+        || event.entity_type != "Suggestion"
+        || event.entity_id != suggestion.suggestion_id
+        || event.entity_revision != next_version
+        || event.schema_version != 1
+        || event.event_type != "suggestion.resolved.v1"
+        || event.payload != expected_payload
+        || event.recorded_at != commit.accepted_at
         || event.origin_runtime_id != commit.task.event.origin_runtime_id
         || event.correlation_id != commit.task.event.correlation_id
         || event.event_id == commit.task.event.event_id
-    { return Err(StoreError::Invalid("Suggestion acceptance event is inconsistent".to_owned())); }
+    {
+        return Err(StoreError::Invalid(
+            "Suggestion acceptance event is inconsistent".to_owned(),
+        ));
+    }
 
     let mut accepted = suggestion.clone();
     accepted.status = SuggestionStatus::Accepted;
     accepted.snoozed_until = None;
     accepted.resolved_at = Some(commit.accepted_at.clone());
-    accepted.resolved_by = Some(PrincipalRef { principal_id: commit.task.request.principal_id.clone(), kind: PrincipalKind::User });
+    accepted.resolved_by = Some(PrincipalRef {
+        principal_id: commit.task.request.principal_id.clone(),
+        kind: PrincipalKind::User,
+    });
     accepted.resolution_reason = Some("ACCEPTED_BY_OWNER".to_owned());
     accepted.result_task_id = Some(commit.task.task.task_id.clone());
     accepted.version = next_version;
@@ -626,20 +1103,46 @@ fn validate_suggestion_acceptance_commit(
         || event.entity_id != commit.suggestion_id
         || event.entity_revision != next_version.unwrap_or_default()
         || event.event_type != "suggestion.resolved.v1"
-        || event.payload.get("suggestion_id").and_then(serde_json::Value::as_str) != Some(commit.suggestion_id.as_str())
+        || event
+            .payload
+            .get("suggestion_id")
+            .and_then(serde_json::Value::as_str)
+            != Some(commit.suggestion_id.as_str())
         || event.payload.get("to").and_then(serde_json::Value::as_str) != Some("ACCEPTED")
-        || event.payload.get("result_task_id").and_then(serde_json::Value::as_str) != Some(commit.task.task.task_id.as_str())
-    { return Err(StoreError::Invalid("Suggestion acceptance commit is inconsistent".to_owned())); }
+        || event
+            .payload
+            .get("result_task_id")
+            .and_then(serde_json::Value::as_str)
+            != Some(commit.task.task.task_id.as_str())
+    {
+        return Err(StoreError::Invalid(
+            "Suggestion acceptance commit is inconsistent".to_owned(),
+        ));
+    }
     Ok(())
 }
 
 fn map_suggestion_store_error(error: SuggestionServiceError) -> StoreError {
     match error {
-        SuggestionServiceError::Unauthorized => StoreError::Invalid("authenticated Principal does not own this Workspace".to_owned()),
+        SuggestionServiceError::Unauthorized => {
+            StoreError::Invalid("authenticated Principal does not own this Workspace".to_owned())
+        }
         SuggestionServiceError::NotFound => StoreError::NotFound,
-        SuggestionServiceError::VersionConflict | SuggestionServiceError::Expired => StoreError::Conflict { expected: None, actual: None },
-        SuggestionServiceError::InvalidRequest | SuggestionServiceError::InvalidTransition => StoreError::Invalid("Suggestion cannot be accepted in its current state".to_owned()),
-        SuggestionServiceError::ClockUnavailable | SuggestionServiceError::IdempotencyConflict | SuggestionServiceError::ExpiryPending | SuggestionServiceError::Storage => StoreError::Integrity("Suggestion acceptance storage failed".to_owned()),
+        SuggestionServiceError::VersionConflict | SuggestionServiceError::Expired => {
+            StoreError::Conflict {
+                expected: None,
+                actual: None,
+            }
+        }
+        SuggestionServiceError::InvalidRequest | SuggestionServiceError::InvalidTransition => {
+            StoreError::Invalid("Suggestion cannot be accepted in its current state".to_owned())
+        }
+        SuggestionServiceError::ClockUnavailable
+        | SuggestionServiceError::IdempotencyConflict
+        | SuggestionServiceError::ExpiryPending
+        | SuggestionServiceError::Storage => {
+            StoreError::Integrity("Suggestion acceptance storage failed".to_owned())
+        }
     }
 }
 
@@ -652,27 +1155,45 @@ impl SuggestionExpiryStore for SqliteSuggestionStore {
         as_of: &str,
         limit: usize,
     ) -> Result<(usize, bool), SuggestionServiceError> {
-        if owner_principal_id.trim().is_empty() || workspace_id.trim().is_empty()
-            || service_principal_id != SUGGESTION_SERVICE_PRINCIPAL_ID || as_of.trim().is_empty()
+        if owner_principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || service_principal_id != SUGGESTION_SERVICE_PRINCIPAL_ID
+            || as_of.trim().is_empty()
             || !(1..=200).contains(&limit)
-        { return Err(SuggestionServiceError::InvalidRequest); }
-        let context = self.event_context.clone().ok_or(SuggestionServiceError::InvalidRequest)?;
-        let as_of = canonicalize_utc_timestamp(as_of).map_err(|_| SuggestionServiceError::InvalidRequest)?;
+        {
+            return Err(SuggestionServiceError::InvalidRequest);
+        }
+        let context = self
+            .event_context
+            .clone()
+            .ok_or(SuggestionServiceError::InvalidRequest)?;
+        let as_of = canonicalize_utc_timestamp(as_of)
+            .map_err(|_| SuggestionServiceError::InvalidRequest)?;
         let owner = owner_principal_id.to_owned();
         let workspace = workspace_id.to_owned();
         let service = service_principal_id.to_owned();
         let blobs = Arc::clone(&self.store.inner.blobs);
         let (reply, receive) = mpsc::channel();
-        self.store.execute_command(
-            Command::SuggestionOperation { operation: Box::new(move |connection| {
-                let result = settle_expired_bounded(
-                    connection, blobs.as_ref(), &owner, &workspace, &service,
-                    &as_of, &context, limit,
-                );
-                let _ = reply.send(result);
-            }) },
-            receive,
-        ).map_err(|_| SuggestionServiceError::Storage)?
+        self.store
+            .execute_command(
+                Command::SuggestionOperation {
+                    operation: Box::new(move |connection| {
+                        let result = settle_expired_bounded(
+                            connection,
+                            blobs.as_ref(),
+                            &owner,
+                            &workspace,
+                            &service,
+                            &as_of,
+                            &context,
+                            limit,
+                        );
+                        let _ = reply.send(Ok(result));
+                    }),
+                },
+                receive,
+            )
+            .map_err(|_| SuggestionServiceError::Storage)?
     }
 }
 
@@ -687,29 +1208,50 @@ impl SuggestionOwnerActionStore for SqliteSuggestionStore {
         as_of: &str,
         action: SuggestionOwnerAction,
     ) -> Result<Suggestion, SuggestionServiceError> {
-        if owner_principal_id.trim().is_empty() || workspace_id.trim().is_empty()
-            || suggestion_id.trim().is_empty() || expected_version == 0
-            || request_id.trim().is_empty() || request_id.len() > 128
+        if owner_principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || suggestion_id.trim().is_empty()
+            || expected_version == 0
+            || request_id.trim().is_empty()
+            || request_id.len() > 128
             || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
-        { return Err(SuggestionServiceError::InvalidRequest); }
-        let context = self.event_context.clone().ok_or(SuggestionServiceError::InvalidRequest)?;
-        let as_of = canonicalize_utc_timestamp(as_of).map_err(|_| SuggestionServiceError::InvalidRequest)?;
+        {
+            return Err(SuggestionServiceError::InvalidRequest);
+        }
+        let context = self
+            .event_context
+            .clone()
+            .ok_or(SuggestionServiceError::InvalidRequest)?;
+        let as_of = canonicalize_utc_timestamp(as_of)
+            .map_err(|_| SuggestionServiceError::InvalidRequest)?;
         let owner = owner_principal_id.to_owned();
         let workspace = workspace_id.to_owned();
         let suggestion_id = suggestion_id.to_owned();
         let request_id = request_id.to_owned();
         let blobs = Arc::clone(&self.store.inner.blobs);
         let (reply, receive) = mpsc::channel();
-        self.store.execute_command(
-            Command::SuggestionOperation { operation: Box::new(move |connection| {
-                let result = execute_owner_action(
-                    connection, blobs.as_ref(), &owner, &workspace, &suggestion_id,
-                    expected_version, &request_id, &as_of, &context, action,
-                );
-                let _ = reply.send(result);
-            }) },
-            receive,
-        ).map_err(|_| SuggestionServiceError::Storage)?
+        self.store
+            .execute_command(
+                Command::SuggestionOperation {
+                    operation: Box::new(move |connection| {
+                        let result = execute_owner_action(
+                            connection,
+                            blobs.as_ref(),
+                            &owner,
+                            &workspace,
+                            &suggestion_id,
+                            expected_version,
+                            &request_id,
+                            &as_of,
+                            &context,
+                            action,
+                        );
+                        let _ = reply.send(Ok(result));
+                    }),
+                },
+                receive,
+            )
+            .map_err(|_| SuggestionServiceError::Storage)?
     }
 }
 
@@ -724,25 +1266,42 @@ fn settle_expired_bounded(
     limit: usize,
 ) -> Result<(usize, bool), SuggestionServiceError> {
     let due = {
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| SuggestionServiceError::Storage)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| SuggestionServiceError::Storage)?;
         authorize_expiry_owner(&tx, owner, workspace)?;
         let mut statement = tx.prepare(
             "SELECT suggestion_id FROM suggestions WHERE workspace_id = ?1 AND status = 'PROPOSED' AND expires_at <= ?2 ORDER BY expires_at, suggestion_id LIMIT ?3"
         ).map_err(|_| SuggestionServiceError::Storage)?;
-        let due = statement.query_map(params![workspace, as_of, (limit + 1) as i64], |row| row.get::<_, String>(0))
+        let due = statement
+            .query_map(params![workspace, as_of, (limit + 1) as i64], |row| {
+                row.get::<_, String>(0)
+            })
             .map_err(|_| SuggestionServiceError::Storage)?
-            .collect::<rusqlite::Result<Vec<_>>>().map_err(|_| SuggestionServiceError::Storage)?;
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|_| SuggestionServiceError::Storage)?;
         due.into_iter().take(limit).collect::<Vec<_>>()
     };
 
     let mut settled = 0usize;
     for suggestion_id in due {
-        if expire_one(connection, blobs, owner, workspace, service, as_of, context, &suggestion_id)? {
+        if expire_one(
+            connection,
+            blobs,
+            owner,
+            workspace,
+            service,
+            as_of,
+            context,
+            &suggestion_id,
+        )? {
             settled += 1;
         }
     }
 
-    let tx = connection.transaction().map_err(|_| SuggestionServiceError::Storage)?;
+    let tx = connection
+        .transaction()
+        .map_err(|_| SuggestionServiceError::Storage)?;
     authorize_expiry_owner(&tx, owner, workspace)?;
     let more_due: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM suggestions WHERE workspace_id = ?1 AND status = 'PROPOSED' AND expires_at <= ?2)",
@@ -762,29 +1321,63 @@ fn expire_one(
     suggestion_id: &str,
 ) -> Result<bool, SuggestionServiceError> {
     let prepared = {
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| SuggestionServiceError::Storage)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| SuggestionServiceError::Storage)?;
         authorize_expiry_owner(&tx, owner, workspace)?;
-        let Some(current) = load_suggestion_optional(&tx, workspace, suggestion_id).map_err(map_read_error)? else { return Ok(false); };
-        if current.status != SuggestionStatus::Proposed || current.expires_at > as_of { return Ok(false); }
+        let Some(current) =
+            load_suggestion_optional(&tx, workspace, suggestion_id).map_err(map_read_error)?
+        else {
+            return Ok(false);
+        };
+        if current.status != SuggestionStatus::Proposed || current.expires_at.as_str() > as_of {
+            return Ok(false);
+        }
         expire_value(current, service, as_of)?
     };
     let state_bytes = canonical_json(&prepared).map_err(|_| SuggestionServiceError::Storage)?;
-    let blob = blobs.put(workspace, BlobPurpose::AggregateState, &state_bytes, "application/vnd.litecow.suggestion+json")
+    let blob = blobs
+        .put(
+            workspace,
+            BlobPurpose::AggregateState,
+            &state_bytes,
+            "application/vnd.litecow.suggestion+json",
+        )
         .map_err(|_| SuggestionServiceError::Storage)?;
-    if blob.digest != digest(&state_bytes) || blob.size_bytes != state_bytes.len() as u64
-        || blobs.get(workspace, BlobPurpose::AggregateState, &blob).map_err(|_| SuggestionServiceError::Storage)? != state_bytes
-    { return Err(SuggestionServiceError::Storage); }
+    if blob.digest != digest(&state_bytes)
+        || blob.size_bytes != state_bytes.len() as u64
+        || blobs
+            .get(workspace, BlobPurpose::AggregateState, &blob)
+            .map_err(|_| SuggestionServiceError::Storage)?
+            != state_bytes
+    {
+        return Err(SuggestionServiceError::Storage);
+    }
 
-    let expected_version = prepared.version.checked_sub(1).ok_or(SuggestionServiceError::Storage)?;
+    let expected_version = prepared
+        .version
+        .checked_sub(1)
+        .ok_or(SuggestionServiceError::Storage)?;
     let request_id = expiry_request_id(workspace, suggestion_id, expected_version);
-    let fingerprint = digest(&canonical_json(&json!({
-        "workspace_id": workspace,
-        "suggestion_id": suggestion_id,
-        "expected_version": expected_version,
-        "resolution_reason": "SYSTEM_EXPIRY"
-    })).map_err(|_| SuggestionServiceError::Storage)?);
-    let event_id = format!("ev_{}", request_id.strip_prefix("sug_exp_").ok_or(SuggestionServiceError::Storage)?);
-    let resolved_by = PrincipalRef { principal_id: service.to_owned(), kind: PrincipalKind::Service };
+    let fingerprint = digest(
+        &canonical_json(&json!({
+            "workspace_id": workspace,
+            "suggestion_id": suggestion_id,
+            "expected_version": expected_version,
+            "resolution_reason": "SYSTEM_EXPIRY"
+        }))
+        .map_err(|_| SuggestionServiceError::Storage)?,
+    );
+    let event_id = format!(
+        "ev_{}",
+        request_id
+            .strip_prefix("sug_exp_")
+            .ok_or(SuggestionServiceError::Storage)?
+    );
+    let resolved_by = PrincipalRef {
+        principal_id: service.to_owned(),
+        kind: PrincipalKind::Service,
+    };
     let payload = json!({
         "suggestion_id": suggestion_id,
         "from": "PROPOSED",
@@ -794,30 +1387,57 @@ fn expire_one(
         "aggregate_version": prepared.version
     });
 
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| SuggestionServiceError::Storage)?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| SuggestionServiceError::Storage)?;
     authorize_expiry_owner(&tx, owner, workspace)?;
     if let Some(prior) = expiry_receipt(&tx, service, &request_id, &fingerprint)? {
         // A concurrent sweep already committed this exact version. The durable
         // receipt proves the transition; no second event is appended.
-        if prior.suggestion_id != suggestion_id || prior.workspace_id != workspace
-            || prior.status != SuggestionStatus::Expired || prior.version != prepared.version
+        if prior.suggestion_id != suggestion_id
+            || prior.workspace_id != workspace
+            || prior.status != SuggestionStatus::Expired
+            || prior.version != prepared.version
             || prior.resolution_reason.as_deref() != Some("SYSTEM_EXPIRY")
             || prior.resolved_by.as_ref() != Some(&resolved_by)
-        { return Err(SuggestionServiceError::Storage); }
+        {
+            return Err(SuggestionServiceError::Storage);
+        }
         return Ok(false);
     }
-    let Some(current) = load_suggestion_optional(&tx, workspace, suggestion_id).map_err(map_read_error)? else { return Ok(false); };
-    if current.status != SuggestionStatus::Proposed || current.version != expected_version || current.expires_at > as_of {
+    let Some(current) =
+        load_suggestion_optional(&tx, workspace, suggestion_id).map_err(map_read_error)?
+    else {
+        return Ok(false);
+    };
+    if current.status != SuggestionStatus::Proposed
+        || current.version != expected_version
+        || current.expires_at.as_str() > as_of
+    {
         return Ok(false);
     }
     let changed = tx.execute(
         "UPDATE suggestions SET status = 'EXPIRED', snoozed_until = NULL, resolved_at = ?1, resolved_by_json = ?2, resolution_reason = 'SYSTEM_EXPIRY', version = ?3 WHERE workspace_id = ?4 AND suggestion_id = ?5 AND status = 'PROPOSED' AND version = ?6 AND expires_at <= ?1",
-        params![as_of, encode(&resolved_by)?, prepared.version, workspace, suggestion_id, expected_version],
+        params![as_of, encode(&resolved_by)?, sql_suggestion_version(prepared.version)?, workspace, suggestion_id, sql_suggestion_version(expected_version)?],
     ).map_err(|_| SuggestionServiceError::Storage)?;
-    if changed != 1 { return Ok(false); }
+    if changed != 1 {
+        return Ok(false);
+    }
     let persisted = load_suggestion(&tx, workspace, suggestion_id).map_err(map_read_error)?;
-    if persisted != prepared { return Err(SuggestionServiceError::Storage); }
-    write_expiry_event(&tx, workspace, context, as_of, &event_id, suggestion_id, prepared.version, payload, blob)?;
+    if persisted != prepared {
+        return Err(SuggestionServiceError::Storage);
+    }
+    write_expiry_event(
+        &tx,
+        workspace,
+        context,
+        as_of,
+        &event_id,
+        suggestion_id,
+        prepared.version,
+        payload,
+        blob,
+    )?;
     let response = encode(&prepared)?;
     tx.execute(
         "INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
@@ -839,77 +1459,135 @@ fn execute_owner_action(
     context: &SuggestionEventContext,
     action: SuggestionOwnerAction,
 ) -> Result<Suggestion, SuggestionServiceError> {
-    let action_json = canonical_json(&action).map_err(|_| SuggestionServiceError::InvalidRequest)?;
+    let action_json =
+        canonical_json(&action).map_err(|_| SuggestionServiceError::InvalidRequest)?;
     let fingerprint = digest(&canonical_json(&json!({
         "workspace_id": workspace,
         "suggestion_id": suggestion_id,
         "expected_version": expected_version,
         "action": serde_json::from_slice::<Value>(&action_json).map_err(|_| SuggestionServiceError::InvalidRequest)?
     })).map_err(|_| SuggestionServiceError::InvalidRequest)?);
-    let event_id = format!("ev_{}", &digest(format!("LiteCowork/SuggestionOwnerAction/v1\0{owner}\0{request_id}").as_bytes())[7..]);
+    let event_id = format!(
+        "ev_{}",
+        &digest(format!("LiteCowork/SuggestionOwnerAction/v1\0{owner}\0{request_id}").as_bytes())
+            [7..]
+    );
 
     let prepared = {
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| SuggestionServiceError::Storage)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| SuggestionServiceError::Storage)?;
         authorize_active_suggestion_owner(&tx, owner, workspace)?;
         if let Some(prior) = owner_action_receipt(&tx, owner, request_id, &fingerprint)? {
-            if prior.workspace_id != workspace || prior.suggestion_id != suggestion_id
-                || prior.version != expected_version.checked_add(1).ok_or(SuggestionServiceError::Storage)?
-            { return Err(SuggestionServiceError::Storage); }
+            if prior.workspace_id != workspace
+                || prior.suggestion_id != suggestion_id
+                || prior.version
+                    != expected_version
+                        .checked_add(1)
+                        .ok_or(SuggestionServiceError::Storage)?
+            {
+                return Err(SuggestionServiceError::Storage);
+            }
             return Ok(prior);
         }
-        let current = load_suggestion_optional(&tx, workspace, suggestion_id).map_err(map_read_error)?
+        let current = load_suggestion_optional(&tx, workspace, suggestion_id)
+            .map_err(map_read_error)?
             .ok_or(SuggestionServiceError::NotFound)?;
-        if current.status == SuggestionStatus::Expired { return Err(SuggestionServiceError::Expired); }
-        if current.status != SuggestionStatus::Proposed { return Err(SuggestionServiceError::InvalidTransition); }
-        if current.version != expected_version { return Err(SuggestionServiceError::VersionConflict); }
-        if current.expires_at <= as_of { return Err(SuggestionServiceError::Expired); }
+        if current.status == SuggestionStatus::Expired {
+            return Err(SuggestionServiceError::Expired);
+        }
+        if current.status != SuggestionStatus::Proposed {
+            return Err(SuggestionServiceError::InvalidTransition);
+        }
+        if current.version != expected_version {
+            return Err(SuggestionServiceError::VersionConflict);
+        }
+        if current.expires_at.as_str() <= as_of {
+            return Err(SuggestionServiceError::Expired);
+        }
         prepare_owner_action(current, owner, as_of, action.clone())?
     };
 
     let state_bytes = canonical_json(&prepared).map_err(|_| SuggestionServiceError::Storage)?;
-    let blob = blobs.put(workspace, BlobPurpose::AggregateState, &state_bytes, "application/vnd.litecowork.suggestion+json")
+    let blob = blobs
+        .put(
+            workspace,
+            BlobPurpose::AggregateState,
+            &state_bytes,
+            "application/vnd.litecowork.suggestion+json",
+        )
         .map_err(|_| SuggestionServiceError::Storage)?;
-    if blob.digest != digest(&state_bytes) || blob.size_bytes != state_bytes.len() as u64
-        || blobs.get(workspace, BlobPurpose::AggregateState, &blob).map_err(|_| SuggestionServiceError::Storage)? != state_bytes
-    { return Err(SuggestionServiceError::Storage); }
+    if blob.digest != digest(&state_bytes)
+        || blob.size_bytes != state_bytes.len() as u64
+        || blobs
+            .get(workspace, BlobPurpose::AggregateState, &blob)
+            .map_err(|_| SuggestionServiceError::Storage)?
+            != state_bytes
+    {
+        return Err(SuggestionServiceError::Storage);
+    }
 
-    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|_| SuggestionServiceError::Storage)?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|_| SuggestionServiceError::Storage)?;
     authorize_active_suggestion_owner(&tx, owner, workspace)?;
     if let Some(prior) = owner_action_receipt(&tx, owner, request_id, &fingerprint)? {
-        if prior.workspace_id != workspace || prior.suggestion_id != suggestion_id
-            || prior.version != expected_version.checked_add(1).ok_or(SuggestionServiceError::Storage)?
-        { return Err(SuggestionServiceError::Storage); }
+        if prior.workspace_id != workspace
+            || prior.suggestion_id != suggestion_id
+            || prior.version
+                != expected_version
+                    .checked_add(1)
+                    .ok_or(SuggestionServiceError::Storage)?
+        {
+            return Err(SuggestionServiceError::Storage);
+        }
         return Ok(prior);
     }
-    let current = load_suggestion_optional(&tx, workspace, suggestion_id).map_err(map_read_error)?
+    let current = load_suggestion_optional(&tx, workspace, suggestion_id)
+        .map_err(map_read_error)?
         .ok_or(SuggestionServiceError::NotFound)?;
-    if current.status == SuggestionStatus::Expired || current.expires_at <= as_of {
+    if current.status == SuggestionStatus::Expired || current.expires_at.as_str() <= as_of {
         return Err(SuggestionServiceError::Expired);
     }
-    if current.status != SuggestionStatus::Proposed { return Err(SuggestionServiceError::InvalidTransition); }
-    if current.version != expected_version { return Err(SuggestionServiceError::VersionConflict); }
+    if current.status != SuggestionStatus::Proposed {
+        return Err(SuggestionServiceError::InvalidTransition);
+    }
+    if current.version != expected_version {
+        return Err(SuggestionServiceError::VersionConflict);
+    }
     let verified = prepare_owner_action(current.clone(), owner, as_of, action.clone())?;
-    if verified != prepared { return Err(SuggestionServiceError::VersionConflict); }
+    if verified != prepared {
+        return Err(SuggestionServiceError::VersionConflict);
+    }
 
     match &action {
         SuggestionOwnerAction::Snooze { .. } => {
             let changed = tx.execute(
                 "UPDATE suggestions SET snoozed_until = ?1, version = ?2 WHERE workspace_id = ?3 AND suggestion_id = ?4 AND status = 'PROPOSED' AND version = ?5 AND expires_at > ?6",
-                params![prepared.snoozed_until, prepared.version, workspace, suggestion_id, expected_version, as_of],
+                params![prepared.snoozed_until, sql_suggestion_version(prepared.version)?, workspace, suggestion_id, sql_suggestion_version(expected_version)?, as_of],
             ).map_err(|_| SuggestionServiceError::Storage)?;
-            if changed != 1 { return Err(SuggestionServiceError::VersionConflict); }
+            if changed != 1 {
+                return Err(SuggestionServiceError::VersionConflict);
+            }
         }
         SuggestionOwnerAction::Dismiss => {
-            let resolved_by = prepared.resolved_by.as_ref().ok_or(SuggestionServiceError::Storage)?;
+            let resolved_by = prepared
+                .resolved_by
+                .as_ref()
+                .ok_or(SuggestionServiceError::Storage)?;
             let changed = tx.execute(
                 "UPDATE suggestions SET status = 'DISMISSED', resolved_at = ?1, resolved_by_json = ?2, resolution_reason = 'DISMISSED_BY_OWNER', version = ?3 WHERE workspace_id = ?4 AND suggestion_id = ?5 AND status = 'PROPOSED' AND version = ?6 AND expires_at > ?1",
-                params![as_of, encode(resolved_by)?, prepared.version, workspace, suggestion_id, expected_version],
+                params![as_of, encode(resolved_by)?, sql_suggestion_version(prepared.version)?, workspace, suggestion_id, sql_suggestion_version(expected_version)?],
             ).map_err(|_| SuggestionServiceError::Storage)?;
-            if changed != 1 { return Err(SuggestionServiceError::VersionConflict); }
+            if changed != 1 {
+                return Err(SuggestionServiceError::VersionConflict);
+            }
         }
     }
     let persisted = load_suggestion(&tx, workspace, suggestion_id).map_err(map_read_error)?;
-    if persisted != prepared { return Err(SuggestionServiceError::Storage); }
+    if persisted != prepared {
+        return Err(SuggestionServiceError::Storage);
+    }
     let (event_type, payload) = match &action {
         SuggestionOwnerAction::Snooze { .. } => (
             "suggestion.visibility.changed.v1",
@@ -933,7 +1611,18 @@ fn execute_owner_action(
             }),
         ),
     };
-    write_suggestion_event(&tx, workspace, context, as_of, &event_id, suggestion_id, prepared.version, event_type, payload, blob)?;
+    write_suggestion_event(
+        &tx,
+        workspace,
+        context,
+        as_of,
+        &event_id,
+        suggestion_id,
+        prepared.version,
+        event_type,
+        payload,
+        blob,
+    )?;
     let response = encode(&prepared)?;
     tx.execute(
         "INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
@@ -949,13 +1638,22 @@ fn prepare_owner_action(
     as_of: &str,
     action: SuggestionOwnerAction,
 ) -> Result<Suggestion, SuggestionServiceError> {
-    suggestion.version = suggestion.version.checked_add(1).ok_or(SuggestionServiceError::Storage)?;
+    suggestion.version = suggestion
+        .version
+        .checked_add(1)
+        .ok_or(SuggestionServiceError::Storage)?;
     match action {
         SuggestionOwnerAction::Snooze { snoozed_until } => {
             let snoozed_until = snoozed_until
-                .map(|value| canonicalize_utc_timestamp(&value).map_err(|_| SuggestionServiceError::InvalidRequest))
+                .map(|value| {
+                    canonicalize_utc_timestamp(&value)
+                        .map_err(|_| SuggestionServiceError::InvalidRequest)
+                })
                 .transpose()?;
-            if snoozed_until.as_deref().is_some_and(|until| until <= as_of || until > suggestion.expires_at) {
+            if snoozed_until
+                .as_deref()
+                .is_some_and(|until| until <= as_of || until > suggestion.expires_at.as_str())
+            {
                 return Err(SuggestionServiceError::InvalidRequest);
             }
             suggestion.snoozed_until = snoozed_until;
@@ -963,7 +1661,10 @@ fn prepare_owner_action(
         SuggestionOwnerAction::Dismiss => {
             suggestion.status = SuggestionStatus::Dismissed;
             suggestion.resolved_at = Some(as_of.to_owned());
-            suggestion.resolved_by = Some(PrincipalRef { principal_id: owner.to_owned(), kind: PrincipalKind::User });
+            suggestion.resolved_by = Some(PrincipalRef {
+                principal_id: owner.to_owned(),
+                kind: PrincipalKind::User,
+            });
             suggestion.resolution_reason = Some("DISMISSED_BY_OWNER".to_owned());
         }
     }
@@ -980,20 +1681,34 @@ fn owner_action_receipt(
         "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
         params![owner, request_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional().map_err(|_| SuggestionServiceError::Storage)?;
-    let Some((actual, response, response_digest)) = prior else { return Ok(None); };
-    if actual != fingerprint { return Err(SuggestionServiceError::IdempotencyConflict); }
+    let Some((actual, response, response_digest)) = prior else {
+        return Ok(None);
+    };
+    if actual != fingerprint {
+        return Err(SuggestionServiceError::IdempotencyConflict);
+    }
     let response = response.ok_or(SuggestionServiceError::Storage)?;
     if response_digest.as_deref() != Some(digest(response.as_bytes()).as_str()) {
         return Err(SuggestionServiceError::Storage);
     }
-    serde_json::from_str(&response).map(Some).map_err(|_| SuggestionServiceError::Storage)
+    serde_json::from_str(&response)
+        .map(Some)
+        .map_err(|_| SuggestionServiceError::Storage)
 }
 
-fn authorize_active_suggestion_owner(tx: &Transaction<'_>, owner: &str, workspace: &str) -> Result<(), SuggestionServiceError> {
-    let status: Option<String> = tx.query_row(
-        "SELECT status FROM workspaces WHERE workspace_id = ?1 AND owner_principal_id = ?2",
-        params![workspace, owner], |row| row.get(0),
-    ).optional().map_err(|_| SuggestionServiceError::Storage)?;
+fn authorize_active_suggestion_owner(
+    tx: &Transaction<'_>,
+    owner: &str,
+    workspace: &str,
+) -> Result<(), SuggestionServiceError> {
+    let status: Option<String> = tx
+        .query_row(
+            "SELECT status FROM workspaces WHERE workspace_id = ?1 AND owner_principal_id = ?2",
+            params![workspace, owner],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| SuggestionServiceError::Storage)?;
     match status.as_deref() {
         Some("ACTIVE") => Ok(()),
         Some("ARCHIVED") => Err(SuggestionServiceError::InvalidTransition),
@@ -1001,19 +1716,31 @@ fn authorize_active_suggestion_owner(tx: &Transaction<'_>, owner: &str, workspac
     }
 }
 
-fn expire_value(mut suggestion: Suggestion, service: &str, as_of: &str) -> Result<Suggestion, SuggestionServiceError> {
+fn expire_value(
+    mut suggestion: Suggestion,
+    service: &str,
+    as_of: &str,
+) -> Result<Suggestion, SuggestionServiceError> {
     suggestion.status = SuggestionStatus::Expired;
     suggestion.snoozed_until = None;
     suggestion.resolved_at = Some(as_of.to_owned());
-    suggestion.resolved_by = Some(PrincipalRef { principal_id: service.to_owned(), kind: PrincipalKind::Service });
+    suggestion.resolved_by = Some(PrincipalRef {
+        principal_id: service.to_owned(),
+        kind: PrincipalKind::Service,
+    });
     suggestion.resolution_reason = Some("SYSTEM_EXPIRY".to_owned());
     suggestion.result_task_id = None;
-    suggestion.version = suggestion.version.checked_add(1).ok_or(SuggestionServiceError::Storage)?;
+    suggestion.version = suggestion
+        .version
+        .checked_add(1)
+        .ok_or(SuggestionServiceError::Storage)?;
     Ok(suggestion)
 }
 
 fn expiry_request_id(workspace: &str, suggestion: &str, version: u64) -> String {
-    let key = digest(format!("LiteCowork/SuggestionExpiry/v1\0{workspace}\0{suggestion}\0{version}").as_bytes());
+    let key = digest(
+        format!("LiteCowork/SuggestionExpiry/v1\0{workspace}\0{suggestion}\0{version}").as_bytes(),
+    );
     format!("sug_exp_{}", &key[7..])
 }
 
@@ -1027,13 +1754,19 @@ fn expiry_receipt(
         "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
         params![service, request_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     ).optional().map_err(|_| SuggestionServiceError::Storage)?;
-    let Some((actual, response, response_digest)) = prior else { return Ok(None); };
-    if actual != fingerprint { return Err(SuggestionServiceError::Storage); }
+    let Some((actual, response, response_digest)) = prior else {
+        return Ok(None);
+    };
+    if actual != fingerprint {
+        return Err(SuggestionServiceError::Storage);
+    }
     let response = response.ok_or(SuggestionServiceError::Storage)?;
     if response_digest.as_deref() != Some(digest(response.as_bytes()).as_str()) {
         return Err(SuggestionServiceError::Storage);
     }
-    serde_json::from_str(&response).map(Some).map_err(|_| SuggestionServiceError::Storage)
+    serde_json::from_str(&response)
+        .map(Some)
+        .map_err(|_| SuggestionServiceError::Storage)
 }
 
 fn write_expiry_event(
@@ -1048,8 +1781,16 @@ fn write_expiry_event(
     blob: BlobRef,
 ) -> Result<(), SuggestionServiceError> {
     write_suggestion_event(
-        tx, workspace, context, as_of, event_id, suggestion_id, version,
-        "suggestion.resolved.v1", payload, blob,
+        tx,
+        workspace,
+        context,
+        as_of,
+        event_id,
+        suggestion_id,
+        version,
+        "suggestion.resolved.v1",
+        payload,
+        blob,
     )
 }
 
@@ -1065,7 +1806,19 @@ fn write_suggestion_event(
     payload: Value,
     blob: BlobRef,
 ) -> Result<(), SuggestionServiceError> {
-    write_domain_event(tx, workspace, context, as_of, event_id, "Suggestion", suggestion_id, version, event_type, payload, blob)
+    write_domain_event(
+        tx,
+        workspace,
+        context,
+        as_of,
+        event_id,
+        "Suggestion",
+        suggestion_id,
+        version,
+        event_type,
+        payload,
+        blob,
+    )
 }
 
 fn write_domain_event(
@@ -1084,20 +1837,32 @@ fn write_domain_event(
     tx.execute("INSERT INTO workspace_origin_sequences(workspace_id, origin_runtime_id, last_sequence) VALUES (?1, ?2, 1) ON CONFLICT(workspace_id, origin_runtime_id) DO UPDATE SET last_sequence = last_sequence + 1", params![workspace, context.origin_runtime_id]).map_err(|_| SuggestionServiceError::Storage)?;
     let sequence: i64 = tx.query_row("SELECT last_sequence FROM workspace_origin_sequences WHERE workspace_id = ?1 AND origin_runtime_id = ?2", params![workspace, context.origin_runtime_id], |row| row.get(0)).map_err(|_| SuggestionServiceError::Storage)?;
     let payload_json = encode(&payload)?;
-    let state_ref = AggregateStateRef { blob, entity_revision: version, record_schema_version: 1 };
+    let state_ref = AggregateStateRef {
+        blob,
+        entity_revision: version,
+        record_schema_version: 1,
+    };
     tx.execute(
         "INSERT INTO domain_events(event_id, workspace_id, entity_type, entity_id, origin_runtime_id, origin_sequence, entity_revision, hlc_timestamp, correlation_id, causation_id, schema_version, type, payload_json, aggregate_state_ref_json, recorded_at, payload_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, 1, ?10, ?11, ?12, ?8, ?13)",
-        params![event_id, workspace, entity_type, entity_id, context.origin_runtime_id, sequence, version, as_of, context.correlation_id, event_type, payload_json, encode(&state_ref)?, digest(payload_json.as_bytes())],
+        params![event_id, workspace, entity_type, entity_id, context.origin_runtime_id, sequence, sql_suggestion_version(version)?, as_of, context.correlation_id, event_type, payload_json, encode(&state_ref)?, digest(payload_json.as_bytes())],
     ).map_err(|_| SuggestionServiceError::Storage)?;
     Ok(())
 }
 
-fn authorize_expiry_owner(tx: &Transaction<'_>, owner: &str, workspace: &str) -> Result<(), SuggestionServiceError> {
+fn authorize_expiry_owner(
+    tx: &Transaction<'_>,
+    owner: &str,
+    workspace: &str,
+) -> Result<(), SuggestionServiceError> {
     let owned: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id = ?1 AND owner_principal_id = ?2)",
         params![workspace, owner], |row| row.get(0),
     ).map_err(|_| SuggestionServiceError::Storage)?;
-    if owned { Ok(()) } else { Err(SuggestionServiceError::Unauthorized) }
+    if owned {
+        Ok(())
+    } else {
+        Err(SuggestionServiceError::Unauthorized)
+    }
 }
 
 fn map_read_error(error: SuggestionReadError) -> SuggestionServiceError {
@@ -1114,62 +1879,284 @@ fn encode<T: serde::Serialize>(value: &T) -> Result<String, SuggestionServiceErr
     String::from_utf8(bytes).map_err(|_| SuggestionServiceError::Storage)
 }
 
-fn authorize_owner(connection: &Connection, principal: &str, workspace: &str) -> Result<(), SuggestionReadError> {
+fn sql_suggestion_version(value: u64) -> Result<i64, SuggestionServiceError> {
+    to_sql_i64(value, "Suggestion version").map_err(|_| SuggestionServiceError::Storage)
+}
+
+fn authorize_owner(
+    connection: &Connection,
+    principal: &str,
+    workspace: &str,
+) -> Result<(), SuggestionReadError> {
     let owned: bool = connection.query_row(
         "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id = ?1 AND owner_principal_id = ?2)",
         params![workspace, principal], |row| row.get(0),
     ).map_err(|_| SuggestionReadError::Storage)?;
-    if owned { Ok(()) } else { Err(SuggestionReadError::Unauthorized) }
+    if owned {
+        Ok(())
+    } else {
+        Err(SuggestionReadError::Unauthorized)
+    }
 }
 
 fn status_name(value: SuggestionStatus) -> &'static str {
-    match value { SuggestionStatus::Proposed => "PROPOSED", SuggestionStatus::Accepted => "ACCEPTED", SuggestionStatus::Dismissed => "DISMISSED", SuggestionStatus::Expired => "EXPIRED" }
+    match value {
+        SuggestionStatus::Proposed => "PROPOSED",
+        SuggestionStatus::Accepted => "ACCEPTED",
+        SuggestionStatus::Dismissed => "DISMISSED",
+        SuggestionStatus::Expired => "EXPIRED",
+    }
 }
 fn visibility_name(value: SuggestionVisibility) -> &'static str {
-    match value { SuggestionVisibility::Visible => "VISIBLE", SuggestionVisibility::Snoozed => "SNOOZED", SuggestionVisibility::All => "ALL" }
+    match value {
+        SuggestionVisibility::Visible => "VISIBLE",
+        SuggestionVisibility::Snoozed => "SNOOZED",
+        SuggestionVisibility::All => "ALL",
+    }
 }
 fn decode<T: serde::de::DeserializeOwned>(value: String) -> Result<T, SuggestionReadError> {
     serde_json::from_str(&value).map_err(|_| SuggestionReadError::Storage)
 }
 fn parse_kind(value: &str) -> Result<SuggestionKind, SuggestionReadError> {
-    match value { "TASK_OPPORTUNITY" => Ok(SuggestionKind::TaskOpportunity), "ROUTINE_OPPORTUNITY" => Ok(SuggestionKind::RoutineOpportunity), "AUTOMATION_OPPORTUNITY" => Ok(SuggestionKind::AutomationOpportunity), _ => Err(SuggestionReadError::Storage) }
+    match value {
+        "TASK_OPPORTUNITY" => Ok(SuggestionKind::TaskOpportunity),
+        "ROUTINE_OPPORTUNITY" => Ok(SuggestionKind::RoutineOpportunity),
+        "AUTOMATION_OPPORTUNITY" => Ok(SuggestionKind::AutomationOpportunity),
+        _ => Err(SuggestionReadError::Storage),
+    }
 }
 fn kind_name(value: SuggestionKind) -> &'static str {
-    match value { SuggestionKind::TaskOpportunity => "TASK_OPPORTUNITY", SuggestionKind::RoutineOpportunity => "ROUTINE_OPPORTUNITY", SuggestionKind::AutomationOpportunity => "AUTOMATION_OPPORTUNITY" }
+    match value {
+        SuggestionKind::TaskOpportunity => "TASK_OPPORTUNITY",
+        SuggestionKind::RoutineOpportunity => "ROUTINE_OPPORTUNITY",
+        SuggestionKind::AutomationOpportunity => "AUTOMATION_OPPORTUNITY",
+    }
 }
 fn parse_action(value: &str) -> Result<SuggestionAction, SuggestionReadError> {
-    match value { "TASK" => Ok(SuggestionAction::Task), "OPEN_ROUTINE_EDITOR" => Ok(SuggestionAction::OpenRoutineEditor), "OPEN_AUTOMATION_EDITOR" => Ok(SuggestionAction::OpenAutomationEditor), _ => Err(SuggestionReadError::Storage) }
+    match value {
+        "TASK" => Ok(SuggestionAction::Task),
+        "OPEN_ROUTINE_EDITOR" => Ok(SuggestionAction::OpenRoutineEditor),
+        "OPEN_AUTOMATION_EDITOR" => Ok(SuggestionAction::OpenAutomationEditor),
+        _ => Err(SuggestionReadError::Storage),
+    }
 }
 fn parse_status(value: &str) -> Result<SuggestionStatus, SuggestionReadError> {
-    match value { "PROPOSED" => Ok(SuggestionStatus::Proposed), "ACCEPTED" => Ok(SuggestionStatus::Accepted), "DISMISSED" => Ok(SuggestionStatus::Dismissed), "EXPIRED" => Ok(SuggestionStatus::Expired), _ => Err(SuggestionReadError::Storage) }
+    match value {
+        "PROPOSED" => Ok(SuggestionStatus::Proposed),
+        "ACCEPTED" => Ok(SuggestionStatus::Accepted),
+        "DISMISSED" => Ok(SuggestionStatus::Dismissed),
+        "EXPIRED" => Ok(SuggestionStatus::Expired),
+        _ => Err(SuggestionReadError::Storage),
+    }
 }
-fn parse_latency(value: Option<String>) -> Result<Option<SuggestionLatencyClass>, SuggestionReadError> {
-    value.map(|value| match value.as_str() { "STANDARD" => Ok(SuggestionLatencyClass::Standard), "INTERACTIVE" => Ok(SuggestionLatencyClass::Interactive), "DEADLINE_SENSITIVE" => Ok(SuggestionLatencyClass::DeadlineSensitive), _ => Err(SuggestionReadError::Storage) }).transpose()
+fn parse_latency(
+    value: Option<String>,
+) -> Result<Option<SuggestionLatencyClass>, SuggestionReadError> {
+    value
+        .map(|value| match value.as_str() {
+            "STANDARD" => Ok(SuggestionLatencyClass::Standard),
+            "INTERACTIVE" => Ok(SuggestionLatencyClass::Interactive),
+            "DEADLINE_SENSITIVE" => Ok(SuggestionLatencyClass::DeadlineSensitive),
+            _ => Err(SuggestionReadError::Storage),
+        })
+        .transpose()
 }
-fn load_suggestion(connection: &Connection, workspace: &str, id: &str) -> Result<Suggestion, SuggestionReadError> {
+fn load_suggestion(
+    connection: &Connection,
+    workspace: &str,
+    id: &str,
+) -> Result<Suggestion, SuggestionReadError> {
     load_suggestion_optional(connection, workspace, id)?.ok_or(SuggestionReadError::Storage)
 }
 
-fn load_suggestion_optional(connection: &Connection, workspace: &str, id: &str) -> Result<Option<Suggestion>, SuggestionReadError> {
+fn load_suggestion_optional(
+    connection: &Connection,
+    workspace: &str,
+    id: &str,
+) -> Result<Option<Suggestion>, SuggestionReadError> {
     let row: Option<(Option<String>, String, String, String, String, String, String, Option<String>, Option<String>, Option<String>, String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, u64)> = connection.query_row(
         "SELECT coworker_id, dedupe_key, kind, reason, source_refs_json, goal_refs_json, proposed_action, proposed_by_json, proposed_task_spec_json, estimated_cost_json, status, created_at, expires_at, snoozed_until, resolved_at, resolved_by_json, resolution_reason, result_task_id, latency_class_hint, version FROM suggestions WHERE workspace_id = ?1 AND suggestion_id = ?2",
         params![workspace, id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?, row.get(16)?, row.get(17)?, row.get(18)?, row.get(19)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?, row.get(16)?, row.get(17)?, row.get(18)?, from_row_u64(row, 19)?)),
     ).optional().map_err(|_| SuggestionReadError::Storage)?;
-    let Some(row) = row else { return Ok(None); };
-    let (coworker_id, dedupe_key, kind, reason, source_refs, goal_refs, proposed_action, proposed_by, proposed_task_spec, estimated_cost, status, created_at, expires_at, snoozed_until, resolved_at, resolved_by, resolution_reason, result_task_id, latency, version) = row;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let (
+        coworker_id,
+        dedupe_key,
+        kind,
+        reason,
+        source_refs,
+        goal_refs,
+        proposed_action,
+        proposed_by,
+        proposed_task_spec,
+        estimated_cost,
+        status,
+        created_at,
+        expires_at,
+        snoozed_until,
+        resolved_at,
+        resolved_by,
+        resolution_reason,
+        result_task_id,
+        latency,
+        version,
+    ) = row;
     Ok(Some(Suggestion {
-        suggestion_id: id.to_owned(), workspace_id: workspace.to_owned(), coworker_id, dedupe_key,
-        kind: parse_kind(&kind)?, reason,
+        suggestion_id: id.to_owned(),
+        workspace_id: workspace.to_owned(),
+        coworker_id,
+        dedupe_key,
+        kind: parse_kind(&kind)?,
+        reason,
         source_refs: decode::<Vec<SuggestionResourceRef>>(source_refs)?,
         goal_refs: decode::<Vec<SuggestionGoalRef>>(goal_refs)?,
         proposed_action: parse_action(&proposed_action)?,
-        proposed_by: decode::<SuggestionServiceRef>(proposed_by)?,
+        proposed_by: decode::<SuggestionServiceRef>(
+            proposed_by.ok_or(SuggestionReadError::Storage)?,
+        )?,
         proposed_task_spec: proposed_task_spec.map(decode).transpose()?,
         estimated_cost: estimated_cost.map(decode).transpose()?,
-        latency_class_hint: parse_latency(latency)?, status: parse_status(&status)?, created_at,
-        expires_at, snoozed_until, resolved_at,
+        latency_class_hint: parse_latency(latency)?,
+        status: parse_status(&status)?,
+        created_at,
+        expires_at,
+        snoozed_until,
+        resolved_at,
         resolved_by: resolved_by.map(decode::<PrincipalRef>).transpose()?,
-        resolution_reason, result_task_id, version,
+        resolution_reason,
+        result_task_id,
+        version,
     }))
+}
+
+#[cfg(test)]
+mod acceptance_receipt_tests {
+    use super::*;
+
+    fn accepted_suggestion(result_task_id: &str, workspace_id: &str) -> Suggestion {
+        Suggestion {
+            suggestion_id: "suggestion-1".to_owned(),
+            workspace_id: workspace_id.to_owned(),
+            coworker_id: None,
+            dedupe_key: format!("sha256:{}", "a".repeat(64)),
+            kind: SuggestionKind::TaskOpportunity,
+            reason: "A bounded proposal".to_owned(),
+            source_refs: Vec::new(),
+            goal_refs: Vec::new(),
+            proposed_action: SuggestionAction::Task,
+            proposed_by: SuggestionServiceRef {
+                service_id: SUGGESTION_SERVICE_PRINCIPAL_ID.to_owned(),
+            },
+            proposed_task_spec: None,
+            estimated_cost: None,
+            latency_class_hint: None,
+            status: SuggestionStatus::Accepted,
+            created_at: "2026-10-09T10:00:00Z".to_owned(),
+            expires_at: "2026-10-10T10:00:00Z".to_owned(),
+            snoozed_until: None,
+            resolved_at: Some("2026-10-09T10:01:00Z".to_owned()),
+            resolved_by: Some(PrincipalRef {
+                principal_id: "owner".to_owned(),
+                kind: PrincipalKind::User,
+            }),
+            resolution_reason: Some("ACCEPTED_BY_OWNER".to_owned()),
+            result_task_id: Some(result_task_id.to_owned()),
+            version: 2,
+        }
+    }
+
+    fn ready_task_view(workspace_id: &str) -> storage_core::TaskView {
+        storage_core::TaskView {
+            task: storage_core::TaskRecord {
+                task_id: "task-1".to_owned(),
+                workspace_id: workspace_id.to_owned(),
+                conversation_id: None,
+                current_spec_revision: 1,
+                current_plan_revision: None,
+                status: "READY".to_owned(),
+                resume_status: None,
+                routine_id: None,
+                routine_revision: None,
+                automation_id: None,
+                automation_occurrence_id: None,
+                origin_coworker_id: None,
+                origin_coworker_revision: None,
+                lead_agent_binding_id: "lead-1".to_owned(),
+                blocking_conditions: Vec::new(),
+                priority: "NORMAL".to_owned(),
+                created_by: json!({"principal_id": "owner", "kind": "USER"}),
+                created_at: "2026-10-09T10:01:00Z".to_owned(),
+                updated_at: "2026-10-09T10:01:00Z".to_owned(),
+                completed_at: None,
+                version: 1,
+            },
+            current_spec_revision: storage_core::TaskSpecRevisionRecord {
+                task_id: "task-1".to_owned(),
+                workspace_id: workspace_id.to_owned(),
+                revision: 1,
+                parent_revisions: Vec::new(),
+                objective: "A bounded Task".to_owned(),
+                task_category: None,
+                constraints: Vec::new(),
+                non_goals: Vec::new(),
+                input_refs: Vec::new(),
+                workspace_instruction_revision: None,
+                required_outputs: Vec::new(),
+                acceptance_criteria: Vec::new(),
+                approvals_required: Vec::new(),
+                budget: None,
+                delegation_budget_policy: None,
+                lead_failover_policy: json!({"mode": "DISABLED"}),
+                deadline: None,
+                source_message_refs: Vec::new(),
+                placement_preference: json!({"mode": "AUTO"}),
+                preferred_lead_agent_binding_id: Some("lead-1".to_owned()),
+                authored_by: json!({"principal_id": "owner", "kind": "USER"}),
+                created_at: "2026-10-09T10:01:00Z".to_owned(),
+            },
+        }
+    }
+
+    #[test]
+    fn acceptance_receipt_requires_same_workspace_and_exact_result_task_link() {
+        let suggestion = accepted_suggestion("task-1", "workspace-1");
+        let task = ready_task_view("workspace-1");
+        let receipt = build_suggestion_task_acceptance_receipt_from_view(
+            "workspace-1",
+            &suggestion,
+            &task,
+            storage_core::SuggestionAcceptanceDisposition::Created,
+        )
+        .expect("matching atomic acceptance produces a receipt");
+        assert_eq!(receipt.suggestion.result_task_id, receipt.task.task_id);
+        assert_eq!(receipt.suggestion.status, SuggestionStatus::Accepted);
+        assert_eq!(
+            receipt.task.status,
+            storage_core::SuggestedTaskAcceptanceStatus::Ready
+        );
+
+        let mismatched_suggestion = accepted_suggestion("another-task", "workspace-1");
+        assert!(matches!(
+            build_suggestion_task_acceptance_receipt_from_view(
+                "workspace-1",
+                &mismatched_suggestion,
+                &task,
+                storage_core::SuggestionAcceptanceDisposition::Created,
+            ),
+            Err(StoreError::Integrity(_)),
+        ));
+        let mismatched_task = ready_task_view("workspace-2");
+        assert!(matches!(
+            build_suggestion_task_acceptance_receipt_from_view(
+                "workspace-1",
+                &suggestion,
+                &mismatched_task,
+                storage_core::SuggestionAcceptanceDisposition::Replayed,
+            ),
+            Err(StoreError::Integrity(_)),
+        ));
+    }
 }

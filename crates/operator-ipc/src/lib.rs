@@ -34,8 +34,8 @@ impl std::error::Error for UnsupportedPlatform {}
 
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{self, Read, Write},
     convert::Infallible,
+    io::{self, Read, Write},
     pin::Pin,
     sync::{
         Arc,
@@ -47,8 +47,7 @@ use std::{
 pub const PROTOCOL_VERSION: u16 = 1;
 /// Native-only selection operation. It is accepted only by the authenticated local IPC
 /// transport and is never mounted on an HTTP listener or included in the public API.
-pub const PRIVATE_LOCAL_ROOT_SELECTION_PATH: &str =
-    "/__litecowork_local/workspace-root-selection";
+pub const PRIVATE_LOCAL_ROOT_SELECTION_PATH: &str = "/__litecowork_local/workspace-root-selection";
 pub const MAX_HEADER_BYTES: usize = 16 * 1024;
 pub const MAX_BODY_BYTES: usize = 100 * 1024 * 1024;
 pub const MAX_REQUEST_ID_BYTES: usize = 128;
@@ -248,7 +247,10 @@ impl InFlightBodyBudget {
         }))
     }
 
-    pub fn reserve_bytes(self: &Arc<Self>, bytes: usize) -> Result<BodyBudgetPermit, ProtocolError> {
+    pub fn reserve_bytes(
+        self: &Arc<Self>,
+        bytes: usize,
+    ) -> Result<BodyBudgetPermit, ProtocolError> {
         if bytes > MAX_BODY_BYTES {
             return Err(ProtocolError::LimitExceeded);
         }
@@ -440,8 +442,7 @@ fn validate_request_fields(header: &RequestHeader) -> Result<(), ProtocolError> 
             "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
         )
         || !valid_relative_path(&header.path_and_query)
-        || (header.path_and_query == PRIVATE_LOCAL_ROOT_SELECTION_PATH
-            && header.method != "POST")
+        || (header.path_and_query == PRIVATE_LOCAL_ROOT_SELECTION_PATH && header.method != "POST")
     {
         return Err(ProtocolError::InvalidFrame);
     }

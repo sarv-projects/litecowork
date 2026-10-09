@@ -114,10 +114,122 @@ Host delegation should default to isolated write scope when two workers can modi
 ## Built-in provider classes
 
 ### LocalWorkspace
-Direct local workspace. Best for user files/device resources. May be LOCAL_BOUND.
+Direct local workspace for owner-controlled files and device resources. It may be
+`LOCAL_BOUND`, but a host directory or process working directory is not a security
+boundary. A `LocalWorkspace` with `process: HOST` must not be admitted for an external
+Agent that can read or write files unless a separately qualified OS containment provider
+enforces the requested filesystem, process, and network restrictions.
+
+### Local Task execution isolation
+
+The desktop V1 native-agent path uses a Task-scoped Environment prepared from exact
+`PinnedResourceRef`s. The host working directory, Git root, or Git worktree alone is not
+containment: a child process may still read the user's home directory, follow a symlink,
+or start a descendant that continues writing after the parent exits. `GitWorktree` provides
+change isolation and mergeability; it does not by itself provide read isolation or
+process-tree fencing.
+
+Before an AgentSession or Attempt can start, the selected provider must return a
+Runtime-local, non-secret `IsolationAttestation` bound to the Environment ID, Task ID,
+Attempt/session admission, current Runtime incarnation, provider implementation/version,
+OS build, and normalized isolation policy digest. It records observed enforcement for:
+
+```text
+readable roots       exact staged input roots plus explicitly allowed runtime files
+writable roots       separate bounded Attempt output/work roots
+network              NONE or the exact policy-enforced allowlist
+process containment  provider-owned process group/job/container boundary
+resource limits      enforced limits or explicit unsupported/unknown results
+```
+
+The provider resolves each source only by its exact Workspace/Resource/revision/digest
+pin. It verifies bytes against the pinned digest before exposure, rejects missing, stale,
+foreign, duplicate, traversal, and symlinked inputs, and presents source inputs read-only
+under the enforcing OS boundary. Outputs and generated files go to a distinct bounded
+writable root. The provider must not mount a home directory or ambient Workspace path.
+Import limits apply before extraction or copying; an unsupported format is rejected or
+exposed as opaque bytes, never silently treated as parsed content.
+
+Runtime-local evidence is represented as bounded typed values, stored only in the private
+incarnation-scoped binding store and never in domain events, aggregate snapshots, backups,
+Operator projections, Agent prompts, or Task packets:
+
+```text
+IsolationAttestation {
+  environment_id: EnvironmentId
+  workspace_id: WorkspaceId
+  task_id: TaskId
+  runtime_id: RuntimeId
+  runtime_incarnation_id: RuntimeIncarnationId
+
+  provider_kind: string
+  provider_version: string
+  operating_system: string
+  operating_system_build: string
+
+  normalized_policy_digest: Sha256Digest
+  pinned_input_set_digest: Sha256Digest
+  readable_root_set_digest: Sha256Digest
+  writable_root_set_digest: Sha256Digest
+
+  filesystem_enforcement: ENFORCED | NOT_ENFORCED | UNKNOWN
+  process_tree_enforcement: ENFORCED | NOT_ENFORCED | UNKNOWN
+  network_enforcement: ENFORCED | NOT_ENFORCED | UNKNOWN
+  resource_limit_enforcement: ENFORCED | NOT_ENFORCED | UNKNOWN
+
+  observed_at: Timestamp
+  expires_at: Timestamp
+}
+
+QuiescenceObservation {
+  environment_id: EnvironmentId
+  runtime_id: RuntimeId
+  runtime_incarnation_id: RuntimeIncarnationId
+  execution_identity_digest: Sha256Digest
+  process_scope_digest: Sha256Digest
+
+  result: QUIESCENT | UNKNOWN
+  observed_at: Timestamp
+}
+```
+
+Provider adapters do not return raw filesystem paths in these attestations. The Runtime
+checks that every required enforcement field is `ENFORCED`, the attestation is current,
+and its policy/input digests match the admission request. A quiescence observation is
+accepted only for the current Environment/Runtime incarnation and exact private execution
+identity; a different or expired observation cannot release a writer fence. `NOT_ENFORCED`
+is an observed rejection, while `UNKNOWN` preserves uncertainty. Neither is coerced to
+success.
+
+`IsolationAttestation` is operational evidence, not a Grant, CapabilityActivation,
+ExecutionLease, or authorization. It is held in Runtime-local private state and cannot be
+supplied by an Agent or Operator request. `UNKNOWN`, `UNAVAILABLE`, a version mismatch,
+or a provider that cannot prove the requested restriction fails admission closed. Native
+agent permissions, hooks, plugins, MCP, and subagents remain intact, but their effective
+access is still constrained by the OS boundary and LiteCowork Gateway. A native direct
+capability that bypasses required Trust/Effect controls remains unavailable for that
+Attempt; prompt instructions and adapter configuration are not substitutes for operating
+system enforcement.
+
+Provider stop/cancel acknowledgement is not proof that descendants have stopped. Before
+releasing a writer lease, settling an Attempt as safely stopped, reusing a writable root,
+or destroying an Environment, the provider must return a current-incarnation
+`QuiescenceObservation` tied to the provider execution identity. Only a positive
+`QUIESCENT` observation permits those transitions. `UNKNOWN`, timeout, lost provider
+identity, or a Runtime restart leaves the Attempt/environment fenced and blocks replacement
+writers until recovery revalidates process identity or the owner resolves the blocker.
+
+Local containment is qualified separately by supported OS and implementation mechanism.
+An OS/provider combination that has not passed the adversarial system cases is reported as
+unavailable and cannot run native Task work. It may still support owner-only file
+management and read-only preview. Linux qualification does not imply macOS or Windows
+support.
 
 ### GitWorktree
-Creates isolated git worktree pinned to base commit/branch. Preferred for parallel coding workers.
+Creates an isolated Git worktree pinned to a base commit/branch. It isolates Git changes
+and supports deterministic review/merge, but it is not a filesystem or process security
+boundary. Native-agent execution still requires an independently qualified OS containment
+provider and exact read/write root enforcement.
 
 ### Container
 Disposable or persistent container with bounded resource/network policy.

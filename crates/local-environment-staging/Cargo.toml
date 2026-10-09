@@ -1,0 +1,20 @@
+[package]
+name = "local-environment-staging"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+hex = "0.4"
+serde_json = "1.0"
+sha2 = "0.10"
+storage-core = { path = "../storage-core" }
+unicode-casefold = "0.2"
+unicode-normalization = "0.1"
+
+[dev-dependencies]
+tempfile = "3.23"
+
+[lints]
+workspace = true

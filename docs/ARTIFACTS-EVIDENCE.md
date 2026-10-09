@@ -116,6 +116,23 @@ overwrites an earlier one.
 
 An Artifact follows TRANSIENT -> SAVED -> ARCHIVED. Only explicit Library promotion moves TRANSIENT to SAVED; archive moves SAVED to ARCHIVED. Both commands use If-Match/expected_version and increment the Artifact aggregate version on transition. Repeating an already-applied command with the same Idempotency-Key returns the recorded result; archiving an already archived Artifact with the current expected Artifact version returns its current representation without another transition event; a stale expected version still returns STALE_VERSION. Archived artifacts retain immutable versions and authorized direct reads, but disappear from the default Library projection. ArtifactStore owns these transitions and emits the matching event.
 
+## Local desktop Library commands
+
+The current source mounts owner-authenticated promotion/archive through Operator IPC and
+the native desktop bridge. Confirmation names the Artifact; `If-Match` pins its aggregate
+version and the principal-scoped Idempotency-Key fingerprints Workspace, Artifact,
+action and expected version. The writer commits status/version, the full Artifact aggregate
+snapshot, transition event and receipt atomically. An identical retry returns the original
+recorded result even after subsequent archival; a changed payload with the same key returns
+`IDEMPOTENCY_CONFLICT`. Fresh commands require an ACTIVE Workspace. An already-archived
+archive with current If-Match stores a no-op receipt without another event or version bump.
+
+Both managed and linked Artifacts support these local metadata transitions. No content is
+fetched, copied, altered or deleted; linked provider availability is not inferred. The
+Workbench validates the response identity, content version, status and aggregate version
+before updating its display. Unconfirmed responses retain the original request ID for an
+unchanged retry. This source slice is unverified pending the deferred system/user gates.
+
 ## Provenance
 
 `ProvenanceRecord` and `ProvenanceTransformation` are shared value types defined

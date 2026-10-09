@@ -58,6 +58,7 @@ export function ArtifactLibrary({ api, workspaceId, onOpenSource }: Props) {
     {!loading && !failure && items.length === 0 && <p>No {status === "SAVED" ? "saved" : status === "ARCHIVED" ? "archived" : "transient"} Artifacts in this Workspace.</p>}
     <ul>{items.map(item => <li key={item.artifact_id}><button type="button" onClick={() => setSelectedId(item.artifact_id)}>{item.display_name} · version {item.current_version}</button></li>)}</ul>
     {cursor && <button type="button" disabled={loading} onClick={() => void loadMore()}>Load older Artifacts</button>}
-    {selectedId && <ArtifactWorkbench key={`${workspaceId}:${selectedId}`} api={api} workspaceId={workspaceId} artifactId={selectedId} onClose={() => setSelectedId(null)} onOpenSource={onOpenSource} />}
+    {selectedId && <ArtifactWorkbench key={`${workspaceId}:${selectedId}`} api={api} workspaceId={workspaceId} artifactId={selectedId} onClose={() => setSelectedId(null)} onOpenSource={onOpenSource}
+      onLibraryChanged={committed => setItems(current => current.flatMap(item => item.artifact_id !== committed.artifact_id ? [item] : committed.library_status === status ? [committed] : []))} />}
   </section>;
 }

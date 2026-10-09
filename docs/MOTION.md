@@ -35,6 +35,12 @@ new work. The Activity label remains static unless its source projection changes
 | Domain/UI change | Commit or observation required before motion | Motion |
 |---|---|---|
 | Conversation message appears | `conversation.message.added.v1` projection | Fade in 120ms, standard easing; no slide-in |
+| Rich response enhancement appears | `rich.presentation.published.v1` plus blob digest/message binding verified by Operator | Upgrade the same committed message in place; reveal validated blocks with opacity 120ms; semantic text remains available throughout |
+| Rich response fetch/compile fails | Typed unavailable/unsupported/integrity result | Keep semantic response; show a quiet textual fallback immediately, with no error animation or success-like transition |
+| Media becomes visible | Authorized pinned Resource bytes resolve and pass digest check | Crossfade 120ms; no network fetch from model URL and no autoplay |
+| Chart renders | Validated bounded data and renderer ready | Opacity 180ms only; no animated data growth or fabricated trend |
+| Diagram playback begins | User presses Play on a bounded HIGHLIGHT_SEQUENCE diagram | User-controlled sequence; no autoplay, looping, or implication that Task work is live |
+| Checklist item toggles | Local Operator UI action | Check state 120ms; reduced motion applies immediately; no Task/Evidence animation or domain event |
 | Live response text extends | Current monotonic `turn.delta` received for an active turn | Append real text; optional nonanimated caret while frames arrive; never animate fabricated characters |
 | Stream reconnects/resyncs | Snapshot/cursor accepted by Operator | Replace stale projection immediately; do not replay historical message, activity, or artifact entrances |
 | Context-used disclosure opens | User action | Expand/collapse 120ms; reduced motion changes immediately; no retrieval animation |
@@ -55,13 +61,15 @@ new work. The Activity label remains static unless its source projection changes
 | Human/Agent control changes | control lease owner/epoch projection changes | Badge/label 120ms; never animate queued pointer input |
 | Resource freshness changes | location/revision projection changes | Label + linked freshness icon 120ms |
 | Imported Resource appears | Resource + initial revision/location and idempotency receipt commit | Add the catalog row with a 120ms fade; never animate on file selection or while bytes are being sent |
-| Text preview appears | Authenticated current-revision bytes pass digest/size checks and Tauri accepts a text-like UTF-8 response within 1 MiB | Reveal the inert plain-text panel with opacity 120ms; never render active content or animate a preview before verified response |
+| Text preview appears | Authenticated exact-revision bytes pass digest/size checks and Tauri accepts allowlisted UTF-8 `text/plain` or Markdown within the requested 1 MiB bound | Reveal the inert plain-text panel with opacity 120ms; never render active content or animate a preview before verified response |
+| Resource revision comparison appears | Both explicitly selected exact revision reads succeed for the same Resource | Reveal labeled side-by-side text panes with opacity 120ms; no changed-line animation or implied merge; a failure leaves the existing revision view unchanged |
 | Markdown preview appears | Authenticated exact-version bytes pass digest/size checks and the bounded parser accepts the supported subset | Reveal the inert preview with opacity 120ms; fallback/raw-source changes are immediate and no source content is animated as executable markup |
 | Saved Task presentation refreshes | A new finite authenticated snapshot for the same Task identity is validated | Keep existing rows stable; update only fields that changed. Freshness label may change at 120ms. Initial load, reconnect, or snapshot replacement does not replay historical item animations |
 | Workspace instruction revision appears | `workspace.instructions.revision.created.v1` commits | Add the revision-history row with opacity 120ms; keep the editor's unsaved text unchanged until the user reloads or switches Workspaces |
 | Instruction conflict comparison appears | stale-version response followed by successful latest-revision read | Reveal the latest saved text with opacity 120ms beside the preserved draft; never imply a merge or overwrite occurred |
 | Saved Task objective editor opens/closes | Owner action on an eligible `READY`/unplanned Task | Show/hide immediately; no draft is represented as committed state |
 | Task `Work details` disclosure opens/closes | User action on the loaded Task detail | Native disclosure, immediate; no Task/plan/status transition is implied, and reduced-motion behavior is identical |
+| Pinned Task Resource preview disclosure opens/closes | User action on the loaded Task detail | Native disclosure, immediate; start the exact pinned read only after opening; no retrieval animation or Task transition is implied, and reduced-motion behavior is identical |
 | TaskSpec history disclosure opens | User action on the loaded Task | Load exact revisions lazily; show rows only after identity/order validation; stale cached history gets a text notice with no row replay |
 | TaskSpec revision appears | `task.spec.revised.v1` committed and the subsequent Task read confirms the current revision | Update objective/revision label immediately; on conflict keep the draft static and show Reload latest Task |
 | Task lane fails | affected lane projects failure | Border/status update 180ms; no screen-wide flash |
@@ -87,6 +95,10 @@ new work. The Activity label remains static unless its source projection changes
 Historical hydration, cursor resync, and initial page load render the current state without
 replaying transitions. An animation is never queued from an earlier event after the latest
 projection has advanced.
+RichPresentation publication is a content-format upgrade, not new work. It never restarts
+turn typing, animates each token, or animates system-state blocks as if the Agent caused
+them. Reduced-motion mode displays the same content/state immediately without transforms,
+fades, playback, or status pulse.
 
 ### Workspace creation, policy change, and archive
 Workspace creation appears only after `workspace.created.v1` commits. A replication-policy change updates its displayed label after `workspace.replication_policy.changed.v1`; it must not imply that previously replicated data was deleted. Archive enters a persistent read-only presentation only after `workspace.archived.v1` commits. Blocked archive requests show active Tasks/Automations without an archive transition.

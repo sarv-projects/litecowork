@@ -58,6 +58,16 @@ one branch. Resolution never drops sibling heads. A merge must create a new revi
 parent set includes every head it actually merges; merely selecting a branch is not a
 merge.
 
+The authenticated local content route accepts an exact `revision_id` and resolves bytes
+from that immutable revision's digest-addressed managed local blob. It never treats the
+pin as a current-head precondition and never substitutes a newer head. Storage verifies
+Workspace/Resource/revision membership, ContextDocument ACTIVE status, local managed
+provider availability, the caller's size bound, byte length, and digest before returning
+content. Historical external-provider observations without a locally managed blob remain
+metadata-only and return a typed unsupported-content error. A missing local blob is
+unavailable, not permission to fetch from an external provider. ContextDocument
+revocation/deletion continues to deny historical reads as well as current reads.
+
 An authenticated owner may append a new revision to an existing managed Resource through
 the revision-upload protocol in `API.md`. Admission requires `If-Match` for the exact
 Resource version and a non-empty set of unique parent IDs equal to every current head. The
@@ -206,10 +216,22 @@ source revision/digest, parser version, key version, and distinct HMAC-SHA256 te
 it stores neither plaintext extracted text nor raw terms. Matching is deterministic,
 case-normalized Unicode token equality with AND across query terms, not semantic
 similarity. Results include the exact revision-pinned ResourceRef and a bounded excerpt
-read back from the encrypted index object. The search boundary must recheck Workspace,
+read back from the encrypted index object. `ResourceSearchResult` also carries that
+revision's `source_content_digest` and `source_matches`: one first-occurrence record per
+distinct query term, with zero-based half-open UTF-8 byte offsets into the original
+ResourceRevision bytes. These spans are created only after digest verification and remain
+bound to the result's pinned ResourceRef/digest; they must never be applied to a newer
+Resource head or to the shortened display snippet. Non-indexed results carry an empty
+`source_matches` array, and on-demand excerpts do not currently have exact span metadata.
+The search boundary must recheck Workspace,
 current revision, source digest, and ContextDocument active status after reading the
 snapshot. An unavailable/lost index key disables indexed search and never falls back to
 plaintext indexing.
+
+The storage result computes these spans, but the daemon's ResourceSearchResult serializer
+has not yet mapped them to the Operator API. Until that implementation step is complete,
+the mounted route does not satisfy the documented `source_content_digest` and
+`source_matches` response fields; no client may derive citation offsets from a snippet.
 
 Index preparation happens before the Resource SQLite writer transaction; the index row
 and keyed-term rows are committed with initial Resource creation/upload. An owner can

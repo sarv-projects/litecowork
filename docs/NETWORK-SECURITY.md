@@ -103,6 +103,25 @@ A compromised Agent can still misuse authority intentionally granted to its auth
 session; scopes, short lifetimes, operation allowlists, rate limits, Effect recording,
 and audit bound that risk but do not make an authorized worker trustworthy.
 
+## Rich response content and media
+
+RichPresentation is untrusted structured input until the host validates its closed schema,
+source bindings, Workspace scope, byte/count/depth limits, and semantic-message digest.
+Renderers use text nodes and an allowlisted Markdown subset; raw HTML, scriptable SVG,
+inline event handlers, CSS, executable components, and arbitrary React/JavaScript are never
+accepted. Mermaid/diagram source is parsed with bounded node/edge/depth limits and rendered
+in a non-scriptable sandbox or converted to a static host graph. Unknown block versions
+fall back to semantic text.
+
+Model-authored media URLs are never fetched by the desktop renderer. Media must resolve to
+an authorized, digest-pinned Resource revision through the ResourceResolver. This prevents
+tracking requests, local-network probes, and source substitution. External HTTPS navigation
+is a user-triggered Operator action with origin display and normal network policy; it is
+not an embedded fetch. A media Resource revoked or unavailable after the document was
+published is reauthorized at read time and shown as unavailable if access no longer holds.
+MCP App blocks use the existing isolated App host and Capability/Grant boundary; they do
+not receive the desktop DOM, filesystem, local IPC, or SecretStore access.
+
 ## Provider-requested user input and external sign-in
 
 Ordinary `UserRequest` forms are non-sensitive inputs. They are immutable Workspace data

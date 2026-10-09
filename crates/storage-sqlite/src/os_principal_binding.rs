@@ -73,7 +73,7 @@ impl RuntimeOsPrincipalIdentity {
         message.extend_from_slice(namespace.as_bytes());
         message.push(0);
         message.extend_from_slice(material);
-        hex::encode(hmac_sha256(self.pseudonym_key.as_ref(), &message))
+        hex::encode(hmac_sha256(&*self.pseudonym_key, &message))
     }
 }
 
@@ -142,8 +142,8 @@ impl OsRuntimePrincipalBindingProvider {
 
         let platform = current_unix_platform();
         let principal = unix_process_principal()?;
-        let path_metadata = std::fs::symlink_metadata(data_directory)
-            .map_err(|_| unsafe_directory_error())?;
+        let path_metadata =
+            std::fs::symlink_metadata(data_directory).map_err(|_| unsafe_directory_error())?;
         if path_metadata.file_type().is_symlink()
             || !path_metadata.is_dir()
             || path_metadata.uid() != principal.uid()
@@ -166,7 +166,9 @@ impl OsRuntimePrincipalBindingProvider {
 
         let account = account_for(&canonical_directory);
         let entry = Entry::new(KEYRING_SERVICE, &account).map_err(|_| credential_store_error())?;
-        let _guard = mutation_lock().lock().map_err(|_| credential_store_error())?;
+        let _guard = mutation_lock()
+            .lock()
+            .map_err(|_| credential_store_error())?;
 
         let stored = match entry.get_password() {
             Ok(secret) => {
@@ -185,7 +187,7 @@ impl OsRuntimePrincipalBindingProvider {
                 let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
                 getrandom::fill(key.as_mut())
                     .map_err(|_| StoreError::Blob("secure random unavailable".to_owned()))?;
-                let fingerprint = fingerprint(key.as_ref(), platform, principal);
+                let fingerprint = fingerprint(&*key, platform, principal);
                 let stored = StoredBinding {
                     runtime_id: runtime_id.to_owned(),
                     platform,
@@ -217,12 +219,11 @@ impl OsRuntimePrincipalBindingProvider {
         let key_bytes = Zeroizing::new(hex::decode(key_hex.as_str()).map_err(|_| {
             StoreError::Integrity("OS principal fingerprint key is malformed".to_owned())
         })?);
-        let key: Zeroizing<[u8; KEY_BYTES]> = Zeroizing::new(
-            key_bytes.as_slice().try_into().map_err(|_| {
+        let key: Zeroizing<[u8; KEY_BYTES]> =
+            Zeroizing::new(key_bytes.as_slice().try_into().map_err(|_| {
                 StoreError::Integrity("OS principal fingerprint key has an invalid size".to_owned())
-            })?,
-        );
-        let expected_fingerprint = fingerprint(key.as_ref(), platform, principal);
+            })?);
+        let expected_fingerprint = fingerprint(&*key, platform, principal);
         if stored.principal_fingerprint != expected_fingerprint {
             return Err(StoreError::Integrity(
                 "OS principal changed for this Runtime installation".to_owned(),

@@ -1,7 +1,10 @@
 use ed25519_dalek::SigningKey;
 use keyring::Entry;
 use sha2::{Digest, Sha256};
-use std::{path::Path, sync::{Mutex, OnceLock}};
+use std::{
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 use storage_core::{DeviceIdentityRecord, StoreError};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use zeroize::{Zeroize, Zeroizing};
@@ -42,7 +45,9 @@ impl OsRuntimeDeviceIdentityProvider {
             return Err(StoreError::Invalid("RuntimeId is required".to_owned()));
         }
         validate_timestamp(now)?;
-        let canonical_directory = data_directory.canonicalize().map_err(|_| key_store_error())?;
+        let canonical_directory = data_directory
+            .canonicalize()
+            .map_err(|_| key_store_error())?;
         let account = account_for(&canonical_directory);
         let entry = Entry::new(KEYRING_SERVICE, &account).map_err(|_| key_store_error())?;
         let _guard = mutation_lock().lock().map_err(|_| key_store_error())?;
@@ -50,8 +55,9 @@ impl OsRuntimeDeviceIdentityProvider {
         let mut stored = match entry.get_password() {
             Ok(secret) => {
                 let secret = Zeroizing::new(secret);
-                serde_json::from_str::<StoredSigningIdentity>(&secret)
-                    .map_err(|_| StoreError::Integrity("stored Runtime signing identity is malformed".to_owned()))?
+                serde_json::from_str::<StoredSigningIdentity>(&secret).map_err(|_| {
+                    StoreError::Integrity("stored Runtime signing identity is malformed".to_owned())
+                })?
             }
             Err(keyring::Error::NoEntry) => {
                 let mut seed = Zeroizing::new([0_u8; SEED_BYTES]);
@@ -63,11 +69,12 @@ impl OsRuntimeDeviceIdentityProvider {
                     private_seed_hex: hex::encode(seed.as_ref()),
                     issued_at: now.to_owned(),
                 };
-                let encoded = Zeroizing::new(
-                    serde_json::to_string(&secret)
-                        .map_err(|_| StoreError::Blob("could not encode Runtime signing identity".to_owned()))?,
-                );
-                entry.set_password(encoded.as_str()).map_err(|_| key_store_error())?;
+                let encoded = Zeroizing::new(serde_json::to_string(&secret).map_err(|_| {
+                    StoreError::Blob("could not encode Runtime signing identity".to_owned())
+                })?);
+                entry
+                    .set_password(encoded.as_str())
+                    .map_err(|_| key_store_error())?;
                 secret
             }
             Err(_) => return Err(key_store_error()),
@@ -81,15 +88,16 @@ impl OsRuntimeDeviceIdentityProvider {
         validate_timestamp(&stored.issued_at)?;
         let seed_hex = Zeroizing::new(std::mem::take(&mut stored.private_seed_hex));
         let seed_bytes = Zeroizing::new(hex::decode(seed_hex.as_str()).map_err(|_| {
-            StoreError::Integrity("OS credential store contains an invalid Runtime signing key".to_owned())
+            StoreError::Integrity(
+                "OS credential store contains an invalid Runtime signing key".to_owned(),
+            )
         })?);
-        let seed: Zeroizing<[u8; SEED_BYTES]> = Zeroizing::new(
-            seed_bytes.as_slice().try_into().map_err(|_| {
+        let seed: Zeroizing<[u8; SEED_BYTES]> =
+            Zeroizing::new(seed_bytes.as_slice().try_into().map_err(|_| {
                 StoreError::Integrity(
                     "OS credential store contains an invalid Runtime signing key".to_owned(),
                 )
-            })?,
-        );
+            })?);
         // The `ed25519-dalek/zeroize` feature implements Drop for SigningKey and
         // zeroizes its private scalar. Limit its lifetime to public-key derivation.
         let public_key = {

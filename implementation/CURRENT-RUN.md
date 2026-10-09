@@ -3,16 +3,219 @@
 Update this file when the active story, implementation state, or handoff changes. It is
 operational context; architecture and owning domain contracts remain authoritative.
 
-## Active desktop/local status snapshot (2026-10-08)
+## Active desktop/local status snapshot (2026-10-09)
 
-This is the current source-level status, superseding older chronological entries below.
-The owner has clarified that V1 is the complete desktop/local product; cloud continuation
-and remote Runtime are post-V1 and are excluded from the V1 release gate. E11/E12 remain
-planned post-V1 work. Local capabilities already committed in the architecture remain in
-V1 scope.
-The owner has explicitly deferred builds, tests, formatters, validators, migrations, and
-real provider/OS checks until a later verification pass. None of the source work in this
-snapshot should be described as compiled, tested, OS-qualified, or production-ready.
+This is the current desktop/local V1 status; older chronological entries below record
+what was true at their timestamps. V1 is the complete desktop/local product. Cloud
+continuation and remote Runtime are post-V1 and excluded from the V1 release gate; local
+capabilities already committed in the architecture remain in V1 scope.
+
+### ResourceStore-to-staging adapter slice (2026-10-09)
+
+`local-environment-staging` now has a bounded Task input adapter over the narrow exact
+Resource read contract, with a blanket implementation for `ResourceStore`. It checks the
+selected `TaskView` and expected Task/spec versions before any Resource read, strictly
+parses the closed `PinnedResourceRef` shape, rejects foreign and duplicate pins, requests
+each exact revision with the remaining per-file/aggregate byte bound, checks the returned
+Workspace/Resource/revision/size identity, and uses only the stored canonical display name
+for a validated staging path. Digests are rechecked by the stager before files are exposed.
+The SQLite integration test proves an old pinned revision stages its original bytes after
+the Resource head advances. The result is `PreparedOnly` and has no OS-isolation,
+authorization, Environment, Attempt, AgentSession, lease, Effect, or dispatch authority.
+There is no Operator/API/provider caller or lifecycle for retaining the prepared directory;
+this is an adapter seam, not a user-visible or production execution flow.
+
+Focused verification passed: `cargo test -p local-environment-staging` (16 tests) and the
+SQLite exact-historical-revision/staging integration test (1 test). Final workspace and
+validator results for this slice are recorded after the complete checks run below. Existing
+compiler warnings in unrelated unfinished modules remain.
+
+### Latest implementation checkpoint — Environment lifecycle, staging, and RichPresentation read path (2026-10-09)
+
+The Environment domain policy and transactional SQLite adapter are now present. The
+adapter persists Environment aggregate state/events and owner-scoped idempotency receipts;
+provider locators remain in the Runtime-local private binding table. It authorizes the
+active Workspace owner before receipt replay, excludes regenerated event/provider data
+from request identity, safely refreshes a provider binding only for the same current
+Runtime incarnation, and blocks checkpointing while an Attempt remains active. Migrations
+v12 and v13 are forward-only; rollback/retry tests cover v11, v12 and v13.
+
+Environment persistence is not provider execution. Persistent creation still requires
+preview/budget admission, no Environment provider or Task/Attempt/lease integration exists,
+prior-incarnation bindings have no recovery/reattach edge, destruction fails closed without
+durable retention/output proofs, and there is no Environment manager UI. The F65
+sharing-scope operation has domain/SQLite storage support but no Operator API/UI; existing
+hold checks still fail closed.
+
+The local staging helper accepts already-resolved exact-pinned bytes, checks Workspace,
+Resource/revision identity, digest, canonical path collisions and input limits, and
+prepares Unix read-only inputs beside a separate writable output directory. It is
+`PreparedOnly`: no ResourceStore resolution, OS process/filesystem/network confinement,
+output quota, Runtime-local attestation, Environment binding, Attempt, AgentSession, lease,
+or Task dispatch is connected. Non-Unix staging fails closed until owner-only ACL
+behavior is qualified.
+
+The SQLite `AgentSessionStore` now also rejects direct Task-planning session reservation
+and activation with `TASK_PLANNING_ISOLATION_UNAVAILABLE` before any session/Event/receipt
+write or Task transition. This closes an internal storage bypass around the read-only
+preflight route; it does not produce or verify an isolation attestation and planner
+dispatch remains unavailable.
+
+The separate RichPresentation store now persists a bounded immutable display enhancement
+only after an exact committed AGENT message is found in the authorized Workspace. It
+checks canonical document/blob and semantic digests, UTF-8 text slices, closed
+TEXT_SLICE/LAYOUT/DIVIDER shapes, provenance, event identity, and archive status; metadata
+and publication event commit atomically. The semantic message remains readable if the
+presentation blob is unavailable. Core-generated presentation IDs are a caller contract.
+
+An authenticated individual RichPresentation GET route now scopes reads to the selected
+Workspace/owner, validates message/document/blob bindings, omits private session metadata,
+and sets `no-store`. Its focused tests cover the response/selection helpers and shared auth
+middleware, but do not construct a full authenticated route request. RichPresentation is
+still not integrated into Conversation message creation/snapshots or the desktop
+Conversation UI; HostGuidance, citations/Artifact binders, streaming, and backup/GC roots
+remain outstanding. The renderer/parser and individual read route are separate slices, not
+an end-to-end Presentation Runtime.
+
+The earlier Environment/RichPresentation storage checkpoint passed its then-focused tests;
+the current full-workspace verification is recorded in the latest dated entry below. These
+are code/contract checks only, not provider, UI, OS, or real-user acceptance.
+
+Repository hygiene note: an implementation worker ran `cargo fmt --all` in the already
+dirty shared worktree before being told to use targeted formatting. This introduced broad
+formatting churn across pre-modified Rust files. No changes were staged or committed, and
+the prior unformatted worktree was not recoverable as a clean snapshot, so the churn was
+preserved for owner review rather than risking loss of implementation edits.
+
+### Task planning readiness boundary checks (2026-10-09)
+
+The Task detail surface now treats planning readiness as a read-only diagnostic, not as
+dispatch. The React boundary validates the returned Task identity/version, blocker shape,
+and all-false execution claims; the daemon projection validates Workspace/owner/current
+Task version and confirms that readiness does not create Task execution records or call a
+provider. The Tauri command validates the same Task/version identity before returning the
+projection. Focused checks passed: 12 UI helper tests, 3 daemon readiness tests, and 4
+Tauri readiness tests. `pnpm --config.verifyDepsBeforeRun=false build` also passed for this
+shared worktree, with the existing Vite large-chunk advisory. The full Tauri crate test
+result is recorded below when complete.
+
+The Tauri compile attempt exposed transport-type mismatches in resource/artifact/routine/
+suggestion bridges and a missing default Tauri icon. Those were corrected, and the Linux
+file-dialog dependency now enables its Tokio backend explicitly. The complete Tauri crate
+suite passed (6 tests), the UI helper suite passed (12 tests), the daemon readiness suite
+passed (3 tests), and the production UI build passed with an existing large-chunk advisory.
+Architecture validation passed; generated implementation coverage was refreshed (79
+documents, 1,092 sections, 5,300 traceability rows), then implementation-plan validation
+passed for 59 stories. These checks establish source/build behavior for the Linux
+development environment only: they do not qualify Windows, macOS, packaged startup, OS
+IPC, real providers, or Task dispatch. Planning and execution remain fail-closed.
+
+The owner later asked to implement, test, and verify the current work. On 2026-10-09 the
+Rust workspace suite, UI production build/artifact tests, and both architecture/plan
+validators passed as recorded below. This verifies those code paths/contracts only; it is
+not OS qualification, real-provider validation, full workflow acceptance, or a production
+release gate. Historical entries saying checks were deferred describe earlier checkpoints.
+
+### Follow-up local IPC, retrieval provenance, and rich response slices (2026-10-09)
+
+Three bounded implementation slices were added. The daemon has Linux/Unix IPC regression
+tests for rejecting a missing internal authenticated-peer marker, rejecting bearer-header
+authentication on the IPC frame, and dispatching an accepted same-process/same-UID frame
+through the ordinary authenticated readiness route. `cargo test -p litecoworkd
+operator_ipc_tests -- --nocapture` passed (3 tests). This tests the local dispatcher
+boundary; it does not prove separate-process identity, packaged daemon behavior, or
+macOS/Windows qualification.
+
+The IPC crate also now has a separate-process Unix endpoint lifecycle test: a child cannot
+replace an active endpoint, and the original socket remains owned, mode-restricted, and
+accepting connections. `cargo test -p operator-ipc --test unix_endpoint_lifecycle --
+--nocapture` passed (2 tests). This does not test daemon startup locking or different-UID
+authentication and ran only in the Linux development environment.
+
+Indexed local text search now carries exact source spans with the pinned ResourceRevision
+and content digest. Storage only emits byte offsets after verifying the indexed snapshot's
+revision, byte length, and SHA-256. The daemon maps those spans to the API response and
+rejects inconsistent revision/digest/range bundles. `cargo test -p storage-sqlite
+resource_index::tests -- --nocapture` passed (11 tests), and `cargo test -p litecoworkd
+indexed_resource_source_match_tests -- --nocapture` passed (2 tests). The OpenAPI/API/
+schema/resource contracts and architecture validator now describe and check the mapping.
+The Tauri bridge carries the pinned content digest and spans in its typed view and rejects
+malformed digest/identity/mode/query/span bundles. `cargo test --manifest-path
+apps/litecowork-ui/src-tauri/Cargo.toml resource_search_provenance_tests -- --nocapture`
+passed (5 tests). Because search responses do not include source bytes, Tauri cannot
+independently prove a span against the content; `App.tsx` does not yet display these spans.
+They are not user-facing citations or answer grounding.
+This is provenance-backed lexical search; it is not semantic RAG, document extraction,
+embedding retrieval, or end-to-end cited answer generation.
+
+### Task dispatch gate and next safe execution prerequisite (2026-10-09)
+
+A focused E03 review confirmed that Task dispatch must remain fail-closed. Current code
+can persist Tasks and plans and show a read-only planning-readiness projection, but it does
+not yet have a Task-scoped filesystem Environment, producer-authenticated planning
+submission, connected Trust/capability mediation, or integrated lease/Effect/Evidence
+reconciliation. The existing Codex plan settings (read-only and network disabled) do not
+restrict filesystem access to Task-authorized inputs. No real provider should be started
+for a Task through that path.
+
+The next bounded prerequisite is a local Task-scoped Environment provider slice with no
+agent dispatch: exact same-Workspace pinned inputs, verified Resource exposure, isolated
+writable area, provider identity/lifecycle receipts, and cleanup that never claims safe
+release without positive quiescence evidence. Tests must include foreign/missing/stale
+input rejection, path/symlink traversal, read-only input preservation, restart identity,
+ambiguous cleanup, and proof no Attempt/lease/provider process is created. Afterward,
+OS-specific descendant containment and native capability mediation still gate planning
+dispatch; Trust, Effect reconciliation, and verification still gate real Attempt execution.
+
+### Pure Environment lifecycle domain slice (2026-10-09)
+
+Added the canonical Environment metadata and `EnvironmentStore` persistence port to
+`storage-core`, with pure lifecycle decisions in `domain-environment`. The domain slice
+validates owner/lifetime/sharing combinations, pinned source digests, immutable provider,
+source, isolation and budget configuration, version/status CAS, provider readiness identity,
+and suspend/destroy holds. Ambiguous provision/suspend/destroy results remain in their
+pending lifecycle state for provider reconciliation; only positive provider absence
+confirmation can produce `DESTROYED`. `USER_SHARED` remains rejected for v1 because the
+durable owner/attachment contract is deferred. This adds no provider implementation,
+filesystem calls, Task/Attempt mutation, API/UI route, agent dispatch, lease creation, or
+budget reservation. Workspace-persistent creation is rejected until typed preview
+consumption exists. Creation and lifecycle commands carry owner-scoped request identity;
+READY requires an atomically stored Runtime-local binding, which is excluded from events,
+aggregate snapshots, and public projections. Lifecycle decisions remain clock-free; the
+adapter must stamp `updated_at` from the committed event time. Provider admission must
+remain blocked until budget reservation and a real provider are integrated.
+
+Verification on 2026-10-09:
+
+- `cargo test -p domain-environment` — passed (22 unit tests; doc tests passed).
+- `cargo test -p storage-sqlite environment_tests -- --nocapture` — passed (11 tests).
+- Final-tree `cargo test -p storage-sqlite` — passed (94 tests).
+- `cargo check -p storage-sqlite` and targeted Rust formatting passed.
+- Architecture, implementation-plan, coverage validation, and `git diff --check` passed.
+
+The transactional SQLite adapter now persists lifecycle state, events, aggregate snapshots,
+receipts, and incarnation-local provider bindings. It still does not provision or clean up a
+provider, reserve persistent-environment budget, integrate Task/Attempt/lease admission,
+expose an Operator API/UI, or recover bindings across Runtime incarnations. Persistent
+creation and destruction remain fail-closed until their preview/budget and retention/output
+proof contracts are implemented.
+
+The desktop source now has a bounded RichPresentation parser and optional display-only
+renderer for semantic text slices and simple layouts/cards/callouts/tables. It bounds the
+JSON tree before serialization, checks message and semantic digest binding, validates
+strict UTF-8 byte slices, limits depth/size, rejects unsupported renderer versions and
+unresolved provenance, and falls back to the semantic answer. Its adversarial focused suite
+passed (20 tests), and the production UI build passed with the existing Vite large-chunk
+advisory. Browser/Tauri rendering was not exercised. A separate daemon-side SQLite
+RichPresentation store now verifies and persists bounded documents, but the UI parser is
+not connected to that store: API-level fetch/digest verification, Conversation snapshots,
+Host Guidance, source/Artifact binders, and streaming remain outstanding. This is not
+end-to-end generative UI.
+
+Architecture validation passed (140 typed events). Generated implementation coverage was
+refreshed (79 documents, 1,092 sections, 5,302 traceability rows), and implementation-plan
+validation passed (59 stories). `git diff --check` passed. All evidence is from the Linux
+development environment; no packaged OS/provider or owner real-user acceptance was run.
 
 ### Latest auth and desktop connection review (2026-10-08)
 
@@ -49,6 +252,82 @@ can still exceed the deadline and force an unclean stop.
 
 ### Implemented in source; verification still open
 
+- Task detail's committed Outputs disclosure now offers an explicit retry after an
+  authenticated Artifact-list failure. A new request generation causes effect cleanup to
+  abort a superseded read; the control is withheld while the local Runtime is offline, when
+  Runtime readiness itself is the recovery path. This is only a read/UI recovery slice: it
+  does not create Artifacts or indicate Task execution. No tests, build, formatters, or
+  validators were run.
+- Task presentation and committed-output panels are now keyed by Workspace and Task
+  identity, so switching Tasks remounts the disclosures and clears local selection/error
+  state before the next Task's panels render. This supplements their request cancellation
+  and identity checks; it is not live execution or projection resynchronization. No UI
+  build or interaction check was run.
+- The saved progress panel additionally scopes snapshot timestamps, freshness,
+  transient failures/notices, and the progress projection to the current Workspace/Task
+  identity. This prevents a prior Task's activity or error state from appearing during a
+  Task switch, even before the next read completes. Progress remains a finite saved
+  projection, not live provider activity. No UI check was run.
+- Goal details now render linked Tasks as accessible navigation actions, showing the
+  loaded Task objective/status when present and opening the existing Work detail route in
+  the same Workspace. This does not edit the Goal or Task and does not start execution.
+  No desktop check was run.
+- An unconfirmed Artifact text-version publish now keeps its original draft and RequestId
+  locked: editing, discard, and closing are disabled until an unchanged retry confirms the
+  immutable publication result. This preserves idempotent reconciliation; the request is
+  still in-memory and is not restored across app restart. No UI check was run.
+- If a Work list refresh fails after this Workspace/status query already has rows, those
+  rows now remain available but are explicitly labeled as the last successfully loaded
+  list with its timestamp. The label is limited to initial-page refresh failure/offline
+  state; a failed Load more request does not incorrectly invalidate rows already loaded.
+  Work rows also say `Task updated` for the Task summary's updated_at field; only the Task
+  detail panel labels event-derived timestamps as activity/evidence. No UI interaction
+  check was run.
+- Task detail now validates both Workspace and Task identity on its initial read. A failed
+  or mismatched read shows an explicit retry action for the same authenticated read;
+  retry is disabled while Runtime is offline and does not mutate or start the Task. No UI
+  interaction check was run.
+- Indexed local search now rejects a query token over the contract's 128 Unicode-character
+  limit rather than silently dropping it and weakening an AND query. Boundary test source
+  covers accepted 128 and rejected 129 characters; it was not run.
+- If Operator IPC cannot initialize after Runtime registration, startup now persists
+  `OPERATOR_API_START_FAILED` in private local status and exits nonzero, releasing the
+  single-instance lock for bounded service-manager retry or explicit manual retry. The
+  catalog was already durably `DEGRADED` before endpoint bind and remains so; it does not
+  store the specific blocker. Updated Runtime lifecycle and failure-recovery contracts;
+  source is unbuilt/unverified.
+- `docs/FLOWS.md` now records F122 for read-only Goal-linked Task navigation and F123 for
+  Artifact text publish ambiguity/retry, including the fact that the request ID is mounted
+  UI state and can be lost after restart/unmount. `docs/EXPERIENCE.md` records those
+  behaviors and distinguishes the exact Task update timestamp from observed activity.
+  The implementation backlog now states that the current Work selector is exact Task
+  status; semantic Active/Waiting/Scheduled/Done grouping remains open. These are
+  documentation/source-alignment changes, not acceptance evidence.
+- A focused Task-dispatch review found no safe activation increment: although initial-plan
+  admission and a Linux cgroup process-scope primitive exist in source, Task-specific
+  filesystem isolation, mediated/disabled native capabilities, verified descendant-writer
+  quiescence, and durable Attempt/lease/Effect recovery are not connected to dispatch.
+  Codex read-only mode does not establish a Resource-root filesystem boundary; OpenCode is
+  not an enabled Task worker. Keep planning dispatch fail-closed until those boundaries are
+  integrated and qualified.
+- A focused ZIP/RAG review confirmed the daemon's `UNAVAILABLE` ZIP status is intentional.
+  The existing parser is not supervised with hard OS resource limits or bounded IPC, and
+  there is no Core-owned member-Resource publication/deletion transaction. Keep ZIP bytes
+  opaque; the next implementation boundary is a supervised, resource-limited local worker,
+  followed by Core-mediated publication and cleanup. No parser/provider was connected.
+
+- Automation manual Run once now has a desktop path: the definition editor can create a
+  ManualTrigger; the page reloads the exact Automation/Routine revisions, renders bounded
+  TEXT/choice fields and same-Workspace Resource revision selectors, and calls the local
+  authenticated route through the finite Tauri bridge. The receipt is checked for
+  Workspace, Automation/Routine pins, occurrence, and
+  READY Task state before showing a Work link. Ambiguous responses retain the exact
+  request identity for retry while the mounted app remains open; explicitly allowing a
+  separate Task discards that key and warns the user. This creates a real occurrence and
+  READY Task only; it does not start planning or an agent. Recurring trigger hosting and
+  all verification remain open. No tests, builds,
+  validators, formatters, or OS/provider checks were run.
+
 - `litecoworkd` has a single-instance lifecycle, local storage/bootstrap, authenticated
   Unix IPC Operator transport, Runtime status/readiness, and Tauri on-demand launch/status.
   The Tauri startup probe now observes the spawned daemon through an authenticated
@@ -72,6 +351,18 @@ can still exceed the deadline and force an unclean stop.
   live worker, resumes, or performs a lead handoff. Task detail also loads exact TaskSpec
   revision history through an authenticated Workspace-scoped read bridge; it is read-only
   and does not restore or mutate history.
+- Manual Routine run source now materializes one ordinary standalone Task: the authenticated
+  `/v1/routines/{id}/run` route accepts the exact current revision and bounded inputs,
+  while SQLite rechecks the Routine ACTIVE/head state, TaskSpec projection, lead eligibility,
+  and Resource revisions in the same Task creation transaction. Task and TaskSpec are
+  `READY`/revision 1 with conditional `task.created.v1` Routine provenance and a stable
+  owner/Workspace/RequestId receipt; no planning or execution records are created. The
+  finite Tauri bridge, schema-generated bounded TEXT/choice fields and exact
+  same-Workspace Resource revision selectors, response identity checks, and Task detail
+  link are authored. Source regression cases are added but tests/builds/validators/
+  formatters were not run per owner instruction. This
+  slice is not yet compiled, tested, or production-qualified; Conversation-origin admission
+  and actual Task planning/execution remain unavailable.
 - A standalone Linux process-scope source primitive gates native-agent exec on same-PID
   cgroup membership and exact kernel memory/CPU/process limits. Its pre-GO cleanup now
   requires a reaped launcher plus positive unit-inactive/dead or cgroup `populated=0`
@@ -103,8 +394,10 @@ can still exceed the deadline and force an unclean stop.
   Editing is limited to managed `text/plain` content up to 1 MiB, preserves drafts on
   conflicts, and requires explicit reload/rebase before retry. It does not edit HTML,
   external Resource content, or arbitrary Artifact types. This path is source-only and
-  remains unverified. Automation creation remains PAUSED; there is no trigger host,
-  occurrence-to-Task scheduler, or Automation run. A read-only, owner- and local-Runtime-
+remains unverified. Automation creation remains PAUSED. A narrow local owner
+ManualTrigger route now requires the enrolled local TRIGGER_HOST binding/incarnation and
+atomically commits an occurrence plus ordinary READY Task. It does not activate recurring
+  hosting or start planning; the Automation desktop UI now exposes a Manual-trigger-only one-shot Task action for supported inputs. A read-only, owner- and local-Runtime-
   scoped DelegationProfile catalog is now connected to Coworker Settings. Enabled profiles
   can be assigned; disabled assignments can be removed; archived/unknown assignments are
   surfaced for clearing. Profile creation, immutable revision, duplicate, and lifecycle
@@ -114,11 +407,18 @@ can still exceed the deadline and force an unclean stop.
   exposed. Profile enablement is explicitly fail-closed until adapter, Trust, Environment, and execution
   admission are integrated. Automation definition create/revise now pins an exact
   Workspace Coworker revision or explicit null; the editor preserves an existing pin
-  unless the owner deliberately changes it. Automations still save PAUSED and cannot
-  run or create Tasks. Workspace instruction history now displays exact source Resource
+  unless the owner deliberately changes it. Automations still save PAUSED; recurring
+  triggers remain unhosted, while ManualTrigger can create a READY Task without planning.
+  Workspace instruction history now displays exact source Resource
   and revision, content digest, and parent provenance while clearly distinguishing saved
-  guidance from Task Context actually consumed. Generic ContextDocument edit/revocation/
-  deletion and session invalidation remain unavailable. The shared SQLite Resource
+  guidance from Task Context actually consumed. ContextDocument owner status now has an
+  authenticated local ACTIVE↔REVOKED service/route with Resource-version CAS, one
+  transaction for metadata/snapshot/event/idempotency receipt, and source regression cases
+  for replay, stale versions, restore, read denial, and rejected purge statuses. The owner
+  Library ContextDocument history now exposes version-pinned revoke/restore controls with
+  confirmation, retained-bytes/already-delivered-content warnings, and same-key retry for
+  ambiguous responses; ordinary Resource metadata controls remain absent. Deletion/purge
+  and session invalidation remain unavailable. The shared SQLite Resource
   content-read admission now rejects non-ACTIVE ContextDocuments before BlobStore access;
   owner metadata remains readable and errors distinguish retained revoked content from
   deletion in progress/completed. If an admitted BlobStore read fails, the store rechecks
@@ -1388,14 +1688,13 @@ saved Workspace guidance provenance, not evidence of what a Task or agent actual
 This reuses the existing authenticated Workspace-instruction history response; it adds no
 Operator route and does not expose historical Resource bytes.
 
-The full ContextDocument lifecycle remains blocked at the product API boundary: although
-architecture/OpenAPI describe Resource metadata, revision uploads, status changes, and
-deletion receipts, the local daemon router currently mounts none of those ContextDocument
-or Resource detail/revision lifecycle routes. The desktop therefore does not classify
-ordinary Library files as ContextDocuments, edit ContextDocument revisions, revoke/delete
-context, or claim purge completion. Safe native-session invalidation is also not integrated.
-No tests, build, formatter, validator, migration, or runtime checks were run for this
-source-only change; verification is deferred by the current run instruction.
+Earlier source-only note, superseded by the current implementation above: the local
+Operator now mounts the owner ACTIVE↔REVOKED status route. It still does not mount purge
+or deletion-receipt operations, offer revoke controls in the desktop UI, or invalidate
+native sessions that already received content. The generic lifecycle is therefore
+incomplete and must not be described as deletion-ready. No tests, build, formatter,
+validator, migration, or runtime checks were run for this source-only change; verification
+is deferred by the current run instruction.
 
 ## Story status — 2026-10-07
 
@@ -1532,8 +1831,12 @@ sequence is OS-keystore qualification/build, daemon lifecycle, authenticated loc
 boundary, Tauri shell and Workspace/resource intake, durable Tasks/Attempts, Trust-mediated
 capabilities and Evidence, native adapters/delegation, then remaining local product surfaces.
 Keep each slice tied to its current Epic and authority docs. Do not mark the Linux handover
-PoC as production switching. Verification/testing is deferred by the owner; label code from
-this run unvalidated until the dedicated pass. Do not push without explicit instruction.
+PoC as production switching. Verification is now being run incrementally: the 2026-10-09
+workspace/UI and architecture-plan results are recorded at the current snapshot and latest
+verification entry. The next safe product boundary remains E03-S01 qualification and
+integration; E03-S03 planning dispatch and E03-S04 Attempts must stay fail-closed until
+Environment, Trust, lease, Effect, and recovery proofs are actually connected. Do not push
+without explicit instruction.
 
 ## Active Runtime identity/migration slice — 2026-10-08
 
@@ -2458,3 +2761,601 @@ Source/contracts updated: `apps/litecowork-ui/src-tauri/src/lib.rs`,
 `apps/litecowork-ui/src/App.tsx`, `docs/API.md`, `docs/EXPERIENCE.md`, and `docs/FLOWS.md`.
 No tests, builds, typechecks, formatters, validators, migrations, providers, or OS checks
 were run by instruction. The source slice is unverified.
+
+## Desktop Library Workspace note creation — 2026-10-08
+
+Added a short-text Library form that creates only a Workspace-owned `WORKSPACE_NOTES`
+ContextDocument. The title is normalized to a managed `.md` Resource name, note content is
+bounded to 64 KiB of UTF-8, and creation uses the existing authenticated local Tauri
+resumable Resource upload path. ContextDocument kind/Workspace owner metadata is pinned in
+the create request, included in local resume identity, and checked against the returned
+upload session before transfer proceeds. The committed note appears as a normal Library
+Resource and can use the existing revision history/edit/revoke surface. It is not
+automatically attached to agent context and does not implement semantic RAG. The current
+Operator session record persists the two-field `ContextDocumentCreateMetadata` (kind and
+owner only); the OpenAPI upload-session response had incorrectly referenced full committed
+`ContextDocumentMetadata` with status/purge fields. The response schema and Tauri/WebView
+echo validation now match the actual upload-session shape. Committed Resource metadata still
+starts `ACTIVE`.
+
+The note form preserves the exact entered body bytes instead of trimming or appending a
+newline before upload; its 64 KiB limit applies to the bytes that are actually stored.
+
+Source/contracts updated: `apps/litecowork-ui/src/App.tsx`,
+`apps/litecowork-ui/src/styles.css`, `apps/litecowork-ui/src-tauri/src/lib.rs`,
+`docs/API.md`, `docs/SCHEMAS.md`, `docs/schemas/operator-api.openapi.yaml`,
+`docs/EXPERIENCE.md`, and `docs/FLOWS.md`. No tests, builds, typechecks, formatters,
+validators, migrations, provider checks, or OS checks were run by instruction; the source
+change is unverified.
+
+## Desktop ContextDocument owner controls — 2026-10-08
+
+The Library ContextDocument revision/history panel now exposes owner-confirmed
+`ACTIVE ↔ REVOKED` status changes. The authenticated Operator route uses Resource-version
+If-Match and idempotency; SQLite commits the metadata/version, Resource aggregate snapshot,
+domain event and replay receipt atomically. Resource state snapshots retain the existing
+Resource schema version. New content reads and index publication are denied after
+revocation. Revocation retains bytes and cannot recall content already delivered to an
+agent session. Purge/deletion receipts and safe native-session invalidation remain absent.
+This source is unverified; checks and tests remain deferred.
+
+## Local Workspace backup implementation audit — 2026-10-08
+
+The documented backup routes and manifest schema are not wired into the source. The
+daemon has no backup Operator handlers, `storage-core` has no BackupStore port, and
+SQLite has no consistent Workspace-filtered snapshot/export barrier or manifest
+transaction. The current BlobStore has no backup envelope, key-reference authentication,
+or manifest MAC interface. A working UI cannot be added honestly until those provider and
+storage boundaries exist. Copying the live SQLite file would violate the storage contract;
+no such shortcut or placeholder UI was added. This source-only audit ran no checks.
+
+## Desktop/local V1 policy surface — 2026-10-08
+
+Settings no longer offers cloud Workspace replication as an active local V1 feature.
+`LOCAL_ONLY` is shown as the current supported mode; a previously saved non-local policy
+is labeled inactive, with an explicit owner action to reset it to `LOCAL_ONLY`. No transfer
+or cloud/remote behavior is implied or started. Future replication values and generic flow
+contracts remain documented for post-V1 work. UI/docs source changes are unverified; no
+checks were run.
+
+## ContextDocument Task-input admission — 2026-10-08
+
+Task creation and pre-planning TaskSpec revision storage now share a transaction-local
+Resource input validator. It requires unique same-Workspace pinned Resource revisions and
+checks current ContextDocument status before accepting a new pin; revoked, deletion-pending,
+or deleted documents are rejected. The Task resolver/read path still has to repeat the
+status check when bytes are actually requested because owner status can change after Task
+admission. Source regression cases cover active → revoked → active, deleting statuses,
+duplicate inputs, and Workspace mismatch; they call the shared admission helper directly,
+not the full Task create/revision transactions.
+The storage source, test, and Task Runtime contract are updated but unverified. No test,
+build, formatter, or validator was run.
+
+## ZIP extraction integration boundary — 2026-10-08
+
+The existing Python ZIP parser and fixture tests are not reachable from the desktop/daemon
+path. Current contracts require supervised isolation, hard resource limits, cancellation and
+crash handling, exact source revision binding, and Core-managed child Resource publication
+with provenance/deletion. The Linux process-scope primitive is unqualified and is not a
+cross-platform ZIP worker. ZIPs therefore remain intact, searchable only by metadata, and
+available for original-byte export; no in-process parser shortcut or placeholder extraction
+control was added. This was a source/contract audit only; no checks or OS/provider runs.
+
+## Runtime lifecycle file-open hardening — 2026-10-08
+
+Unix daemon startup/status now opens the Runtime lock and lifecycle state without following
+final-component symlinks, validates the opened descriptor as a regular file owned by the
+current effective user, and requires a user-owned private Runtime directory. This closes
+the prior lstat-then-open race for lifecycle state and lock files. A Unix source regression
+case was added for symlinked state. No tests, builds, formatters, validators, or OS
+qualification were run; Windows transport remains fail-closed and the daemon lifecycle is
+not production-qualified.
+
+## Artifact Library promotion/archive source — 2026-10-08
+
+Authored the owner-scoped `ArtifactLibraryWriteStore`, SQLite status/state/event/receipt
+transaction, mounted `/promote` and `/archive` Operator handlers, native IPC command,
+strict desktop response validation and confirmed Workbench controls. Managed and linked
+Artifacts retain exact content versions/Resource heads; linked provider content is not
+fetched or deleted. Replays resolve the original receipt, fresh archived no-ops emit no
+event, and stale/archive/owner/idempotency guards remain authoritative. The standalone
+ArtifactLibrary updates its active status filter from the validated committed response;
+App.tsx is untouched. Source regression cases cover transitions, history/restart/replay,
+no-op/stale behavior, concurrent commands, owner/Workspace/archive/idempotency rejection,
+receipt integrity, linked metadata and event-insert rollback. No tests/builds/formatters,
+validators, provider or OS checks were run. This is authored source, not system/user
+acceptance or an E04/E08 completion claim.
+
+## Exact historical Resource reads and text comparison — 2026-10-08
+
+The local Resource content route and `ResourceStore::read_resource_content_bounded` now
+carry an optional exact revision pin (`None` means current head). SQLite resolves the
+selected immutable revision only under the requested Workspace/Resource, checks
+ContextDocument ACTIVE status and the requested byte ceiling before BlobStore access,
+requires an available local managed encrypted-blob provider, and verifies exact length and
+SHA-256 before returning. Historical content is read by immutable digest metadata rather
+than the mutable location locator; absent/external/unavailable content fails closed with a
+typed response and never falls back to a newer head. Archived Workspace owner reads retain
+the existing policy. The route emits `X-Resource-Revision-Id`; Tauri pins the selected
+revision and requests a 1 MiB bound for text preview.
+
+Resource History now exposes comparison only after the owner explicitly selects two
+different loaded revisions of the same Resource. It restricts choices to committed
+`text/plain`/Markdown revisions no larger than 1 MiB and displays raw escaped text in
+labeled side-by-side panes; no HTML/SVG rendering or changed-line diff is claimed. A failed
+read preserves the surrounding editor/history state, and changing pins/unmounting fences
+late responses. Regression cases were authored in storage source and F120. No tests,
+builds, formatters, validators, provider checks, or OS qualification were run. This source
+slice is unverified and does not complete E02 or E03.
+
+## Home Coworker first-use source — 2026-10-08
+
+E08-S01 has an optional Home setup card for an ACTIVE Workspace with no primary and a
+successfully loaded, scoped roster. The owner explicitly creates neutral Assistant or
+selects an existing active Coworker, then separately confirms Make primary. Existing
+Coworker create/primary APIs provide the authenticated commands; immutable revisions and
+Workspace If-Match semantics are unchanged. The composer draft, explicit Workspace
+defaults, fail-closed lead resolution, and pending Task save remain intact. No agent or
+Task execution is initiated. A partial/unavailable roster is not claimed to be empty.
+
+Authored paths: `apps/litecowork-ui/src/coworkers/HomeCoworkerOnboarding.tsx`, narrow Home
+wiring in `apps/litecowork-ui/src/App.tsx`, `implementation/epics/E08.md`, and E08-S01's
+implementation note in `implementation/backlog.json`, plus this record. Retry IDs and
+dismissal last only for the mounted card; full guided lead/worker onboarding and durable
+navigation/restart recovery remain deferred. No tests, builds, formatters, validators,
+provider checks, or OS qualification were run. This slice is unverified; E08-S01 is not
+complete and still requires its recorded source/system/owner acceptance cases.
+
+## Local Automation ManualTrigger admission — 2026-10-08
+
+Added a narrow authenticated local owner `POST /v1/automations/{id}/run` admission path.
+It accepts a PAUSED or ENABLED Automation only when the exact pinned revision has a local
+ManualTrigger, validates the pinned Routine inputs, and atomically creates an
+AutomationOccurrence at PENDING/version 1, CLAIMED/version 2/claim_epoch 1, then
+STARTED/version 3 linked to an ordinary READY Task. It records immutable Automation,
+Routine, trigger, Runtime-incarnation, binding-version, and owner RequestId provenance in
+the Task/occurrence commit. No recurring cursor is created, no Automation activation is
+implicit, and no Plan, Step, Attempt, AgentSession, lease, Environment, CapabilityInvocation,
+Effect, or Evidence is created. `STARTED` describes materialization only.
+
+`AutomationOccurrence.version` is separate from `claim_epoch`; migration 11 adds and
+backfills the version, SQLite enforces exact +1 updates, and occurrence event/snapshot
+`entity_revision` follows the aggregate version. A TaskStore receipt read resolves exact
+same-principal/request/payload replay before mutable Resource, Coworker, Runtime-binding,
+and Automation-head admission checks; the write transaction repeats receipt resolution
+before its atomic dependency checks. A changed payload conflicts. The authenticated owner
+and immutable Automation revision must still be available to identify the trigger.
+
+Authored/updated source paths include `apps/litecoworkd/src/automation_operator.rs`,
+`crates/storage-core/src/lib.rs`, `crates/storage-sqlite/src/lib.rs`,
+`crates/storage-sqlite/src/automation_admission.rs`,
+`crates/storage-sqlite/src/tests.rs`, `docs/AUTOMATION.md`, `docs/API.md`,
+`docs/DATA-MODEL.md`, `docs/STATE-MACHINES.md`, `docs/EVENTS.md`, `docs/SCHEMAS.md`,
+`docs/STORAGE.md`, `docs/SERVICES.md`, `docs/FLOWS.md`, OpenAPI/event/SQLite schemas,
+E09 and this file.
+The Automation desktop page does not yet expose Run now; scheduled/provider trigger
+hosting, cursor/misfire recovery, occurrence settlement from Task outcomes, and full local
+system/user acceptance remain open. Source cases were authored but not run. No builds,
+tests, formatters, validators, migration execution, provider checks, or OS qualification
+were run; this source slice is unverified and is not production-ready.
+
+## E08-S04 factual Task progress projection — 2026-10-08
+
+Added a read-only authenticated `GET /v1/tasks/{task_id}/progress` path across the
+Operator, bounded SQLite presentation read model, Tauri command, and Task presentation
+panel. In one SQLite read snapshot it projects the persisted Task, current-plan Steps,
+each Step's exact persisted current Attempt, newest committed Task/Step/current-Attempt
+events, newest Task Evidence timestamp, blockers, and newest resolvable ArtifactVersion.
+The latest event from a terminal current Attempt remains eligible as historical Task
+activity; `active_workstreams` includes only nonterminal Attempts. UI Step labels are
+derived from StepStatus, not AttemptStatus. Event summaries use a fixed allowlist and do
+not expose event payloads. Progress is not a percentage, ETA, process-liveness claim, or
+provider-progress claim. CapabilityInvocation, provider, and Environment observation
+sources remain unintegrated. The endpoint rejects over-limit source sets instead of
+silently truncating them and sets `Cache-Control: no-store`.
+
+Updated `docs/TASK-RUNTIME.md`, `docs/PRESENTATION-RUNTIME.md`, `docs/API.md`, E08-S04,
+and its backlog implementation note with the exact current source coverage and limits.
+Added a source regression case for terminal Attempt historical activity vs nonterminal
+workstream classification. No tests, builds, formatters, validators, provider checks, or
+OS qualification were run; source remains unverified and does not complete E08-S04.
+`apps/litecowork-ui/src/App.tsx` is not part of this slice.
+
+## E09 ManualTrigger desktop recovery — 2026-10-09
+
+The Automation page now exposes a one-shot ManualTrigger action that creates an ordinary
+READY Task; it does not start planning or agent execution. If the authenticated `/run`
+request has an ambiguous outcome, the UI preserves its exact RequestId, immutable
+Automation/Routine snapshots, trigger ID, and bounded validated inputs in a process-local
+registry. The retry card survives route navigation/remount in that desktop process,
+prevents another Run for the same Automation, and resolves only after a receipt-validated
+response or explicit owner discard. Discard warns that the original request may have
+committed. Registry capacity fails closed; no entry is silently evicted. Process restart
+recovery remains unsupported.
+
+Reviewed F125 against the UI/API source. Updated `AutomationApi.run` input typing from
+`Record<string, string>` to `Record<string, unknown>` so the declared client contract
+matches the supported ResourceRef input objects in the authenticated request body.
+Updated E09-S02/S05 and backlog notes. Cloud continuation and Remote Runtime are post-V1.
+No tests, builds, formatters, validators, migration execution, provider checks, or OS
+qualification were run per owner instruction. This remains source-only and unverified;
+scheduled Automation hosting, restart-safe retry, Task execution, and production-safe
+agent switching are still incomplete.
+
+## E08-S02 Suggestion acceptance recovery — 2026-10-09
+
+Reviewed the Suggestion acceptance transaction and typed receipt across TaskService,
+SQLite, the Operator route, the Tauri bridge, and the desktop page. SQLite atomically
+creates the READY Task and resolves the Suggestion; exact replay checks the authenticated
+Workspace, Suggestion/version, deterministic Task ID, request digest, immutable original
+Task response digest/content, and linked accepted state before returning `REPLAYED`.
+Different idempotency keys do not reveal an accepted Task. The Tauri bridge checks the
+`201`/`CREATED` and `200`/`REPLAYED` pairing and receipt identities. Source review found
+and fixed an extra UI expectation for `suggestion.workspace_id`; the documented receipt
+has top-level `workspace_id` and `task.workspace_id` instead.
+
+The Ideas page now stores exact Task-acceptance retry envelopes in the same bounded,
+process-local, Workspace-scoped registry as other Suggestion actions. Route navigation and
+API recreation preserve the RequestId and expected version. Only a matching typed receipt
+clears the same registry entry; retry opens the linked READY Task; explicit discard warns
+that the Task may already exist. F108/F129 and E08 record the flow, races, test cases, and
+desktop acceptance case. This does not survive process restart and does not start planning
+or execute the Task. No tests, builds, formatters, validators, database migrations,
+provider checks, or OS qualification were run; the changes remain source-only and
+unverified. A whitespace-only `git diff --check` was run incidentally; it did not execute
+product or contract validation.
+
+## E02-S03 Resource indexability-first intake — 2026-10-09
+
+Reviewed the local Resource create/upload/revision commit and explicit text-index rebuild
+paths against `docs/WORLD-RESOURCES.md`, `docs/API.md`, `docs/STORAGE.md`, and the current
+SQLite/index implementation. Updated storage so bounded eligibility classification runs
+before consulting the optional Workspace ResourceIndex key history. Unsupported,
+oversized, invalid UTF-8, control-character, and over-term-limit inputs remain ordinary
+importable Resources without creating a partial index or requiring an index key they will
+not use. Explicit rebuild returns its typed NOT_INDEXABLE outcome before key lookup for
+those content-specific cases; eligible text still fails closed if key history or encrypted
+snapshot operations fail. Resource content remains protected by the existing separate
+encrypted RESOURCE BlobStore path.
+
+This is a narrow SQLite source correction, not durable failure/retry state, rich-document
+extraction, ZIP inspection/extraction, or semantic RAG. No tests, builds, formatters,
+validators, provider checks, or OS qualification were run under owner instruction. The
+later E02-S03 code/system/user verification must cover import of unsupported/oversized
+content when the ResourceIndex key provider is unavailable, and prove eligible text fails
+closed without plaintext index fallback.
+
+## E08-S07 bounded Artifact text comparison — 2026-10-09
+
+Added an optional literal line-diff display for comparing two exact immutable text
+ArtifactVersions, retaining side-by-side mode. The client aligns bounded lines, reports
+added/removed counts, labels both exact versions, and renders content as text. The diff
+caps each version at 400 lines, the LCS matrix at 160,000 pairs, and lines at 16,384
+characters; larger inputs remain available through side-by-side rendering. This does not
+infer semantic changes or publish Artifact content. Updated E08-S07, Experience,
+Presentation Runtime scope, and the Artifact UI README with limits and deferred cases.
+No build, tests, formatter, validator, provider check, or OS qualification was run. This
+source remains unverified and does not complete E08-S07.
+
+## E03-S01 clear Workspace default lead — 2026-10-09
+
+The desktop Agent Catalog now exposes a confirmation-bound **Clear Workspace default**
+action through the existing authenticated, versioned nullable Workspace setter. Clearing
+affects only future default resolution: Coworker-pinned leads and active Task/Attempt
+bindings stay unchanged, and new Task admission without an explicit or Coworker lead fails
+`AGENT_UNAVAILABLE` while preserving the draft. The confirmation is scoped to the current
+Workspace and selected binding. Updated Experience and E03-S01. This settings path does
+not switch or execute agents. No tests, builds, formatters, validators, provider checks,
+or OS qualification were run; source remains unverified.
+
+## E02-S04 Task-attention page — 2026-10-09
+
+Added a desktop Needs You view backed by the existing authenticated Task-list operation.
+It queries persisted `WAITING_USER`, `NEEDS_USER`, and `BLOCKED` states with independent
+cursors, validates returned statuses, deduplicates and sorts rows, keeps the prior
+same-Workspace snapshot on refresh failure, and fences stale responses on Workspace
+changes. Selecting a row opens its Task detail for a fresh read and does not mutate Task
+state. The page says Approval/UserRequest inbox actions and blocker resolution are not
+connected; `GET /v1/needs-you` and full aggregation remain unimplemented. F130, Experience,
+API, E02 and backlog notes record the scope and deferred acceptance. No tests, builds,
+formatters, validators, provider checks, or OS qualification were run; the source is
+unverified and does not complete E02-S04.
+
+## E02-S03 exact-pin index rebuild retry — 2026-10-09
+
+The Library now offers **Retry index rebuild** after an ambiguous or transient rebuild
+failure for the exact visible Resource pin. The desktop reuses the process-local RequestId
+and pins Workspace, Resource, ResourceRevision, and content digest. A stale-head,
+eligibility, or request-pin conflict clears the retry affordance and requires Library
+reload; the UI does not silently target a newer revision. This is presentation/session
+recovery only: there is no durable index-health/failure entity or restart-safe retry, and
+it adds no RAG semantics. E02-S03/backlog record the exact test cases. No tests, builds,
+formatters, validators, provider checks, or OS qualification were run; this source is
+unverified.
+
+## Rich Conversation presentation contracts — 2026-10-09
+
+Completed the architecture/contract pass for optional rich Conversation responses. Added
+`docs/RICH-RESPONSE.md` and `docs/HOST-GUIDANCE.md`; expanded
+`docs/PRESENTATION-RUNTIME.md`; and aligned architecture, model, schemas, events, API,
+storage, services, security, UX, motion, flows, benchmarks, coverage, and E08-S08. The
+semantic `ConversationMessage` remains durable truth. RichPresentation is a separate,
+immutable, zero-authority enhancement; presentation guidance is optional and does not
+rewrite native harness configuration or gate agent eligibility. Added bounded presentation
+intent/document/stream schemas, exact citation and Artifact bindings, recoverable draft
+streaming, digest validation, deterministic deliverable/ZIP behavior, renderer fallback,
+and code/system/real-user acceptance cases.
+
+Validation uncovered and fixed concrete cross-contract defects: typed false values in the
+agent-binding-created event; Coworker and Resource routes carrying a `workspaceId` path
+parameter when their paths do not contain one; AutomationOccurrence aggregate version vs
+claim-epoch wording; and SQLite migration runner handling for immutable triggers during
+v4/v6 table rebuilds. The architecture validator now applies v2-v12 migrations using the
+required rebuild PRAGMAs and checks foreign keys. No applied migration history was
+rewritten; v11/v12 remain additive migration files.
+
+Verified on 2026-10-09:
+
+- `uv run --locked python scripts/validate_architecture.py` — passed (JSON Schemas, 140
+typed events, error codes, OpenAPI, SQLite, Gateway names, product naming, Markdown links).
+- `python3 scripts/validate_implementation_coverage.py --write` — regenerated coverage.
+- `python3 scripts/validate_implementation_plan.py` — passed (59 stories, current flows,
+benchmarks, and machine-contract inventory linked).
+- `python3 scripts/validate_implementation_coverage.py` — passed (79 documents, 1,091
+sections, 5,299 traceability rows).
+- `git diff --check` — passed.
+- SQLite migrations v2-v12 applied in sequence; `PRAGMA foreign_key_check` returned zero
+violations.
+
+This is architecture/documentation/schema/backlog work, not an implemented Rich Response
+runtime. The new schemas and assets are contracts for later implementation; the end-to-end
+publication API, compiler, host skill loader, streaming renderer, provider behavior, and
+real-user UI qualification remain outstanding. Existing unrelated/in-progress desktop and
+daemon changes in this worktree were preserved and are not claimed as verified by the
+architecture validators.
+
+## Desktop/local integration compile and persistence repair — 2026-10-09
+
+Resumed the existing desktop/local V1 implementation work without replacing or
+resetting the pre-existing dirty worktree. Fixed SQLite Workspace event reads so they
+return all domain events for the requested Workspace in deterministic HLC/runtime
+ordering. Aligned Routine persistence's event-payload checks with the versioned Routine
+event contract, fixed a Task presentation fixture to use a valid disabled lead-failover
+policy, and gave a second Workspace in a scope test its own globally unique event ID.
+The root causes were a query that only selected Workspace-aggregate events, storage
+expectations that diverged from the Routine event payload, and a test-only event-ID
+collision.
+
+The daemon compile gate also exposed in-progress Rust integration errors. Fixed Task
+plan dependency IDs to materialize as owned IDs, retained the event timestamp when
+updating Task state, corrected Operator API request ownership/borrows and Workspace
+checks, made the authenticated IPC request marker cloneable for Axum extensions, and
+fixed the private Runtime directory setup in the local-principal fail-closed regression.
+Completed the corresponding provider/suggestion/routine/artifact bridge fixes, including
+typed lead-binding fields, failover-policy propagation, request ID ownership, and
+OpenCode provider-ID parsing. This establishes compilation and focused local behavior;
+it does not establish production-safe agent switching, provider interoperability,
+Effect/lease reconciliation with real external agents, or cross-OS qualification.
+
+Verified on 2026-10-09:
+
+- `cargo test -p storage-sqlite` — passed (65 tests).
+- `cargo check -p litecoworkd` — passed; compiler reports existing unused/dead-code
+  warnings that remain cleanup work.
+- `cargo test -p litecoworkd` — passed (14 unit tests and 4 CLI integration tests).
+- `cargo test -p domain-task` — passed (16 tests).
+- `pnpm --config.verifyDepsBeforeRun=false build` in `apps/litecowork-ui` — passed
+  TypeScript and Vite production build; Vite still reports a 700.84 kB minified JS
+  chunk warning.
+- `node --experimental-transform-types --test tests/artifact-publication.test.ts` in
+  `apps/litecowork-ui` — passed (6 tests).
+- `uv run --locked python scripts/validate_architecture.py` — passed (140 typed events,
+  schemas, OpenAPI, SQLite, names, and Markdown links).
+- `uv run --locked python scripts/validate_implementation_plan.py` — passed (59 stories,
+  5,300 coverage rows, current flows/benchmarks/machine inventory).
+- `git diff --check` — passed.
+
+`cargo fmt --all -- --check` was also attempted and failed because the broader existing
+workspace is not rustfmt-clean; it emitted formatting diffs across many untouched files.
+No workspace-wide formatting was applied. Support files touched for daemon compilation
+were checked with `rustfmt --edition 2024 --check` by their implementer. Linux is the
+only currently exercised OS path; Windows/macOS, clean-machine installation, full
+real-user workflows, keyring/provider qualifications, and end-to-end agent-backed Task
+execution remain open.
+
+The full `cargo test --workspace` run then found a strict-decoding gap in the responsibility
+domain: internally tagged unit variants accepted unexpected fields. `MisfirePolicy` and
+`TriggerDefinition` now use explicit deserializers that reject fields not present in their
+canonical variants. This keeps persisted/event input aligned with the closed contract rather
+than weakening the test. The focused canonical codec regression passed.
+
+Additional verification on 2026-10-09:
+
+- `cargo test --workspace` — passed. Domain-effects (5), domain-responsibility (21),
+  domain-task (16), domain-workspace (2), linux-process-scope (3), operator-ipc (1),
+  litecoworkd (18), and storage-sqlite (65): **131 tests passed**, with doc tests passing.
+- `uv run --locked python scripts/validate_implementation_plan.py` — passed (59 stories,
+  5,300 coverage rows, current flows/benchmarks/machine inventory).
+- `git diff --check` — passed.
+
+The final `uv run --locked python scripts/validate_architecture.py` rerun passed (140 typed
+events, schemas, OpenAPI, SQLite, naming, and Markdown links). These checks cover the present local code/contracts only; they do not establish external
+provider compatibility, safe live agent switching, or a production-ready V1 release.
+
+## Environment lifecycle domain and persistence port — 2026-10-09
+
+Added canonical v11 Environment record metadata and a pure lifecycle policy crate. The
+record now represents every existing Environment column; the storage port provides
+workspace-scoped stable-key listing, authenticated/idempotent request identity, and a
+Runtime-local provider-binding commit required atomically with READY. Creation requests
+fail closed for `WORKSPACE_PERSISTENT` until typed provision-preview consumption exists.
+Invalid readiness proof now remains pending reconciliation rather than claiming FAILED.
+This is domain/port policy only: no SQLite adapter, provider call, provisioning, or Task
+admission is integrated.
+
+Verified on 2026-10-09:
+
+- `cargo test -p domain-environment` — passed (22 tests, including persistent-creation
+  rejection, list bounds, READY binding requirement, lifecycle holds, and invalid-proof
+  reconciliation).
+- `cargo check -p storage-sqlite` — passed against the expanded storage-core interface;
+  there is no EnvironmentStore SQLite implementation yet.
+- Targeted Rust formatting and `git diff --check` — passed for the Environment module.
+
+## F65 scope change and RichPresentation read/render hardening — 2026-10-09
+
+Added the versioned F65 operation to change the sharing scope of a suspended persistent
+Environment. SQLite rechecks owner, expected Environment version, the current represented
+Attempt/Invocation/control-lease/checkpoint/Effect holds and Workspace state under its
+write transaction; the Environment record, event, and idempotency receipt commit together.
+Any retained checkpoint blocks the change because checkpoint-hold release is not yet
+implemented. This operation does not provision an Environment or authorize Task execution.
+
+Added the authenticated read-only `GET /v1/rich-presentations/{presentation_id}` route.
+It scopes reads to the selected Workspace and owner, validates committed semantic-message
+and document/blob bindings, omits private session/HostGuidance metadata, and returns
+`Cache-Control: no-store`. The Rust tests currently exercise its response helper rather
+than a full request through the authenticated Axum/IPC stack; route-level integration
+coverage remains open. There is still no Conversation message store/snapshot endpoint or
+desktop Conversation screen connected to RichPresentation, so this route and renderer do
+not constitute the complete Presentation Runtime flow.
+
+The desktop RichPresentation renderer now promotes only parser-branded, digest-bound
+documents to the primary view and retains the full semantic Markdown answer in an
+accessible disclosure. The bounded rich-draft reducer fences Workspace/turn/session/retry/
+draft identities, detects sequence gaps, discards stale partials, caps frame/retained
+bytes, draft count, blocks and nesting, and matches the 1 MiB stream frame schema. The
+Operator-stream decoder rejects sequence zero. SQLite now rejects `DIVIDER`, which is not
+part of RichPresentation v1; its regression test was observed failing before the storage
+allowlist was corrected.
+
+Refined delegation contracts to require an explicit expected-benefit decision that
+includes handoff, queue/startup, execution, verification, retry/recovery and contention.
+Unknown or low-confidence estimates do not become zero; insufficient evidence keeps the
+current option, and a pinned worker is never silently substituted. The versioned policy's
+benefit/confidence threshold is calibrated from B83 evidence. Updated the end-user wording
+for best-results/balanced/premium-usage preferences and corrected B87 so it measures
+immediate semantic availability while allowing a validated rich view to upgrade the same
+message in place.
+
+Verified on 2026-10-09:
+
+- `cargo test --workspace` — passed; 203 unit/integration tests across the current workspace
+  and all doc-test targets completed successfully.
+- `cargo test -p litecoworkd presentation_operator -- --nocapture` — passed 7/7 for the
+  RichPresentation read helper (included again in the workspace run).
+- `cargo test -p storage-sqlite rich_publication_rejects_divider_which_is_not_in_the_v1_wire_schema`
+  — passed after the test-first failure exposed the contract mismatch.
+- `node --experimental-transform-types --test tests/*.test.ts` — passed 55/55. A separate
+  run using `--experimental-strip-types` failed because Node strip-only mode does not
+  support TypeScript parameter properties; rerunning with the repository-compatible
+  transform-types mode passed.
+- `pnpm --config.verifyDepsBeforeRun=false build` — passed TypeScript and Vite production
+  build; Vite still reports a 705.07 kB minified JavaScript chunk warning.
+- `uv run --locked python scripts/validate_architecture.py` — passed after the final
+  delegation/Experience refinements (140 typed events; schema, OpenAPI, SQLite, naming,
+  Gateway, and Markdown-link checks).
+- `python3 scripts/validate_implementation_coverage.py --write` — regenerated coverage
+  (79 documents, 5,310 rows).
+- `uv run --locked python scripts/validate_implementation_plan.py` — passed (60 stories,
+  5,310 coverage rows, current numbered flows/benchmarks and machine inventory linked).
+- `git diff --check` — passed before the run-log result wording was updated; rerun required.
+
+These results do not establish OS-enforced Local Task Environment isolation, provider
+compatibility, Environment provisioning, Task/Attempt dispatch, Effect/lease reconciliation
+with external agents, end-to-end agent switching, a complete Conversation/RichPresentation
+flow, or macOS/Windows qualification. Task dispatch remains fail-closed.
+
+## Preparation staging review and current verification — 2026-10-09
+
+Added the standalone `local-environment-staging` preparation helper to the Cargo workspace.
+It accepts bytes that the caller has already resolved and authorized for exact Workspace,
+Resource, revision, and digest pins. It verifies digests and bounded count/file/total/path
+limits, rejects traversal and Unicode case-fold/prefix collisions, creates sibling paths
+correctly, and on Unix stages read-only inputs beside a separate writable output folder.
+Non-Unix targets return `UnsupportedPlatform` before creating a staging root because
+owner-only ACL semantics are not qualified. The result is `PreparedOnly`; this is not OS
+confinement, output-quota enforcement, an Environment provider, ResourceStore integration,
+or Task dispatch.
+
+Test-first regression work caught and fixed sibling files failing on an already-created
+parent directory. Review then found and fixed Unicode case-fold aliases, clearing read-only
+file attributes during cleanup, and non-Unix ACL fail-open behavior. The reviewer also
+identified that the positive staging tests must be Unix-only; those tests are now gated and
+the non-Unix fail-closed expectation has its own conditional test. Current host has only
+`x86_64-unknown-linux-gnu` installed, so the non-Unix branch and Windows cleanup behavior
+were not compiled or exercised here. Cleanup remains path-based and explicitly is not safe
+against same-user TOCTOU tampering; it must not be used as a confinement primitive.
+
+The RichPresentation GET route has focused tests for required/malformed Workspace headers,
+non-disclosing Workspace mismatch, owner access, digest corruption, and omitted private
+metadata. A full Axum/IPC route test was not added because constructing the trusted OS
+principal in a test would require the host credential store or a test-only production
+authentication seam. The shared production auth middleware test passes; full authenticated
+route integration remains open.
+
+Verified on 2026-10-09:
+
+- `cargo test --workspace` — passed all current Rust unit/integration suites and doc-test
+  targets before the final platform-only test attributes/test-name clarification; the
+  staging crate's final Linux run then passed all 12 tests.
+- `cargo test -p local-environment-staging -- --nocapture` — passed 12/12 after the final
+  Unix-test gating and regression fixes.
+- `cargo test -p litecoworkd presentation_operator -- --nocapture` — passed the focused
+  RichPresentation read tests; the full-workspace run also passed the daemon tests.
+- Coverage generation — 79 documents, 5,310 traceability rows.
+- Architecture validation — passed: 140 typed events, schemas, OpenAPI, SQLite, Gateway
+  names, product naming, and Markdown links.
+- Implementation-plan validation — passed: 60 stories, 5,310 coverage rows, and linked
+  current flows/benchmarks/machine inventory.
+- `git diff --check` — passed after this log entry was appended.
+
+This preparation slice does not complete E07-S00: no enforcing OS provider, real child
+process test, network/filesystem boundary proof, ResourceStore-to-staging integration,
+Runtime restart attestation, quiescence provider, Task/Attempt/lease admission, or owner
+real-use acceptance exists. Native Task dispatch remains disabled.
+
+## Task-planner storage admission fence — 2026-10-09
+
+Two regression tests were added for direct SQLite planner-session start and activation.
+Before the guard, the start path proceeded to event/session validation and the activation
+path proceeded to a database lookup (`NotFound`), demonstrating that neither storage API
+enforced the preflight's isolation gate. Both concrete methods now return
+`StoreError::Invalid("TASK_PLANNING_ISOLATION_UNAVAILABLE")` before BlobStore writes,
+idempotency receipt creation, session/event persistence, lookup, or Task transition.
+The guard is deliberately not a caller-provided boolean or fabricated proof. Removing it
+requires a Runtime-owned attestation producer plus transaction-time validation and the
+other documented planning-admission gates.
+
+Verified on 2026-10-09:
+
+- `cargo test -p storage-sqlite sqlite_planning_ -- --nocapture` — 2/2 passed after
+  first observing both tests fail against the former behavior.
+- The tests query the database to ensure rejection leaves no AgentSession or corresponding
+  AgentSession/Task event. The activation test proves rejection happens before lookup of a
+  nonexistent session, at the concrete store boundary.
+
+This is a safety correction, not planner integration. Planning remains disabled; no
+Environment provider/attestation, native capability mediation, process containment,
+Task-scoped ResourceStore staging, lease/Effect integration, or real-provider execution
+was added.
+
+## Closed Task input pin shape — 2026-10-09
+
+Task creation and TaskSpec revision storage both pass their `input_refs` through the same
+SQLite validator. A regression case with an otherwise valid Resource pin plus an
+unrecognized `path` field failed before the fix because storage accepted it, despite the
+public `PinnedResourceRef` schema being closed. Added a closed `storage-core::PinnedResourceRef`
+value with `deny_unknown_fields` and made SQLite deserialize each input through that type
+before Workspace, revision, uniqueness, and ContextDocument checks. Unknown properties,
+non-object values, and malformed shapes now fail at the shared admission boundary.
+
+Verified on 2026-10-09:
+
+- `cargo test -p storage-sqlite context_document_status_revocation_restore_stale_and_replay_are_atomic -- --nocapture`
+  — passed after first observing the new unknown-field assertion fail against the prior
+  validator.
+
+This closes only Task pin shape validation. Exact ResourceStore-to-staging resolution,
+historical-revision staging, cleanup/restart behavior, a user inspection surface, and all
+Environment isolation and dispatch gates remain open.

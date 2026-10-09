@@ -1,3 +1,8 @@
+use crate::agents::{
+    AgentInstallation, PlanningDispatchBlocker, discover_local_installations,
+    prepare_local_task_planning,
+};
+use crate::local_filesystem::open_selected_directory;
 use axum::{
     Json, Router,
     body::{Body, Bytes, to_bytes},
@@ -11,44 +16,44 @@ use base64::{
     Engine as _,
     engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD},
 };
-use crate::agents::{
-    AgentInstallation, PlanningDispatchBlocker, discover_local_installations,
-    prepare_local_task_planning,
-};
-use crate::local_filesystem::open_selected_directory;
 use domain_task::{CreateStandaloneTask, PreparePlanningAssignment, ReviseTaskSpec, TaskService};
 use domain_workspace::{
     AddWorkspaceRoot, ChangeReplicationPolicy, ChangeWorkspaceRootStatus,
-    CreateResourceUploadSession, CreateResourceRevisionUploadSession, CreateWorkspace,
-    CreateWorkspaceInstructionRevision, EventContext, ResourceUploadService,
-    SetWorkspaceDefaultAgentBinding, WorkspaceRootService, WorkspaceService,
+    CreateResourceRevisionUploadSession, CreateResourceUploadSession, CreateWorkspace,
+    CreateWorkspaceInstructionRevision, EventContext, ResourceService, ResourceUploadService,
+    SetContextDocumentStatus as SetContextDocumentStatusCommand, SetWorkspaceDefaultAgentBinding,
+    WorkspaceRootService, WorkspaceService,
+};
+#[cfg(unix)]
+use operator_ipc::unix::{PeerCredentials, UnixEndpoint};
+use operator_ipc::{
+    DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, InFlightBodyBudget, LogicalHeader, PROTOCOL_VERSION,
+    ResponseHeader,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::{
     ffi::OsString,
     path::{Path as FsPath, PathBuf},
     sync::{Arc, mpsc},
     thread::{self, JoinHandle},
 };
-use operator_ipc::{
-    DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, InFlightBodyBudget, LogicalHeader, PROTOCOL_VERSION,
-    ResponseHeader,
-};
-#[cfg(unix)]
-use operator_ipc::unix::{PeerCredentials, UnixEndpoint};
 use storage_core::{
     AgentBindingCreateRequest, AgentBindingEnableRequest, AgentBindingRecord, AgentCatalogStore,
-    AgentEndpointRecord, AgentProfileRecord, AgentProfileViewRecord, LocalAgentEndpointBindingInput,
-    LocalRuntimeWorkspaceBindingLookup, LocalRuntimeWorkspaceEnrollmentRequest,
-    RuntimeOfferRecord, RuntimeWorkspaceBindingRecord, RuntimeWorkspaceBindingStore,
-    StoreError, WorkspaceCreateRequest, WorkspaceRootStatusAction,
-    FolderImportMetadata, ReplicationPolicy, ResourceRecord, ResourceRevisionRecord, ResourceSearchRecord, ResourceStore, ResourceSummary,
-    ResourceUploadChunkInput, ResourceUploadContentRange, ResourceUploadSessionRecord,
-    ResourceUploadState, ResourceUploadStore, StateStore, TaskStore, TaskSummaryRecord, TaskView, Workspace,
-    WorkspaceInstructionRevisionRecord, WorkspaceRootRecord, ResourceTextIndexRebuildRequest,
+    AgentEndpointRecord, AgentProfileRecord, AgentProfileViewRecord, ContextDocumentOwnerStatus,
+    FolderImportMetadata, LocalAgentEndpointBindingInput, LocalRuntimeWorkspaceBindingLookup,
+    LocalRuntimeWorkspaceEnrollmentRequest, ReplicationPolicy, ResourceRecord,
+    ResourceRevisionRecord, ResourceSearchRecord, ResourceStore, ResourceSummary,
+    ResourceTextIndexRebuildRequest, ResourceTextMatchSpan, ResourceUploadChunkInput,
+    ResourceUploadContentRange, ResourceUploadSessionRecord, ResourceUploadState,
+    ResourceUploadStore, RuntimeOfferRecord, RuntimeWorkspaceBindingRecord,
+    RuntimeWorkspaceBindingStore, StateStore, StoreError, SuggestionTaskAcceptanceStore, TaskStore,
+    TaskSummaryRecord, TaskView, Workspace, WorkspaceCreateRequest,
+    WorkspaceInstructionRevisionRecord, WorkspaceRootRecord, WorkspaceRootStatusAction,
 };
-use storage_sqlite::{CoworkerEventContext, RuntimeOsPrincipalIdentity, SqliteCoworkerStore, SqliteWorkspaceStore};
+use storage_sqlite::{
+    CoworkerEventContext, RuntimeOsPrincipalIdentity, SqliteCoworkerStore, SqliteWorkspaceStore,
+};
 use tokio::sync::oneshot as tokio_oneshot;
 #[cfg(unix)]
 use tokio::{task::JoinSet, time::timeout};
@@ -64,12 +69,15 @@ mod coworker_operator;
 mod delegation_profiles_operator;
 #[path = "goal_operator.rs"]
 mod goal_operator;
-#[path = "suggestions_operator.rs"]
-mod suggestions_operator;
+#[cfg(all(test, unix))]
+#[path = "operator_ipc_tests.rs"]
+mod operator_ipc_tests;
 #[path = "presentation_operator.rs"]
 mod presentation_operator;
 #[path = "routine_operator.rs"]
 mod routine_operator;
+#[path = "suggestions_operator.rs"]
+mod suggestions_operator;
 #[path = "zip_intake_operator.rs"]
 mod zip_intake_operator;
 
@@ -91,6 +99,7 @@ pub struct OperatorServer {
 /// Marker added only after the local IPC adapter has authenticated the OS peer.
 /// It is deliberately private so a transport caller cannot manufacture an
 /// authenticated request by setting an HTTP header.
+#[derive(Clone)]
 struct AuthenticatedLocalPeer;
 
 const MAX_OPERATOR_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
@@ -266,7 +275,6 @@ struct ReviseTaskSpecBody {
     lead_failover_policy: Option<serde_json::Value>,
 }
 
-
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TaskListCursor {
@@ -306,6 +314,12 @@ struct CreateResourceBody {
     display_name: String,
     media_type: String,
     content_base64: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SetContextDocumentStatusBody {
+    status: String,
 }
 
 #[derive(Deserialize)]
@@ -372,6 +386,7 @@ struct ResourceSearchQuery {
 #[serde(deny_unknown_fields)]
 struct ResourceContentQuery {
     revision_id: Option<String>,
+    max_bytes: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -418,6 +433,8 @@ struct ResourceContentScanInfo {
 #[derive(Serialize)]
 struct ResourceSearchResultResponse {
     resource_ref: ResourceSearchRefResponse,
+    source_content_digest: String,
+    source_matches: Vec<ResourceTextMatchSpanResponse>,
     display_name: String,
     locations: Vec<ResourceSearchLocationResponse>,
     freshness: String,
@@ -429,7 +446,14 @@ struct ResourceSearchResultResponse {
 struct ResourceSearchRefResponse {
     workspace_id: String,
     resource_id: String,
-    revision_id: Option<String>,
+    revision_id: String,
+}
+
+#[derive(Serialize)]
+struct ResourceTextMatchSpanResponse {
+    term: String,
+    start_utf8_byte: u64,
+    end_utf8_byte_exclusive: u64,
 }
 
 #[derive(Serialize)]
@@ -555,23 +579,24 @@ impl OperatorServer {
     ) -> Result<Self, String> {
         #[cfg(unix)]
         {
-        operator_ipc::require_os_local_ipc()
-            .map_err(|_| "authenticated local Operator IPC is unsupported on this platform".to_owned())?;
-        let endpoint = UnixEndpoint::derive(data_directory)
-            .map_err(|_| "local Operator IPC endpoint is unsafe".to_owned())?;
-        let state = ApiState {
-            store,
-            principal_id,
-            runtime_id,
-            local_incarnation_id: runtime_incarnation_id,
-            runtime_identity: Arc::new(runtime_identity),
-        };
-        let sweeper_state = state.clone();
-        let app = build_operator_router(state);
-        let (shutdown, shutdown_receiver) = tokio_oneshot::channel();
-        let (admission_stopped_sender, admission_stopped) = mpsc::sync_channel(1);
-        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
-        let thread = thread::Builder::new()
+            operator_ipc::require_os_local_ipc().map_err(|_| {
+                "authenticated local Operator IPC is unsupported on this platform".to_owned()
+            })?;
+            let endpoint = UnixEndpoint::derive(data_directory)
+                .map_err(|_| "local Operator IPC endpoint is unsafe".to_owned())?;
+            let state = ApiState {
+                store,
+                principal_id,
+                runtime_id,
+                local_incarnation_id: runtime_incarnation_id,
+                runtime_identity: Arc::new(runtime_identity),
+            };
+            let sweeper_state = state.clone();
+            let app = build_operator_router(state);
+            let (shutdown, mut shutdown_receiver) = tokio_oneshot::channel();
+            let (admission_stopped_sender, admission_stopped) = mpsc::sync_channel(1);
+            let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+            let thread = thread::Builder::new()
             .name("litecowork-operator-ipc".to_owned())
             .spawn(move || {
                 let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -645,19 +670,17 @@ impl OperatorServer {
                 });
             })
             .map_err(|_| "could not start the local Operator endpoint".to_owned())?;
-        match ready_receiver.recv() {
-            Ok(true) => {
-                Ok(Self {
+            match ready_receiver.recv() {
+                Ok(true) => Ok(Self {
                     shutdown: Some(shutdown),
                     admission_stopped: Some(admission_stopped),
                     thread: Some(thread),
-                })
+                }),
+                _ => {
+                    let _ = thread.join();
+                    Err("local Operator endpoint failed to initialize".to_owned())
+                }
             }
-            _ => {
-                let _ = thread.join();
-                Err("local Operator endpoint failed to initialize".to_owned())
-            }
-        }
         }
         #[cfg(not(unix))]
         {
@@ -720,31 +743,83 @@ fn build_operator_router(state: ApiState) -> Router {
         .route("/v1/agent-installations", get(list_agent_installations))
         .route("/v1/agent-profiles", get(list_agent_profiles))
         .route("/v1/agent-profiles/probe", post(probe_local_agent_profile))
-        .route("/v1/agent-bindings", get(list_agent_bindings).post(create_agent_binding))
-        .route("/v1/agent-bindings/{agent_binding_id}", get(get_agent_binding))
-        .route("/v1/agent-bindings/{agent_binding_id}/enable", post(enable_agent_binding))
+        .route(
+            "/v1/agent-bindings",
+            get(list_agent_bindings).post(create_agent_binding),
+        )
+        .route(
+            "/v1/agent-bindings/{agent_binding_id}",
+            get(get_agent_binding),
+        )
+        .route(
+            "/v1/agent-bindings/{agent_binding_id}/enable",
+            post(enable_agent_binding),
+        )
         .route("/v1/tasks", get(list_tasks).post(create_task))
         .route("/v1/tasks/{task_id}", get(get_task))
-        .route("/v1/tasks/{task_id}/planning-readiness", get(get_task_planning_readiness))
-        .route("/v1/tasks/{task_id}/spec-revisions", get(list_task_spec_revisions).post(revise_task_spec))
-        .route("/v1/tasks/{task_id}/plan-revisions", get(list_task_plan_revisions))
+        .route(
+            "/v1/tasks/{task_id}/planning-readiness",
+            get(get_task_planning_readiness),
+        )
+        .route(
+            "/v1/tasks/{task_id}/spec-revisions",
+            get(list_task_spec_revisions).post(revise_task_spec),
+        )
+        .route(
+            "/v1/tasks/{task_id}/plan-revisions",
+            get(list_task_plan_revisions),
+        )
         .route("/v1/tasks/{task_id}/steps", get(list_task_steps))
-        .route("/v1/conversations/{conversation_id}/tasks", get(list_conversation_tasks))
+        .route(
+            "/v1/conversations/{conversation_id}/tasks",
+            get(list_conversation_tasks),
+        )
         .route("/v1/resources/uploads", post(create_resource_upload))
-        .route("/v1/resources/uploads/{upload_id}", get(get_resource_upload))
-        .route("/v1/resources/uploads/{upload_id}/chunks/{chunk_index}", axum::routing::put(put_resource_upload_chunk))
-        .route("/v1/resources/uploads/{upload_id}/commit", post(commit_resource_upload))
+        .route(
+            "/v1/resources/uploads/{upload_id}",
+            get(get_resource_upload),
+        )
+        .route(
+            "/v1/resources/uploads/{upload_id}/chunks/{chunk_index}",
+            axum::routing::put(put_resource_upload_chunk),
+        )
+        .route(
+            "/v1/resources/uploads/{upload_id}/commit",
+            post(commit_resource_upload),
+        )
         .route("/v1/resources/quick-import", post(create_resource))
-        .route("/v1/resources/{resource_id}/revisions", get(list_resource_revisions))
-        .route("/v1/resources/{resource_id}/text-index/rebuild", post(rebuild_resource_text_index))
-        .route("/v1/resources/{resource_id}/revision-uploads", post(create_resource_revision_upload))
+        .route(
+            "/v1/resources/{resource_id}/revisions",
+            get(list_resource_revisions),
+        )
+        .route(
+            "/v1/resources/{resource_id}/text-index/rebuild",
+            post(rebuild_resource_text_index),
+        )
+        .route(
+            "/v1/resources/{resource_id}/revision-uploads",
+            post(create_resource_revision_upload),
+        )
+        .route(
+            "/v1/resources/{resource_id}/context-document/status",
+            axum::routing::patch(set_context_document_status),
+        )
         .route("/v1/resources/{resource_id}", get(get_resource_detail))
         .route("/v1/resources/search", get(search_resources))
         .route("/v1/resources", get(list_resources))
         .route("/v1/workspace-roots", get(list_workspace_roots))
-        .route("/v1/workspace-roots/{workspace_root_id}/pause", post(pause_workspace_root))
-        .route("/v1/workspace-roots/{workspace_root_id}/resume", post(resume_workspace_root))
-        .route("/v1/workspace-roots/{workspace_root_id}/revoke", post(revoke_workspace_root))
+        .route(
+            "/v1/workspace-roots/{workspace_root_id}/pause",
+            post(pause_workspace_root),
+        )
+        .route(
+            "/v1/workspace-roots/{workspace_root_id}/resume",
+            post(resume_workspace_root),
+        )
+        .route(
+            "/v1/workspace-roots/{workspace_root_id}/revoke",
+            post(revoke_workspace_root),
+        )
         .route(
             "/v1/resources/{resource_id}/content",
             get(read_resource_content),
@@ -761,12 +836,17 @@ fn build_operator_router(state: ApiState) -> Router {
             "/v1/workspaces/{workspace_id}/default-agent-binding",
             axum::routing::patch(set_workspace_default_agent_binding),
         )
-        .route("/v1/workspaces/{workspace_id}/runtime-bindings/current-local", get(list_workspace_runtime_bindings))
-        .route("/v1/workspaces/{workspace_id}/runtime-bindings/local-enrollment", post(enroll_local_runtime))
+        .route(
+            "/v1/workspaces/{workspace_id}/runtime-bindings/current-local",
+            get(list_workspace_runtime_bindings),
+        )
+        .route(
+            "/v1/workspaces/{workspace_id}/runtime-bindings/local-enrollment",
+            post(enroll_local_runtime),
+        )
         .route(
             "/v1/workspaces/{workspace_id}/instructions/revisions",
-            get(list_workspace_instruction_revisions)
-                .post(create_workspace_instruction_revision),
+            get(list_workspace_instruction_revisions).post(create_workspace_instruction_revision),
         )
         .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
         .route_layer(middleware::from_fn(authenticate))
@@ -836,7 +916,11 @@ async fn dispatch_ipc_exchange(
             });
         }
     }
-    for name in ["x-content-type-options", "x-resource-media-type", "x-correlation-id"] {
+    for name in [
+        "x-content-type-options",
+        "x-resource-media-type",
+        "x-correlation-id",
+    ] {
         if let Some(value) = response.headers().get(name)
             && let Ok(value) = value.to_str()
         {
@@ -1077,20 +1161,48 @@ async fn create_resource_upload(
 ) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
     if body.workspace_id != workspace_id {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Upload Workspace does not match the selected Workspace"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Upload Workspace does not match the selected Workspace",
+        ));
     }
     let display_name = body.display_name.trim();
     let media_type = body.media_type.trim();
     let request_id = idempotency_key(&headers)?;
-    let upload_id = new_id("upl").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload could not be initialized"))?;
+    let upload_id = new_id("upl").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Upload could not be initialized",
+        )
+    })?;
     let now = time::OffsetDateTime::now_utc();
-    let expires_at = (now + time::Duration::hours(24)).format(&time::format_description::well_known::Rfc3339).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload could not be initialized"))?;
-    let correlation_id = new_id("cor")
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload could not be initialized"))?;
-    let event_context = event_context(&state.runtime_id, &correlation_id)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload could not be initialized"))?;
+    let expires_at = (now + time::Duration::hours(24))
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Upload could not be initialized",
+            )
+        })?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Upload could not be initialized",
+        )
+    })?;
+    let event_context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Upload could not be initialized",
+        )
+    })?;
     let command = CreateResourceUploadSession {
-        upload_id,
+        upload_id: upload_id.clone(),
         workspace_id,
         principal_id: state.principal_id.clone(),
         request_id: request_id.to_owned(),
@@ -1104,16 +1216,40 @@ async fn create_resource_upload(
         event: event_context,
     };
     let store = state.store.clone();
-    let created = tokio::task::spawn_blocking(move || ResourceUploadService::new(store).create_session(command)).await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload session creation did not complete"))?
-        .map_err(|error| match error {
-            storage_core::StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource upload metadata is invalid or unsupported"),
-            storage_core::StoreError::NotFound => operator_error(StatusCode::FORBIDDEN, "FORBIDDEN", "Workspace access is unavailable"),
-            storage_core::StoreError::Conflict { .. } => operator_error(StatusCode::CONFLICT, "CONFLICT", "Upload request conflicts with an existing request"),
-            _ => upload_store_error(error),
-        })?;
+    let created = tokio::task::spawn_blocking(move || {
+        ResourceUploadService::new(store).create_session(command)
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Upload session creation did not complete",
+        )
+    })?
+    .map_err(|error| match error {
+        storage_core::StoreError::Invalid(_) => operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Resource upload metadata is invalid or unsupported",
+        ),
+        storage_core::StoreError::NotFound => operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Workspace access is unavailable",
+        ),
+        storage_core::StoreError::Conflict { .. } => operator_error(
+            StatusCode::CONFLICT,
+            "CONFLICT",
+            "Upload request conflicts with an existing request",
+        ),
+        _ => upload_store_error(error),
+    })?;
     let mut response = (StatusCode::CREATED, Json(created)).into_response();
-    response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
     Ok(response)
 }
 
@@ -1126,17 +1262,45 @@ async fn create_resource_revision_upload(
     let workspace_id = selected_workspace(&headers)?;
     let workspace = ensure_workspace_owner(&state, &workspace_id)?;
     if workspace.status != "ACTIVE" {
-        return Err(operator_error(StatusCode::CONFLICT, "CONFLICT", "Archived Workspaces are read-only"));
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "CONFLICT",
+            "Archived Workspaces are read-only",
+        ));
     }
     let expected_resource_version = parse_if_match(&headers)?;
     let request_id = idempotency_key(&headers)?;
-    let correlation_id = new_id("cor").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Revision upload could not be initialized"))?;
-    let event = event_context(&state.runtime_id, &correlation_id)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Revision upload could not be initialized"))?;
-    let upload_id = new_id("upl").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Revision upload could not be initialized"))?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Revision upload could not be initialized",
+        )
+    })?;
+    let event = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Revision upload could not be initialized",
+        )
+    })?;
+    let upload_id = new_id("upl").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Revision upload could not be initialized",
+        )
+    })?;
     let now = time::OffsetDateTime::now_utc();
-    let expires_at = (now + time::Duration::hours(24)).format(&time::format_description::well_known::Rfc3339)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Revision upload could not be initialized"))?;
+    let expires_at = (now + time::Duration::hours(24))
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Revision upload could not be initialized",
+            )
+        })?;
     let command = CreateResourceRevisionUploadSession {
         upload_id,
         workspace_id: workspace_id.clone(),
@@ -1152,16 +1316,44 @@ async fn create_resource_revision_upload(
         event,
     };
     let store = state.store.clone();
-    let created = tokio::task::spawn_blocking(move || ResourceUploadService::new(store).create_revision_session(command)).await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Revision upload did not complete"))?
-        .map_err(|error| match error {
-            storage_core::StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource revision upload metadata is invalid"),
-            storage_core::StoreError::Conflict { .. } => operator_error(StatusCode::CONFLICT, "RESOURCE_CONFLICT", "Resource version or revision heads changed; reload and retry"),
-            storage_core::StoreError::NotFound => operator_error(StatusCode::FORBIDDEN, "FORBIDDEN", "Workspace access is unavailable"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Revision upload could not be created"),
-        })?;
+    let created = tokio::task::spawn_blocking(move || {
+        ResourceUploadService::new(store).create_revision_session(command)
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Revision upload did not complete",
+        )
+    })?
+    .map_err(|error| match error {
+        storage_core::StoreError::Invalid(_) => operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Resource revision upload metadata is invalid",
+        ),
+        storage_core::StoreError::Conflict { .. } => operator_error(
+            StatusCode::CONFLICT,
+            "RESOURCE_CONFLICT",
+            "Resource version or revision heads changed; reload and retry",
+        ),
+        storage_core::StoreError::NotFound => operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Workspace access is unavailable",
+        ),
+        _ => operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Revision upload could not be created",
+        ),
+    })?;
     let mut response = (StatusCode::CREATED, Json(created)).into_response();
-    response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
     Ok(response)
 }
 
@@ -1175,30 +1367,89 @@ async fn list_resource_revisions(
     ensure_workspace_owner(&state, &workspace_id)?;
     let limit = query.limit.unwrap_or(50);
     if !(1..=200).contains(&limit) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource revision page limit must be between 1 and 200"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Resource revision page limit must be between 1 and 200",
+        ));
     }
     let after_revision_id = if let Some(encoded) = query.cursor.as_deref() {
-        let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource revision cursor is invalid"))?;
-        let cursor: ResourceRevisionListCursor = serde_json::from_slice(&bytes).map_err(|_| operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource revision cursor is invalid"))?;
+        let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Resource revision cursor is invalid",
+            )
+        })?;
+        let cursor: ResourceRevisionListCursor = serde_json::from_slice(&bytes).map_err(|_| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Resource revision cursor is invalid",
+            )
+        })?;
         if cursor.workspace_id != workspace_id || cursor.resource_id != resource_id {
-            return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource revision cursor does not match this query"));
+            return Err(operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Resource revision cursor does not match this query",
+            ));
         }
         Some(cursor.resource_revision_id)
-    } else { None };
-    let mut items = state.store.list_resource_revisions_page(&workspace_id, &resource_id, after_revision_id.as_deref(), limit + 1).map_err(|error| match error {
-        storage_core::StoreError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource is unavailable"),
-        storage_core::StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource revision cursor is invalid"),
-        _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource revisions are unavailable"),
-    })?;
+    } else {
+        None
+    };
+    let mut items = state
+        .store
+        .list_resource_revisions_page(
+            &workspace_id,
+            &resource_id,
+            after_revision_id.as_deref(),
+            limit + 1,
+        )
+        .map_err(|error| match error {
+            storage_core::StoreError::NotFound => operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Resource is unavailable",
+            ),
+            storage_core::StoreError::Invalid(_) => operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Resource revision cursor is invalid",
+            ),
+            _ => operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Resource revisions are unavailable",
+            ),
+        })?;
     let has_more = items.len() > limit;
-    if has_more { items.pop(); }
+    if has_more {
+        items.pop();
+    }
     let next_cursor = if has_more {
-        items.last().map(|item| serde_json::to_vec(&ResourceRevisionListCursor {
-            workspace_id: workspace_id.clone(),
-            resource_id: resource_id.clone(),
-            resource_revision_id: item.revision.resource_revision_id.clone(),
-        }).map(|bytes| URL_SAFE_NO_PAD.encode(bytes)).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource revision cursor could not be created"))).transpose()?
-    } else { None };
+        items
+            .last()
+            .map(|item| {
+                serde_json::to_vec(&ResourceRevisionListCursor {
+                    workspace_id: workspace_id.clone(),
+                    resource_id: resource_id.clone(),
+                    resource_revision_id: item.revision.resource_revision_id.clone(),
+                })
+                .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
+                .map_err(|_| {
+                    operator_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "INTERNAL",
+                        "Resource revision cursor could not be created",
+                    )
+                })
+            })
+            .transpose()?
+    } else {
+        None
+    };
     Ok(Json(ResourceRevisionPageResponse { items, next_cursor }))
 }
 
@@ -1209,12 +1460,135 @@ async fn get_resource_detail(
 ) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
     ensure_workspace_owner(&state, &workspace_id)?;
-    let detail = state.store.get_resource_detail(&workspace_id, &resource_id).map_err(|_| {
-        operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource metadata is unavailable")
-    })?.ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource is unavailable"))?;
+    let detail = state
+        .store
+        .get_resource_detail(&workspace_id, &resource_id)
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Resource metadata is unavailable",
+            )
+        })?
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Resource is unavailable",
+            )
+        })?;
     let mut response = Json(detail).into_response();
-    response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
     Ok(response)
+}
+
+/// Owner-only revocation/restoration. This transition fences new content-read
+/// admissions through the Resource status check; it does not claim to stop a native
+/// AgentSession that may already have received this content.
+async fn set_context_document_status(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(resource_id): Path<String>,
+    Json(body): Json<SetContextDocumentStatusBody>,
+) -> Result<Response, Response> {
+    let workspace_id = selected_workspace(&headers)?;
+    // Keep the principal/Workspace ownership check here, but let ResourceService and
+    // SQLite resolve an existing idempotency receipt before rejecting a new mutation
+    // against an archived Workspace.
+    ensure_workspace_owner(&state, &workspace_id)?;
+    let target_status = parse_context_document_owner_status(&body.status).ok_or_else(|| {
+        operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Only ACTIVE and REVOKED ContextDocument status transitions are currently available",
+        )
+    })?;
+    let expected_version = parse_if_match(&headers)?;
+    let request_id = idempotency_key(&headers)?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "ContextDocument status update could not be initialized",
+        )
+    })?;
+    let event = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "ContextDocument status update could not be initialized",
+        )
+    })?;
+    let command = SetContextDocumentStatusCommand {
+        workspace_id,
+        resource_id,
+        principal_id: state.principal_id.clone(),
+        request_id,
+        expected_version,
+        target_status,
+        event,
+    };
+    let store = state.store.clone();
+    let committed = tokio::task::spawn_blocking(move || {
+        ResourceService::new(store).set_context_document_status(command)
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "ContextDocument status update did not complete",
+        )
+    })?
+    .map_err(|error| match error {
+        StoreError::NotFound => operator_error(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "ContextDocument is unavailable",
+        ),
+        StoreError::Conflict { .. } => operator_error(
+            StatusCode::CONFLICT,
+            "RESOURCE_CONFLICT",
+            "ContextDocument status or Resource version changed; reload and retry",
+        ),
+        StoreError::Invalid(message) if message.contains("archived Workspace") => operator_error(
+            StatusCode::CONFLICT,
+            "WORKSPACE_ARCHIVED",
+            "Archived Workspaces are read-only",
+        ),
+        StoreError::Invalid(_) => operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "ContextDocument status request is invalid",
+        ),
+        StoreError::Integrity(_) => operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "ContextDocument status could not be verified",
+        ),
+        _ => operator_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "DEPENDENCY_UNAVAILABLE",
+            "ContextDocument status storage is unavailable",
+        ),
+    })?;
+    let mut response = Json(committed.resource).into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
+}
+
+fn parse_context_document_owner_status(value: &str) -> Option<ContextDocumentOwnerStatus> {
+    match value {
+        "ACTIVE" => Some(ContextDocumentOwnerStatus::Active),
+        "REVOKED" => Some(ContextDocumentOwnerStatus::Revoked),
+        _ => None,
+    }
 }
 
 async fn get_resource_upload(
@@ -1225,12 +1599,28 @@ async fn get_resource_upload(
     let workspace_id = selected_workspace(&headers)?;
     ensure_workspace_owner(&state, &workspace_id)?;
     let store = state.store.clone();
-    let session = tokio::task::spawn_blocking(move || store.get(&workspace_id, &upload_id)).await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload progress is unavailable"))?
+    let session = tokio::task::spawn_blocking(move || store.get(&workspace_id, &upload_id))
+        .await
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Upload progress is unavailable",
+            )
+        })?
         .map_err(upload_store_error)?
-        .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Upload session is unavailable"))?;
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Upload session is unavailable",
+            )
+        })?;
     let mut response = Json(session).into_response();
-    response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
     Ok(response)
 }
 
@@ -1243,10 +1633,11 @@ async fn expire_due_upload_sessions(state: &ApiState) {
     };
     let store = state.store.clone();
     let now_for_expiry = now.clone();
-    let sessions = match tokio::task::spawn_blocking(move || store.list_expired(&now_for_expiry, 100)).await {
-        Ok(Ok(sessions)) => sessions,
-        _ => return,
-    };
+    let sessions =
+        match tokio::task::spawn_blocking(move || store.list_expired(&now_for_expiry, 100)).await {
+            Ok(Ok(sessions)) => sessions,
+            _ => return,
+        };
     for session in sessions {
         let _ = expire_upload_if_due(state, session).await;
     }
@@ -1255,7 +1646,8 @@ async fn expire_due_upload_sessions(state: &ApiState) {
     // transactions. The daemon process lock guarantees a single periodic collector;
     // durable DELETING fences let the next daemon incarnation retry after a crash.
     let store = state.store.clone();
-    let collected = tokio::task::spawn_blocking(move || store.collect_orphan_chunks(&now, 100)).await;
+    let collected =
+        tokio::task::spawn_blocking(move || store.collect_orphan_chunks(&now, 100)).await;
     if !matches!(collected, Ok(Ok(_))) {
         // Keep cleanup failure non-fatal. Any claimed object stays fenced and is retried
         // by the next bounded sweep; uploads and other Operator requests continue.
@@ -1271,46 +1663,128 @@ async fn put_resource_upload_chunk(
 ) -> Result<StatusCode, Response> {
     const MAX_CHUNK: usize = 4 * 1024 * 1024;
     if body.is_empty() || body.len() > MAX_CHUNK {
-        return Err(operator_error(StatusCode::PAYLOAD_TOO_LARGE, "INVALID_ARGUMENT", "Upload chunks must contain between 1 byte and 4 MiB"));
+        return Err(operator_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "INVALID_ARGUMENT",
+            "Upload chunks must contain between 1 byte and 4 MiB",
+        ));
     }
     let workspace_id = selected_workspace(&headers)?;
-    ensure_workspace_owner(&state, &workspace_id)?;
+    let workspace = ensure_workspace_owner(&state, &workspace_id)?;
     if workspace.status != "ACTIVE" {
-        return Err(operator_error(StatusCode::CONFLICT, "CONFLICT", "Archived Workspaces are read-only"));
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "CONFLICT",
+            "Archived Workspaces are read-only",
+        ));
     }
     let request_id = idempotency_key(&headers)?;
-    let content_range = headers.get(header::CONTENT_RANGE).and_then(|value| value.to_str().ok()).and_then(parse_content_range)
-        .ok_or_else(|| operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Content-Range is invalid"))?;
-    let supplied_digest = headers.get("x-chunk-sha256").and_then(|value| value.to_str().ok()).filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()))
-        .ok_or_else(|| operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Chunk digest is invalid"))?;
+    let content_range = headers
+        .get(header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_content_range)
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Content-Range is invalid",
+            )
+        })?;
+    let supplied_digest = headers
+        .get("x-chunk-sha256")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Chunk digest is invalid",
+            )
+        })?;
     if sha256_digest(&body) != format!("sha256:{supplied_digest}") {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INTEGRITY_FAILURE", "Chunk digest does not match its content"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INTEGRITY_FAILURE",
+            "Chunk digest does not match its content",
+        ));
     }
     let store = state.store.clone();
     let scoped_workspace = workspace_id.clone();
-    let found = tokio::task::spawn_blocking(move || store.get(&scoped_workspace, &upload_id)).await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload session is unavailable"))?
-        .map_err(upload_store_error)?
-        .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Upload session is unavailable"))?;
+    let lookup_upload_id = upload_id.clone();
+    let found =
+        tokio::task::spawn_blocking(move || store.get(&scoped_workspace, &lookup_upload_id))
+            .await
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Upload session is unavailable",
+                )
+            })?
+            .map_err(upload_store_error)?
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::NOT_FOUND,
+                    "NOT_FOUND",
+                    "Upload session is unavailable",
+                )
+            })?;
     if found.workspace_id != workspace_id {
-        return Err(operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Upload session is unavailable"));
+        return Err(operator_error(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "Upload session is unavailable",
+        ));
     }
-    let received_at = time::OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Chunk could not be accepted"))?;
+    let received_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Chunk could not be accepted",
+            )
+        })?;
     let found = expire_upload_if_due(&state, found).await?;
     if found.state == ResourceUploadState::Expired {
-        return Err(operator_error(StatusCode::GONE, "UPLOAD_EXPIRED", "Upload session has expired"));
+        return Err(operator_error(
+            StatusCode::GONE,
+            "UPLOAD_EXPIRED",
+            "Upload session has expired",
+        ));
     }
     let chunk = ResourceUploadChunkInput {
-        upload_id,
+        upload_id: upload_id.clone(),
         chunk_index,
         request_id: request_id.to_owned(),
-        content_range: ResourceUploadContentRange { start_offset: content_range.0, end_offset_inclusive: content_range.1, total_size_bytes: content_range.2 },
+        content_range: ResourceUploadContentRange {
+            start_offset: content_range.0,
+            end_offset_inclusive: content_range.1,
+            total_size_bytes: content_range.2,
+        },
         sha256: format!("sha256:{supplied_digest}"),
         content: body.to_vec(),
         received_at,
         lifecycle_event: {
-            let correlation_id = new_id("cor").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Chunk transfer could not be initialized"))?;
-            let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Chunk transfer could not be initialized"))?;
+            let correlation_id = new_id("cor").map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Chunk transfer could not be initialized",
+                )
+            })?;
+            let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Chunk transfer could not be initialized",
+                )
+            })?;
             storage_core::EventDraft {
                 event_id: context.event_id,
                 workspace_id: workspace_id.clone(),
@@ -1329,8 +1803,15 @@ async fn put_resource_upload_chunk(
         },
     };
     let store = state.store.clone();
-    tokio::task::spawn_blocking(move || store.put_chunk(chunk)).await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Chunk transfer did not complete"))?
+    tokio::task::spawn_blocking(move || store.put_chunk(chunk))
+        .await
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Chunk transfer did not complete",
+            )
+        })?
         .map_err(upload_store_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -1341,62 +1822,146 @@ async fn commit_resource_upload(
     Path(upload_id): Path<String>,
 ) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
-    ensure_workspace_owner(&state, &workspace_id)?;
+    let workspace = ensure_workspace_owner(&state, &workspace_id)?;
     if workspace.status != "ACTIVE" {
-        return Err(operator_error(StatusCode::CONFLICT, "CONFLICT", "Archived Workspaces are read-only"));
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "CONFLICT",
+            "Archived Workspaces are read-only",
+        ));
     }
     let request_id = idempotency_key(&headers)?;
     let store = state.store.clone();
     let scoped_workspace = workspace_id.clone();
-    let session = tokio::task::spawn_blocking(move || store.get(&scoped_workspace, &upload_id)).await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload session is unavailable"))?
+    let session = tokio::task::spawn_blocking(move || store.get(&scoped_workspace, &upload_id))
+        .await
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Upload session is unavailable",
+            )
+        })?
         .map_err(upload_store_error)?
-        .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Upload session is unavailable"))?;
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Upload session is unavailable",
+            )
+        })?;
     let session = expire_upload_if_due(&state, session).await?;
     if session.state == ResourceUploadState::Expired {
-        return Err(operator_error(StatusCode::GONE, "UPLOAD_EXPIRED", "Upload session has expired"));
+        return Err(operator_error(
+            StatusCode::GONE,
+            "UPLOAD_EXPIRED",
+            "Upload session has expired",
+        ));
     }
     if session.state == ResourceUploadState::Failed {
-        return Err(operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INTEGRITY_FAILURE", "Upload content failed verification; start a new upload"));
+        return Err(operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INTEGRITY_FAILURE",
+            "Upload content failed verification; start a new upload",
+        ));
     }
     if session.state == ResourceUploadState::Committed {
         let committed = state.store.committed_resource_for_upload(&state.principal_id, &session.upload_id)
             .map_err(upload_store_error)?
             .ok_or_else(|| operator_error(StatusCode::CONFLICT, "RESOURCE_CONFLICT", "The committed upload has no replayable receipt; review the Resource before retrying"))?;
         let correlation_id = committed.event.correlation_id.clone();
-        let mut response = (StatusCode::CREATED, Json(CommittedResourceResponse {
-            resource: committed.resource,
-            revision: committed.revision,
-            event: committed.event,
-        })).into_response();
-        response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+        let mut response = (
+            StatusCode::CREATED,
+            Json(CommittedResourceResponse {
+                resource: committed.resource,
+                revision: committed.revision,
+                event: committed.event,
+            }),
+        )
+            .into_response();
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("no-store"),
+        );
         if let Ok(value) = header::HeaderValue::from_str(&correlation_id) {
-            response.headers_mut().insert(header::HeaderName::from_static("x-correlation-id"), value);
+            response
+                .headers_mut()
+                .insert(header::HeaderName::from_static("x-correlation-id"), value);
         }
         return Ok(response);
     }
     let expected_digest = session.expected_digest.as_deref().ok_or_else(|| {
         operator_error(StatusCode::CONFLICT, "RESOURCE_CONFLICT", "This older upload has no whole-file digest and cannot be safely resumed or committed; start a new upload")
     })?;
-    let correlation_id = new_id("cor").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource commit could not be initialized"))?;
-    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource commit could not be initialized"))?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Resource commit could not be initialized",
+        )
+    })?;
+    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Resource commit could not be initialized",
+        )
+    })?;
     let revision_upload = session.resource_id.is_some();
     let resource_id = match session.resource_id.as_deref() {
         Some(resource_id) => resource_id.to_owned(),
-        None => new_id("res").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource commit could not be initialized"))?,
+        None => new_id("res").map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Resource commit could not be initialized",
+            )
+        })?,
     };
-    let revision_id = new_id("rrev").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource commit could not be initialized"))?;
+    let revision_id = new_id("rrev").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Resource commit could not be initialized",
+        )
+    })?;
     let resource = if revision_upload {
-        let current = state.store.get_resource_record(&workspace_id, &resource_id)
-            .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource is unavailable"))?
-            .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource is unavailable"))?;
-        if Some(current.version) != session.expected_resource_version || current.display_name != session.display_name {
-            return Err(operator_error(StatusCode::CONFLICT, "RESOURCE_CONFLICT", "Resource changed after this revision upload was created"));
+        let current = state
+            .store
+            .get_resource_record(&workspace_id, &resource_id)
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Resource is unavailable",
+                )
+            })?
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::NOT_FOUND,
+                    "NOT_FOUND",
+                    "Resource is unavailable",
+                )
+            })?;
+        if Some(current.version) != session.expected_resource_version
+            || current.display_name != session.display_name
+        {
+            return Err(operator_error(
+                StatusCode::CONFLICT,
+                "RESOURCE_CONFLICT",
+                "Resource changed after this revision upload was created",
+            ));
         }
         ResourceRecord {
             current_revision_id: Some(revision_id.clone()),
             updated_at: context.recorded_at.clone(),
-            version: current.version.checked_add(1).ok_or_else(|| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource version overflow"))?,
+            version: current.version.checked_add(1).ok_or_else(|| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Resource version overflow",
+                )
+            })?,
             ..current
         }
     } else {
@@ -1405,25 +1970,50 @@ async fn commit_resource_upload(
             provenance["folder_import"] = json!({"relative_path": folder_import.relative_path});
         }
         ResourceRecord {
-            resource_id: resource_id.clone(), workspace_id: workspace_id.clone(), kind: "FILE".to_owned(),
+            resource_id: resource_id.clone(),
+            workspace_id: workspace_id.clone(),
+            kind: "FILE".to_owned(),
             provider_identity: json!({"provider_instance_id":"litecowork.local-upload", "stable_object_id":resource_id, "identity_confidence":"WEAK"}),
-            identity_digest: None, display_name: session.display_name.clone(), current_revision_id: Some(revision_id.clone()),
-            sensitivity: "PERSONAL".to_owned(), provenance,
-            created_at: context.recorded_at.clone(), updated_at: context.recorded_at.clone(), version: 1,
+            identity_digest: None,
+            display_name: session.display_name.clone(),
+            current_revision_id: Some(revision_id.clone()),
+            sensitivity: "PERSONAL".to_owned(),
+            provenance,
+            created_at: context.recorded_at.clone(),
+            updated_at: context.recorded_at.clone(),
+            version: 1,
         }
     };
     let revision = ResourceRevisionRecord {
-        resource_revision_id: revision_id.clone(), resource_id: resource_id.clone(), parent_revision_ids: session.parent_revision_ids.clone(),
-        provider_revision: None, content_digest: Some(expected_digest.to_owned()), size_bytes: Some(session.expected_size_bytes),
-        media_type: Some(session.media_type.clone()), observed_at: context.recorded_at.clone(),
+        resource_revision_id: revision_id.clone(),
+        resource_id: resource_id.clone(),
+        parent_revision_ids: session.parent_revision_ids.clone(),
+        provider_revision: None,
+        content_digest: Some(expected_digest.to_owned()),
+        size_bytes: Some(session.expected_size_bytes),
+        media_type: Some(session.media_type.clone()),
+        observed_at: context.recorded_at.clone(),
         created_by: json!({"principal_id":state.principal_id.clone(), "kind":"USER"}),
     };
     let event = storage_core::EventDraft {
-        event_id: context.event_id, workspace_id: workspace_id.clone(), entity_type: "Resource".to_owned(), entity_id: resource_id.clone(),
-        origin_runtime_id: context.origin_runtime_id, entity_revision: resource.version, hlc_timestamp: context.hlc_timestamp,
-        correlation_id: context.correlation_id.clone(), causation_id: None, schema_version: 1,
-        event_type: (if revision_upload { "resource.revision.created.v1" }
-            else if session.folder_import.is_some() { "resource.created.v2" } else { "resource.created.v1" }).to_owned(),
+        event_id: context.event_id,
+        workspace_id: workspace_id.clone(),
+        entity_type: "Resource".to_owned(),
+        entity_id: resource_id.clone(),
+        origin_runtime_id: context.origin_runtime_id,
+        entity_revision: resource.version,
+        hlc_timestamp: context.hlc_timestamp,
+        correlation_id: context.correlation_id.clone(),
+        causation_id: None,
+        schema_version: 1,
+        event_type: (if revision_upload {
+            "resource.revision.created.v1"
+        } else if session.folder_import.is_some() {
+            "resource.created.v2"
+        } else {
+            "resource.created.v1"
+        })
+        .to_owned(),
         payload: if revision_upload {
             json!({"resource_id":resource_id, "resource_revision_id":revision_id, "parent_revision_ids":revision.parent_revision_ids, "content_digest":expected_digest, "size_bytes":session.expected_size_bytes, "media_type":session.media_type, "created_by":revision.created_by, "aggregate_version":resource.version})
         } else {
@@ -1432,10 +2022,21 @@ async fn commit_resource_upload(
         recorded_at: context.recorded_at,
     };
     let upload_status_event = if session.state == ResourceUploadState::ContentReceived {
-        let lifecycle_context = event_context(&state.runtime_id, &correlation_id)
-            .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource commit could not be initialized"))?;
-        let aggregate_version = session.version.checked_add(1)
-            .ok_or_else(|| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource commit could not be initialized"))?;
+        let lifecycle_context =
+            event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Resource commit could not be initialized",
+                )
+            })?;
+        let aggregate_version = session.version.checked_add(1).ok_or_else(|| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Resource commit could not be initialized",
+            )
+        })?;
         Some(storage_core::EventDraft {
             event_id: lifecycle_context.event_id,
             workspace_id: workspace_id.clone(),
@@ -1461,10 +2062,21 @@ async fn commit_resource_upload(
         None
     };
     let upload_failure_event = if session.state == ResourceUploadState::ContentReceived {
-        let lifecycle_context = event_context(&state.runtime_id, &correlation_id)
-            .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource commit could not be initialized"))?;
-        let aggregate_version = session.version.checked_add(1)
-            .ok_or_else(|| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource commit could not be initialized"))?;
+        let lifecycle_context =
+            event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Resource commit could not be initialized",
+                )
+            })?;
+        let aggregate_version = session.version.checked_add(1).ok_or_else(|| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Resource commit could not be initialized",
+            )
+        })?;
         Some(storage_core::EventDraft {
             event_id: lifecycle_context.event_id,
             workspace_id: workspace_id.clone(),
@@ -1490,7 +2102,8 @@ async fn commit_resource_upload(
         None
     };
     let request = WorkspaceCreateRequest {
-        principal_id: state.principal_id.clone(), request_id: request_id.to_owned(),
+        principal_id: state.principal_id.clone(),
+        request_id: request_id.to_owned(),
         request_payload: json!({"operation":"resource.upload.commit.v1", "upload_id":session.upload_id.clone()}),
     };
     let store = state.store.clone();
@@ -1503,10 +2116,23 @@ async fn commit_resource_upload(
             other => upload_store_error(other),
         })?;
     let correlation_id = committed.event.correlation_id.clone();
-    let mut response = (StatusCode::CREATED, Json(CommittedResourceResponse { resource: committed.resource, revision: committed.revision, event: committed.event })).into_response();
-    response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    let mut response = (
+        StatusCode::CREATED,
+        Json(CommittedResourceResponse {
+            resource: committed.resource,
+            revision: committed.revision,
+            event: committed.event,
+        }),
+    )
+        .into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
     if let Ok(value) = header::HeaderValue::from_str(&correlation_id) {
-        response.headers_mut().insert(header::HeaderName::from_static("x-correlation-id"), value);
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static("x-correlation-id"), value);
     }
     Ok(response)
 }
@@ -1515,24 +2141,48 @@ async fn expire_upload_if_due(
     state: &ApiState,
     session: ResourceUploadSessionRecord,
 ) -> Result<ResourceUploadSessionRecord, Response> {
-    if matches!(session.state, ResourceUploadState::Committed | ResourceUploadState::Failed | ResourceUploadState::Expired) {
+    if matches!(
+        session.state,
+        ResourceUploadState::Committed | ResourceUploadState::Failed | ResourceUploadState::Expired
+    ) {
         return Ok(session);
     }
     let now = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload expiry could not be recorded"))?;
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Upload expiry could not be recorded",
+            )
+        })?;
     if now < session.expires_at {
         return Ok(session);
     }
-    let next_version = session.version.checked_add(1)
-        .ok_or_else(|| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload expiry could not be recorded"))?;
+    let next_version = session.version.checked_add(1).ok_or_else(|| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Upload expiry could not be recorded",
+        )
+    })?;
     let mut expired = session.clone();
     expired.state = ResourceUploadState::Expired;
     expired.version = next_version;
-    let correlation_id = new_id("cor")
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload expiry could not be recorded"))?;
-    let context = event_context(&state.runtime_id, &correlation_id)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload expiry could not be recorded"))?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Upload expiry could not be recorded",
+        )
+    })?;
+    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Upload expiry could not be recorded",
+        )
+    })?;
     let from = match session.state {
         ResourceUploadState::Open => "OPEN",
         ResourceUploadState::ContentReceived => "CONTENT_RECEIVED",
@@ -1564,18 +2214,49 @@ async fn expire_upload_if_due(
     let expected_version = session.progress_version;
     let fallback_workspace_id = session.workspace_id.clone();
     let fallback_upload_id = session.upload_id.clone();
-    match tokio::task::spawn_blocking(move || store.expire(expected_version, expired, event)).await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload expiry did not complete"))? {
+    match tokio::task::spawn_blocking(move || store.expire(expected_version, expired, event))
+        .await
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Upload expiry did not complete",
+            )
+        })? {
         Ok(result) => Ok(result),
         Err(storage_core::StoreError::Conflict { .. }) => {
-            let current = tokio::task::spawn_blocking(move || fallback_store.get(&fallback_workspace_id, &fallback_upload_id)).await
-                .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Upload expiry could not be reconciled"))?
-                .map_err(upload_store_error)?
-                .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Upload session is unavailable"))?;
-            if matches!(current.state, ResourceUploadState::Expired | ResourceUploadState::Committed | ResourceUploadState::Failed) {
+            let current = tokio::task::spawn_blocking(move || {
+                fallback_store.get(&fallback_workspace_id, &fallback_upload_id)
+            })
+            .await
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Upload expiry could not be reconciled",
+                )
+            })?
+            .map_err(upload_store_error)?
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::NOT_FOUND,
+                    "NOT_FOUND",
+                    "Upload session is unavailable",
+                )
+            })?;
+            if matches!(
+                current.state,
+                ResourceUploadState::Expired
+                    | ResourceUploadState::Committed
+                    | ResourceUploadState::Failed
+            ) {
                 Ok(current)
             } else {
-                Err(operator_error(StatusCode::CONFLICT, "CONFLICT", "Upload session changed while expiry was being recorded"))
+                Err(operator_error(
+                    StatusCode::CONFLICT,
+                    "CONFLICT",
+                    "Upload session changed while expiry was being recorded",
+                ))
             }
         }
         Err(error) => Err(upload_store_error(error)),
@@ -1593,69 +2274,165 @@ async fn create_task(
     let workspace_id = selected_workspace(&headers)?;
     let workspace = ensure_workspace_owner(&state, &workspace_id)?;
     if workspace.status != "ACTIVE" {
-        return Err(operator_error(StatusCode::UNPROCESSABLE_ENTITY, "WORKSPACE_ARCHIVED", "Archived Workspaces cannot accept new Tasks"));
+        return Err(operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "WORKSPACE_ARCHIVED",
+            "Archived Workspaces cannot accept new Tasks",
+        ));
     }
     if body.get("workspace_id").and_then(serde_json::Value::as_str) != Some(workspace_id.as_str()) {
-        return Err(operator_error(StatusCode::FORBIDDEN, "FORBIDDEN", "Workspace access is unavailable"));
+        return Err(operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Workspace access is unavailable",
+        ));
     }
     let explicit_binding = match body.get("preferred_lead_agent_binding_id") {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(value)) if !value.trim().is_empty() => Some(value.clone()),
-        Some(_) => return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task lead selection is invalid")),
+        Some(_) => {
+            return Err(operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Task lead selection is invalid",
+            ));
+        }
     };
     let coworker_id = match body.get("coworker_id") {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::String(value)) if valid_task_query_id(value) => Some(value.clone()),
-        Some(_) => return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task Coworker selection is invalid")),
+        Some(_) => {
+            return Err(operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Task Coworker selection is invalid",
+            ));
+        }
     };
     let expected_coworker_version = match body.get("expected_coworker_version") {
         None | Some(serde_json::Value::Null) => None,
         Some(serde_json::Value::Number(value)) => value.as_u64().filter(|version| *version > 0),
         Some(_) => None,
     };
-    if body.get("expected_coworker_version").is_some_and(|value| !value.is_null())
+    if body
+        .get("expected_coworker_version")
+        .is_some_and(|value| !value.is_null())
         && expected_coworker_version.is_none()
     {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Expected Coworker version is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Expected Coworker version is invalid",
+        ));
     }
     if coworker_id.is_none() && expected_coworker_version.is_some() {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "A Coworker version requires a selected Coworker"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "A Coworker version requires a selected Coworker",
+        ));
     }
 
     // The client pins the selected Coworker ID and expected aggregate version, but
     // does not choose the origin revision. The server resolves the current immutable
     // revision; SQLite rechecks that head and version in the Task creation transaction.
     let coworker_origin = if let Some(coworker_id) = coworker_id.as_deref() {
-        let correlation_id = new_id("cor").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task request could not be initialized"))?;
-        let context = event_context(&state.runtime_id, &correlation_id)
-            .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task request could not be initialized"))?;
-        let coworker_store = SqliteCoworkerStore::new(state.store.clone(), CoworkerEventContext {
-            event_id: context.event_id,
-            origin_runtime_id: context.origin_runtime_id,
-            hlc_timestamp: context.hlc_timestamp,
-            correlation_id: context.correlation_id,
-            causation_id: context.causation_id,
-            recorded_at: context.recorded_at,
-        }).map_err(|_| operator_error(StatusCode::SERVICE_UNAVAILABLE, "DEPENDENCY_UNAVAILABLE", "Selected Coworker is unavailable"))?;
+        let correlation_id = new_id("cor").map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Task request could not be initialized",
+            )
+        })?;
+        let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Task request could not be initialized",
+            )
+        })?;
+        let coworker_store = SqliteCoworkerStore::new(
+            state.store.clone(),
+            CoworkerEventContext {
+                event_id: context.event_id,
+                origin_runtime_id: context.origin_runtime_id,
+                hlc_timestamp: context.hlc_timestamp,
+                correlation_id: context.correlation_id,
+                causation_id: context.causation_id,
+                recorded_at: context.recorded_at,
+            },
+        )
+        .map_err(|_| {
+            operator_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "DEPENDENCY_UNAVAILABLE",
+                "Selected Coworker is unavailable",
+            )
+        })?;
         let (head, revision) = coworker_store
             .get(&state.principal_id, &workspace_id, coworker_id)
-            .map_err(|_| operator_error(StatusCode::SERVICE_UNAVAILABLE, "DEPENDENCY_UNAVAILABLE", "Selected Coworker is unavailable"))?
-            .ok_or_else(|| operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INVALID_ARGUMENT", "Selected Coworker is unavailable in this Workspace"))?;
-        let failover_policy = revision.definition.lead_failover_policy
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "DEPENDENCY_UNAVAILABLE",
+                    "Selected Coworker is unavailable",
+                )
+            })?
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "INVALID_ARGUMENT",
+                    "Selected Coworker is unavailable in this Workspace",
+                )
+            })?;
+        let failover_policy = revision
+            .definition
+            .lead_failover_policy
             .map(|policy| serde_json::Value::Object(policy.into_iter().collect()));
-        Some((head.current_revision, revision.definition.default_lead_agent_binding_id, failover_policy))
+        Some((
+            head.current_revision,
+            revision.definition.default_lead_agent_binding_id,
+            failover_policy,
+        ))
     } else {
         None
     };
     let lead_binding_id = explicit_binding
-        .or_else(|| coworker_origin.as_ref().and_then(|(_, binding, _)| binding.clone()))
+        .or_else(|| {
+            coworker_origin
+                .as_ref()
+                .and_then(|(_, binding, _)| binding.clone())
+        })
         .or(workspace.default_agent_binding_id.clone())
-        .ok_or_else(|| operator_error(StatusCode::UNPROCESSABLE_ENTITY, "AGENT_UNAVAILABLE", "Choose and enable a lead agent before creating a Task"))?;
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "AGENT_UNAVAILABLE",
+                "Choose and enable a lead agent before creating a Task",
+            )
+        })?;
     let request_id = idempotency_key(&headers)?;
-    let correlation_id = new_id("cor").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task request could not be initialized"))?;
-    let task_id = new_id("tsk").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task request could not be initialized"))?;
-    let event = event_context(&state.runtime_id, &correlation_id)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task request could not be initialized"))?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task request could not be initialized",
+        )
+    })?;
+    let task_id = new_id("tsk").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task request could not be initialized",
+        )
+    })?;
+    let event = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task request could not be initialized",
+        )
+    })?;
     let command = CreateStandaloneTask {
         task_id,
         workspace_id: workspace_id.clone(),
@@ -1664,27 +2441,70 @@ async fn create_task(
         origin_coworker_id: coworker_id,
         origin_coworker_revision: coworker_origin.as_ref().map(|(revision, _, _)| *revision),
         expected_coworker_version,
-        coworker_default_lead_failover_policy: coworker_origin.as_ref().and_then(|(_, _, policy)| policy.clone()),
+        coworker_default_lead_failover_policy: coworker_origin
+            .as_ref()
+            .and_then(|(_, _, policy)| policy.clone()),
         principal_id: state.principal_id.clone(),
         request_id,
         request_payload: body,
         event,
     };
     let store = state.store.clone();
-    let committed = tokio::task::spawn_blocking(move || TaskService::new(store).create_standalone(command))
-        .await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task creation did not complete"))?
-        .map_err(|error| match error {
-            storage_core::StoreError::Invalid(message) if message.contains("Coworker is archived") => operator_error(StatusCode::CONFLICT, "COWORKER_ARCHIVED", "An archived Coworker cannot be selected for new work"),
-            storage_core::StoreError::Invalid(message) if message.contains("lead AgentBinding") => operator_error(StatusCode::UNPROCESSABLE_ENTITY, "AGENT_UNAVAILABLE", "The selected lead AgentBinding is unavailable for new work"),
-            storage_core::StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task request is invalid or uses an unavailable origin path"),
-            storage_core::StoreError::Conflict { .. } => operator_error(StatusCode::CONFLICT, "CONFLICT", "Workspace or Task inputs changed; refresh and retry"),
-            storage_core::StoreError::NotFound => operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INVALID_ARGUMENT", "A Task input or lead binding is unavailable"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task could not be saved"),
-        })?;
+    let committed =
+        tokio::task::spawn_blocking(move || TaskService::new(store).create_standalone(command))
+            .await
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Task creation did not complete",
+                )
+            })?
+            .map_err(|error| match error {
+                storage_core::StoreError::Invalid(message)
+                    if message.contains("Coworker is archived") =>
+                {
+                    operator_error(
+                        StatusCode::CONFLICT,
+                        "COWORKER_ARCHIVED",
+                        "An archived Coworker cannot be selected for new work",
+                    )
+                }
+                storage_core::StoreError::Invalid(message)
+                    if message.contains("lead AgentBinding") =>
+                {
+                    operator_error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "AGENT_UNAVAILABLE",
+                        "The selected lead AgentBinding is unavailable for new work",
+                    )
+                }
+                storage_core::StoreError::Invalid(_) => operator_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENT",
+                    "Task request is invalid or uses an unavailable origin path",
+                ),
+                storage_core::StoreError::Conflict { .. } => operator_error(
+                    StatusCode::CONFLICT,
+                    "CONFLICT",
+                    "Workspace or Task inputs changed; refresh and retry",
+                ),
+                storage_core::StoreError::NotFound => operator_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "INVALID_ARGUMENT",
+                    "A Task input or lead binding is unavailable",
+                ),
+                _ => operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Task could not be saved",
+                ),
+            })?;
     let mut response = (StatusCode::CREATED, Json(committed.view)).into_response();
     if let Ok(value) = header::HeaderValue::from_str(&committed.event.correlation_id) {
-        response.headers_mut().insert(header::HeaderName::from_static("x-correlation-id"), value);
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static("x-correlation-id"), value);
     }
     Ok(response)
 }
@@ -1697,17 +2517,42 @@ async fn list_tasks(
     query: Result<Query<TaskListQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<TaskPageResponse>, Response> {
     let workspace_id = selected_workspace(&headers)?;
-    let Query(query) = query.map_err(|_| operator_error(
-        StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task filters are invalid",
-    ))?;
+    let Query(query) = query.map_err(|_| {
+        operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task filters are invalid",
+        )
+    })?;
     if !valid_task_query_id(&workspace_id)
-        || query.conversation_id.as_deref().is_some_and(|id| !valid_task_query_id(id))
-        || query.status.as_deref().is_some_and(|status| !matches!(status,
-            "READY" | "RUNNING" | "WAITING_USER" | "BLOCKED" | "VERIFYING"
-            | "NEEDS_USER" | "INCOMPLETE" | "PAUSE_REQUESTED" | "PAUSED"
-            | "COMPLETED" | "FAILED" | "CANCEL_REQUESTED" | "CANCELLED"))
+        || query
+            .conversation_id
+            .as_deref()
+            .is_some_and(|id| !valid_task_query_id(id))
+        || query.status.as_deref().is_some_and(|status| {
+            !matches!(
+                status,
+                "READY"
+                    | "RUNNING"
+                    | "WAITING_USER"
+                    | "BLOCKED"
+                    | "VERIFYING"
+                    | "NEEDS_USER"
+                    | "INCOMPLETE"
+                    | "PAUSE_REQUESTED"
+                    | "PAUSED"
+                    | "COMPLETED"
+                    | "FAILED"
+                    | "CANCEL_REQUESTED"
+                    | "CANCELLED"
+            )
+        })
     {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task filters are invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task filters are invalid",
+        ));
     }
     list_task_page(
         state,
@@ -1716,7 +2561,8 @@ async fn list_tasks(
         query.conversation_id,
         query.cursor,
         query.limit,
-    ).await
+    )
+    .await
 }
 
 async fn list_conversation_tasks(
@@ -1726,11 +2572,19 @@ async fn list_conversation_tasks(
     query: Result<Query<ConversationTaskListQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<TaskPageResponse>, Response> {
     let workspace_id = selected_workspace(&headers)?;
-    let Query(query) = query.map_err(|_| operator_error(
-        StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task page query is invalid",
-    ))?;
+    let Query(query) = query.map_err(|_| {
+        operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task page query is invalid",
+        )
+    })?;
     if !valid_task_query_id(&workspace_id) || !valid_task_query_id(&conversation_id) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task query is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task query is invalid",
+        ));
     }
     list_task_page(
         state,
@@ -1739,7 +2593,8 @@ async fn list_conversation_tasks(
         Some(conversation_id),
         query.cursor,
         query.limit,
-    ).await
+    )
+    .await
 }
 
 async fn list_task_page(
@@ -1752,34 +2607,85 @@ async fn list_task_page(
 ) -> Result<Json<TaskPageResponse>, Response> {
     let limit = requested_limit.unwrap_or(50);
     if !(1..=200).contains(&limit) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task page limit must be between 1 and 200"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task page limit must be between 1 and 200",
+        ));
     }
-    let cursor = encoded_cursor.as_deref().map(|encoded| {
-        decode_task_cursor(encoded, &workspace_id, status.as_deref(), conversation_id.as_deref())
-    }).transpose()?;
+    let cursor = encoded_cursor
+        .as_deref()
+        .map(|encoded| {
+            decode_task_cursor(
+                encoded,
+                &workspace_id,
+                status.as_deref(),
+                conversation_id.as_deref(),
+            )
+        })
+        .transpose()?;
     let scoped_workspace = workspace_id.clone();
     let status_filter = status.clone();
     let conversation_filter = conversation_id.clone();
     let mut rows = tokio::task::spawn_blocking(move || {
         ensure_workspace_owner(&state, &scoped_workspace)?;
-        state.store.list_tasks_page(
-            &scoped_workspace, status_filter.as_deref(), conversation_filter.as_deref(),
-            cursor.as_ref().map(|cursor| cursor.created_at.as_str()),
-            cursor.as_ref().map(|cursor| cursor.task_id.as_str()), limit + 1,
-        ).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task list is unavailable"))
-    }).await.map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task list is unavailable"))??;
+        state
+            .store
+            .list_tasks_page(
+                &scoped_workspace,
+                status_filter.as_deref(),
+                conversation_filter.as_deref(),
+                cursor.as_ref().map(|cursor| cursor.created_at.as_str()),
+                cursor.as_ref().map(|cursor| cursor.task_id.as_str()),
+                limit + 1,
+            )
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Task list is unavailable",
+                )
+            })
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task list is unavailable",
+        )
+    })??;
     let has_more = rows.len() > limit;
     rows.truncate(limit);
     let next_cursor = if has_more {
-        rows.last().map(|last| {
-            let cursor = TaskListCursor { version: 1, workspace_id,
-                status, conversation_id,
-                created_at: last.created_at.clone(), task_id: last.task_id.clone() };
-            serde_json::to_vec(&cursor).map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
-                .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task cursor could not be created"))
-        }).transpose()?
-    } else { None };
-    Ok(Json(TaskPageResponse { items: rows, next_cursor }))
+        rows.last()
+            .map(|last| {
+                let cursor = TaskListCursor {
+                    version: 1,
+                    workspace_id,
+                    status,
+                    conversation_id,
+                    created_at: last.created_at.clone(),
+                    task_id: last.task_id.clone(),
+                };
+                serde_json::to_vec(&cursor)
+                    .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
+                    .map_err(|_| {
+                        operator_error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "INTERNAL",
+                            "Task cursor could not be created",
+                        )
+                    })
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    Ok(Json(TaskPageResponse {
+        items: rows,
+        next_cursor,
+    }))
 }
 
 async fn get_task(
@@ -1789,14 +2695,36 @@ async fn get_task(
 ) -> Result<Json<TaskView>, Response> {
     let workspace_id = selected_workspace(&headers)?;
     if !valid_task_query_id(&workspace_id) || !valid_task_query_id(&task_id) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task lookup is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task lookup is invalid",
+        ));
     }
     let view = tokio::task::spawn_blocking(move || {
         ensure_workspace_owner(&state, &workspace_id)?;
-        state.store.get_task(&workspace_id, &task_id)
-            .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task is unavailable"))?
-            .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task is unavailable"))
-    }).await.map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task is unavailable"))??;
+        state
+            .store
+            .get_task(&workspace_id, &task_id)
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Task is unavailable",
+                )
+            })?
+            .ok_or_else(|| {
+                operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task is unavailable")
+            })
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task is unavailable",
+        )
+    })??;
     Ok(Json(view))
 }
 
@@ -1807,71 +2735,162 @@ async fn get_task_planning_readiness(
     Path(task_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, Response> {
-    let workspace_id = selected_workspace(&headers)?;
-    if !valid_task_query_id(&workspace_id) || !valid_task_query_id(&task_id) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task planning readiness query is invalid"));
-    }
-    let expected_task_version = parse_if_match(&headers)?;
-    if expected_task_version == 0 {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "If-Match must contain a positive Task version"));
-    }
+    let (workspace_id, expected_task_version) =
+        parse_task_planning_readiness_request(&task_id, &headers)?;
     let observed_at = operator_now()?;
-    let result = tokio::task::spawn_blocking(move || {
-        ensure_workspace_owner(&state, &workspace_id)?;
-        let task = state.store.get_task(&workspace_id, &task_id)
-            .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task planning readiness is unavailable"))?
-            .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task is unavailable"))?;
-        if task.task.version != expected_task_version {
-            return Err(operator_error(StatusCode::CONFLICT, "STALE_TASK_VERSION", "Task changed; reload before checking planning readiness"));
-        }
+    let store = state.store;
+    let principal_id = state.principal_id;
+    let runtime_id = state.runtime_id;
+    let runtime_incarnation_id = state.local_incarnation_id;
+    tokio::task::spawn_blocking(move || {
+        task_planning_readiness_projection(
+            store,
+            principal_id,
+            runtime_id,
+            runtime_incarnation_id,
+            workspace_id,
+            task_id,
+            expected_task_version,
+            observed_at,
+        )
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task planning readiness is unavailable",
+        )
+    })?
+}
 
-        let mut blockers = Vec::new();
-        if task.task.current_plan_revision.is_some() {
-            blockers.push(PlanningDispatchBlocker::PlanAlreadyAccepted);
-        }
-        if !matches!(task.task.status.as_str(), "READY" | "RUNNING") {
-            blockers.push(PlanningDispatchBlocker::TaskStateNotEligible);
-        }
-        if blockers.is_empty() {
-            let request = PreparePlanningAssignment {
-                owner_principal_id: state.principal_id.clone(),
-                workspace_id: workspace_id.clone(),
-                task_id: task_id.clone(),
-                expected_task_version,
-                runtime_id: state.runtime_id.clone(),
-                runtime_incarnation_id: state.local_incarnation_id.clone(),
-                now: observed_at.clone(),
-            };
-            match prepare_local_task_planning(state.store.clone(), request) {
-                Ok(preflight) => blockers.extend(preflight.view().dispatch_blockers.iter().copied()),
-                Err(StoreError::Conflict { .. }) => {
-                    return Err(operator_error(StatusCode::CONFLICT, "STALE_TASK_VERSION", "Task changed; reload before checking planning readiness"));
-                }
-                Err(StoreError::NotFound | StoreError::Invalid(_)) => {
-                    blockers.push(PlanningDispatchBlocker::CurrentLeadOrEndpointUnavailable);
-                }
-                Err(_) => {
-                    return Err(operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task planning readiness is unavailable"));
-                }
+fn parse_task_planning_readiness_request(
+    task_id: &str,
+    headers: &HeaderMap,
+) -> Result<(String, u64), Response> {
+    let workspace_id = selected_workspace(headers)?;
+    if !valid_task_query_id(&workspace_id) || !valid_task_query_id(task_id) {
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task planning readiness query is invalid",
+        ));
+    }
+    let expected_task_version = parse_if_match(headers)?;
+    if expected_task_version == 0 {
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "If-Match must contain a positive Task version",
+        ));
+    }
+    Ok((workspace_id, expected_task_version))
+}
+
+/// Builds the read-only, owner-scoped readiness projection. Keeping this function
+/// independent of transport state makes the no-mutation contract directly testable;
+/// it still only prepares an internal bounded packet and never dispatches it.
+fn task_planning_readiness_projection(
+    store: SqliteWorkspaceStore,
+    principal_id: String,
+    runtime_id: String,
+    runtime_incarnation_id: String,
+    workspace_id: String,
+    task_id: String,
+    expected_task_version: u64,
+    observed_at: String,
+) -> Result<Response, Response> {
+    let workspace = store.get_workspace(&workspace_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Workspace is unavailable",
+        )
+    })?;
+    if workspace
+        .as_ref()
+        .is_none_or(|workspace| workspace.owner_principal_id != principal_id)
+    {
+        return Err(operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Workspace access is unavailable",
+        ));
+    }
+    let task = store
+        .get_task(&workspace_id, &task_id)
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Task planning readiness is unavailable",
+            )
+        })?
+        .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task is unavailable"))?;
+    if task.task.version != expected_task_version {
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "STALE_TASK_VERSION",
+            "Task changed; reload before checking planning readiness",
+        ));
+    }
+
+    let mut blockers = Vec::new();
+    if task.task.current_plan_revision.is_some() {
+        blockers.push(PlanningDispatchBlocker::PlanAlreadyAccepted);
+    }
+    if !matches!(task.task.status.as_str(), "READY" | "RUNNING") {
+        blockers.push(PlanningDispatchBlocker::TaskStateNotEligible);
+    }
+    if blockers.is_empty() {
+        let request = PreparePlanningAssignment {
+            owner_principal_id: principal_id,
+            workspace_id: workspace_id.clone(),
+            task_id: task_id.clone(),
+            expected_task_version,
+            runtime_id,
+            runtime_incarnation_id,
+            now: observed_at.clone(),
+        };
+        match prepare_local_task_planning(store, request) {
+            Ok(preflight) => blockers.extend(preflight.view().dispatch_blockers.iter().copied()),
+            Err(StoreError::Conflict { .. }) => {
+                return Err(operator_error(
+                    StatusCode::CONFLICT,
+                    "STALE_TASK_VERSION",
+                    "Task changed; reload before checking planning readiness",
+                ));
+            }
+            Err(StoreError::NotFound | StoreError::Invalid(_)) => {
+                blockers.push(PlanningDispatchBlocker::CurrentLeadOrEndpointUnavailable);
+            }
+            Err(_) => {
+                return Err(operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Task planning readiness is unavailable",
+                ));
             }
         }
+    }
 
-        let response = TaskPlanningReadinessResponse {
-            task_id: task.task.task_id,
-            task_version: task.task.version,
-            task_spec_revision: task.current_spec_revision.revision,
-            task_status: task.task.status,
-            observed_at,
-            dispatch_available: false,
-            planning_started: false,
-            agent_session_started: false,
-            plan_created: false,
-            blockers,
-        };
-        Ok(Json(response).into_response())
-    }).await.map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task planning readiness is unavailable"))??;
-    let mut response = result;
-    response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    let response = TaskPlanningReadinessResponse {
+        task_id: task.task.task_id,
+        task_version: task.task.version,
+        task_spec_revision: task.current_spec_revision.revision,
+        task_status: task.task.status,
+        observed_at,
+        dispatch_available: false,
+        planning_started: false,
+        agent_session_started: false,
+        plan_created: false,
+        blockers,
+    };
+    let mut response = Json(response).into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
     Ok(response)
 }
 
@@ -1882,18 +2901,41 @@ async fn list_task_spec_revisions(
 ) -> Result<Json<Vec<storage_core::TaskSpecRevisionRecord>>, Response> {
     let workspace_id = selected_workspace(&headers)?;
     if !valid_task_query_id(&workspace_id) || !valid_task_query_id(&task_id) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task specification history lookup is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task specification history lookup is invalid",
+        ));
     }
+    ensure_workspace_owner(&state, &workspace_id)?;
     let revisions = tokio::task::spawn_blocking(move || {
-        ensure_workspace_owner(&state, &workspace_id)?;
-        state.store.list_task_spec_revisions(&workspace_id, &task_id)
-    }).await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task specification history is unavailable"))?
-        .map_err(|error| match error {
-            storage_core::StoreError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task is unavailable"),
-            storage_core::StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task specification history lookup is invalid"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task specification history is unavailable"),
-        })?;
+        state
+            .store
+            .list_task_spec_revisions(&workspace_id, &task_id)
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task specification history is unavailable",
+        )
+    })?
+    .map_err(|error| match error {
+        storage_core::StoreError::NotFound => {
+            operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task is unavailable")
+        }
+        storage_core::StoreError::Invalid(_) => operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task specification history lookup is invalid",
+        ),
+        _ => operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task specification history is unavailable",
+        ),
+    })?;
     Ok(Json(revisions))
 }
 
@@ -1907,17 +2949,36 @@ async fn revise_task_spec(
 ) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
     if !valid_task_query_id(&workspace_id) || !valid_task_query_id(&task_id) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task specification identity is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task specification identity is invalid",
+        ));
     }
     ensure_workspace_owner(&state, &workspace_id)?;
     let request_id = idempotency_key(&headers)?;
     let expected_task_version = parse_if_match(&headers)?;
-    let correlation_id = new_id("cor")
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task edit could not be initialized"))?;
-    let event = event_context(&state.runtime_id, &correlation_id)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task edit could not be initialized"))?;
-    let normalized_body = serde_json::to_value(&body)
-        .map_err(|_| operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task edit body is invalid"))?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task edit could not be initialized",
+        )
+    })?;
+    let event = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task edit could not be initialized",
+        )
+    })?;
+    let normalized_body = serde_json::to_value(&body).map_err(|_| {
+        operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task edit body is invalid",
+        )
+    })?;
     let request_payload = json!({
         "operation": "task.spec.revise.v1",
         "workspace_id": workspace_id,
@@ -1946,17 +3007,43 @@ async fn revise_task_spec(
         event,
     };
     let store = state.store.clone();
-    let committed = tokio::task::spawn_blocking(move || TaskService::new(store).revise_saved_spec(command)).await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task edit did not complete"))?
-        .map_err(|error| match error {
-            storage_core::StoreError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task or pinned input is unavailable"),
-            storage_core::StoreError::Conflict { .. } => operator_error(StatusCode::CONFLICT, "CONFLICT", "Task changed or is no longer editable; reload before retrying"),
-            storage_core::StoreError::Invalid(_) => operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INVALID_ARGUMENT", "Task edit fields are invalid"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task edit could not be saved"),
-        })?;
+    let committed =
+        tokio::task::spawn_blocking(move || TaskService::new(store).revise_saved_spec(command))
+            .await
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Task edit did not complete",
+                )
+            })?
+            .map_err(|error| match error {
+                storage_core::StoreError::NotFound => operator_error(
+                    StatusCode::NOT_FOUND,
+                    "NOT_FOUND",
+                    "Task or pinned input is unavailable",
+                ),
+                storage_core::StoreError::Conflict { .. } => operator_error(
+                    StatusCode::CONFLICT,
+                    "CONFLICT",
+                    "Task changed or is no longer editable; reload before retrying",
+                ),
+                storage_core::StoreError::Invalid(_) => operator_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "INVALID_ARGUMENT",
+                    "Task edit fields are invalid",
+                ),
+                _ => operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Task edit could not be saved",
+                ),
+            })?;
     let mut response = (StatusCode::CREATED, Json(committed.revision)).into_response();
     if let Ok(value) = header::HeaderValue::from_str(&committed.event.correlation_id) {
-        response.headers_mut().insert(header::HeaderName::from_static("x-correlation-id"), value);
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static("x-correlation-id"), value);
     }
     Ok(response)
 }
@@ -1968,19 +3055,39 @@ async fn list_task_plan_revisions(
 ) -> Result<Json<Vec<storage_core::PlanRevisionRecord>>, Response> {
     let workspace_id = selected_workspace(&headers)?;
     if !valid_task_query_id(&workspace_id) || !valid_task_query_id(&task_id) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Plan history lookup is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Plan history lookup is invalid",
+        ));
     }
+    ensure_workspace_owner(&state, &workspace_id)?;
     let rows = tokio::task::spawn_blocking(move || {
-        ensure_workspace_owner(&state, &workspace_id)?;
         state.store.list_plan_revisions(&workspace_id, &task_id)
     })
-        .await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Plan history is unavailable"))?
-        .map_err(|error| match error {
-            storage_core::StoreError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task is unavailable"),
-            storage_core::StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Plan history query is invalid"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Plan history is unavailable"),
-        })?;
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Plan history is unavailable",
+        )
+    })?
+    .map_err(|error| match error {
+        storage_core::StoreError::NotFound => {
+            operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task is unavailable")
+        }
+        storage_core::StoreError::Invalid(_) => operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Plan history query is invalid",
+        ),
+        _ => operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Plan history is unavailable",
+        ),
+    })?;
     Ok(Json(rows))
 }
 
@@ -1991,19 +3098,38 @@ async fn list_task_steps(
 ) -> Result<Json<Vec<storage_core::StepRecord>>, Response> {
     let workspace_id = selected_workspace(&headers)?;
     if !valid_task_query_id(&workspace_id) || !valid_task_query_id(&task_id) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Step lookup is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Step lookup is invalid",
+        ));
     }
-    let rows = tokio::task::spawn_blocking(move || {
-        ensure_workspace_owner(&state, &workspace_id)?;
-        state.store.list_steps(&workspace_id, &task_id, None)
-    })
-        .await
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task Steps are unavailable"))?
-        .map_err(|error| match error {
-            storage_core::StoreError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task is unavailable"),
-            storage_core::StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Step query is invalid"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Task Steps are unavailable"),
-        })?;
+    ensure_workspace_owner(&state, &workspace_id)?;
+    let rows =
+        tokio::task::spawn_blocking(move || state.store.list_steps(&workspace_id, &task_id, None))
+            .await
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Task Steps are unavailable",
+                )
+            })?
+            .map_err(|error| match error {
+                storage_core::StoreError::NotFound => {
+                    operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Task is unavailable")
+                }
+                storage_core::StoreError::Invalid(_) => operator_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENT",
+                    "Step query is invalid",
+                ),
+                _ => operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Task Steps are unavailable",
+                ),
+            })?;
     Ok(Json(rows))
 }
 
@@ -2011,31 +3137,60 @@ fn valid_task_query_id(value: &str) -> bool {
     !value.trim().is_empty() && value.len() <= 200 && !value.chars().any(char::is_control)
 }
 
-fn decode_task_cursor(encoded: &str, workspace_id: &str, status: Option<&str>,
-    conversation_id: Option<&str>) -> Result<TaskListCursor, Response>
-{
-    let invalid = || operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Task cursor is invalid or does not match these filters");
-    if encoded.is_empty() || encoded.len() > 2048 { return Err(invalid()); }
-    let bytes = URL_SAFE_NO_PAD.decode(encoded.as_bytes()).map_err(|_| invalid())?;
+fn decode_task_cursor(
+    encoded: &str,
+    workspace_id: &str,
+    status: Option<&str>,
+    conversation_id: Option<&str>,
+) -> Result<TaskListCursor, Response> {
+    let invalid = || {
+        operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Task cursor is invalid or does not match these filters",
+        )
+    };
+    if encoded.is_empty() || encoded.len() > 2048 {
+        return Err(invalid());
+    }
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded.as_bytes())
+        .map_err(|_| invalid())?;
     let cursor: TaskListCursor = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    if cursor.version != 1 || cursor.workspace_id != workspace_id
-        || cursor.status.as_deref() != status || cursor.conversation_id.as_deref() != conversation_id
-        || !valid_task_query_id(&cursor.task_id) || cursor.created_at.len() > 64
-        || time::OffsetDateTime::parse(&cursor.created_at, &time::format_description::well_known::Rfc3339).is_err()
-    { return Err(invalid()); }
+    if cursor.version != 1
+        || cursor.workspace_id != workspace_id
+        || cursor.status.as_deref() != status
+        || cursor.conversation_id.as_deref() != conversation_id
+        || !valid_task_query_id(&cursor.task_id)
+        || cursor.created_at.len() > 64
+        || time::OffsetDateTime::parse(
+            &cursor.created_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .is_err()
+    {
+        return Err(invalid());
+    }
     Ok(cursor)
 }
 
 fn ensure_workspace_owner(state: &ApiState, workspace_id: &str) -> Result<Workspace, Response> {
-    let workspace = state.store.get_workspace(workspace_id).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Workspace is unavailable"))?;
-    workspace.filter(|workspace| workspace.owner_principal_id == state.principal_id)
-        .ok_or_else(|| operator_error(StatusCode::FORBIDDEN, "FORBIDDEN", "Workspace access is unavailable"))
-}
-
-fn idempotency_key(headers: &HeaderMap) -> Result<&str, Response> {
-    headers.get("idempotency-key").and_then(|value| value.to_str().ok())
-        .filter(|value| !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_graphic()))
-        .ok_or_else(|| operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "A valid Idempotency-Key is required"))
+    let workspace = state.store.get_workspace(workspace_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Workspace is unavailable",
+        )
+    })?;
+    workspace
+        .filter(|workspace| workspace.owner_principal_id == state.principal_id)
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::FORBIDDEN,
+                "FORBIDDEN",
+                "Workspace access is unavailable",
+            )
+        })
 }
 
 fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {
@@ -2050,13 +3205,47 @@ fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {
 
 fn upload_store_error(error: storage_core::StoreError) -> Response {
     match error {
-        storage_core::StoreError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Upload session is unavailable"),
-        storage_core::StoreError::Conflict { .. } => operator_error(StatusCode::CONFLICT, "UPLOAD_OFFSET_CONFLICT", "Upload chunk conflicts with previously accepted content"),
-        storage_core::StoreError::LegacyUploadCommitNeedsReview { committed_resource_id: Some(_) } => operator_error(StatusCode::CONFLICT, "RESOURCE_CONFLICT", "An older upload is already committed. Review its recorded Resource before retrying; LiteCowork did not create another Resource."),
-        storage_core::StoreError::LegacyUploadCommitNeedsReview { committed_resource_id: None } => operator_error(StatusCode::CONFLICT, "RESOURCE_CONFLICT", "An older upload is already committed, but its Resource mapping is unavailable. Review the Workspace before retrying; LiteCowork did not create another Resource."),
-        storage_core::StoreError::Invalid(_) => operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INVALID_ARGUMENT", "Upload state or content is invalid"),
-        storage_core::StoreError::Integrity(_) | storage_core::StoreError::Blob(_) => operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INTEGRITY_FAILURE", "Upload content failed integrity checks"),
-        _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource upload could not be completed"),
+        storage_core::StoreError::NotFound => operator_error(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "Upload session is unavailable",
+        ),
+        storage_core::StoreError::Conflict { .. } => operator_error(
+            StatusCode::CONFLICT,
+            "UPLOAD_OFFSET_CONFLICT",
+            "Upload chunk conflicts with previously accepted content",
+        ),
+        storage_core::StoreError::LegacyUploadCommitNeedsReview {
+            committed_resource_id: Some(_),
+        } => operator_error(
+            StatusCode::CONFLICT,
+            "RESOURCE_CONFLICT",
+            "An older upload is already committed. Review its recorded Resource before retrying; LiteCowork did not create another Resource.",
+        ),
+        storage_core::StoreError::LegacyUploadCommitNeedsReview {
+            committed_resource_id: None,
+        } => operator_error(
+            StatusCode::CONFLICT,
+            "RESOURCE_CONFLICT",
+            "An older upload is already committed, but its Resource mapping is unavailable. Review the Workspace before retrying; LiteCowork did not create another Resource.",
+        ),
+        storage_core::StoreError::Invalid(_) => operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INVALID_ARGUMENT",
+            "Upload state or content is invalid",
+        ),
+        storage_core::StoreError::Integrity(_) | storage_core::StoreError::Blob(_) => {
+            operator_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INTEGRITY_FAILURE",
+                "Upload content failed integrity checks",
+            )
+        }
+        _ => operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Resource upload could not be completed",
+        ),
     }
 }
 
@@ -2102,12 +3291,12 @@ async fn list_resources(
             limit + 1,
         )
         .map_err(|_| {
-        operator_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "INTERNAL",
-            "Resource list is unavailable",
-        )
-    })?;
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Resource list is unavailable",
+            )
+        })?;
     let has_more = rows.len() > limit;
     let mut items = rows;
     if has_more {
@@ -2128,27 +3317,54 @@ async fn list_workspace_roots(
 ) -> Result<Json<WorkspaceRootListResponse>, Response> {
     let workspace_id = selected_workspace(&headers)?;
     let status = query.status.as_deref();
-    if status.is_some_and(|value| !matches!(value, "ACTIVE" | "PAUSED" | "REVOKED" | "UNAVAILABLE")) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "WorkspaceRoot status filter is invalid"));
+    if status.is_some_and(|value| !matches!(value, "ACTIVE" | "PAUSED" | "REVOKED" | "UNAVAILABLE"))
+    {
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "WorkspaceRoot status filter is invalid",
+        ));
     }
     let limit = query.limit.unwrap_or(100);
     if !(1..=100).contains(&limit) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "WorkspaceRoot page limit must be between 1 and 100"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "WorkspaceRoot page limit must be between 1 and 100",
+        ));
     }
-    let cursor = query.cursor.as_deref().map(|encoded| decode_workspace_root_cursor(encoded, &workspace_id, status)).transpose()?;
+    let cursor = query
+        .cursor
+        .as_deref()
+        .map(|encoded| decode_workspace_root_cursor(encoded, &workspace_id, status))
+        .transpose()?;
     let rows = WorkspaceRootService::new(state.store.clone())
         .list_roots(
             &workspace_id,
             &state.principal_id,
             status,
             cursor.as_ref().map(|value| value.created_at.as_str()),
-            cursor.as_ref().map(|value| value.workspace_root_id.as_str()),
+            cursor
+                .as_ref()
+                .map(|value| value.workspace_root_id.as_str()),
             limit + 1,
         )
         .map_err(|error| match error {
-            StoreError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Workspace is unavailable"),
-            StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "WorkspaceRoot query is invalid"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "WorkspaceRoot list is unavailable"),
+            StoreError::NotFound => operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Workspace is unavailable",
+            ),
+            StoreError::Invalid(_) => operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "WorkspaceRoot query is invalid",
+            ),
+            _ => operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "WorkspaceRoot list is unavailable",
+            ),
         })?;
     let has_more = rows.len() > limit;
     let mut items = rows;
@@ -2156,7 +3372,10 @@ async fn list_workspace_roots(
         items.truncate(limit);
     }
     let next_cursor = if has_more {
-        items.last().map(|item| encode_workspace_root_cursor(&item.root, status)).transpose()?
+        items
+            .last()
+            .map(|item| encode_workspace_root_cursor(&item.root, status))
+            .transpose()?
     } else {
         None
     };
@@ -2168,7 +3387,13 @@ async fn revoke_workspace_root(
     headers: HeaderMap,
     Path(workspace_root_id): Path<String>,
 ) -> Result<Response, Response> {
-    change_workspace_root_status(state, headers, workspace_root_id, WorkspaceRootStatusAction::Revoke).await
+    change_workspace_root_status(
+        state,
+        headers,
+        workspace_root_id,
+        WorkspaceRootStatusAction::Revoke,
+    )
+    .await
 }
 
 async fn pause_workspace_root(
@@ -2176,7 +3401,13 @@ async fn pause_workspace_root(
     headers: HeaderMap,
     Path(workspace_root_id): Path<String>,
 ) -> Result<Response, Response> {
-    change_workspace_root_status(state, headers, workspace_root_id, WorkspaceRootStatusAction::Pause).await
+    change_workspace_root_status(
+        state,
+        headers,
+        workspace_root_id,
+        WorkspaceRootStatusAction::Pause,
+    )
+    .await
 }
 
 async fn resume_workspace_root(
@@ -2184,7 +3415,13 @@ async fn resume_workspace_root(
     headers: HeaderMap,
     Path(workspace_root_id): Path<String>,
 ) -> Result<Response, Response> {
-    change_workspace_root_status(state, headers, workspace_root_id, WorkspaceRootStatusAction::Resume).await
+    change_workspace_root_status(
+        state,
+        headers,
+        workspace_root_id,
+        WorkspaceRootStatusAction::Resume,
+    )
+    .await
 }
 
 async fn change_workspace_root_status(
@@ -2195,16 +3432,31 @@ async fn change_workspace_root_status(
 ) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
     if workspace_root_id.trim().is_empty() || workspace_root_id.len() > 160 {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "WorkspaceRoot selection is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "WorkspaceRoot selection is invalid",
+        ));
     }
     ensure_workspace_owner(&state, &workspace_id)?;
     let expected_version = parse_if_match(&headers)?;
     let request_id = idempotency_key(&headers)?;
     let workspace_id_for_errors = workspace_id.clone();
     let service = WorkspaceRootService::new(state.store.clone());
-    let correlation_id = new_id("cor").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "WorkspaceRoot request could not be initialized"))?;
-    let event = event_context(&state.runtime_id, &correlation_id)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "WorkspaceRoot request could not be initialized"))?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "WorkspaceRoot request could not be initialized",
+        )
+    })?;
+    let event = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "WorkspaceRoot request could not be initialized",
+        )
+    })?;
     if action == WorkspaceRootStatusAction::Resume {
         let committed = crate::runtime::resume_workspace_root_live(
             &state.store,
@@ -2214,7 +3466,7 @@ async fn change_workspace_root_status(
             &workspace_id,
             &workspace_root_id,
             &state.principal_id,
-            request_id,
+            &request_id,
             expected_version,
             event,
         ).map_err(|error| match error {
@@ -2225,14 +3477,20 @@ async fn change_workspace_root_status(
         })?;
         let mut response = Json(WorkspaceRootStatusResponse {
             root: committed.root,
-            location_availability: committed.location_availability.unwrap_or_else(|| "UNKNOWN".to_owned()),
-        }).into_response();
+            location_availability: committed
+                .location_availability
+                .unwrap_or_else(|| "UNKNOWN".to_owned()),
+        })
+        .into_response();
         if let Ok(value) = header::HeaderValue::from_str(&committed.event.correlation_id) {
-            response.headers_mut().insert(header::HeaderName::from_static("x-correlation-id"), value);
+            response
+                .headers_mut()
+                .insert(header::HeaderName::from_static("x-correlation-id"), value);
         }
         return Ok(response);
     }
-    let committed = service.change_root_status(ChangeWorkspaceRootStatus {
+    let committed = service
+        .change_root_status(ChangeWorkspaceRootStatus {
             workspace_id,
             workspace_root_id,
             principal_id: state.principal_id,
@@ -2244,29 +3502,69 @@ async fn change_workspace_root_status(
             event,
         })
         .map_err(|error| match error {
-            StoreError::Conflict { expected: Some(expected), actual: Some(actual) } if expected == actual => operator_error(StatusCode::CONFLICT, "CONFLICT", "Folder is no longer in a state that supports this action. Refresh the Workspace."),
-            StoreError::Conflict { .. } => operator_error(StatusCode::CONFLICT, "STALE_WORKSPACE_VERSION", "Folder state changed; refresh before retrying"),
+            StoreError::Conflict {
+                expected: Some(expected),
+                actual: Some(actual),
+            } if expected == actual => operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Folder is no longer in a state that supports this action. Refresh the Workspace.",
+            ),
+            StoreError::Conflict { .. } => operator_error(
+                StatusCode::CONFLICT,
+                "STALE_WORKSPACE_VERSION",
+                "Folder state changed; refresh before retrying",
+            ),
             StoreError::NotFound => {
-                let archived = state.store.get_workspace(&workspace_id_for_errors).ok().flatten()
+                let archived = state
+                    .store
+                    .get_workspace(&workspace_id_for_errors)
+                    .ok()
+                    .flatten()
                     .is_some_and(|workspace| workspace.status == "ARCHIVED");
                 if archived {
-                    operator_error(StatusCode::CONFLICT, "WORKSPACE_ARCHIVED", "Archived Workspaces are read-only")
+                    operator_error(
+                        StatusCode::CONFLICT,
+                        "WORKSPACE_ARCHIVED",
+                        "Archived Workspaces are read-only",
+                    )
                 } else {
-                    operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "WorkspaceRoot is unavailable")
+                    operator_error(
+                        StatusCode::NOT_FOUND,
+                        "NOT_FOUND",
+                        "WorkspaceRoot is unavailable",
+                    )
                 }
             }
             StoreError::Invalid(message) if message == "an archived Workspace is read-only" => {
-                operator_error(StatusCode::CONFLICT, "WORKSPACE_ARCHIVED", "Archived Workspaces are read-only")
+                operator_error(
+                    StatusCode::CONFLICT,
+                    "WORKSPACE_ARCHIVED",
+                    "Archived Workspaces are read-only",
+                )
             }
-            StoreError::Invalid(_) => operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INVALID_ARGUMENT", "WorkspaceRoot status change is invalid"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Folder status could not be changed"),
+            StoreError::Invalid(_) => operator_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_ARGUMENT",
+                "WorkspaceRoot status change is invalid",
+            ),
+            _ => operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Folder status could not be changed",
+            ),
         })?;
     let mut response = Json(WorkspaceRootStatusResponse {
         root: committed.root,
-        location_availability: committed.location_availability.unwrap_or_else(|| "UNKNOWN".to_owned()),
-    }).into_response();
+        location_availability: committed
+            .location_availability
+            .unwrap_or_else(|| "UNKNOWN".to_owned()),
+    })
+    .into_response();
     if let Ok(value) = header::HeaderValue::from_str(&committed.event.correlation_id) {
-        response.headers_mut().insert(header::HeaderName::from_static("x-correlation-id"), value);
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static("x-correlation-id"), value);
     }
     Ok(response)
 }
@@ -2282,19 +3580,39 @@ async fn rebuild_resource_text_index(
     let request_id = idempotency_key(&headers)?.to_owned();
     if resource_id.is_empty()
         || resource_id.len() > 160
-        || !resource_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        || !resource_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
         || body.resource_revision_id.is_empty()
         || body.resource_revision_id.len() > 160
-        || !body.resource_revision_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        || !body
+            .resource_revision_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
         || !storage_core::is_sha256_digest(&body.content_digest)
     {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource index rebuild identity is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Resource index rebuild identity is invalid",
+        ));
     }
     let indexed_at = time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource index rebuild could not be initialized"))?;
-    let correlation_id = new_id("cor")
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource index rebuild could not be initialized"))?;
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Resource index rebuild could not be initialized",
+            )
+        })?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Resource index rebuild could not be initialized",
+        )
+    })?;
     let request = ResourceTextIndexRebuildRequest {
         principal_id: state.principal_id.clone(),
         request_id,
@@ -2323,9 +3641,14 @@ async fn rebuild_resource_text_index(
         })?;
     let response_correlation_id = result.correlation_id.clone();
     let mut response = Json(result).into_response();
-    response.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
     if let Ok(value) = header::HeaderValue::from_str(&response_correlation_id) {
-        response.headers_mut().insert(header::HeaderName::from_static("x-correlation-id"), value);
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static("x-correlation-id"), value);
     }
     Ok(response)
 }
@@ -2337,83 +3660,187 @@ async fn search_resources(
 ) -> Result<Json<ResourceSearchPageResponse>, Response> {
     let workspace_id = selected_workspace(&headers)?;
     let workspace = state.store.get_workspace(&workspace_id).map_err(|_| {
-        operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Workspace is unavailable")
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Workspace is unavailable",
+        )
     })?;
     if !workspace.is_some_and(|workspace| workspace.owner_principal_id == state.principal_id) {
-        return Err(operator_error(StatusCode::FORBIDDEN, "FORBIDDEN", "Workspace access is unavailable"));
+        return Err(operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Workspace access is unavailable",
+        ));
     }
-    if query.q.as_ref().is_some_and(|value| value.len() > 256 || value.contains('\0'))
-        || query.mode.as_deref().is_some_and(|value| !matches!(value, "METADATA" | "ON_DEMAND_CONTENT" | "INDEXED_CONTENT"))
-        || query.kind.as_ref().is_some_and(|value| value.len() > 64 || value.contains('\0'))
-        || query.kind.as_deref().is_some_and(|value| !matches!(value, "FILE" | "FOLDER" | "ARTIFACT" | "CONNECTOR_OBJECT" | "WEB_RESOURCE" | "OTHER"))
-        || query.freshness.as_deref().is_some_and(|value| !matches!(value, "CURRENT" | "STALE" | "UNKNOWN" | "UNAVAILABLE"))
+    if query
+        .q
+        .as_ref()
+        .is_some_and(|value| value.len() > 256 || value.contains('\0'))
+        || query.mode.as_deref().is_some_and(|value| {
+            !matches!(value, "METADATA" | "ON_DEMAND_CONTENT" | "INDEXED_CONTENT")
+        })
+        || query
+            .kind
+            .as_ref()
+            .is_some_and(|value| value.len() > 64 || value.contains('\0'))
+        || query.kind.as_deref().is_some_and(|value| {
+            !matches!(
+                value,
+                "FILE" | "FOLDER" | "ARTIFACT" | "CONNECTOR_OBJECT" | "WEB_RESOURCE" | "OTHER"
+            )
+        })
+        || query
+            .freshness
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "CURRENT" | "STALE" | "UNKNOWN" | "UNAVAILABLE"))
     {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource search filters are invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Resource search filters are invalid",
+        ));
     }
     let limit = query.limit.unwrap_or(50);
     if !(1..=200).contains(&limit) {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource search limit must be between 1 and 200"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Resource search limit must be between 1 and 200",
+        ));
     }
     let mode = query.mode.as_deref().unwrap_or("METADATA");
     let content_scan = mode == "ON_DEMAND_CONTENT";
     let indexed_content = mode == "INDEXED_CONTENT";
-    if (content_scan || indexed_content) && query.q.as_deref().is_none_or(|value| value.trim().is_empty()) {
-        let mode_label = if indexed_content { "Indexed content" } else { "On-demand content" };
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", &format!("{mode_label} search requires a non-empty query")));
+    if (content_scan || indexed_content)
+        && query
+            .q
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+    {
+        let message = if indexed_content {
+            "Indexed content search requires a non-empty query"
+        } else {
+            "On-demand content search requires a non-empty query"
+        };
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            message,
+        ));
     }
-    let cursor = query.cursor.as_deref().map(|encoded| {
-        if encoded.is_empty() || encoded.len() > 4096 {
-            return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource search cursor is invalid"));
-        }
-        let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| {
-            operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource search cursor is invalid")
-        })?;
-        let decoded: ResourceSearchCursor = serde_json::from_slice(&bytes).map_err(|_| {
-            operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource search cursor is invalid")
-        })?;
-        if decoded.workspace_id != workspace_id
-            || decoded.query != query.q
-            || decoded.mode != mode
-            || decoded.kind != query.kind
-            || decoded.freshness != query.freshness
-            || decoded.created_at.is_empty()
-            || decoded.created_at.len() > 64
-            || decoded.resource_id.is_empty()
-            || decoded.resource_id.len() > 160
-        {
-            return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource search cursor does not match these filters"));
-        }
-        Ok(decoded)
-    }).transpose()?;
+    let cursor = query
+        .cursor
+        .as_deref()
+        .map(|encoded| {
+            if encoded.is_empty() || encoded.len() > 4096 {
+                return Err(operator_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENT",
+                    "Resource search cursor is invalid",
+                ));
+            }
+            let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| {
+                operator_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENT",
+                    "Resource search cursor is invalid",
+                )
+            })?;
+            let decoded: ResourceSearchCursor = serde_json::from_slice(&bytes).map_err(|_| {
+                operator_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENT",
+                    "Resource search cursor is invalid",
+                )
+            })?;
+            if decoded.workspace_id != workspace_id
+                || decoded.query != query.q
+                || decoded.mode != mode
+                || decoded.kind != query.kind
+                || decoded.freshness != query.freshness
+                || decoded.created_at.is_empty()
+                || decoded.created_at.len() > 64
+                || decoded.resource_id.is_empty()
+                || decoded.resource_id.len() > 160
+            {
+                return Err(operator_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENT",
+                    "Resource search cursor does not match these filters",
+                ));
+            }
+            Ok(decoded)
+        })
+        .transpose()?;
     if indexed_content {
-        let rows = state.store.search_indexed_resource_text(
-            &workspace_id,
-            query.q.as_deref().unwrap_or_default(),
-            query.kind.as_deref(),
-            query.freshness.as_deref(),
-            cursor.as_ref().map(|value| value.created_at.as_str()),
-            cursor.as_ref().map(|value| value.resource_id.as_str()),
-            limit + 1,
-        ).map_err(|error| match error {
-            storage_core::StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Indexed Resource search query is invalid"),
-            storage_core::StoreError::Blob(_) => operator_error(StatusCode::SERVICE_UNAVAILABLE, "RESOURCE_UNAVAILABLE", "The local encrypted Resource index is unavailable"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTEGRITY_FAILURE", "Indexed Resource search could not verify its source"),
-        })?;
+        let rows = state
+            .store
+            .search_indexed_resource_text(
+                &workspace_id,
+                query.q.as_deref().unwrap_or_default(),
+                query.kind.as_deref(),
+                query.freshness.as_deref(),
+                cursor.as_ref().map(|value| value.created_at.as_str()),
+                cursor.as_ref().map(|value| value.resource_id.as_str()),
+                limit + 1,
+            )
+            .map_err(|error| match error {
+                storage_core::StoreError::Invalid(_) => operator_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENT",
+                    "Indexed Resource search query is invalid",
+                ),
+                storage_core::StoreError::Blob(_) => operator_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "RESOURCE_UNAVAILABLE",
+                    "The local encrypted Resource index is unavailable",
+                ),
+                _ => operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTEGRITY_FAILURE",
+                    "Indexed Resource search could not verify its source",
+                ),
+            })?;
         let has_more = rows.len() > limit;
         let rows = rows.into_iter().take(limit).collect::<Vec<_>>();
         let next_cursor = if has_more {
-            rows.last().map(|row| encode_resource_search_cursor(
-                &workspace_id,
-                query.q.as_deref(),
-                mode,
-                query.kind.as_deref(),
-                query.freshness.as_deref(),
-                &row.result.summary,
-            )).transpose()?
-        } else { None };
-        let items = rows.into_iter().map(|row| {
-            search_result_response(&row.result, Some(row.snippet), row.result.match_reasons.clone())
-        }).collect();
+            rows.last()
+                .map(|row| {
+                    encode_resource_search_cursor(
+                        &workspace_id,
+                        query.q.as_deref(),
+                        mode,
+                        query.kind.as_deref(),
+                        query.freshness.as_deref(),
+                        &row.result.summary,
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            if !valid_indexed_source_match_bundle(&row) {
+                return Err(operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTEGRITY_FAILURE",
+                    "Indexed Resource search could not verify its source",
+                ));
+            }
+            let source_matches = row
+                .matched_spans
+                .into_iter()
+                .map(resource_text_match_response)
+                .collect();
+            items.push(search_result_response(
+                &row.result,
+                Some(row.snippet),
+                row.result.match_reasons.clone(),
+                source_matches,
+            ));
+        }
         return Ok(Json(ResourceSearchPageResponse {
             items,
             next_cursor,
@@ -2421,19 +3848,38 @@ async fn search_resources(
             content_scan: None,
         }));
     }
-    let candidate_limit = if content_scan { limit.min(MAX_CONTENT_SCAN_CANDIDATES) } else { limit };
-    let rows = state.store.search_resources_page(
-        &workspace_id,
-        if content_scan { None } else { query.q.as_deref() },
-        query.kind.as_deref(),
-        query.freshness.as_deref(),
-        cursor.as_ref().map(|value| value.created_at.as_str()),
-        cursor.as_ref().map(|value| value.resource_id.as_str()),
-        candidate_limit + 1,
-    ).map_err(|error| match error {
-        storage_core::StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Resource search query is invalid"),
-        _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource search is unavailable"),
-    })?;
+    let candidate_limit = if content_scan {
+        limit.min(MAX_CONTENT_SCAN_CANDIDATES)
+    } else {
+        limit
+    };
+    let rows = state
+        .store
+        .search_resources_page(
+            &workspace_id,
+            if content_scan {
+                None
+            } else {
+                query.q.as_deref()
+            },
+            query.kind.as_deref(),
+            query.freshness.as_deref(),
+            cursor.as_ref().map(|value| value.created_at.as_str()),
+            cursor.as_ref().map(|value| value.resource_id.as_str()),
+            candidate_limit + 1,
+        )
+        .map_err(|error| match error {
+            storage_core::StoreError::Invalid(_) => operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Resource search query is invalid",
+            ),
+            _ => operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Resource search is unavailable",
+            ),
+        })?;
     let has_candidate_page = rows.len() > candidate_limit;
     let rows = rows.into_iter().take(candidate_limit).collect::<Vec<_>>();
     let mut items = Vec::new();
@@ -2444,7 +3890,9 @@ async fn search_resources(
         skipped_over_file_limit: 0,
         skipped_revision_changed: 0,
         byte_budget_exhausted: false,
-        candidate_budget_exhausted: content_scan && candidate_limit == MAX_CONTENT_SCAN_CANDIDATES && has_candidate_page,
+        candidate_budget_exhausted: content_scan
+            && candidate_limit == MAX_CONTENT_SCAN_CANDIDATES
+            && has_candidate_page,
         max_candidates: MAX_CONTENT_SCAN_CANDIDATES,
         max_file_bytes: MAX_CONTENT_SCAN_FILE_BYTES,
         max_total_bytes: MAX_CONTENT_SCAN_TOTAL_BYTES,
@@ -2455,7 +3903,12 @@ async fn search_resources(
 
     for row in &rows {
         if !content_scan {
-            items.push(search_result_response(row, None, row.match_reasons.clone()));
+            items.push(search_result_response(
+                row,
+                None,
+                row.match_reasons.clone(),
+                Vec::new(),
+            ));
             last_scanned = Some(row);
             continue;
         }
@@ -2469,7 +3922,9 @@ async fn search_resources(
         } else if row.summary.size_bytes > MAX_CONTENT_SCAN_FILE_BYTES {
             scan_info.candidates_scanned += 1;
             scan_info.skipped_over_file_limit += 1;
-        } else if bytes_scanned.saturating_add(row.summary.size_bytes) > MAX_CONTENT_SCAN_TOTAL_BYTES {
+        } else if bytes_scanned.saturating_add(row.summary.size_bytes)
+            > MAX_CONTENT_SCAN_TOTAL_BYTES
+        {
             scan_info.byte_budget_exhausted = true;
             stopped_for_byte_budget = true;
             break;
@@ -2478,8 +3933,16 @@ async fn search_resources(
             let content = state.store.read_resource_content_bounded(
                 &workspace_id,
                 &row.summary.resource_id,
+                Some(&row.summary.resource_revision_id),
                 MAX_CONTENT_SCAN_FILE_BYTES,
-            ).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTEGRITY_FAILURE", "Resource content search could not verify a candidate"))?;
+            ).map_err(|error| match error {
+                storage_core::StoreError::Invalid(message) if message == "RESOURCE_CONTENT_EXTERNAL" => operator_error(StatusCode::UNPROCESSABLE_ENTITY, "RESOURCE_CONTENT_EXTERNAL", "This Resource revision is not stored by the local managed content provider."),
+                storage_core::StoreError::Invalid(message) if message == "RESOURCE_LOCATION_UNAVAILABLE" => operator_error(StatusCode::SERVICE_UNAVAILABLE, "RESOURCE_LOCATION_UNAVAILABLE", "Resource content is temporarily unavailable. Refresh its status and retry."),
+                storage_core::StoreError::Invalid(message) if message.starts_with("CONTEXT_DOCUMENT_") => operator_error(StatusCode::CONFLICT, "CONTEXT_DOCUMENT_NOT_ACTIVE", "This ContextDocument is not active; its content cannot be searched."),
+                storage_core::StoreError::Blob(_) | storage_core::StoreError::Io(_) | storage_core::StoreError::NotFound => operator_error(StatusCode::SERVICE_UNAVAILABLE, "RESOURCE_LOCATION_UNAVAILABLE", "Resource content is temporarily unavailable. Refresh its status and retry."),
+                storage_core::StoreError::Integrity(_) => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTEGRITY_FAILURE", "Resource content search could not verify a candidate"),
+                _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource content search is unavailable"),
+            })?;
             if let Some(content) = content {
                 if content.summary.resource_revision_id != row.summary.resource_revision_id
                     || content.summary.content_digest != row.summary.content_digest
@@ -2492,7 +3955,8 @@ async fn search_resources(
                         std::str::from_utf8(&content.content).ok(),
                         query.q.as_deref(),
                     ) {
-                        snippet = content_match_snippet(text, needle, MAX_CONTENT_SCAN_SNIPPET_CHARS);
+                        snippet =
+                            content_match_snippet(text, needle, MAX_CONTENT_SCAN_SNIPPET_CHARS);
                     }
                 }
             }
@@ -2503,31 +3967,41 @@ async fn search_resources(
             reasons.push("CONTENT_ON_DEMAND".to_owned());
         }
         if !reasons.is_empty() {
-            items.push(search_result_response(row, snippet, reasons));
+            items.push(search_result_response(row, snippet, reasons, Vec::new()));
         }
         last_scanned = Some(row);
     }
 
     let page_was_truncated = content_scan && (has_candidate_page || stopped_for_byte_budget);
     let next_cursor = if page_was_truncated {
-        last_scanned.map(|row| encode_resource_search_cursor(
-            &workspace_id,
-            query.q.as_deref(),
-            mode,
-            query.kind.as_deref(),
-            query.freshness.as_deref(),
-            &row.summary,
-        )).transpose()?
+        last_scanned
+            .map(|row| {
+                encode_resource_search_cursor(
+                    &workspace_id,
+                    query.q.as_deref(),
+                    mode,
+                    query.kind.as_deref(),
+                    query.freshness.as_deref(),
+                    &row.summary,
+                )
+            })
+            .transpose()?
     } else if !content_scan && has_candidate_page {
-        rows.last().map(|row| encode_resource_search_cursor(
-            &workspace_id,
-            query.q.as_deref(),
-            mode,
-            query.kind.as_deref(),
-            query.freshness.as_deref(),
-            &row.summary,
-        )).transpose()?
-    } else { None };
+        rows.last()
+            .map(|row| {
+                encode_resource_search_cursor(
+                    &workspace_id,
+                    query.q.as_deref(),
+                    mode,
+                    query.kind.as_deref(),
+                    query.freshness.as_deref(),
+                    &row.summary,
+                )
+            })
+            .transpose()?
+    } else {
+        None
+    };
     Ok(Json(ResourceSearchPageResponse {
         items,
         next_cursor,
@@ -2543,7 +4017,12 @@ const MAX_CONTENT_SCAN_SNIPPET_CHARS: usize = 320;
 
 fn is_allowlisted_plain_text(display_name: &str, media_type: &str) -> bool {
     let name = display_name.to_ascii_lowercase();
-    let media_type = media_type.split(';').next().unwrap_or(media_type).trim().to_ascii_lowercase();
+    let media_type = media_type
+        .split(';')
+        .next()
+        .unwrap_or(media_type)
+        .trim()
+        .to_ascii_lowercase();
     // A misleading text extension must not make a known archive/rich/binary format
     // searchable as text. The extension allowlist below is useful for local files whose
     // upload media type is generic, but it never overrides a known non-text type.
@@ -2562,23 +4041,67 @@ fn is_allowlisted_plain_text(display_name: &str, media_type: &str) -> bool {
         return false;
     }
     let allowed_extension = [
-        ".txt", ".md", ".markdown", ".csv", ".json", ".jsonl", ".ndjson",
-        ".rs", ".py", ".toml", ".yaml", ".yml", ".js", ".jsx", ".ts", ".tsx", ".css",
-    ].iter().any(|extension| name.ends_with(extension));
-    let allowed_media_type = matches!(media_type.as_str(),
-        "text/plain" | "text/markdown" | "text/csv" | "application/json" | "application/x-ndjson" | "application/jsonl"
-    ) || (media_type.starts_with("text/") && matches!(media_type.as_str(), "text/x-rust" | "text/x-python" | "text/javascript" | "text/typescript" | "text/x-toml" | "text/yaml"));
+        ".txt",
+        ".md",
+        ".markdown",
+        ".csv",
+        ".json",
+        ".jsonl",
+        ".ndjson",
+        ".rs",
+        ".py",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".css",
+    ]
+    .iter()
+    .any(|extension| name.ends_with(extension));
+    let allowed_media_type = matches!(
+        media_type.as_str(),
+        "text/plain"
+            | "text/markdown"
+            | "text/csv"
+            | "application/json"
+            | "application/x-ndjson"
+            | "application/jsonl"
+    ) || (media_type.starts_with("text/")
+        && matches!(
+            media_type.as_str(),
+            "text/x-rust"
+                | "text/x-python"
+                | "text/javascript"
+                | "text/typescript"
+                | "text/x-toml"
+                | "text/yaml"
+        ));
     allowed_extension || allowed_media_type
 }
 
 fn metadata_match_reasons(row: &ResourceSearchRecord, query: Option<&str>) -> Vec<String> {
-    let Some(query) = query else { return Vec::new(); };
+    let Some(query) = query else {
+        return Vec::new();
+    };
     let needle = query.to_ascii_lowercase();
     let mut reasons = Vec::new();
-    if row.summary.display_name.to_ascii_lowercase().contains(&needle) {
+    if row
+        .summary
+        .display_name
+        .to_ascii_lowercase()
+        .contains(&needle)
+    {
         reasons.push("NAME".to_owned());
     }
-    if row.summary.media_type.to_ascii_lowercase().contains(&needle) {
+    if row
+        .summary
+        .media_type
+        .to_ascii_lowercase()
+        .contains(&needle)
+    {
         reasons.push("MEDIA_TYPE".to_owned());
     }
     reasons
@@ -2587,7 +4110,9 @@ fn metadata_match_reasons(row: &ResourceSearchRecord, query: Option<&str>) -> Ve
 fn content_match_snippet(text: &str, query: &str, maximum_chars: usize) -> Option<String> {
     if query.is_empty()
         || text.contains('\0')
-        || text.chars().any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+        || text
+            .chars()
+            .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
     {
         return None;
     }
@@ -2596,21 +4121,42 @@ fn content_match_snippet(text: &str, query: &str, maximum_chars: usize) -> Optio
     let match_start = lowered.find(&needle)?;
     let match_end = match_start.checked_add(needle.len())?;
     let mut start = match_start.saturating_sub(maximum_chars / 2);
-    while !text.is_char_boundary(start) { start = start.saturating_sub(1); }
+    while !text.is_char_boundary(start) {
+        start = start.saturating_sub(1);
+    }
     let mut end = (match_end + maximum_chars / 2).min(text.len());
-    while end < text.len() && !text.is_char_boundary(end) { end += 1; }
+    while end < text.len() && !text.is_char_boundary(end) {
+        end += 1;
+    }
     let excerpt = &text[start..end];
     let ellipsis_count = usize::from(start > 0) + usize::from(end < text.len());
-    let mut snippet = excerpt.chars().take(maximum_chars.saturating_sub(ellipsis_count)).map(|character| {
-        if matches!(character, '\n' | '\r' | '\t') { ' ' } else { character }
-    }).collect::<String>();
+    let mut snippet = excerpt
+        .chars()
+        .take(maximum_chars.saturating_sub(ellipsis_count))
+        .map(|character| {
+            if matches!(character, '\n' | '\r' | '\t') {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
     snippet = snippet.split_whitespace().collect::<Vec<_>>().join(" ");
-    if start > 0 { snippet.insert(0, '…'); }
-    if end < text.len() { snippet.push('…'); }
+    if start > 0 {
+        snippet.insert(0, '…');
+    }
+    if end < text.len() {
+        snippet.push('…');
+    }
     Some(snippet)
 }
 
-fn search_result_response(row: &ResourceSearchRecord, snippet: Option<String>, match_reasons: Vec<String>) -> ResourceSearchResultResponse {
+fn search_result_response(
+    row: &ResourceSearchRecord,
+    snippet: Option<String>,
+    match_reasons: Vec<String>,
+    source_matches: Vec<ResourceTextMatchSpanResponse>,
+) -> ResourceSearchResultResponse {
     let location = ResourceSearchLocationResponse {
         location_id: row.location_id.clone(),
         resource_id: row.summary.resource_id.clone(),
@@ -2629,14 +4175,46 @@ fn search_result_response(row: &ResourceSearchRecord, snippet: Option<String>, m
         resource_ref: ResourceSearchRefResponse {
             workspace_id: row.summary.workspace_id.clone(),
             resource_id: row.summary.resource_id.clone(),
-            revision_id: Some(row.summary.resource_revision_id.clone()),
+            revision_id: row.summary.resource_revision_id.clone(),
         },
+        source_content_digest: row.summary.content_digest.clone(),
+        source_matches,
         display_name: row.summary.display_name.clone(),
         locations: vec![location],
         freshness: row.freshness.clone(),
         match_reasons,
         snippet,
     }
+}
+
+fn resource_text_match_response(span: ResourceTextMatchSpan) -> ResourceTextMatchSpanResponse {
+    ResourceTextMatchSpanResponse {
+        term: span.term,
+        start_utf8_byte: span.start_utf8_byte,
+        end_utf8_byte_exclusive: span.end_utf8_byte_exclusive,
+    }
+}
+
+fn valid_indexed_source_match_bundle(row: &storage_core::ResourceTextSearchRecord) -> bool {
+    row.resource_revision_id == row.result.summary.resource_revision_id
+        && row.source_content_digest == row.result.summary.content_digest
+        && storage_core::is_sha256_digest(&row.source_content_digest)
+        && row.matched_term_count > 0
+        && row.matched_term_count as usize == row.matched_spans.len()
+        && row.matched_spans.len() <= 32
+        && row.matched_spans.iter().all(|span| {
+            !span.term.is_empty()
+                && span.term.len() <= 128
+                && span.start_utf8_byte < span.end_utf8_byte_exclusive
+                && span.end_utf8_byte_exclusive <= row.result.summary.size_bytes
+        })
+        && row
+            .matched_spans
+            .iter()
+            .map(|span| span.term.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            == row.matched_spans.len()
 }
 
 fn encode_resource_search_cursor(
@@ -2656,9 +4234,15 @@ fn encode_resource_search_cursor(
         created_at: summary.created_at.clone(),
         resource_id: summary.resource_id.clone(),
     };
-    serde_json::to_vec(&cursor).map(|bytes| URL_SAFE_NO_PAD.encode(bytes)).map_err(|_| {
-        operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource search cursor could not be created")
-    })
+    serde_json::to_vec(&cursor)
+        .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Resource search cursor could not be created",
+            )
+        })
 }
 
 fn encode_resource_cursor(summary: &ResourceSummary) -> Result<String, Response> {
@@ -2690,7 +4274,13 @@ fn encode_workspace_root_cursor(
     };
     serde_json::to_vec(&cursor)
         .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "WorkspaceRoot cursor could not be created"))
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "WorkspaceRoot cursor could not be created",
+            )
+        })
 }
 
 fn decode_workspace_root_cursor(
@@ -2699,13 +4289,25 @@ fn decode_workspace_root_cursor(
     status: Option<&str>,
 ) -> Result<WorkspaceRootListCursor, Response> {
     if encoded.is_empty() || encoded.len() > 2048 {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "WorkspaceRoot cursor is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "WorkspaceRoot cursor is invalid",
+        ));
     }
     let bytes = URL_SAFE_NO_PAD.decode(encoded.as_bytes()).map_err(|_| {
-        operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "WorkspaceRoot cursor is invalid")
+        operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "WorkspaceRoot cursor is invalid",
+        )
     })?;
     let cursor: WorkspaceRootListCursor = serde_json::from_slice(&bytes).map_err(|_| {
-        operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "WorkspaceRoot cursor is invalid")
+        operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "WorkspaceRoot cursor is invalid",
+        )
     })?;
     if cursor.workspace_id != workspace_id
         || cursor.status.as_deref() != status
@@ -2714,7 +4316,11 @@ fn decode_workspace_root_cursor(
         || cursor.workspace_root_id.is_empty()
         || cursor.workspace_root_id.len() > 160
     {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "WorkspaceRoot cursor is invalid"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "WorkspaceRoot cursor is invalid",
+        ));
     }
     Ok(cursor)
 }
@@ -2782,7 +4388,10 @@ async fn read_resource_content(
     }
     if query.revision_id.as_ref().is_some_and(|revision_id| {
         revision_id.is_empty() || revision_id.len() > 160 || revision_id.contains('\0')
-    }) {
+    }) || query
+        .max_bytes
+        .is_some_and(|maximum| maximum == 0 || maximum > MAX_OPERATOR_RESPONSE_BYTES as u64)
+    {
         return Err(operator_error(
             StatusCode::BAD_REQUEST,
             "INVALID_ARGUMENT",
@@ -2794,7 +4403,8 @@ async fn read_resource_content(
         .read_resource_content_bounded(
             &workspace_id,
             &resource_id,
-            MAX_OPERATOR_RESPONSE_BYTES as u64,
+            query.revision_id.as_deref(),
+            query.max_bytes.unwrap_or(MAX_OPERATOR_RESPONSE_BYTES as u64),
         )
         .map_err(|error| {
             match error {
@@ -2803,6 +4413,20 @@ async fn read_resource_content(
                         StatusCode::PAYLOAD_TOO_LARGE,
                         "INVALID_ARGUMENT",
                         "Resource exceeds the local Operator read limit",
+                    )
+                }
+                storage_core::StoreError::Invalid(message) if message == "RESOURCE_CONTENT_EXTERNAL" => {
+                    operator_error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "RESOURCE_CONTENT_EXTERNAL",
+                        "This Resource revision is not stored by the local managed content provider.",
+                    )
+                }
+                storage_core::StoreError::Invalid(message) if message == "RESOURCE_LOCATION_UNAVAILABLE" => {
+                    operator_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "RESOURCE_LOCATION_UNAVAILABLE",
+                        "Resource content is temporarily unavailable. Refresh its status and retry.",
                     )
                 }
                 storage_core::StoreError::Invalid(message) if message == "CONTEXT_DOCUMENT_REVOKED" => {
@@ -2852,19 +4476,16 @@ async fn read_resource_content(
                 "Resource content is unavailable",
             )
         })?;
-    if query.revision_id.as_ref().is_some_and(|revision_id| revision_id != &content.summary.resource_revision_id) {
-        return Err(operator_error(
-            StatusCode::CONFLICT,
-            "RESOURCE_CONFLICT",
-            "Resource revision changed since it was selected",
-        ));
-    }
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/octet-stream")
         .header(header::CONTENT_LENGTH, content.content.len().to_string())
         .header("x-content-type-options", "nosniff")
         .header("x-resource-media-type", content.summary.media_type)
+        .header(
+            "x-resource-revision-id",
+            content.summary.resource_revision_id,
+        )
         .header("cache-control", "no-store")
         .body(Body::from(content.content))
         .map_err(|_| {
@@ -2900,7 +4521,11 @@ fn idempotent_id(prefix: &str, principal_id: &str, request_id: &str, label: &str
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(b"litecowork.idempotent-entity-id.v1");
-    for value in [principal_id.as_bytes(), request_id.as_bytes(), label.as_bytes()] {
+    for value in [
+        principal_id.as_bytes(),
+        request_id.as_bytes(),
+        label.as_bytes(),
+    ] {
         hasher.update((value.len() as u64).to_be_bytes());
         hasher.update(value);
     }
@@ -2914,7 +4539,11 @@ impl Drop for OperatorServer {
 }
 
 async fn authenticate(request: Request<Body>, next: Next) -> Response {
-    if request.extensions().get::<AuthenticatedLocalPeer>().is_some() {
+    if request
+        .extensions()
+        .get::<AuthenticatedLocalPeer>()
+        .is_some()
+    {
         return next.run(request).await;
     }
     operator_error(
@@ -2939,23 +4568,38 @@ async fn create_workspace_root_from_native_selection(
             "Folder selection request exceeds its size limit",
         ));
     }
-    let request: NativeWorkspaceRootSelectionRequest = serde_json::from_slice(&body).map_err(|_| {
-        operator_error(
-            StatusCode::BAD_REQUEST,
-            "INVALID_ARGUMENT",
-            "Folder selection request is invalid",
-        )
-    })?;
+    let request: NativeWorkspaceRootSelectionRequest =
+        serde_json::from_slice(&body).map_err(|_| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Folder selection request is invalid",
+            )
+        })?;
     let request_id = headers
         .get("idempotency-key")
         .and_then(|value| value.to_str().ok())
         .filter(|value| {
-            !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_graphic())
+            !value.is_empty()
+                && value.len() <= 128
+                && value.bytes().all(|byte| byte.is_ascii_graphic())
         })
-        .ok_or_else(|| operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "A valid Idempotency-Key is required"))?;
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "A valid Idempotency-Key is required",
+            )
+        })?;
     if request.workspace_id.trim().is_empty()
-        || !matches!(request.watch_policy.as_str(), "METADATA" | "CONTENT_DIGESTS" | "SELECTED_TEXT_EXTRACTION")
-        || !matches!(request.replication_policy.as_str(), "NONE" | "ACTIVE_TASKS" | "SELECTED_WORKSPACE_POLICY")
+        || !matches!(
+            request.watch_policy.as_str(),
+            "METADATA" | "CONTENT_DIGESTS" | "SELECTED_TEXT_EXTRACTION"
+        )
+        || !matches!(
+            request.replication_policy.as_str(),
+            "NONE" | "ACTIVE_TASKS" | "SELECTED_WORKSPACE_POLICY"
+        )
         || request.selected_path_base64.is_empty()
         || request.selected_path_base64.len() > 44 * 1024
     {
@@ -2965,13 +4609,24 @@ async fn create_workspace_root_from_native_selection(
             "Folder selection settings are invalid",
         ));
     }
-    let workspace = state.store.get_workspace(&request.workspace_id).map_err(|_| {
-        operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Workspace is unavailable")
-    })?;
+    let workspace = state
+        .store
+        .get_workspace(&request.workspace_id)
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Workspace is unavailable",
+            )
+        })?;
     let Some(workspace) = workspace.filter(|workspace| {
         workspace.owner_principal_id == state.principal_id && workspace.status == "ACTIVE"
     }) else {
-        return Err(operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Workspace is unavailable"));
+        return Err(operator_error(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "Workspace is unavailable",
+        ));
     };
     if workspace.version != request.expected_workspace_version {
         return Err(operator_error(
@@ -2984,11 +4639,21 @@ async fn create_workspace_root_from_native_selection(
     #[cfg(unix)]
     let selected_path = {
         use std::os::unix::ffi::OsStringExt;
-        let raw_path = URL_SAFE_NO_PAD.decode(request.selected_path_base64.as_bytes()).map_err(|_| {
-            operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Selected folder is invalid")
-        })?;
+        let raw_path = URL_SAFE_NO_PAD
+            .decode(request.selected_path_base64.as_bytes())
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENT",
+                    "Selected folder is invalid",
+                )
+            })?;
         if raw_path.is_empty() || raw_path.len() > 32 * 1024 || raw_path.contains(&0) {
-            return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Selected folder is invalid"));
+            return Err(operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Selected folder is invalid",
+            ));
         }
         PathBuf::from(OsString::from_vec(raw_path))
     };
@@ -3002,23 +4667,36 @@ async fn create_workspace_root_from_native_selection(
     };
 
     let opened = open_selected_directory(&selected_path).map_err(|_| {
-        operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Selected folder could not be opened safely")
+        operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Selected folder could not be opened safely",
+        )
     })?;
     opened.revalidate().map_err(|_| {
-        operator_error(StatusCode::CONFLICT, "RESOURCE_IDENTITY_CHANGED", "Selected folder changed before it could be added")
+        operator_error(
+            StatusCode::CONFLICT,
+            "RESOURCE_IDENTITY_CHANGED",
+            "Selected folder changed before it could be added",
+        )
     })?;
     let identity = opened.identity();
     let (identity_digest, file_identity) = identity.keyed_projection(&state.runtime_identity);
     let correlation_id = idempotent_id("cor", &state.principal_id, request_id, "correlation");
     let mut context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
-        operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Folder request could not be initialized")
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Folder request could not be initialized",
+        )
     })?;
     context.event_id = idempotent_id("ev", &state.principal_id, request_id, "event");
 
     let resource_id = idempotent_id("res", &state.principal_id, request_id, "resource");
     let location_id = idempotent_id("loc", &state.principal_id, request_id, "location");
     let locator_ref_id = idempotent_id("lr", &state.principal_id, request_id, "locator");
-    let workspace_root_id = idempotent_id("wroot", &state.principal_id, request_id, "workspace-root");
+    let workspace_root_id =
+        idempotent_id("wroot", &state.principal_id, request_id, "workspace-root");
     let file_identity_binding = identity.binding_record(
         location_id.clone(),
         state.runtime_id.clone(),
@@ -3052,10 +4730,22 @@ async fn create_workspace_root_from_native_selection(
                 "CONFLICT",
                 "Folder root conflicts with current Workspace state",
             ),
-            StoreError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Workspace is unavailable"),
-            StoreError::Invalid(_) => operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Folder root request is invalid"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Folder root could not be saved"),
-    })?;
+            StoreError::NotFound => operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Workspace is unavailable",
+            ),
+            StoreError::Invalid(_) => operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Folder root request is invalid",
+            ),
+            _ => operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Folder root could not be saved",
+            ),
+        })?;
     Ok(Json(WorkspaceRootCreatedResponse {
         workspace_id: committed.root.workspace_id,
         workspace_root_id: committed.root.workspace_root_id,
@@ -3179,41 +4869,104 @@ fn operator_now_value() -> Result<String, ()> {
 }
 
 fn operator_now() -> Result<String, Response> {
-    operator_now_value().map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Current time is unavailable"))
+    operator_now_value().map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Current time is unavailable",
+        )
+    })
 }
 
 fn add_seconds(timestamp: &str, seconds: i64) -> Result<String, Response> {
-    let parsed = time::OffsetDateTime::parse(timestamp, &time::format_description::well_known::Rfc3339)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Observation expiry could not be calculated"))?;
-    let expires = parsed.checked_add(time::Duration::seconds(seconds))
-        .ok_or_else(|| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Observation expiry is out of range"))?;
-    expires.format(&time::format_description::well_known::Rfc3339)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Observation expiry could not be formatted"))
+    let parsed =
+        time::OffsetDateTime::parse(timestamp, &time::format_description::well_known::Rfc3339)
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Observation expiry could not be calculated",
+                )
+            })?;
+    let expires = parsed
+        .checked_add(time::Duration::seconds(seconds))
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Observation expiry is out of range",
+            )
+        })?;
+    expires
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Observation expiry could not be formatted",
+            )
+        })
 }
 
 fn idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
-    headers.get("idempotency-key")
+    headers
+        .get("idempotency-key")
         .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.is_empty() && value.len() <= 200 && value.bytes().all(|byte| byte.is_ascii_graphic()))
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value.bytes().all(|byte| byte.is_ascii_graphic())
+        })
         .map(str::to_owned)
-        .ok_or_else(|| operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "A valid Idempotency-Key is required"))
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "A valid Idempotency-Key is required",
+            )
+        })
 }
 
 fn parse_if_match(headers: &HeaderMap) -> Result<u64, Response> {
-    headers.get(header::IF_MATCH)
+    headers
+        .get(header::IF_MATCH)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.trim().trim_matches('"').parse::<u64>())
         .transpose()
-        .map_err(|_| operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "If-Match must contain the current aggregate version"))?
-        .ok_or_else(|| operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "If-Match is required"))
+        .map_err(|_| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "If-Match must contain the current aggregate version",
+            )
+        })?
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "If-Match is required",
+            )
+        })
 }
 
 fn map_agent_store_error(error: storage_core::StoreError, message: &'static str) -> Response {
     match error {
-        storage_core::StoreError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", message),
-        storage_core::StoreError::Conflict { .. } => operator_error(StatusCode::CONFLICT, "CONFLICT", message),
-        storage_core::StoreError::Invalid(_) => operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INVALID_ARGUMENT", message),
-        storage_core::StoreError::Integrity(_) => operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INTEGRITY_FAILURE", message),
+        storage_core::StoreError::NotFound => {
+            operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", message)
+        }
+        storage_core::StoreError::Conflict { .. } => {
+            operator_error(StatusCode::CONFLICT, "CONFLICT", message)
+        }
+        storage_core::StoreError::Invalid(_) => operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INVALID_ARGUMENT",
+            message,
+        ),
+        storage_core::StoreError::Integrity(_) => operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INTEGRITY_FAILURE",
+            message,
+        ),
         _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", message),
     }
 }
@@ -3222,18 +4975,25 @@ async fn list_workspace_runtime_bindings(
     State(state): State<ApiState>,
     Path(workspace_id): Path<String>,
 ) -> Result<Json<RuntimeWorkspaceBindingPageResponse>, Response> {
-    let workspace = ensure_workspace_owner(&state, &workspace_id)?;
+    ensure_workspace_owner(&state, &workspace_id)?;
     let lookup = LocalRuntimeWorkspaceBindingLookup {
         owner_principal_id: state.principal_id.clone(),
         workspace_id: workspace_id.clone(),
         runtime_id: state.runtime_id.clone(),
         runtime_incarnation_id: state.local_incarnation_id.clone(),
     };
-    let items = state.store.get_current_local_binding(lookup)
-        .map_err(|error| map_agent_store_error(error, "Workspace Runtime enrollment is unavailable"))?
+    let items = state
+        .store
+        .get_current_local_binding(lookup)
+        .map_err(|error| {
+            map_agent_store_error(error, "Workspace Runtime enrollment is unavailable")
+        })?
         .into_iter()
         .collect();
-    Ok(Json(RuntimeWorkspaceBindingPageResponse { items, next_cursor: None }))
+    Ok(Json(RuntimeWorkspaceBindingPageResponse {
+        items,
+        next_cursor: None,
+    }))
 }
 
 async fn enroll_local_runtime(
@@ -3245,8 +5005,20 @@ async fn enroll_local_runtime(
     let expected_workspace_version = parse_if_match(&headers)?;
     let request_id = idempotency_key(&headers)?;
     let now = operator_now()?;
-    let correlation_id = new_id("cor").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Runtime enrollment could not be initialized"))?;
-    let binding_id = new_id("rwb").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Runtime enrollment could not be initialized"))?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Runtime enrollment could not be initialized",
+        )
+    })?;
+    let binding_id = new_id("rwb").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Runtime enrollment could not be initialized",
+        )
+    })?;
     let request_payload = json!({
         "operation": "runtime.workspace.local_enrollment.v1",
         "workspace_id": workspace_id,
@@ -3254,16 +5026,28 @@ async fn enroll_local_runtime(
         "runtime_incarnation_id": state.local_incarnation_id,
         "expected_workspace_version": expected_workspace_version,
     });
-    let binding = state.store.enroll_local_runtime(LocalRuntimeWorkspaceEnrollmentRequest {
-        request: WorkspaceCreateRequest { principal_id: state.principal_id.clone(), request_id, request_payload },
-        expected_workspace_version,
-        runtime_workspace_binding_id: binding_id,
-        runtime_id: state.runtime_id.clone(),
-        runtime_incarnation_id: state.local_incarnation_id.clone(),
-        workspace_id,
-        now,
-        correlation_id,
-    }).map_err(|error| map_agent_store_error(error, "Local Runtime could not be enrolled in this Workspace"))?;
+    let binding = state
+        .store
+        .enroll_local_runtime(LocalRuntimeWorkspaceEnrollmentRequest {
+            request: WorkspaceCreateRequest {
+                principal_id: state.principal_id.clone(),
+                request_id,
+                request_payload,
+            },
+            expected_workspace_version,
+            runtime_workspace_binding_id: binding_id,
+            runtime_id: state.runtime_id.clone(),
+            runtime_incarnation_id: state.local_incarnation_id.clone(),
+            workspace_id,
+            now,
+            correlation_id,
+        })
+        .map_err(|error| {
+            map_agent_store_error(
+                error,
+                "Local Runtime could not be enrolled in this Workspace",
+            )
+        })?;
     Ok((StatusCode::CREATED, Json(binding)).into_response())
 }
 
@@ -3281,7 +5065,10 @@ async fn list_agent_profiles(
         .into_iter()
         .map(agent_profile_response)
         .collect();
-    Ok(Json(AgentProfilePageResponse { items, next_cursor: None }))
+    Ok(Json(AgentProfilePageResponse {
+        items,
+        next_cursor: None,
+    }))
 }
 
 async fn probe_local_agent_profile(
@@ -3292,17 +5079,30 @@ async fn probe_local_agent_profile(
     let workspace_id = selected_workspace(&headers)?;
     ensure_workspace_owner(&state, &workspace_id)?;
     if !matches!(body.provider_key.as_str(), "CODEX" | "OPENCODE") {
-        return Err(operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INVALID_ARGUMENT", "This coding-agent profile probe is unavailable for the selected provider"));
+        return Err(operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INVALID_ARGUMENT",
+            "This coding-agent profile probe is unavailable for the selected provider",
+        ));
     }
     let now = operator_now()?;
-    let runtime_binding = state.store.get_current_local_binding(LocalRuntimeWorkspaceBindingLookup {
-        owner_principal_id: state.principal_id.clone(),
-        workspace_id: workspace_id.clone(),
-        runtime_id: state.runtime_id.clone(),
-        runtime_incarnation_id: state.local_incarnation_id.clone(),
-    }).map_err(|error| map_agent_store_error(error, "Workspace Runtime enrollment is unavailable"))?;
+    let runtime_binding = state
+        .store
+        .get_current_local_binding(LocalRuntimeWorkspaceBindingLookup {
+            owner_principal_id: state.principal_id.clone(),
+            workspace_id: workspace_id.clone(),
+            runtime_id: state.runtime_id.clone(),
+            runtime_incarnation_id: state.local_incarnation_id.clone(),
+        })
+        .map_err(|error| {
+            map_agent_store_error(error, "Workspace Runtime enrollment is unavailable")
+        })?;
     if runtime_binding.is_none() {
-        return Err(operator_error(StatusCode::FORBIDDEN, "FORBIDDEN", "Enroll this local Runtime in the Workspace before probing coding agents"));
+        return Err(operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Enroll this local Runtime in the Workspace before probing coding agents",
+        ));
     }
     if body.provider_key == "OPENCODE" {
         return probe_local_opencode_profile(state, workspace_id, now).await;
@@ -3310,9 +5110,19 @@ async fn probe_local_agent_profile(
     // The explicit owner action is the only code path that resolves and records this
     // private executable locator. It is admitted only for the current local Runtime.
     let executable = resolve_local_executable("codex").ok_or_else(|| {
-        operator_error(StatusCode::NOT_FOUND, "AGENT_UNAVAILABLE", "Codex is not available on this local Runtime")
+        operator_error(
+            StatusCode::NOT_FOUND,
+            "AGENT_UNAVAILABLE",
+            "Codex is not available on this local Runtime",
+        )
     })?;
-    let cwd = std::env::current_dir().map_err(|_| operator_error(StatusCode::SERVICE_UNAVAILABLE, "AGENT_UNAVAILABLE", "The local Runtime working directory is unavailable"))?;
+    let cwd = std::env::current_dir().map_err(|_| {
+        operator_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "AGENT_UNAVAILABLE",
+            "The local Runtime working directory is unavailable",
+        )
+    })?;
     let environment = codex_native_environment();
     let state_for_probe = state.clone();
     let scoped_workspace = workspace_id.clone();
@@ -3336,30 +5146,48 @@ async fn probe_local_agent_profile(
             protocol_version: None,
             capabilities: codex_endpoint_capabilities(),
         };
-        let existing = state_for_probe.store.list_agent_profiles(
-            &state_for_probe.principal_id,
-            &scoped_workspace,
-            &now,
-        ).map_err(|error| map_agent_store_error(error, "Agent profile could not be read"))?
+        let existing = state_for_probe
+            .store
+            .list_agent_profiles(&state_for_probe.principal_id, &scoped_workspace, &now)
+            .map_err(|error| map_agent_store_error(error, "Agent profile could not be read"))?
             .into_iter()
             .find(|entry| entry.profile.agent_profile_id == profile_id);
         let stable_profile = existing.map_or(profile.clone(), |entry| entry.profile);
-        state_for_probe.store.put_agent_profile(stable_profile, vec![endpoint]).map_err(
-            |error| map_agent_store_error(error, "Codex profile identity could not be recorded"),
-        )?;
+        state_for_probe
+            .store
+            .put_agent_profile(stable_profile, vec![endpoint])
+            .map_err(|error| {
+                map_agent_store_error(error, "Codex profile identity could not be recorded")
+            })?;
         let locator = executable.to_string_lossy().into_owned();
-        state_for_probe.store.register_local_endpoint_binding(LocalAgentEndpointBindingInput {
-            endpoint_id: endpoint_id.clone(),
-            runtime_id: runtime_id.clone(),
-            runtime_incarnation_id: incarnation_id.clone(),
-            endpoint_ref: locator,
-            observed_at: now.clone(),
-            expires_at: Some(add_seconds(&now, 300)?),
-        }).map_err(|error| map_agent_store_error(error, "Codex endpoint could not be admitted on this Runtime"))?;
+        state_for_probe
+            .store
+            .register_local_endpoint_binding(LocalAgentEndpointBindingInput {
+                endpoint_id: endpoint_id.clone(),
+                runtime_id: runtime_id.clone(),
+                runtime_incarnation_id: incarnation_id.clone(),
+                endpoint_ref: locator,
+                observed_at: now.clone(),
+                expires_at: Some(add_seconds(&now, 300)?),
+            })
+            .map_err(|error| {
+                map_agent_store_error(
+                    error,
+                    "Codex endpoint could not be admitted on this Runtime",
+                )
+            })?;
 
         let probe = crate::agents::probe_codex_profile(&executable, &cwd, environment);
-        now = operator_now_value().map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Probe time could not be recorded"))?;
-        let readiness = if !probe.host_process_stopped || probe.readiness == crate::agents::ProbeReadiness::Failed {
+        now = operator_now_value().map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Probe time could not be recorded",
+            )
+        })?;
+        let readiness = if !probe.host_process_stopped
+            || probe.readiness == crate::agents::ProbeReadiness::Failed
+        {
             "UNAVAILABLE"
         } else if probe.authentication == crate::agents::AuthenticationObservation::NeedsAuth {
             "NEEDS_AUTH"
@@ -3371,28 +5199,55 @@ async fn probe_local_agent_profile(
             "UNAVAILABLE"
         };
         let compatible = readiness == "STARTABLE";
-        let constraints = serde_json::to_value(&probe).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Probe observations could not be normalized"))?;
-        state_for_probe.store.publish_runtime_offer(RuntimeOfferRecord {
-            runtime_id: runtime_id.clone(),
-            runtime_incarnation_id: incarnation_id.clone(),
-            offer_kind: "AGENT_ENDPOINT".to_owned(),
-            offer_ref: endpoint_id,
-            compatible,
-            readiness: readiness.to_owned(),
-            constraints,
-            observed_at: now.clone(),
-            expires_at: add_seconds(&now, 120)?,
-        }).map_err(|error| map_agent_store_error(error, "Codex Runtime offer could not be recorded"))?;
-        let profiles = state_for_probe.store.list_agent_profiles(
-            &state_for_probe.principal_id,
-            &scoped_workspace,
-            &now,
-        ).map_err(|error| map_agent_store_error(error, "Codex profile observation is unavailable"))?;
-        profiles.into_iter()
+        let constraints = serde_json::to_value(&probe).map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Probe observations could not be normalized",
+            )
+        })?;
+        state_for_probe
+            .store
+            .publish_runtime_offer(RuntimeOfferRecord {
+                runtime_id: runtime_id.clone(),
+                runtime_incarnation_id: incarnation_id.clone(),
+                offer_kind: "AGENT_ENDPOINT".to_owned(),
+                offer_ref: endpoint_id,
+                compatible,
+                readiness: readiness.to_owned(),
+                constraints,
+                observed_at: now.clone(),
+                expires_at: add_seconds(&now, 120)?,
+            })
+            .map_err(|error| {
+                map_agent_store_error(error, "Codex Runtime offer could not be recorded")
+            })?;
+        let profiles = state_for_probe
+            .store
+            .list_agent_profiles(&state_for_probe.principal_id, &scoped_workspace, &now)
+            .map_err(|error| {
+                map_agent_store_error(error, "Codex profile observation is unavailable")
+            })?;
+        profiles
+            .into_iter()
             .find(|entry| entry.profile.agent_profile_id == profile_id)
             .map(agent_profile_response)
-            .ok_or_else(|| operator_error(StatusCode::SERVICE_UNAVAILABLE, "AGENT_UNAVAILABLE", "The current Workspace has no eligible local Runtime offer"))
-    }).await.map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Codex profile probe did not complete"))??;
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "AGENT_UNAVAILABLE",
+                    "The current Workspace has no eligible local Runtime offer",
+                )
+            })
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Codex profile probe did not complete",
+        )
+    })??;
     Ok(Json(result))
 }
 
@@ -3404,9 +5259,19 @@ async fn probe_local_opencode_profile(
     // This explicit owner action is the only code path that resolves and records
     // the private OpenCode executable locator. Inventory alone never probes it.
     let executable = resolve_local_executable("opencode").ok_or_else(|| {
-        operator_error(StatusCode::NOT_FOUND, "AGENT_UNAVAILABLE", "OpenCode is not available on this local Runtime")
+        operator_error(
+            StatusCode::NOT_FOUND,
+            "AGENT_UNAVAILABLE",
+            "OpenCode is not available on this local Runtime",
+        )
     })?;
-    let cwd = std::env::current_dir().map_err(|_| operator_error(StatusCode::SERVICE_UNAVAILABLE, "AGENT_UNAVAILABLE", "The local Runtime working directory is unavailable"))?;
+    let cwd = std::env::current_dir().map_err(|_| {
+        operator_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "AGENT_UNAVAILABLE",
+            "The local Runtime working directory is unavailable",
+        )
+    })?;
     let environment = crate::agents::opencode_native_environment();
     let state_for_probe = state.clone();
     let scoped_workspace = workspace_id.clone();
@@ -3430,29 +5295,49 @@ async fn probe_local_opencode_profile(
             protocol_version: None,
             capabilities: opencode_endpoint_capabilities(),
         };
-        let existing = state_for_probe.store.list_agent_profiles(
-            &state_for_probe.principal_id,
-            &scoped_workspace,
-            &observed_at,
-        ).map_err(|error| map_agent_store_error(error, "Agent profile could not be read"))?
+        let existing = state_for_probe
+            .store
+            .list_agent_profiles(
+                &state_for_probe.principal_id,
+                &scoped_workspace,
+                &observed_at,
+            )
+            .map_err(|error| map_agent_store_error(error, "Agent profile could not be read"))?
             .into_iter()
             .find(|entry| entry.profile.agent_profile_id == profile_id);
         let stable_profile = existing.map_or(profile, |entry| entry.profile);
-        state_for_probe.store.put_agent_profile(stable_profile, vec![endpoint]).map_err(
-            |error| map_agent_store_error(error, "OpenCode profile identity could not be recorded"),
-        )?;
+        state_for_probe
+            .store
+            .put_agent_profile(stable_profile, vec![endpoint])
+            .map_err(|error| {
+                map_agent_store_error(error, "OpenCode profile identity could not be recorded")
+            })?;
         let locator = executable.to_string_lossy().into_owned();
-        state_for_probe.store.register_local_endpoint_binding(LocalAgentEndpointBindingInput {
-            endpoint_id: endpoint_id.clone(),
-            runtime_id: runtime_id.clone(),
-            runtime_incarnation_id: incarnation_id.clone(),
-            endpoint_ref: locator,
-            observed_at: observed_at.clone(),
-            expires_at: Some(add_seconds(&observed_at, 300)?),
-        }).map_err(|error| map_agent_store_error(error, "OpenCode endpoint could not be admitted on this Runtime"))?;
+        state_for_probe
+            .store
+            .register_local_endpoint_binding(LocalAgentEndpointBindingInput {
+                endpoint_id: endpoint_id.clone(),
+                runtime_id: runtime_id.clone(),
+                runtime_incarnation_id: incarnation_id.clone(),
+                endpoint_ref: locator,
+                observed_at: observed_at.clone(),
+                expires_at: Some(add_seconds(&observed_at, 300)?),
+            })
+            .map_err(|error| {
+                map_agent_store_error(
+                    error,
+                    "OpenCode endpoint could not be admitted on this Runtime",
+                )
+            })?;
 
         let probe = crate::agents::probe_opencode_profile(&executable, &cwd, environment);
-        observed_at = operator_now_value().map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Probe time could not be recorded"))?;
+        observed_at = operator_now_value().map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Probe time could not be recorded",
+            )
+        })?;
         let readiness = if probe.host_process_stopped
             && probe.probe_readiness == crate::agents::OpenCodeProbeReadiness::Complete
         {
@@ -3463,29 +5348,60 @@ async fn probe_local_opencode_profile(
         } else {
             "UNAVAILABLE"
         };
-        let constraints = serde_json::to_value(&probe).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Probe observations could not be normalized"))?;
-        state_for_probe.store.publish_runtime_offer(RuntimeOfferRecord {
-            runtime_id: runtime_id.clone(),
-            runtime_incarnation_id: incarnation_id.clone(),
-            offer_kind: "AGENT_ENDPOINT".to_owned(),
-            offer_ref: endpoint_id,
-            compatible: false,
-            readiness: readiness.to_owned(),
-            constraints,
-            observed_at: observed_at.clone(),
-            expires_at: add_seconds(&observed_at, 120)?,
-        }).map_err(|error| map_agent_store_error(error, "OpenCode Runtime offer could not be recorded"))?;
-        let profiles = state_for_probe.store.list_agent_profiles(
-            &state_for_probe.principal_id,
-            &scoped_workspace,
-            &observed_at,
-        ).map_err(|error| map_agent_store_error(error, "OpenCode profile observation is unavailable"))?;
-        profiles.into_iter()
+        let constraints = serde_json::to_value(&probe).map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Probe observations could not be normalized",
+            )
+        })?;
+        state_for_probe
+            .store
+            .publish_runtime_offer(RuntimeOfferRecord {
+                runtime_id: runtime_id.clone(),
+                runtime_incarnation_id: incarnation_id.clone(),
+                offer_kind: "AGENT_ENDPOINT".to_owned(),
+                offer_ref: endpoint_id,
+                compatible: false,
+                readiness: readiness.to_owned(),
+                constraints,
+                observed_at: observed_at.clone(),
+                expires_at: add_seconds(&observed_at, 120)?,
+            })
+            .map_err(|error| {
+                map_agent_store_error(error, "OpenCode Runtime offer could not be recorded")
+            })?;
+        let profiles = state_for_probe
+            .store
+            .list_agent_profiles(
+                &state_for_probe.principal_id,
+                &scoped_workspace,
+                &observed_at,
+            )
+            .map_err(|error| {
+                map_agent_store_error(error, "OpenCode profile observation is unavailable")
+            })?;
+        profiles
+            .into_iter()
             .find(|entry| entry.profile.agent_profile_id == profile_id)
             .map(agent_profile_response)
             .map(Json)
-            .ok_or_else(|| operator_error(StatusCode::SERVICE_UNAVAILABLE, "AGENT_UNAVAILABLE", "The current Workspace has no eligible local Runtime offer"))
-    }).await.map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "OpenCode profile probe did not complete"))??;
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "AGENT_UNAVAILABLE",
+                    "The current Workspace has no eligible local Runtime offer",
+                )
+            })
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "OpenCode profile probe did not complete",
+        )
+    })??;
     Ok(result)
 }
 
@@ -3508,9 +5424,16 @@ async fn list_agent_bindings(
 ) -> Result<Json<AgentBindingPageResponse>, Response> {
     let workspace_id = selected_workspace(&headers)?;
     ensure_workspace_owner(&state, &workspace_id)?;
-    let items = state.store.list_agent_bindings(&state.principal_id, &workspace_id)
-        .map_err(|error| map_agent_store_error(error, "Workspace agent bindings are unavailable"))?;
-    Ok(Json(AgentBindingPageResponse { items, next_cursor: None }))
+    let items = state
+        .store
+        .list_agent_bindings(&state.principal_id, &workspace_id)
+        .map_err(|error| {
+            map_agent_store_error(error, "Workspace agent bindings are unavailable")
+        })?;
+    Ok(Json(AgentBindingPageResponse {
+        items,
+        next_cursor: None,
+    }))
 }
 
 async fn get_agent_binding(
@@ -3520,9 +5443,17 @@ async fn get_agent_binding(
 ) -> Result<Json<AgentBindingRecord>, Response> {
     let workspace_id = selected_workspace(&headers)?;
     ensure_workspace_owner(&state, &workspace_id)?;
-    let binding = state.store.get_agent_binding(&state.principal_id, &workspace_id, &agent_binding_id)
+    let binding = state
+        .store
+        .get_agent_binding(&state.principal_id, &workspace_id, &agent_binding_id)
         .map_err(|error| map_agent_store_error(error, "Workspace agent binding is unavailable"))?
-        .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Workspace agent binding is unavailable"))?;
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Workspace agent binding is unavailable",
+            )
+        })?;
     Ok(Json(binding))
 }
 
@@ -3533,13 +5464,29 @@ async fn create_agent_binding(
 ) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
     if body.workspace_id != workspace_id {
-        return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "Agent binding Workspace does not match the selected Workspace"));
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Agent binding Workspace does not match the selected Workspace",
+        ));
     }
     ensure_workspace_owner(&state, &workspace_id)?;
     let request_id = idempotency_key(&headers)?;
     let now = operator_now()?;
-    let correlation_id = new_id("cor").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Agent binding request could not be initialized"))?;
-    let binding_id = new_id("ab").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Agent binding request could not be initialized"))?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Agent binding request could not be initialized",
+        )
+    })?;
+    let binding_id = new_id("ab").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Agent binding request could not be initialized",
+        )
+    })?;
     let payload = json!({
         "operation": "agent.binding.create.v1",
         "workspace_id": workspace_id,
@@ -3550,14 +5497,29 @@ async fn create_agent_binding(
         "auth_ref": body.auth_ref,
         "configuration": body.configuration,
     });
-    let policy = body.endpoint_selection_policy.unwrap_or_else(|| json!({"mode":"AUTO_COMPATIBLE","required_features":[],"preferred_topologies":[]}));
+    let policy = body.endpoint_selection_policy.unwrap_or_else(
+        || json!({"mode":"AUTO_COMPATIBLE","required_features":[],"preferred_topologies":[]}),
+    );
     let configuration = body.configuration.unwrap_or_else(|| json!({}));
-    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Agent binding event could not be initialized"))?;
+    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Agent binding event could not be initialized",
+        )
+    })?;
     let binding = AgentBindingRecord {
-        agent_binding_id: binding_id.clone(), workspace_id: workspace_id.clone(),
-        agent_profile_id: body.agent_profile_id, runtime_id: body.runtime_id,
-        endpoint_selection_policy: policy, auth_ref: body.auth_ref, configuration,
-        enabled: false, lead_eligible: body.lead_eligible, created_at: now.clone(), version: 1,
+        agent_binding_id: binding_id.clone(),
+        workspace_id: workspace_id.clone(),
+        agent_profile_id: body.agent_profile_id,
+        runtime_id: body.runtime_id,
+        endpoint_selection_policy: policy,
+        auth_ref: body.auth_ref,
+        configuration,
+        enabled: false,
+        lead_eligible: body.lead_eligible,
+        created_at: now.clone(),
+        version: 1,
     };
     let mut created_payload = json!({
         "agent_binding_id": binding.agent_binding_id,
@@ -3572,17 +5534,33 @@ async fn create_agent_binding(
         created_payload["runtime_id"] = json!(runtime_id);
     }
     let event = storage_core::EventDraft {
-        event_id: context.event_id, workspace_id: workspace_id.clone(), entity_type: "AgentBinding".to_owned(),
-        entity_id: binding_id, origin_runtime_id: context.origin_runtime_id, entity_revision: 1,
-        hlc_timestamp: context.hlc_timestamp, correlation_id: context.correlation_id,
-        causation_id: None, schema_version: 1, event_type: "agent.binding.created.v1".to_owned(),
+        event_id: context.event_id,
+        workspace_id: workspace_id.clone(),
+        entity_type: "AgentBinding".to_owned(),
+        entity_id: binding_id,
+        origin_runtime_id: context.origin_runtime_id,
+        entity_revision: 1,
+        hlc_timestamp: context.hlc_timestamp,
+        correlation_id: context.correlation_id,
+        causation_id: None,
+        schema_version: 1,
+        event_type: "agent.binding.created.v1".to_owned(),
         payload: created_payload,
         recorded_at: context.recorded_at,
     };
-    let committed = state.store.create_agent_binding(AgentBindingCreateRequest {
-        request: WorkspaceCreateRequest { principal_id: state.principal_id.clone(), request_id, request_payload: payload },
-        binding, now, event,
-    }).map_err(|error| map_agent_store_error(error, "Agent binding could not be created"))?;
+    let committed = state
+        .store
+        .create_agent_binding(AgentBindingCreateRequest {
+            request: WorkspaceCreateRequest {
+                principal_id: state.principal_id.clone(),
+                request_id,
+                request_payload: payload,
+            },
+            binding,
+            now,
+            event,
+        })
+        .map_err(|error| map_agent_store_error(error, "Agent binding could not be created"))?;
     Ok((StatusCode::CREATED, Json(committed.binding)).into_response())
 }
 
@@ -3596,11 +5574,31 @@ async fn enable_agent_binding(
     let expected_version = parse_if_match(&headers)?;
     let request_id = idempotency_key(&headers)?;
     let now = operator_now()?;
-    let binding = state.store.get_agent_binding(&state.principal_id, &workspace_id, &agent_binding_id)
+    let binding = state
+        .store
+        .get_agent_binding(&state.principal_id, &workspace_id, &agent_binding_id)
         .map_err(|error| map_agent_store_error(error, "Workspace agent binding is unavailable"))?
-        .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Workspace agent binding is unavailable"))?;
-    let correlation_id = new_id("cor").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Agent binding event could not be initialized"))?;
-    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Agent binding event could not be initialized"))?;
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Workspace agent binding is unavailable",
+            )
+        })?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Agent binding event could not be initialized",
+        )
+    })?;
+    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Agent binding event could not be initialized",
+        )
+    })?;
     let request_payload = json!({"operation":"agent.binding.enable.v1", "workspace_id":workspace_id, "agent_binding_id":agent_binding_id, "expected_version":expected_version});
     let mut enabled_payload = json!({
         "agent_binding_id": agent_binding_id,
@@ -3615,18 +5613,35 @@ async fn enable_agent_binding(
         enabled_payload["runtime_id"] = json!(runtime_id);
     }
     let event = storage_core::EventDraft {
-        event_id: context.event_id, workspace_id: workspace_id.clone(), entity_type: "AgentBinding".to_owned(),
-        entity_id: agent_binding_id.clone(), origin_runtime_id: context.origin_runtime_id,
-        entity_revision: expected_version.saturating_add(1), hlc_timestamp: context.hlc_timestamp,
-        correlation_id: context.correlation_id, causation_id: None, schema_version: 1,
+        event_id: context.event_id,
+        workspace_id: workspace_id.clone(),
+        entity_type: "AgentBinding".to_owned(),
+        entity_id: agent_binding_id.clone(),
+        origin_runtime_id: context.origin_runtime_id,
+        entity_revision: expected_version.saturating_add(1),
+        hlc_timestamp: context.hlc_timestamp,
+        correlation_id: context.correlation_id,
+        causation_id: None,
+        schema_version: 1,
         event_type: "agent.binding.changed.v1".to_owned(),
         payload: enabled_payload,
         recorded_at: context.recorded_at,
     };
-    let committed = state.store.enable_agent_binding(AgentBindingEnableRequest {
-        request: WorkspaceCreateRequest { principal_id: state.principal_id.clone(), request_id, request_payload },
-        workspace_id, agent_binding_id, expected_version, now, event,
-    }).map_err(|error| map_agent_store_error(error, "Agent binding could not be enabled"))?;
+    let committed = state
+        .store
+        .enable_agent_binding(AgentBindingEnableRequest {
+            request: WorkspaceCreateRequest {
+                principal_id: state.principal_id.clone(),
+                request_id,
+                request_payload,
+            },
+            workspace_id,
+            agent_binding_id,
+            expected_version,
+            now,
+            event,
+        })
+        .map_err(|error| map_agent_store_error(error, "Agent binding could not be enabled"))?;
     Ok(Json(committed.binding))
 }
 
@@ -3905,25 +5920,56 @@ async fn set_workspace_default_agent_binding(
     Json(body): Json<SetWorkspaceDefaultAgentBindingBody>,
 ) -> Result<Response, Response> {
     if selected_workspace(&headers)? != workspace_id {
-        return Err(operator_error(StatusCode::FORBIDDEN, "FORBIDDEN", "Workspace access is unavailable"));
+        return Err(operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Workspace access is unavailable",
+        ));
     }
     ensure_workspace_owner(&state, &workspace_id)?;
     let expected_version = parse_if_match(&headers)?;
     let request_id = idempotency_key(&headers)?;
     if let Some(binding_id) = body.agent_binding_id.as_deref() {
         if binding_id.trim().is_empty() || binding_id.len() > 200 {
-            return Err(operator_error(StatusCode::BAD_REQUEST, "INVALID_ARGUMENT", "AgentBinding selection is invalid"));
+            return Err(operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "AgentBinding selection is invalid",
+            ));
         }
-        let binding = state.store.get_agent_binding(&state.principal_id, &workspace_id, binding_id)
+        let binding = state
+            .store
+            .get_agent_binding(&state.principal_id, &workspace_id, binding_id)
             .map_err(|error| map_agent_store_error(error, "AgentBinding is unavailable"))?
-            .ok_or_else(|| operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "AgentBinding is unavailable"))?;
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::NOT_FOUND,
+                    "NOT_FOUND",
+                    "AgentBinding is unavailable",
+                )
+            })?;
         if !binding.enabled || !binding.lead_eligible {
-            return Err(operator_error(StatusCode::UNPROCESSABLE_ENTITY, "AGENT_NOT_LEAD_ELIGIBLE", "Choose an enabled AgentBinding that is allowed to lead work"));
+            return Err(operator_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "AGENT_NOT_LEAD_ELIGIBLE",
+                "Choose an enabled AgentBinding that is allowed to lead work",
+            ));
         }
     }
-    let correlation_id = new_id("cor").map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Workspace request could not be initialized"))?;
-    let context = event_context(&state.runtime_id, &correlation_id)
-        .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Workspace request could not be initialized"))?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Workspace request could not be initialized",
+        )
+    })?;
+    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Workspace request could not be initialized",
+        )
+    })?;
     let request_payload = json!({
         "operation": "workspace.default_agent_binding.set.v1",
         "workspace_id": workspace_id,
@@ -3940,14 +5986,32 @@ async fn set_workspace_default_agent_binding(
             event: context,
         })
         .map_err(|error| match error {
-            storage_core::StoreError::Invalid(_) => operator_error(StatusCode::UNPROCESSABLE_ENTITY, "INVALID_ARGUMENT", "Workspace default AgentBinding could not be selected"),
-            storage_core::StoreError::Conflict { .. } => operator_error(StatusCode::CONFLICT, "STALE_WORKSPACE_VERSION", "Workspace changed; refresh before selecting a default"),
-            storage_core::StoreError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "Workspace or AgentBinding is unavailable"),
-            _ => operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Workspace default AgentBinding could not be saved"),
+            storage_core::StoreError::Invalid(_) => operator_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_ARGUMENT",
+                "Workspace default AgentBinding could not be selected",
+            ),
+            storage_core::StoreError::Conflict { .. } => operator_error(
+                StatusCode::CONFLICT,
+                "STALE_WORKSPACE_VERSION",
+                "Workspace changed; refresh before selecting a default",
+            ),
+            storage_core::StoreError::NotFound => operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Workspace or AgentBinding is unavailable",
+            ),
+            _ => operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Workspace default AgentBinding could not be saved",
+            ),
         })?;
     let mut response = Json(committed.workspace).into_response();
     if let Ok(value) = header::HeaderValue::from_str(&committed.event.correlation_id) {
-        response.headers_mut().insert(header::HeaderName::from_static("x-correlation-id"), value);
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static("x-correlation-id"), value);
     }
     Ok(response)
 }
@@ -4029,15 +6093,12 @@ async fn create_workspace_instruction_revision(
         .content_ref
         .get("revision_id")
         .and_then(serde_json::Value::as_str);
-    let ref_has_only_expected_fields = body
-        .content_ref
-        .as_object()
-        .is_some_and(|object| {
-            object.len() == 3
-                && object.contains_key("workspace_id")
-                && object.contains_key("resource_id")
-                && object.contains_key("revision_id")
-        });
+    let ref_has_only_expected_fields = body.content_ref.as_object().is_some_and(|object| {
+        object.len() == 3
+            && object.contains_key("workspace_id")
+            && object.contains_key("resource_id")
+            && object.contains_key("revision_id")
+    });
     if !ref_has_only_expected_fields
         || ref_workspace != Some(workspace_id.as_str())
         || resource_id.is_none_or(str::is_empty)
@@ -4052,20 +6113,44 @@ async fn create_workspace_instruction_revision(
     let resource_id = resource_id.unwrap_or_default();
     let content = state
         .store
-        .read_resource_content_bounded(&workspace_id, resource_id, 64 * 1024)
+        .read_resource_content_bounded(&workspace_id, resource_id, revision_id, 64 * 1024)
         .map_err(|error| {
-            if matches!(error, storage_core::StoreError::Invalid(ref message) if message == "RESOURCE_READ_LIMIT_EXCEEDED") {
-                operator_error(
+            match error {
+                storage_core::StoreError::Invalid(message) if message == "RESOURCE_READ_LIMIT_EXCEEDED" => operator_error(
                     StatusCode::BAD_REQUEST,
                     "INVALID_ARGUMENT",
                     "Instructions must reference a Resource no larger than 64 KiB",
-                )
-            } else {
-                operator_error(
+                ),
+                storage_core::StoreError::Invalid(message) if message == "RESOURCE_CONTENT_EXTERNAL" => operator_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "RESOURCE_CONTENT_EXTERNAL",
+                    "Instructions must reference a Resource stored by the local managed content provider",
+                ),
+                storage_core::StoreError::Invalid(message) if message == "RESOURCE_LOCATION_UNAVAILABLE" => operator_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "RESOURCE_LOCATION_UNAVAILABLE",
+                    "Instruction Resource content is temporarily unavailable",
+                ),
+                storage_core::StoreError::Invalid(message) if message.starts_with("CONTEXT_DOCUMENT_") => operator_error(
+                    StatusCode::CONFLICT,
+                    "CONTEXT_DOCUMENT_NOT_ACTIVE",
+                    "Instruction Resource content is unavailable because its ContextDocument is inactive",
+                ),
+                storage_core::StoreError::Blob(_) | storage_core::StoreError::Io(_) => operator_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "RESOURCE_LOCATION_UNAVAILABLE",
+                    "Instruction Resource content is temporarily unavailable",
+                ),
+                storage_core::StoreError::Integrity(_) => operator_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "INTEGRITY_FAILURE",
                     "Instruction Resource could not be verified",
-                )
+                ),
+                _ => operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Instruction Resource could not be read",
+                ),
             }
         })?
         .ok_or_else(|| {
@@ -4214,13 +6299,14 @@ async fn list_workspace_instruction_revisions(
                     "Instruction history cursor is invalid",
                 )
             })?;
-            let cursor: InstructionHistoryCursor = serde_json::from_slice(&decoded).map_err(|_| {
-                operator_error(
-                    StatusCode::BAD_REQUEST,
-                    "INVALID_ARGUMENT",
-                    "Instruction history cursor is invalid",
-                )
-            })?;
+            let cursor: InstructionHistoryCursor =
+                serde_json::from_slice(&decoded).map_err(|_| {
+                    operator_error(
+                        StatusCode::BAD_REQUEST,
+                        "INVALID_ARGUMENT",
+                        "Instruction history cursor is invalid",
+                    )
+                })?;
             if cursor.workspace_id != workspace_id || cursor.after_revision == 0 {
                 return Err(operator_error(
                     StatusCode::BAD_REQUEST,
@@ -4235,22 +6321,25 @@ async fn list_workspace_instruction_revisions(
         .store
         .list_workspace_instruction_revisions(&workspace_id, after_revision, limit + 1)
         .map_err(|_| {
-        operator_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "INTERNAL",
-            "Workspace instruction history is unavailable",
-        )
-    })?;
-    let has_more = revisions.len() > limit;
-    revisions.truncate(limit);
-    let next_cursor = if has_more {
-        let after_revision = revisions.last().map(|revision| revision.revision).ok_or_else(|| {
             operator_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "INTERNAL",
-                "Instruction history cursor could not be created",
+                "Workspace instruction history is unavailable",
             )
         })?;
+    let has_more = revisions.len() > limit;
+    revisions.truncate(limit);
+    let next_cursor = if has_more {
+        let after_revision = revisions
+            .last()
+            .map(|revision| revision.revision)
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Instruction history cursor could not be created",
+                )
+            })?;
         let encoded = serde_json::to_vec(&InstructionHistoryCursor {
             workspace_id,
             after_revision,
@@ -4275,14 +6364,25 @@ async fn list_workspace_instruction_revisions(
 fn operator_error(status: StatusCode, code: &'static str, message: &'static str) -> Response {
     let correlation_id = new_id("cor").unwrap_or_else(|_| "cor_unavailable".to_owned());
     let retryable = status.is_server_error()
-        || matches!(status, StatusCode::REQUEST_TIMEOUT | StatusCode::TOO_MANY_REQUESTS);
+        || matches!(
+            status,
+            StatusCode::REQUEST_TIMEOUT | StatusCode::TOO_MANY_REQUESTS
+        );
     let mut response = (
         status,
-        Json(OperatorError { code, message, retryable, correlation_id: correlation_id.clone(), details: None }),
+        Json(OperatorError {
+            code,
+            message,
+            retryable,
+            correlation_id: correlation_id.clone(),
+            details: None,
+        }),
     )
         .into_response();
     if let Ok(value) = header::HeaderValue::from_str(&correlation_id) {
-        response.headers_mut().insert(header::HeaderName::from_static("x-correlation-id"), value);
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static("x-correlation-id"), value);
     }
     response
 }
@@ -4312,7 +6412,7 @@ fn event_context(runtime_id: &str, correlation_id: &str) -> Result<EventContext,
 
 #[cfg(test)]
 mod resource_content_search_tests {
-    use super::{content_match_snippet, is_allowlisted_plain_text, MAX_CONTENT_SCAN_SNIPPET_CHARS};
+    use super::{MAX_CONTENT_SCAN_SNIPPET_CHARS, content_match_snippet, is_allowlisted_plain_text};
 
     #[test]
     fn content_scan_accepts_allowlisted_utf8_text_and_rejects_containers() {
@@ -4320,13 +6420,21 @@ mod resource_content_search_tests {
         assert!(is_allowlisted_plain_text("code.rs", "text/plain"));
         assert!(!is_allowlisted_plain_text("archive.zip", "application/zip"));
         assert!(!is_allowlisted_plain_text("report.pdf", "application/pdf"));
-        assert!(!is_allowlisted_plain_text("unknown.bin", "application/octet-stream"));
+        assert!(!is_allowlisted_plain_text(
+            "unknown.bin",
+            "application/octet-stream"
+        ));
     }
 
     #[test]
     fn content_scan_returns_bounded_case_insensitive_utf8_snippet() {
-        let text = format!("{} LiteCowork keeps this result local. {}", "a".repeat(500), "b".repeat(500));
-        let snippet = content_match_snippet(&text, "LITEcowork", MAX_CONTENT_SCAN_SNIPPET_CHARS).expect("matching snippet");
+        let text = format!(
+            "{} LiteCowork keeps this result local. {}",
+            "a".repeat(500),
+            "b".repeat(500)
+        );
+        let snippet = content_match_snippet(&text, "LITEcowork", MAX_CONTENT_SCAN_SNIPPET_CHARS)
+            .expect("matching snippet");
         assert!(snippet.to_ascii_lowercase().contains("litecowork"));
         assert!(snippet.chars().count() <= 320);
     }
@@ -4340,8 +6448,454 @@ mod resource_content_search_tests {
     #[test]
     fn content_scan_rejects_misleading_text_extensions_for_known_rich_media() {
         assert!(!is_allowlisted_plain_text("report.txt", "application/pdf"));
-        assert!(!is_allowlisted_plain_text("report.md", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"));
+        assert!(!is_allowlisted_plain_text(
+            "report.md",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ));
         assert!(!is_allowlisted_plain_text("notes.txt", "image/png"));
-        assert!(is_allowlisted_plain_text("notes.txt", "application/octet-stream"));
+        assert!(is_allowlisted_plain_text(
+            "notes.txt",
+            "application/octet-stream"
+        ));
+    }
+}
+
+#[cfg(test)]
+mod indexed_resource_source_match_tests {
+    use super::{
+        resource_text_match_response, search_result_response, valid_indexed_source_match_bundle,
+    };
+    use storage_core::{
+        ResourceSearchRecord, ResourceSummary, ResourceTextMatchSpan, ResourceTextSearchRecord,
+    };
+
+    fn record() -> ResourceTextSearchRecord {
+        ResourceTextSearchRecord {
+            result: ResourceSearchRecord {
+                summary: ResourceSummary {
+                    resource_id: "resource-1".to_owned(),
+                    workspace_id: "workspace-1".to_owned(),
+                    resource_revision_id: "revision-4".to_owned(),
+                    display_name: "notes.md".to_owned(),
+                    media_type: "text/markdown".to_owned(),
+                    content_digest: format!("sha256:{}", "a".repeat(64)),
+                    size_bytes: 32,
+                    created_at: "2026-10-09T12:00:00Z".to_owned(),
+                },
+                kind: "FILE".to_owned(),
+                location_id: "location-1".to_owned(),
+                availability: "AVAILABLE".to_owned(),
+                writable: false,
+                observed_revision_id: Some("revision-4".to_owned()),
+                observed_digest: Some(format!("sha256:{}", "a".repeat(64))),
+                observed_at: "2026-10-09T12:00:00Z".to_owned(),
+                last_checked_at: None,
+                freshness: "CURRENT".to_owned(),
+                match_reasons: vec!["CONTENT_INDEXED".to_owned()],
+            },
+            resource_revision_id: "revision-4".to_owned(),
+            source_content_digest: format!("sha256:{}", "a".repeat(64)),
+            snippet: "mutex and threads".to_owned(),
+            matched_spans: vec![ResourceTextMatchSpan {
+                term: "mutex".to_owned(),
+                start_utf8_byte: 8,
+                end_utf8_byte_exclusive: 13,
+            }],
+            matched_term_count: 1,
+            parser_id: "utf8-plain-text-v1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn indexed_result_serializes_a_pinned_revision_digest_and_exact_source_spans() {
+        let indexed = record();
+        assert!(valid_indexed_source_match_bundle(&indexed));
+        let matches = indexed
+            .matched_spans
+            .clone()
+            .into_iter()
+            .map(resource_text_match_response)
+            .collect::<Vec<_>>();
+        let response = search_result_response(
+            &indexed.result,
+            Some(indexed.snippet.clone()),
+            indexed.result.match_reasons.clone(),
+            matches,
+        );
+        let json = serde_json::to_value(response).expect("serialize search response");
+        assert_eq!(json["resource_ref"]["workspace_id"], "workspace-1");
+        assert_eq!(json["resource_ref"]["resource_id"], "resource-1");
+        assert_eq!(json["resource_ref"]["revision_id"], "revision-4");
+        assert_eq!(json["source_content_digest"], indexed.source_content_digest);
+        assert_eq!(json["source_matches"][0]["term"], "mutex");
+        assert_eq!(json["source_matches"][0]["start_utf8_byte"], 8);
+        assert_eq!(json["source_matches"][0]["end_utf8_byte_exclusive"], 13);
+    }
+
+    #[test]
+    fn indexed_result_rejects_revision_digest_and_range_mismatches() {
+        let mut mismatch = record();
+        mismatch.resource_revision_id = "newer-head".to_owned();
+        assert!(!valid_indexed_source_match_bundle(&mismatch));
+
+        let mut mismatch = record();
+        mismatch.source_content_digest = format!("sha256:{}", "b".repeat(64));
+        assert!(!valid_indexed_source_match_bundle(&mismatch));
+
+        let mut mismatch = record();
+        mismatch.matched_spans[0].end_utf8_byte_exclusive = 33;
+        assert!(!valid_indexed_source_match_bundle(&mismatch));
+    }
+}
+
+#[cfg(test)]
+mod context_document_status_tests {
+    use super::{ContextDocumentOwnerStatus, parse_context_document_owner_status};
+
+    #[test]
+    fn owner_route_rejects_purge_states_until_purge_is_implemented() {
+        assert_eq!(
+            parse_context_document_owner_status("ACTIVE"),
+            Some(ContextDocumentOwnerStatus::Active)
+        );
+        assert_eq!(
+            parse_context_document_owner_status("REVOKED"),
+            Some(ContextDocumentOwnerStatus::Revoked)
+        );
+        assert_eq!(
+            parse_context_document_owner_status("DELETION_PENDING"),
+            None
+        );
+        assert_eq!(parse_context_document_owner_status("DELETED"), None);
+    }
+}
+
+#[cfg(test)]
+mod task_planning_readiness_tests {
+    use super::{
+        PlanningDispatchBlocker, parse_task_planning_readiness_request,
+        task_planning_readiness_projection,
+    };
+    use axum::{
+        body::to_bytes,
+        http::{HeaderMap, HeaderValue, StatusCode, header},
+    };
+    use domain_task::{CreateStandaloneTask, TaskService};
+    use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
+    use rusqlite::{Connection, params};
+    use serde_json::{Value, json};
+    use std::{fs, path::PathBuf, sync::Arc, time::Duration};
+    use storage_core::{
+        AgentCatalogStore, AgentEndpointRecord, AgentProfileRecord, BlobPurpose, StoreError,
+    };
+    use storage_sqlite::{
+        FileBlobStore, SqliteConfig, SqliteWorkspaceStore, WorkspaceBlobKey,
+        WorkspaceBlobKeyProvider,
+    };
+    use zeroize::Zeroizing;
+
+    const OWNER: &str = "owner-readiness";
+    const OTHER_OWNER: &str = "other-owner";
+    const WORKSPACE: &str = "workspace-readiness";
+    const OTHER_WORKSPACE: &str = "other-workspace-readiness";
+    const TASK: &str = "task-readiness";
+    const BINDING: &str = "binding-readiness";
+    const PROFILE: &str = "profile-readiness";
+    const ENDPOINT: &str = "endpoint-readiness";
+    const NOW: &str = "2026-10-09T12:00:00Z";
+
+    #[derive(Clone)]
+    struct TestKeys;
+
+    impl WorkspaceBlobKeyProvider for TestKeys {
+        fn current_key(
+            &self,
+            _workspace_id: &str,
+            _purpose: BlobPurpose,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            Ok(WorkspaceBlobKey {
+                version: 1,
+                bytes: Zeroizing::new([29_u8; 32]),
+            })
+        }
+
+        fn key_by_version(
+            &self,
+            workspace_id: &str,
+            purpose: BlobPurpose,
+            version: u32,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            if version != 1 {
+                return Err(StoreError::Blob("unknown test key version".to_owned()));
+            }
+            self.current_key(workspace_id, purpose)
+        }
+    }
+
+    struct Fixture {
+        _directory: tempfile::TempDir,
+        database: PathBuf,
+        store: SqliteWorkspaceStore,
+        task_version: u64,
+    }
+
+    fn event(event_id: &str) -> EventContext {
+        EventContext {
+            event_id: event_id.to_owned(),
+            origin_runtime_id: "runtime-readiness".to_owned(),
+            hlc_timestamp: NOW.to_owned(),
+            correlation_id: format!("correlation-{event_id}"),
+            causation_id: None,
+            recorded_at: NOW.to_owned(),
+        }
+    }
+
+    fn fixture() -> Fixture {
+        let directory = tempfile::tempdir().expect("temporary fixture directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("private fixture directory");
+        }
+        let database = directory.path().join("state.sqlite3");
+        let blobs = Arc::new(FileBlobStore::new(directory.path().join("blobs"), TestKeys));
+        let store = SqliteWorkspaceStore::open(
+            &database,
+            blobs,
+            SqliteConfig {
+                writer_queue_capacity: 8,
+                busy_timeout: Duration::from_secs(2),
+            },
+        )
+        .expect("SQLite store opens");
+
+        WorkspaceService::new(store.clone())
+            .create(CreateWorkspace {
+                workspace_id: WORKSPACE.to_owned(),
+                name: "Readiness test workspace".to_owned(),
+                owner_principal_id: OWNER.to_owned(),
+                event: event("workspace-created"),
+            })
+            .expect("Workspace commits");
+        WorkspaceService::new(store.clone())
+            .create(CreateWorkspace {
+                workspace_id: OTHER_WORKSPACE.to_owned(),
+                name: "Other readiness workspace".to_owned(),
+                owner_principal_id: OWNER.to_owned(),
+                event: event("other-workspace-created"),
+            })
+            .expect("second Workspace commits");
+
+        store
+            .put_agent_profile(
+                AgentProfileRecord {
+                    agent_profile_id: PROFILE.to_owned(),
+                    provider_key: "test-native-agent".to_owned(),
+                    display_name: "Test agent".to_owned(),
+                    discovered_at: NOW.to_owned(),
+                },
+                vec![AgentEndpointRecord {
+                    endpoint_id: ENDPOINT.to_owned(),
+                    agent_profile_id: PROFILE.to_owned(),
+                    protocol: "CLI".to_owned(),
+                    topology: "PROCESS_ADAPTER".to_owned(),
+                    protocol_version: Some("test".to_owned()),
+                    capabilities: json!({"input": {"text": true}}),
+                }],
+            )
+            .expect("stable AgentProfile fixture persists");
+
+        // This fixture deliberately has no Runtime endpoint binding/offer. Task
+        // creation is still valid, while planning readiness must report that the
+        // current lead endpoint cannot be resolved. No process/provider is started.
+        let connection = Connection::open(&database).expect("fixture SQLite connection");
+        connection.execute(
+            "INSERT INTO agent_bindings(agent_binding_id, workspace_id, agent_profile_id, runtime_id, endpoint_selection_policy_json, auth_ref, configuration_json, enabled, lead_eligible, created_at, version)
+             VALUES (?1, ?2, ?3, NULL, ?4, NULL, '{}', 1, 1, ?5, 1)",
+            params![BINDING, WORKSPACE, PROFILE,
+                r#"{"mode":"PINNED_ENDPOINT","endpoint_id":"endpoint-readiness","required_features":[],"preferred_topologies":[]}"#,
+                NOW],
+        ).expect("authorized lead binding fixture persists");
+        drop(connection);
+
+        TaskService::new(store.clone())
+            .create_standalone(CreateStandaloneTask {
+                task_id: TASK.to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                workspace_instruction_revision: None,
+                lead_agent_binding_id: BINDING.to_owned(),
+                origin_coworker_id: None,
+                origin_coworker_revision: None,
+                expected_coworker_version: None,
+                coworker_default_lead_failover_policy: None,
+                principal_id: OWNER.to_owned(),
+                request_id: "request-task-readiness".to_owned(),
+                request_payload: json!({
+                    "workspace_id": WORKSPACE,
+                    "objective": "Inspect readiness without starting work",
+                    "preferred_lead_agent_binding_id": BINDING,
+                    "source_message_refs": [],
+                    "constraints": [], "non_goals": [], "input_refs": [],
+                    "required_outputs": [], "acceptance_criteria": [], "approvals_required": [],
+                    "placement_preference": "AUTO",
+                }),
+                event: event("task-created"),
+            })
+            .expect("READY Task commits");
+
+        Fixture {
+            _directory: directory,
+            database,
+            store,
+            task_version: 1,
+        }
+    }
+
+    fn planning_headers(workspace_id: &str, version: Option<&str>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-workspace-id",
+            HeaderValue::from_str(workspace_id).expect("header value"),
+        );
+        if let Some(version) = version {
+            headers.insert(
+                header::IF_MATCH,
+                HeaderValue::from_str(version).expect("version header"),
+            );
+        }
+        headers
+    }
+
+    fn row_counts(database: &PathBuf) -> Vec<(String, i64)> {
+        let connection = Connection::open(database).expect("read-only snapshot connection");
+        [
+            "tasks",
+            "task_spec_revisions",
+            "plan_revisions",
+            "steps",
+            "attempts",
+            "agent_sessions",
+            "execution_leases",
+            "environments",
+            "domain_events",
+        ]
+        .into_iter()
+        .map(|table| {
+            let count = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("count durable rows");
+            (table.to_owned(), count)
+        })
+        .collect()
+    }
+
+    async fn body_json(response: axum::response::Response) -> Value {
+        let bytes = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("bounded response body");
+        serde_json::from_slice(&bytes).expect("JSON response")
+    }
+
+    #[test]
+    fn planning_readiness_requires_workspace_and_current_positive_if_match() {
+        let missing_workspace = HeaderMap::new();
+        let missing_workspace = parse_task_planning_readiness_request(TASK, &missing_workspace)
+            .expect_err("Workspace header required");
+        assert_eq!(missing_workspace.status(), StatusCode::BAD_REQUEST);
+
+        for version in [None, Some("W/\"1\""), Some("\"0\"")] {
+            let headers = planning_headers(WORKSPACE, version);
+            let error = parse_task_planning_readiness_request(TASK, &headers)
+                .expect_err("If-Match must be an exact positive Task version");
+            assert_eq!(error.status(), StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[tokio::test]
+    async fn planning_readiness_enforces_workspace_owner_and_stale_task_version() {
+        let fixture = fixture();
+        let denied = task_planning_readiness_projection(
+            fixture.store.clone(),
+            OTHER_OWNER.to_owned(),
+            "runtime-readiness".to_owned(),
+            "incarnation-readiness".to_owned(),
+            WORKSPACE.to_owned(),
+            TASK.to_owned(),
+            fixture.task_version,
+            NOW.to_owned(),
+        )
+        .expect_err("foreign principal cannot inspect readiness");
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+
+        let cross_workspace = task_planning_readiness_projection(
+            fixture.store.clone(),
+            OWNER.to_owned(),
+            "runtime-readiness".to_owned(),
+            "incarnation-readiness".to_owned(),
+            OTHER_WORKSPACE.to_owned(),
+            TASK.to_owned(),
+            fixture.task_version,
+            NOW.to_owned(),
+        )
+        .expect_err("a Task cannot be read through another owned Workspace");
+        assert_eq!(cross_workspace.status(), StatusCode::NOT_FOUND);
+
+        let stale = task_planning_readiness_projection(
+            fixture.store.clone(),
+            OWNER.to_owned(),
+            "runtime-readiness".to_owned(),
+            "incarnation-readiness".to_owned(),
+            WORKSPACE.to_owned(),
+            TASK.to_owned(),
+            fixture.task_version + 1,
+            NOW.to_owned(),
+        )
+        .expect_err("stale Task version rejected");
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        assert_eq!(body_json(stale).await["code"], "STALE_TASK_VERSION");
+    }
+
+    #[tokio::test]
+    async fn blocker_projection_is_no_store_and_does_not_create_execution_or_provider_state() {
+        let fixture = fixture();
+        let before = row_counts(&fixture.database);
+        let response = task_planning_readiness_projection(
+            fixture.store.clone(),
+            OWNER.to_owned(),
+            "runtime-readiness".to_owned(),
+            "incarnation-readiness".to_owned(),
+            WORKSPACE.to_owned(),
+            TASK.to_owned(),
+            fixture.task_version,
+            NOW.to_owned(),
+        )
+        .expect("owner may read sanitized readiness");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
+        let body = body_json(response).await;
+        assert_eq!(body["task_id"], TASK);
+        assert_eq!(body["task_version"], fixture.task_version);
+        assert_eq!(body["task_status"], "READY");
+        assert_eq!(body["dispatch_available"], false);
+        assert_eq!(body["planning_started"], false);
+        assert_eq!(body["agent_session_started"], false);
+        assert_eq!(body["plan_created"], false);
+        assert_eq!(
+            body["blockers"],
+            json!([PlanningDispatchBlocker::CurrentLeadOrEndpointUnavailable])
+        );
+        assert!(body.get("planning_packet").is_none());
+        assert!(body.get("endpoint_id").is_none());
+        assert_eq!(row_counts(&fixture.database), before);
     }
 }

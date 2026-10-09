@@ -96,6 +96,25 @@ Never log raw secrets, tokens, cookies or unredacted provider credentials.
 - due occurrences waiting for Runtime/resources and wait duration
 - Routine materialization failures and pinned-revision conflicts
 
+### User-visible responsiveness and presentation
+
+- Conversation submit-to-first-useful-text and submit-to-committed-message latency, split
+  into admission, host startup, agent response, and persistence where observable
+- Task critical-path latency split into admission, preparation, planning, execution,
+  verification, and Artifact publication; report p50/p95 by bounded TaskCategory
+- rich-presentation policy decision and HostSkill delivery mode/outcome
+- rich-presentation compile duration, compile outcome/fallback reason, document bytes, and
+  bounded block-count bucket
+- rich-presentation blob fetch latency/integrity failures and renderer errors by block kind
+- rich-draft queue bytes/depth, coalesced delta count, resync count, and dropped-draft count
+- Artifact bundle build duration/outcome/bytes and digest-verification failures
+- time from committed semantic Message to first paint and optional enhancement to first paint
+
+Measure the LiteCowork control-plane contribution separately from native provider/model
+latency. Use bounded outcome/category labels; never place prompts, message text, Artifact
+names, URLs, raw model IDs, or Resource IDs in metric labels. Rendering failure is an
+optional enhancement failure and must not be counted as Conversation failure.
+
 ### Delegation, budget, and prewarm
 
 - delegation_admission_total by bounded outcome/error class and selection mode

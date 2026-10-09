@@ -1,6 +1,4 @@
-use super::{
-    AgentInstallation, AuthenticationReadiness, SessionReadiness, discover_version,
-};
+use super::{AgentInstallation, AuthenticationReadiness, SessionReadiness, discover_version};
 
 pub(super) fn discover() -> AgentInstallation {
     // OpenCode's documented `--version` flag prints the version number itself,

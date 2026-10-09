@@ -8,7 +8,7 @@ type Props = {
   onCancel: () => void;
   onSaved: (automation: Automation, action: "created" | "revised") => void;
 };
-type TriggerKind = "SCHEDULE" | "ONE_SHOT";
+type TriggerKind = "SCHEDULE" | "ONE_SHOT" | "MANUAL";
 type RetryPolicy = AutomationExecutionPolicy["retry_policy"];
 const MAX_ROUTINE_REVISION_PAGES = 100;
 const CRON_FIELD = "[0-9*/,-]+";
@@ -57,6 +57,7 @@ function decodeTrigger(existing: AutomationRevision | undefined): { kind: Trigge
     misfire: trigger.misfire_policy && typeof trigger.misfire_policy === "object"
       && (trigger.misfire_policy as Record<string, unknown>).kind === "RUN_ONCE_WHEN_AVAILABLE" ? "RUN_ONCE_WHEN_AVAILABLE" : "SKIP",
   };
+  if (trigger?.kind === "MANUAL") return { kind: "MANUAL", cron: "0 9 * * 1-5", timezone: currentTimezone(), scheduledAt: "", misfire: "SKIP" };
   return { kind: "SCHEDULE", cron: "0 9 * * 1-5", timezone: currentTimezone(), scheduledAt: "", misfire: "SKIP" };
 }
 function defaultPolicy(): AutomationExecutionPolicy {
@@ -212,6 +213,12 @@ export function AutomationEditor({ api, workspaceId, existing, onCancel, onSaved
 
   const buildTriggers = (): TriggerSpec[] => {
     if (existing && !replaceTriggerSet) return existing.revision.triggers;
+    if (triggerKind === "MANUAL") {
+      const existingSpec = existing?.revision.triggers.length === 1 ? existing.revision.triggers[0] : null;
+      const existingDef = existingSpec?.trigger && typeof existingSpec.trigger === "object" ? existingSpec.trigger as Record<string, unknown> : null;
+      const id = existingDef?.kind === "MANUAL" && typeof existingSpec?.trigger_id === "string" ? existingSpec.trigger_id : randomTriggerId();
+      return [{ trigger_id: id, placement: "AUTO", runtime_id: null, trigger: { kind: "MANUAL" } }];
+    }
     if (triggerKind === "SCHEDULE") {
       if (!CRON_FIVE_FIELDS.test(cron.trim()) || cron.trim().length > 128) throw new Error("Enter a five-field cron expression using bounded numeric syntax (maximum 128 characters).");
       if (!timezone.trim() || timezone.length > 80) throw new Error("Enter an IANA time zone (maximum 80 characters).");
@@ -332,12 +339,12 @@ export function AutomationEditor({ api, workspaceId, existing, onCancel, onSaved
           <small>Replacing the set removes its current trigger IDs and creates one new trigger. Existing triggers are otherwise preserved without edits.</small>
         </div>}
         {(!existing || replaceTriggerSet) && <fieldset className="automation-fieldset"><legend>Trigger definition</legend>
-          <div className="automation-trigger-kinds" role="group" aria-label="Trigger type"><button type="button" className={triggerKind === "SCHEDULE" ? "selected" : ""} disabled={saving} onClick={() => setTriggerKind("SCHEDULE")}>Recurring schedule</button><button type="button" className={triggerKind === "ONE_SHOT" ? "selected" : ""} disabled={saving} onClick={() => setTriggerKind("ONE_SHOT")}>One time</button></div>
+          <div className="automation-trigger-kinds" role="group" aria-label="Trigger type"><button type="button" className={triggerKind === "SCHEDULE" ? "selected" : ""} disabled={saving} onClick={() => setTriggerKind("SCHEDULE")}>Recurring schedule</button><button type="button" className={triggerKind === "ONE_SHOT" ? "selected" : ""} disabled={saving} onClick={() => setTriggerKind("ONE_SHOT")}>One time</button><button type="button" className={triggerKind === "MANUAL" ? "selected" : ""} disabled={saving} onClick={() => setTriggerKind("MANUAL")}>Manual</button></div>
           {triggerKind === "SCHEDULE" ? <>
             <label className="automation-field"><span>Cron schedule · five fields</span><input value={cron} maxLength={128} onChange={event => setCron(event.currentTarget.value)} placeholder="0 9 * * 1-5"/><small>Syntax is bounded here; provider scheduling and timezone execution are not active.</small></label>
             <label className="automation-field"><span>IANA time zone</span><input value={timezone} maxLength={80} onChange={event => setTimezone(event.currentTarget.value)} placeholder="America/New_York"/></label>
-          </> : <label className="automation-field"><span>Scheduled date and time</span><input type="datetime-local" value={scheduledAt} onChange={event => setScheduledAt(event.currentTarget.value)} /></label>}
-          <label className="automation-field"><span>Missed trigger policy</span><select value={misfire} onChange={event => setMisfire(event.currentTarget.value as typeof misfire)}><option value="SKIP">Skip missed time</option><option value="RUN_ONCE_WHEN_AVAILABLE">One run when available</option></select><small>This is saved policy only. This build does not schedule occurrences.</small></label>
+          </> : triggerKind === "ONE_SHOT" ? <label className="automation-field"><span>Scheduled date and time</span><input type="datetime-local" value={scheduledAt} onChange={event => setScheduledAt(event.currentTarget.value)} /></label> : <p className="automation-policy-note">Manual trigger only. Saving keeps this definition paused. You can explicitly create one READY Task from the definition; no schedule is started.</p>}
+          {triggerKind !== "MANUAL" && <label className="automation-field"><span>Missed trigger policy</span><select value={misfire} onChange={event => setMisfire(event.currentTarget.value as typeof misfire)}><option value="SKIP">Skip missed time</option><option value="RUN_ONCE_WHEN_AVAILABLE">One run when available</option></select><small>This is saved policy only. This build does not schedule occurrences.</small></label>}
         </fieldset>}
 
         <fieldset className="automation-fieldset"><legend>Execution policy</legend>

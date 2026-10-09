@@ -65,10 +65,8 @@ impl RawDirectoryIdentity {
             "litecowork.local-filesystem.filesystem.v1",
             &filesystem_bytes,
         );
-        let file_pseudonym = runtime_identity.keyed_pseudonym(
-            "litecowork.local-filesystem.file.v1",
-            &file_material,
-        );
+        let file_pseudonym =
+            runtime_identity.keyed_pseudonym("litecowork.local-filesystem.file.v1", &file_material);
         let identity = serde_json::json!({
             "filesystem_instance_id": format!("sha256:{filesystem_pseudonym}"),
             "volume_id": null,
@@ -142,8 +140,10 @@ impl OpenedDirectorySelection {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             let reopened = open_absolute_directory_without_symlinks(&self.canonical_path)?;
-            let current = rustix::fs::fstat(&reopened).map_err(|_| LocalDirectoryError::OpenFailed)?;
-            let retained = rustix::fs::fstat(&self.handle).map_err(|_| LocalDirectoryError::OpenFailed)?;
+            let current =
+                rustix::fs::fstat(&reopened).map_err(|_| LocalDirectoryError::OpenFailed)?;
+            let retained =
+                rustix::fs::fstat(&self.handle).map_err(|_| LocalDirectoryError::OpenFailed)?;
             if current.st_mode & DIRECTORY_TYPE_MASK != DIRECTORY_TYPE
                 || current.st_dev != retained.st_dev
                 || current.st_ino != retained.st_ino
@@ -192,8 +192,8 @@ pub(crate) fn open_selected_directory(
     selected_path: &Path,
 ) -> Result<OpenedDirectorySelection, LocalDirectoryError> {
     validate_selection_path(selected_path)?;
-    let selected_metadata = std::fs::symlink_metadata(selected_path)
-        .map_err(|_| LocalDirectoryError::OpenFailed)?;
+    let selected_metadata =
+        std::fs::symlink_metadata(selected_path).map_err(|_| LocalDirectoryError::OpenFailed)?;
     if selected_metadata.file_type().is_symlink() {
         return Err(LocalDirectoryError::InvalidSelection);
     }
@@ -230,7 +230,11 @@ pub(crate) fn open_selected_directory(
             identity: RawDirectoryIdentity {
                 filesystem_instance_id: metadata.st_dev as u64,
                 file_id: metadata.st_ino as u64,
-                platform_kind: if cfg!(target_os = "macos") { "MACOS_DEVICE_INODE" } else { "LINUX_DEVICE_INODE" },
+                platform_kind: if cfg!(target_os = "macos") {
+                    "MACOS_DEVICE_INODE"
+                } else {
+                    "LINUX_DEVICE_INODE"
+                },
             },
         })
     }
@@ -274,7 +278,10 @@ pub(crate) fn reopen_saved_directory(
         if metadata.st_mode & DIRECTORY_TYPE_MASK != DIRECTORY_TYPE {
             return Err(LocalDirectoryError::NotDirectory);
         }
-        if display_name.trim().is_empty() || display_name.chars().any(char::is_control) || display_name.len() > 255 {
+        if display_name.trim().is_empty()
+            || display_name.chars().any(char::is_control)
+            || display_name.len() > 255
+        {
             return Err(LocalDirectoryError::InvalidSelection);
         }
         Ok(OpenedDirectorySelection {
@@ -285,7 +292,11 @@ pub(crate) fn reopen_saved_directory(
             identity: RawDirectoryIdentity {
                 filesystem_instance_id: metadata.st_dev as u64,
                 file_id: metadata.st_ino as u64,
-                platform_kind: if cfg!(target_os = "macos") { "MACOS_DEVICE_INODE" } else { "LINUX_DEVICE_INODE" },
+                platform_kind: if cfg!(target_os = "macos") {
+                    "MACOS_DEVICE_INODE"
+                } else {
+                    "LINUX_DEVICE_INODE"
+                },
             },
         })
     }
@@ -301,7 +312,10 @@ fn validate_selection_path(path: &Path) -> Result<(), LocalDirectoryError> {
         || path.as_os_str().is_empty()
         || path.as_os_str().len() > MAX_SELECTION_PATH_BYTES
         || path.components().any(|component| {
-            matches!(component, Component::CurDir | Component::ParentDir | Component::Prefix(_))
+            matches!(
+                component,
+                Component::CurDir | Component::ParentDir | Component::Prefix(_)
+            )
         })
     {
         return Err(LocalDirectoryError::InvalidSelection);

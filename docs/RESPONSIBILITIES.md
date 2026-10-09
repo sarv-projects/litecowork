@@ -284,6 +284,23 @@ Suggestion {
   result_task_id?: TaskId
   version: u64
 }
+
+SuggestionTaskAcceptanceReceipt {
+  workspace_id: WorkspaceId
+  disposition: CREATED | REPLAYED
+  suggestion: {
+    suggestion_id: SuggestionId
+    status: ACCEPTED
+    result_task_id: TaskId
+    version: u64
+  }
+  task: {
+    task_id: TaskId
+    workspace_id: WorkspaceId
+    status: READY
+    version: u64
+  }
+}
 ```
 
 `kind` is derived deterministically from `proposed_action`: `TASK` maps to
@@ -298,6 +315,16 @@ show it immediately.
 
 Every source reference pins an exact Resource revision, and every Goal reference pins an
 exact Goal revision. This preserves why the proposal was made if inputs later change.
+
+Accepting a TASK proposal returns only a bounded `SuggestionTaskAcceptanceReceipt`, not a
+full Suggestion or Task payload. The receipt repeats the Workspace and Task identities on
+both sides of the link so clients can validate that the Suggestion is `ACCEPTED`, its
+`result_task_id` equals the returned Task ID, and that Task is still the newly committed
+`READY` Task. `CREATED` is produced from the atomic write transaction. An exact
+idempotency replay returns `REPLAYED` from the persisted Task creation receipt and
+accepted Suggestion read together in one authorized SQLite transaction; a different
+request key cannot use an accepted Suggestion as a Task lookup. A later Task status change
+does not rewrite the original acceptance receipt.
 
 Workspace suggestion preferences may mute any SuggestionKind. Muting atomically resolves
 currently proposed Suggestions of that kind as `DISMISSED`, then suppresses new proposals

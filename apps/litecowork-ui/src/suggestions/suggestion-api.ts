@@ -27,6 +27,22 @@ export type Suggestion = {
   version: number;
 };
 export type SuggestionPage = { items: Suggestion[]; next_cursor: string | null };
+export type SuggestionTaskAcceptanceReceipt = {
+  workspace_id: string;
+  disposition: "CREATED" | "REPLAYED";
+  suggestion: {
+    suggestion_id: string;
+    status: "ACCEPTED";
+    result_task_id: string;
+    version: number;
+  };
+  task: {
+    task_id: string;
+    workspace_id: string;
+    status: "READY";
+    version: number;
+  };
+};
 export type SuggestionTransport = (workspaceId: string, visibility: SuggestionVisibility, cursor?: string, signal?: AbortSignal) => Promise<unknown>;
 export type SuggestionOwnerAction = "dismiss" | "snooze" | "unsnooze";
 export type SuggestionActionTransport = (workspaceId: string, suggestionId: string, operation: SuggestionOwnerAction, expectedVersion: number, requestId: string, snoozedUntil?: string) => Promise<unknown>;
@@ -34,11 +50,13 @@ export type SuggestionAcceptTaskTransport = (workspaceId: string, suggestionId: 
 export type SuggestionPreferenceTransport = (workspaceId: string) => Promise<unknown>;
 export type SuggestionPreferenceUpdateTransport = (workspaceId: string, kind: SuggestionKind, muted: boolean, expectedVersion: number, requestId: string) => Promise<unknown>;
 export interface SuggestionApi {
+  /** Stable scope used to bind process-local mutation recovery across API recreation. */
+  readonly workspaceId: string;
   list(visibility?: SuggestionVisibility, cursor?: string, signal?: AbortSignal): Promise<SuggestionPage>;
   dismiss(suggestionId: string, expectedVersion: number, requestId: string): Promise<Suggestion>;
   snooze(suggestionId: string, expectedVersion: number, requestId: string, until: string): Promise<Suggestion>;
   unsnooze(suggestionId: string, expectedVersion: number, requestId: string): Promise<Suggestion>;
-  acceptTask(suggestionId: string, expectedVersion: number, requestId: string): Promise<string>;
+  acceptTask(suggestionId: string, expectedVersion: number, requestId: string): Promise<SuggestionTaskAcceptanceReceipt>;
   preferences(): Promise<SuggestionPreference[]>;
   setPreference(kind: SuggestionKind, muted: boolean, expectedVersion: number, requestId: string): Promise<SuggestionPreference>;
 }
@@ -144,13 +162,58 @@ function decodePreferenceActionResponse(value: unknown, workspaceId: string): Su
   return decodePreference(body, workspaceId);
 }
 
+function decodeSuggestionTaskAcceptanceReceipt(
+  value: unknown,
+  workspaceId: string,
+  suggestionId: string,
+  expectedVersion: number,
+): SuggestionTaskAcceptanceReceipt {
+  const receipt = object(value);
+  const suggestion = object(receipt.suggestion);
+  const task = object(receipt.task);
+  const disposition = text(receipt.disposition);
+  const resultTaskId = text(suggestion.result_task_id);
+  const taskId = text(task.task_id);
+  const suggestionVersion = suggestion.version;
+  const taskVersion = task.version;
+  if (text(receipt.workspace_id) !== workspaceId
+      || text(suggestion.suggestion_id) !== suggestionId
+      || text(suggestion.status) !== "ACCEPTED"
+      || resultTaskId !== taskId
+      || text(task.workspace_id) !== workspaceId
+      || text(task.status) !== "READY"
+      || !["CREATED", "REPLAYED"].includes(disposition)
+      || typeof suggestionVersion !== "number" || !Number.isSafeInteger(suggestionVersion)
+      || suggestionVersion !== expectedVersion + 1
+      || typeof taskVersion !== "number" || !Number.isSafeInteger(taskVersion) || taskVersion < 1) {
+    throw new SuggestionApiError("Local Runtime returned a mismatched Suggestion acceptance receipt.");
+  }
+  return {
+    workspace_id: workspaceId,
+    disposition: disposition as SuggestionTaskAcceptanceReceipt["disposition"],
+    suggestion: {
+      suggestion_id: suggestionId,
+      status: "ACCEPTED",
+      result_task_id: resultTaskId,
+      version: suggestionVersion,
+    },
+    task: {
+      task_id: taskId,
+      workspace_id: workspaceId,
+      status: "READY",
+      version: taskVersion,
+    },
+  };
+}
+
 export function createSuggestionApi(workspaceId: string, transport: SuggestionTransport, actionTransport: SuggestionActionTransport, acceptTaskTransport: SuggestionAcceptTaskTransport, preferenceTransport: SuggestionPreferenceTransport, preferenceUpdateTransport: SuggestionPreferenceUpdateTransport): SuggestionApi {
-  if (!workspaceId) throw new Error("Select a Workspace before viewing suggestions.");
+  if (!workspaceId.trim()) throw new Error("Select a Workspace before viewing suggestions.");
   const mutate = async (id: string, version: number, requestId: string, operation: SuggestionOwnerAction, until?: string) => {
     if (!id || !Number.isSafeInteger(version) || version < 1 || !requestId) throw new SuggestionApiError("Suggestion action is invalid.");
     return decodeActionResponse(await actionTransport(workspaceId, id, operation, version, requestId, until), workspaceId);
   };
   return {
+    workspaceId,
     async list(visibility = "VISIBLE", cursor, signal) {
       const raw = object(await transport(workspaceId, visibility, cursor, signal));
       if (!Array.isArray(raw.items) || (raw.next_cursor != null && typeof raw.next_cursor !== "string")) throw new SuggestionApiError("Local Runtime returned an invalid suggestion page.");
@@ -161,9 +224,9 @@ export function createSuggestionApi(workspaceId: string, transport: SuggestionTr
     unsnooze: (id, version, requestId) => mutate(id, version, requestId, "unsnooze"),
     async acceptTask(id, version, requestId) {
       if (!id || !Number.isSafeInteger(version) || version < 1 || !requestId) throw new SuggestionApiError("Suggestion acceptance is invalid.");
-      const taskId = await acceptTaskTransport(workspaceId, id, version, requestId);
-      if (typeof taskId !== "string" || taskId.trim().length === 0) throw new SuggestionApiError("Local Runtime returned an invalid accepted Task.");
-      return taskId;
+      return decodeSuggestionTaskAcceptanceReceipt(
+        await acceptTaskTransport(workspaceId, id, version, requestId), workspaceId, id, version,
+      );
     },
     async preferences() {
       const page = object(await preferenceTransport(workspaceId));

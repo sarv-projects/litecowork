@@ -425,6 +425,19 @@ Opening a Routine/Automation editor can resolve the Suggestion as accepted, but 
 remains an explicit command to the owning service. Dismissal and expiry are terminal;
 late acceptance returns `SUGGESTION_EXPIRED` and creates no work.
 
+TASK acceptance returns a bounded `SuggestionTaskAcceptanceReceipt`. The write
+transaction constructs the `CREATED` receipt from the accepted Suggestion snapshot and
+the newly committed `READY` Task. A retry with the same authenticated principal,
+Workspace, Suggestion, expected Suggestion version, and Idempotency-Key returns
+`REPLAYED` from the stored Task creation receipt and accepted Suggestion read together
+in one authorized SQLite transaction. The replay validates the key-derived Task identity,
+the Suggestion's terminal `ACCEPTED` state and `result_task_id`, and the original Task
+creation response; it does not read a potentially advanced Task projection or use the
+current Coworker revision to reconstruct the Task. Reusing a different key is a conflict.
+The receipt's Task status is the original `READY` creation state, not a claim about the
+Task's current status. This response projection adds no domain event and does not change
+the atomic `task.created.v1` plus `suggestion.resolved.v1` transition.
+
 Snoozing is a versioned visibility update on a `PROPOSED` Suggestion, not a status
 transition. `snoozed_until` must be in the future and no later than `expires_at`; the
 event is committed before the card is hidden. Expiry wins over a later snooze. Workspace
@@ -760,6 +773,11 @@ Resource, and emits CONTENT_RECEIVED -> COMMITTED. TTL expiry advances only life
 
 `TRANSIENT -> SAVED -> ARCHIVED`
 
+The local Library command source preserves content/Resource heads and emits exactly one
+matching transition event per successful status change. Replays return the original result;
+a fresh already-archived archive checks expected version first and emits no event. Linked
+provider state is outside these local metadata transitions.
+
 ArtifactStore owns Library state. Promotion changes TRANSIENT to SAVED; archive changes SAVED to ARCHIVED and is terminal in v1. Both transitions require the expected Artifact aggregate version and increment it; archive is idempotent and emits no duplicate transition event. Existing ArtifactVersion records and authorized reads remain available after archive. ArtifactVersion is immutable and append-only. Publishing requires the expected Artifact aggregate version, assigns the next integer version, and advances current_version atomically; a concurrent publisher receives STALE_VERSION and cannot silently replace or branch another Attempt's version.
 
 Each Artifact owns one stable `ARTIFACT` Resource. Every ArtifactVersion maps to one
@@ -992,7 +1010,18 @@ future `PENDING` schedule. The unique
 even when an Automation has a newer revision. Task creation, pinned Routine provenance,
 and occurrence Task reference commit atomically. Every successful claim increments
 `claim_epoch`; materialize/settle commands must present that epoch, so an expired claimant
-cannot commit after a later claimant has taken over.
+cannot commit after a later claimant has taken over. `AutomationOccurrence.version` is a
+separate aggregate revision and advances by exactly one for every persisted transition:
+creation is version 1; claim, expiry requeue, materialization, dependency wait/resume, and
+terminal settlement each increment it once. A successful claim also increments
+`claim_epoch`; requeue/materialization/dependency transitions/settlement preserve it.
+Event and snapshot `entity_revision` equal the resulting occurrence `version`, never
+`claim_epoch`.
+
+For the local owner ManualTrigger path, `STARTED` specifically means the occurrence has
+atomically linked an ordinary Task in `READY`. It does not assert a Plan, Step, Attempt,
+AgentSession, or execution lease exists. Task state remains authoritative for planning and
+execution progress; occurrence settlement later projects terminal Task outcomes.
 
 Each AutomationRevision contains one or more stable TriggerSpecs with independent `ANY`
 semantics. TriggerCoordinator owns one fenced host/cursor per trigger. Cursor advancement,
@@ -1226,3 +1255,16 @@ with cancellation reason. A waiting occurrence with a materialized Task cannot b
 until cancellation/reconciliation has settled that Task. Task pause, NEEDS_USER, VERIFYING
 or recoverable failure does not falsely settle an occurrence. Once started, Task blockers
 are shown from Task state; occurrence STARTED is not a claim of uninterrupted execution.
+
+## RichPresentation
+
+```text
+ABSENT -> PUBLISHED (version 1, terminal and immutable)
+```
+
+ConversationService publishes only after the exact AGENT ConversationMessage has
+committed. Publication binds same Workspace/Conversation/Message identity and the
+semantic-content digest. There is no update/delete/revoke transition in v1; a correction
+to the answer is a new ConversationMessage with an optional new RichPresentation. Missing
+or unsupported content is a read/availability condition, not a domain-state rollback.
+No turn or Task transition waits for this aggregate.
