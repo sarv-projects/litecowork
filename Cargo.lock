@@ -1087,6 +1087,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hex",
  "http-body",
+ "linux-process-scope",
  "operator-ipc",
  "rusqlite",
  "rustix",

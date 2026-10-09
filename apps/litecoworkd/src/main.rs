@@ -1,4 +1,5 @@
 mod agents;
+mod attempt_process_scope;
 mod local_filesystem;
 mod operator;
 mod runtime;

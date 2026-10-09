@@ -153,3 +153,47 @@ fn systemd_scope_kills_descendants_before_confirming_quiescence() {
     );
     assert_attempt_slice_stopped(0x72);
 }
+
+#[test]
+#[ignore = "requires a live Linux systemd user manager and delegated cgroup v2"]
+fn parent_exit_does_not_prove_quiescence_while_descendant_continues() {
+    let temp = tempfile::tempdir().expect("temporary fixture directory");
+    let mut scope = spawn(
+        &systemd_commands(),
+        spec(
+            temp.path().to_path_buf(),
+            0x73,
+            "sleep 2 & child=$!; echo descendant:$child; exit 0",
+        ),
+    )
+    .expect("fixture starts in a managed scope");
+
+    let child = scope.child_mut().expect("managed child");
+    let mut stdout = BufReader::new(child.stdout.as_mut().expect("captured stdout"));
+    let mut line = String::new();
+    stdout.read_line(&mut line).expect("read descendant PID");
+    let descendant_pid = line
+        .strip_prefix("descendant:")
+        .expect("fixture reports descendant")
+        .trim()
+        .parse::<u32>()
+        .expect("PID is numeric");
+    drop(stdout);
+
+    let parent_status = loop {
+        if let Some(status) = scope.try_wait().expect("observe direct child") {
+            break status;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(parent_status.success(), "fixture parent exits successfully");
+    assert!(PathBuf::from(format!("/proc/{descendant_pid}")).exists());
+
+    let started = std::time::Instant::now();
+    scope
+        .wait_for_quiescence(Duration::from_secs(10))
+        .expect("recursive cgroup emptiness follows the descendant exit");
+    assert!(started.elapsed() >= Duration::from_millis(1_000));
+    assert!(!PathBuf::from(format!("/proc/{descendant_pid}")).exists());
+    assert_attempt_slice_stopped(0x73);
+}

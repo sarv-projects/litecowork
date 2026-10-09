@@ -1,4 +1,5 @@
 use crate::{
+    attempt_process_scope::AttemptProcessScopeJournal,
     local_filesystem::{LocalDirectoryError, reopen_saved_directory},
     operator::OperatorServer,
 };
@@ -265,6 +266,17 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
         "TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned(),
         "TRUST_EFFECT_RECONCILIATION_NOT_INTEGRATED".to_owned(),
     ];
+    let process_scope_recovery = AttemptProcessScopeJournal::open(
+        &data_directory.join("attempt-process-scopes"),
+    )
+    .and_then(|journal| journal.incomplete_records());
+    match process_scope_recovery {
+        Ok(records) if !records.is_empty() => {
+            blockers.push("ATTEMPT_PROCESS_SCOPE_RECOVERY_REQUIRED".to_owned());
+        }
+        Ok(_) => {}
+        Err(_) => blockers.push("ATTEMPT_PROCESS_SCOPE_IDENTITY_UNAVAILABLE".to_owned()),
+    }
     state.transition(RuntimeState::Degraded, blockers.clone());
     persist_incarnation_transition(
         &storage.store,

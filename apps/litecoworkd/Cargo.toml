@@ -20,6 +20,7 @@ fs2 = "0.4"
 getrandom = "0.3"
 hex = "0.4"
 http-body = "1.0"
+linux-process-scope = { path = "../../crates/linux-process-scope" }
 operator-ipc = { path = "../../crates/operator-ipc" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
