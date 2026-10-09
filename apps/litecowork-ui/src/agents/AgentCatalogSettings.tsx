@@ -102,6 +102,9 @@ type ProbeDiagnostic = {
   sessionStart?: string;
   hostProcessStopped?: boolean;
   writerQuiescenceProven?: boolean;
+  conversationEligibility?: string;
+  conversationDiagnostic?: string;
+  conversationBlockers?: string[];
 };
 
 type OpenCodeProviderDisplay = {
@@ -206,6 +209,8 @@ function codexProbeDiagnostic(observation: AgentProfileObservation | undefined):
   const listed = Array.isArray(constraints.listed_model_options)
     ? constraints.listed_model_options.slice(0, 32)
     : [];
+  const safety = recordValue(constraints.conversation_eligibility);
+  const blockersValue = Array.isArray(safety?.blockers) ? safety.blockers.slice(0, 8) : [];
   return {
     readiness,
     failure: enumValue(constraints.failure, ["INVALID_ADMISSION", "HOST_UNAVAILABLE", "PROTOCOL_TIMEOUT", "PROTOCOL_REJECTED", "UNSAFE_SERVER_REQUEST", "HOST_STOP_UNOBSERVED"]),
@@ -219,7 +224,29 @@ function codexProbeDiagnostic(observation: AgentProfileObservation | undefined):
     sessionStart: enumValue(constraints.session_start, ["SUPPORTED", "REJECTED", "UNKNOWN", "NOT_PROBED"]),
     hostProcessStopped: typeof constraints.host_process_stopped === "boolean" ? constraints.host_process_stopped : undefined,
     writerQuiescenceProven: typeof constraints.writer_quiescence_proven === "boolean" ? constraints.writer_quiescence_proven : undefined,
+    conversationEligibility: enumValue(safety?.status, ["ELIGIBLE", "NOT_ELIGIBLE"]),
+    conversationDiagnostic: enumValue(safety?.diagnostic_code, ["CODEX_CONVERSATION_SAFETY_UNQUALIFIED"]),
+    conversationBlockers: blockersValue.flatMap((value) => typeof value === "string" && [
+      "RESTRICTED_READ_ROOTS_NOT_QUALIFIED",
+      "READ_ONLY_WRITE_BOUNDARY_NOT_QUALIFIED",
+      "SHELL_NETWORK_BOUNDARY_NOT_QUALIFIED",
+      "NATIVE_MCP_TOOLS_NOT_DISABLED",
+      "NATIVE_APP_TOOLS_NOT_DISABLED",
+      "NATIVE_PLUGINS_AND_HOOKS_NOT_DISABLED",
+    ].includes(value) ? [value] : []),
   };
+}
+
+function conversationBlockerLabel(value: string): string {
+  switch (value) {
+    case "RESTRICTED_READ_ROOTS_NOT_QUALIFIED": return "File reads are not proven to stay within an explicit allowed root.";
+    case "READ_ONLY_WRITE_BOUNDARY_NOT_QUALIFIED": return "The read-only write boundary is not qualified.";
+    case "SHELL_NETWORK_BOUNDARY_NOT_QUALIFIED": return "Shell network access is not proven disabled.";
+    case "NATIVE_MCP_TOOLS_NOT_DISABLED": return "Native MCP tools are not proven disabled or mediated.";
+    case "NATIVE_APP_TOOLS_NOT_DISABLED": return "Native app tools are not proven disabled or mediated.";
+    case "NATIVE_PLUGINS_AND_HOOKS_NOT_DISABLED": return "Native plugins and hooks are not proven disabled or mediated.";
+    default: return "A required Conversation safety control is not qualified.";
+  }
 }
 
 function observationLabel(value: string | undefined): string {
@@ -595,9 +622,15 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
                     <div><dt>Model catalog</dt><dd>{probe.modelCatalog === "OBSERVED" ? `Observed · ${probe.modelCount ?? 0}${probe.modelCatalogTruncated ? "+" : ""} options` : "Unknown"}</dd></div>
                     <div><dt>Inference access</dt><dd>Not tested</dd></div>
                     <div><dt>Session start</dt><dd>{observationLabel(probe.sessionStart)}</dd></div>
+                    <div><dt>Conversation turns</dt><dd>{probe.conversationEligibility === "ELIGIBLE" ? "Eligible under qualified safety controls" : "Not eligible · safety controls not qualified"}</dd></div>
                     <div><dt>Probe host</dt><dd>{probe.hostProcessStopped === true ? "Direct process stopped" : probe.hostProcessStopped === false ? "Stop not confirmed" : "Not reported"}</dd></div>
                     <div><dt>Writer quiescence</dt><dd>{probe.writerQuiescenceProven === true ? "Reported proven" : "Not proven"}</dd></div>
                   </dl>
+                  {probe.conversationEligibility !== "ELIGIBLE" && <div className="agent-catalog__safety-blocker" role="note">
+                    <strong>Codex Conversation turns are unavailable on this profile.</strong>
+                    <ul>{(probe.conversationBlockers ?? []).map((blocker) => <li key={blocker}>{conversationBlockerLabel(blocker)}</li>)}</ul>
+                    {probe.conversationDiagnostic && <small>Diagnostic: {probe.conversationDiagnostic}</small>}
+                  </div>}
                   <p>These are bounded read-only observations. A listed model is not proof of entitlement or successful inference; this probe does not test a work session or safe switching.</p>
                 </details>}
                 {openCodeProbe && <details className="agent-catalog__capabilities agent-catalog__probe-diagnostics" open>

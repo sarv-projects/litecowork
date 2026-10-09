@@ -38,6 +38,9 @@
 .agent-catalog__probe-facts > div { min-width: 0; }
 .agent-catalog__probe-facts dt { color: var(--color-text-subtle); font-size: 10px; }
 .agent-catalog__probe-facts dd { margin: 2px 0 0; font-size: 11px; overflow-wrap: anywhere; }
+.agent-catalog__safety-blocker { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--color-warning-border, #e6c880); border-radius: 8px; background: var(--color-warning-subtle, #fff9e8); color: var(--color-text); font-size: 12px; }
+.agent-catalog__safety-blocker ul { display: grid; gap: 4px; margin: 6px 0; padding-left: 18px; }
+.agent-catalog__safety-blocker small { color: var(--color-text-subtle); }
 .agent-catalog__opencode-status, .agent-catalog__opencode-catalog { display: grid; gap: 7px; margin-top: 10px; padding: 10px; border-radius: 7px; background: var(--color-surface-muted, #f7f8fa); }
 .agent-catalog__opencode-status > span, .agent-catalog__opencode-catalog > p, .agent-catalog__opencode-catalog > small, .agent-catalog__opencode-status > small { color: var(--color-text-subtle); }
 .agent-catalog__opencode-status ul, .agent-catalog__opencode-catalog ul { display: grid; gap: 6px; margin: 0; padding-left: 18px; }

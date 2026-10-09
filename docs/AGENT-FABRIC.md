@@ -195,7 +195,12 @@ Session admission rules:
   publication, or consequential capability authority. It may issue read-only
   CapabilityInvocations scoped to that Conversation. `context_packet_ref` is absent; the
   adapter receives a bounded Conversation projection and selected ResourceRefs from
-  ContextService.
+  ContextService. Codex Conversation admission additionally requires a qualified native
+  safety profile: the exact turn must use an enforced read-only policy restricted to the
+  explicit authorized roots, shell network must be disabled, and all unmediated native MCP,
+  app, plugin, and hook tools must be disabled or moved behind the LiteCowork broker. Every
+  control is explicit evidence; missing/unknown evidence makes the binding ineligible for
+  Conversation turns. A general profile offer marked `STARTABLE` is not this evidence.
 - `TASK_PLANNING {task_id}` is authorized by a transient PlanningAssignment envelope,
   bound to the current lead AgentBinding and TaskSpecRevision, and has no Attempt or
   Environment write access. The envelope is not durable; the AgentSession and Task state
@@ -204,17 +209,16 @@ Session admission rules:
   The durable AgentSession records that revision. If the TaskSpec head changes, the old
   planner is fenced from new Invocations and plan acceptance, its in-flight Invocations
   are settled, and its session is closed before a fresh envelope/session is admitted.
-  The current Codex App Server transport now has typed read-only thread/turn constructors
-  and a strict initial-plan output schema. Its turn policy sets `type: readOnly` and
-  `networkAccess: false`; this disables writes and shell network for the Codex sandbox but
-  does not restrict reads to a set of Resource roots. Codex's default read-only access may
-  include the host filesystem, so this path is unusable for Task planning until the
-  Runtime provides an externally isolated, Task-specific Environment. It also does not
-  disable or mediate user-configured MCP servers, app tools, or other non-filesystem native
-  capabilities; establish Environment identity, Task admission, process-tree containment,
-  or writer quiescence. A coordinator must fail closed until the native capability set is
-  disabled or individually authorized/mediated and the sandbox payload is qualified for
-  the installed Codex protocol version.
+  The Codex App Server documentation now describes `sandboxPolicy.type=readOnly` with
+  restricted readable roots. The installed local Codex CLI `0.162.0` schema bundle was
+  generated without provider calls and does not expose that `access` field. The current
+  LiteCowork transport has not implemented/negotiated it, and has no proven per-session
+  mechanism that disables user-configured native MCP, app, plugin, and hook tools. Its
+  typed plan constructor therefore remains unqualified and fails the same restricted-read
+  boundary. Even after those protocol controls qualify, Task planning still requires the
+  Runtime's Task-specific Environment, Task admission, process-tree containment, and writer
+  quiescence. A coordinator must fail closed until every boundary is proven for the
+  installed protocol version.
   In the current SQLite implementation, `AgentSessionStore` independently rejects both
   planning-session reservation and activation with
   `TASK_PLANNING_ISOLATION_UNAVAILABLE`, before durable session/Task state is written.

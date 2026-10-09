@@ -303,14 +303,15 @@ admission; no caller-supplied Boolean or request field can satisfy the gate.
 The session has Task read, plan proposal, and user-clarification tools only; it has no Attempt, lease, Environment write access, consequential capability invocation, or artifact publication. Plan acceptance creates/promotes a PlanRevision and materializes Steps; only then can an execution Attempt be admitted. A planning session may be replaced without changing Task identity or fabricating an Attempt. User clarification closes the current planning session; after a valid response, the coordinator builds a new envelope against the current TaskSpec revision and starts a fresh session.
 
 The current Codex transport includes typed read-only thread and plan-turn constructors
-with a structured initial-plan output schema. The turn requests `type: readOnly` and
-`networkAccess: false`, which constrain writes and shell network but do not restrict
-filesystem reads to Task Resources; default read-only access may include the host
-filesystem. This is not an admitted `TASK_PLANNING` session and must not be treated as
-one. Planner admission remains unavailable until a Task-specific isolated Environment is
-provided, native MCP/app tools and other configured capabilities are disabled or mediated,
-the installed Codex protocol version is qualified, and process containment/recovery are
-integrated.
+with a structured initial-plan output schema. The current official App Server documentation
+describes an explicit restricted-readable-roots policy, but the installed local Codex CLI
+`0.162.0` schema bundle does not expose that policy field and the LiteCowork transport has
+not negotiated or applied it. This path is therefore unqualified; `readOnly` alone must not
+be treated as Task Resource scope. The profile probe also does not prove native MCP/app/
+plugin/hook tools disabled or mediated. Planner admission remains unavailable until the
+installed protocol applies and qualifies restricted roots, non-filesystem tools are
+disabled/mediated, and Task-specific Environment identity, process containment, and
+recovery are integrated.
 
 ## Plan acceptance
 

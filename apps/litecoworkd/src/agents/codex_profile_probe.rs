@@ -20,6 +20,87 @@ use super::codex_app_server::{
     RpcId, RpcMethod, TransportError, TransportLimits,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SafetyControl {
+    RestrictedReadRoots,
+    ReadOnlyWrites,
+    ShellNetworkDisabled,
+    NativeMcpDisabled,
+    NativeAppsDisabled,
+    NativePluginsAndHooksDisabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SafetyEvidence {
+    Proven,
+    Unsupported,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ConversationEligibility {
+    status: &'static str,
+    diagnostic_code: Option<&'static str>,
+    blockers: Vec<&'static str>,
+}
+
+fn assess_conversation_eligibility(
+    evidence: &[(SafetyControl, SafetyEvidence)],
+) -> ConversationEligibility {
+    const REQUIRED: [SafetyControl; 6] = [
+        SafetyControl::RestrictedReadRoots,
+        SafetyControl::ReadOnlyWrites,
+        SafetyControl::ShellNetworkDisabled,
+        SafetyControl::NativeMcpDisabled,
+        SafetyControl::NativeAppsDisabled,
+        SafetyControl::NativePluginsAndHooksDisabled,
+    ];
+    let mut blockers = Vec::new();
+    for control in REQUIRED {
+        let value = evidence
+            .iter()
+            .find_map(|(observed, value)| (*observed == control).then_some(*value));
+        if value != Some(SafetyEvidence::Proven) {
+            blockers.push(match control {
+                SafetyControl::RestrictedReadRoots => "RESTRICTED_READ_ROOTS_NOT_QUALIFIED",
+                SafetyControl::ReadOnlyWrites => "READ_ONLY_WRITE_BOUNDARY_NOT_QUALIFIED",
+                SafetyControl::ShellNetworkDisabled => "SHELL_NETWORK_BOUNDARY_NOT_QUALIFIED",
+                SafetyControl::NativeMcpDisabled => "NATIVE_MCP_TOOLS_NOT_DISABLED",
+                SafetyControl::NativeAppsDisabled => "NATIVE_APP_TOOLS_NOT_DISABLED",
+                SafetyControl::NativePluginsAndHooksDisabled => {
+                    "NATIVE_PLUGINS_AND_HOOKS_NOT_DISABLED"
+                }
+            });
+        }
+    }
+    ConversationEligibility {
+        status: if blockers.is_empty() {
+            "ELIGIBLE"
+        } else {
+            "NOT_ELIGIBLE"
+        },
+        diagnostic_code: (!blockers.is_empty()).then_some("CODEX_CONVERSATION_SAFETY_UNQUALIFIED"),
+        blockers,
+    }
+}
+
+fn current_conversation_safety_assessment() -> ConversationEligibility {
+    // The profile probe does not launch a turn or inspect the effective tool
+    // configuration. Unknown evidence must fail closed. The installed CLI's
+    // generated v0.162.0 schema was separately inspected and lacks the
+    // documented restricted-read access field.
+    const CONTROLS: [SafetyControl; 6] = [
+        SafetyControl::RestrictedReadRoots,
+        SafetyControl::ReadOnlyWrites,
+        SafetyControl::ShellNetworkDisabled,
+        SafetyControl::NativeMcpDisabled,
+        SafetyControl::NativeAppsDisabled,
+        SafetyControl::NativePluginsAndHooksDisabled,
+    ];
+    let evidence = CONTROLS.map(|control| (control, SafetyEvidence::Unknown));
+    assess_conversation_eligibility(&evidence)
+}
+
 const PROBE_TOTAL_BUDGET: Duration = Duration::from_secs(20);
 const PROBE_STARTUP_BUDGET: Duration = Duration::from_secs(7);
 const PROBE_RPC_BUDGET: Duration = Duration::from_secs(5);
@@ -104,6 +185,7 @@ pub(crate) struct CodexProfileProbe {
     /// unproven because no session/work Environment was launched.
     pub host_process_stopped: bool,
     pub writer_quiescence_proven: bool,
+    pub conversation_eligibility: ConversationEligibility,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -136,6 +218,7 @@ impl CodexProfileProbe {
             model_catalog_truncated: false,
             host_process_stopped: false,
             writer_quiescence_proven: false,
+            conversation_eligibility: current_conversation_safety_assessment(),
         }
     }
 }
@@ -436,4 +519,86 @@ fn safe_text(value: &Value) -> Option<String> {
         return None;
     }
     Some(value.to_owned())
+}
+
+#[cfg(test)]
+mod conversation_safety_tests {
+    use super::*;
+
+    const CONTROLS: [SafetyControl; 6] = [
+        SafetyControl::RestrictedReadRoots,
+        SafetyControl::ReadOnlyWrites,
+        SafetyControl::ShellNetworkDisabled,
+        SafetyControl::NativeMcpDisabled,
+        SafetyControl::NativeAppsDisabled,
+        SafetyControl::NativePluginsAndHooksDisabled,
+    ];
+
+    #[test]
+    fn conversation_admission_requires_every_native_boundary_to_be_proven() {
+        for missing in CONTROLS {
+            let evidence = CONTROLS.map(|control| {
+                (
+                    control,
+                    if control == missing {
+                        SafetyEvidence::Unknown
+                    } else {
+                        SafetyEvidence::Proven
+                    },
+                )
+            });
+            let result = assess_conversation_eligibility(&evidence);
+            assert_eq!(result.status, "NOT_ELIGIBLE", "missing: {missing:?}");
+            assert_eq!(result.blockers.len(), 1, "missing: {missing:?}");
+        }
+
+        let proven = CONTROLS.map(|control| (control, SafetyEvidence::Proven));
+        let result = assess_conversation_eligibility(&proven);
+        assert_eq!(result.status, "ELIGIBLE");
+        assert_eq!(result.diagnostic_code, None);
+        assert!(result.blockers.is_empty());
+    }
+
+    #[test]
+    fn missing_or_unsupported_evidence_has_specific_blockers_and_never_defaults_open() {
+        let evidence = [
+            (
+                SafetyControl::RestrictedReadRoots,
+                SafetyEvidence::Unsupported,
+            ),
+            (SafetyControl::ReadOnlyWrites, SafetyEvidence::Proven),
+            (SafetyControl::ShellNetworkDisabled, SafetyEvidence::Proven),
+            (SafetyControl::NativeMcpDisabled, SafetyEvidence::Unknown),
+            (SafetyControl::NativeAppsDisabled, SafetyEvidence::Proven),
+            (
+                SafetyControl::NativePluginsAndHooksDisabled,
+                SafetyEvidence::Proven,
+            ),
+        ];
+        let result = assess_conversation_eligibility(&evidence);
+        assert_eq!(result.status, "NOT_ELIGIBLE");
+        assert_eq!(
+            result.diagnostic_code,
+            Some("CODEX_CONVERSATION_SAFETY_UNQUALIFIED")
+        );
+        assert_eq!(
+            result.blockers,
+            vec![
+                "RESTRICTED_READ_ROOTS_NOT_QUALIFIED",
+                "NATIVE_MCP_TOOLS_NOT_DISABLED"
+            ]
+        );
+    }
+
+    #[test]
+    fn current_profile_probe_reports_conversation_turns_not_eligible() {
+        let result = current_conversation_safety_assessment();
+        assert_eq!(result.status, "NOT_ELIGIBLE");
+        assert!(
+            result
+                .blockers
+                .contains(&"RESTRICTED_READ_ROOTS_NOT_QUALIFIED")
+        );
+        assert!(result.blockers.contains(&"NATIVE_MCP_TOOLS_NOT_DISABLED"));
+    }
 }
