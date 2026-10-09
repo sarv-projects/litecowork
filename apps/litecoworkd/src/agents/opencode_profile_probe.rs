@@ -12,7 +12,9 @@ use std::{path::Path, time::Duration};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::{OpenCodeEnvironment, OpenCodeProcessState, OpenCodeServer, OpenCodeServerConfig};
+use super::{
+    OpenCodeEnvironment, OpenCodeError, OpenCodeProcessState, OpenCodeServer, OpenCodeServerConfig,
+};
 
 const MAX_PROVIDERS: usize = 32;
 const MAX_MODELS_TOTAL: usize = 256;
@@ -133,37 +135,8 @@ pub(crate) fn probe_opencode_profile(
         }
     };
 
-    match server.read_provider_status() {
-        Ok(native) => match connected_provider_ids(&native) {
-            Some((ids, truncated)) => {
-                result.reported_provider_status = OpenCodeObservation::Observed;
-                result.reported_connected_provider_ids = ids;
-                result.reported_connected_provider_ids_truncated = truncated;
-            }
-            None => result.failure = Some(OpenCodeProbeFailure::ProviderStatusUnavailable),
-        },
-        Err(_) => result.failure = Some(OpenCodeProbeFailure::ProviderStatusUnavailable),
-    }
-
-    match server.read_configured_provider_catalog() {
-        Ok(native) => match configured_catalog(&native) {
-            Some((providers, truncated)) => {
-                result.reported_model_catalog = OpenCodeObservation::Observed;
-                result.configured_providers = providers;
-                result.catalog_truncated = truncated;
-            }
-            None => {
-                if result.failure.is_none() {
-                    result.failure = Some(OpenCodeProbeFailure::CatalogUnavailable);
-                }
-            }
-        },
-        Err(_) => {
-            if result.failure.is_none() {
-                result.failure = Some(OpenCodeProbeFailure::CatalogUnavailable);
-            }
-        }
-    }
+    observe_provider_status(&mut result, server.read_provider_status());
+    observe_catalog(&mut result, server.read_configured_provider_catalog());
 
     result.host_process_stopped = server.stop() == OpenCodeProcessState::Exited;
     if !result.host_process_stopped {
@@ -183,6 +156,44 @@ pub(crate) fn probe_opencode_profile(
         OpenCodeProbeReadiness::Failed
     };
     result
+}
+
+fn observe_provider_status(
+    result: &mut OpenCodeProfileProbe,
+    response: Result<Value, OpenCodeError>,
+) {
+    match response
+        .ok()
+        .and_then(|native| connected_provider_ids(&native))
+    {
+        Some((ids, truncated)) => {
+            result.reported_provider_status = OpenCodeObservation::Observed;
+            result.reported_connected_provider_ids = ids;
+            result.reported_connected_provider_ids_truncated = truncated;
+        }
+        None => {
+            result.reported_provider_status = OpenCodeObservation::Unknown;
+            if result.failure.is_none() {
+                result.failure = Some(OpenCodeProbeFailure::ProviderStatusUnavailable);
+            }
+        }
+    }
+}
+
+fn observe_catalog(result: &mut OpenCodeProfileProbe, response: Result<Value, OpenCodeError>) {
+    match response.ok().and_then(|native| configured_catalog(&native)) {
+        Some((providers, truncated)) => {
+            result.reported_model_catalog = OpenCodeObservation::Observed;
+            result.configured_providers = providers;
+            result.catalog_truncated = truncated;
+        }
+        None => {
+            result.reported_model_catalog = OpenCodeObservation::Unknown;
+            if result.failure.is_none() {
+                result.failure = Some(OpenCodeProbeFailure::CatalogUnavailable);
+            }
+        }
+    }
 }
 
 fn connected_provider_ids(value: &Value) -> Option<(Vec<String>, bool)> {
@@ -264,6 +275,7 @@ fn configured_catalog(value: &Value) -> Option<(Vec<OpenCodeProviderOption>, boo
 fn safe_identifier(value: &str) -> Option<String> {
     if value.is_empty()
         || value.len() > MAX_ID_BYTES
+        || looks_sensitive(value)
         || value.contains("://")
         || value.to_ascii_lowercase().starts_with("www.")
         || !value.bytes().all(|byte| {
@@ -280,12 +292,34 @@ fn safe_display_name(value: &Value) -> Option<String> {
     if value.is_empty()
         || value.len() > MAX_DISPLAY_NAME_BYTES
         || value.chars().any(char::is_control)
+        || looks_sensitive(value)
         || value.contains("://")
         || value.to_ascii_lowercase().starts_with("www.")
     {
         return None;
     }
     Some(value.to_owned())
+}
+
+fn looks_sensitive(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.contains('@')
+        || lower.contains("bearer ")
+        || lower.contains("authorization:")
+        || lower.contains("api_key")
+        || lower.contains("api-key")
+        || lower.contains("api key")
+        || lower.contains("token=")
+        || lower.contains("password=")
+        || lower.contains("secret=")
+        || lower.contains("sk-")
+        || lower.contains("ghp_")
+        || lower.contains("gho_")
+        || lower.contains("ghu_")
+        || lower.contains("ghs_")
+        || lower.contains("ghr_")
+        || lower.contains("xoxb-")
+        || lower.contains("xoxp-")
 }
 
 pub(crate) fn opencode_native_environment() -> OpenCodeEnvironment {
@@ -308,5 +342,181 @@ pub(crate) fn opencode_native_environment() -> OpenCodeEnvironment {
         lang: std::env::var_os("LANG"),
         lc_all: std::env::var_os("LC_ALL"),
         term: std::env::var_os("TERM"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attempted_provider_read_failure_is_unknown_not_not_probed() {
+        let mut result = OpenCodeProfileProbe::initial();
+        observe_provider_status(&mut result, Err(OpenCodeError::Timeout));
+
+        assert_eq!(
+            result.reported_provider_status,
+            OpenCodeObservation::Unknown
+        );
+        assert_eq!(
+            result.failure,
+            Some(OpenCodeProbeFailure::ProviderStatusUnavailable)
+        );
+    }
+
+    #[test]
+    fn malformed_provider_status_is_unknown_not_connected() {
+        let mut result = OpenCodeProfileProbe::initial();
+        observe_provider_status(&mut result, Ok(serde_json::json!({"connected": "invalid"})));
+
+        assert_eq!(
+            result.reported_provider_status,
+            OpenCodeObservation::Unknown
+        );
+        assert!(result.reported_connected_provider_ids.is_empty());
+        assert_eq!(
+            result.failure,
+            Some(OpenCodeProbeFailure::ProviderStatusUnavailable)
+        );
+    }
+
+    #[test]
+    fn attempted_catalog_failure_is_unknown_not_not_probed() {
+        let mut result = OpenCodeProfileProbe::initial();
+        observe_catalog(&mut result, Err(OpenCodeError::Timeout));
+
+        assert_eq!(result.reported_model_catalog, OpenCodeObservation::Unknown);
+        assert_eq!(
+            result.failure,
+            Some(OpenCodeProbeFailure::CatalogUnavailable)
+        );
+    }
+
+    #[test]
+    fn provider_status_is_not_authentication_or_entitlement_evidence() {
+        let mut result = OpenCodeProfileProbe::initial();
+        observe_provider_status(
+            &mut result,
+            Ok(serde_json::json!({"connected": ["openai", "local-provider"]})),
+        );
+
+        assert_eq!(
+            result.reported_provider_status,
+            OpenCodeObservation::Observed
+        );
+        assert_eq!(
+            result.reported_connected_provider_ids,
+            vec!["local-provider", "openai"]
+        );
+        assert_eq!(result.authentication_observation, "UNKNOWN");
+        assert_eq!(result.session_model_selection, "NOT_QUALIFIED");
+        assert!(!result.inference_access_verified);
+        assert!(!result.profile_admission_supported);
+    }
+
+    #[test]
+    fn catalog_projection_is_bounded_and_drops_native_options() {
+        let catalog = serde_json::json!({
+            "providers": [{
+                "id": "openai",
+                "name": "OpenAI",
+                "models": {
+                    "z-model": {"name":"Z model", "options":{"api_key":"not-retained"}},
+                    "a-model": {"name":"A model"}
+                }
+            }]
+        });
+        let mut result = OpenCodeProfileProbe::initial();
+        observe_catalog(&mut result, Ok(catalog));
+
+        assert_eq!(result.reported_model_catalog, OpenCodeObservation::Observed);
+        assert_eq!(result.configured_providers[0].id, "openai");
+        assert_eq!(result.configured_providers[0].models[0].id, "a-model");
+        let serialized = serde_json::to_string(&result).expect("safe projected DTO");
+        assert!(!serialized.contains("options"));
+        assert!(!serialized.contains("not-retained"));
+    }
+
+    #[test]
+    fn provider_and_model_catalog_limits_are_reported_as_truncated() {
+        let connected: Vec<_> = (0..MAX_PROVIDERS + 1)
+            .map(|index| serde_json::Value::String(format!("provider-{index:02}")))
+            .collect();
+        let (provider_ids, connected_truncated) =
+            connected_provider_ids(&serde_json::json!({"connected": connected}))
+                .expect("connected list is present");
+        assert_eq!(provider_ids.len(), MAX_PROVIDERS);
+        assert!(connected_truncated);
+
+        let models: serde_json::Map<_, _> = (0..MAX_MODELS_PER_PROVIDER + 1)
+            .map(|index| {
+                (
+                    format!("model-{index:02}"),
+                    serde_json::json!({"name": format!("Model {index}")}),
+                )
+            })
+            .collect();
+        let native_catalog = serde_json::json!({
+            "providers": [{"id":"provider", "models":models}]
+        });
+        let (providers, catalog_truncated) =
+            configured_catalog(&native_catalog).expect("provider catalog is present");
+        assert_eq!(providers[0].models.len(), MAX_MODELS_PER_PROVIDER);
+        assert!(catalog_truncated);
+
+        let many_providers: Vec<_> = (0..5)
+            .map(|provider_index| {
+                let provider_models: serde_json::Map<_, _> = (0..64)
+                    .map(|model_index| {
+                        (
+                            format!("model-{model_index:02}"),
+                            serde_json::json!({"name":format!("Model {model_index}")}),
+                        )
+                    })
+                    .collect();
+                serde_json::json!({
+                    "id": format!("provider-{provider_index}"),
+                    "models": provider_models
+                })
+            })
+            .collect();
+        let (providers, catalog_truncated) =
+            configured_catalog(&serde_json::json!({"providers":many_providers}))
+                .expect("provider catalog is present");
+        assert_eq!(
+            providers
+                .iter()
+                .map(|provider| provider.models.len())
+                .sum::<usize>(),
+            MAX_MODELS_TOTAL
+        );
+        assert!(catalog_truncated);
+    }
+
+    #[test]
+    fn identifiers_with_account_or_credential_markers_are_rejected() {
+        for identifier in ["user@example.test", "sk-proj-secret", "xoxb-private"] {
+            assert_eq!(safe_identifier(identifier), None, "{identifier}");
+        }
+    }
+
+    #[test]
+    fn provider_and_model_display_names_reject_obvious_secret_material() {
+        for name in [
+            "Bearer sk-proj-0123456789abcdef0123456789abcdef",
+            "api_key=0123456789abcdef",
+            "user@example.test",
+            "https://provider.example",
+        ] {
+            assert_eq!(
+                safe_display_name(&Value::String(name.to_owned())),
+                None,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            safe_display_name(&Value::String("OpenAI-compatible Local".to_owned())),
+            Some("OpenAI-compatible Local".to_owned())
+        );
     }
 }
