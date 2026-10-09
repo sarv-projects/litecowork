@@ -70,6 +70,60 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_create_cleans_temporary_file_and_allows_later_update() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let journal = AttemptProcessScopeJournal::open(directory.path()).expect("journal");
+        let identity = identity();
+        journal.record_active(&identity).expect("initial record");
+        assert!(matches!(
+            journal.record_active(&identity),
+            Err(AttemptProcessScopeError::DuplicateIdentity)
+        ));
+        assert_eq!(
+            fs::read_dir(directory.path())
+                .expect("journal entries")
+                .count(),
+            1
+        );
+        journal
+            .record_unresolved(&identity, "QUIESCENCE_UNPROVEN")
+            .expect("update following duplicate must succeed");
+        assert_eq!(
+            fs::read_dir(directory.path())
+                .expect("journal entries")
+                .count(),
+            1
+        );
+        assert_eq!(
+            journal.incomplete_records().expect("read journal"),
+            vec![identity]
+        );
+    }
+
+    #[test]
+    fn stale_old_pid_temporary_file_does_not_block_new_record() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let journal = AttemptProcessScopeJournal::open(directory.path()).expect("journal");
+        let identity = identity();
+        let stale =
+            directory
+                .path()
+                .join(format!(".{}.{}.tmp", identity.digest(), std::process::id()));
+        fs::write(&stale, b"stale incomplete write").expect("create stale path");
+        journal
+            .record_active(&identity)
+            .expect("create despite stale temporary path");
+        assert_eq!(
+            journal.incomplete_records().expect("read journal"),
+            vec![identity]
+        );
+        assert_eq!(
+            fs::read(&stale).expect("stale file retained"),
+            b"stale incomplete write"
+        );
+    }
+
+    #[test]
     fn quiescence_proof_is_bound_to_the_exact_runtime_incarnation() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let journal = AttemptProcessScopeJournal::open(directory.path()).expect("journal");
@@ -103,7 +157,7 @@ use linux_process_scope::{LaunchSpec, ManagedScope, ScopeError, SystemdCommands,
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
     time::Duration,
@@ -290,30 +344,23 @@ impl AttemptProcessScopeJournal {
             AttemptProcessScopeError::InvalidRecord("record serialization failed".into())
         })?;
         bytes.push(b'\n');
-        let temp =
-            self.directory
-                .join(format!(".{}.{}.tmp", identity.digest(), std::process::id()));
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temp)?;
+        // A unique, privately owned temporary file is cleaned up on every failure.
+        // In particular, a duplicate record must not strand a predictable PID-based
+        // .tmp path and block later writes after a retry or daemon restart.
+        let mut file = tempfile::NamedTempFile::new_in(&self.directory)?;
         file.write_all(&bytes)?;
-        file.sync_all()?;
+        file.as_file().sync_all()?;
         if create_new {
-            fs::hard_link(&temp, &path).map_err(|error| {
-                if error.kind() == std::io::ErrorKind::AlreadyExists {
+            file.persist_noclobber(&path).map_err(|error| {
+                if error.error.kind() == std::io::ErrorKind::AlreadyExists {
                     AttemptProcessScopeError::DuplicateIdentity
                 } else {
-                    AttemptProcessScopeError::Io(error)
+                    AttemptProcessScopeError::Io(error.error)
                 }
             })?;
-            fs::remove_file(&temp)?;
         } else {
-            fs::rename(&temp, &path)?;
+            file.persist(&path)
+                .map_err(|error| AttemptProcessScopeError::Io(error.error))?;
         }
         File::open(&self.directory)?.sync_all()?;
         Ok(())

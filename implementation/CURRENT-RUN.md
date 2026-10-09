@@ -32,6 +32,17 @@ validation passed (60 stories, 5,317 coverage rows). Existing Rust unused-code/i
 warnings remain. These checks prove compilability and contract consistency only,
 not Task/provider execution or owner acceptance.
 
+### Process journal temporary-file hardening (2026-10-10)
+
+Replaced PID-derived temporary journal paths with the existing `tempfile`
+`NamedTempFile` persistence paths. Record creation still refuses replacement, and
+updates still publish atomically; a failed duplicate create now cleans its temporary
+file instead of poisoning subsequent writes. Existing stale PID-named temp files no
+longer block a new journal record. Two regression tests were added; the six focused
+`attempt_process_scope::tests` passed (0 failed), and targeted rustfmt and Git
+whitespace validation passed. This is journal recovery hardening, not qualified
+Task process dispatch or authorization/Effect integration.
+
 ## Historical desktop/local status snapshot (2026-10-09)
 
 This was the desktop/local V1 status at that date; older chronological entries below record
