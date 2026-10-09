@@ -520,6 +520,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "domain-conversation"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "domain-effects"
 version = "0.1.0"
 dependencies = [

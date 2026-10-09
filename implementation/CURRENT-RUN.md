@@ -10,6 +10,19 @@ what was true at their timestamps. V1 is the complete desktop/local product. Clo
 continuation and remote Runtime are post-V1 and excluded from the V1 release gate; local
 capabilities already committed in the architecture remain in V1 scope.
 
+### Conversation turn lifecycle foundation (2026-10-09)
+
+Added the `domain-conversation` crate with a pure, version-checked ConversationTurn
+transition function. It covers start, user/dependency waits, provider-request-again,
+resume, explicit retry with a fresh session, completion/failure, cancellation races, and
+terminal timestamp invariants. Focused verification passed: `cargo test -p
+domain-conversation` (8 tests), `cargo clippy -p domain-conversation --all-targets -- -D
+warnings`, and `git diff --check`.
+
+This is only a domain decision layer. Conversation user-message/turn persistence,
+idempotent Operator submit API, session admission, native provider dispatch, streaming,
+and UI submission remain unimplemented. No agent session is started by this crate.
+
 ### ResourceStore-to-staging adapter slice (2026-10-09)
 
 `local-environment-staging` now has a bounded Task input adapter over the narrow exact
