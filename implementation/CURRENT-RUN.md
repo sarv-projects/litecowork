@@ -3538,3 +3538,31 @@ LiteCowork source was reached. The Conversation route/UI has no provider-backed 
 streaming, retry/cancel, or owner real-user acceptance. OpenCode remains a diagnostics-only,
 incompatible profile on the installed v2.0.26 build; neither adapter has Task execution or
 safe-switching qualification from this increment.
+
+## Desktop RichPresentation read/render connection — 2026-10-09
+
+Connected existing Conversation snapshot references to the desktop renderer. The Tauri
+bridge fetches an immutable RichPresentation through the authenticated local Operator API,
+validates selected Workspace/Conversation/Message identity, closed response shape, digest
+format and bounded document size. The Conversation view validates document/digest and
+semantic bindings before rendering; it lazy-loads only the six newest available
+presentations near the viewport, leaves the complete semantic answer visible throughout,
+and offers explicit retry/fallback when the rich document cannot load. Route IDs are
+restricted to path-safe ASCII characters. Review found and fixed a fetch-effect cancellation
+race so the `IDLE → LOADING` state update does not cancel its own request.
+
+Verified on this Linux development environment:
+
+- `node --experimental-transform-types --test apps/litecowork-ui/tests/*.test.ts` — 68
+  passed, 0 failed.
+- `pnpm --config.verifyDepsBeforeRun=false build` in `apps/litecowork-ui` — passed;
+  Vite warns that the main JavaScript chunk exceeds 500 kB.
+- `cargo test --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` — 15 passed,
+  0 failed; existing Rust warnings remain.
+- `git diff --check` — passed.
+
+This connects only the read/render path for RichPresentations already published by the
+daemon. It does not implement a Conversation agent turn, RichPresentation production or
+publication, trusted Artifact/citation/action blocks, rich streaming, or full Presentation
+Runtime qualification. Browser-only preview cannot invoke the native Tauri bridge and
+therefore uses the semantic-text fallback.

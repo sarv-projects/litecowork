@@ -1,10 +1,85 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { RichResponseView } from "../presentation/RichResponseView";
+import { parseRichPresentationResponse, type ValidatedRichPresentation } from "../presentation/rich-presentation";
 import { parseConversationList, parseConversationSnapshot, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary } from "./conversation-view";
 import "./conversations-page.css";
 
 function messageText(message: ConversationMessageView): string {
   return message.content.map(block => block.kind === "TEXT" ? block.text : "Attachment").join("\n");
+}
+
+function semanticText(message: ConversationMessageView): string {
+  return message.content.filter((block): block is { kind: "TEXT"; text: string } => block.kind === "TEXT").map(block => block.text).join("\n");
+}
+
+function ConversationMessageContent({ workspaceId, conversationId, message, autoLoadRich }: {
+  workspaceId: string;
+  conversationId: string;
+  message: ConversationMessageView;
+  autoLoadRich: boolean;
+}) {
+  const element = useRef<HTMLDivElement | null>(null);
+  const [visible, setVisible] = useState(false);
+  const [requested, setRequested] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const [status, setStatus] = useState<"IDLE" | "LOADING" | "READY" | "FAILED">("IDLE");
+  const [presentation, setPresentation] = useState<ValidatedRichPresentation | null>(null);
+  const reference = message.rich_presentation;
+  const text = semanticText(message);
+
+  useEffect(() => {
+    if (!autoLoadRich || !reference || reference.availability !== "AVAILABLE" || !element.current || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: "320px" });
+    observer.observe(element.current);
+    return () => observer.disconnect();
+  }, [autoLoadRich, reference]);
+
+  const shouldLoad = Boolean(reference && reference.availability === "AVAILABLE" && (requested || (autoLoadRich && visible)));
+  useEffect(() => {
+    if (!shouldLoad || !reference || status !== "IDLE") return;
+    let current = true;
+    setStatus("LOADING");
+    void invoke<unknown>("get_rich_presentation", {
+      workspaceId,
+      conversationId,
+      messageId: message.message_id,
+      presentationId: reference.presentation_id,
+      semanticContentDigest: reference.semantic_content_digest,
+    }).then(async value => {
+      const parsed = await parseRichPresentationResponse(value, {
+        workspaceId,
+        conversationId,
+        messageId: message.message_id,
+        semanticContentDigest: reference.semantic_content_digest,
+      }, text);
+      if (!current) return;
+      setPresentation(parsed);
+      setStatus(parsed ? "READY" : "FAILED");
+    }).catch(() => {
+      if (current) setStatus("FAILED");
+    });
+    return () => { current = false; };
+  // `status` is intentionally read to gate a new request but omitted from the
+  // dependency list: changing IDLE -> LOADING must not clean up and cancel the
+  // request that this effect just started. `retry` is the explicit re-fetch key.
+  }, [conversationId, message.message_id, reference, retry, shouldLoad, text, workspaceId]);
+
+  if (!reference || message.role !== "AGENT") return <div className="conversation-message-body">{messageText(message)}</div>;
+  const availability = reference.availability;
+  const canFetch = availability === "AVAILABLE";
+  return <div className="conversation-message-body" ref={element}>
+    <RichResponseView semanticText={text || messageText(message)} presentation={presentation} />
+    {!presentation && canFetch && status === "IDLE" && !shouldLoad && <button type="button" className="conversation-rich-load" onClick={() => setRequested(true)}>Show formatted response</button>}
+    {status === "LOADING" && <p className="conversation-rich-status" role="status">Loading formatted response…</p>}
+    {status === "FAILED" && <p className="conversation-rich-status" role="note">Formatted view unavailable; the complete text response is still shown. <button type="button" onClick={() => { setStatus("IDLE"); setRequested(true); setRetry(value => value + 1); }}>Retry</button></p>}
+    {!canFetch && <p className="conversation-rich-status" role="note">Formatted view unavailable; the complete text response is still shown.</p>}
+  </div>;
 }
 
 function timeLabel(value: string): string {
@@ -69,6 +144,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
   };
 
   const selected = items.find(item => item.conversation_id === selectedId) ?? null;
+  const automaticRichIds = new Set((snapshot?.messages ?? []).filter(message => message.role === "AGENT" && message.rich_presentation?.availability === "AVAILABLE").slice(-6).map(message => message.message_id));
   const activeStatus = snapshot?.active_turn?.status;
   const statusLabel = activeStatus === "RUNNING" ? "A conversation turn is running"
     : activeStatus === "WAITING_USER" ? "Waiting for your response"
@@ -103,7 +179,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
           : busy && !snapshot ? <div className="conversation-empty" role="status">Loading saved messages…</div>
             : snapshot?.messages.length ? <div className="conversation-messages">{snapshot.messages.map(message => <article className={`conversation-message ${message.role.toLowerCase()}`} key={message.message_id}>
               <div className="conversation-message-author">{message.role === "USER" ? "You" : message.role === "AGENT" ? "Assistant" : message.role === "SYSTEM_NOTICE" ? "LiteCowork" : "Connected channel"}</div>
-              <div className="conversation-message-body">{messageText(message)}</div>
+              <ConversationMessageContent workspaceId={workspaceId} conversationId={selected.conversation_id} message={message} autoLoadRich={automaticRichIds.has(message.message_id)} />
               <time>{timeLabel(message.created_at)}</time>
             </article>)}</div>
               : <div className="conversation-empty"><h2>This conversation is ready</h2><p>Conversation records and messages are durable. Sending messages is not available yet because native agent turn execution is not connected.</p></div>}

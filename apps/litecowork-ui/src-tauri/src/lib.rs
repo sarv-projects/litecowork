@@ -4203,6 +4203,7 @@ pub fn run() {
             conversation_bridge::list_conversations,
             conversation_bridge::create_conversation,
             conversation_bridge::get_conversation_presentation,
+            conversation_bridge::get_rich_presentation,
             artifact_bridge::artifact_save_as,
             resource_save_bridge::resource_save_as,
             artifact_bridge::artifact_edit_head,
