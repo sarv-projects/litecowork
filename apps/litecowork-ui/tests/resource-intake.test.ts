@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  resourceIndexAction,
   isSensitiveOrGenerated,
   resourceDisplayName,
   resourceFolderRelativePath,
@@ -52,4 +53,32 @@ test("Resource intake enforces file-count, aggregate-byte, and per-file bounds",
   assert.match(validateResourceFileSelection([file("large.txt", 100 * 1024 * 1024 + 1)]) ?? "", /Each file is limited to 100 MiB/);
   assert.match(validateResourceFileSelection([file("one.txt", 60 * 1024 * 1024), file("two.txt", 40 * 1024 * 1024 + 1)]) ?? "", /100 MiB total/);
   assert.equal(validateResourceFileSelection([file("exact.bin", 100 * 1024 * 1024)]), null);
+});
+
+test("ZIP Resources stay opaque and do not offer a text-index rebuild action", () => {
+  const folderArchive = file("archive.zip", 12, "project/data/archive.zip");
+  assert.equal(validateResourceFileSelection([folderArchive]), null);
+  assert.equal(resourceDisplayName(folderArchive), "project/data/archive.zip");
+  assert.deepEqual(resourceIndexAction({ displayName: "archive.zip", mediaType: "text/plain" }), {
+    kind: "UNAVAILABLE",
+    label: "Not indexed (ZIP)",
+    reason: "ZIP files are stored intact; their contents are not extracted or indexed.",
+  });
+  assert.deepEqual(resourceIndexAction({ displayName: "archive.bin", mediaType: "application/zip" }), {
+    kind: "UNAVAILABLE",
+    label: "Not indexed (ZIP)",
+    reason: "ZIP files are stored intact; their contents are not extracted or indexed.",
+  });
+  assert.deepEqual(resourceIndexAction({ displayName: "archive.bin", mediaType: "application/vnd.example.archive+zip" }), {
+    kind: "UNAVAILABLE",
+    label: "Not indexed (ZIP)",
+    reason: "ZIP files are stored intact; their contents are not extracted or indexed.",
+  });
+});
+
+test("supported non-ZIP text Resources retain the explicit rebuild action", () => {
+  assert.deepEqual(resourceIndexAction({ displayName: "notes.md", mediaType: "text/markdown" }), {
+    kind: "REBUILD",
+    label: "Rebuild local text index",
+  });
 });

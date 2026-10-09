@@ -28,6 +28,21 @@ Node version is below the package's declared 24.21+ requirement. This verifies h
 bundle compilation only; it is not a rendered download interaction, Tauri Save As, or
 qualified-OS/owner acceptance test.
 
+### ZIP opaque-intake Library indexing control (2026-10-09)
+
+Closed one E02-S03 UX gap: ZIP Resources remain accepted by normal file intake and are
+classified as opaque from the `.zip` suffix, supported ZIP media types, or a structured
+`+zip` media-type suffix. Library rows now show `Not indexed (ZIP)` instead of offering an
+explicit text-index rebuild that the backend would reject as `NOT_INDEXABLE`; other
+resources keep the rebuild action. The decision is pure and unit-tested. Focused
+resource-intake tests passed (6/6), and the UI production build passed with Node 22.23.1 /
+pnpm 11.9.0. The project pins Node 24.21.0 / pnpm 12.10.1; the full UI suite was not
+qualified with the available toolchain because the Node 22 strip-only runner cannot
+execute several existing TypeScript parameter properties. No ZIP parser/provider or
+extraction path was enabled. This is a source/UI slice, not end-to-end upload or native
+desktop acceptance evidence.
+
+
 ### Effect dispatch admission remains closed (2026-10-09)
 
 The SQLite Effect writer now rejects every request to enter `STARTED` with typed blockers

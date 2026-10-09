@@ -6,6 +6,33 @@ export type ResourceIntakeFile = Pick<File, "name" | "size"> & {
   webkitRelativePath?: string;
 };
 
+export type ResourceIndexAction =
+  | { kind: "REBUILD"; label: "Rebuild local text index" }
+  | {
+    kind: "UNAVAILABLE";
+    label: "Not indexed (ZIP)";
+    reason: "ZIP files are stored intact; their contents are not extracted or indexed.";
+  };
+
+export function isOpaqueZipResource(resource: { displayName: string; mediaType: string }): boolean {
+  const mediaType = resource.mediaType.split(";", 1)[0]?.trim().toLowerCase();
+  return resource.displayName.toLowerCase().endsWith(".zip")
+    || mediaType === "application/zip"
+    || mediaType === "application/x-zip-compressed"
+    || mediaType?.endsWith("+zip") === true;
+}
+
+export function resourceIndexAction(resource: { displayName: string; mediaType: string }): ResourceIndexAction {
+  if (isOpaqueZipResource(resource)) {
+    return {
+      kind: "UNAVAILABLE",
+      label: "Not indexed (ZIP)",
+      reason: "ZIP files are stored intact; their contents are not extracted or indexed.",
+    };
+  }
+  return { kind: "REBUILD", label: "Rebuild local text index" };
+}
+
 export function isSensitiveOrGenerated(file: ResourceIntakeFile): boolean {
   const path = file.webkitRelativePath || file.name;
   const parts = path.split(/[\\/]/).filter(Boolean).map((part) => part.toLowerCase());
