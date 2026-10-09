@@ -3566,3 +3566,46 @@ daemon. It does not implement a Conversation agent turn, RichPresentation produc
 publication, trusted Artifact/citation/action blocks, rich streaming, or full Presentation
 Runtime qualification. Browser-only preview cannot invoke the native Tauri bridge and
 therefore uses the semantic-text fallback.
+
+## Resource intake, local isolation, and Manual Run increments — 2026-10-09
+
+After merging the parallel E06/E07/E08 slices, folder selection now rejects unsafe
+relative paths instead of normalizing backslashes, shares bounded file-count/size checks
+with tests, and reports the digest preflight before starting/resuming an upload. This
+hardens the existing resumable Resource upload/catalog/preview route; it does not add ZIP
+extraction or semantic RAG. ZIPs remain opaque Resources and indexing remains lexical.
+
+The Linux Environment work adds a Bubblewrap launch builder over staged, validated input
+and output roots: input read-only, output writable, host home hidden, environment cleared,
+and user/PID/network/IPC/UTS namespaces required. On the current Ubuntu host with
+Bubblewrap 0.9.0, live tests verified input immutability, writable output, hidden `/home`,
+and blocked host-loopback TCP. This is a lower-level sandbox boundary, not a production
+EnvironmentProvider. The composed Bubblewrap+cgroup scope test and the existing systemd
+scope tests remain ignored because this host reports a degraded user systemd manager and
+`/non-systemd` cgroups. Task/agent dispatch remains disabled pending ResourceStore pins,
+output quotas, authenticated egress, Runtime attestation/restart recovery, Trust/Effect/
+lease integration and reconciliation.
+
+Automation gained an E08-S09 manual-run slice with client and Tauri request-boundary
+coverage for a READY Task receipt, pinned revision, and exact idempotency-key reuse after
+an ambiguous retry. No scheduled host is claimed; daemon/SQLite occurrence-cursor replay,
+desktop restart/system transport, and owner acceptance remain open.
+
+Merged-tree verification on this Linux development environment:
+
+- `node --experimental-transform-types --test apps/litecowork-ui/tests/*.test.ts` — 75
+  passed, 0 failed.
+- `pnpm --config.verifyDepsBeforeRun=false build` in `apps/litecowork-ui` — passed; Vite
+  warns the main JavaScript bundle is about 730 kB before gzip.
+- `cargo test --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` — 17 passed,
+  0 failed; existing warnings remain.
+- `cargo test --locked -p linux-process-scope -- --nocapture` — 9 passed, 3 ignored.
+- `cargo test --locked -p linux-process-scope --lib bubblewrap::tests -- --ignored
+  --nocapture` — 2 live Bubblewrap tests passed.
+- Architecture and implementation-plan validators passed: 79 documents, 1,096 sections,
+  5,314 traceability rows, 60 stories. `git diff --check` passed.
+
+These are bounded local slices, not V1 completion. Native coding-agent turns, durable
+Task/Attempt execution, production-safe switching, Trust-mediated capabilities/Effects,
+ZIP extraction, semantic/local-model RAG, browser/computer execution, and full Coworker /
+Goal / Automation / Artifact Workbench product acceptance still require implementation.
