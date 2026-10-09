@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ConversationRequestEpochs, parseConversationList, parseConversationSnapshot } from "../src/conversations/conversation-view.ts";
+import { appendConversationPage, ConversationRequestEpochs, parseConversationList, parseConversationSnapshot } from "../src/conversations/conversation-view.ts";
 
 test("snapshot selection does not invalidate the initial Conversation list request", () => {
   const requests = new ConversationRequestEpochs();
@@ -15,6 +15,16 @@ test("Conversation snapshots preserve their bounded pagination cursor", () => {
   const snapshot = { workspace_id: "workspace-1", conversation_id: "conversation-1", items: [{ message, rich_presentation: null, linked_items: [] }], next_cursor: "message-1", active_turn: null };
   assert.equal(parseConversationSnapshot(snapshot, "workspace-1", "conversation-1").next_cursor, "message-1");
   assert.throws(() => parseConversationSnapshot({ ...snapshot, next_cursor: "../foreign" }, "workspace-1", "conversation-1"), /pagination cursor/);
+});
+
+test("Conversation pagination appends unseen messages in order and fences mismatched histories", () => {
+  const message = (message_id: string) => ({ message_id, role: "AGENT" as const, created_at: "2026-10-09T12:00:00Z", content: [{ kind: "TEXT" as const, text: message_id }], rich_presentation: null });
+  const base = { workspace_id: "workspace-1", conversation_id: "conversation-1", messages: [message("message-1"), message("message-2")], next_cursor: "message-2", active_turn: null };
+  const page = { ...base, messages: [message("message-2"), message("message-3"), message("message-3")], next_cursor: null };
+  const appended = appendConversationPage(base, page);
+  assert.deepEqual(appended.messages.map(item => item.message_id), ["message-1", "message-2", "message-3"]);
+  assert.equal(appended.next_cursor, null);
+  assert.throws(() => appendConversationPage(base, { ...page, conversation_id: "conversation-2" }), /does not match/);
 });
 
 test("Conversation list accepts only records pinned to the selected Workspace", () => {

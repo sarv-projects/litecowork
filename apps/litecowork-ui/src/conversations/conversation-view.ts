@@ -48,6 +48,22 @@ export class ConversationRequestEpochs {
   invalidateSnapshot(): void { this.snapshotEpoch += 1; }
 }
 
+export function appendConversationPage(
+  current: ConversationSnapshotView,
+  page: ConversationSnapshotView,
+): ConversationSnapshotView {
+  if (current.workspace_id !== page.workspace_id || current.conversation_id !== page.conversation_id) {
+    throw new Error("Conversation page does not match the selected history.");
+  }
+  const seen = new Set(current.messages.map(message => message.message_id));
+  const additional = page.messages.filter(message => {
+    if (seen.has(message.message_id)) return false;
+    seen.add(message.message_id);
+    return true;
+  });
+  return { ...current, messages: [...current.messages, ...additional], next_cursor: page.next_cursor };
+}
+
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const boundedText = (value: unknown, max = 256): value is string => typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001f]/.test(value);
 const sha256Digest = (value: unknown): value is string => typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);

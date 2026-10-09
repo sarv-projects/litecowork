@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RichResponseView } from "../presentation/RichResponseView";
 import { parseRichPresentationResponse, type ValidatedRichPresentation } from "../presentation/rich-presentation";
-import { ConversationRequestEpochs, parseConversationList, parseConversationSnapshot, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary } from "./conversation-view";
+import { appendConversationPage, ConversationRequestEpochs, parseConversationList, parseConversationSnapshot, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary } from "./conversation-view";
 import "./conversations-page.css";
 
 function messageText(message: ConversationMessageView): string {
@@ -144,15 +144,8 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
       const value = await invoke<unknown>("get_conversation_presentation", { workspaceId, conversationId: selectedId, cursor });
       if (!requests.current.isCurrentSnapshot(current)) return;
       const page = parseConversationSnapshot(value, workspaceId, selectedId);
-      setSnapshot(existing => {
-        if (!existing || existing.conversation_id !== selectedId) return existing;
-        const seen = new Set(existing.messages.map(message => message.message_id));
-        return {
-          ...existing,
-          messages: [...existing.messages, ...page.messages.filter(message => !seen.has(message.message_id))],
-          next_cursor: page.next_cursor,
-        };
-      });
+      if (page.next_cursor === cursor) throw new Error("Conversation history did not advance its pagination cursor.");
+      setSnapshot(existing => existing?.conversation_id === selectedId ? appendConversationPage(existing, page) : existing);
     } catch (cause) {
       if (requests.current.isCurrentSnapshot(current)) setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

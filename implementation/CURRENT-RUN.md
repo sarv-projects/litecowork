@@ -3658,7 +3658,7 @@ appends unseen messages; the Tauri bridge validates and forwards the optional cu
 
 Verified locally:
 
-- `node --experimental-transform-types --test apps/litecowork-ui/tests/*.test.ts` — 77
+- `node --experimental-transform-types --test apps/litecowork-ui/tests/*.test.ts` — 78
   passed, 0 failed.
 - `pnpm --config.verifyDepsBeforeRun=false build` in `apps/litecowork-ui` — passed;
   Vite reports the main JavaScript chunk above 500 kB.
