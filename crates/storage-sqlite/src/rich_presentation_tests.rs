@@ -88,6 +88,97 @@ fn rich_publication_roundtrips_independently_of_semantic_message() {
     );
 }
 
+#[test]
+fn conversation_presentation_snapshot_is_bounded_paged_and_keeps_semantic_truth() {
+    let (dir, store, request) = fixture();
+    let adapter = adapter(&store);
+    adapter.publish_rich_presentation(request).unwrap();
+    let c = Connection::open(state_database(&dir)).unwrap();
+    c.execute(
+        "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,content_json,resource_refs_json,created_at) VALUES('message-z','conversation-rich','{}','USER','[]','[]','2026-10-09T12:00:01.000000000Z')",
+        [],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO conversation_turns(turn_id,conversation_id,user_message_id,status,retry_ordinal,created_at,version,presentation_preference) VALUES('turn-active','conversation-rich','message-z','RUNNING',0,'2026-10-09T12:00:01.000000000Z',3,'RICH')",
+        [],
+    )
+    .unwrap();
+    drop(c);
+
+    let first = adapter
+        .read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            None,
+            1,
+        )
+        .unwrap();
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.items[0]["message"]["message_id"], "message-rich");
+    assert_eq!(
+        first.items[0]["rich_presentation"]["presentation_id"],
+        "presentation-rich"
+    );
+    assert_eq!(first.items[0]["linked_items"], json!([]));
+    assert_eq!(first.next_cursor.as_deref(), Some("message-rich"));
+    assert!(first.projection_revision >= 5);
+    assert!(first.stream_cursor.contains("conversation-rich"));
+    assert_eq!(
+        first.active_turn.as_ref().unwrap()["turn_id"],
+        "turn-active"
+    );
+    assert_eq!(
+        first.active_turn.as_ref().unwrap()["presentation_preference"],
+        "RICH"
+    );
+
+    let second = adapter
+        .read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            first.next_cursor.as_deref(),
+            1,
+        )
+        .unwrap();
+    assert_eq!(second.items[0]["message"]["message_id"], "message-z");
+    assert_eq!(second.items[0]["rich_presentation"], Value::Null);
+    assert_eq!(second.next_cursor, None);
+
+    assert!(matches!(
+        adapter.read_conversation_presentation(
+            "someone-else",
+            "workspace-rich",
+            "conversation-rich",
+            None,
+            1,
+        ),
+        Err(StoreError::NotFound)
+    ));
+    assert!(matches!(
+        adapter.read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            Some("foreign-message"),
+            1,
+        ),
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        adapter.read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            None,
+            MAX_CONVERSATION_PRESENTATION_MESSAGES + 1,
+        ),
+        Err(StoreError::Invalid(_))
+    ));
+}
+
 fn adapter(store: &SqliteWorkspaceStore) -> SqliteRichPresentationStore {
     SqliteRichPresentationStore::new(store.clone())
 }

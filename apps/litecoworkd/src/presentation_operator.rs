@@ -13,13 +13,18 @@ use serde_json::json;
 use storage_core::{
     TaskPresentationActivityEvent, TaskPresentationReadModel, TaskPresentationReadStore,
     rich_presentation::{
-        MAX_RICH_PRESENTATION_BYTES, RichPresentationRecord, RichPresentationStore,
+        MAX_CONVERSATION_PRESENTATION_MESSAGES, MAX_RICH_PRESENTATION_BYTES,
+        RichPresentationRecord, RichPresentationStore,
     },
 };
 use storage_sqlite::SqliteRichPresentationStore;
 
 pub(super) fn routes() -> Router<ApiState> {
     Router::new()
+        .route(
+            "/v1/conversations/{conversation_id}/presentation",
+            get(get_conversation_presentation),
+        )
         .route(
             "/v1/tasks/{task_id}/presentation",
             get(get_task_presentation),
@@ -29,6 +34,91 @@ pub(super) fn routes() -> Router<ApiState> {
             "/v1/rich-presentations/{presentation_id}",
             get(get_rich_presentation),
         )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConversationPresentationQuery {
+    cursor: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn get_conversation_presentation(
+    State(state): State<ApiState>,
+    Path(conversation_id): Path<String>,
+    Query(query): Query<ConversationPresentationQuery>,
+    headers: HeaderMap,
+) -> Result<Response, Response> {
+    let workspace_id = selected_workspace(&headers)?;
+    let limit = query.limit.unwrap_or(50);
+    if !valid_task_query_id(&workspace_id)
+        || !valid_task_query_id(&conversation_id)
+        || query
+            .cursor
+            .as_deref()
+            .is_some_and(|id| !valid_task_query_id(id))
+        || !(1..=MAX_CONVERSATION_PRESENTATION_MESSAGES).contains(&limit)
+    {
+        return Err(presentation_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation presentation lookup is invalid",
+        ));
+    }
+
+    tokio::task::spawn_blocking(move || {
+        conversation_presentation_response(
+            &state.store,
+            &state.principal_id,
+            &workspace_id,
+            &conversation_id,
+            query.cursor.as_deref(),
+            limit,
+        )
+    })
+    .await
+    .map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Conversation presentation is unavailable",
+        )
+    })?
+}
+
+fn conversation_presentation_response(
+    store: &storage_sqlite::SqliteWorkspaceStore,
+    principal_id: &str,
+    workspace_id: &str,
+    conversation_id: &str,
+    cursor: Option<&str>,
+    limit: usize,
+) -> Result<Response, Response> {
+    let snapshot = SqliteRichPresentationStore::new(store.clone())
+        .read_conversation_presentation(principal_id, workspace_id, conversation_id, cursor, limit)
+        .map_err(|error| match error {
+            StoreError::NotFound => presentation_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Conversation is unavailable",
+            ),
+            StoreError::Invalid(_) => presentation_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Conversation presentation lookup is invalid",
+            ),
+            _ => presentation_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTEGRITY_FAILURE",
+                "Conversation presentation is unavailable",
+            ),
+        })?;
+    let mut response = Json(snapshot).into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
 }
 
 #[derive(Serialize)]
@@ -702,7 +792,7 @@ mod tests {
 
 #[cfg(test)]
 mod rich_presentation_read_tests {
-    use super::rich_presentation_response;
+    use super::{conversation_presentation_response, rich_presentation_response};
     use axum::{
         body::to_bytes,
         http::{StatusCode, header},
@@ -963,6 +1053,72 @@ mod rich_presentation_read_tests {
         assert!(body.get("host_skill_refs").is_none());
     }
 
+    #[tokio::test]
+    async fn owner_reads_semantic_conversation_snapshot_with_optional_presentation_ref() {
+        let fixture = fixture();
+        let response = conversation_presentation_response(
+            &fixture.store,
+            OWNER,
+            WORKSPACE,
+            "rich-read-conversation",
+            None,
+            50,
+        )
+        .expect("Conversation owner can read its bounded snapshot");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-store")
+        );
+        let body = body_json(response).await;
+        assert_eq!(body["workspace_id"], WORKSPACE);
+        assert_eq!(body["conversation_id"], "rich-read-conversation");
+        assert_eq!(
+            body["items"][0]["message"]["message_id"],
+            "rich-read-message"
+        );
+        assert_eq!(
+            body["items"][0]["message"]["content"][0]["text"],
+            "Hello from LiteCowork"
+        );
+        assert_eq!(
+            body["items"][0]["rich_presentation"]["presentation_id"],
+            PRESENTATION
+        );
+        assert!(body["items"][0].get("document").is_none());
+        assert_eq!(body["items"][0]["linked_items"], json!([]));
+    }
+
+    #[test]
+    fn conversation_snapshot_uses_the_same_nondisclosing_owner_boundary() {
+        let fixture = fixture();
+        let denied = conversation_presentation_response(
+            &fixture.store,
+            "foreign-principal",
+            WORKSPACE,
+            "rich-read-conversation",
+            None,
+            50,
+        )
+        .expect_err("foreign owner is denied");
+        assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+
+        let invalid_cursor = conversation_presentation_response(
+            &fixture.store,
+            OWNER,
+            WORKSPACE,
+            "rich-read-conversation",
+            Some("unknown-message"),
+            50,
+        )
+        .expect_err("cursor cannot cross or invent message scope");
+        assert_eq!(invalid_cursor.status(), StatusCode::BAD_REQUEST);
+    }
+
     #[test]
     fn foreign_principal_cannot_read_or_learn_whether_presentation_exists() {
         let fixture = fixture();
@@ -979,13 +1135,11 @@ mod rich_presentation_read_tests {
     #[test]
     fn selecting_another_owned_workspace_does_not_expose_the_presentation() {
         let fixture = fixture();
-        let response = rich_presentation_response(
-            &fixture.store,
-            OWNER,
-            OTHER_WORKSPACE,
-            PRESENTATION,
-        )
-        .expect_err("a presentation bound to a different selected Workspace is unavailable");
+        let response =
+            rich_presentation_response(&fixture.store, OWNER, OTHER_WORKSPACE, PRESENTATION)
+                .expect_err(
+                    "a presentation bound to a different selected Workspace is unavailable",
+                );
 
         // The owner is allowed to access the selected Workspace, but the presentation
         // is not in it. Keep the same non-disclosing response as an unknown id.
@@ -1004,10 +1158,7 @@ mod rich_presentation_read_tests {
             .expect_err("blank selected Workspace must be rejected");
         assert_eq!(blank.status(), StatusCode::BAD_REQUEST);
 
-        headers.insert(
-            "x-workspace-id",
-            WORKSPACE.parse().expect("header value"),
-        );
+        headers.insert("x-workspace-id", WORKSPACE.parse().expect("header value"));
         assert_eq!(
             super::super::selected_workspace(&headers)
                 .expect("valid selected Workspace is retained"),

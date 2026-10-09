@@ -52,6 +52,23 @@ pub struct StoredRichPresentation {
     pub canonical_document: Vec<u8>,
 }
 
+/// Bounded read-only projection for the authenticated Conversation Operator route.
+/// Semantic messages remain available independently of optional presentation refs.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ConversationPresentationSnapshot {
+    pub workspace_id: String,
+    pub conversation_id: String,
+    pub projection_revision: u64,
+    pub stream_cursor: String,
+    pub items: Vec<Value>,
+    pub next_cursor: Option<String>,
+    pub active_turn: Option<Value>,
+}
+
+pub const MAX_CONVERSATION_PRESENTATION_MESSAGES: usize = 100;
+pub const MAX_CONVERSATION_PRESENTATION_MESSAGE_BYTES: usize = 262_144;
+pub const MAX_CONVERSATION_PRESENTATION_PAGE_BYTES: usize = 4_194_304;
+
 /// This initial qualified adapter accepts semantic TEXT_SLICE, LAYOUT and DIVIDER
 /// blocks only. All source-bearing/host-bound blocks require future owning binders.
 /// Read failure never modifies or makes the underlying semantic message unavailable.
@@ -66,4 +83,15 @@ pub trait RichPresentationStore: Send + Sync {
         workspace_id: &str,
         presentation_id: &str,
     ) -> Result<Option<StoredRichPresentation>, StoreError>;
+
+    /// Returns an owner-authorized, bounded message page with optional immutable rich
+    /// presentation refs. Cursors are Conversation-scoped and read-only.
+    fn read_conversation_presentation(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        conversation_id: &str,
+        after_message_id: Option<&str>,
+        limit: usize,
+    ) -> Result<ConversationPresentationSnapshot, StoreError>;
 }
