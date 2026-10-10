@@ -101,3 +101,26 @@ This table distinguishes target specification, code presence, and actual qualifi
 | Cloud continuation | Explicitly future; local-only desktop target | OUT OF DESKTOP V1 | Future placement |
 
 A grep hit is not implementation proof. In particular, owner_coworker_id currently exists for Environment ownership and does NOT establish Coworker-owned Conversations. Likewise the local TriggerHost identity used by manual occurrences is not a recurring/event trigger host.
+
+
+## Agent-module implementation sequence
+
+E03 now has a second internal sequence after the existing bounded native-agent/session
+foundation:
+
+1. **E03-S06** — AgentModuleRegistry + live/cached ACP Registry discovery.
+2. **E03-S07** — install/update/repair lifecycle and Runtime-local observations.
+3. **E03-S08** — AgentControlDescriptor + versioned AgentBinding configuration/defaults.
+4. **E03-S09** — native authentication, secure credential slots and native-config launch.
+5. **E03-S10** — agent-adaptive composer with dependent Model/session options and native
+   slash/reference/input surfaces.
+6. **E03-S11** — per-agent/version/OS conformance packs against the original harness.
+7. **E04-S06** — cross-agent LiteSPM capability bridges after both AgentModule and
+   Capability Fabric contracts are available.
+
+This sequence is intentionally incremental. Do not delete the current Codex/OpenCode
+probe paths at S06; migrate them behind AgentModules and remove brand-specific UI/Tauri
+branches only after equivalent behavior has CODE + SYSTEM evidence.
+
+The detailed current-source refactor map is in
+[AGENT-MODULE-AUDIT.md](AGENT-MODULE-AUDIT.md).

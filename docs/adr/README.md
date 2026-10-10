@@ -25,3 +25,4 @@ Superseded decisions remain available with an explicit successor reference.
 | [0022](0022-rich-presentation-is-optional.md) | Rich presentation is optional; ConversationMessage remains semantic authority |
 | [0023](0023-host-guidance-is-not-capability-authority.md) | Built-in Host guidance is zero-authority context, not a capability |
 | [0024](0024-optional-chat-first-coworkers.md) | Coworkers are optional chat-first identities; standing work and automatic memory remain scoped and bounded |
+| [0025](0025-agent-module-registry-and-native-configuration.md) | Agent-specific lifecycle/configuration is modular; native auth/options/surface stay agent-owned and LiteSPM bridges cross-agent packages |

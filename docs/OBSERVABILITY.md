@@ -184,3 +184,34 @@ provider startup result. Freeze numeric Stage 1 targets from those measurements.
 adds real LiteSPM/MCP activation and provider recovery measurements, retaining the Stage 1
 control-plane budget and publishing provider-specific latency separately. Cross-Runtime
 recovery receives measured targets when Mesh exists; none are invented in advance.
+
+
+## Agent registry/lifecycle observability
+
+Allowed structured dimensions are bounded IDs/state enums, never secrets, paths or raw
+native output.
+
+Metrics:
+
+```text
+agent_registry_refresh_total{outcome}
+agent_registry_cache_age_seconds
+agent_installation_observation_total{state,module_id}
+agent_lifecycle_operation_total{operation,outcome,module_id}
+agent_lifecycle_operation_duration_seconds{operation,module_id}
+agent_auth_observation_total{state,module_id}
+agent_control_descriptor_refresh_total{outcome,module_id}
+agent_control_descriptor_age_seconds{module_id}
+agent_binding_configuration_total{outcome,module_id}
+agent_setup_drift_total{reason,module_id}
+agent_native_command_admission_total{outcome,module_id}
+agent_capability_bridge_resolution_total{route,module_id,capability_class}
+```
+
+Never label metrics by provider account identifier, model prompt, API-key slot value,
+native config path, full registry URL, command argument, or SecretRef.
+
+Trace spans may include `registry_agent_id`, `module_id`, descriptor digest prefix,
+Runtime/incarnation IDs and lifecycle operation ID. Auth spans record method **kind** and
+outcome only. Install/update traces record verified package identity/version, not
+credentials or private download tokens.

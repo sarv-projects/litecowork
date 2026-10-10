@@ -320,3 +320,28 @@ macOS, and Windows versions:
 Until those gates pass, the source-integrated Unix IPC path is not production-qualified.
 There is no desktop loopback HTTP/bearer fallback. Unsupported platforms remain unavailable
 until their authenticated transport is implemented and qualified.
+
+
+## Confidential agent credential submission
+
+An adapter-declared LITECOWORK_SECRET_STORE credential slot is one of the few Operator
+operations whose request body may contain secret bytes. It therefore has a stricter local
+transport profile than ordinary JSON configuration:
+
+1. only the authenticated local desktop principal may invoke it;
+2. the WebView receives no SecretRef target metadata or stored secret value;
+3. the native Tauri command accepts a bounded one-shot secret buffer and forwards it only
+   to the local authenticated Operator;
+4. request/response body logging, debug snapshots, retries by generic query middleware,
+   persistence, crash breadcrumbs and analytics are disabled;
+5. daemon validates the current AgentControlDescriptor, slot ID, storage owner and secret
+   kind before SecretStore write;
+6. the input buffer is zeroized/released as soon as the SecretStore operation settles;
+7. the response contains only configured status / AgentCredentialBinding SecretRef;
+8. remote Operator transports do not inherit this operation by default.
+
+Native-agent-owned sign-in/API keys do not use this route; LiteCowork launches/surfaces the
+adapter-declared native flow instead.
+
+Windows named-pipe support must demonstrate the same no-fallback peer-authentication and
+secret-buffer behavior before this path is enabled there.

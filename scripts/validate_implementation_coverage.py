@@ -43,6 +43,16 @@ def canonical_digest(value: object) -> str:
 
 def schema_story(name: str) -> str:
     low = re.sub(r"([a-z])([A-Z])", r"\1_\2", name).lower()
+    if any(x in low for x in ("agent_registry", "agent_distribution")):
+        return "E03-S06"
+    if any(x in low for x in ("agent_installation", "agent_lifecycle")):
+        return "E03-S07"
+    if any(x in low for x in ("agent_auth", "agent_credential", "native_config")):
+        return "E03-S09"
+    if any(x in low for x in ("agent_control", "agent_configuration", "agent_session_option")):
+        return "E03-S08"
+    if any(x in low for x in ("native_command", "native_reference", "agent_input_surface", "agent_native_surface")):
+        return "E03-S10"
     if any(x in low for x in ("delegation", "worker", "lead_failover", "quota", "cost", "budget")):
         return "E05-S03" if any(x in low for x in ("quota", "cost", "budget", "performance")) else "E05-S01"
     if any(x in low for x in ("coworker", "goal", "suggestion", "context")):
@@ -509,7 +519,19 @@ def operation_story(path: str, method: str, operation_id: str) -> str:
         return "E01-S03"
     if p.startswith("/runtimes"):
         return "E12-S01" if "remote" in p else "E11-S02"
-    if p.startswith("/agent-bindings") or p.startswith("/agent-profiles"):
+    if p.startswith("/agent-registry"):
+        return "E03-S07" if p.endswith("/install") or p.endswith("/update") else "E03-S06"
+    if p.startswith("/agent-installations"):
+        return "E03-S07"
+    if p.startswith("/agent-profiles"):
+        if "/auth/" in p or "/credentials/" in p or "/native-config/" in p:
+            return "E03-S09"
+        if p.endswith("/refresh") or p.endswith("/control-descriptor"):
+            return "E03-S08"
+        return "E03-S01"
+    if p.startswith("/agent-bindings"):
+        if p.endswith("/configuration") or p.endswith("/session-options") or p.endswith("/harness-capabilities"):
+            return "E03-S08"
         return "E05-S03" if "quota" in p else "E03-S01"
     if p.startswith("/delegation-profiles"):
         return "E05-S03" if "performance" in p else "E05-S01"
@@ -537,6 +559,8 @@ def operation_story(path: str, method: str, operation_id: str) -> str:
 def event_story(event_type: str) -> str:
     if event_type == "task.spec.revised.v1":
         return "E03-S03"
+    if event_type == "agent.binding.configuration.changed.v1":
+        return "E03-S08"
     prefix = event_type.split(".", 1)[0]
     if prefix in {"conversation", "message", "turn"}:
         return "E03-S02"
@@ -570,6 +594,8 @@ def event_story(event_type: str) -> str:
 
 
 def contract_file_story(path: str) -> str:
+    if path.endswith("sqlite-v16.sql"):
+        return "E03-S08"
     if path.endswith("delegation.schema.json"):
         return "E05-S01"
     if path.endswith("operator-api.openapi.yaml"):
@@ -594,6 +620,7 @@ def read_doc_mappings(previous: list[dict[str, str]]) -> dict[str, str]:
             "GLOSSARY.md": "E01-S01",
             "README.md": "E02-S01",
             "apps/litecowork-ui/README.md": "E02-S01",
+            "docs/AGENT-CONTROL.md": "E03-S06",
             "docs/COWORKER-FLOWS.md": "E09-S02",
             "docs/COWORKERS-TARGET.md": "E08-S01",
             "docs/FLOWS.md": "E13-S03",
@@ -619,6 +646,7 @@ def read_doc_mappings(previous: list[dict[str, str]]) -> dict[str, str]:
             "docs/adr/0018-context-content-is-resource-backed-and-provider-pluggable.md": "E08-S03",
             "docs/adr/0019-credential-egress-and-audit-boundaries.md": "E04-S01",
             "docs/adr/0024-optional-chat-first-coworkers.md": "E08-S01",
+            "docs/adr/0025-agent-module-registry-and-native-configuration.md": "E03-S06",
         }
     )
     for path in schema_docs():
@@ -643,6 +671,15 @@ def doc_sections(path: str, text: str) -> list[tuple[str, str, str]]:
         for row in previous
         if row["kind"] in {"FLOW", "BENCHMARK"}
     }
+    explicit_case_rows = {
+        ("FLOW", "F137"): "E03-S06",
+        ("FLOW", "F138"): "E03-S07",
+        ("FLOW", "F139"): "E03-S09",
+        ("FLOW", "F140"): "E03-S08",
+        ("FLOW", "F141"): "E03-S10",
+        ("FLOW", "F142"): "E03-S10",
+        ("FLOW", "F143"): "E04-S06",
+    }
     for position, (start, level, title) in enumerate(headings):
         end = len(lines)
         for next_start, next_level, _ in headings[position + 1 :]:
@@ -655,7 +692,7 @@ def doc_sections(path: str, text: str) -> list[tuple[str, str, str]]:
         scenario = re.match(r"^(F\d+)\s+[—-]", title) or re.match(r"^(B\d+)\s+", title)
         if scenario:
             kind = "FLOW" if scenario.group(1).startswith("F") else "BENCHMARK"
-            active_case_story = old_case_rows.get((kind, scenario.group(1)))
+            active_case_story = old_case_rows.get((kind, scenario.group(1))) or explicit_case_rows.get((kind, scenario.group(1)))
             if active_case_story is None:
                 fail(f"new {kind.lower()} {scenario.group(1)} needs an explicit story mapping before coverage refresh")
         body = "".join(lines[start:end])
@@ -673,6 +710,7 @@ def plan_doc_story(path: str, title: str, backlog: dict[str, object]) -> str:
         prefix = "E" + epic.group(1) + "-"
         return sorted(story for story in stories if story.startswith(prefix))[0]
     defaults = {
+        "AGENT-MODULE-AUDIT.md": "E03-S06",
         "AUDIT.md": "E01-S01",
         "COVERAGE.md": "E01-S01",
         "PROCESS.md": "E01-S01",
@@ -695,6 +733,22 @@ def plan_doc_story(path: str, title: str, backlog: dict[str, object]) -> str:
 
 def section_story(path: str, title: str, base: str) -> str:
     low = title.lower()
+    if path.endswith("AGENT-CONTROL.md"):
+        if any(word in low for word in ("litespm", "capability bridge", "capability attachment")):
+            return "E04-S06"
+        if any(word in low for word in ("research", "qualification", "required code", "required system", "required user", "implementation decomposition")):
+            return "E03-S11"
+        if any(word in low for word in ("authentication", "credential", "secret submission", "native config")):
+            return "E03-S09"
+        if any(word in low for word in ("composer", "native command", "reference namespace", "input surface")):
+            return "E03-S10"
+        if any(word in low for word in ("installation", "update", "lifecycle")):
+            return "E03-S07"
+        if any(word in low for word in ("registry", "distribution", "agentmodule", "module architecture")):
+            return "E03-S06"
+        if any(word in low for word in ("binding", "control descriptor", "session option", "operator api", "event", "persistence", "service")):
+            return "E03-S08"
+        return "E03-S06"
     if path.endswith("SCHEMAS.md"):
         if any(word in low for word in ("conversation", "message", "turn")):
             return "E03-S02"
@@ -777,7 +831,13 @@ def build_coverage(previous: list[dict[str, str]], inventory: dict[str, object])
         "docs/schemas/domain-event.schema.json",
         "docs/schemas/error-codes.schema.json",
         "docs/schemas/operator-api.openapi.yaml",
-        "docs/schemas/sqlite-v1.sql",
+        *[
+            path.relative_to(ROOT).as_posix()
+            for path in sorted(
+                (ROOT / "docs" / "schemas").glob("sqlite-v[0-9]*.sql"),
+                key=lambda item: int(re.search(r"sqlite-v(\d+)\.sql$", item.name).group(1)),
+            )
+        ],
         "scripts/validate_architecture.py",
     ]
     for path in contract_files:
@@ -881,6 +941,15 @@ def build_coverage(previous: list[dict[str, str]], inventory: dict[str, object])
         (row["kind"], row["contract_or_scenario"]): row
         for row in previous
     }
+    explicit_case_rows = {
+        ("FLOW", "F137"): ("E03-S06", "Agent Registry refresh/discovery lifecycle."),
+        ("FLOW", "F138"): ("E03-S07", "Agent install/update/repair lifecycle."),
+        ("FLOW", "F139"): ("E03-S09", "Native authentication and secure credential-slot flow."),
+        ("FLOW", "F140"): ("E03-S08", "Versioned AgentBinding configuration/defaults."),
+        ("FLOW", "F141"): ("E03-S10", "Agent-adaptive composer dependency refresh."),
+        ("FLOW", "F142"): ("E03-S10", "Native slash/reference semantic input."),
+        ("FLOW", "F143"): ("E04-S06", "Cross-agent LiteSPM capability bridge qualification."),
+    }
     for path, pattern, kind in [
         (ROOT / "docs/FLOWS.md", r"^## (F\d+) — (.+)$", "FLOW"),
         (ROOT / "docs/BENCHMARKS.md", r"^### (B\d+) (.+)$", "BENCHMARK"),
@@ -889,9 +958,13 @@ def build_coverage(previous: list[dict[str, str]], inventory: dict[str, object])
         for identifier, title in re.findall(pattern, text, re.M):
             key = identifier + " " + title
             prior = previous_by_key.get((kind, key))
-            if not prior:
+            explicit = explicit_case_rows.get((kind, identifier))
+            if prior:
+                add(kind, key, prior["primary_story"], prior["coverage_note"])
+            elif explicit:
+                add(kind, key, explicit[0], explicit[1])
+            else:
                 fail(f"new {kind.lower()} {identifier} requires an explicit primary_story in coverage.csv")
-            add(kind, key, prior["primary_story"], prior["coverage_note"])
 
     keys = [(row["kind"], row["contract_or_scenario"]) for row in rows]
     if len(keys) != len(set(keys)):

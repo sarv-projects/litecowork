@@ -246,3 +246,480 @@ Adopt: compact **Start** header, spacious neutral dark/light surface, 3–5 larg
 - Per-Coworker notifications are compact settings, not a wall of switches in creation.
 - Coworker Library groups exact files/pages/Artifacts by Today / This week / Older only when those refs exist; it never implies all computer files are shared among Coworkers.
 - Optional Inspector/Trace is for technical users. Default activity remains sentence-first (`Read Drive`, `Ran tests`, `Drafted report`) with duration/outcome; raw invocation payload and native reasoning are not default UI.
+
+
+# Agent Registry and agent-adaptive composer target
+
+This section is normative for the final V1 UI target and supersedes older mock/settings
+wording that shows a standalone **Providers** screen, a separate **Installed agents**
+screen, or one combined Agent/Model/Reasoning chip.
+
+## Routes
+
+~~~text
+/settings/agents
+/settings/agents/:registryAgentId
+/settings/local-models
+/settings/subagents
+~~~
+
+There is no /settings/providers.
+
+Settings > Agents is the **Agent Registry**. It renders the live/cached ACP Registry plus
+local AgentModule, installation, auth/control-descriptor and Workspace-binding state.
+The URL identity is an agent/registry identity, never a provider-account ID.
+
+## Composer component tree
+
+~~~text
+Composer
+  ComposerInput
+    NativeCommandAutocomplete?
+    NativeReferenceAutocomplete?
+    AttachmentTokens[]
+    IncompatibleDraftBanner?
+  ComposerControlRow
+    HostActionButton(+)            # LiteCowork namespace
+    AgentPicker                    # root dependency
+    AgentPrimaryOptionControls[]   # Model / Reasoning / Effort / Mode
+    NativeSurfaceButton            # slash / @ / other reported native affordances
+    SendButton
+~~~
+
+### ComposerAgentSurface target
+
+~~~ts
+type ComposerAgentSurface = {
+  bindingId: string;
+  descriptorDigest: string;
+  agentLabel: string;
+
+  primaryOptions: Array<{
+    optionId: string;
+    label: string;
+    semanticHint: "MODEL" | "REASONING" | "EFFORT" | "MODE" | "OTHER" | null;
+    valueSchema: JsonSchema;
+    selectedValue: unknown;
+    mutableScope: "LIVE_SESSION" | "NEW_SESSION" | "UNSUPPORTED";
+  }>;
+
+  input: {
+    text: boolean;
+    images: boolean;
+    files: boolean;
+    resources: boolean;
+  };
+
+  slashCommands: NativeCommandDescriptor[];
+  referenceKinds: NativeReferenceKindDescriptor[];
+
+  setupState:
+    | "READY"
+    | "NEEDS_INSTALL"
+    | "NEEDS_AUTH"
+    | "DESCRIPTOR_STALE"
+    | "ADAPTER_UPDATE_REQUIRED"
+    | "UNAVAILABLE";
+
+  incompatibleDraftItems: DraftCompatibilityIssue[];
+};
+~~~
+
+Target hook:
+
+~~~ts
+function useComposerAgentSurface(selection, draft) {
+  const binding = resolveBinding(selection);
+  const descriptor = useAgentControlDescriptor(binding.agentProfileId);
+
+  const options = validateDefaultsAndOverrides(
+    binding.defaultSessionOptions,
+    selection.turnOverrides,
+    descriptor.sessionOptions
+  );
+
+  const incompatibilities = compareDraftToInputSurface(
+    draft,
+    descriptor.inputSurface
+  );
+
+  return projectComposerSurface(
+    binding,
+    descriptor,
+    options,
+    incompatibilities
+  );
+}
+~~~
+
+### Agent change reducer
+
+~~~text
+onAgentSelected(nextBindingId):
+  keep draft text
+  keep attachment/resource tokens
+  close prior native autocomplete UI
+
+  descriptor = loadFreshDescriptor(nextBindingId)
+
+  for each prior session option:
+    if same option ID/value validates in next descriptor:
+      retain only when UI visibly communicates retention
+    else:
+      clear; NEVER translate to a guessed equivalent
+
+  recompute primary option buttons
+  recompute slash/reference palette
+  recompute attachment compatibility
+
+  if incompatible draft exists:
+    show IncompatibleDraftBanner
+    disable Send
+  else:
+    enable Send if ordinary validation passes
+~~~
+
+The switch is transactional from the user's point of view: dependent controls replace as
+one group, not one by one while the draft changes underneath them.
+
+## Agent picker
+
+Rows show:
+- name/icon;
+- Ready / Setup required / Unavailable;
+- Workspace default or Coworker default indicator;
+- optional sanitized native account label when safe;
+- Manage agents shortcut.
+
+The ordinary picker lists actionable installed/bound agents, not every registry entry.
+Uninstalled agents live in Agent Registry.
+
+Selecting an agent does not silently start a session. It sets the next-turn selection and
+loads the descriptor needed to render dependent controls.
+
+## Model and reasoning/session-option controls
+
+Never hardcode OpenAI/Anthropic/Groq model names globally.
+
+The adapter's semantic hint controls preferred placement:
+- MODEL -> Model button;
+- REASONING / EFFORT -> next primary control;
+- MODE -> primary only when high-value/bounded;
+- OTHER -> Agent options overflow unless module UI metadata elevates it.
+
+If an agent exposes no override, omit the control. If the option requires NEW_SESSION, the
+UI says it applies at the next send/session boundary.
+
+The UI never says an enum value exists because another agent exposed it.
+
+## Native slash/reference behavior
+
+~~~ts
+function onComposerInput(text, caret, descriptor) {
+  const trigger = nativeTriggerAtCaret(
+    text,
+    caret,
+    descriptor.inputSurface
+  );
+
+  if (trigger.kind === "SLASH") {
+    return showSlashPalette(
+      descriptor.inputSurface.slashCommands,
+      trigger.query
+    );
+  }
+
+  if (trigger.kind === "REFERENCE") {
+    return showReferencePalette(
+      descriptor.inputSurface.referenceKinds,
+      trigger
+    );
+  }
+
+  return closeNativePalette();
+}
+~~~
+
+Selecting an entry creates a semantic native input token. It is not converted into a
+LiteCowork host command.
+
+Host actions behind Plus and native agent commands are different namespaces and must stay
+visually distinct even when both use familiar symbols.
+
+## Settings > Agent Registry component tree
+
+~~~text
+AgentRegistryPage
+  RegistryRail
+    Search
+    Filters?
+    AgentRegistryRow[]
+    RefreshRegistryButton
+
+  AgentDetailPanel
+    AgentIdentityHeader
+    InstallationCard
+      InstallButton?
+      UpdateButton?
+      RepairButton?
+    AuthenticationCard
+      AuthMethodButtons[]
+      SecureCredentialSlotEditor[]
+      NativeAccountObservation
+    NativeConfigurationCard
+      NativeConfigTargetButton[]
+      NonSecretAdapterField[]
+    SessionOptionsCard
+      Model/options schema preview
+    NativeInputCard
+      input types
+      slash commands
+      reference kinds
+    NativeExtensionsCard
+      native harness summary
+      LiteSPM bridge summary
+    WorkspaceBindingsCard
+      binding rows
+      enabled/lead/default
+      configure binding
+    DiagnosticsCard
+      descriptor/module/harness/protocol versions
+      observed/expiry
+      compatibility failures
+~~~
+
+## Registry rail state derivation
+
+~~~ts
+function registryRowState(
+  entry,
+  installation,
+  descriptor,
+  bindings
+) {
+  if (entry.adapterSupport === "NO_ADAPTER") return "NO_ADAPTER";
+  if (!installation || installation.state === "MISSING") return "NOT_INSTALLED";
+
+  if (installation.state === "INSTALLING") return "INSTALLING";
+  if (installation.state === "UPDATING") return "UPDATING";
+  if (installation.state === "BROKEN") return "REPAIR";
+  if (installation.state === "UPDATE_AVAILABLE" && !descriptor) {
+    return "UPDATE_AVAILABLE";
+  }
+
+  if (descriptor?.moduleCompatibility === false) {
+    return "ADAPTER_UPDATE_REQUIRED";
+  }
+
+  if (
+    descriptor?.auth.state === "NEEDS_AUTH" ||
+    descriptor?.auth.state === "EXPIRED" ||
+    descriptor?.auth.state === "ERROR"
+  ) {
+    return "NEEDS_SETUP";
+  }
+
+  if (
+    descriptorIsFresh(descriptor) &&
+    bindings.some(isEnabledUsableBinding)
+  ) {
+    return "READY";
+  }
+
+  return "INSTALLED";
+}
+~~~
+
+Never derive Ready from registry listing, package presence or successful version output.
+
+## Per-agent detail sections
+
+### Identity
+
+Show:
+- display name;
+- registry/source label;
+- AgentModule ID + module version;
+- descriptor API version;
+- harness version;
+- protocol/version;
+- support/compatibility statement.
+
+Do not show private executable paths or socket URLs.
+
+### Installation/update
+
+Primary state/actions:
+- Not installed -> Install
+- Installing -> progress/status, Cancel only if lifecycle adapter supports safe cancel
+- Installed -> Check updates
+- Update available -> Update
+- Updating -> current lifecycle operation
+- Broken -> Repair / Reinstall
+
+A successful installation does **not**:
+- sign in;
+- create an AgentBinding;
+- enable the binding;
+- set Workspace default;
+- start an AgentSession.
+
+Lifecycle progress is recovered through operation ID + actual post-operation observation,
+not only client-side percent.
+
+### Authentication
+
+#### Native/external auth
+
+For NATIVE_FLOW, EXTERNAL_HANDOFF, DEVICE_CODE or NATIVE_CONFIG_ONLY, render a single
+adapter-method action.
+
+No generic email/password UI.
+
+Examples of what the adapter may choose:
+- Open native sign-in
+- Continue in browser
+- Show device code
+- Open provider settings in native harness
+
+#### Secure API-key slot
+
+Only render when descriptor says:
+- method kind SECRET_SLOT
+- slot storage owner LITECOWORK_SECRET_STORE.
+
+The field:
+- uses password semantics;
+- is never prefilled;
+- is excluded from analytics/debug snapshots;
+- submits once through local privileged IPC;
+- clears immediately after submit;
+- then displays only Configured / Needs replacement;
+- never reveals SecretRef or bytes.
+
+Multiple agent/provider keys are multiple **agent-declared slots**, not a universal
+Providers list.
+
+### Native configuration
+
+Render only adapter-known NativeConfigTarget IDs:
+- native settings UI;
+- known config file;
+- known config directory;
+- external native UI.
+
+The UI cannot take an arbitrary path or shell command for Open native config.
+
+### Session/model options
+
+Render current closed option schema with the agent's own labels.
+
+Per option show:
+- display label;
+- current/default value;
+- semantic hint;
+- LIVE_SESSION / NEW_SESSION / UNSUPPORTED;
+- source descriptor freshness.
+
+Editing Workspace defaults uses AgentBinding configuration. A one-turn override stays at
+Conversation selection/session level.
+
+### Native input surface
+
+Show support matrix for:
+- text;
+- images;
+- files;
+- resources;
+- slash commands;
+- reference/mention triggers.
+
+Large command catalogs open a searchable panel rather than dumping hundreds of rows into
+the detail screen.
+
+### Native extensions vs LiteSPM
+
+Show two distinct groups:
+
+**Native to <Agent>**
+- observed native MCP/plugins/hooks/skills/subagents when safe/available;
+- informational unless separately qualified for mediation.
+
+**Managed by LiteSPM**
+- package/capability;
+- exact compatibility route for this agent:
+  - Native attachment qualified
+  - LiteCowork Gateway
+  - Context-only
+  - Unsupported.
+
+Do not duplicate LiteSPM package install/update forms in the agent panel. Link to
+Discover/LiteSPM ownership.
+
+### Workspace bindings
+
+One installed/authenticated profile may have bindings for multiple Workspaces.
+
+Each row shows:
+- Workspace;
+- Enabled;
+- Can lead;
+- Default;
+- runtime/placement summary;
+- descriptor/config freshness;
+- Configure;
+- Disable.
+
+Configure opens:
+- adapter-declared non-secret fields;
+- secure credential slot references/configured status;
+- default session options.
+
+It never mirrors native provider config.
+
+## Setup drift UX
+
+Any of these can invalidate future admission:
+- agent externally updated;
+- native config changes;
+- native sign-out/expiry;
+- model removed;
+- adapter module outdated;
+- descriptor expired.
+
+Composer behavior:
+1. preserve the complete draft;
+2. mark Agent control Needs setup;
+3. block Send only when admission cannot be truthful;
+4. show exact reason;
+5. Open Agent Registry -> exact selected agent;
+6. after repair/refresh, return to original conversation/draft.
+
+No silent agent/model fallback.
+
+## Local models
+
+Settings > Local models is **inventory**, not routing.
+
+A local endpoint/model becomes selectable only if the selected AgentModule projects it as
+a valid model/session option. Example: an agent with native Ollama/provider support may
+show a local model; another agent may show none.
+
+## Required UI tests
+
+1. Agent switch changes dependent controls and preserves draft.
+2. Unsupported attachments block Send without deletion.
+3. Model option from Agent A never survives Agent B unless B validates it.
+4. slash and @ palettes change by selected Agent.
+5. setup drift preserves draft and opens exact Agent Registry detail.
+6. registry listing alone never displays Ready.
+7. install success does not imply signed-in/enabled/default.
+8. secret slot never re-renders entered key and never enters logs.
+9. navigation away/back preserves lifecycle-operation truth.
+10. native-config action cannot be given arbitrary path.
+11. no Providers route/screen exists.
+12. Local Models remains separate inventory, not a universal router.
+13. LiteSPM managed vs native extensions are visually distinct.
+14. keyboard focus remains in composer through dependent-control refresh.
+15. screen reader announces setup errors and dependent option changes without reading
+    credential values.

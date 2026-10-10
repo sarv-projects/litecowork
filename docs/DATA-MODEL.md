@@ -1,6 +1,6 @@
 # Data Model
 
-IDs are opaque, globally unique and stable. Durable records carry the creation or receipt time relevant to their lifecycle. Mutable aggregates carry an optimistic `version`; `updated_at` appears where it belongs to that aggregate's update contract. Immutable records have no update API. Timestamps are RFC 3339 UTC. Canonical entities and relationships are defined here; shared enums are in `SCHEMAS.md`, transitions in `STATE-MACHINES.md`, and the current SQLite schema is the ordered immutable baseline plus migrations `schemas/sqlite-v1.sql` through `schemas/sqlite-v10.sql`.
+IDs are opaque, globally unique and stable. Durable records carry the creation or receipt time relevant to their lifecycle. Mutable aggregates carry an optimistic `version`; `updated_at` appears where it belongs to that aggregate's update contract. Immutable records have no update API. Timestamps are RFC 3339 UTC. Canonical entities and relationships are defined here; shared enums are in `SCHEMAS.md`, transitions in `STATE-MACHINES.md`, and the current SQLite schema is the ordered immutable baseline plus migrations `schemas/sqlite-v1.sql` through the current ordered migration.
 
 ## Workspace
 
@@ -362,12 +362,40 @@ the Attempt's pinned AgentBinding, Runtime/incarnation, Environment, or lease id
 
 ## Agent records
 
+The detailed lifecycle/configuration owner is
+[`AGENT-CONTROL.md`](AGENT-CONTROL.md). Registry/install/control observations are
+deliberately separate from Workspace authorization.
+
 ```text
+AgentRegistryEntry { # local cache / discovery metadata; never authority
+  registry_agent_id: string
+  display_name: string
+  description?: string
+  source_registry: string
+  source_revision?: string
+  distributions: AgentDistribution[]
+  metadata_observed_at: Timestamp
+  cache_expires_at: Timestamp?
+}
+
+AgentInstallationObservation { # Runtime-local operational state
+  registry_agent_id: string
+  module_id: string
+  runtime_id: RuntimeId
+  runtime_incarnation_id: RuntimeIncarnationId
+  state: MISSING | INSTALLING | INSTALLED | UPDATE_AVAILABLE |
+         UPDATING | VERSION_UNAVAILABLE | BROKEN
+  installed_version?: string
+  available_version?: string
+  observed_at: Timestamp
+  expires_at: Timestamp
+}
+
 AgentProfile {
   agent_profile_id: AgentProfileId
-  provider_key: string
+  provider_key: string # transitional source field; target semantics are agent/module identity, not a global provider
   display_name: string
-  endpoints: AgentEndpoint[] # stable protocol identities; current availability comes from RuntimeOffer
+  endpoints: AgentEndpoint[]
   discovered_at: Timestamp
 }
 
@@ -378,6 +406,23 @@ AgentEndpoint {
   topology: LOCAL_INTERACTIVE | REMOTE_AGENT_SERVICE | VENDOR_SERVICE | PROCESS_ADAPTER
   protocol_version?: string
   capabilities: AgentCapabilities
+}
+
+AgentControlDescriptor { # Runtime-local, sanitized, time-bounded
+  descriptor_digest: Sha256Digest
+  registry_agent_id: string
+  module_id: string
+  module_version: string
+  harness_version?: string
+  protocol_version?: string
+  auth: AgentAuthDescriptor
+  configuration: AgentConfigurationDescriptor
+  session_options?: AgentSessionOptionDescriptor
+  input_surface: AgentInputSurfaceDescriptor
+  native_surface: AgentNativeSurfaceDescriptor
+  capabilities: AgentCapabilities
+  observed_at: Timestamp
+  expires_at: Timestamp
 }
 
 AgentEndpointBinding { # Runtime-local operational relation
@@ -396,14 +441,24 @@ EndpointSelectionPolicy {
   preferred_topologies: AgentEndpointTopology[]
 }
 
+AgentCredentialBinding {
+  credential_slot_id: string
+  secret_ref: SecretRef
+}
+
 AgentBinding {
   agent_binding_id: AgentBindingId
   workspace_id: WorkspaceId
   agent_profile_id: AgentProfileId
   runtime_id: RuntimeId?
   endpoint_selection_policy: EndpointSelectionPolicy
-  auth_ref: SecretRef? # reference only; never auth bytes
-  configuration: JsonObject # non-secret options only
+
+  configuration_descriptor_digest: Sha256Digest?
+  configuration: JsonObject # closed, descriptor-validated, non-secret only
+  credential_bindings: AgentCredentialBinding[]
+  default_session_options_descriptor_digest: Sha256Digest?
+  default_session_options: JsonObject
+
   enabled: bool
   lead_eligible: bool
   created_at: Timestamp
@@ -413,7 +468,7 @@ AgentBinding {
 AgentSession {
   agent_session_id: AgentSessionId
   scope: AgentSessionScope
-  task_spec_revision: u64? # required for Task scopes; absent for Conversation
+  task_spec_revision: u64?
   agent_binding_id: AgentBindingId
   endpoint_id: AgentEndpointId
   runtime_id: RuntimeId
@@ -430,10 +485,23 @@ AgentSession {
 AgentSessionHostBinding { # Runtime-local operational relation
   agent_session_id: AgentSessionId
   host_instance_id: AgentHostInstanceId
-  native_session_ref: string? # opaque, adapter-owned, never replicated/backed up
+  native_session_ref: string?
   bound_at: Timestamp
 }
 ```
+
+`AgentRegistryEntry`, installation observations and AgentControlDescriptors are
+operational projections. They are not Workspace domain aggregates and are not replicated
+as authority. A Registry entry may exist while the agent is missing; an installation may
+exist while auth is missing; an authenticated harness may exist without any enabled
+Workspace AgentBinding.
+
+AgentBinding `configuration` contains only values admitted by the current closed
+AgentConfigurationDescriptor. Secret bytes are forbidden. Native-owned credentials stay
+in the native harness. LiteCowork-managed credential slots store only `SecretRef`
+relations. Binding edits affect future admissions only. AgentSession records the
+normalized configuration/harness descriptor digests used for its own admission so later
+updates do not rewrite history.
 
 `AgentSessionScope` is a tagged union: `CONVERSATION {conversation_id,
 conversation_turn_id}`, `TASK_PLANNING {task_id}`, or `ATTEMPT_EXECUTION {task_id,
@@ -442,26 +510,20 @@ be reused for another turn. Task-scoped sessions pin the exact `TaskSpecRevision
 to construct their bounded context packet. For `TASK_PLANNING`, this must be the Task's
 current revision at admission. For `ATTEMPT_EXECUTION`, it is the revision referenced
 by the Attempt's Step PlanRevision, even if the Task later receives a newer spec.
-Conversation sessions have no
-Task mutation authority and may invoke only authorized read-only capabilities. Planning
-sessions have no Attempt/lease/Environment write access and may clarify intent, read the
-Task packet, and propose a plan. Execution sessions require exactly one admitted Attempt,
-its current lease, Environment, and scoped grants. Only TaskService promotes an authorized
-plan proposal. The session's Runtime and incarnation are immutable provenance. `endpoint_id`
-is a historical selection identity and need not resolve to a live `AgentEndpoint` offer on
-another peer. The optional `AgentSessionHostBinding` is Runtime-local, must match that
-Runtime/incarnation and the selected endpoint, and is removed when the session settles; a
-replacement Runtime never receives it.
+Conversation sessions have no Task mutation authority and may invoke only authorized
+read-only capabilities. Planning sessions have no Attempt/lease/Environment write access
+and may clarify intent, read the Task packet, and propose a plan. Execution sessions
+require exactly one admitted Attempt, its current lease, Environment, and scoped grants.
+Only TaskService promotes an authorized plan proposal. Runtime/incarnation and endpoint
+selection are immutable session provenance.
 
-The AgentSession role is fixed at creation. A delegated session is linked through its
-Attempt's pinned DelegationProfile revision. `harness_descriptor_digest` identifies the
-adapter capability/configuration observation used for admission; the descriptor contains
-only normalized non-secret metadata and is not a copy of native configuration.
+The optional `AgentSessionHostBinding` is Runtime-local and removed when the session
+settles. Native session handles never replicate. `harness_descriptor_digest` identifies
+the normalized descriptor admitted for the session; the descriptor itself contains no
+secret bytes or copied native configuration.
 
-`PlanningAssignment` is an internal transient admission envelope, not a durable entity.
-The Task and its `TASK_PLANNING` AgentSession are the records of truth; at most one active
-planning session per Task is enforced by storage. A replacement planner uses a new session
-and a freshly built envelope pinned to the current TaskSpec revision.
+`PlanningAssignment` is an internal transient admission envelope, not a durable entity. The Task and its `TASK_PLANNING` AgentSession are the durable records of truth; at most one active planning session per Task is enforced by storage. A replacement planner uses a new AgentSession and a freshly built envelope pinned to the current TaskSpec revision.
+
 
 ## Runtime and incarnation
 

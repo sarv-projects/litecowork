@@ -261,13 +261,14 @@
         "E02-S04"
       ],
       "authorities": [
+        "docs/AGENT-CONTROL.md",
         "docs/AGENT-FABRIC.md",
         "docs/TASK-RUNTIME.md",
         "docs/STATE-MACHINES.md",
         "docs/CONTEXT.md",
         "docs/DELEGATION.md"
       ],
-      "implementation": "Run SP04; probe supported native descriptor/config digest/session options; implement discovery, auth readiness, enabled and lead_eligible. Current source adds explicit local Runtime enrollment, bounded Codex App Server profile observation, sanitized expiring offers, versioned disabled/enable AgentBinding setup, and Workspace default lead selection from Agent Settings. OpenCode inventory accepts its documented bare semver output but has no profile probe; current contract authorizes only Codex probing. Task AgentSession admission/readiness, model entitlement/inference, process-tree containment and provider qualification remain incomplete.",
+      "implementation": "Run SP04; probe supported native descriptor/config digest/session options; implement discovery, auth readiness, enabled and lead_eligible. Current source adds explicit local Runtime enrollment, bounded Codex App Server profile observation, sanitized expiring offers, versioned disabled/enable AgentBinding setup, and Workspace default lead selection from Agent Settings. OpenCode inventory accepts its documented bare semver output but has no profile probe; current contract authorizes only Codex probing. Task AgentSession admission/readiness, model entitlement/inference, process-tree containment and provider qualification remain incomplete. Final target lifecycle/configuration is decomposed into E03-S06..S11; this story must not claim those behaviors complete from the current Codex/OpenCode inventory/probe slice.",
       "acceptance": "Native config remains unchanged; unsupported overrides rejected; installed/connected/lead eligibility displayed independently.",
       "negative_cases": "Missing binary, expired auth, config drift, unavailable model, plugin conflict.",
       "demo": "Compare selected native agent with LiteCowork launched session using same config.",
@@ -409,6 +410,222 @@
         "E03-S05-USER"
       ],
       "sources": [
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E03-S06",
+      "epic": "E03",
+      "title": "AgentModule registry and ACP discovery",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S01"
+      ],
+      "authorities": [
+        "docs/AGENT-CONTROL.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/API.md",
+        "docs/DATA-MODEL.md",
+        "docs/STATE-MACHINES.md",
+        "docs/SECURITY.md"
+      ],
+      "implementation": "Implement AgentModuleRegistry plus bounded ACP Registry client/cache. Replace brand-conditioned discovery fanout with module matching by registry identity and descriptor API. Registry metadata is descriptive/untrusted and may not define arbitrary executable install/auth actions. Add list/refresh Operator APIs and Agent Registry UI rail. Current Codex/OpenCode hard-coded inventory remains transitional until migrated.",
+      "acceptance": "Live/cached registry renders independently from installation/auth/readiness; module support is explicit; ambiguous module matches fail closed; registry outage does not break already installed agents; no registry action creates a binding/session/task.",
+      "negative_cases": "Duplicate registry IDs, oversized/malformed registry, malicious command text, no adapter, two adapters claim same ID, stale cache, registry redirect/origin drift, unsupported OS/architecture.",
+      "demo": "Refresh registry, show supported and unsupported entries, disconnect network and prove cached metadata is labeled stale while an already installed agent remains usable.",
+      "tests": [
+        "E03-S06-CODE",
+        "E03-S06-SYSTEM",
+        "E03-S06-USER"
+      ],
+      "sources": [
+        "R-ACPSPEC",
+        "R-ACP-REGISTRY",
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E03-S07",
+      "epic": "E03",
+      "title": "Agent install, update and repair lifecycle",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S06"
+      ],
+      "authorities": [
+        "docs/AGENT-CONTROL.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/API.md",
+        "docs/DATA-MODEL.md",
+        "docs/STATE-MACHINES.md",
+        "docs/SECURITY.md"
+      ],
+      "implementation": "Implement AgentLifecycleService installation observations and idempotent lifecycle operations using each module lifecycle adapter. Add v16 local operational storage and install/update/repair Operator routes. Install plans must be module-compiled from recognized distributions under restricted environment/process policy. Re-probe actual installed version after ambiguous interruption.",
+      "acceptance": "Missing -> install -> installed and update-available -> update -> installed work without creating auth/binding/session authority; failed/unknown operations recover by observation; upstream/native installations outside LiteCowork are detected rather than overwritten.",
+      "negative_cases": "Interrupted install, partial update, stale registry revision, stale installed version, executable replacement during operation, permission/admin prompt, rollback failure, WSL/Windows placement mismatch, update leaves old version intact.",
+      "demo": "Install a supported test agent from missing state, restart during lifecycle operation, recover exact state, then update and verify no Conversation/Task/Binding was silently created.",
+      "tests": [
+        "E03-S07-CODE",
+        "E03-S07-SYSTEM",
+        "E03-S07-USER"
+      ],
+      "sources": [
+        "R-ACPSPEC",
+        "R-ACP-REGISTRY",
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E03-S08",
+      "epic": "E03",
+      "title": "AgentControlDescriptor and versioned binding configuration",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S07"
+      ],
+      "authorities": [
+        "docs/AGENT-CONTROL.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/API.md",
+        "docs/DATA-MODEL.md",
+        "docs/STATE-MACHINES.md",
+        "docs/SECURITY.md"
+      ],
+      "implementation": "Implement sanitized time-bounded AgentControlDescriptor validation/storage with auth/config/session-option/input/native/capability descriptors. Replace empty AgentBinding.configuration gate with closed digest-pinned non-secret configuration, credential slot references, and default session options. Implement configure_binding transaction/event and descriptor-drift admission checks.",
+      "acceptance": "Unknown/stale fields fail; raw secret values cannot enter binding/event/log; binding edits are versioned/idempotent; active sessions keep old admitted digests; model/reasoning values are adapter-owned and never globally substituted.",
+      "negative_cases": "Descriptor expiry during edit, native config drift, removed model, malformed JSON schema, secret-shaped value in non-secret config, undeclared credential slot, stale If-Match, duplicate idempotency key with changed payload.",
+      "demo": "Change one adapter option/default model, inspect event/digests, keep an existing session pinned, then start a new session under the new configuration.",
+      "tests": [
+        "E03-S08-CODE",
+        "E03-S08-SYSTEM",
+        "E03-S08-USER"
+      ],
+      "sources": [
+        "R-ACPSPEC",
+        "R-ACP-REGISTRY",
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E03-S09",
+      "epic": "E03",
+      "title": "Native authentication, API-key slots and native configuration",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S08"
+      ],
+      "authorities": [
+        "docs/AGENT-CONTROL.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/API.md",
+        "docs/DATA-MODEL.md",
+        "docs/STATE-MACHINES.md",
+        "docs/SECURITY.md",
+        "docs/NETWORK-SECURITY.md"
+      ],
+      "implementation": "Implement AgentLifecycleAdapter auth-method projection and flows: native/external/device/native-config plus privileged local SecretStore credential slots. Implement no-store secret submission, SecretRef binding, native-config target open, auth refresh/expiry state, and UI. No global Providers page.",
+      "acceptance": "User can complete every qualified native sign-in/provider API-key setup path without exposing credentials in chat/log/events; native-owned provider configuration stays native; secure slot bytes are write-only and only SecretRefs persist.",
+      "negative_cases": "Cancelled login, expired device code, rejected API key, API key appears in logs/error, malicious native config target, arbitrary path/command attempt, auth expires after binding, multiple provider slots, secret replacement race.",
+      "demo": "Configure one native-login agent and one secure API-key slot agent, inspect logs/events/storage for absence of secret bytes, revoke/expire auth and recover original draft after reauthentication.",
+      "tests": [
+        "E03-S09-CODE",
+        "E03-S09-SYSTEM",
+        "E03-S09-USER"
+      ],
+      "sources": [
+        "R-ACPSPEC",
+        "R-ACP-REGISTRY",
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E03-S10",
+      "epic": "E03",
+      "title": "Agent-adaptive composer and native input affordances",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S09",
+        "E03-S02"
+      ],
+      "authorities": [
+        "docs/AGENT-CONTROL.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/API.md",
+        "docs/DATA-MODEL.md",
+        "docs/STATE-MACHINES.md",
+        "docs/SECURITY.md",
+        "docs/EXPERIENCE.md",
+        "implementation/UI.md"
+      ],
+      "implementation": "Implement ComposerAgentSurface projection and dependent Agent -> Model/session-option -> native slash/reference/input controls. Preserve host Plus menu separately. Changing agent rebuilds dependent options; semantic native command/reference tokens are revalidated at send. Preserve draft and block truthful send on incompatibility/setup drift.",
+      "acceptance": "Switching agent changes only controls the new descriptor supports; no model/provider values leak across agents; slash/@ native behavior remains available; unsupported attachments are not dropped; setup drift routes to exact agent panel; no silent fallback.",
+      "negative_cases": "Agent switched with files/images/native token in draft, descriptor expires during autocomplete, command removed upstream, two agents use same slash token differently, NEW_SESSION option, agent unavailable after selection, screen reader/focus regression.",
+      "demo": "In one unsent draft switch Codex -> OpenCode -> another agent and show model/reasoning/slash/@/attachment surfaces change while text/files remain; send only after valid selection.",
+      "tests": [
+        "E03-S10-CODE",
+        "E03-S10-SYSTEM",
+        "E03-S10-USER"
+      ],
+      "sources": [
+        "R-ACPSPEC",
+        "R-ACP-REGISTRY",
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-CLINE"
+      ]
+    },
+    {
+      "id": "E03-S11",
+      "epic": "E03",
+      "title": "Per-agent lifecycle and native-surface conformance packs",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E03-S05",
+        "E03-S10"
+      ],
+      "authorities": [
+        "docs/AGENT-CONTROL.md",
+        "docs/AGENT-FABRIC.md",
+        "docs/API.md",
+        "docs/DATA-MODEL.md",
+        "docs/STATE-MACHINES.md",
+        "docs/SECURITY.md",
+        "docs/BENCHMARKS.md"
+      ],
+      "implementation": "Create versioned conformance matrix/fixtures and real-provider CODE/SYSTEM/USER packs for launch-critical AgentModules. Compare native harness versus LiteCowork for install/update/auth/provider setup/models/options/slash/@/attachments/extensions/subagents/session stop/config drift. Unsupported remains explicit.",
+      "acceptance": "A supported agent/version has evidence for every claimed lifecycle/native-surface cell; LiteCowork does not remove a native feature simply for UI parity; upstream changes fail compatibility until adapter/conformance update.",
+      "negative_cases": "Agent upstream minor/major release changes protocol, auth, command list, model option, native subagent semantics or stop behavior; private config leaks into fixture; mock-only pass incorrectly counted as provider qualification.",
+      "demo": "Run the same prepared native-feature suite directly in each harness and through LiteCowork; owner reviews differences and marks each capability proven/unsupported/provider-dependent.",
+      "tests": [
+        "E03-S11-CODE",
+        "E03-S11-SYSTEM",
+        "E03-S11-USER"
+      ],
+      "sources": [
+        "R-ACPSPEC",
+        "R-ACP-REGISTRY",
         "R-CODEX",
         "R-CLAUDE",
         "R-OPENCODE",
@@ -568,6 +785,40 @@
       "sources": [
         "R-MCP",
         "R-MUSE-SAFETY"
+      ]
+    },
+    {
+      "id": "E04-S06",
+      "epic": "E04",
+      "title": "Cross-agent LiteSPM capability bridges",
+      "gate": "G1",
+      "status": "PLANNED",
+      "depends_on": [
+        "E04-S04",
+        "E03-S11"
+      ],
+      "authorities": [
+        "docs/AGENT-CONTROL.md",
+        "docs/CAPABILITY-FABRIC.md",
+        "docs/CAPABILITY-INVOCATIONS.md",
+        "docs/TRUST.md",
+        "docs/SECURITY.md"
+      ],
+      "implementation": "Implement AgentCapabilityBridge route qualification for LiteSPM-managed connector/MCP/plugin/skill capability packages. Route each exact capability for each agent as DIRECT_NATIVE_ATTACHMENT, LITECOWORK_GATEWAY, HOST_CONTEXT_ONLY, or UNSUPPORTED while preserving native-only extensions separately. Reuse one LiteSPM installation across agents when qualified.",
+      "acceptance": "One qualified LiteSPM package can be used through at least two compatible agents without duplicate per-agent install; grants/effects never widen; unsupported agent is explicit; native extension config is never rewritten to fake parity.",
+      "negative_cases": "Package updated during active Task, bridge route differs after agent update, direct path cannot enforce grant, native MCP with same name as LiteSPM capability, package unavailable, agent B unsupported, malicious package metadata.",
+      "demo": "Install one real LiteSPM-managed package once, use it from two qualified agents with exact provenance, then switch to an unsupported agent and verify explicit incompatibility with no native-config mutation.",
+      "tests": [
+        "E04-S06-CODE",
+        "E04-S06-SYSTEM",
+        "E04-S06-USER"
+      ],
+      "sources": [
+        "R-MCP",
+        "R-CODEX",
+        "R-CLAUDE",
+        "R-OPENCODE",
+        "R-ACPSPEC"
       ]
     },
     {

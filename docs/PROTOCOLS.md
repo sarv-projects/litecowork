@@ -136,3 +136,30 @@ on third-party MCP, ACP, A2A, or LiteSPM endpoints; their own version negotiatio
 - [MCP Skills](https://skills.extensions.modelcontextprotocol.io/specification/stable/skills)
 - [Agent Client Protocol overview](https://agentclientprotocol.com/protocol/overview)
 - [A2A key concepts](https://a2a-protocol.org/latest/topics/key-concepts/)
+
+
+## Agent lifecycle/control plane versus Agent session protocol
+
+Agent lifecycle/configuration is deliberately **not** encoded as a fake universal ACP
+session operation.
+
+AgentLifecycleAdapter owns:
+- installation/update/repair;
+- native auth/config handoff;
+- secure credential-slot declaration;
+- AgentControlDescriptor observation.
+
+AgentAdapter/ACP/native session protocol owns:
+- start/resume/steer/interrupt/cancel;
+- turn input/event normalization;
+- live session options where actually supported;
+- capability/context attachment.
+
+The Operator Agent Registry coordinates the lifecycle/control plane. A successful lifecycle
+operation does not start an AgentSession and a successful ACP/session handshake does not
+retroactively grant install/update/native-config privileges.
+
+LiteSPM package lifecycle is a third separate plane. AgentCapabilityBridge translates a
+qualified LiteSPM CapabilityOffer into an agent-specific attachment route; neither ACP
+Registry metadata nor native plugin configuration substitutes for LiteSPM/Core
+authorization.

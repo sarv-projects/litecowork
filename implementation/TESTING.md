@@ -138,3 +138,33 @@ cloud/remote fault drill, full real-use corpus, accessibility, dependency/licens
 benchmark comparison and owner review. Quarantined flaky tests need issue/owner/expiry and
 cannot hide a release-critical failure. Paid provider runs are budgeted and never use
 production send/payment accounts without the owner's test authorization.
+
+
+## Agent-module program
+
+Stories E03-S06 through E03-S11 and E04-S06 have separate CODE, SYSTEM and USER IDs in
+backlog.json. Their shared test oracle is
+[AGENT-MODULE-AUDIT.md](AGENT-MODULE-AUDIT.md) plus the normative
+docs/AGENT-CONTROL.md.
+
+Minimum review packet per supported agent/version:
+
+~~~text
+agent/module/harness versions
+OS/runtime version
+distribution/install source
+auth method kind (never secret)
+descriptor digest + expiry
+model/session-option inventory digest
+native input/command/reference capability digest
+native extension summary
+stop/resume/quiescence evidence
+LiteSPM bridge matrix
+CODE results
+SYSTEM results
+USER comparison result
+known unsupported cells
+~~~
+
+Do not merge support claims across agent versions. Upstream changes that alter auth,
+options, commands, input or stop behavior reopen the affected conformance cells.

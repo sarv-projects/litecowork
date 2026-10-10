@@ -1,5 +1,27 @@
 # Capability Fabric
 
+
+## LiteSPM cross-agent package boundary
+
+LiteSPM is the package-system authority for connectors, MCP servers, plugins, skills and
+related capability packages: discovery, verification, installation, updates, removal,
+package/provider supervision and exact package identity. LiteCowork must not duplicate
+that marketplace/lifecycle.
+
+LiteCowork owns the **use** of a LiteSPM-managed package in a Conversation/Task:
+CapabilityRefs, Offers, Grants, Activations, Invocations, Effects, Evidence, and the
+attachment route selected for one agent. The selected AgentModule exposes an
+`AgentCapabilityBridge` that classifies a package/capability as
+`DIRECT_NATIVE_ATTACHMENT`, `LITECOWORK_GATEWAY`, `HOST_CONTEXT_ONLY`, or
+`UNSUPPORTED`. The same LiteSPM package may therefore be usable through multiple agents
+without per-agent duplicate installation when each bridge qualifies a route.
+
+Native-only extensions already configured in an agent remain native harness state. They
+are never silently deleted/replaced by LiteSPM and LiteCowork never claims Core/LiteSPM
+receipts for effects executed outside qualified mediation. See
+[`AGENT-CONTROL.md`](AGENT-CONTROL.md).
+
+
 ## Purpose and ownership
 
 LiteCowork gives a Conversation, planning session, or Attempt progressive access to

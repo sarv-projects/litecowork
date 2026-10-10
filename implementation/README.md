@@ -40,3 +40,13 @@ CODE, SYSTEM, and USER evidence before accepting it.
 ## Current target UX and source-status distinction
 
 The reviewed user requirements are preserved in [Coworker target](../docs/COWORKERS-TARGET.md) and detailed controls/tests in [UI](UI.md). Every owner should reconcile the current source, machine contracts and acceptance cases before implementing the target. Older snapshots in CURRENT-RUN are historical; do not present partial native-agent execution, simulated memory, or placeholder buttons as completed features.
+
+
+## Agent-module implementation handoff
+
+For the current Codex/OpenCode source seam and the exact refactor into modular agent
+lifecycle/configuration, read
+[AGENT-MODULE-AUDIT.md](AGENT-MODULE-AUDIT.md) before E03-S06–S11 or E04-S06 work.
+It maps existing files/functions to target services, storage, Tauri/UI APIs, deletion
+gates, research dependencies and CODE/SYSTEM/USER tests. Architecture authority remains
+docs/AGENT-CONTROL.md and docs/AGENT-FABRIC.md.

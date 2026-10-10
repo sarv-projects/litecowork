@@ -3941,3 +3941,105 @@ passed TypeScript and Vite compilation (96 modules). Vite reports the existing 7
 main JavaScript chunk advisory. `git diff --check` passed. The pinned Node version, rendered
 keyboard/screen-reader acceptance, native Save As, and real desktop workflow remain
 unverified; this is a testable UI code increment, not E08-S07 completion.
+
+
+## Modular native-agent lifecycle/configuration architecture pass — 2026-10-10
+
+The owner clarified that LiteCowork is built around native agents rather than a reduced
+universal LLM abstraction. This pass re-audited the first-party architecture/implementation
+surface and finalized the target contracts before implementation.
+
+### Finalized product/architecture boundary
+
+- No global LiteCowork Providers screen/model router.
+- Each supported agent remains fully agent-specific for install/update, native sign-in,
+  provider/API-key configuration, model/session options, reasoning/effort/mode, native
+  slash commands/references, attachments/resources, native config, native extensions and
+  native subagents when the upstream harness supports them.
+- Each supported agent is a versioned AgentModule with:
+  - AgentLifecycleAdapter for install/update/auth/native-config/control observation;
+  - AgentAdapter for live sessions/input/events;
+  - optional AgentCapabilityBridge for qualified LiteSPM-managed capabilities.
+- ACP Registry/distribution metadata is discovery metadata only. It does not prove
+  installation, authentication, entitlement, readiness, Workspace authorization or
+  session capability.
+- LiteSPM owns connector/MCP/plugin/skill/package discovery, verification, install/update,
+  removal and package supervision. LiteCowork owns scoped use via CapabilityRefs/Grants/
+  Activations/Invocations/Effects/Evidence. AgentCapabilityBridge selects a qualified
+  per-agent attachment route.
+- AgentBinding target configuration is closed, descriptor-validated and non-secret.
+  Native-owned credentials stay native. Adapter-declared LiteCowork credential slots
+  persist only SecretRefs; secret bytes go directly to SecretStore.
+- Composer dependency is Agent -> agent-owned Model/session options -> native input
+  surface. Changing Agent rebuilds dependent controls without deleting the draft.
+- LiteCowork host actions behind Plus remain a separate namespace from native slash/@
+  commands.
+
+### New authoritative artifacts
+
+- docs/AGENT-CONTROL.md
+- docs/adr/0025-agent-module-registry-and-native-configuration.md
+- docs/schemas/sqlite-v16.sql
+- implementation/AGENT-MODULE-AUDIT.md
+
+The source audit maps current Codex/OpenCode-specific files/functions to the target
+AgentModule services, Rust/TypeScript APIs, UI components, storage changes, deletion gates,
+research gates and CODE/SYSTEM/USER tests.
+
+### Machine contracts and flows
+
+Added/expanded:
+- Agent Registry/list/refresh/install/update Operator contracts;
+- AgentControlDescriptor refresh/read;
+- native auth begin;
+- secure credential-slot submission;
+- safe native-config target opening;
+- versioned AgentBinding configuration/default session options;
+- agent.binding.configuration.changed.v1;
+- Runtime-local registry/install/control/lifecycle storage contract;
+- F137-F143 for registry, install/update, auth/API key, binding config, composer switching,
+  native slash/@ input and LiteSPM cross-agent capability bridging.
+
+### Implementation plan
+
+Backlog is now 67 stories. New stories:
+- E03-S06 AgentModule registry and ACP discovery
+- E03-S07 install/update/repair lifecycle
+- E03-S08 AgentControlDescriptor and binding configuration
+- E03-S09 native auth/API-key/native config
+- E03-S10 agent-adaptive composer/native input
+- E03-S11 per-agent/version/OS conformance packs
+- E04-S06 cross-agent LiteSPM capability bridges
+
+These are PLANNED target work. Existing bounded Codex/OpenCode inventory/probe code is
+transitional and is not evidence that these stories are implemented.
+
+### Current source gaps confirmed
+
+Current source still contains intentional transitional brand-specific seams:
+- apps/litecoworkd/src/agents/mod.rs directly inventories Codex + OpenCode;
+- apps/litecoworkd/src/operator.rs probes CODEX | OPENCODE;
+- apps/litecowork-ui/src/agents/agent-catalog-api.ts defines CODEX | OPENCODE and
+  probeCodex/probeOpenCode;
+- apps/litecowork-ui/src-tauri/src/lib.rs branches on provider_key;
+- apps/litecowork-ui/src/App.tsx wires explicit Codex/OpenCode actions;
+- current AgentBinding source storage still uses the safe empty-configuration gate.
+
+Do not delete these paths until generic replacements pass their own CODE + SYSTEM
+evidence. implementation/AGENT-MODULE-AUDIT.md owns the migration sequence.
+
+### Validation evidence after the final reconciliation
+
+- architecture validator: passed — JSON Schemas, 142 typed events, ErrorCodes, OpenAPI,
+  SQLite/migrations, Gateway names, product naming and Markdown links;
+- implementation plan validator: passed — 67 stories, 5,680 coverage rows, all current
+  numbered flows/benchmarks and machine-contract inventory linked;
+- architecture coverage validator: passed — 84 architecture documents, 1,302 sections,
+  5,680 traceability rows;
+- OpenAPI spec validation: passed;
+- git diff --check: passed.
+
+This pass finalizes planning/contracts only. It does not claim E03-S06-S11 or E04-S06
+source implementation, real agent installation/auth/update support, SecretStore credential
+slot execution, descriptor-driven composer behavior, or LiteSPM cross-agent bridge
+qualification.

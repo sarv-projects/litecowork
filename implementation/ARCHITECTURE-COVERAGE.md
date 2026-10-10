@@ -7,13 +7,13 @@ domain owners still apply. Story status tracks planning through owner acceptance
 
 ## Coverage inventory
 
-- 82 source Markdown documents; 1198 heading-level sections are digest-pinned.
-- 35 implementation-plan documents and 240 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
-- 60 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
-- 137 flows and 90 benchmarks.
-- 196 OpenAPI operations and 316 component schemas; 0 components are unreachable from every Operator operation.
-- 99 error codes; 251 shared IDs/value definitions.
-- 141 event types and 140 typed event payload schemas.
+- 84 source Markdown documents; 1302 heading-level sections are digest-pinned.
+- 36 implementation-plan documents and 291 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 67 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
+- 144 flows and 90 benchmarks.
+- 206 OpenAPI operations and 342 component schemas; 0 components are unreachable from every Operator operation.
+- 99 error codes; 259 shared IDs/value definitions.
+- 142 event types and 141 typed event payload schemas.
 - 107 SQLite tables, 1172 columns, 475 foreign-key columns, 68 unique constraints, 348 checks, 1 view(s), 140 triggers, and 76 indexes.
 
 Machine-object names and canonical digests are compared to current source contracts by
@@ -37,6 +37,7 @@ USER tests provide that evidence when executed.
 | [`assets/host-skills/rich-response-design/SKILL.md`](../assets/host-skills/rich-response-design/SKILL.md) | E08-S08 | Architecture contract |
 | [`capabilities/zip_intake/README.md`](../capabilities/zip_intake/README.md) | E06-S01 | Architecture contract |
 | [`crates/domain-responsibility/README.md`](../crates/domain-responsibility/README.md) | E08-S02 | Architecture contract |
+| [`docs/AGENT-CONTROL.md`](../docs/AGENT-CONTROL.md) | E03-S06 | Architecture contract |
 | [`docs/AGENT-FABRIC.md`](../docs/AGENT-FABRIC.md) | E03-S05 | Architecture contract |
 | [`docs/API.md`](../docs/API.md) | E01-S04 | Architecture contract |
 | [`docs/ARTIFACTS-EVIDENCE.md`](../docs/ARTIFACTS-EVIDENCE.md) | E04-S05 | Architecture contract |
@@ -106,6 +107,7 @@ USER tests provide that evidence when executed.
 | [`docs/adr/0022-rich-presentation-is-optional.md`](../docs/adr/0022-rich-presentation-is-optional.md) | E08-S08 | Architecture decision record |
 | [`docs/adr/0023-host-guidance-is-not-capability-authority.md`](../docs/adr/0023-host-guidance-is-not-capability-authority.md) | E08-S08 | Architecture decision record |
 | [`docs/adr/0024-optional-chat-first-coworkers.md`](../docs/adr/0024-optional-chat-first-coworkers.md) | E08-S01 | Architecture decision record |
+| [`docs/adr/0025-agent-module-registry-and-native-configuration.md`](../docs/adr/0025-agent-module-registry-and-native-configuration.md) | E03-S06 | Architecture decision record |
 | [`docs/adr/README.md`](../docs/adr/README.md) | E01-S01 | Architecture decision record |
 
 ## Not covered by this plan yet

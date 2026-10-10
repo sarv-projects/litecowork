@@ -66,7 +66,11 @@ AgentHarnessDescriptor {
 ```
 
 It is not a copy of native configuration. Model names, effort values, and other option
-values remain agent-owned opaque values and are validated by the adapter. Unsupported
+values remain agent-owned opaque values and are validated by the adapter against the
+current AgentControlDescriptor/session-option descriptor. A profile revision that stores
+session options pins that descriptor digest. Authentication methods, credential bytes,
+native provider configuration, slash commands and native reference metadata are never
+copied into a DelegationProfile. Unsupported
 or stale options fail admission with `AGENT_SESSION_OVERRIDE_UNSUPPORTED` or
 `AGENT_NATIVE_CONFIG_CHANGED`; LiteCowork never silently substitutes a different value.
 Descriptor loss/expiry requires a fresh probe before new work.

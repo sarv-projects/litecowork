@@ -190,6 +190,7 @@ agent.session.lost.v1
 agent.session.closed.v1
 agent.binding.changed.v1
 agent.binding.lead_eligibility.changed.v1
+agent.binding.configuration.changed.v1
 agent.session.harness_descriptor.pinned.v1
 
 delegation_profile.created.v1
@@ -449,6 +450,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `suggestion.preference.changed` | `workspace_id`, `kind`, `from_muted`, `to_muted`, `changed_by`, `aggregate_version` |
 | `task.coworker.origin.pinned` | `task_id`, `coworker_id`, `coworker_revision`, `aggregate_version` |
 | `agent.binding.lead_eligibility.changed` | `agent_binding_id`, `workspace_id`, `from`, `to`, `aggregate_version`, `requested_by` |
+| `agent.binding.configuration.changed` | `agent_binding_id`, `workspace_id`, `agent_profile_id`, `descriptor_digest`, `configuration_digest`, `credential_slot_ids[]`, `default_session_options_digest`, `aggregate_version`, `requested_by`, `changed_at` |
 | `agent.session.harness_descriptor.pinned` | `agent_session_id`, `scope`, `task_spec_revision` (nullable for conversation scope), `descriptor_digest`, `features_digest`, `effective_config_digest?`, `observed_at` |
 | `delegation_profile.created` | `delegation_profile_id`, `workspace_id`, `agent_binding_id`, `current_revision`, `status`, `aggregate_version` |
 | `delegation_profile.revised` | `delegation_profile_id`, `revision`, `revision_digest`, `authored_by`, `aggregate_version` |
@@ -554,6 +556,7 @@ the provider cannot prove a more specific route; the UI must not infer one from 
 | `suggestion.preference.changed.v1` | SuggestionPreference / SuggestionService | Workspace-scoped preference replicates; muting also resolves currently proposed items of that kind in the same transaction |
 | `task.coworker.origin.pinned.v1` | Task / TaskService | Immutable Task origin provenance; Coworker revision is pinned |
 | `agent.binding.lead_eligibility.changed.v1` | AgentBinding / AgentBindingService | Workspace authorization state; no endpoint locator or credentials |
+| `agent.binding.configuration.changed.v1` | AgentBinding / AgentBindingService | Versioned non-secret configuration/default-session-option digests and declared credential slot IDs only; no SecretRefs, secret bytes, native config, or endpoint locators |
 | `agent.session.starting.v1` | AgentSession / AgentSessionStore | Reserves a Task planner slot before native startup; includes only normalized scope/selection IDs and Runtime incarnation, never a native handle |
 | `agent.session.started.v1` | AgentSession / AgentSessionSupervisor | Adapter readiness and ACTIVE state; first planning also transitions Task to RUNNING atomically |
 | `agent.session.harness_descriptor.pinned.v1` | AgentSession / AgentSessionSupervisor | Non-secret descriptor/feature/config digests and session scope only; no descriptor contents or handles |
@@ -626,6 +629,38 @@ Every digest-valued field uses `Sha256Digest`: `sha256:` followed by 64 lowercas
 hexadecimal characters. Provider revision IDs and opaque resource locators are not digests.
 
 For `provider.circuit.changed`, `consecutive_failures` is an integer in the unsigned 32-bit range (0 through 4,294,967,295), matching `ProviderCircuit.consecutive_failures` in `DATA-MODEL.md`. The event schema and SQLite constraint enforce this bound.
+
+
+### Agent lifecycle/configuration event boundary
+
+Registry refreshes, installation observations, update availability, AgentControlDescriptor
+refreshes and native auth observations are Runtime-local operational state. They do **not**
+become replicated Workspace domain events. Security-relevant explicit install/update/auth
+actions still produce AuditRecords under the ordinary audit contract.
+
+The only new Workspace-domain event in this target is
+`agent.binding.configuration.changed.v1`, emitted atomically with one successful
+versioned AgentBinding configuration/default-session-option change. Its payload is closed:
+
+```json
+{
+  "agent_binding_id": "ab_...",
+  "workspace_id": "ws_...",
+  "agent_profile_id": "ap_...",
+  "descriptor_digest": "sha256:...",
+  "configuration_digest": "sha256:...",
+  "credential_slot_ids": ["provider_api_key"],
+  "default_session_options_digest": "sha256:...",
+  "aggregate_version": 4,
+  "requested_by": {"kind": "USER", "principal_id": "pr_..."},
+  "changed_at": "2026-10-10T09:00:00Z"
+}
+```
+
+The event deliberately proves **which slot identities** changed, not where a SecretRef
+points or what it contains. Active AgentSessions are not rewritten; their existing
+descriptor/configuration digests remain historical provenance.
+
 
 ## Example payloads
 

@@ -234,3 +234,24 @@ root-relative race attempts.
 ## Coworker connection egress and OAuth target
 
 Connecting an app in setup or via a blocked Task must use the owning provider secure authentication flow; never ask the model to solicit passwords, tokens, OAuth callbacks or credentials through conversation. A Coworker may reuse a connected account only when Workspace identity and scoped connection assignment permit it. Remote MCP endpoints, app connectors, local desktop automation providers, and imported Skills retain independent publisher identity, egress policy, origin validation, network and secret leases. The catalog may contain thousands of entries without opening thousands of sockets or spawning processes. Connected knowledge may contain prompt injection; a source cannot extend grant scope, enable automatic monitoring, or authorize its own memory extraction.
+
+
+## Agent authentication and lifecycle network boundary
+
+Agent registry refresh, external sign-in and agent update checks are distinct network
+classes.
+
+- **Registry fetch:** bounded configured HTTPS origin, strict response-size/schema limits,
+  redirects/origin policy explicit, metadata treated as untrusted.
+- **External/native auth handoff:** destination comes only from the selected
+  AgentLifecycleAdapter's verified flow; confidential callback/device-code material is
+  no-store and never journaled.
+- **SECRET_SLOT:** does not travel to a generic remote LiteCowork endpoint. The local
+  authenticated Operator accepts the bounded secret and writes directly to SecretStore.
+- **Agent update/install:** download/source origins are module/distribution-policy
+  controlled; registry metadata cannot introduce arbitrary egress.
+- **Native provider traffic:** remains the native harness's network behavior unless a
+  separately qualified LiteCowork/LiteSPM bridge mediates it.
+
+Remote Operator access must not inherit local install/update/native-config/secret-write
+privileges merely because the principal can read the Workspace.

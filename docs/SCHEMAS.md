@@ -1323,6 +1323,75 @@ that registry.
 The Operator error envelope is specified in `API.md`. `TriggerSpec` is a tagged union
 defined in `AUTOMATION.md`; trigger deliveries are deduplicated before Task creation.
 
+## Agent registry/control schemas
+
+The normative wire shapes are in
+[`schemas/operator-api.openapi.yaml`](schemas/operator-api.openapi.yaml); lifecycle and
+validation semantics are in [`AGENT-CONTROL.md`](AGENT-CONTROL.md).
+
+```text
+AgentInstallState =
+  MISSING | INSTALLING | INSTALLED | UPDATE_AVAILABLE |
+  UPDATING | VERSION_UNAVAILABLE | BROKEN
+
+AgentAuthState =
+  UNKNOWN | NEEDS_AUTH | AUTHENTICATING | AUTHENTICATED |
+  EXPIRED | DEGRADED | ERROR
+
+AgentAuthMethodKind =
+  NATIVE_FLOW | EXTERNAL_HANDOFF | DEVICE_CODE |
+  SECRET_SLOT | NATIVE_CONFIG_ONLY
+
+AgentCredentialStorageOwner =
+  NATIVE_AGENT | LITECOWORK_SECRET_STORE
+
+AgentSessionOptionSemanticHint =
+  MODEL | REASONING | EFFORT | MODE | OTHER
+
+AgentSessionOptionMutableScope =
+  LIVE_SESSION | NEW_SESSION | UNSUPPORTED
+
+NativeReferenceSelectionMode =
+  NATIVE_PICKER | HOST_RESOURCE_PICKER | TEXT_COMPLETION
+
+AgentLifecycleOperationState =
+  QUEUED | RUNNING | SUCCEEDED | FAILED | UNKNOWN
+```
+
+`AgentControlDescriptor.descriptor_digest` covers its normalized **non-secret**
+descriptor. The descriptor and all nested arrays/strings are bounded. Native command
+tokens, reference triggers, account labels, model labels and registry metadata are
+untrusted display/input metadata and must pass sanitization before projection.
+
+`AgentCredentialSecretSubmission.secret_base64` is write-only confidential local
+Operator input. It MUST NOT appear in any response, event, log, Artifact, TaskPacket,
+Workspace backup, descriptor, or AgentBinding configuration.
+
+`AgentBinding.configuration` is a closed adapter-validated non-secret JSON object.
+`credential_bindings` contains only declared slot IDs and SecretRefs.
+`default_session_options` contains opaque adapter-owned values validated against the
+current session-option descriptor. The old single `auth_ref` field is transitional and
+deprecated.
+
+`agent.binding.configuration.changed.v1` payload:
+
+```text
+{
+  agent_binding_id,
+  workspace_id,
+  agent_profile_id,
+  descriptor_digest,
+  configuration_digest,
+  credential_slot_ids[],
+  default_session_options_digest,
+  aggregate_version,
+  requested_by,
+  changed_at
+}
+```
+
+No SecretRef itself is included in that event.
+
 ## Future Coworker records and wire conformance gates
 
 The target data model is explicitly catalogued in [Coworker target](COWORKERS-TARGET.md) and [DATA-MODEL](DATA-MODEL.md). The current CoworkerContextPolicy.require_user_confirmation_for_memory is a legacy implemented field; new automatic learning needs a new policy and candidate status schema rather than reinterpreting this boolean. Before implementing any route, define closed JSON/TypeScript/Rust schema, IDs, authorization/Workspace cross-scope checks, expected-version/RequestId, bounded field sizes and typed errors for Coworker-owned Conversations, Responsibility/Revision, capability assignment, memory policy/candidate and handoff receipts. Do not list proposed event names as accepted wire events before adding their exact payloads to the canonical schema and validators.

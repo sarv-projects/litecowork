@@ -4251,6 +4251,131 @@ No provider start, AgentSession, Attempt, lease, or Agent-side file access occur
 preparation alone. If cleanup cannot prove process-tree quiescence, retain the Environment
 and expose an actionable blocker instead of claiming deletion.
 
+## F137 — Refresh ACP Agent Registry without granting authority
+
+1. Owner opens Settings > Agent Registry.
+2. Operator calls `AgentRegistryService.refresh_registry(force=false)`.
+3. Service uses fresh cache if valid; otherwise fetches the bounded configured registry.
+4. Registry JSON/schema/size/duplicate IDs are validated as untrusted input.
+5. `AgentModuleRegistry.match(registry_agent_id)` annotates each entry as supported,
+   no-adapter, or unsupported on this OS. Registry metadata never supplies arbitrary
+   executable commands.
+6. Cache replacement commits atomically.
+7. UI combines registry metadata with **separate** local installation observations,
+   auth/control observations and Workspace bindings.
+
+Failure: registry unavailable -> last non-expired cache remains visible. No install,
+binding, auth, AgentSession or Task state changes.
+
+## F138 — Install or update one agent through its AgentModule
+
+1. Owner selects a registry entry and explicit distribution/update action.
+2. Operator verifies local authenticated owner, expected registry/install version and
+   Idempotency-Key.
+3. AgentModuleRegistry resolves exactly one supported module.
+4. Lifecycle adapter compiles the recognized distribution into a bounded install/update
+   plan; raw registry command strings are never executed.
+5. `agent_lifecycle_operations` records QUEUED/RUNNING before external work.
+6. Adapter executes under lifecycle environment/process restrictions.
+7. On settlement, service re-probes the actual executable/version and records
+   SUCCEEDED/FAILED/UNKNOWN. Provider/model sessions are never started by this flow.
+8. Existing Workspace bindings remain disabled/enabled exactly as before; active sessions
+   stay pinned until settlement.
+
+Crash/ambiguity: on restart, re-observe actual installation/version before retrying; do
+not trust the prior child-process exit state.
+
+## F139 — Configure native sign-in or API-key credential
+
+1. Owner opens one installed agent's Registry detail.
+2. Operator refreshes its AgentControlDescriptor.
+3. UI renders only descriptor-declared auth methods.
+4. For NATIVE_FLOW / EXTERNAL_HANDOFF / DEVICE_CODE / NATIVE_CONFIG_ONLY, LiteCowork
+   launches the adapter-owned flow and waits for a fresh auth observation.
+5. For SECRET_SLOT:
+   - descriptor must declare `storage_owner=LITECOWORK_SECRET_STORE`;
+   - UI submits secret only over local authenticated no-store IPC;
+   - SecretStore writes bytes and returns a SecretRef;
+   - request buffer is zeroized;
+   - only `AgentCredentialBinding(slot_id, SecretRef)` is returned.
+6. Binding configuration is still a separate versioned action; authentication does not
+   silently enable the agent or set it as Workspace default.
+7. UI refreshes auth/control descriptor.
+
+Failure/cancel keeps NEEDS_AUTH/ERROR explicit and never echoes the credential.
+
+## F140 — Save agent-specific non-secret configuration and defaults
+
+1. UI loads fresh AgentControlDescriptor for the exact binding/profile.
+2. User edits only fields projected from AgentConfigurationDescriptor plus declared
+   default session options.
+3. Request carries If-Match, Idempotency-Key and descriptor digest.
+4. AgentBindingService rechecks Workspace owner, binding version, descriptor freshness,
+   configuration closed schema, credential-slot declarations/SecretRefs and session
+   option schema.
+5. In one transaction:
+   - update `agent_binding_configurations`;
+   - increment AgentBinding aggregate version;
+   - append `agent.binding.configuration.changed.v1`;
+   - write idempotency receipt.
+6. Existing AgentSessions keep their pinned digests; future admission sees the new config.
+
+Stale descriptor/version returns typed conflict/setup-drift without mutating the binding.
+
+## F141 — Switch composer Agent and rebuild dependent native surface
+
+1. Conversation draft exists independently of a live AgentSession.
+2. User changes Agent picker.
+3. Operator resolves that enabled lead-eligible binding and current descriptor.
+4. UI atomically rebuilds:
+   - Model control when a MODEL semantic option exists;
+   - Reasoning/Effort/Mode controls from that agent only;
+   - additional session options;
+   - allowed image/file/resource inputs;
+   - native slash-command palette;
+   - native reference/mention palette.
+5. Any previous option values not valid for the new descriptor are cleared **visibly**,
+   never silently mapped.
+6. Existing draft text/attachments remain. If the new agent cannot accept an attachment or
+   native token, Send is blocked with an actionable explanation.
+7. Sending performs ordinary Conversation admission pinned to the selected descriptor and
+   normalized option/configuration digests.
+
+No provider/model fallback occurs.
+
+## F142 — Native slash command or @ reference in chat
+
+1. User types a trigger reported by the selected agent descriptor.
+2. UI filters the bounded descriptor catalogue locally or invokes adapter-supported
+   discovery when explicitly declared.
+3. User selects one native command/reference.
+4. Composer stores semantic `NativeCommandInvocation` /
+   `NativeReferenceSelection`, not merely decorated text.
+5. At Send, AgentTurnCoordinator rechecks descriptor digest and support.
+6. Adapter serializes the semantic input using the harness's native protocol.
+7. If the command/reference disappeared after an upstream/native config change, admission
+   returns setup-drift and refreshes the descriptor; it is not silently sent as plain text.
+
+LiteCowork host actions (Task, schedule, Library, capability attach) remain visibly
+separate from native agent command namespaces.
+
+## F143 — Expose one LiteSPM-managed capability through multiple agents
+
+1. User installs/verifies package once through LiteSPM.
+2. Capability Fabric observes one exact qualified CapabilityOffer/version/digest.
+3. Conversation/Task obtains the ordinary scoped Grant.
+4. For selected Agent A, `AgentCapabilityBridge.select_route` returns one of
+   DIRECT_NATIVE_ATTACHMENT / LITECOWORK_GATEWAY / HOST_CONTEXT_ONLY / UNSUPPORTED.
+5. LiteCowork attaches only the qualified route and records ordinary Invocation/Effect
+   truth where mediation supports it.
+6. Switching to Agent B reruns bridge selection; package installation is not duplicated
+   merely because the agent changed.
+7. If B is unsupported, UI says so explicitly; LiteCowork does not modify B's native
+   plugin/MCP configuration to fake parity.
+
+Native-only extensions remain usable under their native harness semantics but are labeled
+as native and do not receive fabricated LiteCowork/LiteSPM Effect evidence.
+
 ## Coworker chat-first and proactive responsibility target flows
 
 The accepted user-experience flows CF01–CF18 are specified in [Coworker flows](COWORKER-FLOWS.md), including creation, optional setup, task-time connectors, reviewed schedules, proactive no-change, Needs You, sleep/recovery, external sends, revocation, chief switch, drift, pause, verification, notifications, handoffs, generated integrations, quiet memory, and global stop. These are proposed reconciliation requirements and NOT existing executable F-number flow implementations. Existing F18/F19/F40/F41/F55/F72 remain the transactional owners; new contracts must pass schema/authorization/replay tests before activation. The concrete UI control matrix is [implementation/UI](../implementation/UI.md).

@@ -78,10 +78,14 @@ user's Task.
     encrypted cursor bytes for host-epoch consistency, but never reveals or recovers the
     provider cursor. Domain events, Mesh replication, Operator projections, aggregate
     snapshots, and Workspace backups never contain the opaque plaintext values.
-14. **Native agents remain themselves.** LiteCowork does not rewrite a harness's native
-    configuration or claim ownership of its private subagents, prompts, memory, tools, or
-    effects. Unsupported session options fail explicitly; they are never silently
-    replaced.
+14. **Native agents remain themselves and remain fully configurable.** LiteCowork does
+    not rewrite a harness's native configuration or claim ownership of its provider
+    accounts, API keys, private subagents, prompts, memory, tools, commands, references,
+    extensions, or effects. Agent-specific installation/update, native authentication,
+    provider/API-key setup, models, reasoning/session options, slash commands, mention
+    semantics and configuration targets are projected through the selected AgentModule.
+    Unsupported or stale options fail explicitly; they are never silently replaced.
+    There is no global LiteCowork Providers/model-router authority.
 15. **Runtime identity is installation-scoped; Workspace authorization is explicit.** A
     stable Runtime identifies one `litecoworkd` installation, not one Workspace. Each
     authorized Workspace has an independently revocable `RuntimeWorkspaceBinding`.
@@ -144,6 +148,21 @@ user's Task.
     Agent dispatch and replacement writers; prompt rules, harness permissions, and parent
     process exit are not containment or quiescence evidence.
 
+29. **Agent distribution and configuration are modular observations, not Core branches.**
+    ACP Registry metadata is discovery input only. Every supported agent is implemented by
+    a versioned AgentModule whose lifecycle adapter owns install/update/auth/config
+    projection and whose runtime adapter owns sessions/input/events. A time-bounded
+    AgentControlDescriptor projects the agent's current non-secret setup and native input
+    surface. Registry listing, installation, authentication, binding authorization and
+    session readiness remain separate facts. Upstream agent changes update that module and
+    its conformance fixtures rather than introducing brand-specific Core logic.
+30. **LiteSPM is the cross-agent package-system authority.** Connector, MCP, plugin, skill
+    and related capability package discovery/install/update/supervision belong to LiteSPM.
+    LiteCowork owns scoped CapabilityRefs, Grants, Activations, Invocations, Effects and
+    Evidence for actual use. AgentModules provide qualified bridges so one LiteSPM-managed
+    capability can be exposed to multiple compatible agents without rewriting native
+    agent configuration or widening authority.
+
 ## 3. Canonical concepts and ownership
 
 | Concept | Meaning and owner |
@@ -157,6 +176,10 @@ user's Task.
 | Step | Semantic unit from the current plan. |
 | Attempt | One worker's execution of one Step, admitted and tracked by the Task Runtime. |
 | AgentProfile / AgentBinding | Discovered agent and its negotiated host binding, owned by Agent Fabric. |
+| AgentModule | Independently versioned agent-specific lifecycle/runtime adapter bundle; it owns install/update/auth/config projection and protocol translation for one or more registry agent identities. |
+| AgentRegistryEntry | Cached descriptive ACP/distribution metadata used for discovery; it is not readiness, authentication, capability, or authorization truth. |
+| AgentInstallationObservation | Runtime-local observation of installed/update state for one registry agent; it is not an AgentProfile or AgentBinding. |
+| AgentControlDescriptor | Time-bounded normalized non-secret projection of auth methods/state, configuration schema, session options, native input/command/reference surface, and negotiated capabilities. |
 | DelegationProfile / revision | User-enabled worker configuration pinned by a host-delegated Attempt. |
 | Coworker / revision | User-facing identity and operating preferences; it does not own Task execution. |
 | Goal / revision | User-authored desired outcome; progress is a projection over verified work. |
@@ -185,6 +208,32 @@ user's Task.
 
 The portable Task checkpoint is the recovery source of truth. Agent session snapshots
 and environment snapshots may accelerate resume but are never required for correctness.
+
+
+### Agent lifecycle and configuration boundary
+
+Agent configuration is specified in
+[Agent Registry, Configuration, Authentication, and Native Surface LLD](docs/AGENT-CONTROL.md).
+The Operator Agent Registry is a projection over registry metadata plus Runtime-local
+installation/control observations and Workspace AgentBindings. It is not a global provider
+layer.
+
+```text
+ACP Registry/cache -> AgentRegistryService -> AgentModuleRegistry
+                                           -> AgentLifecycleAdapter
+                                           -> AgentControlDescriptor
+Workspace --------------------------------> AgentBindingService
+Conversation/Task ------------------------> AgentAdapter / AgentSessionSupervisor
+
+LiteSPM package ecosystem -> Capability Fabric -> AgentCapabilityBridge -> selected Agent
+```
+
+Registry/distribution metadata may change without changing Workspace authority. Installing
+or signing in to an agent does not create/enable a binding. Editing an AgentBinding affects
+future admissions only; active sessions remain pinned to their admitted descriptor,
+configuration and option digests. Secret bytes remain in the native agent store or
+SecretStore and never enter replicated Workspace state.
+
 
 ## 4. Core and adapter boundary
 
@@ -657,8 +706,13 @@ module ownership, [`docs/TESTING.md`](docs/TESTING.md) for evidence levels, and
 
 [`docs/COVERAGE-MATRIX.md`](docs/COVERAGE-MATRIX.md) indexes the complete HLD, LLD,
 API, persistence, security, UI, motion, operations, and acceptance contracts. Each
-concern has one normative document; other documents link to it. The source reconciliation
-and dispositions are recorded in [`docs/SOURCE-RECONCILIATION.md`](docs/SOURCE-RECONCILIATION.md).
+concern has one normative document; other documents link to it. Agent registry,
+installation/update, native authentication/API-key setup, agent-owned session options and
+native input/configuration are normatively owned by
+[`docs/AGENT-CONTROL.md`](docs/AGENT-CONTROL.md) and ADR-0025; runtime Agent sessions and
+protocol normalization remain owned by [`docs/AGENT-FABRIC.md`](docs/AGENT-FABRIC.md).
+The source reconciliation and dispositions are recorded in
+[`docs/SOURCE-RECONCILIATION.md`](docs/SOURCE-RECONCILIATION.md).
 
 ## 16. Initial implementation ownership map
 
@@ -676,8 +730,8 @@ apps/operator-web/                   # future optional client; not V1
 crates/domain/{conversation,task,artifact,effect,evidence}/
 crates/runtime/{lifecycle,supervisor,attempt_runner,dependency_planner}/
 crates/mesh/{identity,presence,replication,leases,transport}/
-crates/agents/{adapter,acp,a2a,cli}/
-crates/capabilities/{gateway,broker,host_supervisor,litespm_adapter}/
+crates/agents/{module_registry,lifecycle,control,adapter,acp,a2a,cli}/
+crates/capabilities/{gateway,broker,host_supervisor,litespm_adapter,agent_bridge}/
 crates/environments/{local,worktree,container,remote}/
 crates/{trust,verification,routines,automation,events,storage,operator-api}/
 ```

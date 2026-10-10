@@ -118,3 +118,19 @@ lowest-common-denominator chat API. [Codex App Server](https://github.com/openai
 Ollama and LM Studio expose local inference surfaces; qualification still determines the
 agent behavior above them. [Ollama](https://docs.ollama.com/api),
 [LM Studio](https://lmstudio.ai/docs/developer).
+
+
+## Agent-module stack boundary
+
+| Area | Starting point | Qualification rule |
+|---|---|---|
+| Agent registry | Official ACP Registry through bounded HTTPS cache/client | Registry metadata is untrusted discovery only; verify schema/cache/integrity semantics before implementation |
+| Agent module registry | Rust trait/object registry inside litecoworkd | No Core/UI branch on Codex/Claude/OpenCode names; ambiguous claims fail closed |
+| Agent lifecycle | Per-agent Rust AgentLifecycleAdapter | Install/update/auth/native-config behavior must be versioned and qualified against upstream agent |
+| Agent session runtime | Existing AgentAdapter/ACP/native protocol work | AgentControlDescriptor is separate from live session handles |
+| Agent secrets | Native harness store or OS-backed LiteCowork SecretStore slot | Raw bytes never enter AgentBinding JSON/events/logs/WebView caches |
+| Agent UI | React Agent Registry master-detail + descriptor-driven composer controls | No global provider/model catalog; control presence/values come from selected descriptor |
+| Cross-agent packages | LiteSPM + AgentCapabilityBridge | Package lifecycle remains LiteSPM; each agent attachment route is separately qualified |
+
+The concrete current-source refactor map and target function signatures are maintained in
+[AGENT-MODULE-AUDIT.md](AGENT-MODULE-AUDIT.md).

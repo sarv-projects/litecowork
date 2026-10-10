@@ -912,3 +912,70 @@ workloads; a database status update alone cannot prove that an external process 
 ## Coworker target migration and outbox constraints
 
 Future schema revisions must add immutable optional Conversation.owner_coworker_id and server-derived last_activity_at, versioned StandingResponsibility/Revision and links, CoworkerCapabilityAssignment, CoworkerMemoryPolicy, MemoryCandidate metadata and Resource-backed MemoryRecordMetadata. All same-Workspace references require foreign-key and service-level validation; submitted RequestIds and expected-version checks survive retries. New standing triggers require durable outbox registration or one transaction that cannot claim enabled without host-acknowledged readiness. Candidate payloads use encrypted Resource/blobs rather than plaintext event rows. Migration must preserve existing ordinary Conversations, Coworker primary preference and manually authored ContextDocuments; legacy flags remain readable until an explicit migration maps them. Existing migration schemas are not modified by this target-only description.
+
+
+### Agent registry/control operational storage
+
+The target Agent Registry/configuration implementation adds four **installation-local**
+operational projections and one durable AgentBinding configuration projection. These do
+not change the rule that secret bytes stay outside Workspace state.
+
+```text
+agent_registry_cache
+  registry_agent_id PK
+  source_registry
+  source_revision?
+  metadata_json             # sanitized descriptive registry metadata only
+  observed_at
+  expires_at?
+
+agent_installation_observations
+  registry_agent_id
+  runtime_id
+  runtime_incarnation_id
+  module_id
+  state
+  installed_version?
+  available_version?
+  observed_at
+  expires_at
+  PK(registry_agent_id, runtime_incarnation_id)
+
+agent_control_descriptors
+  descriptor_digest PK
+  registry_agent_id
+  runtime_id
+  runtime_incarnation_id
+  module_id
+  module_version
+  descriptor_json           # normalized non-secret closed descriptor
+  observed_at
+  expires_at
+
+agent_lifecycle_operations
+  lifecycle_operation_id PK
+  registry_agent_id
+  operation                 # INSTALL | UPDATE | REPAIR
+  request_id
+  request_digest
+  state
+  started_at
+  settled_at?
+  result_json               # bounded non-secret receipt
+
+agent_binding_configurations
+  agent_binding_id PK/FK
+  configuration_descriptor_digest?
+  configuration_json        # non-secret
+  credential_bindings_json  # slot IDs + SecretRefs only
+  session_options_descriptor_digest?
+  default_session_options_json
+  version
+  updated_at
+```
+
+Registry/install/control/lifecycle-operation rows never replicate as Workspace authority.
+`agent_binding_configurations` participates in the AgentBinding aggregate/version and
+the binding-configuration event. Storage validates JSON bounds/digests and relies on the
+service layer for adapter-schema semantics; SQLite additionally rejects malformed JSON and
+secret-shaped raw values in fields that are contractually non-secret where feasible.

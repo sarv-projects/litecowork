@@ -205,6 +205,10 @@
       "sha256": "e57537927f3e5b193a4bb015b4850ac48a9c1396c60206c709e84d5ad3d3ec6a"
     },
     {
+      "name": "agent_binding_configuration_changed",
+      "sha256": "bf8ef7be3b2fcd1e49aaa37eb8d8d50043b5d04b6df49c4799be35c96b25c578"
+    },
+    {
       "name": "agent_binding_created",
       "sha256": "e64578345e8b2952f34e2c717b6f6d36caf7bd542c702a769b874d2f2e1b3f30"
     },
@@ -804,7 +808,7 @@
     },
     {
       "name": "payloads",
-      "sha256": "6acdb27ff5a8acfc7abaabb9277e6e850dcf5e41443a7ce4448ce66db1ee1b79"
+      "sha256": "c432fe0c89079f898f2f10fd7c29e9133c3d4cc103418c21a2ff2b9a3231ad3e"
     },
     {
       "name": "pinned_resource_ref",
@@ -877,6 +881,7 @@
   ],
   "event_schema_payloads": [
     "agent_binding_changed",
+    "agent_binding_configuration_changed",
     "agent_binding_created",
     "agent_binding_lead_eligibility_changed",
     "agent_session_closed",
@@ -1019,6 +1024,7 @@
   ],
   "event_type_registry": [
     "agent.binding.changed.v1",
+    "agent.binding.configuration.changed.v1",
     "agent.binding.created.v1",
     "agent.binding.lead_eligibility.changed.v1",
     "agent.session.closed.v1",
@@ -1180,6 +1186,12 @@
       "sha256": "1854dc0862fd1301c84b3b023f5c5497a7f6e5d423dbbf1a9ea5778fbba6d022"
     },
     {
+      "method": "PUT",
+      "operationId": "configureAgentBinding",
+      "path": "/agent-bindings/{agentBindingId}/configuration",
+      "sha256": "720bd9303176cd7747043b4a8cfbd21729f6e9fd97d3f795880d5d87d84433d5"
+    },
+    {
       "method": "POST",
       "operationId": "disableAgentBinding",
       "path": "/agent-bindings/{agentBindingId}/disable",
@@ -1225,7 +1237,61 @@
       "method": "POST",
       "operationId": "probeLocalAgentProfile",
       "path": "/agent-profiles/probe",
-      "sha256": "22e3eca4c743653540c8c4e72a1f5b96fff570e4db0c4d381a29ebd884f13460"
+      "sha256": "89113f238093731d270dcff68174a3dece2b0a7b2fbafd8474f1756cb06ca394"
+    },
+    {
+      "method": "POST",
+      "operationId": "beginAgentAuthentication",
+      "path": "/agent-profiles/{agentProfileId}/auth/{authMethodId}/begin",
+      "sha256": "6cd37e0f82822214f93d75498549ae8c070da401f9d20b42c056839aae012a25"
+    },
+    {
+      "method": "GET",
+      "operationId": "getAgentControlDescriptor",
+      "path": "/agent-profiles/{agentProfileId}/control-descriptor",
+      "sha256": "e52fb3c2c884e31123d1af4227dd580dffa2bb67da7178c60296ee7cddc1e87c"
+    },
+    {
+      "method": "POST",
+      "operationId": "submitAgentCredential",
+      "path": "/agent-profiles/{agentProfileId}/credentials/{credentialSlotId}",
+      "sha256": "449e617427bfdd74143fe84df030e9aea87b7c6cda91747486369fda5dac5192"
+    },
+    {
+      "method": "POST",
+      "operationId": "openAgentNativeConfiguration",
+      "path": "/agent-profiles/{agentProfileId}/native-config/{targetId}/open",
+      "sha256": "40ffaac07c538a94dd0ae95dc61f342532d6631139df16d7b2e2661103444806"
+    },
+    {
+      "method": "POST",
+      "operationId": "refreshAgentProfileControl",
+      "path": "/agent-profiles/{agentProfileId}/refresh",
+      "sha256": "3af4242d6b4345aef188acf03a48dcf2c8a4a423ae7a869782707287f83b6c00"
+    },
+    {
+      "method": "GET",
+      "operationId": "listAgentRegistry",
+      "path": "/agent-registry",
+      "sha256": "74c7a5aa01d3fd1eac07a569d1c0d4448a4c35fadb7f2fadf7d1a21b4a985f54"
+    },
+    {
+      "method": "POST",
+      "operationId": "refreshAgentRegistry",
+      "path": "/agent-registry/refresh",
+      "sha256": "378b6eea082425e6659dc518edc39ee1cab713b66f16ef9c9f01a61fbec7c067"
+    },
+    {
+      "method": "POST",
+      "operationId": "installRegistryAgent",
+      "path": "/agent-registry/{registryAgentId}/install",
+      "sha256": "33426e6b741ec96f9d1d40e6141961976fad279e050fb923ad155c9a333c7a37"
+    },
+    {
+      "method": "POST",
+      "operationId": "updateRegistryAgent",
+      "path": "/agent-registry/{registryAgentId}/update",
+      "sha256": "1e6fe3a26a1f7ccf4ccbedff15b5349f0faea7ba9690bc2085adf50fb6f60146"
     },
     {
       "method": "GET",
@@ -2356,6 +2422,11 @@
       "path": "/agent-bindings/{agentBindingId}"
     },
     {
+      "method": "PUT",
+      "operationId": "configureAgentBinding",
+      "path": "/agent-bindings/{agentBindingId}/configuration"
+    },
+    {
       "method": "POST",
       "operationId": "disableAgentBinding",
       "path": "/agent-bindings/{agentBindingId}/disable"
@@ -2394,6 +2465,51 @@
       "method": "POST",
       "operationId": "probeLocalAgentProfile",
       "path": "/agent-profiles/probe"
+    },
+    {
+      "method": "POST",
+      "operationId": "beginAgentAuthentication",
+      "path": "/agent-profiles/{agentProfileId}/auth/{authMethodId}/begin"
+    },
+    {
+      "method": "GET",
+      "operationId": "getAgentControlDescriptor",
+      "path": "/agent-profiles/{agentProfileId}/control-descriptor"
+    },
+    {
+      "method": "POST",
+      "operationId": "submitAgentCredential",
+      "path": "/agent-profiles/{agentProfileId}/credentials/{credentialSlotId}"
+    },
+    {
+      "method": "POST",
+      "operationId": "openAgentNativeConfiguration",
+      "path": "/agent-profiles/{agentProfileId}/native-config/{targetId}/open"
+    },
+    {
+      "method": "POST",
+      "operationId": "refreshAgentProfileControl",
+      "path": "/agent-profiles/{agentProfileId}/refresh"
+    },
+    {
+      "method": "GET",
+      "operationId": "listAgentRegistry",
+      "path": "/agent-registry"
+    },
+    {
+      "method": "POST",
+      "operationId": "refreshAgentRegistry",
+      "path": "/agent-registry/refresh"
+    },
+    {
+      "method": "POST",
+      "operationId": "installRegistryAgent",
+      "path": "/agent-registry/{registryAgentId}/install"
+    },
+    {
+      "method": "POST",
+      "operationId": "updateRegistryAgent",
+      "path": "/agent-registry/{registryAgentId}/update"
     },
     {
       "method": "GET",
@@ -3339,8 +3455,20 @@
       "sha256": "447470c8dc051dd889f572f4c9f27a84def902e82f75e9dd2be56b97f381122e"
     },
     {
+      "name": "AgentAuthChallenge",
+      "sha256": "7e22091d41a9bd88371bfb898c559be5eb90ae5fbf715b44264bab3309314a20"
+    },
+    {
+      "name": "AgentAuthDescriptor",
+      "sha256": "33a75a218bf015a80bef48f7b05609767a1a1845fc2eb1958b6e7f839a3ece00"
+    },
+    {
+      "name": "AgentAuthMethodDescriptor",
+      "sha256": "9ba23152f429b47a029a2fde9d801c9cc7e76405d5b904341e495791ea690fbf"
+    },
+    {
       "name": "AgentBinding",
-      "sha256": "709826c67c11d376c583fc765118098699f11f8fb03b45a4468e36932783ee76"
+      "sha256": "dddbf8d8c0cd783790a9c06d786ecc36087bba3c3c273866ea0c7ef6f7df7f62"
     },
     {
       "name": "AgentBindingPage",
@@ -3348,7 +3476,35 @@
     },
     {
       "name": "AgentCapabilities",
-      "sha256": "f707b3039a3bd7330dc70e4631671a5c9cec0245090045eb54487b3221926ce6"
+      "sha256": "df63c720159fc8587772c7e0dd17255c6f6d88b039187f6a181dc9b804fdd4c1"
+    },
+    {
+      "name": "AgentConfigurationDescriptor",
+      "sha256": "48a7850f9c2a6de3d64c35052be1edd4b0fad731b8529f8e3638096f52c8a5e0"
+    },
+    {
+      "name": "AgentConfigurationField",
+      "sha256": "3aaf226b2dd4758fed7a594b80ddd97a3856dadc4e20faeff5727572f04b2635"
+    },
+    {
+      "name": "AgentControlDescriptor",
+      "sha256": "c0afd7fd46bbf18cf3933f139e6783479e5192e4490279231b2249609f390184"
+    },
+    {
+      "name": "AgentCredentialBinding",
+      "sha256": "631959a1463d74737431b6e18000f5935454eda1b8d92450a39dacf4fe761db5"
+    },
+    {
+      "name": "AgentCredentialSecretSubmission",
+      "sha256": "9a60294a2b1aeda322d74e97967501dd6cd831bf0755a694fea1cfd909ea8bd5"
+    },
+    {
+      "name": "AgentCredentialSlotDescriptor",
+      "sha256": "15a90ba4ac1a3071f3cb8795522a077f2ecca0c98bc9ddbd6311c15a43d6137e"
+    },
+    {
+      "name": "AgentDistribution",
+      "sha256": "c12d468d0a86743f4fcc792f92c125778ae17bf1dc82f2e489cee28e0c3ac62a"
     },
     {
       "name": "AgentEndpoint",
@@ -3367,12 +3523,28 @@
       "sha256": "e676e0569c186d577caa1d752604a7642ea99728cbb5fffa14ae68252bfc795b"
     },
     {
+      "name": "AgentInputSurfaceDescriptor",
+      "sha256": "f2fd2c343342aa4798aa3efdf933ff845a31848c46e5903256ba6e94bea4eddb"
+    },
+    {
       "name": "AgentInstallation",
       "sha256": "556c7ae74f3ef16b801328a50a6277d4c4dbad1e66b67a4415d577a7112bf5b7"
     },
     {
+      "name": "AgentInstallationObservation",
+      "sha256": "706b2d77a24e481e2f9c45bed5448cc114d2d42821f0a1186b82f8e4aea7f220"
+    },
+    {
       "name": "AgentInstallationPage",
       "sha256": "13806eaa4c3988f3eb7d31b792664b68b4c20182e05c70116b8d707cb11fcdff"
+    },
+    {
+      "name": "AgentLifecycleOperation",
+      "sha256": "c67c62d29d0e457cd769cc9d069f4546efe9b36e25748c7005e95ea2a08950dc"
+    },
+    {
+      "name": "AgentNativeSurfaceDescriptor",
+      "sha256": "d1c27be8aa530649798ea0bb307f05e6f14295333778c88226f019eede1936f9"
     },
     {
       "name": "AgentProfile",
@@ -3391,8 +3563,28 @@
       "sha256": "b7205e084c6b1fdbd129b7615c99b3b6f172e4c6357781577c252f6ad736225a"
     },
     {
+      "name": "AgentRegistryEntry",
+      "sha256": "54148216f13a7c7fb2a74dfea494006e0c88e660e1688e2464f3caa276218af0"
+    },
+    {
+      "name": "AgentRegistryPage",
+      "sha256": "77e475cffb6d466e27beab143f4df58f164119408c6ce850a684255a3d04e72e"
+    },
+    {
+      "name": "AgentRegistrySnapshot",
+      "sha256": "d9eeba30ad36be500999cbef3cdc70b216da3bede403cdb9a3cc611963ed3b64"
+    },
+    {
+      "name": "AgentSessionOption",
+      "sha256": "4b198e4541544a2df2e586ab492b1787ba885edccb2b1ca50abaa8303a49f53b"
+    },
+    {
+      "name": "AgentSessionOptionDescriptor",
+      "sha256": "8e9ac99cedd8200271d06128f3d504abb2d651b978ae6b8bbd2ecc1efe6a7c72"
+    },
+    {
       "name": "AgentSessionOptions",
-      "sha256": "654ef989b67bd65836b5b33266dc531b98b795cc5053a259f6b1c9fd26788fc4"
+      "sha256": "7631fff300afd85cde64a424175a3423dfd5e07a7093f78b2f87c674c0e79525"
     },
     {
       "name": "ApiError",
@@ -3587,6 +3779,10 @@
       "sha256": "2bd9432482b07ff4338b6c052d2038c3662f829cea92d0d3b3082445fc1348e8"
     },
     {
+      "name": "ConfigureAgentBindingRequest",
+      "sha256": "e7dce213978500aceb87ee489a3722f3203a77509068d39dbde6ee6044661835"
+    },
+    {
       "name": "ConnectCapabilityRequest",
       "sha256": "243f77d523c1298ff14e68cbec7bceeb9f31cd41a20df373a89c7d3ce3b7acf8"
     },
@@ -3692,7 +3888,7 @@
     },
     {
       "name": "CreateAgentBindingRequest",
-      "sha256": "a70ed661688837e0a44fd84c0cafa2bf9d67d598306e7e2bc47d4cdde6255522"
+      "sha256": "d8a591811ac6b37e09f72165d4b1f18fb4cea3130434fac2520546e2caa9a4e9"
     },
     {
       "name": "CreateAutomationRequest",
@@ -3923,6 +4119,10 @@
       "sha256": "c413ef7ff97bb22bc0c8121a667dc1f191b0d8fbcebc6aa116072e1dad59d766"
     },
     {
+      "name": "InstallAgentRequest",
+      "sha256": "b662c3d63586ccc822247a06c61556dc01be9c08efb084954fab8a65929ed1dd"
+    },
+    {
       "name": "InvalidationPage",
       "sha256": "1ad95c6aba3c3ea1bda2f6d6ecf57bf1b16de183d8c2b0dd346010d75db5c983"
     },
@@ -3977,6 +4177,22 @@
     {
       "name": "MisfirePolicy",
       "sha256": "fd8de657ed758d9ee9da5414639c4369dc130e6eb8d5f17b6b7837ec8cab3bfd"
+    },
+    {
+      "name": "NativeCommandDescriptor",
+      "sha256": "dcf360dd9145a1d21daf4188d08d10410c55e3ca93e0341d906013ecc7a74926"
+    },
+    {
+      "name": "NativeConfigOpenReceipt",
+      "sha256": "dbb228e71fb45a3aee40f1d6af5e7e5467b91d3d5dbdc4b212b7811486265028"
+    },
+    {
+      "name": "NativeConfigTarget",
+      "sha256": "26c432854ab83c79149ae3a7315d16c5649ecd67f4d742d5a26f308b51d20a58"
+    },
+    {
+      "name": "NativeReferenceKindDescriptor",
+      "sha256": "0954e65e6dc1c95dbef4e98996605039965142308c9194a1f22c956eff2a6251"
     },
     {
       "name": "NeedsYouItem",
@@ -4479,6 +4695,10 @@
       "sha256": "61122be9c3bcbb5801af73852ab1cb78626554cb2f0ebab0e031e41f10ccd774"
     },
     {
+      "name": "UpdateAgentRequest",
+      "sha256": "c5d44f398432b7c70a2d83af343e8342b9a1ae8252697942e180ee0c81d1c673"
+    },
+    {
       "name": "UpdateAutomationRequest",
       "sha256": "d884b7fbd7334bafc65337a10337899111d1f0ab0e7e1da63429a79409f9d404"
     },
@@ -4592,19 +4812,38 @@
     "AcceptanceCriterion",
     "ActionBatchMemberRef",
     "AddWorkspaceRootRequest",
+    "AgentAuthChallenge",
+    "AgentAuthDescriptor",
+    "AgentAuthMethodDescriptor",
     "AgentBinding",
     "AgentBindingPage",
     "AgentCapabilities",
+    "AgentConfigurationDescriptor",
+    "AgentConfigurationField",
+    "AgentControlDescriptor",
+    "AgentCredentialBinding",
+    "AgentCredentialSecretSubmission",
+    "AgentCredentialSlotDescriptor",
+    "AgentDistribution",
     "AgentEndpoint",
     "AgentEndpointTopology",
     "AgentFeature",
     "AgentHarnessCapabilities",
+    "AgentInputSurfaceDescriptor",
     "AgentInstallation",
+    "AgentInstallationObservation",
     "AgentInstallationPage",
+    "AgentLifecycleOperation",
+    "AgentNativeSurfaceDescriptor",
     "AgentProfile",
     "AgentProfileObservation",
     "AgentProfilePage",
     "AgentProfileView",
+    "AgentRegistryEntry",
+    "AgentRegistryPage",
+    "AgentRegistrySnapshot",
+    "AgentSessionOption",
+    "AgentSessionOptionDescriptor",
     "AgentSessionOptions",
     "ApiError",
     "AppendArtifactTextVersionRequest",
@@ -4654,6 +4893,7 @@
     "CommandReceipt",
     "CommittedResource",
     "ConditionWatchTrigger",
+    "ConfigureAgentBindingRequest",
     "ConnectCapabilityRequest",
     "Connection",
     "ConnectionPage",
@@ -4738,6 +4978,7 @@
     "GoalRevisionInput",
     "GoalStatusRequest",
     "GoalTaskContribution",
+    "InstallAgentRequest",
     "InvalidationPage",
     "InvalidationRecord",
     "JsonObject",
@@ -4752,6 +4993,10 @@
     "MessageContentBlock",
     "MessagePage",
     "MisfirePolicy",
+    "NativeCommandDescriptor",
+    "NativeConfigOpenReceipt",
+    "NativeConfigTarget",
+    "NativeReferenceKindDescriptor",
     "NeedsYouItem",
     "NeedsYouPage",
     "NetworkPolicy",
@@ -4877,6 +5122,7 @@
     "TimelinePage",
     "TriggerDefinition",
     "TriggerSpec",
+    "UpdateAgentRequest",
     "UpdateAutomationRequest",
     "UpdateChannelBindingActionsRequest",
     "UpdateNotificationPreferenceRequest",
@@ -4907,16 +5153,23 @@
   ],
   "shared_schema_definitions": [
     "ActivationHealth",
+    "AgentAuthMethodKind",
+    "AgentAuthState",
     "AgentAuthenticationReadiness",
+    "AgentCredentialStorageOwner",
     "AgentDelegationMode",
     "AgentEndpointTopology",
     "AgentFeature",
     "AgentHostOwnership",
     "AgentHostState",
     "AgentHostingMode",
+    "AgentInstallState",
     "AgentInstallation",
     "AgentInstallationState",
+    "AgentLifecycleOperationState",
     "AgentProtocol",
+    "AgentSessionOptionMutableScope",
+    "AgentSessionOptionSemanticHint",
     "AgentSessionReadiness",
     "AgentSessionScope",
     "AgentSessionStatus",
@@ -5009,6 +5262,7 @@
     "MessageTextSliceRef",
     "MisfirePolicy",
     "NativeHarnessIntegrityMode",
+    "NativeReferenceSelectionMode",
     "NeedsYouFilter",
     "NeedsYouItemKind",
     "NeedsYouStatus",

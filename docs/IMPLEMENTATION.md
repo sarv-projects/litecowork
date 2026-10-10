@@ -178,3 +178,33 @@ Version independently:
 - LiteSPM client wire/package contract
 
 Upgrade principle: in-progress Tasks remain pinned to immutable spec/plan/capability/artifact revisions; runtime upgrades must not silently mutate their semantics.
+
+
+## Agent module/control implementation map
+
+The target agent configuration lifecycle is specified in AGENT-CONTROL.md and ADR-0025.
+Implementation ownership is intentionally modular:
+
+~~~text
+crates/agent-module-core/          # NEW: shared descriptors/module registry traits
+crates/agent-registry/             # NEW: bounded ACP registry cache/client
+crates/agent-lifecycle/            # NEW: lifecycle service/state/validation
+apps/litecoworkd/src/agents/
+  mod.rs                           # refactor: module registry, not hard-coded inventory fanout
+  codex/                           # target per-agent module
+  opencode/                        # target per-agent module
+  claude/                          # future qualified module
+  ...
+crates/storage-core/               # AgentBinding configuration + operational store ports
+crates/storage-sqlite/             # v16 projections/transactions
+apps/litecoworkd/src/operator.rs   # target routes; thin transport only
+apps/litecowork-ui/src/agents/     # Agent Registry master-detail
+apps/litecowork-ui/src/conversations/
+  composer agent-surface hook      # dependent Agent/Model/options/native input projection
+~~~
+
+Exact package names may be adjusted during implementation, but the **ownership split must
+not** collapse lifecycle logic into operator.rs or brand conditionals into Core/UI.
+
+The current Codex/OpenCode inventory/probe UI is a transitional source slice, not the
+generic target.

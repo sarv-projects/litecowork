@@ -178,3 +178,35 @@ LiteCowork Core is not:
 ## Optional chat-first Coworkers — accepted target
 
 A new ordinary conversation is available with zero Coworkers. The optional Coworkers section lists persistent assistants. Selecting one resumes the most recently active Coworker-owned chat; New chat starts another conversation and retains only authorized Coworker memory, not private native-agent transcripts. Quick Create requires a name and purpose and inherits eligible defaults. Customize may select native chief/model/effort, external worker profiles, knowledge, connections and standing responsibilities; every optional stage can be skipped. Connect apps, MCP, skills and local providers during setup OR while chatting, with no arbitrary configured integration-count limit. Consumer setup never forces per-operation permission checkboxes; consequential actions still follow Trust and scoped approval. A user-confirmed Responsibility can admit scheduled, event or bounded monitor work, while merely creating a Coworker or saving automatic memory never enables autonomous work. The right Workbench and truthful activity are available within a Coworker conversation. Implemented UI/API gaps remain unavailable, not simulated.
+
+
+## Native-agent completeness guarantee
+
+LiteCowork's product promise is **use your agent through a better cowork shell without
+losing the agent you chose**. The native chief is not merely a backend model selector.
+
+For every supported agent/version, LiteCowork SHOULD expose every safely supportable
+user-facing capability that the AgentModule can qualify:
+
+- installation and update lifecycle;
+- native sign-in and account state;
+- provider/API-key configuration through the correct native or secure adapter path;
+- agent-owned model/session options;
+- reasoning/effort/mode controls when supported;
+- text/image/file/resource inputs;
+- native slash commands, mentions/references and other input affordances;
+- native configuration launch points;
+- native extensions/subagents/harness behavior, clearly distinguished from
+  LiteSPM-managed capabilities.
+
+The product has **no standalone global Providers screen**. Agent-specific provider
+configuration lives in the selected Agent's Registry panel. Local models are the one
+separate model inventory because they are machine resources; they appear in an agent's
+Model picker only when that AgentModule reports compatibility.
+
+The Agent Registry is the single setup surface:
+
+**discover -> install/update -> sign in/configure -> probe -> bind -> optionally set default**
+
+None of those steps silently authorizes work. See AGENT-CONTROL.md and
+implementation/UI.md.

@@ -82,3 +82,27 @@ capability and evidence; dependency-ready stories can overlap within a gate's sa
 ## Coworker target inclusion and implementation status
 
 The [accepted Coworker target](../docs/COWORKERS-TARGET.md) is part of the desktop/local UX and autonomy design: ordinary chats do not require Coworkers, Coworkers are chat-first; optional connections, standing responsibilities, scoped automatic memory, Workers, background schedules, recovery and Workbench integration are planned behind the existing native-agent, Trust, Environment and Task gates. Do not push these into cloud-only scope. A feature described by target docs is not functional until its API/persistence, real native provider execution and owner acceptance are qualified. Post-V1 cloud only adds execution location; it does not create a separate autonomous Bot engine.
+
+
+## Native-agent completeness within V1 scope
+
+“Complete native harness integration” includes the user-facing setup and control surface,
+not merely sending prompts to an installed binary. For every agent/version LiteCowork
+claims as supported, the qualification matrix must cover, where the upstream harness
+offers them:
+
+- discover/install/update/repair;
+- native sign-in or provider/API-key configuration through the correct owner;
+- native model/session options, including reasoning/effort/mode where exposed;
+- text/image/file/resource inputs;
+- native slash commands and reference/mention affordances;
+- native configuration launch points;
+- native extension/subagent behavior and its distinction from LiteSPM-managed packages;
+- cancel/resume/steer/stop/quiescence behavior required by LiteCowork Tasks.
+
+There is no separate global Providers feature to qualify. Local Models is inventory only
+and appears through an agent when that AgentModule reports compatibility.
+
+Registry presence or successful version output is not support evidence. The exact
+supported agent/module/harness/OS combination must pass E03-S11 CODE + SYSTEM + USER
+conformance.

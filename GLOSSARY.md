@@ -223,3 +223,35 @@ _Avoid_: Agent protocol
 ## Accepted Coworker target terminology
 
 Coworker: optional persistent named assistant identity, not a new executable agent. Ordinary session: Conversation with no Coworker owner. Standing responsibility: explicitly enabled, versioned user-facing grouping of Goals/Routines/Automations that fences new unattended Task admissions; not a scheduler. Connection: provider-installed/authenticated resource; Coworker assignment restricts its use without creating a live Grant. Knowledge: authorized source retrieval, not necessarily saved memory. Memory candidate: untrusted extraction proposal; memory record: versioned Resource-backed ContextDocument admitted under scoped policy. Proactive activity: confirmed schedule/event/monitor-driven work, not automatic model thought. Current code may not yet implement these accepted targets.
+
+
+## Agent lifecycle/control terms
+
+**AgentModule** — Independently versioned bundle that owns one agent family's lifecycle
+adapter, runtime adapter, and optional LiteSPM capability bridge. Core selects modules by
+registry identity/capability contract, never brand conditionals.
+
+**AgentRegistryEntry** — Cached descriptive ACP/distribution metadata. It does not prove
+installation, authentication, entitlement, compatibility, or authorization.
+
+**AgentInstallationObservation** — Runtime-local observation of whether an agent is
+missing/installing/installed/update-available/updating/broken and which version was
+observed.
+
+**AgentControlDescriptor** — Time-bounded sanitized non-secret projection of an agent's
+auth methods/state, non-secret config schema, session options, native input/command/
+reference surface, version information, and negotiated capabilities.
+
+**AgentLifecycleAdapter** — AgentModule boundary for install/update/auth/native-config and
+control-descriptor projection. It does not execute Conversation/Task reasoning.
+
+**AgentCapabilityBridge** — AgentModule policy/translation boundary determining how one
+LiteSPM-managed capability may be exposed to that agent.
+
+**Credential slot** — Adapter-declared authentication/configuration slot. It is either
+native-agent-owned or a LiteCowork SecretStore slot. The slot ID may be durable; secret
+bytes never are.
+
+**Native surface** — Agent-owned slash commands, @ references, input types,
+provider/model/session controls, extensions, subagents, config and related harness behavior
+preserved by LiteCowork.

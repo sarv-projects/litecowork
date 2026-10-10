@@ -3,9 +3,12 @@
 ## Purpose
 
 Agent Fabric normalizes external agents without taking ownership of their internal
-reasoning, model choice, prompts, or native subagent implementation. Host delegation,
-worker profiles, selection, cost policy, and warmth are specified in
-[`DELEGATION.md`](DELEGATION.md).
+reasoning, provider configuration, model choice, prompts, native commands, native
+references, extensions, memory, or native subagent implementation. This document owns the
+runtime/session protocol boundary. Installation/update/authentication/configuration and
+the user-visible native input surface are owned by
+[`AGENT-CONTROL.md`](AGENT-CONTROL.md). Host delegation, worker profiles, selection,
+cost policy, and warmth are specified in [`DELEGATION.md`](DELEGATION.md).
 
 ## AgentAdapter
 
@@ -13,7 +16,6 @@ worker profiles, selection, cost policy, and warmth are specified in
 interface AgentAdapter {
   discover() -> AgentProfile
   probe() -> AgentCapabilities
-  authenticate(AuthContext) -> AuthResult
 
   start_session(SessionSpec) -> SessionHandle
   resume_session(ResumeSessionSpec) -> SessionHandle
@@ -34,6 +36,14 @@ interface AgentAdapter {
 
 Optional features are capability-negotiated. Never branch on agent brand name.
 
+
+Authentication is intentionally not a universal `AgentAdapter.authenticate()` operation.
+The lifecycle/auth surface varies by harness and is owned by the selected
+`AgentLifecycleAdapter`: native browser/device flows, native configuration, provider API
+keys, or a secure SecretStore-backed credential slot are not equivalent operations. Core
+consumes only the normalized auth/control observation required for admission.
+
+
 ## AgentCapabilities
 
 ```text
@@ -51,6 +61,27 @@ AgentCapabilities {
 ```
 
 ## Profiles and Workspace bindings
+
+### AgentModule and control descriptor
+
+Every supported agent is supplied by a versioned `AgentModule` combining one
+`AgentLifecycleAdapter`, this runtime `AgentAdapter`, and optionally an
+`AgentCapabilityBridge`. The module is selected by registry/agent identity and
+descriptor API compatibility, never by brand conditionals inside Core.
+
+The time-bounded `AgentControlDescriptor` defined in
+[`AGENT-CONTROL.md`](AGENT-CONTROL.md) is the only normalized source for:
+
+- installation/update projection;
+- native authentication state/methods and secure credential-slot declarations;
+- non-secret adapter configuration schema;
+- agent-owned Model/Reasoning/Effort/session-option schemas;
+- text/image/file/resource input support;
+- slash-command and native reference/mention metadata;
+- native configuration targets and extension-state summaries.
+
+Registry listing, installation observation, AgentProfile discovery, Workspace binding,
+authentication readiness, lead eligibility and session readiness remain separate facts.
 
 ### Local installation inventory
 
@@ -110,16 +141,27 @@ bindings are disabled until explicitly enabled. Disabling prevents new planning/
 admission; sessions already admitted stay pinned and settle under their current Task,
 lease, and Effect rules.
 
-Until an adapter-specific non-secret configuration allowlist exists, V1 AgentBinding
-`configuration` must be an empty object. Reject unknown configuration rather than
-persisting arbitrary values that may contain credentials. Credentials belong in the
-SecretStore and are referenced only through a validated `SecretRef`.
+AgentBinding configuration is adapter-specific but never arbitrary. The target binding
+stores only non-secret values validated against the current closed
+`AgentConfigurationDescriptor` plus its descriptor digest. Secret-bearing fields are
+forbidden from `configuration`. An adapter may instead declare named credential slots:
+native-owned slots remain in the native harness; explicitly supported
+`LITECOWORK_SECRET_STORE` slots persist only a validated `SecretRef`. Agent-owned
+session defaults are validated against the current session-option descriptor and stored
+separately from non-secret configuration. Unknown keys, stale descriptor digests and raw
+credential bytes are rejected.
+
+The current source implementation still enforces an empty configuration object. That is a
+transitional safety gate to be replaced by the typed descriptor path before the final
+Agent Registry/configuration UI is enabled.
 
 The profile list includes stable software/protocol identity plus a Runtime inventory
 projection with currently observed Runtime IDs and offer expiry; it may go stale when a
 Runtime goes offline. Endpoint command paths, sockets, and URLs are local bindings and are
-excluded from events and Workspace backups. Binding history remains durable. Agent-specific installation and login
-flows remain adapter-owned; secret bytes never enter the AgentBinding API.
+excluded from events and Workspace backups. Binding history remains durable. Agent-specific installation/update/login/configuration flows remain AgentModule-owned;
+secret bytes never enter ordinary AgentBinding JSON or replicated domain state. The
+privileged local secret-submission path defined in `AGENT-CONTROL.md` returns only a
+SecretRef.
 Discovery/probe must not keep an agent process alive. `AgentHostSupervisor` lazily starts
 or attaches the selected endpoint only when a Conversation turn, planning assignment, or
 admitted Attempt needs it; process ownership, incarnation tagging, derived use counts, and
@@ -250,8 +292,13 @@ Session admission rules:
 ## Agent options and switching
 
 AgentProfile identifies agent software and AgentEndpoint identifies one concrete protocol
-route. Model/reasoning options are opaque agent-owned session configuration, not a
-LiteCowork model catalog or router. Each turn/Attempt pins the binding, selected endpoint,
+route. Model/reasoning/options and native chat affordances are opaque agent-owned
+configuration projected by the current AgentControlDescriptor, not a LiteCowork model
+catalog/router. The selected agent may expose no model override, one model selector,
+multiple provider/model values, reasoning/effort/mode options, slash commands, reference
+triggers, file/image/resource inputs, or additional closed session options. The Operator
+renders only what the adapter reports and rebuilds dependent controls immediately when the
+agent changes. Each turn/Attempt pins the binding, selected endpoint,
 and a digest of the normalized agent options used. Changing model/options does not change
 the AgentProfile or start another AgentHost; the adapter reports whether the option can
 change in the live session, requires a fresh AgentSession, or is unsupported. New sessions

@@ -39,6 +39,74 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/AgentInstallationPage'}
         default: {$ref: '#/components/responses/Error'}
+  /agent-registry:
+    get:
+      tags: [agents]
+      operationId: listAgentRegistry
+      security: [{operatorAuth: []}]
+      parameters:
+      - {name: q, in: query, required: false, schema: {type: string, maxLength: 128}}
+      - {$ref: '#/components/parameters/Cursor'}
+      - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Bounded cached ACP/distribution registry metadata. Listing is not installation, authentication, capability, readiness, or Workspace authority.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentRegistryPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-registry/refresh:
+    post:
+      tags: [agents]
+      operationId: refreshAgentRegistry
+      security: [{operatorAuth: []}]
+      responses:
+        '200':
+          description: Refresh the bounded registry cache. Untrusted registry metadata never defines executable install/auth commands.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentRegistrySnapshot'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-registry/{registryAgentId}/install:
+    post:
+      tags: [agents]
+      operationId: installRegistryAgent
+      security: [{operatorAuth: []}]
+      parameters:
+      - {name: registryAgentId, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/InstallAgentRequest'}
+      responses:
+        '202':
+          description: Explicit local owner install operation accepted; creates no AgentBinding or work session.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentLifecycleOperation'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-registry/{registryAgentId}/update:
+    post:
+      tags: [agents]
+      operationId: updateRegistryAgent
+      security: [{operatorAuth: []}]
+      parameters:
+      - {name: registryAgentId, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateAgentRequest'}
+      responses:
+        '202':
+          description: Explicit local owner update operation accepted; active sessions remain pinned to their admitted descriptors until they settle.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentLifecycleOperation'}
+        default: {$ref: '#/components/responses/Error'}
   /operator/readiness:
     get:
       tags: [runtime-lifecycle]
@@ -1539,6 +1607,8 @@ paths:
     post:
       tags: [agents]
       operationId: probeLocalAgentProfile
+      deprecated: true
+      description: Transitional source-only Codex/OpenCode probe. Target clients use registry/lifecycle/profile refresh operations below.
       requestBody:
         required: true
         content:
@@ -1550,6 +1620,88 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AgentProfileView'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-profiles/{agentProfileId}/refresh:
+    post:
+      tags: [agents]
+      operationId: refreshAgentProfileControl
+      security: [{operatorAuth: []}]
+      parameters:
+      - {name: agentProfileId, in: path, required: true, schema: {type: string, minLength: 1}}
+      responses:
+        '200':
+          description: Refresh the selected module's bounded AgentControlDescriptor and normalized Runtime offer. Requires Workspace owner and active local Runtime enrollment.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentControlDescriptor'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-profiles/{agentProfileId}/control-descriptor:
+    get:
+      tags: [agents]
+      operationId: getAgentControlDescriptor
+      security: [{operatorAuth: []}]
+      parameters:
+      - {name: agentProfileId, in: path, required: true, schema: {type: string, minLength: 1}}
+      responses:
+        '200':
+          description: Current sanitized time-bounded install/auth/config/session/native-input descriptor; contains no secret bytes or private native config.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentControlDescriptor'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-profiles/{agentProfileId}/auth/{authMethodId}/begin:
+    post:
+      tags: [agents]
+      operationId: beginAgentAuthentication
+      security: [{operatorAuth: []}]
+      parameters:
+      - {name: agentProfileId, in: path, required: true, schema: {type: string, minLength: 1}}
+      - {name: authMethodId, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
+      responses:
+        '200':
+          description: Begin one adapter-declared native/external/device authentication flow. Does not accept secret bytes in this operation.
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentAuthChallenge'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-profiles/{agentProfileId}/credentials/{credentialSlotId}:
+    post:
+      tags: [agents]
+      operationId: submitAgentCredential
+      security: [{operatorAuth: []}]
+      parameters:
+      - {name: agentProfileId, in: path, required: true, schema: {type: string, minLength: 1}}
+      - {name: credentialSlotId, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentCredentialSecretSubmission'}
+      responses:
+        '201':
+          description: Secret written directly to local SecretStore for an adapter-declared secure slot; response contains only the SecretRef binding.
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentCredentialBinding'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-profiles/{agentProfileId}/native-config/{targetId}/open:
+    post:
+      tags: [agents]
+      operationId: openAgentNativeConfiguration
+      security: [{operatorAuth: []}]
+      parameters:
+      - {name: agentProfileId, in: path, required: true, schema: {type: string, minLength: 1}}
+      - {name: targetId, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
+      responses:
+        '200':
+          description: Open an adapter-known native configuration target. Caller cannot provide an arbitrary path or command.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NativeConfigOpenReceipt'}
         default: {$ref: '#/components/responses/Error'}
   /agent-bindings:
     get:
@@ -1590,6 +1742,27 @@ paths:
       responses:
         '200':
           description: AgentBinding view; auth is represented by SecretRef only
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentBinding'}
+        default: {$ref: '#/components/responses/Error'}
+  /agent-bindings/{agentBindingId}/configuration:
+    put:
+      tags: [agents]
+      operationId: configureAgentBinding
+      security: [{operatorAuth: []}]
+      parameters:
+      - {name: agentBindingId, in: path, required: true, schema: {type: string, minLength: 1}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConfigureAgentBindingRequest'}
+      responses:
+        '200':
+          description: Versioned non-secret adapter configuration, credential SecretRef bindings, and default session options saved after descriptor validation.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AgentBinding'}
@@ -4169,6 +4342,308 @@ components:
         value_kind: {type: string, enum: [TEXT, RESOURCE_REF]}
         required: {type: boolean}
         max_bytes: {type: integer, minimum: 1, maximum: 16384}
+    AgentRegistrySnapshot:
+      type: object
+      additionalProperties: false
+      required: [source_registry, source_revision, observed_at, items]
+      properties:
+        source_registry: {type: string, minLength: 1}
+        source_revision: {type: [string, 'null'], maxLength: 256}
+        observed_at: {type: string, format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        stale: {type: boolean, default: false}
+        items:
+          type: array
+          maxItems: 512
+          items: {$ref: '#/components/schemas/AgentRegistryEntry'}
+    AgentRegistryPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor, observed_at, stale]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/AgentRegistryEntry'}
+        next_cursor: {type: [string, 'null']}
+        observed_at: {type: string, format: date-time}
+        stale: {type: boolean}
+    AgentRegistryEntry:
+      type: object
+      additionalProperties: false
+      required: [registry_agent_id, display_name, source_registry, distributions, metadata_observed_at]
+      properties:
+        registry_agent_id: {type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9._-]+$'}
+        display_name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: [string, 'null'], maxLength: 1024}
+        homepage: {type: [string, 'null'], format: uri}
+        source_registry: {type: string, minLength: 1, maxLength: 256}
+        source_revision: {type: [string, 'null'], maxLength: 256}
+        distributions:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/AgentDistribution'}
+        adapter_support: {type: string, enum: [SUPPORTED, NO_ADAPTER, UNSUPPORTED_OS]}
+        metadata_observed_at: {type: string, format: date-time}
+        cache_expires_at: {type: [string, 'null'], format: date-time}
+    AgentDistribution:
+      type: object
+      additionalProperties: false
+      required: [distribution_id, kind, package_ref, os]
+      properties:
+        distribution_id: {type: string, minLength: 1, maxLength: 128}
+        kind: {type: string, enum: [NPM, PYPI, BINARY, HOMEBREW, WINGET, SCOOP, CARGO, MANUAL, OTHER]}
+        package_ref: {type: string, minLength: 1, maxLength: 512}
+        version_constraint: {type: [string, 'null'], maxLength: 128}
+        os:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {type: string, enum: [WINDOWS, LINUX, MACOS]}
+        architecture:
+          type: array
+          uniqueItems: true
+          items: {type: string, enum: [X86_64, AARCH64, OTHER]}
+    AgentInstallationObservation:
+      type: object
+      additionalProperties: false
+      required: [registry_agent_id, module_id, runtime_id, runtime_incarnation_id, state, observed_at, expires_at]
+      properties:
+        registry_agent_id: {type: string}
+        module_id: {type: string}
+        runtime_id: {type: string}
+        runtime_incarnation_id: {type: string}
+        state: {type: string, enum: [MISSING, INSTALLING, INSTALLED, UPDATE_AVAILABLE, UPDATING, VERSION_UNAVAILABLE, BROKEN]}
+        installed_version: {type: [string, 'null'], maxLength: 128}
+        available_version: {type: [string, 'null'], maxLength: 128}
+        installation_source: {type: [string, 'null'], maxLength: 256}
+        observed_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+    InstallAgentRequest:
+      type: object
+      additionalProperties: false
+      required: [distribution_id, expected_registry_revision]
+      properties:
+        distribution_id: {type: string, minLength: 1, maxLength: 128}
+        expected_registry_revision: {type: string, minLength: 1, maxLength: 256}
+    UpdateAgentRequest:
+      type: object
+      additionalProperties: false
+      required: [expected_installed_version]
+      properties:
+        expected_installed_version: {type: string, minLength: 1, maxLength: 128}
+        target_version: {type: [string, 'null'], maxLength: 128}
+    AgentLifecycleOperation:
+      type: object
+      additionalProperties: false
+      required: [lifecycle_operation_id, registry_agent_id, operation, state, started_at]
+      properties:
+        lifecycle_operation_id: {type: string}
+        registry_agent_id: {type: string}
+        operation: {type: string, enum: [INSTALL, UPDATE, REPAIR]}
+        state: {type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, UNKNOWN]}
+        observed_version: {type: [string, 'null']}
+        message: {type: [string, 'null'], maxLength: 512}
+        started_at: {type: string, format: date-time}
+        settled_at: {type: [string, 'null'], format: date-time}
+    AgentAuthDescriptor:
+      type: object
+      additionalProperties: false
+      required: [state, methods, credential_slots]
+      properties:
+        state: {type: string, enum: [UNKNOWN, NEEDS_AUTH, AUTHENTICATING, AUTHENTICATED, EXPIRED, DEGRADED, ERROR]}
+        account_label: {type: [string, 'null'], maxLength: 128}
+        methods:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/AgentAuthMethodDescriptor'}
+        credential_slots:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/AgentCredentialSlotDescriptor'}
+    AgentAuthMethodDescriptor:
+      type: object
+      additionalProperties: false
+      required: [auth_method_id, display_name, kind, requires_restart]
+      properties:
+        auth_method_id: {type: string, minLength: 1, maxLength: 128}
+        display_name: {type: string, minLength: 1, maxLength: 128}
+        kind: {type: string, enum: [NATIVE_FLOW, EXTERNAL_HANDOFF, DEVICE_CODE, SECRET_SLOT, NATIVE_CONFIG_ONLY]}
+        credential_slot_id: {type: [string, 'null'], maxLength: 128}
+        requires_restart: {type: boolean}
+    AgentCredentialSlotDescriptor:
+      type: object
+      additionalProperties: false
+      required: [credential_slot_id, display_name, secret_kind, storage_owner, required]
+      properties:
+        credential_slot_id: {type: string, minLength: 1, maxLength: 128}
+        display_name: {type: string, minLength: 1, maxLength: 128}
+        secret_kind: {type: string, enum: [API_KEY, TOKEN, PASSWORD, OTHER]}
+        storage_owner: {type: string, enum: [NATIVE_AGENT, LITECOWORK_SECRET_STORE]}
+        required: {type: boolean}
+    AgentCredentialBinding:
+      type: object
+      additionalProperties: false
+      required: [credential_slot_id, secret_ref]
+      properties:
+        credential_slot_id: {type: string, minLength: 1, maxLength: 128}
+        secret_ref: {$ref: '#/components/schemas/SecretRef'}
+    AgentCredentialSecretSubmission:
+      type: object
+      additionalProperties: false
+      required: [descriptor_digest, secret_base64]
+      properties:
+        descriptor_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        secret_base64:
+          type: string
+          writeOnly: true
+          minLength: 1
+          maxLength: 65536
+          description: Confidential local-Operator-only secret payload. Must never be logged, echoed, persisted outside SecretStore, or copied into domain events.
+    AgentAuthChallenge:
+      type: object
+      additionalProperties: false
+      required: [kind, auth_method_id]
+      properties:
+        kind: {type: string, enum: [NATIVE_FLOW_STARTED, EXTERNAL_HANDOFF, DEVICE_CODE, SECRET_REQUIRED, NATIVE_CONFIG_REQUIRED]}
+        auth_method_id: {type: string}
+        external_handoff:
+          oneOf: [{$ref: '#/components/schemas/ExternalAuthHandoff'}, {type: 'null'}]
+        device_code_display: {type: [string, 'null'], maxLength: 256}
+        expires_at: {type: [string, 'null'], format: date-time}
+    AgentConfigurationDescriptor:
+      type: object
+      additionalProperties: false
+      required: [schema_digest, fields, native_config_targets]
+      properties:
+        schema_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        fields:
+          type: array
+          maxItems: 64
+          items: {$ref: '#/components/schemas/AgentConfigurationField'}
+        native_config_targets:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/NativeConfigTarget'}
+    AgentConfigurationField:
+      type: object
+      additionalProperties: false
+      required: [field_id, display_name, type, required, constraints, ownership]
+      properties:
+        field_id: {type: string, minLength: 1, maxLength: 128}
+        display_name: {type: string, minLength: 1, maxLength: 128}
+        type: {type: string, enum: [BOOLEAN, ENUM, STRING, INTEGER, PATH, STRING_LIST]}
+        required: {type: boolean}
+        default_value: {}
+        constraints: {$ref: '#/components/schemas/JsonObject'}
+        ownership: {type: string, const: LITECOWORK_NON_SECRET}
+    NativeConfigTarget:
+      type: object
+      additionalProperties: false
+      required: [target_id, display_name, kind]
+      properties:
+        target_id: {type: string, minLength: 1, maxLength: 128}
+        display_name: {type: string, minLength: 1, maxLength: 128}
+        kind: {type: string, enum: [FILE, DIRECTORY, NATIVE_SETTINGS, EXTERNAL_UI]}
+    AgentSessionOptionDescriptor:
+      type: object
+      additionalProperties: false
+      required: [descriptor_digest, options]
+      properties:
+        descriptor_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        options:
+          type: array
+          maxItems: 64
+          items: {$ref: '#/components/schemas/AgentSessionOption'}
+    AgentSessionOption:
+      type: object
+      additionalProperties: false
+      required: [option_id, display_name, value_schema, mutable_scope]
+      properties:
+        option_id: {type: string, minLength: 1, maxLength: 128}
+        display_name: {type: string, minLength: 1, maxLength: 128}
+        semantic_hint: {type: [string, 'null'], enum: [MODEL, REASONING, EFFORT, MODE, OTHER, null]}
+        value_schema: {$ref: '#/components/schemas/JsonSchema'}
+        mutable_scope: {type: string, enum: [LIVE_SESSION, NEW_SESSION, UNSUPPORTED]}
+    NativeCommandDescriptor:
+      type: object
+      additionalProperties: false
+      required: [command_id, token, display_name]
+      properties:
+        command_id: {type: string, minLength: 1, maxLength: 128}
+        token: {type: string, minLength: 1, maxLength: 128}
+        display_name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: [string, 'null'], maxLength: 512}
+        argument_schema:
+          oneOf: [{$ref: '#/components/schemas/JsonSchema'}, {type: 'null'}]
+    NativeReferenceKindDescriptor:
+      type: object
+      additionalProperties: false
+      required: [reference_kind_id, trigger, display_name, selection_mode]
+      properties:
+        reference_kind_id: {type: string, minLength: 1, maxLength: 128}
+        trigger: {type: string, minLength: 1, maxLength: 8}
+        display_name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: [string, 'null'], maxLength: 512}
+        selection_mode: {type: string, enum: [NATIVE_PICKER, HOST_RESOURCE_PICKER, TEXT_COMPLETION]}
+    AgentInputSurfaceDescriptor:
+      type: object
+      additionalProperties: false
+      required: [text, images, files, resources, slash_commands, reference_kinds, supports_command_discovery, supports_reference_discovery]
+      properties:
+        text: {type: boolean}
+        images: {type: boolean}
+        files: {type: boolean}
+        resources: {type: boolean}
+        slash_commands:
+          type: array
+          maxItems: 256
+          items: {$ref: '#/components/schemas/NativeCommandDescriptor'}
+        reference_kinds:
+          type: array
+          maxItems: 64
+          items: {$ref: '#/components/schemas/NativeReferenceKindDescriptor'}
+        supports_command_discovery: {type: boolean}
+        supports_reference_discovery: {type: boolean}
+    AgentNativeSurfaceDescriptor:
+      type: object
+      additionalProperties: false
+      required: [native_config_preserved, native_extensions_preserved, native_subagents_preserved]
+      properties:
+        native_config_preserved: {type: boolean}
+        native_extensions_preserved: {type: boolean}
+        native_subagents_preserved: {type: boolean}
+        summary: {type: [string, 'null'], maxLength: 1024}
+    AgentControlDescriptor:
+      type: object
+      additionalProperties: false
+      required: [descriptor_digest, descriptor_api_version, registry_agent_id, module_id, module_version, installation, auth, configuration, input_surface, native_surface, capabilities, observed_at, expires_at]
+      properties:
+        descriptor_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        descriptor_api_version: {type: integer, minimum: 1}
+        registry_agent_id: {type: string}
+        module_id: {type: string}
+        module_version: {type: string}
+        harness_version: {type: [string, 'null']}
+        protocol_version: {type: [string, 'null']}
+        installation: {$ref: '#/components/schemas/AgentInstallationObservation'}
+        auth: {$ref: '#/components/schemas/AgentAuthDescriptor'}
+        configuration: {$ref: '#/components/schemas/AgentConfigurationDescriptor'}
+        session_options:
+          oneOf: [{$ref: '#/components/schemas/AgentSessionOptionDescriptor'}, {type: 'null'}]
+        input_surface: {$ref: '#/components/schemas/AgentInputSurfaceDescriptor'}
+        native_surface: {$ref: '#/components/schemas/AgentNativeSurfaceDescriptor'}
+        capabilities: {$ref: '#/components/schemas/AgentCapabilities'}
+        observed_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+    NativeConfigOpenReceipt:
+      type: object
+      additionalProperties: false
+      required: [agent_profile_id, target_id, opened]
+      properties:
+        agent_profile_id: {type: string}
+        target_id: {type: string}
+        opened: {type: boolean}
     AgentCapabilities:
       type: object
       required: [protocol, session, input, extension, reporting, environment, limits]
@@ -4177,13 +4652,14 @@ components:
         protocol_version: {type: [string, 'null']}
         session:
           type: object
-          required: [resume, steer, interrupt, cancel, fork]
+          required: [resume, steer, interrupt, cancel, fork, model_switch]
           properties:
             resume: {type: boolean}
             steer: {type: boolean}
             interrupt: {type: boolean}
             cancel: {type: boolean}
             fork: {type: boolean}
+            model_switch: {type: string, enum: [LIVE, NEW_SESSION, UNSUPPORTED]}
         input:
           type: object
           required: [text, image, file, resources]
@@ -4356,7 +4832,8 @@ components:
         display_name: {type: [string, 'null'], maxLength: 128}
     AgentBinding:
       type: object
-      required: [agent_binding_id, workspace_id, agent_profile_id, runtime_id, endpoint_selection_policy, auth_ref, configuration, enabled, lead_eligible, created_at, version]
+      additionalProperties: false
+      required: [agent_binding_id, workspace_id, agent_profile_id, runtime_id, endpoint_selection_policy, configuration_descriptor_digest, configuration, credential_bindings, default_session_options_descriptor_digest, default_session_options, enabled, lead_eligible, created_at, version]
       properties:
         agent_binding_id: {type: string}
         workspace_id: {type: string}
@@ -4364,8 +4841,23 @@ components:
         runtime_id: {type: [string, 'null']}
         endpoint_selection_policy: {$ref: '#/components/schemas/EndpointSelectionPolicy'}
         auth_ref:
+          deprecated: true
           oneOf: [{$ref: '#/components/schemas/SecretRef'}, {type: 'null'}]
-        configuration: {type: object, maxProperties: 0, description: Adapter-specific configuration is unavailable until a reviewed non-secret allowlist exists.}
+          description: Transitional single-secret field. Target credential slots use credential_bindings.
+        configuration_descriptor_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        configuration:
+          type: object
+          maxProperties: 64
+          description: Closed adapter-validated non-secret configuration only; raw credentials are forbidden.
+        credential_bindings:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/AgentCredentialBinding'}
+        default_session_options_descriptor_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        default_session_options:
+          type: object
+          maxProperties: 64
+          description: Opaque agent-owned default session options validated against the named descriptor.
         enabled: {type: boolean}
         lead_eligible: {type: boolean}
         created_at: {type: string, format: date-time}
@@ -4390,9 +4882,32 @@ components:
         endpoint_selection_policy:
           allOf: [{$ref: '#/components/schemas/EndpointSelectionPolicy'}]
           default: {mode: AUTO_COMPATIBLE, required_features: [], preferred_topologies: []}
-        auth_ref:
-          oneOf: [{$ref: '#/components/schemas/SecretRef'}, {type: 'null'}]
-        configuration: {type: object, maxProperties: 0, description: Adapter-specific configuration is unavailable until a reviewed non-secret allowlist exists.}
+        configuration_descriptor_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        configuration: {type: object, maxProperties: 64}
+        credential_bindings:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/AgentCredentialBinding'}
+        default_session_options_descriptor_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        default_session_options: {type: object, maxProperties: 64}
+    ConfigureAgentBindingRequest:
+      type: object
+      additionalProperties: false
+      required: [descriptor_digest, configuration, credential_bindings, default_session_options]
+      properties:
+        descriptor_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        configuration:
+          type: object
+          maxProperties: 64
+          description: Non-secret values only; service validates against current AgentConfigurationDescriptor.
+        credential_bindings:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/AgentCredentialBinding'}
+        default_session_options:
+          type: object
+          maxProperties: 64
+          description: Agent-owned option values validated against current AgentSessionOptionDescriptor.
     EndpointSelectionPolicy:
       oneOf:
       - type: object
@@ -7161,14 +7676,8 @@ components:
         expires_at: {type: string, format: date-time}
         options:
           type: array
-          items:
-            type: object
-            additionalProperties: false
-            required: [option_id, value_schema, mutable_scope]
-            properties:
-              option_id: {type: string, minLength: 1}
-              value_schema: {$ref: '#/components/schemas/JsonSchema'}
-              mutable_scope: {type: string, enum: [LIVE_SESSION, NEW_SESSION, UNSUPPORTED]}
+          maxItems: 64
+          items: {$ref: '#/components/schemas/AgentSessionOption'}
     AgentHarnessCapabilities:
       type: object
       additionalProperties: false

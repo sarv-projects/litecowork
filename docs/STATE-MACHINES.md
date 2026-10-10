@@ -347,6 +347,55 @@ Yielding an Attempt session does not settle the Attempt when a durable provider 
 is still running; a fresh session may be admitted only after its result is available and
 Attempt authority is rechecked.
 
+## Agent installation, authentication, and control descriptor
+
+These are Runtime-local operational state machines owned by AgentLifecycleService and the
+selected AgentLifecycleAdapter. They are not replicated Workspace aggregates.
+
+### Agent installation observation
+
+```text
+MISSING -> INSTALLING -> INSTALLED
+MISSING -> INSTALLING -> BROKEN
+INSTALLED -> UPDATE_AVAILABLE
+UPDATE_AVAILABLE -> UPDATING -> INSTALLED
+UPDATE_AVAILABLE -> UPDATING -> UPDATE_AVAILABLE  # failed update, old install intact
+UPDATING -> BROKEN                                 # actual installation unusable
+BROKEN -> INSTALLING
+INSTALLED | UPDATE_AVAILABLE -> VERSION_UNAVAILABLE # observation cannot prove version
+```
+
+Only explicit owner install/update/repair commands begin mutating transitions. Registry
+refresh alone cannot.
+
+### Agent authentication observation
+
+```text
+UNKNOWN -> NEEDS_AUTH | AUTHENTICATED | DEGRADED | ERROR
+NEEDS_AUTH -> AUTHENTICATING
+AUTHENTICATING -> AUTHENTICATED | NEEDS_AUTH | ERROR
+AUTHENTICATED -> EXPIRED | NEEDS_AUTH | DEGRADED | ERROR
+EXPIRED -> AUTHENTICATING
+ERROR -> AUTHENTICATING | NEEDS_AUTH
+```
+
+This state never contains credential bytes.
+
+### AgentControlDescriptor freshness
+
+```text
+ABSENT -> FRESH
+FRESH -> STALE
+STALE -> REFRESHING -> FRESH
+STALE -> REFRESHING -> FAILED
+FAILED -> REFRESHING
+```
+
+A descriptor becomes stale at expiry, on detected harness/native-config version drift, or
+when its AgentModule declares the observation invalid. Existing AgentSessions retain their
+pinned descriptor digest. New admission requiring agent-owned options/config must use a
+fresh compatible descriptor.
+
 ## AgentBinding
 
 ```text

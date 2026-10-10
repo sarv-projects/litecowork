@@ -701,79 +701,129 @@ fields. Expired observations are returned as `UNKNOWN`/stale and cannot satisfy 
 
 ## Agents
 
+The canonical lifecycle/configuration contract is
+[`AGENT-CONTROL.md`](AGENT-CONTROL.md). The API intentionally separates registry,
+installation, auth/configuration, Workspace binding, and session readiness.
+
+### Registry and lifecycle
+
 ```text
+GET  /v1/agent-registry?q=&cursor=&limit=
+POST /v1/agent-registry/refresh
+
 GET  /v1/agent-installations
+POST /v1/agent-registry/{registryAgentId}/install
+POST /v1/agent-registry/{registryAgentId}/update
+```
+
+The registry is descriptive ACP/distribution metadata only. It does not prove the agent is
+installed, authenticated, entitled to a model, session-capable, compatible, lead-eligible,
+or authorized in the Workspace. Registry metadata is untrusted; an AgentModule compiles
+recognized distribution metadata into bounded install/update operations. The API never
+executes an arbitrary command supplied by the registry.
+
+Install/update are explicit authenticated **local owner** actions. They create
+`AgentLifecycleOperation` records and AuditRecords, but no AgentBinding, Conversation,
+Task, AgentSession or execution authority. Clients poll/refresh installation observations
+after ambiguous interruption rather than assuming subprocess exit means success.
+
+`GET /v1/agent-installations` remains a Runtime-local observation. Current source
+implements a narrow Codex/OpenCode `--version` inventory; the target projection is the
+generic `AgentInstallationObservation` backed by AgentModules.
+
+### Profile/control discovery
+
+```text
 GET  /v1/agent-profiles
+POST /v1/agent-profiles/{agentProfileId}/refresh
+GET  /v1/agent-profiles/{agentProfileId}/control-descriptor
+
+# transitional current-source route; deprecated in target contract
 POST /v1/agent-profiles/probe
+```
+
+`AgentControlDescriptor` is sanitized, closed, digest-pinned and time-bounded. It
+contains current non-secret observations needed by the UI/admission layer:
+
+- module/harness/protocol versions;
+- installation/update observation;
+- auth state and supported auth methods;
+- declared secure credential slots;
+- non-secret configuration schema and native config targets;
+- agent-owned session options (including semantic hints such as Model/Reasoning/Effort);
+- text/image/file/resource input support;
+- native slash-command and reference/mention metadata;
+- native-surface preservation flags and negotiated capabilities.
+
+Raw provider/native config objects, credential bytes, native session handles, endpoint
+locators and private prompts are forbidden.
+
+### Agent authentication and configuration
+
+```text
+POST /v1/agent-profiles/{agentProfileId}/auth/{authMethodId}/begin
+POST /v1/agent-profiles/{agentProfileId}/credentials/{credentialSlotId}
+POST /v1/agent-profiles/{agentProfileId}/native-config/{targetId}/open
+```
+
+There is no global Providers API/settings authority.
+
+For `NATIVE_FLOW`, `EXTERNAL_HANDOFF`, `DEVICE_CODE`, or
+`NATIVE_CONFIG_ONLY`, LiteCowork begins the adapter-declared flow and the native agent
+retains the credential/configuration. A `SECRET_SLOT` is accepted only when the current
+descriptor declares `storage_owner=LITECOWORK_SECRET_STORE`; the local privileged
+request writes bytes directly to SecretStore and returns only
+`AgentCredentialBinding { credential_slot_id, secret_ref }`. The route is no-store,
+no-log and never echoes the secret.
+
+`open native config` accepts only an adapter-known `targetId`; callers cannot submit
+arbitrary paths or shell commands.
+
+### Workspace bindings and defaults
+
+```text
 GET  /v1/agent-bindings
 POST /v1/agent-bindings
 GET  /v1/agent-bindings/{id}
+PUT  /v1/agent-bindings/{id}/configuration
 POST /v1/agent-bindings/{id}/enable
 POST /v1/agent-bindings/{id}/disable
+
 GET  /v1/agent-bindings/{id}/session-options
 GET  /v1/agent-bindings/{id}/harness-capabilities
 GET  /v1/agent-bindings/{id}/quota-observation
 ```
 
-`agent-installations` is an authenticated runtime-local snapshot with no Workspace
-scope because it reports installed software. It invokes only each supported
-executable's `--version`, accepts a bounded version-shaped value, and discards
-arbitrary process output. The response is cached for at most five seconds and does not
-persist executable paths. `authentication=UNKNOWN` and
-`session_readiness=NOT_PROBED` are permanent inventory values; later negotiated status
-belongs to AgentProfile/RuntimeOffer observations. An installation row cannot be selected
-as a lead or delegated worker; that requires a negotiated AgentProfile and an explicitly
-created AgentBinding.
+AgentProfile/Endpoint identities and Runtime offers remain separate from durable
+Workspace AgentBindings. Binding creation starts disabled. Binding configuration contains
+only descriptor-validated non-secret values, credential **SecretRefs**, and adapter-owned
+default session options. `PUT .../configuration` requires `If-Match`,
+`Idempotency-Key`, and the exact current descriptor digest. Stale descriptors, unknown
+configuration keys, undeclared credential slots, raw secrets, or unsupported session
+options fail before mutation.
 
-`agent-profiles/probe` is a separate, explicit owner action. V1 accepts
-`provider_key=CODEX` or `provider_key=OPENCODE`, uses the daemon's admitted local
-executable/environment binding, and returns a sanitized AgentProfileView plus its
-RuntimeOffer observation. It does not start a Task or establish that a model is entitled
-to perform inference. A successful Codex `model/list` or OpenCode `/config/providers`
-response is catalog discovery only. OpenCode reads only `/provider` and
-`/config/providers` and returns bounded provider/model IDs and display names plus
-explicitly named reported connected-provider IDs; the result never includes native
-provider/model objects, options, headers, keys, URLs, or raw responses. OpenCode's
-reported connected list is not an authentication or entitlement claim. Its model catalog
-is display-only, `session_model_selection=NOT_QUALIFIED`, and its offer is always
-`compatible=false`, so it cannot create or enable an AgentBinding. Authentication is
-reported only from each adapter's bounded evidence; account identifiers, native protocol
-payloads, endpoint locators, and private configuration are never returned. The probe is
-bounded and stops its owned host, but does not prove descendant-writer quiescence;
-therefore neither probe is a production-safe AgentSession or switching path. The selected
-Workspace must first have an ACTIVE `LOCAL_ENROLLMENT` RuntimeWorkspaceBinding for this
-exact local Runtime incarnation with both `EXECUTOR` and `OPERATOR_ENDPOINT` roles. This
-is a distinct owner action; Operator readiness alone is not Workspace authorization.
-Every explicit probe call runs a fresh bounded observation and refreshes an expiring
-RuntimeOffer, so the probe operation does not accept `Idempotency-Key` and must not be
-automatically retried by a client.
+Configuration writes append
+`agent.binding.configuration.changed.v1` with only digests, slot IDs and actor/version
+metadata. Active AgentSessions remain pinned to their admitted descriptor/configuration
+digests; edits affect future admissions.
 
-AgentProfile and AgentEndpoint are stable identities; the profile response joins them to
-per-endpoint RuntimeOffer observations (Runtime/incarnation, readiness, compatibility,
-and expiry) without exposing endpoint locators. Bindings are durable Workspace records.
-Create requires an observed compatible endpoint and always creates a disabled binding. Agent setup/auth
-flows remain adapter-owned; the API accepts only an opaque `SecretRef` and non-secret
-configuration. Enable/disable are versioned and idempotent. Disabling blocks new
-admission immediately while already admitted sessions remain pinned and settle safely.
-Creation may pin an exact discovered endpoint or save required features and preferred
-topologies for later compatible selection; protocol choice is not a universal ranking.
-Each profile observation includes sanitized `constraints` for that current offer. A
-Codex probe may include bounded model-option metadata and protocol/authentication
-observations there, but no raw App Server messages, account identity, paths, configuration
-contents, or credentials. An OpenCode probe includes only its bounded sanitized display
-catalog and labeled `/provider.connected` observation. That connection summary is not
-treated as authentication evidence. OpenCode remains incompatible and cannot be bound or
-enabled until its session/model option semantics and execution lifecycle are qualified.
-Model discovery does not prove inference entitlement. The offer is expiring
-Runtime-operational state, not an AgentSession or evidence that a Task can execute.
-`lead_eligible` is distinct from `enabled`: a worker-only binding cannot be selected as a
-lead and returns `AGENT_NOT_LEAD_ELIGIBLE` when explicitly selected. Session-option and harness-capability routes return fresh adapter-negotiated
-metadata only; they never return native configuration files, credentials, or local
-endpoint locators.
+`lead_eligible` remains distinct from `enabled`. Disabling blocks new admission while
+already admitted sessions settle under their pinned contract. No agent/provider/model is
+silently substituted.
 
-Quota observation returns the latest source-named observation, including `UNKNOWN` and
-its expiry, or JSON `null` when no observation exists. An expired observation is
-projected as `UNKNOWN`; clients must not display stale `LOW`/`EXHAUSTED` as current state.
+### Composer/session option dependency
+
+The Operator resolves the selected AgentBinding first. Model, reasoning/effort/mode,
+native slash commands, `@` references, and accepted attachment kinds are then rendered
+from that binding's current AgentControlDescriptor. Changing Agent invalidates and
+rebuilds all dependent controls. A draft containing an input unsupported by the new agent
+is preserved and Send is blocked with an explicit explanation; LiteCowork never silently
+drops the input.
+
+The current Codex/OpenCode probe implementation remains source-only/transitional:
+Codex/OpenCode-specific catalog observations do not satisfy the generic target until the
+AgentModule lifecycle/control-descriptor paths and per-agent qualification tests are
+implemented.
 
 ## Delegation profiles
 

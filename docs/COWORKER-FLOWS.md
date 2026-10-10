@@ -77,3 +77,31 @@ Global Stop unattended work first lists active schedules/monitors, currently adm
 ## Cross-flow invariants and tests
 
 Test every control with: empty/loading/success/stale revision/offline/partial provider result/missing consent/cancel/failure/duplicate RequestId/late response. Verify same-Workspace ownership and pinned revisions, no leaking private Coworker memory, no automatic permission gain from Skills, and truthful Unknown/Blocked states. UI tests cover keyboard, screen reader, focus return, dirty editor, reduced motion, 200% zoom, large inventories, contextual Connect repair and no ghost chat. System tests cover real close/restart/locked/sleep states, duplicate webhook, DST and ambiguous sent Effect on each qualified OS/provider. See [UI](../implementation/UI.md) and [target data model](COWORKERS-TARGET.md).
+
+
+## CF19 — Coworker switches chief agent without losing native functionality
+
+1. Owner opens Coworker Settings > Chief agent or uses the chat Agent override.
+2. UI lists enabled lead-eligible bindings, not registry entries or raw provider accounts.
+3. Selected binding's fresh AgentControlDescriptor is loaded.
+4. Model/Reasoning/additional session options and native slash / @ / input capabilities
+   rebuild from that descriptor.
+5. Coworker memory/knowledge/responsibilities do not move into the agent's native memory
+   or provider configuration.
+6. Existing durable Tasks keep their pinned lead/Attempt provenance; new chat turns/new
+   work use the new selection.
+7. If the new agent lacks support for draft inputs, draft remains and Send is blocked with
+   exact unsupported items.
+
+## CF20 — Coworker encounters agent setup drift
+
+1. Coworker has a configured AgentBinding.
+2. Native agent is updated, signed out, provider key expires, or option schema changes.
+3. New turn admission detects stale descriptor/auth/configuration.
+4. No silent fallback occurs.
+5. UI shows **Needs setup** on the agent control and a direct action to the exact Agent
+   Registry detail.
+6. User signs in/updates/configures through the adapter-owned flow.
+7. Descriptor refresh succeeds; original draft remains intact and may be sent.
+8. Active Tasks already admitted under the old descriptor follow normal settlement and
+   are not rewritten.

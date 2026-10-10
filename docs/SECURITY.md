@@ -116,3 +116,32 @@ and Trust policy.
 ## Supply chain
 
 LiteSPM package verification metadata should include source, publisher, digest/signature, permissions, compatibility and last verification. LiteCowork consumes normalized lock metadata and independently applies task policy.
+
+
+## Agent lifecycle, registry, and native configuration security
+
+ACP/distribution registry metadata is untrusted supply-chain input. It may describe a
+package, but it cannot provide an arbitrary executable command, credential destination,
+native-config path, or privileged callback that LiteCowork blindly executes.
+AgentModuleRegistry maps recognized registry identities to trusted/versioned lifecycle
+adapters that compile bounded install/update/auth actions.
+
+AgentControlDescriptors are sanitized **non-secret observations**. Raw native config,
+provider responses, account tokens, API keys, cookies, endpoint locators, private prompts,
+native session handles, and unbounded command output are forbidden.
+
+Secret-bearing agent setup has two valid ownership modes:
+
+1. **NATIVE_AGENT** — open/use the agent's own sign-in/configuration flow; LiteCowork
+   observes only sanitized auth state.
+2. **LITECOWORK_SECRET_STORE** — only an adapter-declared credential slot may accept local
+   privileged secret input; bytes go directly to SecretStore, are zeroized from the
+   request buffer, and only a SecretRef enters durable configuration.
+
+AgentBinding non-secret configuration is closed-schema and descriptor-digest pinned.
+Unknown fields and stale descriptor digests fail closed. A successfully installed,
+authenticated, or configured agent receives no Workspace/Task authority until the
+separate AgentBinding/Trust admission allows it.
+
+Install/update subprocesses use a lifecycle-specific environment allowlist and official
+module-defined distribution semantics. Registry text must never become a shell command.

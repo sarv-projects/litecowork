@@ -378,3 +378,63 @@ The Workbench is one border-separated application region, not a stack of floatin
 The common header is 40–48px high and uses icon buttons with tooltip/accessibility names for Maximize/Restore and Close; history controls appear only when real history exists. A layout/split icon must describe its effect in tooltip, never rely on glyph recognition. Panel resizing uses an obvious separator hit target and visible keyboard focus. The panel does not auto-open or steal focus from background completion.
 
 Browser, Computer, Terminal, Artifact, and MCP App views share this shell but do not pretend to be the same capability. Terminal is advanced/conditional. Locked capabilities remain discoverable with reason when that improves repair; irrelevant capabilities may sit under More rather than producing a wall of disabled rows. No fake browser chrome, command output, cursor activity, or preview bytes.
+
+
+## Agent-adaptive controls
+
+Agent-specific controls use one visual grammar while preserving agent-specific semantics.
+
+### Composer control box
+
+AgentControlButton:
+- 32-36 px high;
+- small semantic eyebrow (Agent, Model, adapter-supplied option label, Native);
+- primary current value;
+- chevron;
+- never truncates the only error/setup state.
+
+The **Agent** button is visually first among agent controls because all later controls are
+dependent projections.
+
+Do not concatenate Agent + Model + Reasoning into one ambiguous pill. Do not place
+Task/Schedule as permanent composer pills; those are LiteCowork host actions behind Plus.
+
+### Dependency animation
+
+When Agent changes:
+1. keep the input text/attachments stationary;
+2. dependent controls fade/replace together in <= 180 ms;
+3. show a tiny loading skeleton only if descriptor refresh is required;
+4. do not animate controls out and back individually;
+5. preserve focus in the composer.
+
+An incompatible draft gets an inline non-destructive banner above the control row.
+
+### Native affordance palette
+
+Slash/reference palette:
+- anchored above the composer;
+- selected-agent identity in the palette header;
+- token rendered monospace;
+- description rendered as untrusted plain text;
+- separate styling/section from LiteCowork host actions;
+- supports keyboard navigation and Escape without losing draft.
+
+### Agent Registry master-detail
+
+Left registry rail is independently scrollable/searchable. Right detail is independently
+scrollable. Installation/auth/update status badges are not merged into one status color.
+
+States:
+- Registry / No adapter
+- Not installed
+- Installing
+- Installed
+- Update available
+- Sign in needed
+- Ready
+- Degraded
+- Adapter update required
+- Broken / Repair
+
+Every state must have one obvious next action and an accessible textual explanation.

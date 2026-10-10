@@ -365,3 +365,65 @@ In addition to existing contract validators, qualify: zero-Coworker ordinary cha
 - **Root mount modes:** read-only/read-write/no-delete are enforced by provider-level tests where advertised; symlink escape and delete attempts fail closed.
 - **Large capability inventory:** 10k catalog/tool metadata entries remain searchable without eager process launch/schema injection.
 - **Optional technical trace:** nontechnical flow completes without Inspector; technical user can expand exact Task/Attempt/Invocation/Effect evidence without hidden model reasoning.
+
+
+## Agent Registry, lifecycle and native-surface conformance
+
+The AgentModule target adds a dedicated test family owned by E03-S06–S11 and E04-S06.
+
+### CODE
+
+For every AgentModule implementation:
+
+- manifest/registry identity bounds and duplicate/ambiguous-claim rejection;
+- registry metadata schema/size/origin handling;
+- install/update operation idempotency and stale-version rejection;
+- AgentControlDescriptor closed-schema validation and digest determinism;
+- auth-method/credential-slot referential integrity;
+- proof that secret bytes cannot serialize into AgentBinding, DomainEvent, AuditRecord,
+  logs, descriptors, query caches or backup fixtures;
+- native command/reference token sanitization, uniqueness and size limits;
+- session-option semantic hints/mutability and stale-value rejection;
+- Agent switch reducer preserves draft but removes only invalid dependent option state;
+- binding configuration optimistic concurrency/idempotency/event atomicity;
+- active AgentSession provenance remains pinned after a binding edit;
+- AgentCapabilityBridge cannot widen a CapabilityGrant.
+
+### SYSTEM
+
+For every advertised agent/version/OS cell, run the original harness and LiteCowork side
+by side and record exact versions.
+
+Required cases where supported upstream:
+
+1. missing -> install -> observe exact version;
+2. update available -> update -> re-probe;
+3. interrupted install/update -> restart -> observe actual truth before retry;
+4. native sign-in success/cancel/expiry;
+5. secure API-key slot success/rejection/replacement when adapter supports one;
+6. external native configuration change -> descriptor invalidation/refresh;
+7. model/session-option catalog equality with native harness;
+8. slash command and reference/mention behavior equality;
+9. image/file/resource input behavior equality;
+10. native extensions/subagents remain usable/visible under honest ownership labels;
+11. cancel/resume/steer and process quiescence required by durable Task replacement;
+12. agent update changes capability schema -> old new-session admission fails closed;
+13. one LiteSPM-managed capability through each claimed qualified attachment route.
+
+A registry entry, mock adapter or CLI version string cannot satisfy these tests.
+
+### USER
+
+Owner acceptance for every launch-critical agent must demonstrate:
+
+- install/configure/sign-in from Agent Registry;
+- open a normal chat and see correct Agent-dependent Model/options/native controls;
+- use at least one native feature also available in the original harness;
+- switch to another agent without losing draft text/files;
+- trigger setup drift, repair it, and return to the same draft;
+- update the agent and observe refreshed capabilities;
+- if claimed compatible, use one LiteSPM-managed capability without per-agent duplicate
+  package installation.
+
+Store sanitized evidence in the owning story review packet. No secret/API-key value may be
+recorded in test artifacts.

@@ -382,3 +382,32 @@ Users need global `What is running?` and `Stop unattended work` controls with an
 The right-side Workbench is **not always open by default**. New chats start with maximum conversational width. The shell restores a prior explicit user pane preference, or opens because the user directly chose File/Artifact/Browser/Computer/Terminal/MCP App. Background tool completion alone cannot steal focus or open it.
 
 When open with no active object, Workbench uses a calm Start launcher modeled on the reviewed desktop reference: Workspace files, Browser, qualified Computer, conditional advanced Terminal, and optional Recent outputs. The panel is resizable, maximizable, closable, and becomes a full-screen sheet on narrow layouts. It is one common shell for rich outputs and interactive tools, while each surface retains its own authority, lease, freshness, and dirty-state semantics. See implementation/UI.md for the control-level contract.
+
+
+## Coworker chief-agent configuration and native surface
+
+A Coworker's chief-agent preference is an AgentBinding/default-session-option preference,
+not a reduced LiteCowork model wrapper.
+
+Coworker creation may choose an Agent, but it remains optional configuration. When the
+Coworker chat opens, its composer resolves:
+
+1. explicit conversation Agent override;
+2. Coworker default AgentBinding;
+3. Workspace default AgentBinding.
+
+Once resolved, Model/Reasoning/session options and native slash / @ / attachment semantics
+come entirely from the current AgentControlDescriptor. Switching chief agents therefore
+rebuilds the dependent composer controls exactly as an ordinary chat does.
+
+Coworker Settings MUST NOT copy provider/API-key/native harness configuration into the
+Coworker. It stores only:
+- selected AgentBinding/defaults;
+- allowed host-delegation profiles;
+- Coworker-owned memory/knowledge/responsibility configuration;
+- Coworker-specific LiteSPM capability assignments where applicable.
+
+Agent installation, native sign-in, API-key/provider configuration and agent updates are
+handled in Settings > Agent Registry and reused by every permitted Coworker/Workspace
+binding. If a Coworker selects an agent requiring setup, the Coworker chat keeps the draft
+and links directly to that agent's setup panel.

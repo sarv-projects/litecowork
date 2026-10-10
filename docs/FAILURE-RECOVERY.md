@@ -161,3 +161,24 @@ Durable event journal is source of truth for replayable projections. Projection 
 ## Coworker autonomy and integration repair cases
 
 A Coworker run blocked by expired OAuth, missing connector, disabled Skill, unqualified desktop app, unavailable lead, revoked memory source, desktop lock, sleep, or exhausted quota stores a typed blocker with a repair action. User answers are bound to the original Task/Invocation/Approval and never accidentally restart earlier completed Steps. Multiple connected Coworkers must not lose shared account state if one assignment is revoked. A replayed schedule or webhook yields the same occurrence; a lost externally consequential acknowledgment stays AMBIGUOUS until positive reconciliation. A disconnected background daemon reports observation gaps, not fake No change observations. Quiet-hours suppression affects notifications only, not durable safety records. Archive/pause never discards independent Artifacts or grants new authority.
+
+
+## Agent registry/setup/update recovery cases
+
+| Failure | Recovery owner | Required settlement |
+|---|---|---|
+| ACP registry unavailable | AgentRegistryService | Continue with last valid bounded cache and stale label; installed agents remain unchanged |
+| Install/update process interrupted | AgentLifecycleService | Mark operation UNKNOWN/FAILED, re-probe actual executable/version before retry |
+| Agent updated outside LiteCowork | AgentLifecycleService | Invalidate stale control descriptor; refresh before new session admission |
+| Native auth expired/revoked | AgentLifecycleAdapter | Block new admission with setup-needed; never erase draft/Task |
+| Secure API key rejected | AgentLifecycleAdapter/SecretStore | Keep secret non-observable; report auth ERROR/NEEDS_AUTH, allow explicit replacement |
+| Model/session option removed | AgentBindingService / admission | Reject stale override; preserve draft and offer current options |
+| Native slash/reference token removed | composer/admission | Refresh descriptor and require reselection; never reinterpret as plain text silently |
+| Descriptor expires during active session | AgentSessionSupervisor | Existing session remains pinned; continuation/new session revalidates |
+| LiteSPM capability route disappears | Capability Fabric + AgentCapabilityBridge | Stop new activation/attachment; native unrelated harness functionality continues |
+| AgentModule too old for upstream harness | AgentLifecycleService | Fail closed with adapter-update-required; no generic fallback |
+| Registry agent has no supported module | AgentRegistryService | Display no-adapter/unsupported; never execute arbitrary registry lifecycle logic |
+
+Recovery must distinguish **installation truth**, **authentication truth**, **Workspace
+binding authorization**, and **session readiness**. Repairing one never silently repairs
+or enables the others.

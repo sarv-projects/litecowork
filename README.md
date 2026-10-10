@@ -120,3 +120,13 @@ or authentication behavior is assumed before its service contract is available.
 ## Coworkers target evolution
 
 The accepted desktop Coworker design is described in [docs/COWORKERS-TARGET.md](docs/COWORKERS-TARGET.md): optional chat-first persistent assistants, no connector ceiling on configured integrations, natural-language approved responsibilities, quiet scoped memory learning and honest background execution. This is a target design, NOT a claim that UI, memory, trigger or native agent execution are already complete. Current implementation status and gates remain in [implementation/CURRENT-RUN.md](implementation/CURRENT-RUN.md).
+
+
+### Native agent philosophy
+
+LiteCowork is designed around full native agent harnesses rather than a universal model
+wrapper. Agent-specific install/update, sign-in/API-key setup, models/session options,
+slash commands, references and native configuration are exposed through modular
+AgentModules. LiteSPM owns the cross-agent connector/MCP/plugin/skill package ecosystem;
+LiteCowork owns scoped authorization and durable work around their use. See
+docs/AGENT-CONTROL.md.

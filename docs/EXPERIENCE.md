@@ -964,3 +964,77 @@ Chat is the home/focal surface; Workbench is a user-controlled secondary surface
 When open without an active object, the Workbench uses a sparse Start launcher inspired by the reviewed desktop reference: Workspace files, Browser, qualified Computer, conditional advanced Terminal, and optional Recent outputs. Connections/Skills/MCP configuration do not clutter this launcher.
 
 Header controls are semantic and accessible: history when available, resize/split preset, maximize/restore, and close. Below desktop breakpoint the panel becomes a full-screen sheet/route. Authorization and object identity are rechecked on Workspace/Coworker/session change and restart; panel restore never restores stale authority. See [UI](../implementation/UI.md#right-workbench-shell--finalized-2026-10-10).
+
+
+## Agent-native setup and composer experience
+
+### Principle
+
+Do not make ordinary users learn AgentProfile/Endpoint/Binding vocabulary, but also do not
+hide capabilities they could use in the original harness. Progressive disclosure applies
+to **complexity**, not to **capability removal**.
+
+### Composer
+
+The normal composer is one rounded input box. Its lower control row is:
+
+**[ + ] [ Agent ] [ Model? ] [ Reasoning/Effort/other primary option? ] [ Native / @ ... ] [ Send ]**
+
+Rules:
+
+1. Agent is the root selector.
+2. Changing Agent immediately refreshes all dependent controls from that agent's current
+   AgentControlDescriptor.
+3. Model appears only if that agent exposes a selectable MODEL option.
+4. Reasoning/Effort/Mode uses the agent's own label/values; LiteCowork does not normalize
+   values into fake parity.
+5. Secondary session options are reachable from the Agent/options popover.
+6. Slash and @ preserve native commands/references. Autocomplete is labeled with the
+   selected agent so host actions cannot be confused with native commands.
+7. Plus is LiteCowork's host-action/attachment menu: files, Library, connections,
+   durable Task, schedule/responsibility, etc.
+8. If an Agent switch makes a draft attachment/native selection unsupported, preserve the
+   draft and visibly block Send. Never delete or coerce it silently.
+9. Setup drift while sending keeps the draft and routes the user directly to the exact
+   agent setup problem.
+
+### Settings > Agent Registry
+
+The page is master-detail, not a generic form.
+
+**Left pane**
+- live/cached ACP Registry list;
+- search;
+- supported / no adapter / installed / setup needed / update available / ready states;
+- installed state and auth readiness are separate.
+
+**Right pane for selected agent**
+- identity, source, AgentModule/version and compatibility;
+- install/update/repair controls;
+- native sign-in/account state;
+- adapter-declared API-key/credential slots;
+- native configuration targets;
+- models/session options;
+- native slash, @, attachments and input capability summary;
+- native extension/subagent summary;
+- Workspace bindings/default-lead usage;
+- probe/descriptor freshness and diagnostics.
+
+Primary action changes truthfully:
+**Install -> Sign in / Configure -> Use / Set default**, with Update or Repair
+when applicable.
+
+Provider/API-key configuration is never moved to a separate universal Providers page.
+
+### LiteSPM-managed capabilities
+
+Discover/Connections may present LiteSPM packages, but package lifecycle remains LiteSPM.
+The selected agent's panel may show:
+
+- Managed by LiteSPM
+- Native to <agent>
+- Available through Gateway
+- Not supported by this agent
+
+Users should not reinstall one LiteSPM package for every agent when a qualified
+cross-agent bridge exists.

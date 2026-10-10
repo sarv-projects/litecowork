@@ -203,9 +203,64 @@ linked to the resolved UserRequest; stale or cancelled requests are rejected.
 
 Defined in `TASK-RUNTIME.md`. Owns Task, TaskSpecRevision, PlanRevision, Step and high-level Attempt orchestration.
 
+### AgentModuleRegistry
+
+Defined in [`AGENT-CONTROL.md`](AGENT-CONTROL.md). Owns registration and selection of
+independently versioned AgentModules.
+
+```text
+register(AgentModule) -> ()
+match(RegistryAgentId) -> AgentModule?
+get(ModuleId) -> AgentModule
+list_supported() -> AgentModuleManifest[]
+```
+
+It resolves by registry identity + descriptor API compatibility, never by product-brand
+conditionals in Core. Ambiguous matches fail closed.
+
+### AgentRegistryService
+
+```text
+refresh_registry(force: bool) -> AgentRegistrySnapshot
+list_registry(query?, Cursor?, Limit) -> Page<AgentRegistryEntry>
+get_registry_entry(RegistryAgentId) -> AgentRegistryEntry
+```
+
+Owns a bounded cache of descriptive ACP Registry/distribution metadata. Registry state is
+not Workspace authority, installation truth, authentication truth, or capability
+readiness. Untrusted registry metadata cannot define executable install/auth commands.
+
+### AgentLifecycleService
+
+```text
+list_installations(RuntimeId) -> AgentInstallationObservation[]
+install(RegistryAgentId, DistributionId, expected_registry_revision, RequestId)
+  -> AgentLifecycleOperation
+check_update(RegistryAgentId) -> AgentUpdateObservation
+update(RegistryAgentId, expected_installation_version, RequestId)
+  -> AgentLifecycleOperation
+
+refresh_control_descriptor(WorkspaceId, RegistryAgentId)
+  -> AgentControlDescriptor
+begin_auth(WorkspaceId, RegistryAgentId, AuthMethodId)
+  -> AgentAuthChallenge
+submit_secret(WorkspaceId, RegistryAgentId, CredentialSlotId, SecretInput)
+  -> AgentAuthObservation
+open_native_config(RegistryAgentId, NativeConfigTargetId)
+  -> NativeConfigOpenReceipt
+```
+
+This service is local-Operator-only for install/update/auth/config actions. It delegates
+agent-specific behavior to the selected AgentLifecycleAdapter and persists only sanitized
+operational observations, lifecycle-operation receipts, AuditRecords and SecretRefs.
+Install/update/auth never create a Conversation, Task, AgentSession or enabled
+AgentBinding. Exact pseudocode and failure rules are in `AGENT-CONTROL.md`.
+
 ### AgentAdapter
 
-Defined in `AGENT-FABRIC.md`. Protocol boundary to external agents.
+Defined in `AGENT-FABRIC.md`. Runtime/session protocol boundary to external agents.
+Installation/update/auth/configuration are intentionally not generic AgentAdapter methods;
+they belong to AgentLifecycleService/AgentLifecycleAdapter.
 
 ### AgentBindingService
 
@@ -213,7 +268,19 @@ Defined in `AGENT-FABRIC.md`. Protocol boundary to external agents.
 list_profiles(WorkspaceId, RuntimeId?, Cursor?, Limit) -> Page<AgentProfileView>
 list_bindings(WorkspaceId, AgentBindingQuery, Cursor?, Limit) -> Page<AgentBindingView>
 get_binding(AgentBindingId) -> AgentBindingView
+get_control_descriptor(AgentBindingId) -> AgentControlDescriptor
+
 create_binding(CreateAgentBindingRequest) -> AgentBinding
+configure_binding(
+  AgentBindingId,
+  expected_version,
+  descriptor_digest,
+  non_secret_configuration,
+  credential_bindings,
+  default_session_options,
+  RequestId
+) -> AgentBinding
+
 enable_binding(AgentBindingId, expected_version) -> AgentBinding
 disable_binding(AgentBindingId, expected_version) -> AgentBinding
 set_lead_eligibility(AgentBindingId, bool, expected_version) -> AgentBinding
@@ -231,6 +298,15 @@ default is rejected with `CONFLICT` until the owner explicitly clears or changes
 default. The default is therefore never left pointing at a non-lead or disabled binding.
 Runtime or endpoint unavailability does not disable
 the binding, but admission rechecks availability and returns `AGENT_UNAVAILABLE`.
+
+`configure_binding` validates all non-secret configuration and default session options
+against the fresh AgentControlDescriptor named by `descriptor_digest`. Credential
+bindings may reference only descriptor-declared `LITECOWORK_SECRET_STORE` slots and
+validated same-Workspace SecretRefs. Native-owned provider/API-key configuration never
+enters this command. The transaction compares `expected_version`, updates the binding,
+increments its version, emits `agent.binding.configuration.changed.v1`, and writes the
+idempotency receipt atomically. Active AgentSessions keep their previously admitted
+configuration/descriptor digests.
 
 ### DelegationProfileService
 
