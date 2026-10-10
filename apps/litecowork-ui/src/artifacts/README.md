@@ -1,9 +1,12 @@
-# Artifact read foundation
+# Artifact Library and Workbench source boundary
 
-This slice reads committed Artifact records through SQLite, the authenticated local
-Operator IPC server, and the Tauri native bridge. It contains no sample Artifacts and
-does not turn imported Resources into Artifacts. Until E04-S05 implements publication,
-an installation without committed Artifacts returns an empty catalog.
+Current source reads committed Artifact records through SQLite, the authenticated local
+Operator IPC server, and the Tauri native bridge. The Workbench also supports bounded
+managed-text version append, exact-version history/compare, owner-confirmed Library
+promotion/archive, and native Save As for authorized managed content. It contains no
+sample Artifacts and does not turn imported Resources into Artifacts. General Task/output
+Artifact creation/publication remains an E04-S05 responsibility, so an installation with
+no independently committed Artifacts still returns an empty catalog.
 
 ## Desktop integration
 
@@ -139,11 +142,14 @@ receipt. The Node type-transform feature emitted its experimental warning. These
 controlled transport responses to exercise the actual client adapter; they do not prove
 SQLite, Operator IPC, native Save As, rendered UI, provider integration, or OS behavior.
 
-## Remaining verification deferred
+## Remaining verification and qualification
 
-New SQLite tests in `crates/storage-sqlite/src/artifact_tests.rs` seed committed records
-under the real schema, then exercise exact historical reads after a new head/restart,
-Workspace isolation, Library filtering, transfer limits, missing versions and missing blobs.
-They do not qualify publication. No tests, builds, formatters, or validators were run
-for this delegated change. The owner must run compilation and the new read tests,
-then the real IPC/desktop acceptance flow, before claiming runtime correctness.
+SQLite tests in `crates/storage-sqlite/src/artifact_tests.rs` seed committed records under
+the real schema and exercise historical reads/restart, Workspace isolation, Library
+filtering, transfer limits, missing versions and missing blobs. Later repository checks on
+2026-10-09 recorded `cargo test -p storage-sqlite`, `cargo test -p litecoworkd`, the full
+`cargo test --workspace`, the desktop production build, and the focused six-case
+`artifact-publication.test.ts` suite passing. Those checks provide code/integration
+regression evidence, not end-to-end owner acceptance. Real Tauri Save As, concurrent
+clients, restart-safe pending mutation recovery, provider-backed content/editing, richer
+renderers, supported-OS behavior, and complete Artifact publication remain open.

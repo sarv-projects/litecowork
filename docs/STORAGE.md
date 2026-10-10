@@ -67,8 +67,9 @@ all three occurrence events/snapshots, the Task event/snapshot, and request rece
 together. Migration 11 persists the independent occurrence version and SQLite requires
 each later update to increase it exactly once. This path is one-shot only: it does not
 create/advance an AutomationCursor, enable the Automation, create a Plan, or start agent
-execution. The Automation page does not yet expose Run now; recurring TriggerCoordinator
-hosting and occurrence settlement remain unavailable.
+execution. The desktop Automation page exposes this as explicit **Run once** for a valid
+ManualTrigger definition. Recurring TriggerCoordinator hosting, cursor/misfire recovery,
+and production occurrence settlement remain unavailable.
 
 `ResourceStore::read_resource_content_bounded` accepts an optional immutable revision pin
 (omitted means current head) and requires providers to resolve that exact same-Resource,

@@ -1,11 +1,15 @@
 # Coworker, Goal, and Automation domain boundary
 
 This crate implements typed Coworker and Automation commands plus the passive Goal
-domain boundary. SQLite persistence covers Coworker and PAUSED Automation definitions.
-Goal has a transaction port and guarded domain service, but no SQLite adapter, Operator
-routes, progress projector, or desktop UI yet. Current integration status is tracked in
-`implementation/CURRENT-RUN.md`; no source slice alone satisfies system or owner
-acceptance gates.
+domain boundary. Current source includes SQLite-backed Coworker and Automation definition
+persistence, authenticated Coworker/Goal/Automation Operator routes, a Goal SQLite adapter
+and bounded progress projection, and desktop settings/Goal/Automation source slices.
+Automation activation/recurring trigger hosting is deliberately incomplete: the local
+path supports stored definitions and an explicit one-shot ManualTrigger Task admission,
+not a qualified recurring/provider TriggerCoordinator. Coworker presence has a route/UI
+shape but remains unavailable until its committed activity/runtime projections exist.
+Current integration status is tracked in `implementation/CURRENT-RUN.md`; source presence
+and passing unit tests do not satisfy system or owner acceptance gates.
 
 Authority: [RESPONSIBILITIES](../../docs/RESPONSIBILITIES.md),
 [AUTOMATION](../../docs/AUTOMATION.md), [DATA-MODEL](../../docs/DATA-MODEL.md),
@@ -85,17 +89,21 @@ rules. Exact-revision tests must reserve TestRunIdentity with one ordinary Task
 atomically, enforce input/auth/Effect rules, and keep occurrence/cursor state intact.
 No test means dry run, grants new authority, or implicitly enables scheduling.
 
-Workspace primary selection, truthful Coworker presence, health projections and
-Operator/UI wiring belong to their existing owning services and remain pending.
+Workspace primary selection and Coworker/Goal/Automation Operator/UI slices now exist in
+partial form. Truthful Coworker presence and complete health projections remain pending;
+the current presence route fails explicitly when its required committed Task,
+UserRequest, Attempt, and Runtime projections are unavailable.
 
 ## Validation status
 
-Unit test source covers canonical vectors/UTF-8 framing, typed codecs, pause/archive/
-resume guards, terminal disable, stale versions/overflow, source identity and separate
-test-run identity. Tests, builds, formatters and validators were not executed in
-this delegated slice, as instructed. The Coworker SQLite adapter has test source but has not been built or executed;
-no system/owner acceptance claim is made. Automation persistence is unimplemented. Future integration should run `cargo test -p domain-responsibility`
-and the real adapter's transaction/restart checks after workspace registration.
+Unit tests cover canonical vectors/UTF-8 framing, typed codecs, pause/archive/resume
+guards, terminal disable, stale versions/overflow, source identity, and separate test-run
+identity. Later repository verification on 2026-10-09 ran `cargo test --workspace` and
+recorded all 21 `domain-responsibility` tests passing; the same run also exercised the
+current workspace storage/daemon test suites. This is CODE-level evidence only: provider
+trigger hosting, restart/system behavior, supported-OS qualification, and owner acceptance
+remain open. Automation definition persistence is implemented; recurring/provider trigger
+coordination and production occurrence settlement are not.
 
 ## Coworker SQLite adapter
 
@@ -103,7 +111,9 @@ and the real adapter's transaction/restart checks after workspace registration.
 Runtime-generated `CoworkerEventContext`; `ResponsibilityService::execute` takes
 transport-authenticated owner scope and a typed Coworker command. Read methods
 require current active-Workspace ownership and provide exact current revision
-and bounded keyset pagination. Automation commands return `TriggerUnsupported`.
+and bounded keyset pagination. Automation create/revise/read persistence supports the
+current definition contract; enabling/active hosting fails closed for unsupported
+non-Manual triggers or missing qualified TriggerHost/reconciliation support.
 
 Preparation and final SQL transactions both check current ownership and exact
 RequestId reuse before evaluating the domain callback. Between them the adapter
@@ -124,7 +134,8 @@ reconciliation, because that provider path is intentionally absent from this sli
 Existing Tasks and immutable historical revisions remain unchanged.
 
 Concrete SQLite test source covers restart/readback, immutable prior revision,
-state-blob content, command replay/conflict, stale version, owner isolation,
-pause, primary/archive guards and authorization before replay. These tests were
-written but not executed. Operator/UI integration and real system/owner review
-remain pending; no story completion claim is made.
+state-blob content, command replay/conflict, stale version, owner isolation, pause,
+primary/archive guards, and authorization before replay. Later workspace test execution
+passed the integrated Rust suite, but real provider/TriggerCoordinator behavior,
+platform/system qualification, and owner review remain pending; no story completion claim
+is made.

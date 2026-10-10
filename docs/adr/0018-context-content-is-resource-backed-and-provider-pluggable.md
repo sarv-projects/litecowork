@@ -1,6 +1,6 @@
 # ADR-0018: Context Is Resource-Backed and Provider-Pluggable
 
-- **Status:** Accepted for vNext
+- **Status:** Accepted; memory-learning target amended by ADR 0024 on 2026-10-10
 - **Date:** 2026-10-05
 
 ## Context

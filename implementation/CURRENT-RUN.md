@@ -3,6 +3,51 @@
 Update this file when the active story, implementation state, or handoff changes. It is
 operational context; architecture and owning domain contracts remain authoritative.
 
+## Full modular documentation/source re-audit — 2026-10-10
+
+Re-read all **119 tracked Markdown files** through a module-partitioned full-line audit.
+The final post-correction pass consumed **38,123 lines / 2,542,246 bytes**, assigned every
+tracked Markdown file to one of 11 review modules, left **0 unassigned files**, and found
+**0 broken relative Markdown links**. Candidate semantic conflicts were then reviewed in
+context rather than treated as regex failures; remaining hits are negative safety rules,
+explicit legacy/current-source notes, or post-V1 target statements.
+
+Concrete stale-current documentation corrected in this pass:
+
+- root README no longer positions LiteCowork as coding-only or makes a Coworker mandatory;
+  ordinary chat is primary and Coworkers are optional persistent specialists;
+- desktop README now reflects resumable Resource intake, root registration, local text
+  search/index slices and later UI surfaces, and uses the actual Node 24.21/pnpm 12.10
+  toolchain while retaining explicit unqualified/missing capabilities;
+- Artifact README now reflects bounded Workbench publication/history/Save As source and
+  later passing code suites without claiming owner/OS acceptance;
+- responsibility-domain README now reflects existing Goal storage/routes/UI, Automation
+  definition persistence and ManualTrigger admission, while keeping recurring trigger
+  hosting, full Coworker presence/health and system/owner qualification open;
+- Storage no longer says the Automation UI lacks Run now; current explicit Run once
+  ManualTrigger behavior is documented while recurring TriggerCoordinator remains absent;
+- optional Workspace primary Coworker is explicitly legacy/interim Task-composer behavior,
+  not first-run identity or ordinary Conversation ownership;
+- Runtime sleep/offline table labels Cloud/Hub columns as post-V1, E07 status matches the
+  backlog, and ADR 0018 explicitly records ADR 0024's memory-target amendment;
+- implementation/AUDIT now records the module-by-module review and no longer says no app
+  exists or reopens already-decided toolchain/SQLite choices.
+
+Validation after the corrections:
+- validate_architecture.py passed: JSON schemas, **141 typed events**, error codes,
+  OpenAPI, SQLite, Gateway names, product naming and Markdown links;
+- validate_implementation_plan.py passed: **82 architecture documents / 1,198
+  sections / 5,447 traceability rows / 60 stories**, with all current flows, benchmarks
+  and machine inventory linked;
+- git diff --check passed.
+
+This pass changed documentation/traceability only. It did **not** implement provider-backed
+chat, Coworker-owned Conversations, automatic memory, connection assignment,
+StandingResponsibility, recurring/provider TriggerHost, unified Workbench shell,
+Browser/Computer/Terminal integration, Windows Operator transport or full
+Trust/Invocation/Effect-backed Task dispatch. No story completion or provider/OS
+qualification is claimed.
+
 ## Coworker desktop benchmark + Workbench second pass — 2026-10-10
 
 Performed a second repository-wide audit after the first Coworker reconciliation: 119 tracked Markdown files / 37,961 lines were scanned for stale mandatory-Coworker, Home-default, manual-memory, connections, autonomy and Workbench assumptions. The remaining normative F55/E08 primary-Coworker wording was corrected; legacy primary settings remain documented only where they describe current transitional Task-origin behavior or actual storage semantics.

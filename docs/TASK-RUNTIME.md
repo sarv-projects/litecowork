@@ -188,8 +188,9 @@ read before another check.
 }
 ```
 
-`coworker_id` is an explicit origin selection. The Operator may prefill it from the
-Workspace's `primary_coworker_id`, but sends the selected ID so a concurrent primary
+`coworker_id` is an explicit origin selection. The current interim Task composer may
+prefill it from the optional legacy Workspace `primary_coworker_id`; ordinary new-session
+chat does not. The Operator sends the selected ID so a concurrent primary
 change cannot silently switch this Task to another Coworker. Omitting it creates work
 without Coworker origin. When supplied, TaskService reads the current Coworker head and
 pins its ID/revision to Task in the creation transaction; `expected_coworker_version`,

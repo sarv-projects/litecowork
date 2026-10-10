@@ -290,6 +290,10 @@ storage adapter cannot be hidden by an ONLINE projection.
 
 ## Sleep, lock, shutdown, and restart semantics
 
+**Scope note:** desktop/local V1 implements only the local Runtime/local-bound columns.
+`Cloud Attempt` and Hub-hosted trigger behavior below describe the post-V1 architecture and
+must not be presented as current desktop availability.
+
 | Host state | Local Runtime | Cloud Attempt | Local-bound Attempt | Trigger behavior |
 |---|---|---|---|---|
 | Operator window closed | Follows startup policy; usually stays alive | Continues | Continues if Runtime remains awake | Continues on its assigned TriggerHost |

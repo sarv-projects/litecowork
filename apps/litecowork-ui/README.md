@@ -3,22 +3,31 @@
 Implementation owners: E02-S01 (desktop shell) and E02-S03 (local Resource intake and
 preview). This README describes current implementation state, not completed release scope.
 
-This directory contains the Tauri 2 + React desktop shell. It can locate and start the
-local `litecoworkd` process, display persisted lifecycle status, and list/create local
-Workspaces through the daemon's OS-peer-authenticated Unix IPC Operator path on Linux and
-macOS. Windows fails closed until named-pipe authentication is implemented. Workspace creation
-uses a durable idempotency receipt in the Workspace commit transaction. The daemon opens
-encrypted local storage and remains `DEGRADED` because Task recovery and execution are not
-implemented. The shell supports a bounded quick Resource import/catalog and a text preview
-for small current revisions. Resumable intake, ZIP extraction, Workspace roots, indexing,
-search and Task execution remain unavailable; the shell shows no fabricated work.
+This directory contains the Tauri 2 + React desktop Operator. Current source can locate
+and start local `litecoworkd`, show lifecycle/readiness state, and use the authenticated
+local Operator transport on Linux/macOS; Windows still fails closed until named-pipe
+peer authentication is implemented. The UI now contains partial source slices for
+Workspace setup/instructions, resumable Resource upload and revision editing, persistent
+folder-scope registration, metadata/on-demand/indexed plain-text search, Goals,
+Suggestions, Coworker settings, Routines, Automation definitions plus one-shot Manual
+runs, Needs You, Conversation catalog/read views, agent catalog settings, Artifact
+Library/Workbench, and typed Presentation rendering. These source surfaces are not a
+release-complete product and many remain unverified or deliberately read-only.
+
+Important limits remain explicit: provider-backed Conversation send and native Task/Attempt
+execution are not qualified; Coworker-owned Conversation association, automatic memory,
+StandingResponsibilities, recurring/provider trigger hosting, unified Browser/Computer/
+Terminal Workbench surfaces, ZIP extraction, and folder watching/crawling are not complete.
+A registered persistent folder is therefore a saved scope, not proof that its contents are
+being watched or indexed. The shell shows blockers/empty states rather than fabricated work.
 
 ## Local setup
 
-Prerequisites: Node.js 22+, pnpm 10+, Rust 1.98.1, and the native Tauri prerequisites
-for the host OS. The repository pins Rust in `rust-toolchain.toml`; Node and pnpm are
-not pinned at repository root yet, so use a current compatible release and record the
-exact versions when this app is qualified.
+Prerequisites: Node.js 24.21.x (`>=24.21.0 <25`), pnpm 12.10.1, Rust 1.98.1, and the
+native Tauri prerequisites for the host OS. The desktop `package.json`, `.node-version`,
+`pnpm-workspace.yaml`, and `rust-toolchain.toml` are the version authorities. pnpm is the
+supported package manager; do not treat successful source-only checks on an older local
+Node installation as release qualification.
 
 From this directory:
 
@@ -38,9 +47,11 @@ Build an installer with `pnpm tauri build`. These commands have not yet been qua
 on supported operating systems. Packaged executable lookup checks Tauri resources and
 the desktop executable's directory. Development builds may use `LITECOWORKD_PATH` or
 `PATH`. Status and startup are native Tauri commands. Workspace reads and creation use
-the native Operator client; IPC endpoint details remain outside the WebView. This is still
-a narrow Workspace/Resource API slice, not the complete Operator contract. The IPC source
-is unbuilt and unqualified; do not treat it as production-ready.
+the native Operator client; IPC endpoint details remain outside the WebView. This remains a partial desktop integration rather than the complete Operator contract.
+Linux/macOS IPC and multiple UI slices have compiled/test evidence recorded in
+`implementation/CURRENT-RUN.md`, but supported-OS system/user qualification is incomplete;
+Windows IPC remains unavailable. Do not infer production readiness from source presence or
+a successful frontend build.
 
 ## UI contract
 

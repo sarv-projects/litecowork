@@ -71,10 +71,12 @@ a PAUSED Coworker; it follows ordinary Task admission and authority checks. An A
 Coworker cannot be selected as a new Task origin. `PAUSED -> ACTIVE` resumes future
 scheduling only after trigger and dependency reconciliation. Archive is allowed only when no
 Coworker-owned Automation is active and all Tasks are terminal; it is a soft archive and
-does not delete Tasks, Artifacts, ContextDocuments, or external data. The initial
-single-user product uses one `primary_coworker_id` Workspace setting; it may be cleared
-explicitly and does not rewrite the origin of historical Tasks. The Operator uses this
-selection to prefill new work and sends the chosen Coworker ID with Task creation. An
+does not delete Tasks, Artifacts, ContextDocuments, or external data. The current
+legacy/interim Task-origin flow has one optional `primary_coworker_id` Workspace setting;
+it may be cleared explicitly and does not rewrite the origin of historical Tasks. The
+interim Task composer may use this selection to prefill Coworker-origin work and sends the
+chosen Coworker ID with Task creation. It is not a first-run requirement, ordinary
+Conversation owner, or final chat-first navigation rule. An
 archived Coworker
 cannot remain primary; clear/change the Workspace primary setting before archiving. The
 Workspace, Coworker, and Task-origin changes are separate versioned commands.
