@@ -17,7 +17,7 @@ fn valid_id(value: &str) -> bool {
 }
 
 fn valid_request_id(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_graphic())
+    super::valid_idempotency_key(value)
 }
 
 fn read_response(response: LocalOperatorResponse) -> Result<Vec<u8>, String> {
@@ -30,6 +30,17 @@ fn read_response(response: LocalOperatorResponse) -> Result<Vec<u8>, String> {
         return Err("Worker profile response exceeded its size limit".to_owned());
     }
     Ok(body)
+}
+
+#[cfg(test)]
+mod idempotency_key_tests {
+    use super::valid_request_id;
+
+    #[test]
+    fn accepts_200_byte_keys_and_rejects_201_byte_keys() {
+        assert!(valid_request_id(&"k".repeat(200)));
+        assert!(!valid_request_id(&"k".repeat(201)));
+    }
 }
 
 /// Narrow bridge for the saved worker-profile catalogue and its user-authored

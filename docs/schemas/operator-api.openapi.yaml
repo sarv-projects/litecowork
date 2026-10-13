@@ -355,7 +355,7 @@ paths:
             schema: {$ref: '#/components/schemas/CreateConversationRequest'}
       responses:
         '201':
-          description: Conversation created
+          description: Conversation created; an exact owner-scoped receipt replays before the active-Workspace check, while a fresh create is rejected after archival
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Conversation'}
@@ -7186,7 +7186,7 @@ components:
       additionalProperties: false
       required: [requestId, correlationId, workspaceId, resourceId, resourceRevisionId, contentDigest, outcome, reason]
       properties:
-        requestId: {type: string, minLength: 1, maxLength: 128}
+        requestId: {type: string, minLength: 1, maxLength: 200}
         correlationId: {type: string, minLength: 1, maxLength: 128}
         workspaceId: {type: string, minLength: 1}
         resourceId: {type: string, minLength: 1, maxLength: 160}

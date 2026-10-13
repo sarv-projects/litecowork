@@ -34,9 +34,22 @@ Node installation as release qualification.
 From this directory:
 
 ```sh
-pnpm install
+pnpm install --frozen-lockfile
+pnpm test
+pnpm test:browser
+pnpm build
 pnpm tauri dev
 ```
+
+`pnpm test:browser` runs the rendered Resource editor and Conversation view in headless
+Chrome using mocked Tauri IPC. It checks UI races, accessible dialog behavior, and list
+cursor forwarding; it is component CODE evidence, not a packaged desktop, live daemon, or
+provider SYSTEM test. CI records the Chrome version used by its pinned Ubuntu runner.
+
+The workspace explicitly allows the `esbuild@0.25.12` install build required by the
+locked Vite toolchain; other dependency build scripts remain subject to pnpm's approval
+policy. The frozen install must leave `pnpm-lock.yaml` unchanged. A successful UI test
+and web build does not qualify the packaged native shell or its supported OS transports.
 
 For development, build the daemon first and set its executable path:
 

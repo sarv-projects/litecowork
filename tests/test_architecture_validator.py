@@ -1,5 +1,7 @@
 import os
+import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +10,7 @@ from unittest.mock import patch
 import yaml
 
 from scripts import validate_architecture
+from scripts import audit_v1_contracts
 
 
 class JsonSchemaValidationTests(unittest.TestCase):
@@ -198,6 +201,216 @@ class CheckScriptToolchainTests(unittest.TestCase):
             if step.get("run") == "scripts/check.sh"
         )
         self.assertLess(steps.index(native_dependencies), check_index)
+
+
+class CICoverageContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(__file__).resolve().parents[1]
+        cls.workflow = yaml.safe_load(
+            (cls.root / ".github/workflows/architecture-docs.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    def test_ui_job_uses_pinned_node_pnpm_install_tests_and_production_build(self):
+        job = self.workflow["jobs"].get("ui")
+        self.assertIsNotNone(job, "CI must test and build the desktop UI independently")
+        steps = job["steps"]
+        node_step = next(
+            step for step in steps if step.get("uses", "").startswith("actions/setup-node@")
+        )
+        self.assertEqual(
+            node_step["uses"],
+            "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+        )
+        self.assertEqual(
+            node_step["with"]["node-version-file"], "apps/litecowork-ui/.node-version"
+        )
+        commands = [step.get("run", "") for step in steps]
+        self.assertIn("corepack pnpm@12.10.1 install --frozen-lockfile", commands)
+        self.assertIn("corepack pnpm@12.10.1 test", commands)
+        self.assertIn("corepack pnpm@12.10.1 build", commands)
+        self.assertLess(
+            commands.index("corepack pnpm@12.10.1 install --frozen-lockfile"),
+            commands.index("corepack pnpm@12.10.1 test"),
+        )
+        self.assertLess(
+            commands.index("corepack pnpm@12.10.1 test"),
+            commands.index("corepack pnpm@12.10.1 build"),
+        )
+        self.assertEqual(
+            job["defaults"]["run"]["working-directory"], "apps/litecowork-ui"
+        )
+
+    def test_tauri_job_tests_separate_workspace_with_linux_prerequisites(self):
+        job = self.workflow["jobs"].get("tauri")
+        self.assertIsNotNone(job, "CI must test the separate Tauri Cargo workspace")
+        steps = job["steps"]
+        rust_step = next(
+            step
+            for step in steps
+            if step.get("uses", "").startswith(
+                "actions-rust-lang/setup-rust-toolchain@"
+            )
+        )
+        self.assertEqual(
+            rust_step["uses"],
+            "actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f",
+        )
+        dependencies = next(
+            step
+            for step in steps
+            if step.get("name") == "Install Tauri Linux native dependencies"
+        )["run"]
+        for package in (
+            "libwebkit2gtk-4.1-dev",
+            "build-essential",
+            "curl",
+            "file",
+            "libxdo-dev",
+            "libssl-dev",
+            "libayatana-appindicator3-dev",
+            "libdbus-1-dev",
+            "librsvg2-dev",
+            "pkg-config",
+            "wget",
+        ):
+            with self.subTest(package=package):
+                self.assertIn(package, dependencies)
+        cargo_test = next(
+            step.get("run", "") for step in steps if "cargo test" in step.get("run", "")
+        )
+        self.assertIn(
+            "--manifest-path apps/litecowork-ui/src-tauri/Cargo.toml", cargo_test
+        )
+        self.assertIn("--workspace", cargo_test)
+        self.assertIn("--locked", cargo_test)
+        dependency_index = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("name") == "Install Tauri Linux native dependencies"
+        )
+        test_index = next(
+            i for i, step in enumerate(steps) if "cargo test" in step.get("run", "")
+        )
+        self.assertLess(dependency_index, test_index)
+
+    def test_root_ci_runs_strict_v1_audits_and_checks_generated_output_freshness(self):
+        script = (self.root / "scripts/check.sh").read_text(encoding="utf-8")
+        for command in (
+            "scripts/audit_v1_contracts.py --strict --write-report",
+            "scripts/audit_v1_design_depth.py --strict --write",
+            "scripts/audit_v1_markdown.py",
+            "scripts/validate_design_owner_consistency.py",
+            "scripts/validate_implementation_coverage.py",
+        ):
+            with self.subTest(command=command):
+                self.assertIn(command, script)
+        self.assertIn("run_freshness_check", script)
+        self.assertIn("implementation/V1-CONTRACT-CHECK.md", script)
+        self.assertIn("implementation/V1-DESIGN-DEPTH-AUDIT.md", script)
+        self.assertIn("implementation/V1-AUDIT-INVENTORY.md", script)
+        self.assertIn("implementation/V1-MARKDOWN-INVENTORY.csv", script)
+        self.assertIn("implementation/V1-CROSS-CONTRACT-GUARD.json", script)
+        self.assertLess(
+            script.index("scripts/audit_v1_markdown.py"),
+            script.index("scripts/validate_implementation_coverage.py --write"),
+        )
+        self.assertLess(
+            script.index("scripts/validate_implementation_coverage.py --write"),
+            script.index("scripts/validate_implementation_plan.py"),
+        )
+        self.assertLess(
+            script.index("scripts/validate_implementation_plan.py"),
+            script.index("scripts/validate_architecture.py"),
+        )
+        self.assertIn(
+            "actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f",
+            (self.root / ".github/workflows/architecture-docs.yml").read_text(
+                encoding="utf-8"
+            ),
+        )
+
+    def test_contract_audit_labels_openapi_operations_as_specification_only(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            isolated_root = Path(temporary_directory)
+            source_paths = (
+                "docs/schemas/operator-api.openapi.yaml",
+                "docs/V1-DESIGN-INDEX.md",
+                "docs/NATIVE-COMPOSER-LLD.md",
+                "docs/CHROME-BROWSER-LLD.md",
+                "docs/DESKTOP-SHELL-LLD.md",
+                "docs/RENDERING-CONFORMANCE-LLD.md",
+                "docs/V1-FUNCTION-FILE-CATALOG.md",
+                "docs/STATE-MACHINES.md",
+                "docs/V1-WORKFLOW-EVENT-LLD.md",
+                "apps/litecowork-ui/src/conversations/ConversationsPage.tsx",
+                "implementation/V1-DESIGN-COVERAGE.md",
+                "implementation/TESTING.md",
+                "implementation/backlog.json",
+            )
+            for relative in source_paths:
+                destination = isolated_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes((self.root / relative).read_bytes())
+
+            with (
+                patch.object(audit_v1_contracts, "ROOT", isolated_root),
+                patch.object(sys, "argv", ["audit_v1_contracts.py", "--write-report"]),
+            ):
+                self.assertEqual(audit_v1_contracts.main(), 0)
+
+            report = (isolated_root / "implementation/V1-CONTRACT-CHECK.md").read_text(
+                encoding="utf-8"
+            )
+        self.assertIn("# V1 Contract Specification and Backlog Audit", report)
+        self.assertIn("OpenAPI operations specified (not served-route count)", report)
+        self.assertIn("| Method | Route | In OpenAPI? | OperationId |", report)
+        self.assertIn("not counts of mounted daemon handlers", report)
+        self.assertIn("V1-SERVED-CAPABILITY-INVENTORY.md", report)
+        self.assertNotIn("Actual OpenAPI?", report)
+
+    def test_freshness_helper_detects_stale_output_and_restores_snapshot(self):
+        check_script = (self.root / "scripts/check.sh").read_text(encoding="utf-8")
+        function_start = check_script.index("run_freshness_check() {")
+        function_end = check_script.index("\n}\n", function_start) + 2
+        function = check_script[function_start:function_end]
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            output = temporary / "generated.txt"
+            output.write_text("reviewed\n", encoding="utf-8")
+            same_output = temporary / "same-output.sh"
+            same_output.write_text("printf 'reviewed\\n' > generated.txt\n", encoding="utf-8")
+            stale_output = temporary / "stale-output.sh"
+            stale_output.write_text("printf 'stale\\n' > generated.txt\n", encoding="utf-8")
+            driver = temporary / "driver.sh"
+            driver.write_text(
+                "\n".join(
+                    (
+                        "#!/usr/bin/env bash",
+                        "set -Eeuo pipefail",
+                        f"cd {shlex.quote(str(temporary))}",
+                        function,
+                        "run_freshness_check generated.txt -- bash "
+                        + shlex.quote(str(same_output)),
+                        "if run_freshness_check generated.txt -- bash "
+                        + shlex.quote(str(stale_output))
+                        + "; then exit 1; fi",
+                        "[[ \"$(<generated.txt)\" == reviewed ]]",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                ["bash", str(driver)], capture_output=True, text=True, check=False
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Generated output is stale", result.stderr)
 
 
 if __name__ == "__main__":

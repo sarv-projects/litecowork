@@ -12,6 +12,7 @@ type Resource = {
   contentDigest: string;
   sizeBytes: number;
 };
+type ResourceIdentity = Pick<Resource, "workspaceId" | "resourceId">;
 type ContextDocument = { kind: string; status: string; owner_ref?: { kind?: string; workspace_id?: string; principal_id?: string; coworker_id?: string; goal_id?: string } };
 type Detail = { resourceId: string; workspaceId: string; kind: string; displayName: string; currentRevisionId: string | null; version: number; contextDocument: ContextDocument | null };
 type Revision = { resourceRevisionId: string; resourceId: string; parentRevisionIds: string[]; contentDigest: string | null; sizeBytes: number | null; mediaType: string | null; observedAt: string; isHead: boolean };
@@ -86,7 +87,48 @@ function assertRevisionUploadMatches(session: UploadSession, recovery: RevisionU
   }
 }
 
-export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { resource: Resource; onClose: () => void; onCommitted: (resource: Resource) => void }) {
+export function resourceNavigationDecision(
+  current: ResourceIdentity,
+  requestedResource: ResourceIdentity,
+  requestedWorkspaceId: string,
+  hasUnsavedDraft: boolean,
+  operationPending: boolean,
+): "SAME" | "WAIT" | "CONFIRM" | "SWITCH_RESOURCE" | "CLOSE_WORKSPACE" {
+  if (current.workspaceId === requestedWorkspaceId
+    && current.workspaceId === requestedResource.workspaceId
+    && current.resourceId === requestedResource.resourceId) return "SAME";
+  if (operationPending) return "WAIT";
+  if (hasUnsavedDraft) return "CONFIRM";
+  return requestedWorkspaceId === current.workspaceId ? "SWITCH_RESOURCE" : "CLOSE_WORKSPACE";
+}
+
+export function isCurrentResourceSelection(
+  requested: ResourceIdentity,
+  current: ResourceIdentity,
+  requestGeneration: number,
+  currentGeneration: number,
+): boolean {
+  return requested.workspaceId === current.workspaceId
+    && requested.resourceId === current.resourceId
+    && requestGeneration === currentGeneration;
+}
+
+export function ResourceRevisionEditor({ resource: requestedResource, activeWorkspaceId, onClose, onCommitted, onSelectResource, onSelectWorkspace, onNavigationSaveFailure }: {
+  resource: Resource;
+  activeWorkspaceId: string;
+  onClose: () => void;
+  onCommitted: (resource: Resource) => void;
+  onSelectResource: (resource: Resource) => void;
+  onSelectWorkspace: (workspaceId: string) => void;
+  onNavigationSaveFailure?: (message: string) => void;
+}) {
+  const [resource, setResource] = useState(requestedResource);
+  const [pendingNavigation, setPendingNavigation] = useState<{
+    key: string;
+    requestedWorkspaceId: string;
+    requestedResource: Resource;
+    requiresContinue: boolean;
+  } | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [history, setHistory] = useState<Revision[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -120,6 +162,10 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
   const [compareError, setCompareError] = useState<string | null>(null);
   const [comparison, setComparison] = useState<RevisionComparison | null>(null);
   const comparisonRequest = useRef(0);
+  const resourceReadRequest = useRef(0);
+  const resourceSelectionGeneration = useRef(0);
+  const selectedResourceRef = useRef({ workspaceId: requestedResource.workspaceId, resourceId: requestedResource.resourceId });
+  const headPreviewRequest = useRef(0);
   const [locationState, setLocationState] = useState<ResourceLocationLoadState | null>(null);
   const locationsRequest = useRef(0);
   const selectedLocationState = resourceLocationStateForSelection(
@@ -127,6 +173,57 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
     resource.workspaceId,
     resource.resourceId,
   );
+  const hasUnsavedDraft = selectedFile !== null || (draftText !== null && draftText !== textBaseline);
+  const operationPending = busy || statusBusy || statusRequest !== null;
+  const navigationDecision = resourceNavigationDecision(
+    resource,
+    requestedResource,
+    activeWorkspaceId,
+    hasUnsavedDraft,
+    operationPending,
+  );
+  const navigationKey = JSON.stringify([activeWorkspaceId, requestedResource.workspaceId, requestedResource.resourceId]);
+
+  const switchResource = (next: Resource) => {
+    selectedResourceRef.current = { workspaceId: next.workspaceId, resourceId: next.resourceId };
+    resourceSelectionGeneration.current += 1;
+    resourceReadRequest.current += 1;
+    headPreviewRequest.current += 1;
+    comparisonRequest.current += 1;
+    locationsRequest.current += 1;
+    setResource(next);
+    setDetail(null);
+    setHistory([]);
+    setCursor(null);
+    setLoading(true);
+    setMessage(null);
+    setError(null);
+    setSelectedFile(null);
+    setPendingFileReplacement(null);
+    setDraftText(null);
+    setTextBaseline(null);
+    setConfirmDiscard(false);
+    setConfirmReplaceDraft(false);
+    setRebaseRequired(false);
+    setRebaseReloadPending(false);
+    setRebaseApproval(null);
+    setReviewedHeadText(null);
+    setHeadPreviewBusy(false);
+    setHeadPreviewError(null);
+    setUploadBytes(0);
+    setUploadRecovery(revisionUploadRecoveries.get(revisionUploadKey(next.workspaceId, next.resourceId)) ?? null);
+    setStatusConfirmation(null);
+    setStatusRequest(null);
+    setStatusError(null);
+    setCompareOpen(false);
+    setCompareLeftId("");
+    setCompareRightId("");
+    setCompareBusy(false);
+    setCompareError(null);
+    setComparison(null);
+    setLocationState(null);
+    setPendingNavigation(null);
+  };
 
   useEffect(() => {
     comparisonRequest.current += 1;
@@ -157,6 +254,9 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
   };
 
   const reload = useCallback(async (append = false) => {
+    const request = ++resourceReadRequest.current;
+    const requestGeneration = resourceSelectionGeneration.current;
+    const selection = { workspaceId: resource.workspaceId, resourceId: resource.resourceId };
     setLoading(true);
     setError(null);
     try {
@@ -164,29 +264,121 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
         invoke<Detail>("get_resource_detail", { workspaceId: resource.workspaceId, resourceId: resource.resourceId }),
         invoke<RevisionPage>("list_resource_revisions", { workspaceId: resource.workspaceId, resourceId: resource.resourceId, cursor: append ? cursor : null }),
       ]);
+      if (!isCurrentResourceSelection(selection, selectedResourceRef.current, requestGeneration, resourceSelectionGeneration.current)
+        || request !== resourceReadRequest.current) return;
       if (nextDetail.workspaceId !== resource.workspaceId || nextDetail.resourceId !== resource.resourceId) throw new Error("Resource response did not match this Workspace.");
       setDetail(nextDetail);
       setHistory((current) => append ? [...current, ...page.items] : page.items);
       setCursor(page.nextCursor);
       if (!append) setRebaseReloadPending(false);
     } catch (cause) {
-      setError(messageOf(cause, "Resource details and revision history could not be loaded."));
+      if (isCurrentResourceSelection(selection, selectedResourceRef.current, requestGeneration, resourceSelectionGeneration.current)
+        && request === resourceReadRequest.current) {
+        setError(messageOf(cause, "Resource details and revision history could not be loaded."));
+      }
     } finally {
-      setLoading(false);
+      if (isCurrentResourceSelection(selection, selectedResourceRef.current, requestGeneration, resourceSelectionGeneration.current)
+        && request === resourceReadRequest.current) setLoading(false);
     }
   }, [cursor, resource.resourceId, resource.workspaceId]);
 
-  useEffect(() => { void reload(false); }, [resource.resourceId, resource.workspaceId]);
+  useEffect(() => {
+    setDetail(null);
+    setHistory([]);
+    setCursor(null);
+    setLoading(true);
+    setError(null);
+    void reload(false);
+    return () => { resourceReadRequest.current += 1; };
+  }, [resource.resourceId, resource.workspaceId]);
 
   const context = detail?.contextDocument ?? null;
   const isCurrentTextEditable = isSmallText(resource.mediaType, resource.sizeBytes);
-  const hasUnsavedDraft = selectedFile !== null || (draftText !== null && draftText !== textBaseline);
   const recoveryMatchesCurrentHead = !!(detail && uploadRecovery && sameRevisionUploadPins(uploadRecovery, resource, detail));
   const rebaseIsApproved = rebaseRequired && !rebaseReloadPending && detail?.currentRevisionId !== null
     && detail?.currentRevisionId !== undefined && rebaseApproval?.resourceVersion === detail.version
     && rebaseApproval.headId === detail.currentRevisionId;
   const headTextMatchesCurrent = reviewedHeadText !== null && reviewedHeadText.resourceVersion === detail?.version
     && reviewedHeadText.headId === detail?.currentRevisionId;
+  const canSaveDraft = hasUnsavedDraft && context?.status === "ACTIVE" && detail?.currentRevisionId !== null
+    && detail?.currentRevisionId !== undefined && !operationPending && (!rebaseRequired || rebaseIsApproved)
+    && (selectedFile !== null || draftText !== null);
+  const notifyNavigationSaveFailure = (message: string) => {
+    window.requestAnimationFrame(() => onNavigationSaveFailure?.(message));
+  };
+
+  useEffect(() => {
+    if (navigationDecision === "SAME") {
+      if (pendingNavigation !== null) setPendingNavigation(null);
+      if (!hasUnsavedDraft && !operationPending
+        && (resource.displayName !== requestedResource.displayName
+          || resource.mediaType !== requestedResource.mediaType
+          || resource.sizeBytes !== requestedResource.sizeBytes
+          || resource.resourceRevisionId !== requestedResource.resourceRevisionId)) {
+        setResource(requestedResource);
+      }
+      return;
+    }
+    if (navigationDecision === "WAIT" || navigationDecision === "CONFIRM") {
+      setPendingNavigation((current) => current?.key === navigationKey
+        ? current
+        : {
+          key: navigationKey,
+          requestedWorkspaceId: activeWorkspaceId,
+          requestedResource,
+          requiresContinue: navigationDecision === "WAIT",
+        });
+      return;
+    }
+    if (pendingNavigation?.key === navigationKey && pendingNavigation.requiresContinue) return;
+    if (navigationDecision === "SWITCH_RESOURCE") {
+      switchResource(requestedResource);
+    } else if (navigationDecision === "CLOSE_WORKSPACE") {
+      onClose();
+    }
+  }, [activeWorkspaceId, hasUnsavedDraft, navigationDecision, navigationKey, onClose, operationPending,
+    pendingNavigation, requestedResource, resource.displayName, resource.mediaType, resource.resourceRevisionId,
+    resource.sizeBytes]);
+
+  const stayOnCurrentResource = () => {
+    setPendingNavigation(null);
+    if (activeWorkspaceId !== resource.workspaceId) onSelectWorkspace(resource.workspaceId);
+    else onSelectResource(resource);
+  };
+
+  const continuePendingNavigation = () => {
+    if (!pendingNavigation || operationPending || hasUnsavedDraft) return;
+    const destinationWorkspaceId = pendingNavigation.requestedWorkspaceId;
+    if (destinationWorkspaceId !== resource.workspaceId) {
+      setPendingNavigation(null);
+      onClose();
+      return;
+    }
+    switchResource(pendingNavigation.requestedResource);
+  };
+
+  const discardDraftAndSwitch = () => {
+    if (!pendingNavigation || operationPending) return;
+    const destinationWorkspaceId = pendingNavigation.requestedWorkspaceId;
+    const destination = pendingNavigation.requestedResource;
+    setSelectedFile(null);
+    setPendingFileReplacement(null);
+    setDraftText(null);
+    setTextBaseline(null);
+    if (destinationWorkspaceId !== resource.workspaceId) {
+      setPendingNavigation(null);
+      onClose();
+    } else {
+      switchResource(destination);
+    }
+  };
+
+  const saveDraftAndSwitch = () => {
+    if (!pendingNavigation || operationPending || !hasUnsavedDraft || (rebaseRequired && !rebaseIsApproved)) return;
+    setPendingNavigation((current) => current?.key === navigationKey ? { ...current, requiresContinue: false } : current);
+    if (selectedFile) void saveRevision(selectedFile);
+    else void saveText();
+  };
 
   const stageReplacementFile = (file: File) => {
     if (hasUnsavedDraft) {
@@ -245,6 +437,9 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
 
   const previewCurrentHeadForReview = async () => {
     if (!detail?.currentRevisionId || rebaseReloadPending || !isCurrentTextEditable || statusRequest !== null) return;
+    const request = ++headPreviewRequest.current;
+    const requestGeneration = resourceSelectionGeneration.current;
+    const selection = { workspaceId: resource.workspaceId, resourceId: resource.resourceId };
     setHeadPreviewBusy(true);
     setHeadPreviewError(null);
     setReviewedHeadText(null);
@@ -254,10 +449,20 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
         resourceId: resource.resourceId,
         revisionId: detail.currentRevisionId,
       });
+      if (request !== headPreviewRequest.current
+        || !isCurrentResourceSelection(selection, selectedResourceRef.current, requestGeneration, resourceSelectionGeneration.current)) return;
       setReviewedHeadText({ resourceVersion: detail.version, headId: detail.currentRevisionId, text });
     } catch (cause) {
-      setHeadPreviewError(messageOf(cause, "The current Resource head could not be previewed."));
-    } finally { setHeadPreviewBusy(false); }
+      if (request === headPreviewRequest.current
+        && isCurrentResourceSelection(selection, selectedResourceRef.current, requestGeneration, resourceSelectionGeneration.current)) {
+        setHeadPreviewError(messageOf(cause, "The current Resource head could not be previewed."));
+      }
+    } finally {
+      if (request === headPreviewRequest.current
+        && isCurrentResourceSelection(selection, selectedResourceRef.current, requestGeneration, resourceSelectionGeneration.current)) {
+        setHeadPreviewBusy(false);
+      }
+    }
   };
 
   const compareSelectedRevisions = async () => {
@@ -386,8 +591,14 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
   const saveRevision = async (file: File) => {
     if (!detail || !context || context.status !== "ACTIVE" || !detail.currentRevisionId || statusRequest !== null
       || (rebaseRequired && !rebaseIsApproved)) return;
-    if (file.size > MAX_REVISION_BYTES) { setError("A revision file cannot exceed 100 MiB."); return; }
+    if (file.size > MAX_REVISION_BYTES) {
+      const message = "A revision file cannot exceed 100 MiB.";
+      setError(message);
+      notifyNavigationSaveFailure(message);
+      return;
+    }
     setBusy(true); setError(null); setMessage(null); setUploadBytes(0);
+    let navigationSaveFailure: string | null = null;
     try {
       const bytes = await file.arrayBuffer();
       const expectedDigest = `sha256:${await digestHex(bytes)}`;
@@ -471,6 +682,7 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
         setRebaseReloadPending(false);
         setRebaseApproval(null);
         setReviewedHeadText(null);
+        setResource(committed);
         onCommitted(committed);
         await reload(false);
         setMessage("New Resource revision saved.");
@@ -493,6 +705,7 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
           contentBase64: bytesToBase64(chunk),
           requestId: crypto.randomUUID(),
         });
+        offset = end;
         setUploadBytes(end);
       }
       setMessage("All selected bytes uploaded. Committing the new revision…");
@@ -508,11 +721,13 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
       setRebaseReloadPending(false);
       setRebaseApproval(null);
       setReviewedHeadText(null);
+      setResource(committed);
       onCommitted(committed);
       await reload(false);
       setMessage("New Resource revision saved.");
     } catch (cause) {
       const text = messageOf(cause, "Resource revision could not be saved.");
+      navigationSaveFailure = text;
       setError(text);
       if (text.includes("RESOURCE_CONFLICT")) {
         setRebaseRequired(true);
@@ -523,22 +738,74 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
         setMessage("No revision was committed. Your exact local draft is preserved. Review the refreshed Resource version, current head, and history; explicitly authorize using this draft as a new revision before retrying.");
         await reload(false);
       }
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+      const failure = navigationSaveFailure;
+      if (failure) notifyNavigationSaveFailure(failure);
+    }
   };
 
   const saveText = async () => {
     if (draftText === null) return;
     const encoded = new TextEncoder().encode(draftText);
-    if (encoded.byteLength > MAX_EDIT_TEXT_BYTES) { setError("Text edits are limited to 1 MiB."); return; }
+    if (encoded.byteLength > MAX_EDIT_TEXT_BYTES) {
+      const message = "Text edits are limited to 1 MiB.";
+      setError(message);
+      notifyNavigationSaveFailure(message);
+      return;
+    }
     const blob = new Blob([encoded], { type: resource.mediaType || "text/plain" });
     await saveRevision(new File([blob], resource.displayName, { type: resource.mediaType || "text/plain" }));
   };
 
-  return <section className="resource-revision-panel" aria-labelledby="resource-revision-title">
+  return <section
+    className="resource-revision-panel"
+    aria-labelledby="resource-revision-title"
+    data-library-draft={hasUnsavedDraft ? "DIRTY" : "CLEAN"}
+    data-library-operation-pending={operationPending ? "true" : "false"}
+    data-library-can-save={canSaveDraft ? "true" : "false"}
+  >
     <header className="resource-revision-header">
       <div><p className="eyebrow">RESOURCE HISTORY</p><h2 id="resource-revision-title">{resource.displayName}</h2><p>Each save creates a new immutable revision.</p></div>
       <button className="quiet-button" type="button" onClick={requestClose} disabled={busy || statusBusy || statusRequest !== null}>{hasUnsavedDraft ? "Close editor…" : "Close"}</button>
     </header>
+    {pendingNavigation && <div className="resource-discard-backdrop">
+      <section className="resource-discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="resource-navigation-title" aria-describedby="resource-navigation-description" onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          stayOnCurrentResource();
+          return;
+        }
+        if (event.key !== "Tab") return;
+        const controls = event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled)");
+        const first = controls.item(0);
+        const last = controls.item(controls.length - 1);
+        if (!first || !last) return;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}>
+        <h3 id="resource-navigation-title">Leave {resource.displayName}?</h3>
+        <p id="resource-navigation-description">{operationPending
+          ? "A Resource save or status request is still resolving. Wait for its result before changing the editor target. Your current draft stays here."
+          : hasUnsavedDraft
+            ? "This exact local draft belongs to the current Resource. Choose what to do before opening the selected Resource or Workspace."
+            : "A request for the current Resource just finished. Continue only after confirming the selected destination."}</p>
+        <div className="resource-discard-actions">
+          <button className="quiet-button" type="button" autoFocus onClick={stayOnCurrentResource}>Stay on current Resource</button>
+          {hasUnsavedDraft ? <>
+            <button className="primary-button" type="button" disabled={operationPending || (rebaseRequired && !rebaseIsApproved)} onClick={saveDraftAndSwitch}>Save draft and switch</button>
+            <button className="primary-button" type="button" disabled={operationPending} onClick={discardDraftAndSwitch}>Discard draft and switch</button>
+          </> : <button className="primary-button" type="button" disabled={operationPending} onClick={continuePendingNavigation}>
+            {pendingNavigation.requestedWorkspaceId === resource.workspaceId ? "Continue to selected Resource" : "Continue to selected Workspace"}
+          </button>}
+        </div>
+      </section>
+    </div>}
     {(confirmDiscard || confirmReplaceDraft) && <div className="resource-discard-backdrop">
       <section className="resource-discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="resource-discard-title" aria-describedby="resource-discard-description" onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -671,9 +938,9 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
             if (file) stageReplacementFile(file);
           }} />
         </label>
-        {selectedFile && <div className="resource-revision-staged"><span>{selectedFile.name} · {formatBytes(selectedFile.size)}</span><button className="primary-button" type="button" disabled={busy || statusRequest !== null || (rebaseRequired && !rebaseIsApproved)} onClick={() => void saveRevision(selectedFile)}>{busy ? `Uploading ${formatBytes(uploadBytes)} of ${formatBytes(selectedFile.size)}…` : uploadRecovery ? "Verify file and resume upload" : rebaseRequired ? "Save authorized draft as new revision" : "Upload as new revision"}</button></div>}
+        {selectedFile && <div className="resource-revision-staged"><span>{selectedFile.name} · {formatBytes(selectedFile.size)}</span><button className="primary-button" type="button" data-library-draft-save disabled={busy || statusRequest !== null || (rebaseRequired && !rebaseIsApproved)} onClick={() => void saveRevision(selectedFile)}>{busy ? `Uploading ${formatBytes(uploadBytes)} of ${formatBytes(selectedFile.size)}…` : uploadRecovery ? "Verify file and resume upload" : rebaseRequired ? "Save authorized draft as new revision" : "Upload as new revision"}</button></div>}
         {!selectedFile && isCurrentTextEditable && <button className="quiet-button" type="button" disabled={busy || hasUnsavedDraft || statusRequest !== null} onClick={() => void openTextEditor()}>{draftText === null ? "Edit small text file" : "Reload current text"}</button>}
-        {draftText !== null && <div className="resource-revision-text-editor"><label htmlFor="resource-revision-text">Edit content (up to 1 MiB)</label><textarea id="resource-revision-text" value={draftText} disabled={busy || statusRequest !== null} onChange={(event) => { setDraftText(event.currentTarget.value); setRebaseApproval(null); }} spellCheck={false} /><div className="resource-revision-actions"><span>{formatBytes(new TextEncoder().encode(draftText).byteLength)} · unsaved draft</span><button className="primary-button" type="button" disabled={busy || statusRequest !== null || (rebaseRequired && !rebaseIsApproved)} onClick={() => void saveText()}>{busy ? `Uploading ${formatBytes(uploadBytes)}…` : rebaseRequired ? "Save authorized draft as new revision" : "Save as new revision"}</button></div></div>}
+        {draftText !== null && <div className="resource-revision-text-editor"><label htmlFor="resource-revision-text">Edit content (up to 1 MiB)</label><textarea id="resource-revision-text" value={draftText} disabled={busy || statusRequest !== null} onChange={(event) => { setDraftText(event.currentTarget.value); setRebaseApproval(null); }} spellCheck={false} /><div className="resource-revision-actions"><span>{formatBytes(new TextEncoder().encode(draftText).byteLength)} · unsaved draft</span><button className="primary-button" type="button" data-library-draft-save disabled={busy || statusRequest !== null || (rebaseRequired && !rebaseIsApproved)} onClick={() => void saveText()}>{busy ? `Uploading ${formatBytes(uploadBytes)}…` : rebaseRequired ? "Save authorized draft as new revision" : "Save as new revision"}</button></div></div>}
         {busy && <p className="inline-status" role="status">Uploading {formatBytes(uploadBytes)} of {formatBytes(selectedFile?.size ?? new TextEncoder().encode(draftText ?? "").byteLength)}. This transfer uses the authenticated local Runtime.</p>}
       </div>}
     </>}

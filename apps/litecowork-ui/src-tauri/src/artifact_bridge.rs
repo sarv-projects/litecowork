@@ -36,9 +36,7 @@ pub(crate) async fn artifact_library_command(
         || !matches!(action.as_str(), "promote" | "archive")
         || expected_version == 0
         || expected_version > 9_007_199_254_740_991
-        || idempotency_key.is_empty()
-        || idempotency_key.len() > 128
-        || !idempotency_key.bytes().all(|byte| byte.is_ascii_graphic())
+        || !super::valid_idempotency_key(&idempotency_key)
     {
         return Err("Artifact Library request is invalid".to_owned());
     }
@@ -710,9 +708,7 @@ pub(crate) async fn artifact_append_text_version(
     if expected_artifact_version == 0
         || expected_content_version == 0
         || expected_resource_version == 0
-        || idempotency_key.is_empty()
-        || idempotency_key.len() > 128
-        || !idempotency_key.bytes().all(|byte| byte.is_ascii_graphic())
+        || !super::valid_idempotency_key(&idempotency_key)
         || content.len() > 1_048_576
     {
         return Err("Artifact text publication request is invalid".to_owned());

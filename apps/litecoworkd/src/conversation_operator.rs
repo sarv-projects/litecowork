@@ -39,7 +39,32 @@ struct Cursor {
     conversation_id: String,
 }
 
+#[derive(Clone)]
+struct ConversationApiState {
+    store: SqliteWorkspaceStore,
+    principal_id: String,
+    runtime_id: String,
+}
+
+impl FromRef<ApiState> for ConversationApiState {
+    fn from_ref(state: &ApiState) -> Self {
+        Self {
+            store: state.store.clone(),
+            principal_id: state.principal_id.clone(),
+            runtime_id: state.runtime_id.clone(),
+        }
+    }
+}
+
 pub(super) fn routes() -> Router<ApiState> {
+    routes_with_state::<ApiState>()
+}
+
+fn routes_with_state<S>() -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+    ConversationApiState: FromRef<S>,
+{
     Router::new()
         .route(
             "/v1/conversations",
@@ -48,8 +73,23 @@ pub(super) fn routes() -> Router<ApiState> {
         .route("/v1/conversations/{conversation_id}", get(get_conversation))
 }
 
+#[cfg(test)]
+pub(super) fn test_router(
+    store: SqliteWorkspaceStore,
+    principal_id: String,
+    runtime_id: String,
+) -> Router {
+    routes_with_state::<ConversationApiState>()
+        .route_layer(middleware::from_fn(authenticate))
+        .with_state(ConversationApiState {
+            store,
+            principal_id,
+            runtime_id,
+        })
+}
+
 async fn create_conversation(
-    State(state): State<ApiState>,
+    State(state): State<ConversationApiState>,
     headers: HeaderMap,
     Json(body): Json<CreateBody>,
 ) -> Result<Response, Response> {
@@ -61,14 +101,7 @@ async fn create_conversation(
             "Workspace access is unavailable",
         ));
     }
-    let workspace = ensure_workspace_owner(&state, &workspace_id)?;
-    if workspace.status != "ACTIVE" {
-        return Err(error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "WORKSPACE_ARCHIVED",
-            "Archived Workspaces cannot accept new Conversations",
-        ));
-    }
+    ensure_workspace_owner_for(&state.store, &state.principal_id, &workspace_id)?;
     let title = body.title.map(|title| title.trim().to_owned());
     if title.as_ref().is_some_and(|value| {
         value.is_empty() || value.chars().count() > 160 || value.chars().any(char::is_control)
@@ -135,7 +168,7 @@ async fn create_conversation(
 }
 
 async fn get_conversation(
-    State(state): State<ApiState>,
+    State(state): State<ConversationApiState>,
     Path(conversation_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<ConversationRecord>, Response> {
@@ -161,7 +194,7 @@ async fn get_conversation(
 }
 
 async fn list_conversations(
-    State(state): State<ApiState>,
+    State(state): State<ConversationApiState>,
     headers: HeaderMap,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<ConversationListResponse>, Response> {
@@ -247,6 +280,11 @@ fn map_store_error(error_value: StoreError) -> Response {
             StatusCode::CONFLICT,
             "CONFLICT",
             "Idempotency key was already used for another Conversation request",
+        ),
+        StoreError::Invalid(message) if message == "WORKSPACE_ARCHIVED" => error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "WORKSPACE_ARCHIVED",
+            "Archived Workspaces cannot accept new Conversations",
         ),
         StoreError::Invalid(_) => error(
             StatusCode::BAD_REQUEST,

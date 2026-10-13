@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { assertSupportedNodeVersion } from '../scripts/check-node-version.mjs';
@@ -15,4 +16,13 @@ test('accepts only stable Node 24 releases from 24.21.0 onward', () => {
       `expected Node.js ${version} to be rejected`,
     );
   }
+});
+
+test('approves only the lock-pinned esbuild build script', () => {
+  const workspace = readFileSync(new URL('../pnpm-workspace.yaml', import.meta.url), 'utf8');
+  const allowBuilds = workspace.match(/^allowBuilds:\n((?:  .+\n?)+)/m)?.[1];
+
+  assert.ok(allowBuilds, 'an explicit dependency build allowlist is required');
+  assert.deepEqual(allowBuilds.trim().split('\n'), ["'esbuild@0.25.12': true"]);
+  assert.doesNotMatch(workspace, /^dangerouslyAllowAllBuilds:\s*true$/m);
 });

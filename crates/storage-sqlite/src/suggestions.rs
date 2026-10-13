@@ -488,9 +488,7 @@ impl storage_core::SuggestionTaskAcceptanceStore for SqliteWorkspaceStore {
             || workspace_id.trim().is_empty()
             || suggestion_id.trim().is_empty()
             || expected_suggestion_version == 0
-            || request_id.trim().is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !super::valid_shared_idempotency_key(request_id)
             || expected_task_id.trim().is_empty()
             || expected_task_id.len() > 256
             || expected_task_id.chars().any(char::is_control)
@@ -1237,9 +1235,7 @@ impl SuggestionOwnerActionStore for SqliteSuggestionStore {
             || workspace_id.trim().is_empty()
             || suggestion_id.trim().is_empty()
             || expected_version == 0
-            || request_id.trim().is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !super::valid_shared_idempotency_key(request_id)
         {
             return Err(SuggestionServiceError::InvalidRequest);
         }

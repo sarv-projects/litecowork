@@ -2413,6 +2413,17 @@ pub trait ResourceUploadStore: ResourceStore {
 }
 
 pub trait IdempotentWorkspaceStore: WorkspaceStore {
+    /// Resolve a committed Workspace mutation by authenticated Principal, RequestId,
+    /// and canonical request payload before performing mutable admission checks or
+    /// writing candidate aggregate state. The committing transaction must still
+    /// recheck this receipt to close concurrent races.
+    fn get_workspace_commit_receipt(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        request_payload: &Value,
+    ) -> Result<Option<CommittedWorkspace>, StoreError>;
+
     fn create_workspace_idempotent(
         &self,
         request: WorkspaceCreateRequest,

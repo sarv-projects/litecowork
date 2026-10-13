@@ -156,6 +156,7 @@ fn uploaded_text_index_rebuild_search_and_restart_preserve_exact_pins() {
     create_workspace_for_uploads(&store);
 
     let upload_id = "upload-index-roundtrip";
+    let chunk_request_id = "c".repeat(200);
     let session = create_upload_with_context_document(
         &store,
         upload_id,
@@ -166,7 +167,7 @@ fn uploaded_text_index_rebuild_search_and_restart_preserve_exact_pins() {
         })),
     );
     let received = store
-        .put_chunk(chunk_input(upload_id, "request-index-chunk"))
+        .put_chunk(chunk_input(upload_id, &chunk_request_id))
         .expect("production chunk path accepts uploaded text");
     assert_eq!(received.state, ResourceUploadState::ContentReceived);
 
@@ -288,10 +289,11 @@ fn uploaded_text_index_rebuild_search_and_restart_preserve_exact_pins() {
             .expect("search without derived index stays bounded")
             .is_empty()
     );
+    let rebuild_request_id = "r".repeat(200);
     let rebuilt = store
         .reindex_resource_text(ResourceTextIndexRebuildRequest {
             principal_id: OWNER.to_owned(),
-            request_id: "request-rebuild-index-roundtrip".to_owned(),
+            request_id: rebuild_request_id.clone(),
             workspace_id: WORKSPACE.to_owned(),
             resource_id: resource_id.to_owned(),
             resource_revision_id: revision_id.to_owned(),
@@ -304,7 +306,7 @@ fn uploaded_text_index_rebuild_search_and_restart_preserve_exact_pins() {
     let replay = store
         .reindex_resource_text(ResourceTextIndexRebuildRequest {
             principal_id: OWNER.to_owned(),
-            request_id: "request-rebuild-index-roundtrip".to_owned(),
+            request_id: rebuild_request_id,
             workspace_id: WORKSPACE.to_owned(),
             resource_id: resource_id.to_owned(),
             resource_revision_id: revision_id.to_owned(),

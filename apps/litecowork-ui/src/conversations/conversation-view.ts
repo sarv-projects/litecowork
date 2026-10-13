@@ -7,6 +7,17 @@ export type ConversationSummary = {
   created_at: string;
 };
 
+export type ConversationListPage = {
+  items: ConversationSummary[];
+  next_cursor: string | null;
+};
+
+export type PendingConversationCreate = {
+  workspaceId: string;
+  title: string | null;
+  requestId: string;
+};
+
 export type ConversationMessageView = {
   message_id: string;
   role: "USER" | "AGENT" | "SYSTEM_NOTICE" | "CHANNEL";
@@ -50,6 +61,89 @@ export class ConversationRequestEpochs {
   beginSnapshot(): number { return ++this.snapshotEpoch; }
   isCurrentSnapshot(epoch: number): boolean { return epoch === this.snapshotEpoch; }
   invalidateSnapshot(): void { this.snapshotEpoch += 1; }
+}
+
+/** Keep an ambiguous create receipt reachable for an unchanged command retry. */
+export class ConversationCreateRequestCache {
+  private readonly pending = new Map<string, PendingConversationCreate>();
+
+  get(workspaceId: string, title: string | null, newRequestId: () => string): PendingConversationCreate {
+    const key = this.key(workspaceId, title);
+    const existing = this.pending.get(key);
+    if (existing) return existing;
+    if (this.pending.size >= 64) throw new Error("Resolve a pending Conversation creation before starting another.");
+    const request = { workspaceId, title, requestId: newRequestId() };
+    this.pending.set(key, request);
+    return request;
+  }
+
+  complete(request: PendingConversationCreate): void {
+    const key = this.key(request.workspaceId, request.title);
+    if (this.pending.get(key) === request) this.pending.delete(key);
+  }
+
+  private key(workspaceId: string, title: string | null): string {
+    return JSON.stringify([workspaceId, title]);
+  }
+}
+
+/** Stable binding for a fetched immutable presentation; object identity is intentionally irrelevant. */
+export function richPresentationCacheKey(
+  workspaceId: string,
+  conversationId: string,
+  messageId: string,
+  reference: RichPresentationRefView | null,
+): string | null {
+  if (!reference || reference.availability !== "AVAILABLE" || reference.message_id !== messageId) return null;
+  return JSON.stringify([
+    workspaceId,
+    conversationId,
+    messageId,
+    reference.presentation_id,
+    reference.schema_version,
+    reference.renderer_contract_version,
+    reference.semantic_content_digest,
+    reference.document_digest,
+    reference.document_size_bytes,
+  ]);
+}
+
+function parseConversationSummary(item: unknown, workspaceId: string): ConversationSummary {
+  if (!record(item) || item.workspace_id !== workspaceId || !boundedText(item.conversation_id)
+    || !(item.title === null || boundedText(item.title, 160))
+    || !(item.active_agent_binding_id === null || boundedText(item.active_agent_binding_id))
+    || !Number.isSafeInteger(item.version) || (item.version as number) < 1 || !boundedText(item.created_at, 64)) {
+    throw new Error("Conversation list contains an invalid or out-of-Workspace item.");
+  }
+  return item as unknown as ConversationSummary;
+}
+
+export function parseConversationListPage(value: unknown, workspaceId: string): ConversationListPage {
+  if (!record(value) || !Array.isArray(value.items) || value.items.length > 100) throw new Error("Conversation list is invalid.");
+  const nextCursor = value.next_cursor;
+  if (nextCursor !== undefined && nextCursor !== null
+    && !(boundedText(nextCursor, 2048) && /^[A-Za-z0-9_-]+$/.test(nextCursor))) {
+    throw new Error("Conversation list cursor is invalid.");
+  }
+  return {
+    items: value.items.map(item => parseConversationSummary(item, workspaceId)),
+    next_cursor: (nextCursor as string | null | undefined) ?? null,
+  };
+}
+
+export function appendConversationListPage(current: ConversationListPage, page: ConversationListPage): ConversationListPage {
+  const items = [...current.items];
+  const positions = new Map(items.map((item, index) => [item.conversation_id, index]));
+  for (const item of page.items) {
+    const position = positions.get(item.conversation_id);
+    if (position === undefined) {
+      positions.set(item.conversation_id, items.length);
+      items.push(item);
+    } else {
+      items[position] = item;
+    }
+  }
+  return { items, next_cursor: page.next_cursor };
 }
 
 export function appendConversationPage(
@@ -133,16 +227,7 @@ function parseRichPresentationRef(value: unknown, messageId: string): RichPresen
 }
 
 export function parseConversationList(value: unknown, workspaceId: string): ConversationSummary[] {
-  if (!record(value) || !Array.isArray(value.items) || value.items.length > 100) throw new Error("Conversation list is invalid.");
-  return value.items.map((item) => {
-    if (!record(item) || item.workspace_id !== workspaceId || !boundedText(item.conversation_id)
-      || !(item.title === null || boundedText(item.title, 160))
-      || !(item.active_agent_binding_id === null || boundedText(item.active_agent_binding_id))
-      || !Number.isSafeInteger(item.version) || (item.version as number) < 1 || !boundedText(item.created_at, 64)) {
-      throw new Error("Conversation list contains an invalid or out-of-Workspace item.");
-    }
-    return item as unknown as ConversationSummary;
-  });
+  return parseConversationListPage(value, workspaceId).items;
 }
 
 export function parseConversationSnapshot(value: unknown, workspaceId: string, conversationId: string): ConversationSnapshotView {

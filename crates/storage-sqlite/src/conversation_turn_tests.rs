@@ -101,7 +101,7 @@ fn fixture() -> (
     let commit = CreateConversationTurnCommit {
         request: WorkspaceCreateRequest {
             principal_id: "owner-local".into(),
-            request_id: "turn-submit-1".into(),
+            request_id: "t".repeat(200),
             request_payload: serde_json::json!({
                 "operation":"conversation.turn.create.v1",
                 "workspace_id":"workspace-turn",

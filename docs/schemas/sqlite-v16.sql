@@ -101,7 +101,7 @@ CREATE TABLE agent_lifecycle_operations (
   operation TEXT NOT NULL
     CHECK (operation IN ('INSTALL', 'UPDATE', 'REPAIR')),
   request_id TEXT NOT NULL
-    CHECK (length(request_id) BETWEEN 1 AND 128),
+    CHECK (length(request_id) BETWEEN 1 AND 200),
   request_digest TEXT NOT NULL
     CHECK (
       length(request_digest) = 71

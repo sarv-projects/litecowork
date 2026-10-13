@@ -193,7 +193,13 @@ Conversation turns use the Workspace default.
 `agent_binding_id` or JSON `null` to clear it. The command requires the selected
 Workspace header, `If-Match`, and `Idempotency-Key`; its response is the committed
 versioned Workspace. The storage transaction enforces same-Workspace, enabled,
-lead-eligible binding membership. Settings reflects only the committed response.
+lead-eligible binding membership. The receipt payload includes the `If-Match` version.
+Once a matching receipt is committed, a retry with the same principal, key, and payload
+returns its original response before current binding-eligibility checks or candidate
+aggregate-state writes; reusing a key with a different payload returns `CONFLICT`.
+Concurrent requests still recheck the receipt transactionally, though a request racing
+the initial commit may already have written candidate aggregate state. New selections
+are checked atomically by SQLite. Settings reflects only the committed response.
 An invalid/disabled explicit override does not silently fall back. Changing or clearing
 the default affects newly admitted Conversation turns and Tasks that have no higher-
 precedence Task or Coworker selection; existing sessions and Attempts remain pinned.
@@ -237,7 +243,9 @@ is newest-first and uses a Workspace-bound opaque cursor. Conversation reads are
 scoped and remain separate from provider/session state. The desktop Conversation page can
 create, list, and read persisted semantic messages; it does not expose message submission
 as available until E03-S01 native session admission and E03-S02 turn execution are
-connected.
+connected. An exact owner-scoped receipt replay is resolved before the active-Workspace
+check, so a lost-response retry still returns the committed Conversation after archival;
+a fresh create in an archived Workspace remains rejected.
 
 `POST /v1/conversations/{id}/turns` accepts optional
 `presentation_preference: AUTO | SIMPLE | RICH`, default `AUTO`. The preference is pinned

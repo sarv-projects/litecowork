@@ -66,9 +66,9 @@ use std::{
 use storage_core::{
     AgentBindingCreateRequest, AgentBindingEnableRequest, AgentBindingRecord, AgentCatalogStore,
     AgentEndpointRecord, AgentProfileRecord, AgentProfileViewRecord, ContextDocumentOwnerStatus,
-    FolderImportMetadata, LocalAgentEndpointBindingInput, LocalRuntimeWorkspaceBindingLookup,
-    LocalRuntimeWorkspaceEnrollmentRequest, ReplicationPolicy, ResourceRecord,
-    ResourceRevisionRecord, ResourceSearchRecord, ResourceStore, ResourceSummary,
+    FolderImportMetadata, IdempotentWorkspaceStore, LocalAgentEndpointBindingInput,
+    LocalRuntimeWorkspaceBindingLookup, LocalRuntimeWorkspaceEnrollmentRequest, ReplicationPolicy,
+    ResourceRecord, ResourceRevisionRecord, ResourceSearchRecord, ResourceStore, ResourceSummary,
     ResourceTextIndexRebuildRequest, ResourceTextMatchSpan, ResourceUploadChunkInput,
     ResourceUploadContentRange, ResourceUploadSessionRecord, ResourceUploadState,
     ResourceUploadStore, RuntimeIncarnationRecord, RuntimeLifecycleStore, RuntimeOfferRecord,
@@ -1995,19 +1995,7 @@ async fn create_resource(
             "Resource must not exceed 10 MiB",
         ));
     }
-    let request_id = headers
-        .get("idempotency-key")
-        .and_then(|v| v.to_str().ok())
-        .filter(|v| {
-            !v.is_empty() && v.len() <= 128 && v.bytes().all(|byte| byte.is_ascii_graphic())
-        })
-        .ok_or_else(|| {
-            operator_error(
-                StatusCode::BAD_REQUEST,
-                "INVALID_ARGUMENT",
-                "A valid Idempotency-Key is required",
-            )
-        })?;
+    let request_id = idempotency_key(&headers)?;
     let correlation_id = new_id("cor").map_err(|_| {
         operator_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3536,18 +3524,45 @@ async fn create_task(
 ) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
     let workspace = ensure_workspace_owner_for(&state.store, &state.principal_id, &workspace_id)?;
-    if workspace.status != "ACTIVE" {
-        return Err(operator_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "WORKSPACE_ARCHIVED",
-            "Archived Workspaces cannot accept new Tasks",
-        ));
-    }
     if body.get("workspace_id").and_then(serde_json::Value::as_str) != Some(workspace_id.as_str()) {
         return Err(operator_error(
             StatusCode::FORBIDDEN,
             "FORBIDDEN",
             "Workspace access is unavailable",
+        ));
+    }
+    let request_id = idempotency_key(&headers)?;
+    match state
+        .store
+        .get_task_create_receipt(&state.principal_id, &request_id, &body)
+    {
+        Ok(Some(committed)) => {
+            return Ok(committed_task_create_response(
+                committed,
+                StatusCode::CREATED,
+            ));
+        }
+        Ok(None) => {}
+        Err(storage_core::StoreError::Conflict { .. }) => {
+            return Err(operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Idempotency key was already used for a different Task request",
+            ));
+        }
+        Err(_) => {
+            return Err(operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Task creation receipt could not be checked",
+            ));
+        }
+    }
+    if workspace.status != "ACTIVE" {
+        return Err(operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "WORKSPACE_ARCHIVED",
+            "Archived Workspaces cannot accept new Tasks",
         ));
     }
     let explicit_binding = match body.get("preferred_lead_agent_binding_id") {
@@ -3674,7 +3689,6 @@ async fn create_task(
                 "Choose and enable a lead agent before creating a Task",
             )
         })?;
-    let request_id = idempotency_key(&headers)?;
     let correlation_id = new_id("cor").map_err(|_| {
         operator_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3763,13 +3777,23 @@ async fn create_task(
                     "Task could not be saved",
                 ),
             })?;
-    let mut response = (StatusCode::CREATED, Json(committed.view)).into_response();
+    Ok(committed_task_create_response(
+        committed,
+        StatusCode::CREATED,
+    ))
+}
+
+fn committed_task_create_response(
+    committed: storage_core::CommittedTask,
+    status: StatusCode,
+) -> Response {
+    let mut response = (status, Json(committed.view)).into_response();
     if let Ok(value) = header::HeaderValue::from_str(&committed.event.correlation_id) {
         response
             .headers_mut()
             .insert(header::HeaderName::from_static("x-correlation-id"), value);
     }
-    Ok(response)
+    response
 }
 
 /// Task reads are historical reads: archive prevents new work, not reading
@@ -5854,7 +5878,7 @@ async fn create_workspace_root_from_native_selection(
         .and_then(|value| value.to_str().ok())
         .filter(|value| {
             !value.is_empty()
-                && value.len() <= 128
+                && value.len() <= 200
                 && value.bytes().all(|byte| byte.is_ascii_graphic())
         })
         .ok_or_else(|| {
@@ -6183,13 +6207,13 @@ fn add_seconds(timestamp: &str, seconds: i64) -> Result<String, Response> {
         })
 }
 
-fn idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
+pub(super) fn idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
     headers
         .get("idempotency-key")
         .and_then(|value| value.to_str().ok())
         .filter(|value| {
             !value.is_empty()
-                && value.len() <= 128
+                && value.len() <= 200
                 && value.bytes().all(|byte| byte.is_ascii_graphic())
         })
         .map(str::to_owned)
@@ -7311,6 +7335,14 @@ async fn archive_workspace(
                 "INVALID_TRANSITION",
                 "Workspace cannot be archived from its current state",
             ),
+            StoreError::Conflict {
+                expected: None,
+                actual: None,
+            } => operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Idempotency key was already used for a different Workspace archive request",
+            ),
             StoreError::Conflict { .. } => operator_error(
                 StatusCode::CONFLICT,
                 "STALE_WORKSPACE_VERSION",
@@ -7437,6 +7469,14 @@ async fn update_workspace_policy(
                 "INVALID_ARGUMENT",
                 "Workspace policy is invalid",
             ),
+            storage_core::StoreError::Conflict {
+                expected: None,
+                actual: None,
+            } => operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Idempotency key was already used for a different Workspace policy request",
+            ),
             storage_core::StoreError::Conflict { .. } => operator_error(
                 StatusCode::CONFLICT,
                 "STALE_WORKSPACE_VERSION",
@@ -7463,7 +7503,7 @@ async fn update_workspace_policy(
 }
 
 async fn set_workspace_default_agent_binding(
-    State(state): State<ApiState>,
+    State(state): State<WorkspacePolicyApiState>,
     headers: HeaderMap,
     Path(workspace_id): Path<String>,
     Json(body): Json<SetWorkspaceDefaultAgentBindingBody>,
@@ -7475,7 +7515,7 @@ async fn set_workspace_default_agent_binding(
             "Workspace access is unavailable",
         ));
     }
-    ensure_workspace_owner(&state, &workspace_id)?;
+    ensure_workspace_owner_for(&state.store, &state.principal_id, &workspace_id)?;
     let expected_version = parse_if_match(&headers)?;
     let request_id = idempotency_key(&headers)?;
     if let Some(binding_id) = body.agent_binding_id.as_deref() {
@@ -7486,6 +7526,39 @@ async fn set_workspace_default_agent_binding(
                 "AgentBinding selection is invalid",
             ));
         }
+    }
+    let request_payload = json!({
+        "operation": "workspace.default_agent_binding.set.v1",
+        "workspace_id": workspace_id,
+        "expected_version": expected_version,
+        "agent_binding_id": &body.agent_binding_id,
+    });
+    match state.store.get_workspace_commit_receipt(
+        &state.principal_id,
+        &request_id,
+        &request_payload,
+    ) {
+        Ok(Some(committed)) => return Ok(committed_workspace_response(committed)),
+        Ok(None) => {}
+        Err(storage_core::StoreError::Conflict {
+            expected: None,
+            actual: None,
+        }) => {
+            return Err(operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Idempotency key was already used for a different default AgentBinding request",
+            ));
+        }
+        Err(_) => {
+            return Err(operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Workspace default AgentBinding receipt could not be checked",
+            ));
+        }
+    }
+    if let Some(binding_id) = body.agent_binding_id.as_deref() {
         let binding = state
             .store
             .get_agent_binding(&state.principal_id, &workspace_id, binding_id)
@@ -7519,11 +7592,8 @@ async fn set_workspace_default_agent_binding(
             "Workspace request could not be initialized",
         )
     })?;
-    let request_payload = json!({
-        "operation": "workspace.default_agent_binding.set.v1",
-        "workspace_id": workspace_id,
-        "agent_binding_id": body.agent_binding_id,
-    });
+    // The SQLite trigger rechecks eligibility in the same transaction as a new
+    // Workspace commit; this route preflight only preserves the typed error response.
     let committed = WorkspaceService::new(state.store.clone())
         .set_default_agent_binding_idempotent(SetWorkspaceDefaultAgentBinding {
             workspace_id: workspace_id.clone(),
@@ -7535,10 +7605,25 @@ async fn set_workspace_default_agent_binding(
             event: context,
         })
         .map_err(|error| match error {
+            storage_core::StoreError::Invalid(message) if message == "AGENT_NOT_LEAD_ELIGIBLE" => {
+                operator_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "AGENT_NOT_LEAD_ELIGIBLE",
+                    "Choose an enabled AgentBinding that is allowed to lead work",
+                )
+            }
             storage_core::StoreError::Invalid(_) => operator_error(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "INVALID_ARGUMENT",
                 "Workspace default AgentBinding could not be selected",
+            ),
+            storage_core::StoreError::Conflict {
+                expected: None,
+                actual: None,
+            } => operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Idempotency key was already used for a different default AgentBinding request",
             ),
             storage_core::StoreError::Conflict { .. } => operator_error(
                 StatusCode::CONFLICT,
@@ -7556,13 +7641,17 @@ async fn set_workspace_default_agent_binding(
                 "Workspace default AgentBinding could not be saved",
             ),
         })?;
+    Ok(committed_workspace_response(committed))
+}
+
+fn committed_workspace_response(committed: storage_core::CommittedWorkspace) -> Response {
     let mut response = Json(committed.workspace).into_response();
     if let Ok(value) = header::HeaderValue::from_str(&committed.event.correlation_id) {
         response
             .headers_mut()
             .insert(header::HeaderName::from_static("x-correlation-id"), value);
     }
-    Ok(response)
+    response
 }
 
 async fn create_workspace_instruction_revision(

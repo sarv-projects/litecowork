@@ -51,8 +51,7 @@ impl ConversationStore for SqliteConversationStore {
     ) -> Result<CommittedConversation, StoreError> {
         validate_conversation_record(&commit.conversation)?;
         if commit.request.principal_id.trim().is_empty()
-            || commit.request.request_id.trim().is_empty()
-            || commit.request.request_id.len() > 128
+            || !super::valid_shared_idempotency_key(&commit.request.request_id)
             || commit.event.workspace_id != commit.conversation.workspace_id
             || commit.event.entity_type != "Conversation"
             || commit.event.entity_id != commit.conversation.conversation_id
@@ -71,30 +70,8 @@ impl ConversationStore for SqliteConversationStore {
         }
 
         let state_bytes = canonical_json(&commit.conversation)?;
-        let blob = self.store.inner.blobs.put(
-            &commit.conversation.workspace_id,
-            BlobPurpose::AggregateState,
-            &state_bytes,
-            super::STATE_MEDIA_TYPE,
-        )?;
-        if blob.size_bytes != state_bytes.len() as u64
-            || self.store.inner.blobs.get(
-                &commit.conversation.workspace_id,
-                BlobPurpose::AggregateState,
-                &blob,
-            )? != state_bytes
-        {
-            return Err(StoreError::Integrity(
-                "Conversation aggregate state failed BlobStore verification".to_owned(),
-            ));
-        }
-        let state_ref = AggregateStateRef {
-            blob,
-            entity_revision: 1,
-            record_schema_version: 1,
-        };
         let request_digest = digest(&canonical_json(&commit.request.request_payload)?);
-        let workspace_id = commit.conversation.workspace_id.clone();
+        let blobs = Arc::clone(&self.store.inner.blobs);
         self.run(move |connection| {
             let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(map_database_error)?;
             if let Some(value) = verify_request_receipt::<Value>(&transaction, &commit.request.principal_id, &commit.request.request_id, &request_digest)? {
@@ -102,11 +79,42 @@ impl ConversationStore for SqliteConversationStore {
                 transaction.commit().map_err(map_database_error)?;
                 return Ok(replay);
             }
-            let allowed: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id=?1 AND owner_principal_id=?2 AND status='ACTIVE')",
-                params![workspace_id, commit.request.principal_id], |row| row.get(0),
-            ).map_err(map_database_error)?;
-            if !allowed { return Err(StoreError::NotFound); }
+            let workspace_status: Option<String> = transaction
+                .query_row(
+                    "SELECT status FROM workspaces WHERE workspace_id=?1 AND owner_principal_id=?2",
+                    params![commit.conversation.workspace_id, commit.request.principal_id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_database_error)?;
+            let Some(workspace_status) = workspace_status else {
+                return Err(StoreError::NotFound);
+            };
+            if workspace_status != "ACTIVE" {
+                return Err(StoreError::Invalid("WORKSPACE_ARCHIVED".to_owned()));
+            }
+            let blob = blobs.put(
+                &commit.conversation.workspace_id,
+                BlobPurpose::AggregateState,
+                &state_bytes,
+                super::STATE_MEDIA_TYPE,
+            )?;
+            if blob.size_bytes != state_bytes.len() as u64
+                || blobs.get(
+                    &commit.conversation.workspace_id,
+                    BlobPurpose::AggregateState,
+                    &blob,
+                )? != state_bytes
+            {
+                return Err(StoreError::Integrity(
+                    "Conversation aggregate state failed BlobStore verification".to_owned(),
+                ));
+            }
+            let state_ref = AggregateStateRef {
+                blob,
+                entity_revision: 1,
+                record_schema_version: 1,
+            };
             transaction.execute(
                 "INSERT INTO conversations(conversation_id,workspace_id,title,active_agent_binding_id,created_at,version) VALUES(?1,?2,?3,NULL,?4,1)",
                 params![commit.conversation.conversation_id, commit.conversation.workspace_id, commit.conversation.title, commit.conversation.created_at],
@@ -414,8 +422,7 @@ fn validate_turn_create(commit: &CreateConversationTurnCommit) -> Result<(), Sto
     let message = &commit.message;
     let turn = &commit.turn;
     if commit.request.principal_id != commit.principal_id
-        || commit.request.request_id.trim().is_empty()
-        || commit.request.request_id.len() > 128
+        || !super::valid_shared_idempotency_key(&commit.request.request_id)
         || commit.workspace_id.trim().is_empty()
         || message.role != "USER"
         || message.author != serde_json::json!({"kind":"USER","principal_id":commit.principal_id})

@@ -186,6 +186,33 @@ fn library_rejects_illegal_transitions_owner_mismatch_and_changed_request_key() 
 }
 
 #[test]
+fn library_accepts_shared_idempotency_keys_up_to_200_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-artifact");
+    publish_fixture(&store, &directory, 1, b"immutable");
+    let request_id = "k".repeat(200);
+
+    let committed = store
+        .change_artifact_library(library_request(
+            ArtifactLibraryAction::Promote,
+            1,
+            &request_id,
+        ))
+        .expect("the shared API key bound is 200 bytes");
+    let replay = store
+        .change_artifact_library(library_request(
+            ArtifactLibraryAction::Promote,
+            1,
+            &request_id,
+        ))
+        .expect("the long key replays the committed Artifact receipt");
+
+    assert_eq!(replay.artifact, committed.artifact);
+    assert!(replay.replayed);
+}
+
+#[test]
 fn library_event_failure_rolls_back_status_version_and_receipt() {
     let directory = tempfile::tempdir().unwrap();
     let store = test_store(&directory, Duration::from_secs(1));

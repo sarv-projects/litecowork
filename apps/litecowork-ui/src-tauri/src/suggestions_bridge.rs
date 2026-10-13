@@ -7,6 +7,14 @@ pub(crate) struct SuggestionActionResponse {
     body_base64: String,
 }
 
+fn valid_suggestion_idempotency_key(value: &str) -> bool {
+    super::valid_idempotency_key(value)
+}
+
+fn valid_suggestion_preference_key(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_graphic())
+}
+
 /// Read-only Suggestions list bridge. It accepts a finite visibility/cursor set and
 /// always calls the authenticated local Operator; no WebView-supplied URL is accepted.
 #[tauri::command]
@@ -125,11 +133,6 @@ pub(crate) async fn set_suggestion_preference(
         let valid_id = |value: &str| {
             !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
         };
-        let valid_request_id = |value: &str| {
-            !value.is_empty()
-                && value.len() <= 128
-                && value.bytes().all(|byte| byte.is_ascii_graphic())
-        };
         if !valid_id(&workspace_id)
             || ![
                 "TASK_OPPORTUNITY",
@@ -137,7 +140,7 @@ pub(crate) async fn set_suggestion_preference(
                 "AUTOMATION_OPPORTUNITY",
             ]
             .contains(&kind.as_str())
-            || !valid_request_id(&request_id)
+            || !valid_suggestion_preference_key(&request_id)
         {
             return Err("Suggestion preference request is invalid".to_owned());
         }
@@ -179,15 +182,10 @@ pub(crate) async fn suggestion_owner_action(
         let valid_id = |value: &str| {
             !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
         };
-        let valid_request_id = |value: &str| {
-            !value.is_empty()
-                && value.len() <= 128
-                && value.bytes().all(|byte| byte.is_ascii_graphic())
-        };
         if !valid_id(&workspace_id)
             || !valid_id(&suggestion_id)
             || expected_version == 0
-            || !valid_request_id(&request_id)
+            || !valid_suggestion_idempotency_key(&request_id)
             || !["dismiss", "snooze", "unsnooze"].contains(&operation.as_str())
             || (operation == "snooze" && snoozed_until.is_none())
             || (operation != "snooze" && snoozed_until.is_some())
@@ -239,15 +237,10 @@ pub(crate) async fn accept_suggestion_task(
         let valid_id = |value: &str| {
             !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
         };
-        let valid_request_id = |value: &str| {
-            !value.is_empty()
-                && value.len() <= 128
-                && value.bytes().all(|byte| byte.is_ascii_graphic())
-        };
         if !valid_id(&workspace_id)
             || !valid_id(&suggestion_id)
             || expected_version == 0
-            || !valid_request_id(&request_id)
+            || !valid_suggestion_idempotency_key(&request_id)
         {
             return Err("Suggestion acceptance request is invalid".to_owned());
         }
@@ -316,4 +309,25 @@ pub(crate) async fn accept_suggestion_task(
     })
     .await
     .map_err(|_| "Suggestion acceptance did not complete".to_owned())?
+}
+
+#[cfg(test)]
+mod idempotency_key_tests {
+    use super::valid_suggestion_idempotency_key;
+
+    #[test]
+    fn suggestion_mutations_accept_the_full_shared_key_limit() {
+        assert!(valid_suggestion_idempotency_key(&"k".repeat(200)));
+    }
+
+    #[test]
+    fn suggestion_mutations_reject_keys_above_the_shared_limit() {
+        assert!(!valid_suggestion_idempotency_key(&"k".repeat(201)));
+    }
+
+    #[test]
+    fn preference_mutations_keep_their_explicit_128_byte_contract() {
+        assert!(super::valid_suggestion_preference_key(&"k".repeat(128)));
+        assert!(!super::valid_suggestion_preference_key(&"k".repeat(129)));
+    }
 }

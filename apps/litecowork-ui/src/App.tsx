@@ -33,6 +33,7 @@ import {
   type ResourceUploadIdentity,
 } from "./resources/resource-upload-resume.ts";
 import { ResourceRevisionEditor } from "./resources/ResourceRevisionEditor";
+import { LibraryNavigationDialog, libraryNavigationMainIsInert, useLibraryNavigation } from "./resources/library-navigation";
 import { TaskResourceTextPreview } from "./resources/TaskResourceTextPreview";
 import { performResourceIndexRebuild } from "./resources/resource-index-rebuild.ts";
 import { validateResourceSourceHighlights, type ResourceSourceMatch, type SourceHighlightResult } from "./resources/source-span-highlights";
@@ -389,13 +390,23 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 function App() {
-  const [page, setPage] = useState<Page>("Home");
+  const libraryNavigation = useLibraryNavigation<Page>("Home");
+  const {
+    page,
+    pendingNavigation: pendingLibraryNavigation,
+    requestNavigation: requestPageNavigation,
+    stayInLibrary,
+    saveLibraryDraftBeforeNavigation,
+    discardLibraryDraftAndNavigate,
+    draftSaveFailed: onLibraryDraftSaveFailed,
+    draftCommitted: onLibraryDraftCommitted,
+  } = libraryNavigation;
   const [navigationOpen, setNavigationOpen] = useState(false);
   const navigationTriggerRef = useRef<HTMLButtonElement>(null);
   const navigationDrawerRef = useRef<HTMLElement>(null);
-  const closeNavigation = useCallback(() => {
+  const closeNavigation = useCallback((restoreFocus = true) => {
     setNavigationOpen(false);
-    window.requestAnimationFrame(() => {
+    if (restoreFocus) window.requestAnimationFrame(() => {
       if (window.innerWidth <= 900) navigationTriggerRef.current?.focus();
     });
   }, []);
@@ -1071,7 +1082,7 @@ function App() {
       if (selectedWorkspaceIdRef.current === pending.workspaceId) {
         if (draft.trim() === pending.objective) setDraft("");
         setOpenedTask({ workspaceId: pending.workspaceId, taskId: saved.taskId });
-        setPage("Work");
+        requestPageNavigation("Work");
       }
     } catch (error) {
       setTaskSaveError(typeof error === "string" ? error : error instanceof Error ? error.message : "Task could not be saved. Retry to reconcile the same request.");
@@ -1667,7 +1678,7 @@ function App() {
     if (!pendingTaskSave) return;
     setSelectedWorkspaceId(pendingTaskSave.workspaceId);
     setOpenedTask(null);
-    setPage("Work");
+    requestPageNavigation("Work");
   };
   const clearPendingTaskAfterReview = () => {
     if (!pendingTaskSave) return;
@@ -1677,9 +1688,11 @@ function App() {
     setTaskSaveError("Original retry cleared after your review. The next save uses the current Coworker and lead settings.");
   };
 
+  const mainAreaInert = libraryNavigationMainIsInert(navigationOpen, pendingLibraryNavigation !== null);
+
   return (
     <div className={`app-shell ${navigationOpen ? "navigation-open" : ""}`}>
-      {navigationOpen && <button className="sidebar-backdrop" type="button" tabIndex={-1} aria-label="Close main navigation" onClick={closeNavigation} />}
+      {navigationOpen && <button className="sidebar-backdrop" type="button" tabIndex={-1} aria-label="Close main navigation" onClick={() => closeNavigation()} />}
       <aside
         id="main-navigation"
         ref={navigationDrawerRef}
@@ -1687,13 +1700,14 @@ function App() {
         aria-label="Main navigation"
         role={navigationOpen ? "dialog" : undefined}
         aria-modal={navigationOpen ? true : undefined}
+        inert={pendingLibraryNavigation !== null}
       >
         <div className="sidebar-heading">
-          <a className="brand" href="#home" onClick={(event) => { event.preventDefault(); setPage("Home"); closeNavigation(); }}>
+          <a className="brand" href="#home" onClick={(event) => { event.preventDefault(); const focusTarget = navigationOpen && window.innerWidth <= 900 ? navigationTriggerRef.current : null; const navigated = requestPageNavigation("Home", focusTarget); closeNavigation(navigated); }}>
             <span className="brand-mark" aria-hidden="true">L</span>
             <span>LiteCowork</span>
           </a>
-          <button className="icon-button sidebar-close" type="button" aria-label="Close navigation" onClick={closeNavigation}>×</button>
+          <button className="icon-button sidebar-close" type="button" aria-label="Close navigation" onClick={() => closeNavigation()}>×</button>
         </div>
 
         <div className="workspace-switcher" aria-label={`Local Runtime ${runtime?.state ?? "status unknown"}; Operator API ${runtime?.operatorReady ? "serving" : "not ready"}`}>
@@ -1719,9 +1733,10 @@ function App() {
                 disabled={taskSaving}
                 aria-current={page === item.label ? "page" : undefined}
                 onClick={() => {
-                  if (item.label === "Work") setOpenedTask(null);
-                  setPage(item.label);
-                  if (navigationOpen) closeNavigation();
+                  const focusTarget = navigationOpen && window.innerWidth <= 900 ? navigationTriggerRef.current : null;
+                  const navigated = requestPageNavigation(item.label, focusTarget);
+                  if (navigated && item.label === "Work") setOpenedTask(null);
+                  if (navigationOpen) closeNavigation(navigated);
                 }}
               >
                 <span className="nav-icon" aria-hidden="true">{item.icon}</span>
@@ -1744,7 +1759,7 @@ function App() {
         </div>
       </aside>
 
-      <main className="main-area" inert={navigationOpen} aria-hidden={navigationOpen || undefined}>
+      <main className="main-area" inert={mainAreaInert} aria-hidden={mainAreaInert || undefined}>
         <header className="topbar">
           <button
             ref={navigationTriggerRef}
@@ -1765,17 +1780,20 @@ function App() {
         </header>
 
         {page === "Home" ? (
-          <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => setPage("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => setPage("Settings")} onOpenCoworkers={() => setPage("Coworkers")} onWorkspaceUpdated={(updated) => setWorkspaces(current => current.map(item => item.workspaceId === updated.workspace_id && item.version <= updated.version ? { ...item, primaryCoworkerId: updated.primary_coworker_id, version: updated.version } : item))} onOpenWork={() => { setOpenedTask(null); setPage("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); setPage("Work"); }} />
+          <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => requestPageNavigation("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => requestPageNavigation("Settings")} onOpenCoworkers={() => requestPageNavigation("Coworkers")} onWorkspaceUpdated={(updated) => setWorkspaces(current => current.map(item => item.workspaceId === updated.workspace_id && item.version <= updated.version ? { ...item, primaryCoworkerId: updated.primary_coworker_id, version: updated.version } : item))} onOpenWork={() => { setOpenedTask(null); requestPageNavigation("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
         ) : page === "Conversations" ? (
           <ConversationsPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} operatorReady={runtime?.operatorReady === true && Boolean(selectedWorkspaceId)} />
         ) : page === "Work" ? (
           <WorkPage key={selectedWorkspaceId} selectedWorkspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={runtime?.operatorReady === true} initialTaskId={openedTask?.workspaceId === selectedWorkspaceId ? openedTask.taskId : null} />
         ) : page === "Library" ? (
-          <LibraryPage selectedWorkspaceId={selectedWorkspaceId} selectedWorkspaceIdRef={selectedWorkspaceIdRef} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item))} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => setPage("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
+          <LibraryPage selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={setSelectedWorkspaceId} selectedWorkspaceIdRef={selectedWorkspaceIdRef} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => {
+            setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item));
+            onLibraryDraftCommitted();
+          }} onDraftSaveFailure={onLibraryDraftSaveFailed} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => requestPageNavigation("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
         ) : page === "Needs You" ? (
-          <TaskAttentionPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} operatorReady={runtime?.operatorReady === true} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); setPage("Work"); }} />
+          <TaskAttentionPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} operatorReady={runtime?.operatorReady === true} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
         ) : page === "Coworkers" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
-          <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE</div><h1>Coworkers</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">◉</div><h2>Local Operator unavailable</h2><p>Start the local Runtime before loading or changing Coworker settings. No Coworker state is cached in this view.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
+          <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE</div><h1>Coworkers</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">◉</div><h2>Local Operator unavailable</h2><p>Start the local Runtime before loading or changing Coworker settings. No Coworker state is cached in this view.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Coworkers" ? (
           <CoworkerSettings
             api={coworkerApi}
@@ -1805,38 +1823,44 @@ function App() {
         ) : page === "Goals" ? (
           <GoalsPage key={selectedWorkspaceId} api={goalApi} workspaceId={selectedWorkspaceId} onOpenTask={(taskId) => {
             setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
-            setPage("Work");
+            requestPageNavigation("Work");
           }} />
         ) : page === "Ideas" && !selectedWorkspaceId ? (
-          <div className="page-content subpage-content"><div className="eyebrow">IDEAS</div><h1>Ideas</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">✦</div><h2>Select a Workspace</h2><p>Create or select a Workspace in Settings to view saved Suggestions.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Workspace settings <span aria-hidden="true">→</span></button></section></div>
+          <div className="page-content subpage-content"><div className="eyebrow">IDEAS</div><h1>Ideas</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">✦</div><h2>Select a Workspace</h2><p>Create or select a Workspace in Settings to view saved Suggestions.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Workspace settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Ideas" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
-          <div className="page-content subpage-content"><div className="eyebrow">IDEAS</div><h1>Ideas</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">✦</div><h2>Local Operator unavailable</h2><p>Start the local Runtime to load saved Suggestions. This view never starts work.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
+          <div className="page-content subpage-content"><div className="eyebrow">IDEAS</div><h1>Ideas</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">✦</div><h2>Local Operator unavailable</h2><p>Start the local Runtime to load saved Suggestions. This view never starts work.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Ideas" && suggestionApi ? (
           <SuggestionsPage key={selectedWorkspaceId} api={suggestionApi} onTaskAccepted={(taskId) => {
             setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
-            setPage("Work");
+            requestPageNavigation("Work");
           }} />
         ) : page === "Routines" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
-          <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE RESPONSIBILITIES</div><h1>Routines</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">↻</div><h2>Local Operator unavailable</h2><p>Start the local Runtime to load or change Routine definitions. Run now can save a Task in READY state; planning and agent execution are not available yet.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
+          <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE RESPONSIBILITIES</div><h1>Routines</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">↻</div><h2>Local Operator unavailable</h2><p>Start the local Runtime to load or change Routine definitions. Run now can save a Task in READY state; planning and agent execution are not available yet.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Routines" ? (
           <RoutinesPage key={selectedWorkspaceId} api={routineApi} workspaceId={selectedWorkspaceId} resources={resources} resourcesNextCursor={resourceNextCursor} resourcesPageBusy={resourcePageBusy} onLoadMoreResources={loadMoreResources} onOpenTask={(task) => {
             if (task.workspace_id !== selectedWorkspaceId || task.status !== "READY" || !task.task_id) return;
             setOpenedTask({ workspaceId: task.workspace_id, taskId: task.task_id });
-            setPage("Work");
+            requestPageNavigation("Work");
           }} />
         ) : page === "Automations" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
-          <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE RESPONSIBILITIES</div><h1>Automations</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">◷</div><h2>Local Operator unavailable</h2><p>Start the local Runtime before loading Automation definitions. No Automation state is cached in this view.</p><button className="text-button" type="button" onClick={() => setPage("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
+          <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE RESPONSIBILITIES</div><h1>Automations</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">◷</div><h2>Local Operator unavailable</h2><p>Start the local Runtime before loading Automation definitions. No Automation state is cached in this view.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Automations" ? (
           <AutomationsPage key={selectedWorkspaceId} api={automationApi} workspaceId={selectedWorkspaceId} resources={resources} resourcesNextCursor={resourceNextCursor} resourcesPageBusy={resourcePageBusy} onLoadMoreResources={loadMoreResources} onOpenTask={(taskId) => {
             setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
-            setPage("Work");
+            requestPageNavigation("Work");
           }} />
         ) : page === "Settings" ? (
           <SettingsPage runtime={runtime} runtimeLifecycle={runtimeLifecycle?.identity === `${runtime?.runtimeId}:${runtime?.localIncarnationId}` ? runtimeLifecycle.view : null} runtimeLifecycleLoading={runtimeLifecycleLoading} runtimeLifecycleError={runtimeLifecycleError} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} agents={agentInstallations} agentError={agentInstallationError} refreshAgents={refreshAgentInstallations} agentProfiles={agentProfiles} agentProfileError={agentProfileError} runtimeInventoryStreamStatus={runtimeInventoryStreamStatus} agentBindings={agentBindings} agentBindingError={agentBindingError} agentActionMessage={agentActionMessage} agentActionError={agentActionError} agentActionBusy={agentActionBusy} onProbeCodex={probeCodexProfile} onProbeOpenCode={probeOpenCodeProfile} onRefreshAgentProfiles={() => refreshAgentProfiles(selectedWorkspaceId)} onRefreshAgentBindings={() => refreshAgentBindings(selectedWorkspaceId)} onCreateAgentBinding={createAgentBinding} onEnableAgentBinding={enableAgentBinding} runtimeBindings={runtimeBindings} runtimeBindingError={runtimeBindingError} runtimeBindingsLoading={runtimeBindingsLoading} runtimeEnrollmentBusy={runtimeEnrollmentBusy} runtimeEnrollmentMessage={runtimeEnrollmentMessage} runtimeEnrollmentError={runtimeEnrollmentError} onEnrollLocalRuntime={enrollLocalRuntime} onRefreshRuntimeBindings={() => refreshRuntimeBindings(selectedWorkspaceId)} workspaces={workspaces} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} setWorkspaceName={setWorkspaceName} createWorkspace={createWorkspace} workspaceCreateBusy={workspaceCreateBusy} selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={setSelectedWorkspaceId} onUpdatePolicy={updateWorkspacePolicy} policyBusy={workspacePolicyBusy} onArchiveWorkspace={archiveWorkspace} archiveBusy={workspaceArchiveBusy} onSetDefaultAgentBinding={setWorkspaceDefaultAgent} defaultAgentBusy={workspaceDefaultAgentBusy} instructions={instructionText} onInstructionsChange={changeWorkspaceInstructions} instructionHistory={workspaceInstructions} instructionMessage={instructionMessage} instructionBusy={instructionBusy} onSaveInstructions={saveWorkspaceInstructions} latestInstructionsAfterConflict={latestInstructionsAfterConflict} onUseLatestInstructions={useLatestWorkspaceInstructions} />
         ) : (
-          <PlaceholderPage page={page} onSettings={() => setPage("Settings")} />
+          <PlaceholderPage page={page} onSettings={() => requestPageNavigation("Settings")} />
         )}
       </main>
+      <LibraryNavigationDialog
+        pending={pendingLibraryNavigation}
+        onStay={stayInLibrary}
+        onSave={saveLibraryDraftBeforeNavigation}
+        onDiscard={discardLibraryDraftAndNavigate}
+      />
     </div>
   );
 }
@@ -2790,7 +2814,7 @@ function PlaceholderPage({ page, onSettings }: { page: Page; onSettings: () => v
   );
 }
 
-function LibraryPage({ selectedWorkspaceId, selectedWorkspaceIdRef, artifactApi, onOpenArtifactSource, rootStatusRequestKeys, resourceIndexRequestKeys, workspaceVersion, operatorReady, resources, onRevisionCommitted, onRefreshResources, selectedTaskInputs, onToggleTaskInput, onClearTaskInputs, onUseSelectedInTask, nextCursor, pageBusy, onLoadMore, busy, pausePending, onPauseImport, message, onFiles, onPreview, onClosePreview, previewResourceId, previewResourceName, preview, previewHighlights, previewError }: { selectedWorkspaceId: string; selectedWorkspaceIdRef: { current: string }; artifactApi: ReturnType<typeof desktopArtifactApi>; onOpenArtifactSource: (ref: PinnedResourceRef) => void; rootStatusRequestKeys: { current: Map<string, string> }; resourceIndexRequestKeys: { current: Map<string, string> }; workspaceVersion: number | null; operatorReady: boolean; resources: ResourceView[]; onRevisionCommitted: (resource: ResourceView) => void; onRefreshResources: () => void; selectedTaskInputs: TaskInputSelection[]; onToggleTaskInput: (resource: { resourceId: string; resourceRevisionId: string; displayName: string }) => void; onClearTaskInputs: () => void; onUseSelectedInTask: () => void; nextCursor: string | null; pageBusy: boolean; onLoadMore: () => Promise<void>; busy: boolean; pausePending: boolean; onPauseImport: () => void; message: string | null; onFiles: (files: FileList | File[] | null, contextDocument?: ContextDocumentCreateMetadata | null) => Promise<void>; onPreview: (resourceId: string, displayName: string, revisionId: string, searchPin?: PreviewSearchPin) => Promise<void>; onClosePreview: () => void; previewResourceId: string | null; previewResourceName: string | null; preview: string | null; previewHighlights: SourceHighlightResult | null; previewError: string | null }) {
+function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspaceIdRef, artifactApi, onOpenArtifactSource, rootStatusRequestKeys, resourceIndexRequestKeys, workspaceVersion, operatorReady, resources, onRevisionCommitted, onDraftSaveFailure, onRefreshResources, selectedTaskInputs, onToggleTaskInput, onClearTaskInputs, onUseSelectedInTask, nextCursor, pageBusy, onLoadMore, busy, pausePending, onPauseImport, message, onFiles, onPreview, onClosePreview, previewResourceId, previewResourceName, preview, previewHighlights, previewError }: { selectedWorkspaceId: string; onSelectWorkspace: (workspaceId: string) => void; selectedWorkspaceIdRef: { current: string }; artifactApi: ReturnType<typeof desktopArtifactApi>; onOpenArtifactSource: (ref: PinnedResourceRef) => void; rootStatusRequestKeys: { current: Map<string, string> }; resourceIndexRequestKeys: { current: Map<string, string> }; workspaceVersion: number | null; operatorReady: boolean; resources: ResourceView[]; onRevisionCommitted: (resource: ResourceView) => void; onDraftSaveFailure: (message: string) => void; onRefreshResources: () => void; selectedTaskInputs: TaskInputSelection[]; onToggleTaskInput: (resource: { resourceId: string; resourceRevisionId: string; displayName: string }) => void; onClearTaskInputs: () => void; onUseSelectedInTask: () => void; nextCursor: string | null; pageBusy: boolean; onLoadMore: () => Promise<void>; busy: boolean; pausePending: boolean; onPauseImport: () => void; message: string | null; onFiles: (files: FileList | File[] | null, contextDocument?: ContextDocumentCreateMetadata | null) => Promise<void>; onPreview: (resourceId: string, displayName: string, revisionId: string, searchPin?: PreviewSearchPin) => Promise<void>; onClosePreview: () => void; previewResourceId: string | null; previewResourceName: string | null; preview: string | null; previewHighlights: SourceHighlightResult | null; previewError: string | null }) {
   const folderInput = useRef<HTMLInputElement>(null);
   const rootListGeneration = useRef(0);
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRootView[]>([]);
@@ -2850,7 +2874,6 @@ function LibraryPage({ selectedWorkspaceId, selectedWorkspaceIdRef, artifactApi,
     setSearchMode("METADATA");
     setSearchKind("");
     setSearchFreshness("");
-    setRevisionResource(null);
     setIndexActionMessage(null);
     setIndexActionError(null);
   }, [selectedWorkspaceId]);
@@ -3355,7 +3378,7 @@ function LibraryPage({ selectedWorkspaceId, selectedWorkspaceIdRef, artifactApi,
                 : preview}</pre>
             </>}
           </section>}
-          {revisionResource && <ResourceRevisionEditor resource={revisionResource} onClose={() => setRevisionResource(null)} onCommitted={(updated) => { onRevisionCommitted(updated); setRevisionResource(updated); }} />}
+          {revisionResource && <ResourceRevisionEditor resource={revisionResource} activeWorkspaceId={selectedWorkspaceId} onClose={() => setRevisionResource(null)} onSelectResource={setRevisionResource} onSelectWorkspace={onSelectWorkspace} onNavigationSaveFailure={onDraftSaveFailure} onCommitted={(updated) => { onRevisionCommitted(updated); setRevisionResource((current) => current?.workspaceId === updated.workspaceId && current.resourceId === updated.resourceId ? updated : current); }} />}
         </>
       )}
       <section className="workspace-list-card" aria-labelledby="finished-artifacts-heading">

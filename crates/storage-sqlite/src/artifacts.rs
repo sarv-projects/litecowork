@@ -23,11 +23,7 @@ impl ArtifactLibraryWriteStore for SqliteWorkspaceStore {
             &command.request_id,
         ])?;
         if command.expected_version == 0
-            || command.request_id.len() > 128
-            || !command
-                .request_id
-                .bytes()
-                .all(|byte| byte.is_ascii_graphic())
+            || !super::valid_shared_idempotency_key(&command.request_id)
             || command.event.workspace_id != command.workspace_id
             || command.event.entity_type != "Artifact"
             || command.event.entity_id != command.artifact_id

@@ -1,2 +1,4 @@
 nodeVersion: 24.21.0
 engineStrict: true
+allowBuilds:
+  'esbuild@0.25.12': true

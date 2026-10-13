@@ -16,7 +16,7 @@ fn valid_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 fn valid_request_id(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_graphic())
+    super::valid_idempotency_key(value)
 }
 
 struct ManualRunRequest {
@@ -301,5 +301,11 @@ mod manual_run_bridge_tests {
             Some(&json!({})),
         )
         .is_err());
+    }
+
+    #[test]
+    fn request_ids_use_the_full_shared_idempotency_key_limit() {
+        assert!(super::valid_request_id(&"k".repeat(200)));
+        assert!(!super::valid_request_id(&"k".repeat(201)));
     }
 }

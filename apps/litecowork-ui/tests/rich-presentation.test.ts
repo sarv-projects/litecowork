@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import * as richPresentation from "../src/presentation/rich-presentation.ts";
+import { ConversationCreateRequestCache } from "../src/conversations/conversation-view.ts";
 const { isValidatedRichPresentation, parseRichPresentationDocument, resolveRichResponseContent } = richPresentation;
 const parseResponseCandidate = (richPresentation as unknown as Record<string, unknown>).parseRichPresentationResponse;
 
@@ -83,12 +84,77 @@ test("response parser rejects Workspace, Conversation, document digest, and byte
   assert.equal(typeof parseResponse, "function");
   if (typeof parseResponse !== "function") return;
   const response = await responseFor(document);
-  const binding = { workspaceId: "workspace-1", conversationId: "conversation-1", messageId, semanticContentDigest: semanticDigest };
+  const binding = {
+    workspaceId: "workspace-1", conversationId: "conversation-1", messageId,
+    presentationId: "presentation-1", schemaVersion: 1, rendererContractVersion: 1,
+    semanticContentDigest: semanticDigest, documentDigest: response.document_digest, documentSizeBytes: response.document_size_bytes,
+  };
   assert.ok(await parseResponse(response, binding, semantic));
   assert.equal(await parseResponse({ ...response, workspace_id: "workspace-2" }, binding, semantic), null);
   assert.equal(await parseResponse({ ...response, conversation_id: "conversation-2" }, binding, semantic), null);
   assert.equal(await parseResponse({ ...response, document_digest: `sha256:${"0".repeat(64)}` }, binding, semantic), null);
   assert.equal(await parseResponse({ ...response, document_size_bytes: response.document_size_bytes + 1 }, binding, semantic), null);
+});
+
+test("response parser matches every immutable RichPresentation reference field", async () => {
+  const document = await documentFor([await textSlice()]);
+  const parseResponse = parseResponseCandidate;
+  assert.equal(typeof parseResponse, "function");
+  if (typeof parseResponse !== "function") return;
+  const response = await responseFor(document);
+  const binding = {
+    workspaceId: "workspace-1",
+    conversationId: "conversation-1",
+    messageId,
+    presentationId: "presentation-1",
+    schemaVersion: 1,
+    rendererContractVersion: 1,
+    semanticContentDigest: semanticDigest,
+    documentDigest: response.document_digest as string,
+    documentSizeBytes: response.document_size_bytes as number,
+  };
+  assert.ok(await parseResponse(response, binding, semantic));
+
+  const mismatches: Array<[string, Record<string, unknown>]> = [
+    ["presentation ID", { presentationId: "presentation-2" }],
+    ["schema version", { schemaVersion: 2 }],
+    ["renderer contract version", { rendererContractVersion: 2 }],
+    ["semantic content digest", { semanticContentDigest: `sha256:${"b".repeat(64)}` }],
+    ["document digest", { documentDigest: `sha256:${"c".repeat(64)}` }],
+    ["document size", { documentSizeBytes: binding.documentSizeBytes + 1 }],
+    ["Message ID", { messageId: "message-2" }],
+  ];
+  for (const [field, mismatch] of mismatches) {
+    const parsed = await parseResponse(response, { ...binding, ...mismatch }, semantic);
+    assert.equal(parsed, null, `response must match the current ${field}`);
+    if (field === "document digest") {
+      const fallback = resolveRichResponseContent(semantic, parsed);
+      assert.equal(fallback.presentation, null);
+      assert.equal(fallback.semanticText, semantic);
+    }
+  }
+});
+
+test("pending create identity survives a Workspace switch and page remount in the same app session", () => {
+  const pendingCreates = new ConversationCreateRequestCache();
+  const newPage = () => ({
+    create: (workspaceId: string, title: string, requestId: () => string) => pendingCreates.get(workspaceId, title, requestId),
+  });
+  let nextId = 0;
+  const newRequestId = () => `request-${++nextId}`;
+  const firstPage = newPage();
+  const original = firstPage.create("workspace-1", "Draft", newRequestId);
+  newPage().create("workspace-2", "Draft", newRequestId);
+  const remountedPage = newPage();
+  const retry = remountedPage.create("workspace-1", "Draft", newRequestId);
+  assert.equal(retry.requestId, original.requestId);
+  assert.equal(retry.workspaceId, "workspace-1");
+  assert.equal(retry.title, "Draft");
+
+  const conversationPage = readFileSync(new URL("../src/conversations/ConversationsPage.tsx", import.meta.url), "utf8");
+  const moduleCache = conversationPage.indexOf("const pendingCreates = new ConversationCreateRequestCache();");
+  const component = conversationPage.indexOf("export function ConversationsPage(");
+  assert.ok(moduleCache >= 0 && moduleCache < component, "the idempotency cache must outlive keyed page instances");
 });
 
 test("accepts a bounded semantic slice and binds it to the expected Message", async () => {

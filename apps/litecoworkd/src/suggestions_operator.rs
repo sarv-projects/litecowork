@@ -205,6 +205,10 @@ fn decode_cursor(
 }
 
 fn idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
+    super::idempotency_key(headers)
+}
+
+fn preference_idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
     headers
         .get("idempotency-key")
         .and_then(|value| value.to_str().ok())
@@ -392,7 +396,7 @@ async fn set_suggestion_preference(
         ));
     }
     let body: SetSuggestionPreferenceBody = serde_json::from_slice(&body).map_err(|_| invalid())?;
-    let request_id = idempotency_key(&headers)?;
+    let request_id = preference_idempotency_key(&headers)?;
     let version = expected_preference_version(&headers)?;
     let mut service = action_service(&state, &request_id)?;
     let preference = service

@@ -371,7 +371,12 @@ export type RichPresentationResponseBinding = {
   readonly workspaceId: string;
   readonly conversationId: string;
   readonly messageId: string;
+  readonly presentationId: string;
+  readonly schemaVersion: number;
+  readonly rendererContractVersion: number;
   readonly semanticContentDigest: string;
+  readonly documentDigest: string;
+  readonly documentSizeBytes: number;
 };
 
 /**
@@ -393,19 +398,25 @@ export async function parseRichPresentationResponse(
     || !boundedString(expected.workspaceId, 256, true)
     || !boundedString(expected.conversationId, 256, true)
     || !boundedString(expected.messageId, 256, true)
+    || !boundedString(expected.presentationId, 256, true)
+    || expected.schemaVersion !== 1
+    || !Number.isSafeInteger(expected.rendererContractVersion)
+    || expected.rendererContractVersion < 1
     || !DIGEST.test(expected.semanticContentDigest)
+    || !DIGEST.test(expected.documentDigest)
+    || !Number.isSafeInteger(expected.documentSizeBytes)
+    || expected.documentSizeBytes < 1
+    || expected.documentSizeBytes > MAX_DOCUMENT_BYTES
     || value.workspace_id !== expected.workspaceId
     || value.conversation_id !== expected.conversationId
     || value.message_id !== expected.messageId
-    || !boundedString(value.presentation_id, 256, true)
-    || value.schema_version !== 1
+    || value.presentation_id !== expected.presentationId
+    || value.schema_version !== expected.schemaVersion
     || !Number.isSafeInteger(value.renderer_contract_version)
-    || (value.renderer_contract_version as number) < 1
+    || value.renderer_contract_version !== expected.rendererContractVersion
     || value.semantic_content_digest !== expected.semanticContentDigest
-    || typeof value.document_digest !== "string" || !DIGEST.test(value.document_digest)
-    || !Number.isSafeInteger(value.document_size_bytes)
-    || (value.document_size_bytes as number) < 1
-    || (value.document_size_bytes as number) > MAX_DOCUMENT_BYTES
+    || value.document_digest !== expected.documentDigest
+    || value.document_size_bytes !== expected.documentSizeBytes
     || !isRecord(value.document)
     || !isBoundedJsonValue(value.document)) return null;
 

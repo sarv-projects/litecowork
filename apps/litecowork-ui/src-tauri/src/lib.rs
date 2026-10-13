@@ -1342,6 +1342,10 @@ fn workspace_instruction_revisions_path(
     ))
 }
 
+pub(crate) fn valid_idempotency_key(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 200 && value.bytes().all(|byte| byte.is_ascii_graphic())
+}
+
 fn validate_workspace_instruction_request(
     workspace_id: &str,
     parent_revisions: &[u64],
@@ -1359,9 +1363,7 @@ fn validate_workspace_instruction_request(
         || parent_revisions.len() > MAX_INSTRUCTION_PARENTS
         || parent_revisions.contains(&0)
         || content_digest.len() > 71
-        || request_id.is_empty()
-        || request_id.len() > 128
-        || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+        || !valid_idempotency_key(request_id)
     {
         return Err("Workspace instruction request is invalid".to_owned());
     }
@@ -1589,9 +1591,7 @@ async fn add_workspace_root(
                 replication_policy.as_str(),
                 "NONE" | "ACTIVE_TASKS" | "SELECTED_WORKSPACE_POLICY"
             )
-            || request_id.is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !valid_idempotency_key(&request_id)
         {
             return Err("Persistent folder request is invalid".to_owned());
         }
@@ -1670,9 +1670,7 @@ async fn revoke_workspace_root(
         };
         if !valid_id(&workspace_id)
             || !valid_id(&workspace_root_id)
-            || request_id.is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !valid_idempotency_key(&request_id)
         {
             return Err("Persistent folder removal request is invalid".to_owned());
         }
@@ -1765,9 +1763,7 @@ async fn change_workspace_root_status(
             || !valid_id(&workspace_root_id)
             || expected_version == 0
             || expected_version == u64::MAX
-            || request_id.is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !valid_idempotency_key(&request_id)
         {
             return Err("Persistent folder status request is invalid".to_owned());
         }
@@ -1920,9 +1916,7 @@ async fn create_task(
                         .bytes()
                         .all(|byte| byte.is_ascii_graphic())
             })
-            || request_id.is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !valid_idempotency_key(&request_id)
         {
             return Err("Task request is invalid".to_owned());
         }
@@ -2262,9 +2256,7 @@ async fn revise_task_spec(
             || parent_revision == 0
             || objective.is_empty()
             || objective.len() > 32 * 1024
-            || request_id.is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !valid_idempotency_key(&request_id)
         {
             return Err("Task edit request is invalid".to_owned());
         }
@@ -2443,7 +2435,7 @@ async fn create_agent_binding(
     request_id: String,
 ) -> Result<AgentBindingView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.trim().is_empty() || agent_profile_id.trim().is_empty() || request_id.trim().is_empty() || request_id.len() > 128 {
+        if workspace_id.trim().is_empty() || agent_profile_id.trim().is_empty() || !valid_idempotency_key(&request_id) {
             return Err("Agent binding request is invalid".to_owned());
         }
         let (client, workspace_url) = operator_client(&app)?;
@@ -2478,8 +2470,7 @@ async fn enable_agent_binding(
     tauri::async_runtime::spawn_blocking(move || {
         if workspace_id.trim().is_empty()
             || agent_binding_id.trim().is_empty()
-            || request_id.trim().is_empty()
-            || request_id.len() > 128
+            || !valid_idempotency_key(&request_id)
         {
             return Err("Agent binding enable request is invalid".to_owned());
         }
@@ -2540,8 +2531,7 @@ async fn enroll_local_runtime(
     request_id: String,
 ) -> Result<RuntimeWorkspaceBindingView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.trim().is_empty() || request_id.trim().is_empty() || request_id.len() > 128
-        {
+        if workspace_id.trim().is_empty() || !valid_idempotency_key(&request_id) {
             return Err("Local Runtime enrollment request is invalid".to_owned());
         }
         let (client, workspace_url) = operator_client(&app)?;
@@ -2585,7 +2575,7 @@ fn validate_workspace_policy_request(
             replication_policy,
             "LOCAL_ONLY" | "METADATA_ONLY" | "ACTIVE_TASK_INPUTS" | "FULL_WORKSPACE"
         )
-        || request_id.is_empty()
+        || !valid_idempotency_key(request_id)
     {
         return Err("Workspace policy request is invalid".to_owned());
     }
@@ -2630,9 +2620,7 @@ fn validate_workspace_archive_request(workspace_id: &str, request_id: &str) -> R
         || !workspace_id
             .bytes()
             .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b'/' | b'?' | b'#'))
-        || request_id.is_empty()
-        || request_id.len() > 128
-        || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+        || !valid_idempotency_key(request_id)
     {
         return Err("Workspace archive request is invalid".to_owned());
     }
@@ -2678,7 +2666,7 @@ async fn set_workspace_default_agent_binding(
 ) -> Result<WorkspaceView, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if workspace_id.trim().is_empty()
-            || request_id.trim().is_empty()
+            || !valid_idempotency_key(&request_id)
             || agent_binding_id
                 .as_ref()
                 .is_some_and(|id| id.trim().is_empty())
@@ -2770,9 +2758,7 @@ async fn set_context_document_status(
     tauri::async_runtime::spawn_blocking(move || {
         validate_resource_selection(&workspace_id, &resource_id)?;
         if expected_version == 0 || expected_version == u64::MAX
-            || request_id.is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !valid_idempotency_key(&request_id)
             || !matches!(target_status.as_str(), "ACTIVE" | "REVOKED")
         {
             return Err("ContextDocument status request is invalid".to_owned());
@@ -2907,7 +2893,7 @@ async fn create_resource_revision_upload(
             || media_type.is_empty() || media_type.len() > 160 || size_bytes > 100 * 1024 * 1024
             || expected_digest.len() != 71 || !expected_digest.starts_with("sha256:")
             || !expected_digest[7..].bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-            || request_id.is_empty() || request_id.len() > 128
+            || !valid_idempotency_key(&request_id)
         {
             return Err("Resource revision selection is invalid".to_owned());
         }
@@ -2950,7 +2936,7 @@ async fn commit_resource_revision_upload(
 ) -> Result<ResourceView, String> {
     tauri::async_runtime::spawn_blocking(move || {
         validate_upload_scope(&workspace_id, &upload_id)?;
-        if request_id.is_empty() || request_id.len() > 128 { return Err("Resource commit identity is invalid".to_owned()); }
+        if !valid_idempotency_key(&request_id) { return Err("Resource commit identity is invalid".to_owned()); }
         let (client, workspace_url) = operator_client(&app)?;
         let response = client.post(format!("{}/resources/uploads/{}/commit", workspace_url.trim_end_matches("/workspaces"), upload_id))
             .header("X-Workspace-ID", &workspace_id)
@@ -3002,6 +2988,9 @@ async fn import_resource(
         let display_name = display_name.trim();
         if workspace_id.is_empty() || display_name.is_empty() || display_name.len() > 240 {
             return Err("Resource selection is invalid".to_owned());
+        }
+        if !valid_idempotency_key(&request_id) {
+            return Err("Resource intake request identity is invalid".to_owned());
         }
         if content_base64.len() > 14 * 1024 * 1024 {
             return Err("Resource exceeds the 10 MiB local intake limit".to_owned());
@@ -3069,7 +3058,7 @@ async fn create_resource_upload(
                 return Err("Only Workspace notes can be created here; choose Workspace notes without folder-import metadata".to_owned());
             }
         }
-        if request_id.is_empty() || request_id.len() > 128 {
+        if !valid_idempotency_key(&request_id) {
             return Err("Resource upload request identity is invalid".to_owned());
         }
         let (client, workspace_url) = operator_client(&app)?;
@@ -3177,7 +3166,7 @@ async fn upload_resource_chunk(
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         validate_upload_scope(&workspace_id, &upload_id)?;
-        if request_id.is_empty() || request_id.len() > 128 {
+        if !valid_idempotency_key(&request_id) {
             return Err("Resource chunk request identity is invalid".to_owned());
         }
         if chunk_sha256.len() != 64
@@ -3233,7 +3222,7 @@ async fn commit_resource_upload(
 ) -> Result<ResourceView, String> {
     tauri::async_runtime::spawn_blocking(move || {
         validate_upload_scope(&workspace_id, &upload_id)?;
-        if request_id.is_empty() || request_id.len() > 128 {
+        if !valid_idempotency_key(&request_id) {
             return Err("Resource commit request identity is invalid".to_owned());
         }
         let (client, workspace_url) = operator_client(&app)?;
@@ -3571,9 +3560,7 @@ async fn rebuild_resource_text_index(
             || content_digest.len() != 71
             || !content_digest.starts_with("sha256:")
             || !content_digest[7..].bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            || request_id.is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !valid_idempotency_key(&request_id)
         {
             return Err("Resource index rebuild selection is invalid".to_owned());
         }
@@ -3867,10 +3854,7 @@ fn create_workspace_request(
     if name.is_empty() || name.chars().count() > 160 {
         return Err("Workspace name must contain 1 to 160 bytes".to_owned());
     }
-    if request_id.is_empty()
-        || request_id.len() > 128
-        || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
-    {
+    if !valid_idempotency_key(&request_id) {
         return Err("Workspace request identifier is invalid".to_owned());
     }
     let (client, url) = operator_client(app)?;
@@ -5751,5 +5735,24 @@ mod task_planning_readiness_tests {
         assert!(validate_task_planning_readiness_identity(view.clone(), "task-2", 3).is_err());
         assert!(validate_task_planning_readiness_identity(view.clone(), "task-1", 4).is_err());
         assert!(validate_task_planning_readiness_identity(view, "task-1", 3).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod idempotency_key_validation_tests {
+    use super::valid_idempotency_key;
+
+    #[test]
+    fn accepts_printable_ascii_keys_through_the_shared_200_byte_limit() {
+        assert!(valid_idempotency_key("!"));
+        assert!(valid_idempotency_key(&"a".repeat(128)));
+        assert!(valid_idempotency_key(&"~".repeat(200)));
+    }
+
+    #[test]
+    fn rejects_empty_oversized_or_non_graphic_keys() {
+        for invalid in ["", &"a".repeat(201), "has space", "line\nbreak", "café"] {
+            assert!(!valid_idempotency_key(invalid), "accepted {invalid:?}");
+        }
     }
 }

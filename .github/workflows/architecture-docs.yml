@@ -12,7 +12,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions-rust-lang/setup-rust-toolchain@v2
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.23"
@@ -25,3 +25,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes bubblewrap libdbus-1-dev pkg-config
       - run: scripts/check.sh
+
+  ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      LITECOWORK_CHROME: /usr/bin/google-chrome
+    defaults:
+      run:
+        working-directory: apps/litecowork-ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: apps/litecowork-ui/.node-version
+      - name: Install locked UI dependencies
+        run: corepack pnpm@12.10.1 install --frozen-lockfile
+      - name: Run UI test suite
+        run: corepack pnpm@12.10.1 test
+      - name: Run rendered UI interaction and accessibility checks
+        run: |
+          google-chrome --version
+          corepack pnpm@12.10.1 test:browser
+      - name: Build production UI
+        run: corepack pnpm@12.10.1 build
+
+  tauri:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+      - name: Install Tauri Linux native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            build-essential curl file libayatana-appindicator3-dev libdbus-1-dev \
+            librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev pkg-config wget
+      - name: Test separate Tauri Cargo workspace
+        run: cargo test --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --workspace --locked

@@ -2,6 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { createGoalApi, type GoalTransport } from "./goal-api";
 
 type BridgeResponse = { status: number; contentType: string; bodyBase64: string };
+function validIdempotencyKey(value: string): boolean {
+  return /^[\x21-\x7e]{1,200}$/.test(value);
+}
 function decodeBase64(encoded: string): Uint8Array {
   const binary = atob(encoded);
   return Uint8Array.from(binary, character => character.charCodeAt(0));
@@ -60,7 +63,7 @@ function desktopTransport(workspaceId: string): GoalTransport {
     }
 
     if (method !== "GET") {
-      if (!requestId || requestId.length > 128) throw new Error("Goal request identity is missing.");
+      if (!requestId || !validIdempotencyKey(requestId)) throw new Error("Goal request identity is missing.");
       const rawVersion = headers.get("If-Match");
       if (rawVersion !== null) {
         const parsed = Number(rawVersion.replace(/^\"|\"$/g, ""));

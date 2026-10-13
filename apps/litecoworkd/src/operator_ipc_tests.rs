@@ -17,13 +17,13 @@ use super::{
 use axum::{
     Json, Router,
     body::{Body, to_bytes},
-    http::{Request, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     middleware,
     response::Response,
     routing::{get, post},
 };
 use base64::Engine;
-use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
+use domain_workspace::{ArchiveWorkspace, CreateWorkspace, EventContext, WorkspaceService};
 use http_body::Body as HttpBody;
 use operator_ipc::{
     DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, InFlightBodyBudget, LogicalHeader, PROTOCOL_VERSION,
@@ -41,8 +41,8 @@ use std::{
     time::Duration,
 };
 use storage_core::{
-    AgentCatalogStore, BlobPurpose, BlobStore, DeviceIdentityRecord,
-    LocalAgentEndpointBindingInput, LocalRuntimeWorkspaceEnrollmentRequest,
+    AgentCatalogStore, BlobPurpose, BlobStore, ConversationRecord, DeviceIdentityRecord,
+    EventStore, LocalAgentEndpointBindingInput, LocalRuntimeWorkspaceEnrollmentRequest,
     RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
     RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeOfferRecord, RuntimeRecord,
     RuntimeWorkspaceBindingStore, StateStore, StoreError, TaskStore, WorkspaceCreateRequest,
@@ -66,6 +66,36 @@ fn runtime_inventory_revision_stops_at_json_safe_integer_limit() {
         revision.load(std::sync::atomic::Ordering::Acquire),
         super::MAX_SAFE_JSON_INTEGER
     );
+}
+
+#[test]
+fn operator_idempotency_key_matches_the_canonical_200_byte_bound() {
+    for length in [129, 200] {
+        let key = "k".repeat(length);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "idempotency-key",
+            HeaderValue::from_str(&key).expect("printable key is a valid HTTP header"),
+        );
+        assert_eq!(
+            super::idempotency_key(&headers).expect("canonical-length key is accepted"),
+            key
+        );
+    }
+
+    let mut too_long = HeaderMap::new();
+    too_long.insert(
+        "idempotency-key",
+        HeaderValue::from_str(&"k".repeat(201)).expect("printable key is a valid HTTP header"),
+    );
+    assert!(super::idempotency_key(&too_long).is_err());
+
+    let mut malformed = HeaderMap::new();
+    malformed.insert(
+        "idempotency-key",
+        HeaderValue::from_static("key with spaces"),
+    );
+    assert!(super::idempotency_key(&malformed).is_err());
 }
 
 #[test]
@@ -809,6 +839,17 @@ async fn workspace_archive_route_is_owner_scoped_quiescent_and_idempotent() {
         first_workspace
     );
 
+    let changed_receipt =
+        send_archive(router.clone(), WORKSPACE_ID, "archive-route-key", "2").await;
+    assert_eq!(changed_receipt.status(), StatusCode::CONFLICT);
+    let changed_receipt_body = to_bytes(changed_receipt.into_body(), 4096)
+        .await
+        .expect("bounded archive receipt conflict");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&changed_receipt_body).expect("error JSON")["code"],
+        "CONFLICT"
+    );
+
     let changed_key = send_archive(router.clone(), WORKSPACE_ID, "archive-route-key-2", "2").await;
     assert_eq!(changed_key.status(), StatusCode::CONFLICT);
     let changed_key_body = to_bytes(changed_key.into_body(), 4096)
@@ -845,6 +886,164 @@ async fn workspace_archive_route_is_owner_scoped_quiescent_and_idempotent() {
         )
         .expect("count archive events");
     assert_eq!(archived_events, 1);
+}
+
+#[tokio::test]
+async fn conversation_create_replays_receipt_after_archive_and_rejects_fresh_create() {
+    const WORKSPACE_ID: &str = "conversation-archive-replay-workspace";
+    const OWNER: &str = "conversation-archive-replay-owner";
+    const RUNTIME: &str = "conversation-archive-replay-runtime";
+    const NOW: &str = "2026-10-11T14:00:00Z";
+
+    let directory = tempfile::tempdir().expect("private Conversation route fixture directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("private route fixture directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        &database,
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            IpcReplayTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real SQLite store opens");
+    WorkspaceService::new(store.clone())
+        .create(CreateWorkspace {
+            workspace_id: WORKSPACE_ID.to_owned(),
+            name: "Conversation archive replay Workspace".to_owned(),
+            owner_principal_id: OWNER.to_owned(),
+            event: EventContext {
+                event_id: "conversation-archive-replay-workspace-created".to_owned(),
+                origin_runtime_id: RUNTIME.to_owned(),
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: "conversation-archive-replay-workspace-created".to_owned(),
+                causation_id: None,
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("Workspace commits");
+
+    let router = super::conversation_operator::test_router(
+        store.clone(),
+        OWNER.to_owned(),
+        RUNTIME.to_owned(),
+    );
+    async fn create(router: Router, workspace_id: &str, key: &str, title: &str) -> Response {
+        let mut request = Request::post("/v1/conversations")
+            .header("x-workspace-id", workspace_id)
+            .header("idempotency-key", key)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"workspace_id":workspace_id,"title":title}).to_string(),
+            ))
+            .expect("Conversation create request is valid");
+        request.extensions_mut().insert(AuthenticatedLocalPeer);
+        router.oneshot(request).await.expect("route responds")
+    }
+
+    let first = create(
+        router.clone(),
+        WORKSPACE_ID,
+        "conversation-archive-replay-key",
+        "Saved title",
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::CREATED);
+    let first_body = to_bytes(first.into_body(), 1024 * 1024)
+        .await
+        .expect("first response body");
+    let first_record: ConversationRecord =
+        serde_json::from_slice(&first_body).expect("Conversation response is typed");
+
+    WorkspaceService::new(store.clone())
+        .archive_idempotent(
+            ArchiveWorkspace {
+                workspace_id: WORKSPACE_ID.to_owned(),
+                expected_version: 1,
+                principal_id: OWNER.to_owned(),
+                event: EventContext {
+                    event_id: "conversation-archive-replay-archived".to_owned(),
+                    origin_runtime_id: RUNTIME.to_owned(),
+                    hlc_timestamp: NOW.to_owned(),
+                    correlation_id: "conversation-archive-replay-archived".to_owned(),
+                    causation_id: None,
+                    recorded_at: NOW.to_owned(),
+                },
+            },
+            "conversation-archive-replay-archive-key".to_owned(),
+            serde_json::json!({
+                "operation":"workspace.archive.v1",
+                "workspace_id":WORKSPACE_ID,
+                "expected_version":1
+            }),
+        )
+        .expect("quiescent Workspace archives");
+
+    let replay = create(
+        router.clone(),
+        WORKSPACE_ID,
+        "conversation-archive-replay-key",
+        "Saved title",
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::CREATED);
+    let replay_body = to_bytes(replay.into_body(), 1024 * 1024)
+        .await
+        .expect("replayed response body");
+    let replay_record: ConversationRecord =
+        serde_json::from_slice(&replay_body).expect("replayed Conversation response is typed");
+    assert_eq!(replay_record, first_record);
+
+    let changed_payload = create(
+        router.clone(),
+        WORKSPACE_ID,
+        "conversation-archive-replay-key",
+        "Changed title",
+    )
+    .await;
+    assert_eq!(changed_payload.status(), StatusCode::CONFLICT);
+    let conflict_body = to_bytes(changed_payload.into_body(), 1024 * 1024)
+        .await
+        .expect("conflict body");
+    let conflict: Value = serde_json::from_slice(&conflict_body).expect("typed conflict");
+    assert_eq!(conflict["code"], "CONFLICT");
+
+    let fresh_create = create(
+        router,
+        WORKSPACE_ID,
+        "conversation-archive-fresh-key",
+        "New conversation",
+    )
+    .await;
+    assert_eq!(fresh_create.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let archived_body = to_bytes(fresh_create.into_body(), 1024 * 1024)
+        .await
+        .expect("archived-create body");
+    let archived: Value = serde_json::from_slice(&archived_body).expect("typed archive error");
+    assert_eq!(archived["code"], "WORKSPACE_ARCHIVED");
+
+    assert_eq!(
+        store
+            .read_workspace_events(WORKSPACE_ID)
+            .expect("workspace events read")
+            .iter()
+            .filter(|event| event.event_type == "conversation.created.v1")
+            .count(),
+        1
+    );
+    let connection = rusqlite::Connection::open(database).expect("fixture database opens");
+    let conversation_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM conversations WHERE workspace_id=?1",
+            [WORKSPACE_ID],
+            |row| row.get(0),
+        )
+        .expect("count persisted Conversations");
+    assert_eq!(conversation_count, 1);
 }
 
 #[tokio::test]
@@ -1318,6 +1517,13 @@ async fn workspace_policy_route_is_owner_scoped_versioned_and_idempotent() {
     )
     .await;
     assert_eq!(changed_replay.status(), StatusCode::CONFLICT);
+    let changed_replay_body = to_bytes(changed_replay.into_body(), 4096)
+        .await
+        .expect("bounded changed-receipt error");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&changed_replay_body).expect("error JSON")["code"],
+        "CONFLICT"
+    );
     let stale = patch_workspace_policy(
         router.clone(),
         WORKSPACE_ID,
@@ -1327,6 +1533,13 @@ async fn workspace_policy_route_is_owner_scoped_versioned_and_idempotent() {
     )
     .await;
     assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let stale_body = to_bytes(stale.into_body(), 4096)
+        .await
+        .expect("bounded stale policy error");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&stale_body).expect("error JSON")["code"],
+        "STALE_WORKSPACE_VERSION"
+    );
 
     let foreign_owner_router = workspace_policy_routes()
         .route_layer(middleware::from_fn(authenticate))
@@ -1396,6 +1609,282 @@ async fn workspace_policy_route_is_owner_scoped_versioned_and_idempotent() {
 }
 
 #[tokio::test]
+async fn workspace_default_agent_route_distinguishes_receipt_conflict_from_stale_version() {
+    const WORKSPACE_ID: &str = "default-agent-route-workspace";
+    const OWNER: &str = "default-agent-route-owner";
+    const RUNTIME: &str = "default-agent-route-runtime";
+    const BINDING_ID: &str = "default-agent-route-binding";
+    const NOW: &str = "2026-10-12T11:00:00Z";
+
+    fn count_files(path: &std::path::Path) -> usize {
+        let Ok(entries) = fs::read_dir(path) else {
+            return 0;
+        };
+        entries
+            .filter_map(Result::ok)
+            .map(|entry| {
+                let path = entry.path();
+                if path.is_dir() { count_files(&path) } else { 1 }
+            })
+            .sum()
+    }
+
+    let directory = tempfile::tempdir().expect("temporary default AgentBinding route directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("private route fixture directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        &database,
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            IpcReplayTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real SQLite store opens");
+    WorkspaceService::new(store.clone())
+        .create(CreateWorkspace {
+            workspace_id: WORKSPACE_ID.to_owned(),
+            name: "Default AgentBinding route Workspace".to_owned(),
+            owner_principal_id: OWNER.to_owned(),
+            event: EventContext {
+                event_id: "default-agent-route-created".to_owned(),
+                origin_runtime_id: RUNTIME.to_owned(),
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: "default-agent-route-created".to_owned(),
+                causation_id: None,
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("owner Workspace commits");
+    let connection = rusqlite::Connection::open(&database).expect("open binding fixture database");
+    connection
+        .execute(
+            "INSERT INTO agent_profiles(agent_profile_id, provider_key, display_name, discovered_at) VALUES ('default-agent-route-profile', 'fixture', 'Fixture Agent', ?1)",
+            [NOW],
+        )
+        .expect("seed AgentProfile");
+    connection
+        .execute(
+            "INSERT INTO agent_bindings(agent_binding_id, workspace_id, agent_profile_id, endpoint_selection_policy_json, configuration_json, enabled, lead_eligible, created_at, version) VALUES (?1, ?2, 'default-agent-route-profile', '{}', '{}', 1, 1, ?3, 1)",
+            rusqlite::params![BINDING_ID, WORKSPACE_ID, NOW],
+        )
+        .expect("seed enabled lead AgentBinding");
+    drop(connection);
+
+    let router = Router::new()
+        .route(
+            "/v1/workspaces/{workspace_id}/default-agent-binding",
+            axum::routing::patch(super::set_workspace_default_agent_binding),
+        )
+        .route_layer(middleware::from_fn(authenticate))
+        .with_state(WorkspacePolicyApiState {
+            store: store.clone(),
+            principal_id: OWNER.to_owned(),
+            runtime_id: RUNTIME.to_owned(),
+        });
+
+    async fn set_default(
+        router: Router,
+        workspace_id: &str,
+        version: &str,
+        key: &str,
+        binding_id: Value,
+    ) -> Response {
+        let mut request = Request::patch(format!(
+            "/v1/workspaces/{workspace_id}/default-agent-binding"
+        ))
+        .header("x-workspace-id", workspace_id)
+        .header("if-match", version)
+        .header("idempotency-key", key)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"agent_binding_id": binding_id}).to_string(),
+        ))
+        .expect("Workspace default AgentBinding request is valid");
+        request.extensions_mut().insert(AuthenticatedLocalPeer);
+        router
+            .oneshot(request)
+            .await
+            .expect("default AgentBinding route responds")
+    }
+
+    let first = set_default(
+        router.clone(),
+        WORKSPACE_ID,
+        "1",
+        "default-agent-route-key",
+        json!(BINDING_ID),
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_body = to_bytes(first.into_body(), 4096)
+        .await
+        .expect("bounded committed Workspace body");
+    let first_workspace: Value = serde_json::from_slice(&first_body).expect("Workspace JSON");
+    let blob_count_after_commit = count_files(&directory.path().join("blobs"));
+    let replay = set_default(
+        router.clone(),
+        WORKSPACE_ID,
+        "1",
+        "default-agent-route-key",
+        json!(BINDING_ID),
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay_body = to_bytes(replay.into_body(), 4096)
+        .await
+        .expect("bounded replayed Workspace body");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&replay_body).expect("Workspace JSON"),
+        first_workspace
+    );
+    assert_eq!(
+        count_files(&directory.path().join("blobs")),
+        blob_count_after_commit,
+        "an exact replay must not write unreferenced candidate aggregate state"
+    );
+
+    let changed_if_match = set_default(
+        router.clone(),
+        WORKSPACE_ID,
+        "2",
+        "default-agent-route-key",
+        json!(BINDING_ID),
+    )
+    .await;
+    assert_eq!(changed_if_match.status(), StatusCode::CONFLICT);
+    let changed_if_match_body = to_bytes(changed_if_match.into_body(), 4096)
+        .await
+        .expect("bounded changed-If-Match receipt conflict");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&changed_if_match_body).expect("error JSON")["code"],
+        "CONFLICT",
+        "the If-Match precondition is part of the idempotency payload"
+    );
+
+    let changed_receipt = set_default(
+        router.clone(),
+        WORKSPACE_ID,
+        "1",
+        "default-agent-route-key",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(changed_receipt.status(), StatusCode::CONFLICT);
+    let changed_body = to_bytes(changed_receipt.into_body(), 4096)
+        .await
+        .expect("bounded receipt conflict");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&changed_body).expect("error JSON")["code"],
+        "CONFLICT"
+    );
+
+    let clear_default = set_default(
+        router.clone(),
+        WORKSPACE_ID,
+        "2",
+        "default-agent-route-clear",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(clear_default.status(), StatusCode::OK);
+
+    let connection = rusqlite::Connection::open(&database).expect("open binding fixture database");
+    connection
+        .execute(
+            "UPDATE agent_bindings SET enabled = 0, lead_eligible = 0, version = version + 1 WHERE agent_binding_id = ?1 AND workspace_id = ?2",
+            rusqlite::params![BINDING_ID, WORKSPACE_ID],
+        )
+        .expect("disable the selected binding after the committed request");
+    drop(connection);
+    let blob_count_before_late_replay = count_files(&directory.path().join("blobs"));
+
+    let replay_after_binding_change = set_default(
+        router.clone(),
+        WORKSPACE_ID,
+        "1",
+        "default-agent-route-key",
+        json!(BINDING_ID),
+    )
+    .await;
+    assert_eq!(
+        replay_after_binding_change.status(),
+        StatusCode::OK,
+        "an exact receipt retry must be resolved before current binding eligibility"
+    );
+    let late_replay_body = to_bytes(replay_after_binding_change.into_body(), 4096)
+        .await
+        .expect("bounded replayed Workspace body");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&late_replay_body).expect("Workspace JSON"),
+        first_workspace
+    );
+    assert_eq!(
+        count_files(&directory.path().join("blobs")),
+        blob_count_before_late_replay,
+        "a receipt replay after binding changes must not write candidate state"
+    );
+
+    let new_disabled_binding_selection = set_default(
+        router.clone(),
+        WORKSPACE_ID,
+        "3",
+        "default-agent-route-disabled-binding",
+        json!(BINDING_ID),
+    )
+    .await;
+    assert_eq!(
+        new_disabled_binding_selection.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let disabled_binding_body = to_bytes(new_disabled_binding_selection.into_body(), 4096)
+        .await
+        .expect("bounded disabled-binding error");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&disabled_binding_body).expect("error JSON")["code"],
+        "AGENT_NOT_LEAD_ELIGIBLE"
+    );
+
+    let stale = set_default(
+        router,
+        WORKSPACE_ID,
+        "1",
+        "default-agent-route-stale",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    let stale_body = to_bytes(stale.into_body(), 4096)
+        .await
+        .expect("bounded stale-version error");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&stale_body).expect("error JSON")["code"],
+        "STALE_WORKSPACE_VERSION"
+    );
+
+    assert_eq!(
+        store
+            .read_workspace_events(WORKSPACE_ID)
+            .expect("read Workspace events")
+            .iter()
+            .filter(|event| event.event_type == "workspace.default_agent_binding.changed.v1")
+            .count(),
+        2,
+        "the first selection and clear are the only default-binding events"
+    );
+    let current_workspace = store
+        .get_workspace(WORKSPACE_ID)
+        .expect("Workspace lookup")
+        .expect("Workspace exists");
+    assert_eq!(current_workspace.version, 3);
+    assert_eq!(current_workspace.default_agent_binding_id, None);
+}
+
+#[tokio::test]
 async fn instruction_create_route_commits_first_revision_and_replays_after_advance() {
     const WORKSPACE_ID: &str = "instruction-route-replay-workspace";
     const RESOURCE_ID: &str = "route-instruction-resource";
@@ -1450,6 +1939,12 @@ async fn instruction_create_route_commits_first_revision_and_replays_after_advan
             rusqlite::params![BINDING_ID, WORKSPACE_ID, now],
         )
         .expect("seed enabled lead AgentBinding");
+    connection
+        .execute(
+            "UPDATE workspaces SET default_agent_binding_id = ?1 WHERE workspace_id = ?2",
+            rusqlite::params![BINDING_ID, WORKSPACE_ID],
+        )
+        .expect("select the Workspace default lead");
     drop(connection);
     let resource_blob = blobs
         .put(WORKSPACE_ID, BlobPurpose::Resource, CONTENT, "text/plain")
@@ -1528,29 +2023,28 @@ async fn instruction_create_route_commits_first_revision_and_replays_after_advan
             principal_id: OWNER.to_owned(),
             runtime_id: "instruction-route-runtime".to_owned(),
         });
+    let task_request_id = "k".repeat(200);
+    let task_payload = json!({
+        "workspace_id": WORKSPACE_ID,
+        "objective": "Use the current Workspace instructions",
+        "source_message_refs": [],
+        "constraints": [],
+        "non_goals": [],
+        "input_refs": [],
+        "required_outputs": [],
+        "acceptance_criteria": [],
+        "approvals_required": [],
+        "placement_preference": "AUTO"
+    });
     let mut task_request = Request::post("/v1/tasks")
         .header("x-workspace-id", WORKSPACE_ID)
-        .header("idempotency-key", "instruction-route-task-create")
+        .header("idempotency-key", task_request_id.as_str())
         .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            json!({
-                "workspace_id": WORKSPACE_ID,
-                "objective": "Use the current Workspace instructions",
-                "source_message_refs": [],
-                "constraints": [],
-                "non_goals": [],
-                "input_refs": [],
-                "required_outputs": [],
-                "acceptance_criteria": [],
-                "approvals_required": [],
-                "placement_preference": "AUTO",
-                "preferred_lead_agent_binding_id": BINDING_ID
-            })
-            .to_string(),
-        ))
+        .body(Body::from(task_payload.to_string()))
         .expect("Task creation request is valid");
     task_request.extensions_mut().insert(AuthenticatedLocalPeer);
     let task_response = task_router
+        .clone()
         .oneshot(task_request)
         .await
         .expect("Task route returns a response");
@@ -1564,10 +2058,34 @@ async fn instruction_create_route_commits_first_revision_and_replays_after_advan
         .expect("Task response has an ID")
         .to_owned();
     assert_eq!(task_body["task"]["status"], "READY");
+    assert_eq!(task_body["task"]["lead_agent_binding_id"], BINDING_ID);
     assert_eq!(
         task_body["current_spec_revision"]["workspace_instruction_revision"],
         1
     );
+
+    let foreign_task_router = Router::new()
+        .route("/v1/tasks", post(super::create_task))
+        .route_layer(middleware::from_fn(authenticate))
+        .with_state(TaskCreateApiState {
+            store: store.clone(),
+            principal_id: "another-task-owner".to_owned(),
+            runtime_id: "instruction-route-runtime".to_owned(),
+        });
+    let mut foreign_replay_request = Request::post("/v1/tasks")
+        .header("x-workspace-id", WORKSPACE_ID)
+        .header("idempotency-key", task_request_id.as_str())
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(task_payload.to_string()))
+        .expect("foreign replay request is valid HTTP");
+    foreign_replay_request
+        .extensions_mut()
+        .insert(AuthenticatedLocalPeer);
+    let foreign_replay = foreign_task_router
+        .oneshot(foreign_replay_request)
+        .await
+        .expect("foreign Task replay request receives a response");
+    assert_eq!(foreign_replay.status(), StatusCode::FORBIDDEN);
 
     let second = post_instruction_revision(
         router.clone(),
@@ -1590,6 +2108,111 @@ async fn instruction_create_route_commits_first_revision_and_replays_after_advan
     let second_body: Value = serde_json::from_slice(&second_body).expect("second response JSON");
     assert_eq!(second_body["revision"], 2);
     assert_eq!(second_body["parent_revisions"], json!([1]));
+
+    let default_agent_router = Router::new()
+        .route(
+            "/v1/workspaces/{workspace_id}/default-agent-binding",
+            axum::routing::patch(super::set_workspace_default_agent_binding),
+        )
+        .route_layer(middleware::from_fn(authenticate))
+        .with_state(WorkspacePolicyApiState {
+            store: store.clone(),
+            principal_id: OWNER.to_owned(),
+            runtime_id: "instruction-route-runtime".to_owned(),
+        });
+    let mut clear_default_request = Request::patch(format!(
+        "/v1/workspaces/{WORKSPACE_ID}/default-agent-binding"
+    ))
+    .header("x-workspace-id", WORKSPACE_ID)
+    .header("if-match", "3")
+    .header("idempotency-key", "instruction-route-clear-default")
+    .header(header::CONTENT_TYPE, "application/json")
+    .body(Body::from(json!({"agent_binding_id": null}).to_string()))
+    .expect("default AgentBinding clear request is valid");
+    clear_default_request
+        .extensions_mut()
+        .insert(AuthenticatedLocalPeer);
+    let clear_default_response = default_agent_router
+        .oneshot(clear_default_request)
+        .await
+        .expect("default AgentBinding route clears Workspace default");
+    assert_eq!(clear_default_response.status(), StatusCode::OK);
+    let cleared_workspace_body = to_bytes(clear_default_response.into_body(), 4096)
+        .await
+        .expect("bounded clear-default response");
+    let cleared_workspace: Value =
+        serde_json::from_slice(&cleared_workspace_body).expect("clear-default response JSON");
+    assert_eq!(cleared_workspace["version"], 4);
+    assert_eq!(cleared_workspace["default_agent_binding_id"], Value::Null);
+
+    let mut replay_request = Request::post("/v1/tasks")
+        .header("x-workspace-id", WORKSPACE_ID)
+        .header("idempotency-key", task_request_id.as_str())
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(task_payload.to_string()))
+        .expect("exact Task replay request is valid");
+    replay_request
+        .extensions_mut()
+        .insert(AuthenticatedLocalPeer);
+    let replay_response = task_router
+        .clone()
+        .oneshot(replay_request)
+        .await
+        .expect("Task route returns the committed replay");
+    assert_eq!(replay_response.status(), StatusCode::CREATED);
+    let replay_body = to_bytes(replay_response.into_body(), 16 * 1024)
+        .await
+        .expect("bounded Task replay response");
+    let replay_body: Value = serde_json::from_slice(&replay_body).expect("Task replay JSON");
+    assert_eq!(
+        replay_body, task_body,
+        "replay returns original Task receipt"
+    );
+    let connection = rusqlite::Connection::open(directory.path().join("state.sqlite3"))
+        .expect("inspect Task replay effects");
+    let task_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE workspace_id = ?1",
+            [WORKSPACE_ID],
+            |row| row.get(0),
+        )
+        .expect("count committed Tasks");
+    let create_event_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE workspace_id = ?1 AND type = 'task.created.v1'",
+            [WORKSPACE_ID],
+            |row| row.get(0),
+        )
+        .expect("count Task creation events");
+    assert_eq!(task_count, 1, "exact retry must not duplicate the Task row");
+    assert_eq!(
+        create_event_count, 1,
+        "exact retry must not append another Task creation event"
+    );
+
+    let mut malformed_key_request = Request::post("/v1/tasks")
+        .header("x-workspace-id", WORKSPACE_ID)
+        .header("idempotency-key", "invalid key")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(task_payload.to_string()))
+        .expect("malformed-key request is valid HTTP");
+    malformed_key_request
+        .extensions_mut()
+        .insert(AuthenticatedLocalPeer);
+    let malformed_key_response = task_router
+        .clone()
+        .oneshot(malformed_key_request)
+        .await
+        .expect("Task route responds to malformed key");
+    assert_eq!(malformed_key_response.status(), StatusCode::BAD_REQUEST);
+    let malformed_key_body = to_bytes(malformed_key_response.into_body(), 4096)
+        .await
+        .expect("bounded malformed-key error");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&malformed_key_body).expect("error JSON")["code"],
+        "INVALID_ARGUMENT"
+    );
+
     let persisted_task = store
         .get_task(WORKSPACE_ID, &task_id)
         .expect("read Task created by authenticated route")
@@ -1733,7 +2356,7 @@ async fn instruction_create_route_commits_first_revision_and_replays_after_advan
         .expect("read instruction Workspace")
         .expect("Workspace persists");
     assert_eq!(workspace.current_instruction_revision, Some(2));
-    assert_eq!(workspace.version, 3);
+    assert_eq!(workspace.version, 4);
     assert_eq!(
         store
             .list_workspace_instruction_revisions(WORKSPACE_ID, 0, 10)

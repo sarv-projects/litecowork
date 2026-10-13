@@ -2,10 +2,19 @@ use super::*;
 use std::io::Read;
 
 const MAX_CONVERSATION_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_CONVERSATION_CURSOR_BYTES: usize = 2048;
 
 fn valid_id(value: &str) -> bool {
     !value.trim().is_empty()
         && value.len() <= 256
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn valid_cursor(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_CONVERSATION_CURSOR_BYTES
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
@@ -105,17 +114,25 @@ fn read_json(response: LocalOperatorResponse) -> Result<serde_json::Value, Strin
 pub(crate) async fn list_conversations(
     app: AppHandle,
     workspace_id: String,
+    cursor: Option<String>,
 ) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !valid_id(&workspace_id) {
             return Err("Conversation Workspace selection is invalid".to_owned());
         }
+        if cursor.as_ref().is_some_and(|value| !valid_cursor(value)) {
+            return Err("Conversation pagination cursor is invalid".to_owned());
+        }
         let (client, _) = operator_client(&app)?;
+        let mut request = client
+            .get("/v1/conversations")
+            .header("X-Workspace-ID", &workspace_id)
+            .query(&[("limit", "50")]);
+        if let Some(cursor) = cursor {
+            request = request.query(&[("cursor", cursor)]);
+        }
         let value = read_json(
-            client
-                .get("/v1/conversations")
-                .header("X-Workspace-ID", &workspace_id)
-                .query(&[("limit", "50")])
+            request
                 .send()
                 .map_err(|_| "Local Conversations are unavailable".to_owned())?,
         )?;
@@ -147,7 +164,7 @@ pub(crate) async fn create_conversation(
     tauri::async_runtime::spawn_blocking(move || {
         if !valid_id(&workspace_id)
             || request_id.is_empty()
-            || request_id.len() > 128
+            || request_id.len() > 200
             || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
             || title.as_ref().is_some_and(|value| {
                 value.trim().is_empty()
@@ -332,5 +349,20 @@ mod rich_presentation_response_tests {
         assert!(!valid_id("presentation/other"));
         assert!(valid_digest(&format!("sha256:{}", "0".repeat(64))));
         assert!(!valid_digest(&format!("sha256:{}", "A".repeat(64))));
+    }
+}
+
+#[cfg(test)]
+mod conversation_cursor_tests {
+    use super::valid_cursor;
+
+    #[test]
+    fn conversation_cursor_is_bounded_and_url_safe() {
+        assert!(valid_cursor("eyJ3b3Jrc3BhY2VfaWQiOiJ3b3Jrc3BhY2UtMSJ9"));
+        assert!(valid_cursor(&"a".repeat(2048)));
+        assert!(!valid_cursor(""));
+        assert!(!valid_cursor("../another-workspace"));
+        assert!(!valid_cursor("cursor=value"));
+        assert!(!valid_cursor(&"a".repeat(2049)));
     }
 }

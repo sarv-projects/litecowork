@@ -2,6 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { createRoutineApi, type RoutineTransport } from "./routine-api";
 
 type BridgeResponse = { status: number; contentType: string; bodyBase64: string };
+function validIdempotencyKey(value: string): boolean {
+  return /^[\x21-\x7e]{1,200}$/.test(value);
+}
 function decodeBase64(encoded: string): Uint8Array {
   const binary = atob(encoded);
   return Uint8Array.from(binary, character => character.charCodeAt(0));
@@ -35,11 +38,11 @@ function desktopTransport(workspaceId: string): RoutineTransport {
 
     let expectedVersion: number | null = null;
     if (operation === "revise" || operation === "archive") {
-      if (!requestId || requestId.length > 128 || !rawVersion) throw new Error("Routine mutation identity or version is missing.");
+      if (!requestId || !validIdempotencyKey(requestId) || !rawVersion) throw new Error("Routine mutation identity or version is missing.");
       expectedVersion = Number(rawVersion.replace(/^\"|\"$/g, ""));
       if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new Error("Routine version is invalid.");
     }
-    if (["create", "run"].includes(operation) && (!requestId || requestId.length > 128)) throw new Error("Routine request identity is missing.");
+    if (["create", "run"].includes(operation) && (!requestId || !validIdempotencyKey(requestId))) throw new Error("Routine request identity is missing.");
     if (operation === "run" && rawVersion) throw new Error("Routine request is invalid.");
     const body = typeof init.body === "string" ? init.body : null;
     if (body && body.length > 128 * 1024) throw new Error("Routine definition exceeds its size limit.");

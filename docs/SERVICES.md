@@ -41,9 +41,13 @@ and `lead_eligible=true`; clearing it is explicit. Binding/endpoint availability
 each new turn or Task admission, and no alternate binding is selected silently.
 `set_default_agent_binding` is idempotent by authenticated Principal and RequestId. The
 Workspace version, default binding, event, and original response commit atomically; the
-SQLite adapter rechecks binding eligibility in the same transaction as the Workspace
-write. A lost-response retry with the same key replays the committed Workspace, while a
-stale new command conflicts.
+SQLite trigger rechecks binding eligibility in the same transaction as the Workspace
+write. The receipt payload includes the expected Workspace version. Once a matching
+receipt is committed, a retry with the same principal, key, and payload returns its
+immutable committed Workspace before mutable binding checks or candidate
+aggregate-state writes; reusing a key with a different payload conflicts. Concurrent
+requests still recheck receipts transactionally, but a request racing the initial commit
+may already have written candidate aggregate state. A stale new command conflicts.
 The primary Coworker must belong to the Workspace and may be ACTIVE or PAUSED; this is a
 UX/context default only and does not select an AgentBinding or confer authority. The
 Workspace default binding and primary Coworker are independent settings.

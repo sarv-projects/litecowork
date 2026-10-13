@@ -48,6 +48,20 @@ use storage_core::{
 use zeroize::Zeroizing;
 
 #[test]
+fn shared_idempotency_key_bound_is_200_printable_ascii_bytes() {
+    use super::valid_shared_idempotency_key;
+
+    assert!(valid_shared_idempotency_key("k"));
+    assert!(valid_shared_idempotency_key(&"k".repeat(128)));
+    assert!(valid_shared_idempotency_key(&"k".repeat(129)));
+    assert!(valid_shared_idempotency_key(&"k".repeat(200)));
+    assert!(!valid_shared_idempotency_key(""));
+    assert!(!valid_shared_idempotency_key(&"k".repeat(201)));
+    assert!(!valid_shared_idempotency_key("has space"));
+    assert!(!valid_shared_idempotency_key("é"));
+}
+
+#[test]
 fn automation_occurrence_aggregate_version_is_not_claim_fencing() {
     let connection = Connection::open_in_memory().expect("in-memory SQLite");
     connection.execute_batch(
@@ -489,7 +503,7 @@ fn conversation_create_is_durable_idempotent_and_workspace_scoped() {
     let commit = CreateConversationCommit {
         request: WorkspaceCreateRequest {
             principal_id: "owner-local".into(),
-            request_id: "conversation-create-1".into(),
+            request_id: "i".repeat(200),
             request_payload: payload,
         },
         conversation: record.clone(),
@@ -513,11 +527,38 @@ fn conversation_create_is_durable_idempotent_and_workspace_scoped() {
     let created = adapter
         .create_conversation(commit.clone())
         .expect("Conversation commits");
+    fn count_blob_files(path: &std::path::Path) -> usize {
+        std::fs::read_dir(path)
+            .expect("blob directory lists")
+            .map(|entry| {
+                let entry = entry.expect("blob directory entry reads");
+                if entry.file_type().expect("blob entry type reads").is_dir() {
+                    count_blob_files(&entry.path())
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
+    let blob_count_before_replay = count_blob_files(&directory.path().join("blobs"));
+    let mut retry = commit.clone();
+    retry.conversation.conversation_id = "conversation-retry-candidate".into();
+    retry.event.event_id = "event-conversation-retry-candidate".into();
+    retry.event.entity_id = retry.conversation.conversation_id.clone();
+    retry.event.payload = serde_json::json!({
+        "conversation_id":retry.conversation.conversation_id,
+        "created_by":{"kind":"USER","principal_id":"owner-local"}
+    });
     let replay = adapter
-        .create_conversation(commit)
+        .create_conversation(retry)
         .expect("same request replays exact result");
     assert_eq!(created.conversation, record);
-    assert_eq!(replay.event.event_id, created.event.event_id);
+    assert_eq!(replay, created);
+    assert_eq!(
+        count_blob_files(&directory.path().join("blobs")),
+        blob_count_before_replay,
+        "a lost-response retry must resolve its receipt before writing a candidate aggregate Blob"
+    );
     assert_eq!(
         store
             .read_workspace_events("workspace-conversation")

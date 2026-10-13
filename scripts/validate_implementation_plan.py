@@ -26,6 +26,12 @@ for s in stories:
         if not s.get(field): fail(f"{s.get('id')}: missing {field}")
     if s.get('status') not in allowed_statuses:
         fail(f"{s['id']}: status must be one of {sorted(allowed_statuses)}")
+    review_packet = PLAN/'reviews'/f"{s.get('id')}.md"
+    if s.get('status') in {'IN_PROGRESS', 'IN_REVIEW'} and not review_packet.is_file():
+        fail(
+            f"{s['id']}: active story is missing its dedicated "
+            f"implementation/reviews/{s['id']}.md packet"
+        )
     if not {'CODE','SYSTEM','USER'} <= {x.rsplit('-',1)[-1] for x in s.get('tests',[])}:
         fail(f"{s['id']}: requires CODE, SYSTEM and USER test IDs")
     for dep in s.get('depends_on',[]):

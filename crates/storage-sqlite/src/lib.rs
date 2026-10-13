@@ -98,6 +98,15 @@ use storage_core::{
 
 const MAX_WORKSPACE_ROOT_PATH_BYTES: usize = 32 * 1024;
 const MAX_WORKSPACE_ROOT_ENCODED_LOCATOR_BYTES: usize = 44 * 1024;
+const MAX_SHARED_IDEMPOTENCY_KEY_BYTES: usize = 200;
+
+/// Shared HTTP mutation keys are bounded by the canonical Operator contract.
+/// IPC frame correlation IDs have a separate 128-byte transport limit.
+pub(crate) fn valid_shared_idempotency_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_SHARED_IDEMPOTENCY_KEY_BYTES
+        && value.bytes().all(|byte| byte.is_ascii_graphic())
+}
 use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 
 const SQLITE_V1_DDL: &str = include_str!("../../../docs/schemas/sqlite-v1.sql");
@@ -738,6 +747,12 @@ enum Command {
         commit: Box<WorkspaceCommit>,
         reply: mpsc::Sender<Result<CommittedWorkspace, StoreError>>,
     },
+    GetWorkspaceCommitReceipt {
+        principal_id: String,
+        request_id: String,
+        request_digest: String,
+        reply: mpsc::Sender<Result<Option<CommittedWorkspace>, StoreError>>,
+    },
     ReadWorkspaceEvents {
         workspace_id: String,
         reply: mpsc::Sender<Result<Vec<DomainEvent>, StoreError>>,
@@ -1246,6 +1261,15 @@ impl SqliteWorkspaceStore {
         } else {
             validate_commit(&workspace, &event, expected_version)?;
         }
+        if let Some(request) = request.as_ref()
+            && let Some(committed) = self.get_workspace_commit_receipt(
+                &request.principal_id,
+                &request.request_id,
+                &request.request_payload,
+            )?
+        {
+            return Ok(committed);
+        }
         let request_dedup = request
             .map(|request| {
                 if request.principal_id.trim().is_empty() || request.request_id.trim().is_empty() {
@@ -1477,6 +1501,26 @@ impl StateStore for SqliteWorkspaceStore {
 }
 
 impl IdempotentWorkspaceStore for SqliteWorkspaceStore {
+    fn get_workspace_commit_receipt(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        request_payload: &Value,
+    ) -> Result<Option<CommittedWorkspace>, StoreError> {
+        validate_nonempty(&[principal_id, request_id])?;
+        let request_digest = digest(&canonical_json(request_payload)?);
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::GetWorkspaceCommitReceipt {
+                principal_id: principal_id.to_owned(),
+                request_id: request_id.to_owned(),
+                request_digest,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
     fn create_workspace_idempotent(
         &self,
         request: WorkspaceCreateRequest,
@@ -3263,11 +3307,7 @@ impl ResourceStore for SqliteWorkspaceStore {
             &request.indexed_at,
             &request.correlation_id,
         ])?;
-        if request.request_id.len() > 128
-            || !request
-                .request_id
-                .bytes()
-                .all(|byte| byte.is_ascii_graphic())
+        if !valid_shared_idempotency_key(&request.request_id)
             || !storage_core::is_sha256_digest(&request.content_digest)
         {
             return Err(StoreError::Invalid(
@@ -4077,8 +4117,7 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
         let session = self
             .get_for_chunk(&chunk.upload_id)?
             .ok_or(StoreError::NotFound)?;
-        if chunk.request_id.trim().is_empty()
-            || chunk.request_id.len() > 128
+        if !valid_shared_idempotency_key(&chunk.request_id)
             || chunk.sha256 != digest(&chunk.content)
         {
             return Err(StoreError::Invalid(
@@ -5300,8 +5339,7 @@ fn reserve_resource_upload_blob_transaction(
     created_at: &str,
     expires_at: &str,
 ) -> Result<(), StoreError> {
-    if request_id.trim().is_empty()
-        || request_id.len() > 128
+    if !valid_shared_idempotency_key(request_id)
         || chunk_digest.len() != 71
         || !chunk_digest.starts_with("sha256:")
         || !chunk_digest[7..]
@@ -5637,7 +5675,7 @@ fn put_resource_upload_chunk_transaction(
     completion_event: Option<EventDraft>,
     completion_state_ref: Option<AggregateStateRef>,
 ) -> Result<ResourceUploadSessionRecord, StoreError> {
-    if chunk.request_id.trim().is_empty() || chunk.request_id.len() > 128 {
+    if !valid_shared_idempotency_key(&chunk.request_id) {
         return Err(StoreError::Invalid("chunk RequestId is invalid".to_owned()));
     }
     let tx = connection
@@ -15247,6 +15285,19 @@ fn writer_loop(
                             None,
                         ));
                     }
+                    Command::GetWorkspaceCommitReceipt {
+                        principal_id,
+                        request_id,
+                        request_digest,
+                        reply,
+                    } => {
+                        let _ = reply.send(verify_request_receipt::<CommittedWorkspace>(
+                            &connection,
+                            &principal_id,
+                            &request_id,
+                            &request_digest,
+                        ));
+                    }
                     Command::ReadWorkspaceEvents {
                         workspace_id,
                         reply,
@@ -17825,6 +17876,12 @@ fn map_database_error(error: rusqlite::Error) -> StoreError {
             ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => return StoreError::Busy,
             ErrorCode::DiskFull => return StoreError::Io("database disk is full".to_owned()),
             ErrorCode::ConstraintViolation => {
+                if error
+                    .to_string()
+                    .contains("DEFAULT_AGENT_BINDING_NOT_LEAD_ELIGIBLE")
+                {
+                    return StoreError::Invalid("AGENT_NOT_LEAD_ELIGIBLE".to_owned());
+                }
                 return StoreError::Database("database constraint rejected the write".to_owned());
             }
             _ => {}

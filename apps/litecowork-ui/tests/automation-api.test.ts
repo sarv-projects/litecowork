@@ -107,3 +107,23 @@ test("manual Run preserves the same request key across an ambiguous retry", asyn
   await api.run(automation, revision, { project: "LiteCowork" }, "same-run-key");
   assert.deepEqual(requestIds, ["same-run-key", "same-run-key"]);
 });
+
+test("manual Run accepts the shared 200 byte idempotency-key boundary", async () => {
+  const requestIds: string[] = [];
+  const api = createAutomationApi("workspace-1", async (_path, init) => {
+    requestIds.push(new Headers(init.headers).get("Idempotency-Key") ?? "");
+    return Response.json(readyReceipt(), { status: 201 });
+  });
+
+  for (const length of [129, 200]) {
+    const requestId = "k".repeat(length);
+    await api.run(automation, revision, { project: "LiteCowork" }, requestId);
+    assert.equal(requestIds.at(-1), requestId);
+  }
+
+  await assert.rejects(
+    api.run(automation, revision, {}, "k".repeat(201)),
+    /request identity or version is invalid/,
+  );
+  assert.equal(requestIds.length, 2, "a 201 byte key must not reach the transport");
+});

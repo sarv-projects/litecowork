@@ -58,6 +58,10 @@ export type AutomationDefinitionInput = {
 };
 export type AutomationTransport = (path: string, init: RequestInit) => Promise<Response>;
 
+function validIdempotencyKey(value: string): boolean {
+  return /^[\x21-\x7e]{1,200}$/.test(value);
+}
+
 export interface AutomationApi {
   list(cursor?: string, signal?: AbortSignal): Promise<AutomationPage>;
   get(automationId: string, signal?: AbortSignal): Promise<Automation>;
@@ -338,7 +342,7 @@ export function createAutomationApi(workspaceId: string, transport: AutomationTr
       // response must reach the server's receipt-first exact replay path. New commands
       // are still checked against current status/version by the Operator transaction.
       if (revision.automation_id !== automation.automation_id) throw new Error("Automation revision identity is invalid.");
-      if (!Number.isSafeInteger(automation.version) || automation.version < 1 || !requestId || requestId.length > 128) {
+      if (!Number.isSafeInteger(automation.version) || automation.version < 1 || !validIdempotencyKey(requestId)) {
         throw new Error("Manual Automation request identity or version is invalid.");
       }
       const response = await request(`/v1/automations/${encodeURIComponent(automation.automation_id)}/run`, {

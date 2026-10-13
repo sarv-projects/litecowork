@@ -212,16 +212,7 @@ fn parse_body<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, Response
 }
 
 fn idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
-    headers
-        .get("idempotency-key")
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| {
-            !value.is_empty()
-                && value.len() <= 128
-                && value.bytes().all(|byte| byte.is_ascii_graphic())
-        })
-        .map(str::to_owned)
-        .ok_or_else(invalid)
+    super::idempotency_key(headers)
 }
 
 fn expected_version(headers: &HeaderMap) -> Result<u64, Response> {

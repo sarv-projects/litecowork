@@ -34,6 +34,10 @@ export type MaterializedRoutineTask = {
 };
 export type RoutineTransport = (path: string, init: RequestInit) => Promise<Response>;
 
+function validIdempotencyKey(value: string): boolean {
+  return /^[\x21-\x7e]{1,200}$/.test(value);
+}
+
 export interface RoutineApi {
   list(cursor?: string, signal?: AbortSignal): Promise<RoutinePage>;
   get(routineId: string, signal?: AbortSignal): Promise<Routine>;
@@ -133,7 +137,7 @@ export function createRoutineApi(workspaceId: string, transport: RoutineTranspor
     return response;
   };
   const mutationHeaders = (requestId: string, expectedVersion?: number) => {
-    if (!requestId || requestId.length > 128) throw new Error("Routine request identity is invalid.");
+    if (!validIdempotencyKey(requestId)) throw new Error("Routine request identity is invalid.");
     const headers = new Headers({ "Idempotency-Key": requestId });
     if (expectedVersion !== undefined) {
       if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new Error("Routine version is invalid.");

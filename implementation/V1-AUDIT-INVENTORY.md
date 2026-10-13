@@ -3,8 +3,8 @@
 This script read every line of every included first-party Markdown file and checked literal Markdown relative link targets. **Mechanical coverage does not imply that each statement was semantically audited, implemented or runtime-qualified.**
 
 - Files read: 160
-- Lines read: 57603
-- Bytes read: 4046164
+- Lines read: 57640
+- Bytes read: 4048573
 - Broken relative links: 0
 - Excluded: dependency/cache/output worktrees and this generated report; CSV inventory includes SHA-256 for every read Markdown source.
 
@@ -17,7 +17,7 @@ This script read every line of every included first-party Markdown file and chec
 | CONTRIBUTING.md | 38 | 709b7f2d6cad | rendering;trust/security |
 | GLOSSARY.md | 292 | e76323588a46 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | README.md | 156 | 5c54bf5c560f | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
-| apps/litecowork-ui/README.md | 64 | 21f0fbd62687 | browser/computer;shell/settings/motion;workflow/recovery |
+| apps/litecowork-ui/README.md | 71 | 41de00193a49 | browser/computer;shell/settings/motion;workflow/recovery |
 | apps/litecowork-ui/src/artifacts/README.md | 155 | bed0b3660621 | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | apps/litecowork-ui/src/presentation/README.md | 32 | c868572e9239 | browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | assets/host-instructions/presentation-policy.md | 12 | 7a598b60ebb7 | workflow/recovery |
@@ -139,12 +139,12 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/V1-DESIGN-DRYRUN-AND-RECONCILIATION-2026-10-13.md | 116 | 4836d42b5f95 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/V1-DESIGN-HANDOFF-2026-10-12.md | 71 | a2ed19f4b45c | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/V1-EVERY-MD-AUDIT-2026-10-12.md | 179 | 49fd6f683de5 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| implementation/V1-IMPLEMENTATION-REAUDIT-2026-10-13.md | 159 | 2e9480a898be | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/V1-IMPLEMENTATION-REAUDIT-2026-10-13.md | 159 | 945c8c2b295d | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/V1-OBSERVABILITY-AGENT-MEMORY-TERMINAL-UAT.md | 81 | 744ac1294a31 | browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | implementation/V1-SEMANTIC-MD-FINDINGS-2026-10-12.md | 73 | 716f85e04ed2 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/WORKFLOWS.md | 68 | 506e29243c5f | browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/epics/E01.md | 666 | bbbabe7dbabd | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
-| implementation/epics/E02.md | 438 | 40abb20a7f32 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/epics/E02.md | 439 | 63dd9d2fa3c1 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/epics/E03.md | 428 | 53afeafbcb78 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | implementation/epics/E04.md | 134 | 27e02ac37fb0 | workflow/recovery;trust/security |
 | implementation/epics/E05.md | 127 | 7a25662952e3 | workflow/recovery;trust/security |
@@ -162,7 +162,7 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/reviews/E01-S02.md | 485 | f3fb5e4edea9 | workflow/recovery;trust/security |
 | implementation/reviews/E01-S03.md | 603 | 22dc0b9fa230 | shell/settings/motion;workflow/recovery;trust/security |
 | implementation/reviews/E01-S04.md | 1340 | d865b58470ca | shell/settings/motion;rendering;workflow/recovery;trust/security |
-| implementation/reviews/E02-S01.md | 149 | 99ee608d2ead | browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/reviews/E02-S01.md | 178 | 72e00b555279 | browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/reviews/E02-S02-TAURI-IPC-2026-10-13.md | 86 | 316d19024d46 | shell/settings/motion;rendering;trust/security |
 | implementation/reviews/E02-S02.md | 738 | 2e4db2f170ee | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/reviews/E02-S03.md | 365 | 733981d6738a | browser/computer;workflow/recovery;trust/security |

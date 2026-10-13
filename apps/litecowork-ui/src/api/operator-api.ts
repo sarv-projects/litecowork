@@ -7030,7 +7030,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Conversation created */
+            /** @description Conversation created; an exact owner-scoped receipt replays before the active-Workspace check, while a fresh create is rejected after archival */
             201: {
                 headers: {
                     [name: string]: unknown;

@@ -285,8 +285,7 @@ where
             || workspace_id.trim().is_empty()
             || suggestion_id.trim().is_empty()
             || expected_version == 0
-            || request_id.trim().is_empty()
-            || request_id.len() > 128
+            || !valid_idempotency_key(request_id)
         {
             return Err(SuggestionServiceError::InvalidRequest);
         }
@@ -305,6 +304,10 @@ where
             action,
         )
     }
+}
+
+fn valid_idempotency_key(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 200 && value.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 impl<S, C> SuggestionService<S, C>
@@ -355,5 +358,21 @@ where
             request_id,
             &as_of,
         )
+    }
+}
+
+#[cfg(test)]
+mod idempotency_key_tests {
+    use super::valid_idempotency_key;
+
+    #[test]
+    fn suggestion_owner_actions_accept_the_shared_200_byte_limit() {
+        assert!(valid_idempotency_key("k"));
+        assert!(valid_idempotency_key(&"k".repeat(128)));
+        assert!(valid_idempotency_key(&"k".repeat(129)));
+        assert!(valid_idempotency_key(&"k".repeat(200)));
+        assert!(!valid_idempotency_key(&"k".repeat(201)));
+        assert!(!valid_idempotency_key("has space"));
+        assert!(!valid_idempotency_key("é"));
     }
 }
