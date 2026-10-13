@@ -142,6 +142,34 @@ class CheckScriptToolchainTests(unittest.TestCase):
             )
         )
 
+    def test_ci_installs_linux_dbus_build_dependencies(self):
+        root = Path(__file__).resolve().parents[1]
+        workflow = yaml.safe_load(
+            (root / ".github/workflows/architecture-docs.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        steps = workflow["jobs"]["check"]["steps"]
+        dbus_step = next(
+            (
+                step
+                for step in steps
+                if "libdbus-1-dev" in step.get("run", "")
+            ),
+            None,
+        )
+
+        self.assertIsNotNone(
+            dbus_step, "CI must install libdbus-1-dev before Cargo builds"
+        )
+        self.assertIn("pkg-config", dbus_step["run"])
+        check_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("run") == "scripts/check.sh"
+        )
+        self.assertLess(steps.index(dbus_step), check_index)
+
 
 if __name__ == "__main__":
     unittest.main()

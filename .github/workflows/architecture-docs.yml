@@ -20,4 +20,8 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
             uv.lock
+      - name: Install Linux native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes libdbus-1-dev pkg-config
       - run: scripts/check.sh
