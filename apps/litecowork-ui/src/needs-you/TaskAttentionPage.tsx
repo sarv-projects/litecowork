@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { taskAttentionLoadReducer } from "./task-attention-state";
 import "./task-attention-page.css";
 
 type TaskStatus = "WAITING_USER" | "NEEDS_USER" | "BLOCKED";
@@ -43,7 +44,8 @@ export function TaskAttentionPage({
   const [pages, setPages] = useState<StatusPage[]>([]);
   const [loadedWorkspace, setLoadedWorkspace] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadState, dispatchLoadState] = useReducer(taskAttentionLoadReducer, { generation: 0, loadingMore: false });
+  const loadingMore = loadState.loadingMore;
   const [refreshToken, setRefreshToken] = useState(0);
   const [failure, setFailure] = useState<string | null>(null);
   const generation = useRef(0);
@@ -55,6 +57,7 @@ export function TaskAttentionPage({
 
   useEffect(() => {
     const current = ++generation.current;
+    dispatchLoadState({ type: "invalidate", generation: current });
     let active = true;
     setPages([]);
     setFailure(null);
@@ -101,7 +104,7 @@ export function TaskAttentionPage({
   const loadMore = async () => {
     if (!operatorReady || loadingMore || pages.every(page => page.nextCursor === null)) return;
     const current = generation.current;
-    setLoadingMore(true);
+    dispatchLoadState({ type: "start-more", generation: current });
     setFailure(null);
     try {
       const pending = pages.filter(page => page.nextCursor !== null);
@@ -134,7 +137,7 @@ export function TaskAttentionPage({
     } catch (error) {
       if (generation.current === current) setFailure(typeof error === "string" ? error : "More Tasks could not be loaded.");
     } finally {
-      if (generation.current === current) setLoadingMore(false);
+      dispatchLoadState({ type: "finish-more", generation: current });
     }
   };
 
