@@ -32,6 +32,8 @@ mod zip_intake_bridge;
 #[cfg(target_os = "linux")]
 mod systemd_user_service;
 
+#[cfg(all(test, unix))]
+mod workspace_instruction_bridge_tests;
 #[cfg(unix)]
 use operator_ipc::unix::{PeerCredentials, UnixEndpoint};
 #[cfg(unix)]
@@ -1183,6 +1185,16 @@ struct WorkspaceInstructionPageWire {
     next_cursor: Option<String>,
 }
 
+struct WorkspaceInstructionCreateInput {
+    workspace_id: String,
+    expected_version: u64,
+    parent_revisions: Vec<u64>,
+    resource_id: String,
+    resource_revision_id: String,
+    content_digest: String,
+    request_id: String,
+}
+
 impl From<WorkspaceInstructionWire> for WorkspaceInstructionView {
     fn from(revision: WorkspaceInstructionWire) -> Self {
         Self {
@@ -1203,49 +1215,112 @@ async fn list_workspace_instructions(
     workspace_id: String,
 ) -> Result<Vec<WorkspaceInstructionView>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.is_empty() {
-            return Err("Workspace selection is invalid".to_owned());
-        }
         let (client, workspace_url) = operator_client(&app)?;
-        let url = format!(
-            "{}/{}/instructions/revisions",
-            workspace_url.trim_end_matches("/workspaces"),
-            workspace_id
-        );
-        let mut cursor: Option<String> = None;
-        let mut seen_cursors = std::collections::HashSet::new();
-        let mut revisions = Vec::new();
-        for _ in 0..1000 {
-            let mut request = client
-                .get(&url)
-                .header("X-Workspace-ID", &workspace_id)
-                .query(&[("limit", "200")]);
-            if let Some(value) = cursor.as_deref() {
-                request = request.query(&[("cursor", value)]);
-            }
-            let response = request
-                .send()
-                .map_err(|_| "Workspace instruction history is unavailable".to_owned())?;
-            let body = read_bounded_response(response)?;
-            let mut page: WorkspaceInstructionPageWire = serde_json::from_slice(&body)
-                .map_err(|_| "Local Runtime returned unsupported instruction history".to_owned())?;
-            revisions.append(&mut page.items);
-            match page.next_cursor {
-                Some(next) if seen_cursors.insert(next.clone()) => cursor = Some(next),
-                Some(_) => return Err("Workspace instruction pagination repeated a cursor".to_owned()),
-                None => {
-                    cursor = None;
-                    break;
-                }
-            }
-        }
-        if cursor.is_some() {
-            return Err("Workspace instruction history exceeds the desktop loading limit".to_owned());
-        }
-        Ok(revisions.into_iter().map(WorkspaceInstructionView::from).collect())
+        list_workspace_instructions_with_client(&client, &workspace_url, &workspace_id)
     })
     .await
     .map_err(|_| "Workspace instruction history request did not complete".to_owned())?
+}
+
+fn list_workspace_instructions_with_client(
+    client: &LocalOperatorClient,
+    workspace_url: &str,
+    workspace_id: &str,
+) -> Result<Vec<WorkspaceInstructionView>, String> {
+    if workspace_id.is_empty() {
+        return Err("Workspace selection is invalid".to_owned());
+    }
+    let url = workspace_instruction_revisions_path(workspace_url, workspace_id)?;
+    let mut cursor: Option<String> = None;
+    let mut seen_cursors = std::collections::HashSet::new();
+    let mut revisions = Vec::new();
+    for _ in 0..1000 {
+        let mut request = client
+            .get(&url)
+            .header("X-Workspace-ID", workspace_id)
+            .query(&[("limit", "200")]);
+        if let Some(value) = cursor.as_deref() {
+            request = request.query(&[("cursor", value)]);
+        }
+        let response = request
+            .send()
+            .map_err(|_| "Workspace instruction history is unavailable".to_owned())?;
+        let body = read_bounded_response(response)?;
+        let mut page: WorkspaceInstructionPageWire = serde_json::from_slice(&body)
+            .map_err(|_| "Local Runtime returned unsupported instruction history".to_owned())?;
+        revisions.append(&mut page.items);
+        match page.next_cursor {
+            Some(next) if seen_cursors.insert(next.clone()) => cursor = Some(next),
+            Some(_) => {
+                return Err("Workspace instruction pagination repeated a cursor".to_owned());
+            }
+            None => {
+                cursor = None;
+                break;
+            }
+        }
+    }
+    if cursor.is_some() {
+        return Err("Workspace instruction history exceeds the desktop loading limit".to_owned());
+    }
+    Ok(revisions
+        .into_iter()
+        .map(WorkspaceInstructionView::from)
+        .collect())
+}
+
+fn workspace_instruction_revisions_path(
+    workspace_url: &str,
+    workspace_id: &str,
+) -> Result<String, String> {
+    if workspace_id.is_empty()
+        || matches!(workspace_id, "." | "..")
+        || workspace_id.bytes().any(|byte| matches!(byte, b'/' | b'\\'))
+    {
+        return Err("Workspace selection is invalid".to_owned());
+    }
+    let mut encoded_id = String::with_capacity(workspace_id.len());
+    for byte in workspace_id.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded_id.push(char::from(byte));
+            }
+            _ => {
+                use std::fmt::Write as _;
+                write!(encoded_id, "%{byte:02X}").expect("writing into a String cannot fail");
+            }
+        }
+    }
+    Ok(format!(
+        "{}/workspaces/{encoded_id}/instructions/revisions",
+        workspace_url.trim_end_matches("/workspaces")
+    ))
+}
+
+fn validate_workspace_instruction_request(
+    workspace_id: &str,
+    parent_revisions: &[u64],
+    resource_id: &str,
+    resource_revision_id: &str,
+    content_digest: &str,
+    request_id: &str,
+) -> Result<(), String> {
+    if workspace_id.is_empty()
+        || workspace_id.len() > 200
+        || resource_id.is_empty()
+        || resource_id.len() > 200
+        || resource_revision_id.is_empty()
+        || resource_revision_id.len() > 200
+        || parent_revisions.len() > MAX_INSTRUCTION_PARENTS
+        || parent_revisions.contains(&0)
+        || content_digest.len() > 71
+        || request_id.is_empty()
+        || request_id.len() > 128
+        || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        return Err("Workspace instruction request is invalid".to_owned());
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1260,68 +1335,85 @@ async fn create_workspace_instruction_revision(
     request_id: String,
 ) -> Result<WorkspaceInstructionView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.is_empty()
-            || workspace_id.len() > 200
-            || resource_id.is_empty()
-            || resource_id.len() > 200
-            || resource_revision_id.is_empty()
-            || resource_revision_id.len() > 200
-            || parent_revisions.is_empty()
-            || parent_revisions.len() > MAX_INSTRUCTION_PARENTS
-            || parent_revisions.iter().any(|revision| *revision == 0)
-            || content_digest.len() > 71
-            || request_id.is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
-        {
-            return Err("Workspace instruction request is invalid".to_owned());
-        }
         let (client, workspace_url) = operator_client(&app)?;
-        let response = client
-            .post(format!(
-                "{}/{}/instructions/revisions",
-                workspace_url.trim_end_matches("/workspaces"),
-                workspace_id
-            ))
-            .header("X-Workspace-ID", &workspace_id)
-            .header("If-Match", expected_version.to_string())
-            .header("Idempotency-Key", request_id)
-            .json(&serde_json::json!({
-                "parent_revisions": parent_revisions,
-                "content_ref": {
-                    "workspace_id": workspace_id,
-                    "resource_id": resource_id,
-                    "revision_id": resource_revision_id,
-                },
-                "content_digest": content_digest,
-            }))
-            .send()
-            .map_err(|_| "Workspace instructions could not be saved".to_owned())?;
-        if !response.is_success() {
-            let mut body = Vec::new();
-            response
-                .take(8193)
-                .read_to_end(&mut body)
-                .map_err(|_| "Workspace instruction error response could not be read".to_owned())?;
-            if body.len() > 8192 {
-                return Err("Workspace instructions could not be saved".to_owned());
-            }
-            let code = serde_json::from_slice::<serde_json::Value>(&body)
-                .ok()
-                .and_then(|value| value.pointer("/error/code").and_then(serde_json::Value::as_str).map(str::to_owned));
-            return Err(match code.as_deref() {
-                Some("STALE_WORKSPACE_VERSION") => "STALE_WORKSPACE_VERSION".to_owned(),
-                Some("INVALID_ARGUMENT") => "Workspace instructions are invalid; check the text and Resource size.".to_owned(),
-                _ => "Workspace instructions could not be saved.".to_owned(),
-            });
-        }
-        let body = read_bounded_response(response)?;
-        let revision: WorkspaceInstructionWire = serde_json::from_slice(&body)
-            .map_err(|_| "Local Runtime returned an unsupported instruction revision".to_owned())?;
-        Ok(WorkspaceInstructionView::from(revision))
+        create_workspace_instruction_revision_with_client(
+            &client,
+            &workspace_url,
+            WorkspaceInstructionCreateInput {
+                workspace_id,
+                expected_version,
+                parent_revisions,
+                resource_id,
+                resource_revision_id,
+                content_digest,
+                request_id,
+            },
+        )
     })
     .await
     .map_err(|_| "Workspace instruction update did not complete".to_owned())?
+}
+
+fn create_workspace_instruction_revision_with_client(
+    client: &LocalOperatorClient,
+    workspace_url: &str,
+    input: WorkspaceInstructionCreateInput,
+) -> Result<WorkspaceInstructionView, String> {
+    validate_workspace_instruction_request(
+        &input.workspace_id,
+        &input.parent_revisions,
+        &input.resource_id,
+        &input.resource_revision_id,
+        &input.content_digest,
+        &input.request_id,
+    )?;
+    let workspace_id = input.workspace_id;
+    let path = workspace_instruction_revisions_path(workspace_url, &workspace_id)?;
+    let response = client
+        .post(path)
+        .header("X-Workspace-ID", &workspace_id)
+        .header("If-Match", input.expected_version.to_string())
+        .header("Idempotency-Key", input.request_id)
+        .json(&serde_json::json!({
+            "parent_revisions": input.parent_revisions,
+            "content_ref": {
+                "workspace_id": workspace_id,
+                "resource_id": input.resource_id,
+                "revision_id": input.resource_revision_id,
+            },
+            "content_digest": input.content_digest,
+        }))
+        .send()
+        .map_err(|_| "Workspace instructions could not be saved".to_owned())?;
+    if !response.is_success() {
+        let mut body = Vec::new();
+        response
+            .take(8193)
+            .read_to_end(&mut body)
+            .map_err(|_| "Workspace instruction error response could not be read".to_owned())?;
+        if body.len() > 8192 {
+            return Err("Workspace instructions could not be saved".to_owned());
+        }
+        let code = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .pointer("/error/code")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            });
+        return Err(match code.as_deref() {
+            Some("STALE_WORKSPACE_VERSION") => "STALE_WORKSPACE_VERSION".to_owned(),
+            Some("INVALID_ARGUMENT") => {
+                "Workspace instructions are invalid; check the text and Resource size.".to_owned()
+            }
+            _ => "Workspace instructions could not be saved.".to_owned(),
+        });
+    }
+    let body = read_bounded_response(response)?;
+    let revision: WorkspaceInstructionWire = serde_json::from_slice(&body)
+        .map_err(|_| "Local Runtime returned an unsupported instruction revision".to_owned())?;
+    Ok(WorkspaceInstructionView::from(revision))
 }
 
 #[tauri::command]
@@ -3367,6 +3459,20 @@ fn validated_operator_connection_until(
     deadline: Instant,
 ) -> Result<(LocalOperatorClient, OperatorReadinessWire), String> {
     let client = LocalOperatorClient::new(app)?;
+    validate_operator_client_until(
+        client,
+        expected_runtime_id,
+        expected_incarnation_id,
+        deadline,
+    )
+}
+
+fn validate_operator_client_until(
+    client: LocalOperatorClient,
+    expected_runtime_id: Option<&str>,
+    expected_incarnation_id: Option<&str>,
+    deadline: Instant,
+) -> Result<(LocalOperatorClient, OperatorReadinessWire), String> {
     let response = client
         .get("/v1/operator/readiness")
         .send_with_deadline(deadline.min(Instant::now() + OPERATOR_READINESS_PROBE_TIMEOUT))
@@ -3402,25 +3508,32 @@ impl LocalOperatorClient {
             .map_err(|_| "Authenticated local Operator IPC is unsupported on this platform".to_owned())?;
         #[cfg(unix)]
         {
-            use std::os::unix::fs::MetadataExt;
             let data_dir = app
                 .path()
                 .app_data_dir()
                 .map_err(|_| "LiteCowork application data directory is unavailable".to_owned())?;
-            let endpoint = UnixEndpoint::derive(&data_dir)
-                .map_err(|_| "Local Operator IPC data directory is unavailable or unsafe".to_owned())?;
-            let metadata = fs::symlink_metadata(endpoint.private_data_dir())
-                .map_err(|_| "Local Operator IPC data directory is unavailable".to_owned())?;
-            Ok(Self {
-                endpoint,
-                expected_peer_uid: metadata.uid(),
-            })
+            Self::from_data_dir(&data_dir)
         }
         #[cfg(not(unix))]
         {
             let _ = app;
             Err("Authenticated local Operator IPC is unsupported on this platform".to_owned())
         }
+    }
+
+    #[cfg(unix)]
+    fn from_data_dir(data_dir: impl AsRef<std::path::Path>) -> Result<Self, String> {
+        use std::os::unix::fs::MetadataExt;
+
+        let endpoint = UnixEndpoint::derive(data_dir).map_err(|_| {
+            "Local Operator IPC data directory is unavailable or unsafe".to_owned()
+        })?;
+        let metadata = fs::symlink_metadata(endpoint.private_data_dir())
+            .map_err(|_| "Local Operator IPC data directory is unavailable".to_owned())?;
+        Ok(Self {
+            endpoint,
+            expected_peer_uid: metadata.uid(),
+        })
     }
 
     fn get(&self, path: impl Into<String>) -> LocalOperatorRequest {
