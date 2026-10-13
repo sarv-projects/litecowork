@@ -1,6 +1,43 @@
 # Current run and agent handoff
 
 
+## 2026-10-13 — owner-requested source/documentation re-audit
+
+Pending IPC slice was committed/pushed first as `c8158ac`. Then three read-only
+agents and lead source inspection identified eleven source correctness gaps and
+twelve documentation/tooling/evidence findings. See
+[V1 implementation re-audit](V1-IMPLEMENTATION-REAUDIT-2026-10-13.md) for exact
+triggers, source paths, severity, known unfinished gates and remaining all-V1 scope.
+High priority: Resource draft/target identity across selection, RichPresentation
+cached-policy invalidation, and Task receipt replay before current-default lookup.
+Source defects remain open; no repair or newly executed reproduction is claimed.
+
+Updated entry/audit/handoff docs, corrected stale memory and post-V1 test scope,
+Windows transport source status and on-demand Automation follow-up wording.
+Backlog statuses unchanged: local V1 60 stories, 1 IN_REVIEW, 19 IN_PROGRESS,
+40 PLANNED, zero ACCEPTED. Current audit is evidence, not acceptance.
+
+Hosted run 38448659899 at 40b1233 passed workspace Rust and 15 Python tests plus
+architecture; failed stale generated coverage. Initial local architecture passed,
+plan failed same stale coverage; strict contracts/design-depth/owner-consistency
+checks passed. UI Node 24.21.0 helper run: 169 passed / 2 failed (missing
+@tauri-apps/api); focused retries reproduced import failure. No frontend build,
+rendered-component/native OS/accessibility/SYSTEM/USER qualification claimed.
+Documentation gates after corrections: strict contract audit 0 errors; mechanical
+Markdown audit 0 broken links; coverage generation/plan validation passed with
+103 authority documents, 1,668 sections and 6,354 rows; architecture passed;
+strict design-depth passed (20 domains, 226 functions, 187 Settings); owner
+consistency passed 34 checks. The latest owner scan read 161 documents / 57,774
+lines mechanically. Final frozen-input regeneration/check is required before
+commit; these gates establish consistency, not product qualification.
+Hosted c8158ac run 38449616382 also passed workspace/Python/architecture, then
+failed the same stale coverage. Audit checkpoint will refresh that input.
+
+Resource state unchanged: one main worktree, shared Cargo target 2,288,252,691
+bytes, UI dist 923,931 bytes, owner .playwright-mcp 133,783 bytes. No audit
+worktree/branch/background server/profile or persistent test data created.
+
+
 ## 2026-10-13 — E01-S04 stalled Unix stream CODE checkpoint
 
 Added `stalled_stream_write_uses_production_deadline_and_poisons_exchange` in

@@ -5,8 +5,10 @@ preview). This README describes current implementation state, not completed rele
 
 This directory contains the Tauri 2 + React desktop Operator. Current source can locate
 and start local `litecoworkd`, show lifecycle/readiness state, and use the authenticated
-local Operator transport on Linux/macOS; Windows still fails closed until named-pipe
-peer authentication is implemented. The UI now contains partial source slices for
+local Operator transport on Linux/macOS. Authenticated Windows named-pipe transport
+is present in daemon/Tauri source, with security/helper cross-compilation evidence; full
+Windows builds and real OS/system/user qualification remain pending. The UI now
+contains partial source slices for
 Workspace setup/instructions, resumable Resource upload and revision editing, persistent
 folder-scope registration, metadata/on-demand/indexed plain-text search, Goals,
 Suggestions, Coworker settings, Routines, Automation definitions plus one-shot Manual
@@ -50,7 +52,8 @@ the desktop executable's directory. Development builds may use `LITECOWORKD_PATH
 the native Operator client; IPC endpoint details remain outside the WebView. This remains a partial desktop integration rather than the complete Operator contract.
 Linux/macOS IPC and multiple UI slices have compiled/test evidence recorded in
 `implementation/CURRENT-RUN.md`, but supported-OS system/user qualification is incomplete;
-Windows IPC remains unavailable. Do not infer production readiness from source presence or
+Windows IPC production qualification remains unavailable. Do not infer production
+readiness from source presence or
 a successful frontend build.
 
 ## UI contract

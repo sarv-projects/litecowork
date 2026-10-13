@@ -72,15 +72,16 @@ below define fixture oracles, not model success/performance claims.
 ## Owner real-world user session suite
 
 Synthetic cases keep regressions repeatable; they do not satisfy real-world acceptance.
-Before G2, G3, G4 and G5, the owner performs the required product tasks with the installed
+Before each applicable release gate, the owner performs the required product tasks with the installed
 build using owner-approved real repositories/files, realistic mixed document folders,
 qualified test accounts and non-production external destinations. At minimum each
 finalized user workflow gets one real session: inspect/fix/review an actual coding repo;
 organize a chosen local folder; analyze a realistic PDF/receipt/spreadsheet bundle; produce
 and revise a research/document artifact; use a permitted connector and review an approved
 write in a sandbox account; prepare a browser action then take over; run the configured
-routine twice including one restart; continue portable work in cloud with the desktop
-closed; and run one eligible Task on a paired remote Runtime. Include a locally hosted model
+routine twice including one restart. The post-V1 E11 cloud gate additionally requires
+portable work with the desktop closed; the post-V1 E12 remote gate requires one eligible
+Task on a paired remote Runtime. Neither blocks desktop/local G2/G3. Include a locally hosted model
 path on hardware the owner expects to use.
 
 For each session the owner records the original task request, intended resource scope,
@@ -111,12 +112,13 @@ owner/version/payload/replication class; ephemeral token/PID data never becomes 
 ## Platform, performance and coverage
 
 Matrix: Linux reference OS, then declared Windows/macOS installers; native harnesses and
-local engine models; local/cloud/remote; internet/airplane/offline; cold/warm; keyboard and
+local engine models; local placement for V1 (cloud/remote at E11/E12); internet/airplane/offline; cold/warm; keyboard and
 screen reader. Publish unavailable cells and blockers. No successful Linux mock labels
 macOS native computer use supported. Use actual OS runners/devices and owner test accounts.
 
 Existing B13/B14 mobile interaction clauses: V1 validates channel/cross-device domain
-behavior through desktop/second desktop and supported human channel. Native mobile UI
+behavior through desktop/second desktop. The supported external human-channel variant
+requires post-V1 E11-S04 and is not a local V1 gate. Native mobile UI
 rendering remains explicitly out of scope; record that variant, never claim the unrun
 mobile original passed. All other scenario assertions remain. The owner accepts scoped
 NOT_APPLICABLE only for explicitly deferred client/platform integrations, not a broken
@@ -134,7 +136,8 @@ and escaped-defect trends to judge test effectiveness.
 Every PR: architecture+plan checks, formatting/types/build, unit/property/contract/SQLite,
 frontend components and local integration. Nightly: real native smoke, controlled browser,
 recovery matrix and retrieval corpus. Release: installers/upgrades on supported OS,
-cloud/remote fault drill, full real-use corpus, accessibility, dependency/license scan,
+local recovery fault drill (cloud/remote drills at their post-V1 releases), full real-use
+corpus, accessibility, dependency/license scan,
 benchmark comparison and owner review. Quarantined flaky tests need issue/owner/expiry and
 cannot hide a release-critical failure. Paid provider runs are budgeted and never use
 production send/payment accounts without the owner's test authorization.

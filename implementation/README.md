@@ -71,3 +71,11 @@ Start with ../docs/V1-DESIGN-INDEX.md, V1-DESIGN-COVERAGE.md and the exact epic;
 ## 2026-10-13 implementation reconciliation handoff
 
 Read [V1 contract reconciliation](V1-CONTRACT-RECONCILIATION-2026-10-13.md) immediately after the current run and before dependency-ready E03/E07/E08/E13 work. It maps the corrected canonical API/schema/security/memory contracts to existing stories, code/system/user tests, platform release blockers and their truthful current statuses. Use the backlog as the status/dependency authority; a passing documentation validator does not unblock Task planning, native Send, Windows roots, browser/terminal or private automatic learning.
+
+## 2026-10-13 implementation re-audit
+
+Read [the source-backed audit and remaining V1 work](V1-IMPLEMENTATION-REAUDIT-2026-10-13.md)
+and [refreshed next-session handoff](NEXT-SESSION-HANDOFF-2026-10-13.md).
+The audit lists open source defects, corrected documentation contradictions, tooling
+gaps, exact observed checks and remaining E01–E10/E13 qualification. It does not
+promote story status or certify universal semantic/runtime correctness.

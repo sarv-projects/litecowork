@@ -287,7 +287,7 @@ OAuth, triggers and workflow backends must function without Composio.
 |---|---|---|
 | Agent can update its own config | LearningService + CoworkerService + immutable CoworkerRevision | Model may propose; only policy-qualified memory can quietly commit. Instructions/skills/automations require review/versioned authority. |
 | Schedule/event shown as one Automation concept | AutomationService + TriggerCoordinator + UI projection | Adopt. Internal TriggerDefinition variants remain distinct. |
-| Automation run has a session that can continue | AutomationOccurrence + Task + background Conversation | Adopt with explicit run Conversation linkage and visibility rules. |
+| Automation run has a session that can continue | AutomationOccurrence + Task + on-demand Task follow-up Conversation | Adopt with explicit run Conversation linkage and visibility rules. |
 | One agent has durable files + session scratch | Coworker private Resources + Environment/AgentSession | Adopt conceptually; do not allocate a permanent VM per Coworker by default. |
 | Workforce decomposes and parallelizes | PlanRevision/Step + WorkerSelection + DelegationChannel | Adopt algorithms/tests, not CAMEL authority. |
 | Browser/terminal/MCP assembled per agent | CapabilityBroker + LiteSPM + AgentControlDescriptor | Adopt lifecycle/cleanup test patterns. |

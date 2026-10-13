@@ -29,7 +29,7 @@ ChatGPT documents file previews and iterative artifact work.
 | Browse/form/reservation preparation / Muse | API→DOM→accessibility→computer, takeover/approval | U10/U11 | Prepare and hand off final sensitive action; no CAPTCHA or site restriction bypass |
 | Spending tracker/dashboard / Muse artifact pattern | Data capability + sandboxed renderer + versioned Artifact | U12 | Can replace supported data; sources must refresh under policy |
 | Scheduled research/site change review / persistent assistants | Routine/Automation/occurrence/health with bounded producer | U13/U14 | Desktop V1 requires the qualified local Runtime awake; no promised cloud fallback before E11 |
-| Editable profile/continuity / Muse pattern | ContextDocument revisions + scoped retrieval + durable Task | U15/U16 | Replace explicit continuity; no invisible autonomous memory proposal V1 |
+| Editable profile/continuity / Muse pattern | ContextDocument revisions + scoped retrieval + durable Task | U15/U16 | Qualified scoped private learning plus explicit continuity; eligibility, owner visibility/opt-out, conflict and revocation gates remain required |
 | Learn repeated browser work / Teach-a-task pattern | Bounded semantic demonstration→reviewed SkillProposal→LiteSPM | U17 | Can replace qualified sites; drift and package contract can block publishing |
 | Rich output refinement / ChatGPT file work | Workbench renderer + immutable versions and conflict-safe edits | U05/U12 | Can replace renderer-qualified artifacts; not arbitrary vendor-private app semantics |
 | Background cloud work / Cowork category (**post-V1 E11**) | Same Task→new cloud Attempt after reconciliation/fencing | U18/U19 | Not a desktop V1 release promise; laptop-close continuation only after qualified E11 |

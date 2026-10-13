@@ -8,10 +8,10 @@ source, tests, or backlog. Re-check all listed state at session start.
 
 - Workspace: `/home/sarvesh/business_Dev/litecowork`.
 - Branch: `main`; the current implementation checkpoint is
-  `5ced2ab34568fe752ad431671249fdd579e2af7e` (`test(storage): verify workspace receipt
-  replay after reopen`), pushed to `origin/main`. The handoff refresh follows that
+  `c8158aced6165d601ba46b71b2db159e8edd5cce` (`test(ipc): verify production stalled
+  stream deadline`), pushed to `origin/main`. The handoff refresh follows that
   checkpoint; at the next session, read the live branch/status before editing. Its parent
-  `7d03dbb` is the previous handoff snapshot. Earlier, `c66817b` (subject `commit`) recorded
+  is `40b1233`; `7d03dbb` is an earlier handoff snapshot. Earlier, `c66817b` (subject `commit`) recorded
   the owner's architecture/documentation/source pass: 296 files, 68,758 insertions and
   3,109 deletions. That commit includes owner `.playwright-mcp/` data. Preserve these commits
   and owner data; do not reset, rewrite, or delete them.
@@ -25,6 +25,37 @@ source, tests, or backlog. Re-check all listed state at session start.
   files are agent-maintained evidence; inspect their current diff/status before any new edit.
 - Do not change E01-S02 to `DONE`/`ACCEPTED`. E01-S01 is still `IN_REVIEW`, and owner
   acceptance/system/provider gates remain open.
+
+## Latest audit and resume priority — 2026-10-13
+
+Latest code checkpoint is `c8158ac`; CI dependency fixes `b32ca45` (D-Bus)
+and `40b1233` (Bubblewrap) are pushed. E01-S04 now has a real Unix socket
+regression exercising the production five-second stalled-stream deadline, poisoned
+exchange, budget release and closure on connection drop: 20 unit + 4 integration
+IPC tests, strict Clippy, formatting and diff checks passed. It is CODE evidence;
+packaged SYSTEM and owner USER gates remain pending.
+
+Read [the source-backed re-audit](V1-IMPLEMENTATION-REAUDIT-2026-10-13.md)
+before choosing the next patch. It lists newly identified correctness defects,
+documentation discrepancies and known unfinished V1 gates separately. Prioritize
+the Resource editor's cross-document draft/write race and RichPresentation cache
+invalidation, then receipt replay/error contracts and other async UI races.
+Reproduce each through a focused regression before repair; retain fail-closed
+planning/Effect gates. The owner most recently requested commit/push followed by
+this audit; the implementation goal was paused before that audit request. A new
+session must respect the owner's current requested scope.
+
+Hosted runs `38448659899` at `40b1233` and `38449616382` at `c8158ac`
+passed workspace Rust and 15 Python
+tests plus architecture validation, then failed stale `implementation/coverage.csv`.
+This is a documentation generation failure, not full product qualification.
+Recheck current hosted status after the audit checkpoint. The default shell uses
+Node 22.23.1 / pnpm 12.11.2; use the pinned Node 24.21.0 and pnpm 12.10.1.
+The current UI dependency tree is absent: the audit UI helper run produced
+169 passes and 2 import failures for missing `@tauri-apps/api`, not a green UI gate.
+Shared Cargo target is 2,288,252,691 bytes; UI dist 923,931 bytes and owner
+`.playwright-mcp` 133,783 bytes are retained. One main worktree; no audit worktree,
+branch, background server or native profile was created.
 
 ## Work completed immediately before handoff
 
@@ -316,9 +347,11 @@ comparison when E08-S08 is implemented.
 ```text
 You are the lead implementation agent for LiteCowork. Continue the active desktop/local V1 objective using implementation/NEXT-SESSION-HANDOFF-2026-10-13.md as navigation and implementation/backlog.json plus the live source/contracts as authority. Work autonomously until the desktop/local V1 release evidence is actually proven or an explicit stop condition in AGENTS.md applies. Do not ask whether to continue ordinary reversible work.
 
+Read `implementation/V1-IMPLEMENTATION-REAUDIT-2026-10-13.md` for the latest defects and audit limits. Latest pushed source is `c8158ac`; repair the Resource editor cross-document race and RichPresentation invalidation before enabling more product paths. Refresh hosted CI and generated coverage; qualify UI bootstrap with the pinned tools.
+
 Start by inspecting `git status --short --branch`, staged/current diff, current `HEAD` and `origin/main`, worktrees, branches, processes, disk space, and the named regenerable paths. Preserve the owner source pass `c66817b`, `.playwright-mcp` data, and all other owner changes. Read AGENTS.md and the required start/resume documents in its stated order; reread the exact active epic/story, authority documents, machine contracts, and current source/tests before each domain change. The backlog is status/dependency authority; this handoff is evidence/navigation only.
 
-Latest pushed code checkpoint: `5ced2ab` adds `workspace_policy_receipt_replays_after_store_reopen` and current E01-S02 CODE evidence. The Busy retry test is already in `c66817b`; do not duplicate it. Current storage package evidence is 191/191 plus strict storage Clippy/rustfmt, but E01-S02 remains `IN_PROGRESS`, and E01-S01 remains `IN_REVIEW`. Do not fill owner USER acceptance or claim provider/platform/system qualification from local CODE tests. Continue E01-S02/S03/S04 foundational work under the overlap explicitly allowed by ROADMAP; at strict status/dependency level, zero stories are yet dependency-ready because none is ACCEPTED/DONE.
+Earlier pushed storage checkpoint: `5ced2ab` adds `workspace_policy_receipt_replays_after_store_reopen` and current E01-S02 CODE evidence. The Busy retry test is already in `c66817b`; do not duplicate it. Current storage package evidence is 191/191 plus strict storage Clippy/rustfmt, but E01-S02 remains `IN_PROGRESS`, and E01-S01 remains `IN_REVIEW`. Do not fill owner USER acceptance or claim provider/platform/system qualification from local CODE tests. Continue E01-S02/S03/S04 foundational work under the overlap explicitly allowed by ROADMAP; at strict status/dependency level, zero stories are yet dependency-ready because none is ACCEPTED/DONE.
 
 For each slice, update CURRENT-RUN, review packet, backlog/status only to evidence actually proven; measure and clean only agent-created worktrees, branches, processes, and regenerable artifacts; preserve owner data and useful caches. Run focused tests, then the story's CODE/SYSTEM/USER gates and relevant validators. Inspect the full diff, stage exact intended paths (never broad-stage), inspect the staged diff, create a Conventional Commit, and push the authorized coherent milestone. Do not publish/release/provision/spend or alter external production state. Continue after each commit. Keep E11/E12 out of the V1 critical path.
 

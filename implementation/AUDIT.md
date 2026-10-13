@@ -145,3 +145,11 @@ from files reviewed with no architecture change needed.
 ## 2026-10-13 implementation reconciliation after contract corrections
 
 The architecture/error, idempotency, skill-drift blocker, AgentAuthDescriptor, Task-version naming, memory current-versus-target wording, recovery matrix, terminal authority, ADR index, Windows root and external-reference corrections are recorded in [V1 contract reconciliation](V1-CONTRACT-RECONCILIATION-2026-10-13.md). These are **specification fixes** only. Existing Task planning has a fail-closed storage gate; its optional Runtime-owned containment approach is a *design alternative requiring qualification*, not an implemented bypass. Native Conversation Send, Windows root revalidation and automatic private Coworker learning are not release-qualified. Track implementation only through existing E01/E03/E07/E08/E10/E13 stories and their evidence; do not reclassify historic partial-source progress as ACCEPTED.
+
+## 2026-10-13 current implementation re-audit
+
+The [current source-backed report](V1-IMPLEMENTATION-REAUDIT-2026-10-13.md)
+supersedes older current-state summaries for the inspected seams. It separates
+new Resource/Conversation/receipt correctness defects from known unfinished V1
+gates and records full corpus mechanical ingestion with explicit semantic-review
+limits. Use its repair priorities and the live backlog/source before a new slice.
