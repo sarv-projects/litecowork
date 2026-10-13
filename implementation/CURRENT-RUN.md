@@ -3,6 +3,48 @@
 Update this file when the active story, implementation state, or handoff changes. It is
 operational context; architecture and owning domain contracts remain authoritative.
 
+## E01-S02 durable receipt replay after store reopen CODE evidence — 2026-10-13
+
+Current state: the prior handoff's claim that more local transactional CODE work remained
+was too broad. A post-commit source/test audit found the deterministic E01-S02 storage
+cases already present; this slice closes a narrower evidence gap for an idempotency receipt
+surviving adapter shutdown/reopen. `workspace_policy_receipt_replays_after_store_reopen`
+uses the real on-disk SQLite adapter and `WorkspaceService`, commits an idempotent policy
+update, drops the store, reopens the same database and BlobStore, and retries with the old
+expected version. The original response is returned. Reusing the same principal/request ID
+with a changed payload conflicts; the Workspace remains at version 2, the event stream and
+origin sequences remain `[1, 2]`, replay matches the projection, and exactly one request
+receipt remains. Existing production code passed; no storage behavior changed.
+
+Linux WSL2 x86_64, Ubuntu 24.04.4 LTS, kernel `6.18.54.1-microsoft-standard-WSL2`,
+rustc `1.98.1 (48a229cea 2026-09-01)`, Cargo `1.98.1 (797e8a9bc 2026-08-05)`,
+`rusqlite` 0.40.2, bundled SQLite 3.53.2:
+
+```sh
+cargo test --locked -p storage-sqlite workspace_policy_receipt_replays_after_store_reopen -- --nocapture --test-threads=1
+cargo test --locked -p storage-sqlite idempotent_workspace_policy_busy_leaves_no_receipt_and_retries_once -- --nocapture --test-threads=1
+cargo test --locked -p storage-sqlite before_commit_failure_rolls_back_request_receipt_with_workspace_event_and_sequence -- --nocapture --test-threads=1
+cargo test --locked -p storage-sqlite applies_full_contract_schema_and_reports_sqlite_runtime -- --nocapture --test-threads=1
+cargo test --locked -p storage-sqlite
+cargo clippy --locked -p storage-sqlite --all-targets -- -D warnings
+rustfmt --edition 2024 --check crates/storage-sqlite/src/tests.rs
+git diff --check -- crates/storage-sqlite/src/tests.rs
+```
+
+The three focused receipt/rollback tests each passed **1/1**; the version probe reported
+SQLite **3.53.2**; the current worktree's full storage package suite passed **191/191**
+tests, 0 doc tests, in **343.33 seconds**; strict storage Clippy, rustfmt, and scoped
+whitespace checks passed. The full suite ran after adding the reopen test. This is CODE
+evidence only: it does not qualify physical database/WAL/blob-volume exhaustion, live Linux
+Secret Service, Windows Credential Manager, macOS Keychain, cryptographic review, packaged
+daemon/System behavior, or owner USER acceptance. E01-S02 remains `IN_PROGRESS`; E01-S01
+remains `IN_REVIEW`.
+
+The earlier E01-S02 history below records work before the owner commit `c66817b`. In
+particular, its `BeforeCommit` note that the test depended on an uncommitted
+`archive_request_payload` field and could not be staged is superseded by that commit. Keep
+the historical record, but use this section and the current handoff for present state.
+
 ## E01-S02 request-receipt rollback CODE evidence — 2026-10-13
 
 Added `before_commit_failure_rolls_back_request_receipt_with_workspace_event_and_sequence`

@@ -1468,6 +1468,100 @@ fn workspace_create_update_restart_and_projection_replay_match() {
 }
 
 #[test]
+fn workspace_policy_receipt_replays_after_store_reopen() {
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-policy-receipt-reopen");
+
+    let principal_id = "owner-local".to_owned();
+    let request_id = "request-policy-receipt-reopen".to_owned();
+    let request_payload = serde_json::json!({
+        "operation": "workspace.replication_policy.change.v1",
+        "workspace_id": "workspace-policy-receipt-reopen",
+        "expected_version": 1,
+        "policy": "METADATA_ONLY",
+    });
+    let command = ChangeReplicationPolicy {
+        workspace_id: "workspace-policy-receipt-reopen".to_owned(),
+        expected_version: 1,
+        policy: ReplicationPolicy::MetadataOnly,
+        replication_scope_root_ids: Vec::new(),
+        event: context("event-policy-receipt-reopen", 1),
+    };
+    let committed = service(store.clone())
+        .change_replication_policy_idempotent(
+            command.clone(),
+            principal_id.clone(),
+            request_id.clone(),
+            request_payload.clone(),
+        )
+        .expect("commit the idempotent policy request");
+    drop(store);
+
+    let reopened = test_store(&directory, Duration::from_secs(1));
+    let replayed = service(reopened.clone())
+        .change_replication_policy_idempotent(
+            command,
+            principal_id.clone(),
+            request_id.clone(),
+            request_payload,
+        )
+        .expect("replay the original receipt after reopening the store");
+    assert_eq!(replayed, committed);
+
+    let changed_request_payload = serde_json::json!({
+        "operation": "workspace.replication_policy.change.v1",
+        "workspace_id": "workspace-policy-receipt-reopen",
+        "expected_version": 1,
+        "policy": "FULL_WORKSPACE",
+    });
+    let changed_command = ChangeReplicationPolicy {
+        workspace_id: "workspace-policy-receipt-reopen".to_owned(),
+        expected_version: 1,
+        policy: ReplicationPolicy::FullWorkspace,
+        replication_scope_root_ids: Vec::new(),
+        event: context("event-policy-receipt-reopen-conflict", 2),
+    };
+    assert!(matches!(
+        service(reopened.clone()).change_replication_policy_idempotent(
+            changed_command,
+            principal_id.clone(),
+            request_id.clone(),
+            changed_request_payload,
+        ),
+        Err(StoreError::Conflict { .. })
+    ));
+
+    let workspace = reopened
+        .get_workspace("workspace-policy-receipt-reopen")
+        .expect("read Workspace after replay and conflict")
+        .expect("Workspace remains present");
+    assert_eq!(workspace, committed.workspace);
+    let events = reopened
+        .read_workspace_events("workspace-policy-receipt-reopen")
+        .expect("read Workspace events after replay and conflict");
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].origin_sequence, 1);
+    assert_eq!(events[1].origin_sequence, 2);
+    assert_eq!(
+        reopened
+            .rebuild_workspace_projection("workspace-policy-receipt-reopen")
+            .expect("rebuild projection after replay and conflict"),
+        Some(committed.workspace.clone())
+    );
+
+    let connection = Connection::open(state_database(&directory)).expect("inspect receipt");
+    let receipt_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            [&principal_id, &request_id],
+            |row| row.get(0),
+        )
+        .expect("count durable request receipts");
+    assert_eq!(receipt_count, 1);
+}
+
+#[test]
 fn workspace_event_replay_pages_use_stable_origin_sequences_and_reject_gaps() {
     use storage_core::EventStore;
 
@@ -2292,8 +2386,8 @@ fn idempotent_workspace_policy_busy_leaves_no_receipt_and_retries_once() {
             .expect("replay after Busy"),
         Some(created.workspace.clone())
     );
-    let connection = Connection::open(state_database(&directory))
-        .expect("inspect receipt after Busy");
+    let connection =
+        Connection::open(state_database(&directory)).expect("inspect receipt after Busy");
     let receipts_after_busy: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
@@ -2337,8 +2431,8 @@ fn idempotent_workspace_policy_busy_leaves_no_receipt_and_retries_once() {
         Some(retried.workspace.clone())
     );
 
-    let connection = Connection::open(state_database(&directory))
-        .expect("inspect committed request receipt");
+    let connection =
+        Connection::open(state_database(&directory)).expect("inspect committed request receipt");
     let (response_json, response_digest): (String, String) = connection
         .query_row(
             "SELECT response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
