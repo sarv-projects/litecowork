@@ -170,6 +170,35 @@ class CheckScriptToolchainTests(unittest.TestCase):
         )
         self.assertLess(steps.index(dbus_step), check_index)
 
+    def test_ci_installs_bubblewrap_for_process_scope_contract_tests(self):
+        root = Path(__file__).resolve().parents[1]
+        workflow = yaml.safe_load(
+            (root / ".github/workflows/architecture-docs.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        steps = workflow["jobs"]["check"]["steps"]
+        native_dependencies = next(
+            (
+                step
+                for step in steps
+                if "Install Linux native build dependencies" == step.get("name")
+            ),
+            None,
+        )
+
+        self.assertIsNotNone(
+            native_dependencies,
+            "CI must declare native dependencies required by workspace tests",
+        )
+        self.assertIn("bubblewrap", native_dependencies["run"])
+        check_index = next(
+            index
+            for index, step in enumerate(steps)
+            if step.get("run") == "scripts/check.sh"
+        )
+        self.assertLess(steps.index(native_dependencies), check_index)
+
 
 if __name__ == "__main__":
     unittest.main()
