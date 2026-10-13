@@ -6769,3 +6769,62 @@ The separate daemon route test uses real SQLite and receipt replay. The Tauri fi
 still a hand-authored responder and does not join the daemon route, authorization, or SQLite
 in one process flow. Packaged Tauri/provider SYSTEM behavior, restart evidence,
 cross-platform qualification, and owner USER acceptance remain pending.
+
+## E01-S02 idempotent busy-timeout retry CODE and next-session handoff — 2026-10-13
+
+Added `idempotent_workspace_policy_busy_leaves_no_receipt_and_retries_once` to the real
+on-disk `storage-sqlite` test suite. While a second SQLite connection holds `BEGIN IMMEDIATE`,
+the idempotent Workspace policy command returns `StoreError::Busy`; Workspace state,
+creation-only event/origin sequence, replay projection, and receipt absence are asserted.
+After unlocking, the exact request retries at version 2 / origin sequence 2; exact replay
+returns the original response with no duplicate event, and the persisted response digest is
+checked. No production behavior changed. See the
+[E01-S02 busy-retry CODE addendum](reviews/E01-S02-BUSY-RETRY-2026-10-13.md).
+
+On Linux WSL2 x86_64 / Ubuntu 24.04.4 LTS, rustc `1.98.1 (48a229cea 2026-09-01)`, Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`:
+
+- `cargo test --locked -p storage-sqlite idempotent_workspace_policy_busy_leaves_no_receipt_and_retries_once -- --nocapture --test-threads=1` — **1/1 passed** on the dirty checkout.
+- `cargo test --locked -p storage-sqlite` — **190/190 passed**, 0 doc tests, on the dirty checkout.
+- The focused command above also passed **1/1** from a detached clean-HEAD worktree at `86e0d8033be9fd6e3d023b39e87de26443a5ecbc` with a fresh target; compile emitted 13 existing warnings. The full package suite was not rerun on clean HEAD.
+- `workspace_create_update_restart_and_projection_replay_match`, `sqlite_full_through_writer_actor_preserves_state_and_allows_retry`, and `sqlite_full_workspace_policy_command_rolls_back_idempotency_receipt_and_retries` each passed **1/1** in focused runs.
+
+This is SQLite CODE evidence, not physical filesystem exhaustion, OS keychain/provider
+qualification, packaged daemon/UI SYSTEM integration, cross-platform acceptance, cryptographic
+review, or owner USER evidence. E01-S02 remains `IN_PROGRESS`; E01-S01 remains `IN_REVIEW`.
+The exact pending gates and resource cleanup measurements are in the addendum. The
+[full V1 next-session handoff](NEXT-SESSION-HANDOFF-2026-10-13.md) records the current
+backlog statuses/dependencies, G0–G3 release path, owner-work preservation boundary, and
+ready-to-copy next-session prompt.
+
+Documentation checks for this handoff: `.venv/bin/python scripts/validate_architecture.py`
+passed (JSON Schemas, 142 typed events, ErrorCodes, OpenAPI, SQLite, Gateway names, product
+naming, Markdown links). A scoped local-link/fence check for the two new Markdown files and
+`git diff --check` on this evidence passed. `python3 scripts/validate_architecture.py` lacked
+`openapi_spec_validator`; retrying with the configured `.venv` succeeded.
+At the first validation attempt, before the owner pass landed at `c66817b`,
+`python3 scripts/validate_implementation_plan.py` reported `coverage.csv` stale against the
+broad owner-modified contracts/docs. Coverage regeneration and `audit_v1_markdown.py` were
+deferred then because their generated outputs belonged to the still-uncommitted owner pass.
+After `c66817b`, the prescribed audit and generation sequence passed as recorded below.
+These are documentation consistency checks only; they do not qualify runtime behavior.
+
+At the later handoff inspection, the test was already included in pushed `c66817b` along with
+the owner’s broad 296-file documentation/source commit; no duplicate test staging is needed.
+The checkout had one main worktree and 26 branches. The root and Tauri Cargo target
+folders were absent, the owner `.playwright-mcp` directory was 133,783 bytes, and 21 Node
+processes were present; no Cargo/rustc process appeared in the process-name check. Do not
+treat those Node processes as agent-owned without identifying them.
+
+
+After confirming the owner pass at pushed HEAD `c66817b77c114dc1db8f4c0fc8b24ef5b498e177`,
+ran the documentation gate in order: `.venv/bin/python scripts/audit_v1_contracts.py
+--strict --write-report` — 0 errors (206 routes, 158 UI cases, 67 stories; notes native
+Conversation submission unavailable and some disabled controls require release review);
+`.venv/bin/python scripts/audit_v1_markdown.py` — 159 files, 57,218 lines, 0 broken links;
+coverage generation and read-only validation — 103 documents, 1,668 sections, 6,340 rows;
+`.venv/bin/python scripts/validate_implementation_plan.py` — 67 stories passed; and
+`.venv/bin/python scripts/validate_architecture.py` — passed with 142 typed events and current
+machine contracts. Generated Markdown inventory rows use the existing CRLF format; their
+trailing CR is ignored with `git -c core.whitespace=cr-at-eol diff --check`. These checks
+show documentation consistency, not product feature completion.
