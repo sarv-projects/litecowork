@@ -7,51 +7,49 @@ source, tests, or backlog. Re-check all listed state at session start.
 ## Current branch and preservation boundary
 
 - Workspace: `/home/sarvesh/business_Dev/litecowork`.
-- Branch: `main`; at handoff inspection `HEAD` and `origin/main` point to
-  `c66817b77c114dc1db8f4c0fc8b24ef5b498e177` (commit subject `commit`), following
-  `86e0d80` (`fix(tauri): route workspace instruction revisions correctly`). The new commit
-  records the owner architecture/documentation/source pass: 296 files, 68,758 insertions and
-  3,109 deletions. It includes owner `.playwright-mcp/` data. Preserve that commit and data;
-  do not reset, rewrite, or delete them. At current inspection, the handoff/current-run evidence and deterministic coverage/Markdown
-  inventories are the only uncommitted paths. Recheck `git status --short` before mutation.
+- Branch: `main`; the current implementation checkpoint is
+  `5ced2ab34568fe752ad431671249fdd579e2af7e` (`test(storage): verify workspace receipt
+  replay after reopen`), pushed to `origin/main`. The handoff refresh follows that
+  checkpoint; at the next session, read the live branch/status before editing. Its parent
+  `7d03dbb` is the previous handoff snapshot. Earlier, `c66817b` (subject `commit`) recorded
+  the owner's architecture/documentation/source pass: 296 files, 68,758 insertions and
+  3,109 deletions. That commit includes owner `.playwright-mcp/` data. Preserve these commits
+  and owner data; do not reset, rewrite, or delete them.
 - Never reset, clean, stash, checkout away, overwrite, or broadly stage the owner work. Stage
   exact paths or hunks for the current agent's work and inspect the staged diff. The owner
   has authorized coherent milestone commits and pushes, but this does not authorize staging
   unrelated work.
-- The E01-S02 test `idempotent_workspace_policy_busy_leaves_no_receipt_and_retries_once`
-  is already present in the pushed `c66817b` owner commit. Do not duplicate or stage it again.
-  The review addendum and handoff are agent-authored. `implementation/CURRENT-RUN.md` now
-  has only the E01-S02 handoff entry as an uncommitted change; verify with `git diff` before
-  staging.
+- The E01-S02 Busy retry test is already present in `c66817b`; the durable receipt-after-
+  reopen test and its evidence are in `5ced2ab`. Do not duplicate either test. The source
+  slice was committed from a clean pre-slice worktree and pushed. The handoff/current-run
+  files are agent-maintained evidence; inspect their current diff/status before any new edit.
 - Do not change E01-S02 to `DONE`/`ACCEPTED`. E01-S01 is still `IN_REVIEW`, and owner
   acceptance/system/provider gates remain open.
 
 ## Work completed immediately before handoff
 
-A single new regression was added to
+A new evidence test is committed in
 [`crates/storage-sqlite/src/tests.rs`](../crates/storage-sqlite/src/tests.rs):
-`idempotent_workspace_policy_busy_leaves_no_receipt_and_retries_once`. It uses an actual
-on-disk SQLite adapter and `WorkspaceService`, holds a second-connection `BEGIN IMMEDIATE`
-lock, observes `StoreError::Busy`, and proves no partial Workspace/event/sequence/replay or
-idempotency receipt. Releasing the lock and retrying the identical request commits version
-2 / origin sequence 2; exact replay returns the same receipt without a second event, and the
-saved response digest is checked. No production behavior changed.
+`workspace_policy_receipt_replays_after_store_reopen`. It commits an idempotent Workspace
+policy request through the real on-disk SQLite adapter and `WorkspaceService`, drops and
+reopens the store, retries with the old expected version, and verifies the original response
+is replayed. Reusing the same principal/request ID with a changed payload conflicts; the
+projection, event stream/origin sequence, replay result, and single durable receipt remain
+unchanged. Production code already satisfied this behavior, so no storage behavior changed.
 
-Evidence is in the [E01-S02 busy retry CODE addendum](reviews/E01-S02-BUSY-RETRY-2026-10-13.md)
-and the new entry in `CURRENT-RUN.md`. On the working tree before the owner committed `c66817b`, the focused test passed 1/1 and
-`cargo test --locked -p storage-sqlite` passed 190/190 with 0 doc tests. The test is now
-part of the pushed `c66817b` source tree; the 190-test suite was not rerun after that commit. A detached
-clean-HEAD worktree at `86e0d80` with an isolated target also passed the focused test 1/1;
-that worktree and its 1,508,110,871-byte target were removed. Do not describe the dirty full
-suite as a clean-HEAD full-suite run. The focused storage fixture reported bundled SQLite
-3.53.2. All exact commands, versions, evidence limits, and cleanup measurements are in the
-addendum.
+The existing `idempotent_workspace_policy_busy_leaves_no_receipt_and_retries_once` test
+from `c66817b` was rerun alongside the receipt rollback case. The current worktree package
+suite passed **191/191** tests, 0 doc tests, in 343.33 seconds; strict storage Clippy,
+rustfmt, and scoped diff checks passed. Bundled SQLite reported 3.53.2. Exact commands,
+tool versions, and limits are recorded in `implementation/CURRENT-RUN.md` and
+`implementation/reviews/E01-S02.md`. The earlier 190-test run was on a pre-commit working
+tree and is superseded as the latest package evidence by the 191-test run.
 
-The test demonstrates local SQLite busy-timeout rollback and retry. Physical filesystem
-exhaustion, OS key stores, other operating systems, packaged product/System integration,
-cryptographic review, and owner USER acceptance remain unverified. The existing E01-S02
-review packet remains the owner decision record; its owner section must not be filled by an
-agent.
+Together these tests demonstrate local SQLite Busy rollback/retry and idempotent receipt
+replay after a local adapter reopen. Physical filesystem exhaustion, OS key stores, other
+operating systems, packaged product/System integration, cryptographic review, and owner USER
+acceptance remain unverified. The existing E01-S02 review packet remains the owner decision
+record; its owner section must not be filled by an agent.
 
 Previous pushed slice: E02-S02 Tauri instruction bridge transport CODE, commit `86e0d80`.
 It covers five bridge tests, 59 Tauri library tests, Clippy (with 26 existing warnings), and
@@ -61,14 +59,26 @@ See `implementation/reviews/E02-S02.md` and `CURRENT-RUN.md`.
 
 ## Immediate implementation frontier
 
-The authoritative current status is `implementation/backlog.json`; read it again with the
-source because the owner pass at `c66817b` changed the implementation and contracts broadly.
-The latest read-only frontier audit identified E01-S02 as the current foundational continuation. The test above
-adds CODE evidence only and does not finish E01-S02. Continue through the remaining
-transactional persistence acceptance/recovery gaps, while keeping the E01-S01 prerequisite
-and owner decision explicit. Then select the next dependency-ready story from the live
-source/backlog. Do not jump to an unrelated PLANNED story such as E03-S06 solely because it
-is an obvious new feature.
+The authoritative current status is `implementation/backlog.json`; refresh it with live
+source/tests because owner commit `c66817b` changed implementation and contracts broadly.
+The latest read-only frontier audit found the deterministic local E01-S02 storage cases
+already represented in source except for a receipt replay after reopening the store. The
+new test closes that CODE evidence gap only; it does not finish E01-S02. Do not repeat the
+Busy retry test or claim that the reopen test fixes a production bug. E01-S02 still lacks
+physical database/WAL/blob-volume exhaustion, live OS key-provider qualification,
+cryptographic review, cross-platform/system evidence, and owner acceptance; E01-S01 remains
+`IN_REVIEW` with clean-checkout/hosted-CI and owner gates open.
+
+Continue the foundational E01-S02/S03/S04 sequence in line with `implementation/ROADMAP.md`:
+that roadmap explicitly allows lifecycle and authenticated transport work to proceed while
+storage/provider qualification runs. E01-S03 already has substantial CODE evidence, but its
+live Linux user-systemd/delegated-cgroup SYSTEM gate and owner USER flow remain pending. Check
+whether the required systemd/cgroup environment is actually available; if it is not, do
+not idle—inspect the exact E01-S04 acceptance/source and continue a useful CODE slice or
+other already-`IN_PROGRESS` foundational work. Strictly dependency-ready count is zero
+because no story is `ACCEPTED`/`DONE`; use the roadmap's explicit overlapping foundation
+sequence rather than opening unrelated PLANNED work. Never promote status based on a test or
+handoff alone.
 
 For E01-S02, reread at minimum: `implementation/epics/E01.md` (exact story),
 `implementation/reviews/E01-S02.md`, `docs/STORAGE.md`, `docs/SERVICES.md`, `docs/EVENTS.md`,
@@ -269,17 +279,20 @@ comparison when E08-S08 is implemented.
 
 ## Worktree, resource, and verification state
 
-- One worktree remains (`main`); the temporary clean-HEAD worktree was removed and
-  `git worktree prune` completed. Branch count is 26; this slice created no branch.
-- The 1,508,110,871-byte isolated clean-HEAD target and its temporary worktree were removed.
-  At a later current-state inspection, both shared root and Tauri `target` directories were
-  absent and free space was 924,286,369,792 bytes; do not assume prior caches still exist.
-  Owner `.playwright-mcp` data (133,783 bytes) remains and is committed in `c66817b`; preserve it.
-- One main worktree and 26 branches remain. At the latest process check, 21 Node processes
-  were present and no Cargo/rustc process was listed; do not kill unclassified Node processes.
-  Recheck ownership before cleanup. No E01 temporary SQLite fixture or agent worktree remains.
-- Do not rerun the slow full storage suite merely to recreate already recorded evidence.
-  Run the focused test or the next story's required checks as appropriate.
+- At the start of the receipt-reopen slice: one `main` worktree, 26 branches, root and
+  Tauri `target` absent, UI `dist` 923,931 bytes, Vite cache absent, `.playwright-mcp`
+  133,783 bytes, and 924,279,562,240 bytes free on `/`. `/dev/shm` had 4,165,242,880
+  bytes free. The current run created only the shared root Cargo target for tests/Clippy;
+  no Tauri build, worktree, branch, or persistent test fixture was created.
+- After verification: one `main` worktree, 26 branches; root `target` 1,832,090,326 bytes;
+  Tauri `target` absent; UI `dist` 923,931 bytes; Vite cache absent; `.playwright-mcp`
+  133,783 bytes; `/` had 922,438,729,728 bytes free and `/dev/shm` had 4,165,242,880
+  bytes free. The Cargo target is a reusable verification cache and is retained. No Cargo or
+  rustc process, agent worktree, branch, or fixture remained. The `.playwright-mcp` directory
+  is owner data and must be preserved.
+- The previous temporary clean-HEAD worktree and its 1,508,110,871-byte target were removed
+  in the earlier slice; no such temporary worktree remains. Do not delete existing caches
+  or owner data to obtain a smaller disk footprint.
 - `.venv/bin/python scripts/validate_architecture.py` passed across schemas, events, error
   codes, OpenAPI, SQLite, names, and repository Markdown links. A scoped link/fence check and
   `git diff --check` for this evidence also passed. `python3 scripts/validate_architecture.py`
@@ -287,28 +300,31 @@ comparison when E08-S08 is implemented.
 - The first plan validation found `coverage.csv` stale while the owner pass was not yet
   committed. Once that pass landed at `c66817b`, the documented sequence was run: `.venv/bin/python
   scripts/audit_v1_contracts.py --strict --write-report` reported 0 errors (206 routes, 158
-  UI cases, 67 stories); `.venv/bin/python scripts/audit_v1_markdown.py` reported 159 files,
-  57,218 lines, 0 broken links; coverage generation/read-only validation passed for 103 docs,
-  1,668 sections, 6,340 rows; implementation-plan validation passed for 67 stories; and
-  architecture validation passed for 142 typed events and current machine contracts. The
-  contract audit notes that Conversation native message submission is still unavailable and
-  read-only/disabled controls need release review; these are not pass claims for product
-  functionality. The generated Markdown CSV retains its established CRLF format; use
+  UI cases, 67 stories); after the handoff/evidence refresh, `.venv/bin/python
+  scripts/audit_v1_markdown.py` reported 159 files, 57,303 lines, 0 broken links; coverage
+  generation/read-only validation passed for 103 docs, 1,668 sections, 6,341 rows;
+  implementation-plan validation passed for 67 stories; and architecture validation passed
+  for 142 typed events and current machine contracts. The contract audit notes that
+  Conversation native message submission is still unavailable and read-only/disabled
+  controls need release review; these are not pass claims for product functionality. The
+  generated Markdown CSV retains its established CRLF format; use
   `git -c core.whitespace=cr-at-eol diff --check` when checking those generated rows.
   Validators prove consistency, not runtime behavior.
 
 ## Copy/paste prompt for the next session
 
 ```text
-You are the lead implementation agent for LiteCowork. Continue the active desktop/local V1 implementation objective from implementation/NEXT-SESSION-HANDOFF-2026-10-13.md. Work autonomously through dependency-ready stories until the complete V1 release evidence is actually proven or an explicit stop condition in AGENTS.md applies. Do not ask whether to continue ordinary reversible work.
+You are the lead implementation agent for LiteCowork. Continue the active desktop/local V1 objective using implementation/NEXT-SESSION-HANDOFF-2026-10-13.md as navigation and implementation/backlog.json plus the live source/contracts as authority. Work autonomously until the desktop/local V1 release evidence is actually proven or an explicit stop condition in AGENTS.md applies. Do not ask whether to continue ordinary reversible work.
 
-First inspect git status, branch, staged diff, current diff, worktrees, and owner changes. Preserve the committed owner pass at c66817b and .playwright-mcp data. Read AGENTS.md, implementation/CURRENT-RUN.md, implementation/README.md, SCOPE.md, AUDIT.md, PROCESS.md, ROADMAP.md, backlog.json, the next exact epic/story, ARCHITECTURE.md, COVERAGE-MATRIX.md, ARCHITECTURE-COVERAGE.md, and all story-specific authority documents and machine contracts before editing. Search and read actual source/tests. Treat backlog.json as status/dependency authority; this handoff is evidence/navigation only.
+Start by inspecting `git status --short --branch`, staged/current diff, current `HEAD` and `origin/main`, worktrees, branches, processes, disk space, and the named regenerable paths. Preserve the owner source pass `c66817b`, `.playwright-mcp` data, and all other owner changes. Read AGENTS.md and the required start/resume documents in its stated order; reread the exact active epic/story, authority documents, machine contracts, and current source/tests before each domain change. The backlog is status/dependency authority; this handoff is evidence/navigation only.
 
-The focused E01-S02 test idempotent_workspace_policy_busy_leaves_no_receipt_and_retries_once in crates/storage-sqlite/src/tests.rs is included in pushed commit c66817b. Its review addendum is implementation/reviews/E01-S02-BUSY-RETRY-2026-10-13.md. Verify current history; do not duplicate or stage the test again. E01-S02 remains IN_PROGRESS and E01-S01 remains IN_REVIEW. Continue the highest-priority dependency-ready foundational work, do not jump to unrelated PLANNED E03 agent registry work. Keep Task planning isolation, durable idempotency/Effect/Evidence/Trust, native agent behavior, and platform gates fail-closed.
+Latest pushed code checkpoint: `5ced2ab` adds `workspace_policy_receipt_replays_after_store_reopen` and current E01-S02 CODE evidence. The Busy retry test is already in `c66817b`; do not duplicate it. Current storage package evidence is 191/191 plus strict storage Clippy/rustfmt, but E01-S02 remains `IN_PROGRESS`, and E01-S01 remains `IN_REVIEW`. Do not fill owner USER acceptance or claim provider/platform/system qualification from local CODE tests. Continue E01-S02/S03/S04 foundational work under the overlap explicitly allowed by ROADMAP; at strict status/dependency level, zero stories are yet dependency-ready because none is ACCEPTED/DONE.
 
-For every slice: update CURRENT-RUN and truthful evidence, run narrow then required integration/system/security/USER gates, inspect the whole diff, measure worktrees/branches/processes/regenerable paths at start/end, remove only confirmed agent-created temporary outputs, selectively stage only your paths/hunks, inspect the staged diff, make a Conventional Commit and push the authorized milestone to origin. Preserve owner data/caches and do not publish/release/provision/spend or change external production state. Keep E11/E12 out of the V1 critical path. V1 release is E01-E10 plus E13 and must meet G0-G3 in SCOPE.md and RELEASE.md; it is not complete until production-qualified desktop/local evidence and owner approval exist.
+For each slice, update CURRENT-RUN, review packet, backlog/status only to evidence actually proven; measure and clean only agent-created worktrees, branches, processes, and regenerable artifacts; preserve owner data and useful caches. Run focused tests, then the story's CODE/SYSTEM/USER gates and relevant validators. Inspect the full diff, stage exact intended paths (never broad-stage), inspect the staged diff, create a Conventional Commit, and push the authorized coherent milestone. Do not publish/release/provision/spend or alter external production state. Continue after each commit. Keep E11/E12 out of the V1 critical path.
 
-When implementing E08-S08, use the pinned CopilotKit/OpenIntelligentUI revision and exact comparison/test plan in docs/REFERENCE-IMPLEMENTATIONS.md. Run the viability and matched renderer tests then; preserve it only as UX/test reference, not as the RichPresentation runtime/CSP. Record measured speed and suitability only after matched runs.
+The remaining desktop/local V1 path is E01–E10 and E13 (60 stories); the latest snapshot is the full status/dependency table above. V1 requires G0–G3 and every applicable CODE/SYSTEM/USER gate: real native provider Send/Stop/reconnect; verified Artifact and kill/restart recovery; authenticated atomic planning with E07-S00 isolation; qualified Trust/Gateway/Effects/Evidence and LiteSPM/MCP; native agent parity; delegation; retrieval; browser/desktop takeover; private learning controls; Workbench/presentation/accessibility; Automations/Discover; then E13 backup/restore, upgrade, soak/resilience, supported OS/provider matrix, signed clean-host installers, rollback/uninstall/incident drills, documentation, and owner release approval. E11 cloud continuation and E12 remote Runtime are post-V1.
 
-Continue working; a handoff/status summary is not completion. Update the next session's evidence and continue to the next dependency-ready story automatically.
+At E08-S08, use the exact pinned CopilotKit/OpenIntelligentUI revision and matched viability/performance/test plan in `docs/REFERENCE-IMPLEMENTATIONS.md`. It is a UX/test reference only; its arbitrary generated HTML/JS iframe/CSP is not the LiteCowork RichPresentation security boundary. Report which route is faster only after matched runs record exact versions, commands, raw timings, failures, and limitations.
+
+Continue implementation; a handoff or passing validator is not completion. Refresh this handoff before another session transition.
 ```

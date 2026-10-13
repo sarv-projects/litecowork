@@ -45,6 +45,15 @@ particular, its `BeforeCommit` note that the test depended on an uncommitted
 `archive_request_payload` field and could not be staged is superseded by that commit. Keep
 the historical record, but use this section and the current handoff for present state.
 
+Resource audit: one `main` worktree and 26 branches at both checks. Start/end: root Cargo
+`target` absent / 1,832,090,326 bytes; Tauri `target` absent / absent; UI `dist` 923,931 /
+923,931 bytes; Vite cache absent / absent; owner `.playwright-mcp` 133,783 / 133,783 bytes;
+free space on `/` 924,279,562,240 / 922,438,729,728 bytes; free `/dev/shm`
+4,165,242,880 / 4,165,242,880 bytes. The test-generated SQLite/BlobStore fixture was
+temporary and removed. The shared Cargo target is a useful cache and was retained. No
+additional worktree, branch, persistent test file, Cargo/rustc process, or test credential
+was created or left behind. Owner data and unclassified processes/caches were preserved.
+
 ## E01-S02 request-receipt rollback CODE evidence — 2026-10-13
 
 Added `before_commit_failure_rolls_back_request_receipt_with_workspace_event_and_sequence`
