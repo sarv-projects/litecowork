@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { PresentationRuntime } from "./PresentationRuntime";
 import { parsePresentationItem, type PresentationItem } from "./presentation-types";
+import { TaskPresentationStreamController, type TaskPresentationStreamStatus, type TaskSnapshotStreamDriver, type TaskStreamEnvelope } from "../tasks/task-stream.ts";
 import "./task-presentation.css";
 
 type Snapshot = {
@@ -270,6 +272,8 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
   const [progressFailure, setProgressFailure] = useState<string | null>(null);
   const [invalidItemCount, setInvalidItemCount] = useState(0);
   const [savedSnapshotIdentity, setSavedSnapshotIdentity] = useState<string | null>(null);
+  const [streamStatus, setStreamStatus] = useState<TaskPresentationStreamStatus | "OFFLINE" | null>(null);
+  const streamSnapshotEpoch = useRef(0);
   const panelRef = useRef<HTMLElement | null>(null);
   const requestInFlight = useRef(false);
   const pendingRefresh = useRef<(() => void) | null>(null);
@@ -285,6 +289,7 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
     const identity = `${workspaceId}\u0000${taskId}`;
     if (snapshotIdentity.current !== identity) {
       snapshotIdentity.current = identity;
+      streamSnapshotEpoch.current += 1;
       setItems([]);
       setSnapshotAt(null);
       setFreshness("UNKNOWN");
@@ -299,6 +304,7 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
     setLoading(false);
     if (!workspaceId || !taskId || !operatorReady) {
       setLoading(false);
+      setStreamStatus(workspaceId && taskId ? "OFFLINE" : null);
       if (workspaceId && taskId && hasSnapshot.current) {
         setSavedSnapshotNotice({ identity, message: "The local Runtime is offline. Showing the last saved snapshot, which may be out of date." });
       } else if (workspaceId && taskId) {
@@ -309,6 +315,7 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
     const mayRefresh = () => active && documentVisible && panelIntersecting;
     const loadSnapshot = () => {
       if (!mayRefresh()) return;
+      const streamEpochAtRequestStart = streamSnapshotEpoch.current;
       // `invoke` has no cancellation handle. Serialize reads across Task changes and
       // queue one refresh for the newest panel identity instead of overlapping calls.
       if (requestInFlight.current) {
@@ -328,18 +335,22 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
         if (!mayRefresh()) return;
         // Validate each projected item at the IPC boundary. Invalid records stay out of
         // renderers while the owning Task remains viewable.
-        const parsed = snapshot.items.map(parsePresentationItem);
-        const valid = parsed.filter((item): item is PresentationItem => item !== null);
-        setItems(valid);
-        setInvalidItemCount(parsed.length - valid.length);
-        setSnapshotAt(snapshot.computed_at);
-        setFreshness(snapshot.freshness);
+        if (streamSnapshotEpoch.current === streamEpochAtRequestStart) {
+          // A stream snapshot accepted while this read was in flight is newer than
+          // this request's captured SQLite view; never let the unary read roll it back.
+          const parsed = snapshot.items.map(parsePresentationItem);
+          const valid = parsed.filter((item): item is PresentationItem => item !== null);
+          setItems(valid);
+          setInvalidItemCount(parsed.length - valid.length);
+          setSnapshotAt(snapshot.computed_at);
+          setFreshness(snapshot.freshness);
+          setSavedSnapshotIdentity(identity);
+          hasSnapshot.current = true;
+        }
         setProgress(progressResult.progress);
         setProgressFailure(progressResult.failure);
         setFailure(null);
         setSavedSnapshotNotice(null);
-        setSavedSnapshotIdentity(identity);
-        hasSnapshot.current = true;
       }).catch(error => {
         if (!mayRefresh()) return;
         if (hasSnapshot.current) {
@@ -387,6 +398,41 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
     };
   }, [workspaceId, taskId, taskVersion, operatorReady]);
 
+  useEffect(() => {
+    if (!workspaceId || !taskId || !operatorReady) {
+      setStreamStatus(workspaceId && taskId ? "OFFLINE" : null);
+      return;
+    }
+    const identity = workspaceId + "\u0000" + taskId;
+    const driver: TaskSnapshotStreamDriver = {
+      listen: async callback => listen<unknown>("task-presentation-stream", event => callback(event.payload as TaskStreamEnvelope)),
+      start: input => invoke<void>("subscribe_task_stream", input),
+      acknowledge: (sessionId, frameId) => invoke<void>("acknowledge_conversation_stream_frame", { sessionId, frameId }),
+      stop: sessionId => invoke<void>("unsubscribe_conversation_stream", { sessionId }),
+      newSessionId: () => crypto.randomUUID(),
+    };
+    const controller = new TaskPresentationStreamController(workspaceId, taskId, driver, state => {
+      if (snapshotIdentity.current !== identity) return;
+      if (!state.snapshotReady) {
+        if (state.resyncRequired && hasSnapshot.current) setFreshness("STALE");
+        return;
+      }
+      if (state.workspaceId !== workspaceId || state.taskId !== taskId) return;
+      streamSnapshotEpoch.current += 1;
+      setItems(state.items);
+      setInvalidItemCount(0);
+      setSnapshotAt(state.computedAt);
+      setFreshness(state.freshness ?? "UNKNOWN");
+      setFailure(null);
+      setSavedSnapshotNotice(null);
+      setSavedSnapshotIdentity(identity);
+      hasSnapshot.current = true;
+    }, setStreamStatus);
+    controller.start();
+    setStreamStatus(controller.status);
+    return () => { void controller.dispose(); };
+  }, [workspaceId, taskId, operatorReady]);
+
   const selectedIdentity = `${workspaceId}\u0000${taskId}`;
   const hasSelectedSnapshot = savedSnapshotIdentity === selectedIdentity;
   const selectedFailure = failure?.identity === selectedIdentity ? failure.message : null;
@@ -400,6 +446,15 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
           : freshness === "STALE"
             ? `Saved snapshot may be stale · ${new Date(snapshotAt).toLocaleString()}`
             : `${selectedSnapshotNotice ? "Last saved snapshot" : "Saved snapshot"} · ${new Date(snapshotAt).toLocaleString()}`}</small>}
+        {streamStatus && <small aria-live="polite">{streamStatus === "LIVE"
+          ? "Live Task updates"
+          : streamStatus === "RESYNCING"
+            ? "Refreshing saved Task snapshot"
+          : streamStatus === "RECONNECTING"
+            ? "Reconnecting to live Task updates"
+            : streamStatus === "CONNECTING"
+              ? "Connecting to live Task updates"
+              : "Live Task updates unavailable while the local Runtime is offline"}</small>}
         <button type="button" className="quiet-button" disabled={loading || !operatorReady || !workspaceId || !taskId} onClick={() => refreshNow.current?.()} aria-label="Refresh saved Task activity">
           {loading ? "Refreshing…" : "Refresh"}
         </button>

@@ -5,17 +5,36 @@
 //! untrusted input; the returned handle and identity are required before a root is stored.
 //! A path string alone is never a root grant.
 
-use std::{
-    fmt,
-    path::{Component, Path, PathBuf},
-};
+use std::fmt;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::path::{Component, Path, PathBuf};
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use storage_core::LocalFileIdentityBindingRecord;
 use storage_sqlite::RuntimeOsPrincipalIdentity;
 
+pub(crate) trait RuntimeIdentityKey {
+    fn keyed_pseudonym(&self, namespace: &str, material: &[u8]) -> String;
+}
+
+impl RuntimeIdentityKey for RuntimeOsPrincipalIdentity {
+    fn keyed_pseudonym(&self, namespace: &str, material: &[u8]) -> String {
+        RuntimeOsPrincipalIdentity::keyed_pseudonym(self, namespace, material)
+    }
+}
+
+impl<T: RuntimeIdentityKey + ?Sized> RuntimeIdentityKey for std::sync::Arc<T> {
+    fn keyed_pseudonym(&self, namespace: &str, material: &[u8]) -> String {
+        self.as_ref().keyed_pseudonym(namespace, material)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_SELECTION_PATH_BYTES: usize = 32 * 1024;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const DIRECTORY_TYPE_MASK: u32 = 0o170000;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const DIRECTORY_TYPE: u32 = 0o040000;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -26,18 +45,6 @@ pub(crate) struct RawDirectoryIdentity {
 }
 
 impl RawDirectoryIdentity {
-    pub(crate) fn filesystem_instance_id(&self) -> String {
-        self.filesystem_instance_id.to_string()
-    }
-
-    pub(crate) fn file_id(&self) -> String {
-        self.file_id.to_string()
-    }
-
-    pub(crate) const fn platform_kind(&self) -> &'static str {
-        self.platform_kind
-    }
-
     pub(crate) fn matches_binding(&self, binding: &LocalFileIdentityBindingRecord) -> bool {
         binding.raw_filesystem_instance_id == self.filesystem_instance_id.to_string()
             && binding.raw_volume_id.is_none()
@@ -48,7 +55,7 @@ impl RawDirectoryIdentity {
 
     pub(crate) fn keyed_projection(
         &self,
-        runtime_identity: &RuntimeOsPrincipalIdentity,
+        runtime_identity: &impl RuntimeIdentityKey,
     ) -> (String, serde_json::Value) {
         let filesystem_bytes = self.filesystem_instance_id.to_be_bytes();
         let mut file_material = Vec::with_capacity(16);
@@ -103,8 +110,11 @@ impl RawDirectoryIdentity {
 pub(crate) struct OpenedDirectorySelection {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     handle: rustix::fd::OwnedFd,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     canonical_path: PathBuf,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     private_locator: String,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     display_name: String,
     identity: RawDirectoryIdentity,
 }
@@ -113,7 +123,7 @@ impl fmt::Debug for OpenedDirectorySelection {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("OpenedDirectorySelection")
-            .field("display_name", &self.display_name)
+            .field("display_name", &"<private>")
             .field("identity", &"<private>")
             .field("private_locator", &"<private>")
             .finish_non_exhaustive()
@@ -121,10 +131,12 @@ impl fmt::Debug for OpenedDirectorySelection {
 }
 
 impl OpenedDirectorySelection {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn private_locator(&self) -> &str {
         &self.private_locator
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fn display_name(&self) -> &str {
         &self.display_name
     }
@@ -161,10 +173,16 @@ impl OpenedDirectorySelection {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LocalDirectoryError {
+    // Keep the fail-closed error for targets without qualified native handle identity.
+    #[allow(dead_code)]
     UnsupportedPlatform,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     InvalidSelection,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     NotDirectory,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     OpenFailed,
+    #[allow(dead_code)]
     IdentityChanged,
 }
 
@@ -172,8 +190,11 @@ impl fmt::Display for LocalDirectoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::UnsupportedPlatform => "persistent folder access is unsupported on this platform",
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             Self::InvalidSelection => "selected folder is invalid",
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             Self::NotDirectory => "selected item is not a folder",
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             Self::OpenFailed => "selected folder could not be opened safely",
             Self::IdentityChanged => "selected folder changed before it could be admitted",
         })
@@ -188,6 +209,7 @@ impl std::error::Error for LocalDirectoryError {}
 /// handle with `O_NOFOLLOW | O_DIRECTORY`. The final open handle stays alive in the
 /// returned value. Other platforms fail closed until their native identity and handle
 /// implementations are qualified.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn open_selected_directory(
     selected_path: &Path,
 ) -> Result<OpenedDirectorySelection, LocalDirectoryError> {
@@ -200,17 +222,27 @@ pub(crate) fn open_selected_directory(
     if !selected_metadata.is_dir() {
         return Err(LocalDirectoryError::NotDirectory);
     }
-    let canonical_path = selected_path
-        .canonicalize()
-        .map_err(|_| LocalDirectoryError::OpenFailed)?;
-    validate_selection_path(&canonical_path)?;
-
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        let handle = open_absolute_directory_without_symlinks(&canonical_path)?;
+        // Open the selected spelling before canonicalizing it. Canonicalization follows
+        // symlinks, so doing it first would erase evidence of an intermediate symlink
+        // before the no-follow component walk gets a chance to reject it.
+        let handle = open_absolute_directory_without_symlinks(selected_path)?;
         let metadata = rustix::fs::fstat(&handle).map_err(|_| LocalDirectoryError::OpenFailed)?;
         if metadata.st_mode & DIRECTORY_TYPE_MASK != DIRECTORY_TYPE {
             return Err(LocalDirectoryError::NotDirectory);
+        }
+        let canonical_path = selected_path
+            .canonicalize()
+            .map_err(|_| LocalDirectoryError::OpenFailed)?;
+        validate_selection_path(&canonical_path)?;
+        let canonical_handle = open_absolute_directory_without_symlinks(&canonical_path)?;
+        let canonical_metadata =
+            rustix::fs::fstat(&canonical_handle).map_err(|_| LocalDirectoryError::OpenFailed)?;
+        if metadata.st_dev != canonical_metadata.st_dev
+            || metadata.st_ino != canonical_metadata.st_ino
+        {
+            return Err(LocalDirectoryError::IdentityChanged);
         }
         let display_name = canonical_path
             .file_name()
@@ -224,6 +256,7 @@ pub(crate) fn open_selected_directory(
         let private_locator = format!("unix-path-b64:{encoded_path}");
         Ok(OpenedDirectorySelection {
             handle,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             canonical_path,
             private_locator,
             display_name,
@@ -240,7 +273,6 @@ pub(crate) fn open_selected_directory(
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        let _ = canonical_path;
         Err(LocalDirectoryError::UnsupportedPlatform)
     }
 }
@@ -307,6 +339,7 @@ pub(crate) fn reopen_saved_directory(
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn validate_selection_path(path: &Path) -> Result<(), LocalDirectoryError> {
     if !path.is_absolute()
         || path.as_os_str().is_empty()
@@ -359,13 +392,91 @@ fn open_absolute_directory_without_symlinks(
     Ok(current)
 }
 
-#[cfg(unix)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn path_bytes(path: &Path) -> Result<&[u8], LocalDirectoryError> {
     use std::os::unix::ffi::OsStrExt;
     Ok(path.as_os_str().as_bytes())
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn path_bytes(_path: &Path) -> Result<&[u8], LocalDirectoryError> {
-    Err(LocalDirectoryError::UnsupportedPlatform)
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod tests {
+    use super::{LocalDirectoryError, open_selected_directory};
+    use std::{fs, path::Path};
+    use tempfile::tempdir;
+
+    #[test]
+    fn selected_directory_opens_and_revalidates_the_same_handle_identity() {
+        let root = tempdir().expect("temporary directory");
+        let selected = root.path().join("selected");
+        fs::create_dir(&selected).expect("create selected directory");
+
+        let opened = open_selected_directory(&selected).expect("open selected directory");
+        opened
+            .revalidate()
+            .expect("same directory identity remains");
+        assert_eq!(opened.display_name(), "selected");
+        assert!(format!("{opened:?}").contains("<private>"));
+    }
+
+    #[test]
+    fn selected_directory_rejects_relative_parent_and_filesystem_root_paths() {
+        let relative = Path::new("relative");
+        assert_eq!(
+            open_selected_directory(relative).unwrap_err(),
+            LocalDirectoryError::InvalidSelection
+        );
+
+        let root = tempdir().expect("temporary directory");
+        let traversal = root.path().join("child/../child");
+        fs::create_dir(root.path().join("child")).expect("create child");
+        assert_eq!(
+            open_selected_directory(&traversal).unwrap_err(),
+            LocalDirectoryError::InvalidSelection
+        );
+        assert_eq!(
+            open_selected_directory(Path::new("/")).unwrap_err(),
+            LocalDirectoryError::InvalidSelection
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn selected_directory_rejects_final_and_intermediate_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempdir().expect("temporary directory");
+        let target = root.path().join("target");
+        fs::create_dir(&target).expect("create target");
+        let final_link = root.path().join("final-link");
+        symlink(&target, &final_link).expect("create final symlink");
+        assert_eq!(
+            open_selected_directory(&final_link).unwrap_err(),
+            LocalDirectoryError::InvalidSelection
+        );
+
+        let intermediate = root.path().join("intermediate");
+        symlink(&root, &intermediate).expect("create intermediate symlink");
+        let through_link = intermediate.join("target");
+        assert_eq!(
+            open_selected_directory(&through_link).unwrap_err(),
+            LocalDirectoryError::OpenFailed
+        );
+    }
+
+    #[test]
+    fn selected_directory_revalidation_detects_replacement_at_saved_path() {
+        let root = tempdir().expect("temporary directory");
+        let selected = root.path().join("selected");
+        fs::create_dir(&selected).expect("create selected directory");
+        let opened = open_selected_directory(&selected).expect("open selected directory");
+
+        let moved = root.path().join("moved");
+        fs::rename(&selected, &moved).expect("move original directory");
+        fs::create_dir(&selected).expect("replace selected path");
+
+        assert_eq!(
+            opened.revalidate(),
+            Err(LocalDirectoryError::IdentityChanged)
+        );
+    }
 }

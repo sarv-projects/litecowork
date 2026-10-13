@@ -58,22 +58,28 @@ Runtime). On-demand startup uses authenticated local IPC. The Operator may reque
 Runtime start or stop but cannot report the Operator API ready until an authenticated
 `GET /v1/operator/readiness` response matches the private connection metadata's Runtime
 and local-incarnation IDs. This confirms API serving only; it does not imply Runtime
-execution readiness. The documented lifecycle API may eventually request a start or
-stop, but current source exposes only the readiness handshake. Authenticated Operator
-stop is intentionally unavailable until Task Attempt drain, Effect reconciliation,
-lease fencing/release, and local service-reference settlement are integrated. The
-process signal handler is a daemon/supervisor shutdown path, not an Operator lifecycle
-API and not evidence that those domain dependencies were reconciled.
+execution readiness. The authenticated read-only `GET /v1/runtime-lifecycle` projection
+additionally reports persisted startup policy, the exact current incarnation,
+availability, and sanitized startup/recovery blockers. It is bound to the Runtime and
+incarnation returned by the readiness connection, uses a single current-incarnation
+storage read, and does not probe providers or change lifecycle state. Task and Automation
+dependency lists stay omitted until their inventories are available. Startup-policy
+mutation, stop preview, and authenticated stop remain unimplemented until Task Attempt
+drain, Effect reconciliation, lease fencing/release, and local service-reference
+settlement are integrated. The process signal handler is a daemon/supervisor shutdown
+path, not an Operator lifecycle API and not evidence that those domain dependencies were
+reconciled.
 
 The desktop transport's OS identity, endpoint lifecycle, frame bounds, and reconnection
 contract are specified in [`LOCAL-OPERATOR-IPC.md`](LOCAL-OPERATOR-IPC.md). The daemon
-and Tauri source now use that Unix IPC path on Linux/macOS; Windows fails closed. The
-source has not passed build, system, or OS qualification and must not be treated as a
-production-ready transport.
+and Tauri source use Unix IPC on Linux/macOS and now include a Windows named-pipe path
+with a current-logon-SID/SYSTEM DACL and remote-client rejection. The Windows application
+cross-build is blocked by missing MinGW tools, and no platform has completed the required
+system/OS qualification; do not treat the source as a production-ready transport.
 
 The local bootstrap currently holds the single-instance lock, persists Runtime/incarnation
 state, validates the OS-principal binding, opens local storage, and starts the authenticated
-Operator IPC endpoint where Unix transport is supported. `litecoworkd status` probes the
+Operator IPC endpoint where a platform transport is implemented. `litecoworkd status` probes the
 lock to distinguish a running daemon from stale state after a crash. Tauri can start the
 separate daemon, display status, and use the local Workspace/Resource Operator routes. The
 Runtime remains `DEGRADED` because Task recovery and execution are not implemented; an
@@ -124,9 +130,17 @@ Before GO, cleanup may be reported settled only after the direct launcher is rea
 bounded observation proves the exact transient unit `ActiveState` is `inactive`/`dead` or
 its known cgroup-v2 `cgroup.events` reports `populated 0`. A failed kill request, direct
 child reap, timeout, malformed evidence, or unobservable unit/cgroup is not proof of
-quiescence; the caller retains a retryable `PendingCleanup` handle with the unit and child,
-plus the cgroup event path when it was resolved. This is a source contract, not yet a
-qualified systemd guarantee. Post-GO cleanup continues to require recursive cgroup-v2
+quiescence; the caller retains a retryable `PendingCleanup` handle. It retains the launcher
+child and any resolved cgroup event path when a launcher exists. If `systemd-run` itself
+could not be spawned, the handle retains the exact started Attempt slice for a stop-only
+retry because there is no launcher child to own. If slice startup succeeded but cgroup
+resolution or parent validation failed, failed slice teardown also retains a retry handle;
+it carries the known parent event path when available and retries stop plus positive
+quiescence proof. If the systemd start command returns an ambiguous error, cleanup still
+targets that exact slice and retains a retry handle whenever stop and positive proof cannot
+settle it. A retry may settle after a stop error only when independent unit or cgroup
+evidence proves quiescence. This is a source contract, not yet a qualified systemd guarantee.
+Post-GO cleanup continues to require recursive cgroup-v2
 quiescence; neither path settles external Effects or provider-side work.
 
 The desktop status command performs the daemon status subprocess and authenticated IPC
@@ -157,9 +171,18 @@ cannot silently resume it. A matching unavailable root may become ACTIVE only af
 identity check succeeds. A root-specific missing, changed, or unsupported identity does not
 block unrelated Runtime/Operator startup. A storage/transaction integrity failure blocks
 Operator readiness and attempts to persist the registered Runtime incarnation as DEGRADED;
-if storage also rejects that lifecycle update, only the private local status file can reflect
-the blocker. Revoked roots are excluded and are never reactivated. This source path is not
+if storage rejects the initial RECOVERING-to-DEGRADED lifecycle CAS, startup records the
+safe `RUNTIME_LIFECYCLE_TRANSITION_FAILED` blocker in private local status and exits before
+expired-lease recovery or Operator admission. That CAS is never retried because its commit
+outcome may be ambiguous; the catalog may remain RECOVERING or may already be DEGRADED.
+If the private status write also fails, startup reports both failures and still exits before
+admission. Revoked roots are excluded and are never reactivated. This source path is not
 OS-qualified; Windows and other platforms fail closed.
+
+After bounded expired-lease recovery, startup persists any newly discovered lifecycle
+blocker to the private `runtime-state.json` projection before opening Operator IPC. If that
+status update fails, startup exits without admitting requests; the durable Runtime remains
+DEGRADED and the process does not claim a clean shutdown.
 
 The OS-principal/keyring validation still precedes storage open. If that credential is
 missing or invalid, the current bootstrap stops before root revalidation and does not persist
@@ -302,6 +325,20 @@ must not be presented as current desktop availability.
 | Powered off | Offline | Continues | Waits for the local Runtime | Hub triggers continue; local trigger policy applies on return |
 | Daemon crash | Service manager may restart it | Unaffected | New incarnation recovers before resuming | Durable trigger definitions/cursors reload; no blind replay |
 | Graceful Runtime stop | Current supervisor-signal path stops Operator admission, drains bounded in-flight handlers, then records local stop; Task/Effect/lease drain is not integrated | Unaffected | Authenticated Operator stop remains unavailable | Local trigger host stops; Hub schedules remain independent |
+
+The current supervisor path stops Operator admission before persisting `DRAINING`, then
+allows admitted request tasks up to 60 seconds to settle. It advances to `STOPPING` and
+`STOPPED` only when those tasks and the endpoint thread finish successfully. A handler
+deadline is treated as unsettled because its awaited blocking work may continue after the
+request returns `504`. A request-task failure, unexpected listener exit, thread failure,
+or expired drain after `DRAINING` leaves the durable state at `DRAINING` and the private
+`last_shutdown_clean` flag false; an admission-stop failure leaves the prior durable
+state unclean. The next incarnation therefore treats either path as unclean. After an
+expired drain, the server requests cancellation, allows up to five seconds for tasks to
+settle, then gives Tokio runtime teardown up to five seconds. The endpoint thread join is
+also bounded; failure to settle within those limits returns an error and cannot advance
+the lifecycle to `STOPPING` or `STOPPED`. The systemd 90-second deadline may still force
+termination if storage or the filesystem stalls during lifecycle writes.
 
 Locking a laptop does not guarantee GUI automation remains possible: desktop/browser
 requirements are rechecked. Sleep/offline does not mean a Task vanished. A local-bound
@@ -518,3 +555,26 @@ must reattach and revalidate a persistent Environment after Runtime restart befo
 ## Desktop Coworker unattended work target
 
 A named Coworker does not require its chat or desktop window to remain open. A separately enabled per-user litecoworkd supervisor hosts eligible due occurrences while the device is awake. GUI close and quit, background-disabled, login startup, locked screen, sleep, poweroff, daemon crash and restart are separate tested states. Locked GUIs may require unlock even if background file/API work continues. Sleeping or powered-off local machines perform no work; on wake the coordinator reconciles missed schedules and provider cursors before Task admission. A stopped native agent is not revived without auth/Environment/lease checks. Global Stop unattended work previews active Routines, triggers, Tasks, native workers and AMBIGUOUS Effects, and never implies an external send was cancelled simply because UI closed.
+
+
+## Connector-auth and workflow runtime lifecycle
+
+Ephemeral OAuth loopback listeners are Runtime-owned short-lived resources, not durable
+services. They bind only during an active AuthAttempt, close on terminal result/cancel/
+expiry, and are never restored as listening sockets after daemon restart.
+
+Connector provider processes, compatibility runtimes and workflow backend clients follow
+normal demand-driven lifecycle. Catalog presence does not start them. Active provider
+handles are fenced by Runtime incarnation; durable Connection/Invocation truth survives
+process restart while private handles are reacquired/reconciled.
+
+A Coworker's product-language "own computer" does not mandate a permanent process/VM.
+Actual Environment/browser/terminal leases are acquired for admitted work.
+
+## V1 detailed design integration — 2026-10-12
+
+Agent/browser Runtime restart recovery and UI state projection are detailed in V1-WORKFLOW-EVENT-LLD.md and CHROME-BROWSER-LLD.md. A reopened Tauri window can restore pane layout but cannot restore stale ExecutionLease, browser actor control, old CDP handle or authenticated provider session without current-incarnation revalidation. Draining stops new admissions, not already-applied external effects.
+
+## Multi-agent telemetry, discovery and terminal runtime ownership — V1
+
+The [Usage/Health LLD](V1-TELEMETRY-USAGE-RESILIENCE-LLD.md), [Agent Discovery LLD](V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md), and [Integrated Terminal LLD](V1-INTEGRATED-TERMINAL-LLD.md) add target diagnostics, bounded nonblocking native agent probes, shell/profile discovery and scoped PTY supervision. Observer availability is not Runtime execution readiness. Idle-cache observation must not spawn native inference; closing terminal UI does not terminate unrelated Task work; provider session failure must preserve Task/Attempt/Effect reconciliation.

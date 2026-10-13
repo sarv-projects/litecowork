@@ -240,13 +240,11 @@ pub(super) fn validate_plan_step_content(step: &ProposedStep) -> Result<(), Stor
         if let Some(hint) = criterion
             .get("verifier_hint")
             .filter(|hint| !hint.is_null())
-        {
-            if !hint
+            && !hint
                 .as_str()
                 .is_some_and(|text| text.len() <= 1024 && !text.chars().any(char::is_control))
-            {
-                return Err(invalid_output());
-            }
+        {
+            return Err(invalid_output());
         }
         if criterion.get("subject_refs").is_some() {
             for reference in array(criterion, "subject_refs", 32)? {

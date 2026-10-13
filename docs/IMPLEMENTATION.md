@@ -208,3 +208,19 @@ not** collapse lifecycle logic into operator.rs or brand conditionals into Core/
 
 The current Codex/OpenCode inventory/probe UI is a transitional source slice, not the
 generic target.
+
+
+## 2026-10-10 design inputs
+
+Implementation now has three additional architecture inputs:
+
+- [Reference Implementations](REFERENCE-IMPLEMENTATIONS.md) — exact upstream repos,
+  revisions, file paths, licenses and borrow/do-not-borrow decisions.
+- [Connectors & Workflows](CONNECTORS-WORKFLOWS.md) — ConnectorPackage, local-first OAuth,
+  optional AuthBackends/EventRelay, WorkflowBackendAdapter and functions/edge cases.
+- [Learning](LEARNING.md) — LearningCandidate/policy, memory/instruction/skill/routine/
+  automation separation and review/auto-commit rules.
+
+Promote target records incrementally. Every implementation slice updates domain schema,
+storage migration, API/events where exposed, UI truth, coverage and tests together; target
+prose alone does not make a feature available.

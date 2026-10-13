@@ -1,3 +1,6 @@
+// Route handlers intentionally return full Axum Responses to preserve status, body, and headers.
+#![allow(clippy::result_large_err)]
+
 use super::*;
 use storage_core::{
     ArtifactContentRecord, ArtifactLibraryAction, ArtifactLibraryCommand,

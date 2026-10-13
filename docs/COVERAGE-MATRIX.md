@@ -125,3 +125,20 @@ These are visible dependencies, not blanks to fill by guesswork:
 Changing entity meaning, transition ownership, protocol boundaries, Core ownership,
 event/effect guarantees, lease semantics, or the threat model requires an architecture
 change and ADR. Choosing an implementation that preserves those contracts does not.
+
+
+## 2026-10-10 target-contract extension
+
+The final source/design pass adds three target documents:
+[Reference Implementations](REFERENCE-IMPLEMENTATIONS.md),
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md), and
+[Learning](LEARNING.md). They are review inputs, not implemented coverage claims.
+
+When the first connector/auth/learning machine contract lands, the generated implementation
+coverage inventory must be regenerated and each promoted SQL/OpenAPI/event/schema object
+assigned to its concrete story. Until then, existing numbered flows/benchmarks and current
+machine coverage remain unchanged.
+
+## V1 detailed design integration — 2026-10-12
+
+The implementation-oriented owner crosswalk now also includes V1-DESIGN-INDEX.md, NATIVE-COMPOSER-LLD.md, CHROME-BROWSER-LLD.md, DESKTOP-SHELL-LLD.md, RENDERING-CONFORMANCE-LLD.md, V1-WORKFLOW-EVENT-LLD.md and V1-FUNCTION-FILE-CATALOG.md. Their types and function labels are not alternative domain/wire authority. Existing domain owning rows above remain canonical. See ../implementation/V1-DESIGN-COVERAGE.md for evidence IDs.

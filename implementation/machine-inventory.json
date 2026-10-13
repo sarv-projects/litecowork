@@ -172,6 +172,7 @@
     "RUNTIME_UNAVAILABLE",
     "SECRET_UNAVAILABLE",
     "SENSITIVE_INPUT_UNSUPPORTED",
+    "SKILL_DRIFT_DETECTED",
     "STALE_CLAIM_EPOCH",
     "STALE_FENCE",
     "STALE_SPEC_REVISION",
@@ -800,7 +801,7 @@
     },
     {
       "name": "error_code",
-      "sha256": "8c5d6b1aec3647b2f6795e04aca7632546d004b52f4b64f17d09fae38d66fd90"
+      "sha256": "9b6a5979514998b0b58a9f19b24929375aff7ea3dbe940ca6fb59b1d51d37cee"
     },
     {
       "name": "folder_import_metadata",
@@ -1837,7 +1838,7 @@
       "method": "GET",
       "operationId": "listResourceLocations",
       "path": "/resources/{resourceId}/locations",
-      "sha256": "1f294fc45b506ab4673b958d16a9fa7ea2e83e877223fded7f45cd398a790243"
+      "sha256": "4d795bdc948e0efb15bb506c765ed8ecb77571fa7482e64a83cd054bc9b7ce10"
     },
     {
       "method": "POST",
@@ -1951,7 +1952,7 @@
       "method": "GET",
       "operationId": "listRuntimeCapabilityHosts",
       "path": "/runtimes/{runtimeId}/capability-hosts",
-      "sha256": "a29aa728b5589b101f2732ced8093a0d1a13a878af99a74d0bcb7ce87b6376a1"
+      "sha256": "53d48398541e9b48ed04161dcf2585b5fbdf616b82a07a24370ae2df0a935a15"
     },
     {
       "method": "GET",
@@ -1963,7 +1964,7 @@
       "method": "GET",
       "operationId": "getRuntimeOffers",
       "path": "/runtimes/{runtimeId}/offers",
-      "sha256": "0f94f1751cd825499f389cec948ffac3a89e9ce5eb72dc9fdfea91b9377158ca"
+      "sha256": "de11e38905390ea89dcde3ea73f5bd0635a8d41debbfe61bd84ab3754d5453e8"
     },
     {
       "method": "POST",
@@ -2239,7 +2240,7 @@
       "method": "POST",
       "operationId": "resumeWorkspaceRoot",
       "path": "/workspace-roots/{rootId}/resume",
-      "sha256": "0d5a8477bdb10089f5e0e249d4b2a557013afadc2a98dee1221e63073ef13f20"
+      "sha256": "91191e1568d9e7bdac354ded122d72a68d16de7a135c541f94518255138f5cf4"
     },
     {
       "method": "POST",
@@ -2275,7 +2276,7 @@
       "method": "POST",
       "operationId": "archiveWorkspace",
       "path": "/workspaces/{workspaceId}/archive",
-      "sha256": "14f1484d1a447b57852a5293863fdfd42e31434cf9814023906b89f8533798f3"
+      "sha256": "d746692842a901ef87c885a74eb009688d903ccbb66f275f6b87aae3660e1e43"
     },
     {
       "method": "GET",
@@ -2371,7 +2372,7 @@
       "method": "GET",
       "operationId": "listWorkspaceRuntimeBindings",
       "path": "/workspaces/{workspaceId}/runtime-bindings",
-      "sha256": "8c9775d0483d3f824a785cc66bb49cf02b58a4a61f9f8ed19ca85376c3a24937"
+      "sha256": "21afa4edd855615e1e2ddd4560bded1ede1323cbbf14606aea4df1d57e18c0bd"
     },
     {
       "method": "GET",
@@ -3836,7 +3837,7 @@
     },
     {
       "name": "ConversationPresentationSnapshot",
-      "sha256": "b85ca32f14de39e2a48420ddbc1704df7cc9757eeccacb085e7de785d60845bd"
+      "sha256": "9adad8a0327730ae195ac265daa3110328b58f1d41c109db5ea429178189a34c"
     },
     {
       "name": "ConversationTurnPresentation",
@@ -3944,7 +3945,7 @@
     },
     {
       "name": "CreateWorkspaceInstructionRevisionRequest",
-      "sha256": "10873adc34f6429580e9e86bd55e27d1ae77c763e418a459fd7fe930cefb00d3"
+      "sha256": "78cf82dc2110fb3faf171695f407c4ea9f57b4d168bccd19d9d6bae4c5872e62"
     },
     {
       "name": "CreateWorkspaceRequest",
@@ -4276,7 +4277,7 @@
     },
     {
       "name": "PresentationItem",
-      "sha256": "c7151391e16b417d39b572a841b3d4ecb6f97bce6c8bec73328876cce4d05a23"
+      "sha256": "9d36716d9000bb005fdb678211fa6781b294d19a23a5b677393620913bc55347"
     },
     {
       "name": "PrincipalRef",
@@ -4376,7 +4377,7 @@
     },
     {
       "name": "ResourceLocationView",
-      "sha256": "304d61f1a8a1fe97d8c65b7980c221271d912db8deae00792d39bb882a9f195e"
+      "sha256": "9e741bd933b7c1abedd63389a3122248c4d9f33b7105f86b4d15e2ae56f2741c"
     },
     {
       "name": "ResourceRef",
@@ -5179,6 +5180,7 @@
     "ArtifactLibraryStatus",
     "AssuranceLevel",
     "AttemptStatus",
+    "AuthRecipeKind",
     "AutomationOccurrenceStatus",
     "AutomationStatus",
     "BackupKeyRef",
@@ -5257,6 +5259,7 @@
     "JsonValue",
     "LeadFailoverMode",
     "LeadFailoverTrigger",
+    "LearningCandidateState",
     "LeaseStatus",
     "MessageContentBlock",
     "MessageTextSliceRef",

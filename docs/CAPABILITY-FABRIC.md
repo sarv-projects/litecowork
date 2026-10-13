@@ -346,3 +346,30 @@ A Coworker may configure any number of qualified installed app connectors, remot
 When an admitted Task is blocked only because an otherwise eligible app/account is not connected, the UI may render a provider-owned **Connect** repair action in conversation/Needs You. After secure authentication and Coworker assignment, the original Task is revalidated and may resume from its durable unfinished state. The repair action never replays an ambiguous external Effect.
 
 Large configured inventories should expose a small search/describe/execute surface to the chief rather than every tool schema at once. The user-facing catalog may list thousands of apps/MCP/skills, but the agent context receives only bounded search results and selected capability descriptions. This matches the strongest desktop pattern seen in OpenWork while preserving LiteCowork's independent Trust/Invocation authority.
+
+
+## ConnectorPackage and WorkflowBackend provider boundary
+
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md) defines the accepted target package and
+adapter contracts.
+
+A ConnectorPackage is a LiteSPM-managed package that can contribute auth recipes, actions,
+triggers and resource normalization. LiteCowork receives a qualified bounded descriptor;
+it does not run package installation hooks from model context, copy secrets into package
+metadata, or let a self-declared safety class override Trust.
+
+Activepieces community Pieces may be exposed by a future qualified
+ActivepiecesPieceProvider. Qualification includes exact source/license path, digest,
+dependency/install behavior, descriptor translation, isolation and fixtures. A Piece is
+not a Grant and an update creates a new digest requiring compatibility/requalification.
+
+WorkflowBackendAdapter exposes workflows from a user-owned backend as discoverable bounded
+capabilities. Workflow execution is a CapabilityInvocation; external run IDs remain
+provider-private/Runtime-local and external node progress is observation only.
+
+Optional Nango/Arcade/Composio providers fit behind the same capability/connection
+boundaries. The catalog must remain useful when none is configured.
+
+## V1 detailed design integration — 2026-10-12
+
+Native agent / commands and @ references are not the same as LiteSPM host commands. NATIVE-COMPOSER-LLD.md and V1-FUNCTION-FILE-CATALOG.md require precise namespaces and conformance. A package install, Connection health or adapter probe is insufficient authority for an Effect. Browser/terminal/computer grants stay scoped and revocable.

@@ -1,0 +1,46 @@
+- main [ref=e4]:
+  - generic [ref=e5]:
+    - button "Open main navigation" [active] [ref=e156] [cursor=pointer]:
+      - generic [ref=e7]: ☰
+      - generic [ref=e8]: Menu
+    - generic [ref=e9]:
+      - generic [ref=e10]: LiteCowork
+      - generic [ref=e11]: /
+      - strong [ref=e12]: Home
+    - button "Help" [ref=e157] [cursor=pointer]: "?"
+  - generic [ref=e15]:
+    - generic [ref=e16]:
+      - generic [ref=e17]: YOUR WORKSPACE
+      - heading "What should we work on?" [level=1] [ref=e158]
+      - paragraph [ref=e19]: Save work in this Workspace. Saved Tasks are not sent to an agent yet.
+    - form "Save a Task" [ref=e159]:
+      - generic [ref=e21]:
+        - generic [ref=e22]: For
+        - strong [ref=e23]: Loading Workspace defaults…
+      - generic [ref=e24]: Describe what you want to work on
+      - textbox "Describe what you want to work on" [ref=e160]:
+        - /placeholder: Describe something you want to get done…
+      - generic [ref=e26]:
+        - generic [ref=e27]: Saves a durable Task in the selected Workspace using Workspace defaults. The selected Coworker identity and revision are checked at save time. Selected Resources are pinned as inputs; no agent is started yet.
+        - generic [ref=e28]:
+          - button "Add inputs" [ref=e161]
+          - button "Save Task" [disabled] [ref=e162]:
+            - generic [ref=e32]: →
+      - paragraph [ref=e33]:
+        - text: Choose and enable a lead agent in Settings, or set one on the selected Coworker, before saving a Task.
+        - button "Set up a lead agent" [ref=e163] [cursor=pointer]
+      - paragraph [ref=e35]: Start the local Runtime before saving work.
+    - status [ref=e36]:
+      - generic [ref=e37]: i
+      - generic [ref=e38]:
+        - strong [ref=e39]: Local Runtime setup
+        - paragraph [ref=e40]: Desktop Runtime status is unavailable.
+        - button "View Runtime details" [ref=e164] [cursor=pointer]: View Runtime details →
+    - generic [ref=e42]:
+      - generic [ref=e43]:
+        - heading "Recent work" [level=2] [ref=e165]
+        - paragraph [ref=e45]: Persisted Tasks in the selected Workspace.
+      - button "View all" [ref=e166]
+    - generic [ref=e47]:
+      - heading "Select a Workspace" [level=2] [ref=e167]
+      - paragraph [ref=e49]: Choose or create a Workspace in Settings to browse its saved Tasks.

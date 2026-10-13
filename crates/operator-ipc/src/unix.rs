@@ -22,7 +22,10 @@ use tokio::{
     time::timeout,
 };
 
-use crate::{InFlightBodyBudget, ProtocolError, RequestFrame, ResponseFrame, async_io};
+use crate::{
+    InFlightBodyBudget, ProtocolError, RequestFrame, ResponseFrame, STREAM_WRITE_DEADLINE,
+    StreamMessage, async_io,
+};
 
 pub const MAX_CONCURRENT_CONNECTIONS: usize = 8;
 pub const CONNECT_DEADLINE: Duration = Duration::from_secs(3);
@@ -273,34 +276,32 @@ impl UnixIpcListener {
             .listener
             .as_ref()
             .ok_or(TransportError::InvalidExchangeState)?;
-        loop {
-            let (stream, _) = listener.accept().await?;
-            let permit = match Arc::clone(&self.admission).try_acquire_owned() {
-                Ok(permit) => permit,
-                Err(_) => {
-                    drop(stream);
-                    return Err(TransportError::CapacityExceeded);
-                }
-            };
-            let credentials = match peer_credentials(&stream) {
-                Ok(credentials) => credentials,
-                Err(error) => {
-                    drop(stream);
-                    drop(permit);
-                    return Err(error);
-                }
-            };
-            if !authorize_peer(credentials) {
+        let (stream, _) = listener.accept().await?;
+        let permit = match Arc::clone(&self.admission).try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                drop(stream);
+                return Err(TransportError::CapacityExceeded);
+            }
+        };
+        let credentials = match peer_credentials(&stream) {
+            Ok(credentials) => credentials,
+            Err(error) => {
                 drop(stream);
                 drop(permit);
-                return Err(TransportError::PeerRejected);
+                return Err(error);
             }
-            return Ok(AuthenticatedUnixConnection::new(
-                stream,
-                credentials,
-                Some(permit),
-            ));
+        };
+        if !authorize_peer(credentials) {
+            drop(stream);
+            drop(permit);
+            return Err(TransportError::PeerRejected);
         }
+        Ok(AuthenticatedUnixConnection::new(
+            stream,
+            credentials,
+            Some(permit),
+        ))
     }
 }
 
@@ -325,6 +326,7 @@ enum ExchangeState {
     New,
     RequestWritten(String),
     RequestRead(String),
+    Streaming(String),
     Complete,
     Failed,
 }
@@ -404,6 +406,40 @@ impl AuthenticatedUnixConnection {
         }
     }
 
+    /// Writes the correlated successful handshake and keeps this exchange open
+    /// for bounded stream messages. Non-streaming responses use `write_response`.
+    pub async fn write_stream_response(
+        &mut self,
+        frame: &ResponseFrame,
+    ) -> Result<(), TransportError> {
+        let ExchangeState::RequestRead(request_id) = &self.state else {
+            return Err(TransportError::InvalidExchangeState);
+        };
+        if frame.header.request_id != *request_id || !valid_stream_handshake(frame) {
+            self.state = ExchangeState::Failed;
+            return Err(TransportError::Protocol(ProtocolError::InvalidFrame));
+        }
+        match timeout(
+            STREAM_WRITE_DEADLINE,
+            async_io::write_response(&mut self.stream, frame),
+        )
+        .await
+        {
+            Ok(Ok(())) => {
+                self.state = ExchangeState::Streaming(request_id.clone());
+                Ok(())
+            }
+            Ok(Err(error)) => {
+                self.state = ExchangeState::Failed;
+                Err(error.into())
+            }
+            Err(_) => {
+                self.state = ExchangeState::Failed;
+                Err(TransportError::DeadlineExceeded)
+            }
+        }
+    }
+
     /// Writes the sole request on a client-side exchange.
     pub async fn write_request(&mut self, frame: &RequestFrame) -> Result<(), TransportError> {
         if self.state != ExchangeState::New {
@@ -457,6 +493,155 @@ impl AuthenticatedUnixConnection {
             }
         }
     }
+
+    /// Reads the correlated stream handshake. A non-200 response is a completed
+    /// unary rejection; a malformed successful handshake poisons the connection.
+    pub async fn read_stream_response(
+        &mut self,
+        budget: &Arc<InFlightBodyBudget>,
+    ) -> Result<ResponseFrame, TransportError> {
+        let ExchangeState::RequestWritten(request_id) = &self.state else {
+            return Err(TransportError::InvalidExchangeState);
+        };
+        match async_io::read_response_with_deadlines(
+            &mut self.stream,
+            request_id,
+            budget,
+            HEADER_DEADLINE,
+            BODY_DEADLINE,
+        )
+        .await
+        {
+            Ok(frame) if frame.header.status != 200 => {
+                self.state = ExchangeState::Complete;
+                Ok(frame)
+            }
+            Ok(frame) if valid_stream_handshake(&frame) => {
+                self.state = ExchangeState::Streaming(request_id.clone());
+                Ok(frame)
+            }
+            Ok(_) => {
+                self.state = ExchangeState::Failed;
+                Err(TransportError::Protocol(ProtocolError::InvalidFrame))
+            }
+            Err(error) => {
+                self.state = ExchangeState::Failed;
+                Err(error.into())
+            }
+        }
+    }
+
+    /// Reads the next message from an accepted stream session. `None` means clean
+    /// EOF between messages; malformed, partial, or timed-out frames fail the session.
+    pub async fn read_stream_message(
+        &mut self,
+        budget: &Arc<InFlightBodyBudget>,
+    ) -> Result<Option<StreamMessage>, TransportError> {
+        if !matches!(self.state, ExchangeState::Streaming(_)) {
+            return Err(TransportError::InvalidExchangeState);
+        }
+        match async_io::read_stream_message(&mut self.stream, budget, BODY_DEADLINE).await {
+            Ok(message) => {
+                if message.is_none() {
+                    self.state = ExchangeState::Complete;
+                }
+                Ok(message)
+            }
+            Err(error) => {
+                self.state = ExchangeState::Failed;
+                Err(error.into())
+            }
+        }
+    }
+
+    /// Reads one message from a long-lived stream, allowing an idle gap between
+    /// frames while bounding any partially received frame.
+    pub async fn read_stream_message_for_session(
+        &mut self,
+        budget: &Arc<InFlightBodyBudget>,
+    ) -> Result<Option<StreamMessage>, TransportError> {
+        if !matches!(self.state, ExchangeState::Streaming(_)) {
+            return Err(TransportError::InvalidExchangeState);
+        }
+        match async_io::read_stream_message_for_session(&mut self.stream, budget, BODY_DEADLINE)
+            .await
+        {
+            Ok(message) => {
+                if message.is_none() {
+                    self.state = ExchangeState::Complete;
+                }
+                Ok(message)
+            }
+            Err(error) => {
+                self.state = ExchangeState::Failed;
+                Err(error.into())
+            }
+        }
+    }
+
+    /// Writes one bounded stream message. The five-second deadline is enforced
+    /// for every message; any partial failure requires dropping this connection.
+    pub async fn write_stream_message(
+        &mut self,
+        body: &[u8],
+        budget: &Arc<InFlightBodyBudget>,
+    ) -> Result<(), TransportError> {
+        if !matches!(self.state, ExchangeState::Streaming(_)) {
+            return Err(TransportError::InvalidExchangeState);
+        }
+        match timeout(
+            STREAM_WRITE_DEADLINE,
+            async_io::write_stream_message(&mut self.stream, body, budget),
+        )
+        .await
+        {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => {
+                self.state = ExchangeState::Failed;
+                Err(error.into())
+            }
+            Err(_) => {
+                self.state = ExchangeState::Failed;
+                Err(TransportError::DeadlineExceeded)
+            }
+        }
+    }
+
+    /// Waits for the stream client to close its one-request session.
+    ///
+    /// The client sends no more request-side bytes after the subscription. EOF
+    /// means cancellation; any additional byte is a protocol violation. The
+    /// caller races this read against stream production and never writes while
+    /// this mutable read is in progress.
+    pub async fn wait_for_stream_disconnect(&mut self) -> Result<(), TransportError> {
+        if !matches!(self.state, ExchangeState::Streaming(_)) {
+            return Err(TransportError::InvalidExchangeState);
+        }
+        let mut byte = [0_u8; 1];
+        match tokio::io::AsyncReadExt::read(&mut self.stream, &mut byte).await {
+            Ok(0) => {
+                self.state = ExchangeState::Complete;
+                Ok(())
+            }
+            Ok(_) => {
+                self.state = ExchangeState::Failed;
+                Err(TransportError::Protocol(ProtocolError::InvalidFrame))
+            }
+            Err(error) => {
+                self.state = ExchangeState::Failed;
+                Err(error.into())
+            }
+        }
+    }
+}
+
+fn valid_stream_handshake(frame: &ResponseFrame) -> bool {
+    frame.header.status == 200
+        && frame.body().is_empty()
+        && frame.header.headers.iter().any(|header| {
+            header.name.eq_ignore_ascii_case("content-type")
+                && header.value == "application/vnd.litecowork.operator-stream+json"
+        })
 }
 
 fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, TransportError> {

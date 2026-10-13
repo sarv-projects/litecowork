@@ -4,6 +4,8 @@
 //! SuggestionService clock. Owners can resolve proposals, and TASK acceptance commits
 //! one ordinary READY Task atomically without starting planning or execution.
 
+#![allow(clippy::result_large_err)] // Handlers return full Axum Responses to preserve status, body, and headers.
+
 use super::*;
 use domain_responsibility::{
     CoworkerStatus, SuggestionAction, SuggestionClock, SuggestionOwnerAction, SuggestionService,
@@ -709,7 +711,6 @@ async fn accept_suggestion_task(
         event: task_event,
     };
     let store = state.store.clone();
-    let principal = state.principal_id.clone();
     let accepted_at = suggestion_event.recorded_at.clone();
     let committed = tokio::task::spawn_blocking(move || {
         TaskService::new(store).create_from_suggestion(

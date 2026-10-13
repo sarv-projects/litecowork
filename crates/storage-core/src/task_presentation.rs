@@ -43,6 +43,9 @@ pub struct TaskPresentationCurrentAttempt {
 /// immutable version cannot be resolved are omitted.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TaskPresentationReadModel {
+    /// Durable origin event frontier captured in the same SQLite snapshot as all
+    /// Task presentation source rows. Stream cursors resume from this value.
+    pub origin_sequence: u64,
     pub task: TaskView,
     pub steps: Vec<StepRecord>,
     pub steps_overflow: bool,
@@ -64,5 +67,6 @@ pub trait TaskPresentationReadStore: Send + Sync {
         &self,
         workspace_id: &str,
         task_id: &str,
+        origin_runtime_id: &str,
     ) -> Result<Option<TaskPresentationReadModel>, StoreError>;
 }

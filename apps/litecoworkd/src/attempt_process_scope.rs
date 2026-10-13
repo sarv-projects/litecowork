@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Attempt containment and its durable journal remain staged until production admission wires exact Runtime scope evidence.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -384,7 +386,7 @@ impl AttemptProcessScopeJournal {
                     "journal entry is not a regular file".into(),
                 ));
             }
-            let mut file = File::open(entry.path())?;
+            let file = File::open(entry.path())?;
             let mut bytes = Vec::new();
             file.take(16 * 1024).read_to_end(&mut bytes)?;
             let record: AttemptProcessScopeRecord =

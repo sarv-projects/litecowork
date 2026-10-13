@@ -723,3 +723,54 @@ show a local model; another agent may show none.
 14. keyboard focus remains in composer through dependent-control refresh.
 15. screen reader announces setup errors and dependent option changes without reading
     credential values.
+
+
+## Connector/workflow/learning refinements — final 2026-10-10
+
+### New menu instead of Cowork versus Code
+
+Do not add a persistent Cowork/Code segmented control. Use one lightweight New menu:
+Chat, Code task, Research, Work with files, Automation. Each preset feeds the same
+composer/Conversation/Task routes. Code task may reveal/prefill repository, worktree and
+verification controls; it does not create another history/store.
+
+### Connection detail
+
+Connection detail shows provider/package and exact qualified revision, account display
+hint, credential owner (On this device or explicit backend), provider scopes, Coworker
+assignment, event mode, health and actually supported Test/Reconnect/Disconnect/Revoke.
+OAuth launch/callback is provider/host-owned. No credential field is embedded in chat.
+
+### Workflow backend
+
+A Workflow backend Connection shows searchable existing workflows and bounded input/effect
+descriptions. LiteCowork does not embed another product's visual node editor. Production
+workflow use still occurs through admitted Task/Automation; settings health tests cannot
+fire consequential workflows.
+
+### Automation run detail
+
+Run detail includes occurrence plus Task state and may show Continue, Run again and View
+activity. Continue creates/opens the Task's unique follow-up Conversation. Its first host
+card shows trigger, pinned Routine/Automation, outputs/evidence and unresolved items. Never
+synthesize previous assistant chat bubbles from Task logs.
+
+### Learning UX
+
+Memory & Knowledge separates actual memory records from searchable knowledge. Learning
+review appears only when candidates require action. Quiet memory has an inspectable notice;
+behavioral changes show exact source/diff/test before approval. Feedback controls create
+feedback/candidates only; they do not immediately mutate permissions or schedules.
+
+### Activity and Terminal
+
+Default Activity describes meaningful user-level work and verification. Raw terminal/tool
+details are advanced inspection. Terminal is never required for normal LiteCowork use.
+
+## V1 detailed design integration — 2026-10-12
+
+The final implementation contract is expanded by ../docs/DESKTOP-SHELL-LLD.md (full Settings tree, left/right geometry, focus, resize and motion), ../docs/NATIVE-COMPOSER-LLD.md (agent native / @ model/effort/attachments), ../docs/CHROME-BROWSER-LLD.md (true Chrome provider/profile/attach/takeover) and ../docs/RENDERING-CONFORMANCE-LLD.md. Candidate UI components/events are not proof of implementation. Use V1-DESIGN-COVERAGE.md for scenario IDs and gate owners.
+
+## Usage and health, rich agent cards, memory and PTY terminal — V1 UI targets
+
+The screenshot-informed target surfaces are specified in docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md (1D/7D/30D/90D/YTD/All/Custom + source/cost coverage), docs/V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md (logo/version/detected/configured/auth/ready cards and manual-path fallback), docs/V1-AGENT-MEMORY-FAST-PATH-LLD.md (search/add scoped Memory + provenance and agent tool timing) and docs/V1-INTEGRATED-TERMINAL-LLD.md (Workbench multi-PTY profile UI including PowerShell, Bash, WSL etc). TLM-001–048 in implementation/V1-OBSERVABILITY-AGENT-MEMORY-TERMINAL-UAT.md define negative and OS/user qualification. These targets are not asserted to be implemented.

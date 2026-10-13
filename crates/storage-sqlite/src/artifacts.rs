@@ -4,8 +4,7 @@ use storage_core::{
     ArtifactContentRecord, ArtifactLibraryAction, ArtifactLibraryCommand,
     ArtifactLibraryWriteStore, ArtifactReadStore, ArtifactRecord, ArtifactVersionAppendCommit,
     ArtifactVersionRecord, ArtifactVersionWriteStore, CommittedArtifactLibraryCommand,
-    CommittedArtifactVersionAppend, DomainEvent, MAX_TASK_PRESENTATION_ARTIFACTS,
-    MAX_TASK_PRESENTATION_STEPS, ResourceRecord, ResourceRevisionRecord,
+    CommittedArtifactVersionAppend, MAX_TASK_PRESENTATION_ARTIFACTS, MAX_TASK_PRESENTATION_STEPS,
     TaskPresentationActivityEvent, TaskPresentationArtifactVersion, TaskPresentationCurrentAttempt,
     TaskPresentationReadModel, TaskPresentationReadStore,
 };
@@ -326,6 +325,37 @@ impl ArtifactReadStore for SqliteWorkspaceStore {
         )
     }
 
+    fn list_dependency_invalidations_page(
+        &self,
+        request: storage_core::DependencyInvalidationPageRequest,
+    ) -> Result<Option<Vec<storage_core::InvalidationRecord>>, StoreError> {
+        validate_nonempty(&[
+            &request.owner_principal_id,
+            &request.workspace_id,
+            &request.dependency_edge_id,
+        ])?;
+        if !(1..=201).contains(&request.limit)
+            || request.after_created_at.is_some() != request.after_invalidation_record_id.is_some()
+            || request
+                .after_created_at
+                .as_deref()
+                .is_some_and(|value| value.is_empty() || value.len() > 64)
+            || request
+                .after_invalidation_record_id
+                .as_deref()
+                .is_some_and(|value| value.is_empty() || value.len() > 256)
+        {
+            return Err(StoreError::Invalid(
+                "Dependency invalidation page query is invalid".to_owned(),
+            ));
+        }
+        let (reply, receive) = mpsc::channel();
+        self.execute_command(
+            Command::ListDependencyInvalidations { request, reply },
+            receive,
+        )
+    }
+
     fn get_artifact_version(
         &self,
         workspace_id: &str,
@@ -406,13 +436,15 @@ impl TaskPresentationReadStore for SqliteWorkspaceStore {
         &self,
         workspace_id: &str,
         task_id: &str,
+        origin_runtime_id: &str,
     ) -> Result<Option<TaskPresentationReadModel>, StoreError> {
-        validate_nonempty(&[workspace_id, task_id])?;
+        validate_nonempty(&[workspace_id, task_id, origin_runtime_id])?;
         let (reply, receive) = mpsc::channel();
         self.execute_command(
             Command::GetTaskPresentation {
                 workspace_id: workspace_id.to_owned(),
                 task_id: task_id.to_owned(),
+                origin_runtime_id: origin_runtime_id.to_owned(),
                 reply,
             },
             receive,
@@ -427,10 +459,13 @@ pub(super) fn read_task_presentation(
     connection: &mut Connection,
     workspace_id: &str,
     task_id: &str,
+    origin_runtime_id: &str,
 ) -> Result<Option<TaskPresentationReadModel>, StoreError> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Deferred)
         .map_err(map_database_error)?;
+    let origin_sequence =
+        super::read_workspace_origin_frontier(&transaction, workspace_id, origin_runtime_id)?;
     let Some(task) = super::load_task_view(&transaction, workspace_id, task_id)? else {
         return Ok(None);
     };
@@ -465,19 +500,19 @@ pub(super) fn read_task_presentation(
         {
             activity_events.push(event);
         }
-        if let Some(attempt_id) = step.current_attempt_id.as_deref() {
-            if let Some(attempt) = read_task_presentation_current_attempt(
+        if let Some(attempt_id) = step.current_attempt_id.as_deref()
+            && let Some(attempt) = read_task_presentation_current_attempt(
                 &transaction,
                 workspace_id,
                 task_id,
                 &step.step_id,
                 attempt_id,
-            )? {
-                if let Some(event) = attempt.last_event.clone() {
-                    activity_events.push(event);
-                }
-                current_attempts.push(attempt);
+            )?
+        {
+            if let Some(event) = attempt.last_event.clone() {
+                activity_events.push(event);
             }
+            current_attempts.push(attempt);
         }
     }
 
@@ -513,6 +548,7 @@ pub(super) fn read_task_presentation(
 
     transaction.commit().map_err(map_database_error)?;
     Ok(Some(TaskPresentationReadModel {
+        origin_sequence,
         task,
         steps,
         steps_overflow,
@@ -828,9 +864,6 @@ impl ArtifactVersionWriteStore for SqliteWorkspaceStore {
             commit.artifact.version,
         )?;
 
-        let workspace_id = commit.workspace_id.clone();
-        let principal_id = commit.request.principal_id.clone();
-        let request_id = commit.request.request_id.clone();
         let (reply, receive) = mpsc::channel();
         self.execute_command(
             Command::ArtifactOperation {
@@ -1147,8 +1180,8 @@ fn validate_append_provenance(commit: &ArtifactVersionAppendCommit) -> Result<()
                 .get("revision_id")
                 .and_then(serde_json::Value::as_str);
             if workspace != Some(commit.workspace_id.as_str())
-                || resource.map_or(true, str::is_empty)
-                || revision.map_or(true, str::is_empty)
+                || resource.is_none_or(str::is_empty)
+                || revision.is_none_or(str::is_empty)
                 || resource == Some(commit.resource.resource_id.as_str())
             {
                 return Err(StoreError::Invalid(
@@ -1421,7 +1454,7 @@ fn append_artifact_version_transaction(
     }
 
     let ArtifactContentRecord::ManagedBlob {
-        storage_ref,
+        storage_ref: _,
         content_digest,
         media_type,
         size_bytes,
@@ -1630,9 +1663,9 @@ fn validate_source_inputs(
             params![source_workspace, source_resource, source_revision],
             |row| Ok((row.get(0)?,)),
         ).optional().map_err(map_database_error)?;
-        let Some((source_digest,)) = source_revision_row else {
+        if source_revision_row.is_none() {
             return Err(StoreError::NotFound);
-        };
+        }
     }
     let provenance = &commit.version.provenance;
     let source_inputs = provenance
@@ -1750,6 +1783,86 @@ pub(super) fn list_artifacts(
         .map_err(map_database_error)?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
         .map_err(map_database_error)
+}
+
+pub(super) fn list_dependency_invalidations(
+    connection: &Connection,
+    request: &storage_core::DependencyInvalidationPageRequest,
+) -> Result<Option<Vec<storage_core::InvalidationRecord>>, StoreError> {
+    let edge_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1
+                 FROM dependency_edges edge
+                 JOIN workspaces workspace ON workspace.workspace_id = edge.workspace_id
+                 WHERE edge.dependency_edge_id = ?1
+                   AND edge.workspace_id = ?2
+                   AND workspace.owner_principal_id = ?3
+             )",
+            params![
+                request.dependency_edge_id,
+                request.workspace_id,
+                request.owner_principal_id
+            ],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if !edge_exists {
+        return Ok(None);
+    }
+
+    let limit = i64::try_from(request.limit).map_err(|_| {
+        StoreError::Invalid("Dependency invalidation page limit is invalid".to_owned())
+    })?;
+    let mut statement = connection
+        .prepare(
+            "SELECT invalidation.invalidation_record_id,
+                    invalidation.dependency_edge_id,
+                    invalidation.observed_revision_id,
+                    invalidation.reason_code,
+                    invalidation.created_at
+             FROM invalidation_records invalidation
+             JOIN dependency_edges edge
+               ON edge.dependency_edge_id = invalidation.dependency_edge_id
+             JOIN workspaces workspace
+               ON workspace.workspace_id = edge.workspace_id
+             WHERE edge.dependency_edge_id = ?1
+               AND edge.workspace_id = ?2
+               AND workspace.owner_principal_id = ?3
+               AND (?4 IS NULL
+                    OR invalidation.created_at COLLATE BINARY > ?4
+                    OR (invalidation.created_at COLLATE BINARY = ?4
+                        AND invalidation.invalidation_record_id COLLATE BINARY > ?5))
+             ORDER BY invalidation.created_at COLLATE BINARY ASC,
+                      invalidation.invalidation_record_id COLLATE BINARY ASC
+             LIMIT ?6",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map(
+            params![
+                request.dependency_edge_id,
+                request.workspace_id,
+                request.owner_principal_id,
+                request.after_created_at,
+                request.after_invalidation_record_id,
+                limit,
+            ],
+            |row| {
+                Ok(storage_core::InvalidationRecord {
+                    invalidation_record_id: row.get(0)?,
+                    dependency_edge_id: row.get(1)?,
+                    observed_revision_id: row.get(2)?,
+                    reason_code: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            },
+        )
+        .map_err(map_database_error)?;
+    let page = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(map_database_error)?;
+    Ok(Some(page))
 }
 
 fn json_column<T: serde::de::DeserializeOwned>(

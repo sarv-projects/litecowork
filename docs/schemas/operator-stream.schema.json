@@ -13,6 +13,9 @@
       "$ref": "#/$defs/turn_delta"
     },
     {
+      "$ref": "#/$defs/turn_settled"
+    },
+    {
       "$ref": "#/$defs/rich_draft"
     },
     {
@@ -20,6 +23,25 @@
     }
   ],
   "$defs": {
+    "subscribe": {
+      "type": "object",
+      "required": ["workspace_id", "projection_types"],
+      "properties": {
+        "workspace_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "conversation_ids": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+        "task_ids": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+        "runtime_ids": {"type": "array", "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 256}},
+        "projection_types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {"enum": ["conversation_presentation", "task_presentation", "runtime_inventory"]}
+        },
+        "resume_cursor": {"type": "string", "minLength": 1, "maxLength": 14336}
+      },
+      "additionalProperties": false
+    },
     "stream_ready": {
       "type": "object",
       "required": [
@@ -35,7 +57,8 @@
         },
         "workspace_id": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 256
         },
         "projection_version": {
           "type": "integer",
@@ -43,7 +66,8 @@
         },
         "cursor": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 14336
         },
         "max_frame_bytes": {
           "type": "integer",
@@ -69,7 +93,8 @@
         },
         "workspace_id": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 256
         },
         "projection_type": {
           "enum": [
@@ -80,15 +105,358 @@
         },
         "projection_revision": {
           "type": "integer",
-          "minimum": 1
+          "minimum": 1,
+          "maximum": 9007199254740991
         },
         "cursor": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 14336
         },
         "payload": {
           "type": "object"
         }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "projection_type": {
+                "const": "conversation_presentation"
+              }
+            },
+            "required": [
+              "projection_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/conversation_projection_snapshot"
+                  },
+                  {
+                    "$ref": "#/$defs/conversation_projection_upsert"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "projection_type": {
+                "const": "task_presentation"
+              }
+            },
+            "required": [
+              "projection_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/task_projection_snapshot"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "projection_type": {
+                "const": "runtime_inventory"
+              }
+            },
+            "required": [
+              "projection_type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/runtime_inventory_notification"
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "runtime_inventory_notification": {
+      "type": "object",
+      "required": ["runtime_id", "change_kind"],
+      "properties": {
+        "runtime_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "change_kind": {"const": "OFFERS_CHANGED"}
+      },
+      "additionalProperties": false
+    },
+    "task_projection_snapshot": {
+      "type": "object",
+      "required": [
+        "workspace_id",
+        "task_id",
+        "origin_sequence",
+        "computed_at",
+        "freshness",
+        "items"
+      ],
+      "properties": {
+        "workspace_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "task_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "origin_sequence": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,18})$"},
+        "computed_at": {"type": "string", "minLength": 1, "maxLength": 64, "format": "date-time"},
+        "freshness": {"enum": ["CURRENT", "STALE", "UNKNOWN"]},
+        "items": {
+          "type": "array",
+          "maxItems": 301,
+          "items": {"$ref": "#/$defs/task_presentation_item"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "task_presentation_item": {
+      "type": "object",
+      "required": ["item_key", "kind", "payload_version", "source_refs", "order_key", "status", "payload", "freshness"],
+      "properties": {
+        "item_key": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"enum": ["TASK_CARD", "ACTIVITY", "ARTIFACT"]},
+        "payload_version": {"type": "integer", "const": 1},
+        "source_refs": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "required": ["kind", "id"],
+            "properties": {
+              "kind": {"enum": ["TASK", "STEP", "ARTIFACT_VERSION", "RESOURCE_REVISION"]},
+              "id": {"type": "string", "minLength": 1, "maxLength": 256},
+              "revision": {"type": "string", "maxLength": 128}
+            },
+            "additionalProperties": false
+          }
+        },
+        "occurred_at": {"type": ["string", "null"], "maxLength": 64, "format": "date-time"},
+        "order_key": {"type": "string", "minLength": 1, "maxLength": 512},
+        "status": {"enum": ["IN_PROGRESS", "WAITING", "NEEDS_USER", "COMPLETE", "INCOMPLETE", "FAILED", "UNAVAILABLE", "UNKNOWN"]},
+        "label": {"type": ["string", "null"], "maxLength": 512},
+        "payload": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": ["task_id", "objective", "status"],
+              "properties": {
+                "task_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                "objective": {"type": "string", "maxLength": 32768},
+                "status": {"type": "string", "maxLength": 64},
+                "step_summary": {"type": "string", "maxLength": 2048}
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["summary"],
+              "properties": {
+                "summary": {"type": "string", "maxLength": 2048},
+                "detail": {"type": "string", "maxLength": 8192}
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["artifact_id", "version", "display_name", "artifact_kind"],
+              "properties": {
+                "artifact_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                "version": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+                "display_name": {"type": "string", "maxLength": 512},
+                "artifact_kind": {"type": "string", "maxLength": 128},
+                "verification_status": {"type": "string", "maxLength": 64}
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "freshness": {"enum": ["CURRENT", "STALE", "UNKNOWN"]}
+      },
+      "additionalProperties": false
+    },
+    "conversation_projection_snapshot": {
+      "type": "object",
+      "required": [
+        "conversation_id",
+        "stream_cursor",
+        "origin_sequence",
+        "items",
+        "next_cursor",
+        "active_turn"
+      ],
+      "properties": {
+        "conversation_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "stream_cursor": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "origin_sequence": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,18})$"},
+        "items": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/conversation_presentation_message"}
+        },
+        "next_cursor": {"type": ["string", "null"], "maxLength": 256},
+        "active_turn": {
+          "oneOf": [
+            {"$ref": "#/$defs/conversation_turn"},
+            {"type": "null"}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "conversation_projection_upsert": {
+      "type": "object",
+      "required": ["conversation_id", "stream_cursor", "origin_sequence", "item"],
+      "properties": {
+        "conversation_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "stream_cursor": {"type": "string", "minLength": 1, "maxLength": 2048},
+        "origin_sequence": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,18})$"},
+        "item": {"$ref": "#/$defs/conversation_presentation_message"}
+      },
+      "additionalProperties": false
+    },
+    "conversation_presentation_message": {
+      "type": "object",
+      "required": ["message", "rich_presentation", "linked_items"],
+      "properties": {
+        "message": {"$ref": "#/$defs/conversation_message"},
+        "rich_presentation": {
+          "oneOf": [
+            {"$ref": "#/$defs/rich_presentation_ref"},
+            {"type": "null"}
+          ]
+        },
+        "linked_items": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {"$ref": "#/$defs/presentation_item"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "conversation_message": {
+      "type": "object",
+      "required": ["message_id", "conversation_id", "author", "role", "content", "created_at"],
+      "properties": {
+        "message_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "conversation_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "author": {
+          "type": "object",
+          "required": ["principal_id", "kind"],
+          "properties": {
+            "principal_id": {"type": "string", "minLength": 1, "maxLength": 256},
+            "kind": {"enum": ["USER", "SERVICE", "RUNTIME", "AGENT", "CHANNEL_IDENTITY"]}
+          },
+          "additionalProperties": false
+        },
+        "role": {"enum": ["USER", "AGENT", "SYSTEM_NOTICE", "CHANNEL"]},
+        "agent_session_id": {"type": ["string", "null"], "maxLength": 256},
+        "agent_binding_id": {"type": ["string", "null"], "maxLength": 256},
+        "turn_id": {"type": ["string", "null"], "maxLength": 256},
+        "content": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["kind", "text"],
+                "properties": {"kind": {"const": "TEXT"}, "text": {"type": "string", "maxLength": 262144}},
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["kind", "resource_ref"],
+                "properties": {
+                  "kind": {"const": "RESOURCE"},
+                  "resource_ref": {"$ref": "#/$defs/resource_ref"},
+                  "display_name": {"type": ["string", "null"], "maxLength": 512}
+                },
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "resource_refs": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {"$ref": "#/$defs/resource_ref"}
+        },
+        "created_at": {"type": "string", "minLength": 1, "maxLength": 64}
+      },
+      "additionalProperties": false
+    },
+    "resource_ref": {
+      "type": "object",
+      "required": ["workspace_id", "resource_id"],
+      "properties": {
+        "workspace_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "resource_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "revision_id": {"type": ["string", "null"], "maxLength": 256}
+      },
+      "additionalProperties": false
+    },
+    "rich_presentation_ref": {
+      "type": "object",
+      "required": ["presentation_id", "message_id", "schema_version", "renderer_contract_version", "semantic_content_digest", "document_digest", "document_size_bytes", "availability"],
+      "properties": {
+        "presentation_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "message_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "schema_version": {"type": "integer", "const": 1},
+        "renderer_contract_version": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "semantic_content_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "document_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "document_size_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "availability": {"enum": ["AVAILABLE", "FETCHING", "UNAVAILABLE", "POLICY_OMITTED", "UNSUPPORTED_VERSION", "INTEGRITY_FAILED"]}
+      },
+      "additionalProperties": false
+    },
+    "conversation_turn": {
+      "type": "object",
+      "required": ["turn_id", "status", "retry_ordinal", "presentation_preference"],
+      "properties": {
+        "turn_id": {"type": "string", "minLength": 1, "maxLength": 256},
+        "status": {"enum": ["OPEN", "RUNNING", "WAITING_USER", "WAITING_DEPENDENCY", "CANCEL_REQUESTED"]},
+        "retry_ordinal": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "presentation_preference": {"enum": ["AUTO", "SIMPLE", "RICH"]}
+      },
+      "additionalProperties": false
+    },
+    "presentation_item": {
+      "type": "object",
+      "required": ["item_key", "kind", "payload_version", "source_refs", "order_key", "freshness", "payload"],
+      "properties": {
+        "item_key": {"type": "string", "minLength": 1, "maxLength": 256},
+        "kind": {"enum": ["TEXT", "ACTIVITY", "TASK_CARD", "USER_REQUEST", "APPROVAL", "ARTIFACT", "CITATION", "CODE", "DIFF", "TABLE", "CHART", "IMAGE", "BROWSER", "TERMINAL", "MCP_APP", "ERROR", "UNSUPPORTED"]},
+        "payload_version": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "source_refs": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["kind", "id"],
+            "properties": {
+              "kind": {"enum": ["MESSAGE", "TASK", "STEP", "RESOURCE_REVISION", "ARTIFACT_VERSION", "USER_REQUEST", "APPROVAL", "INVOCATION"]},
+              "id": {"type": "string", "minLength": 1, "maxLength": 256},
+              "revision": {"type": "string", "maxLength": 128}
+            },
+            "additionalProperties": false
+          }
+        },
+        "occurred_at": {"type": ["string", "null"], "maxLength": 64, "format": "date-time"},
+        "order_key": {"type": "string", "minLength": 1, "maxLength": 256},
+        "status": {"type": ["string", "null"], "enum": ["IN_PROGRESS", "WAITING", "NEEDS_USER", "COMPLETE", "INCOMPLETE", "FAILED", "UNAVAILABLE", "UNKNOWN", null]},
+        "label": {"type": ["string", "null"], "maxLength": 512},
+        "freshness": {"enum": ["CURRENT", "STALE", "UNKNOWN"]},
+        "payload": {"type": "object", "maxProperties": 64}
       },
       "additionalProperties": false
     },
@@ -109,15 +477,18 @@
         },
         "workspace_id": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 256
         },
         "conversation_id": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 256
         },
         "turn_id": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 256
         },
         "retry_ordinal": {
           "type": "integer",
@@ -129,7 +500,48 @@
         },
         "text_delta": {
           "type": "string",
-          "maxLength": 65536
+          "minLength": 1,
+          "maxLength": 32768
+        }
+      },
+      "additionalProperties": false
+    },
+    "turn_settled": {
+      "type": "object",
+      "required": [
+        "type",
+        "workspace_id",
+        "conversation_id",
+        "turn_id",
+        "retry_ordinal"
+      ],
+      "properties": {
+        "type": {
+          "const": "turn.settled"
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "conversation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "turn_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "retry_ordinal": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "committed_message_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
         }
       },
       "additionalProperties": false

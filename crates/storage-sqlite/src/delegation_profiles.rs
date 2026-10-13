@@ -7,14 +7,51 @@
 use super::*;
 use domain_responsibility::{
     CommittedDelegationProfile, DelegationProfile, DelegationProfileAppend,
-    DelegationProfileCommandScope, DelegationProfileError, DelegationProfileEvent,
-    DelegationProfileMutation, DelegationProfileRevision, DelegationProfileStatus,
+    DelegationProfileCommandScope, DelegationProfileError, DelegationProfileMutation,
+    DelegationProfileRevision, DelegationProfileStatus,
     DelegationProfileStore as DomainDelegationProfileStore, DelegationProfileTransaction,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
 
 pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
+
+type DelegationProfileHeadRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    u64,
+    String,
+    String,
+    String,
+    u64,
+);
+type DelegationProfileRevisionRow = (
+    u64,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    u32,
+    u32,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DelegationProfilePage {
@@ -474,7 +511,7 @@ fn persist_profile(
     let revision = &mutation.committed.revision;
     if head.workspace_id != scope.workspace_id
         || head.updated_at != context.recorded_at
-        || revision.authored_by.principal_id == ""
+        || revision.authored_by.principal_id.is_empty()
     {
         return Err(DelegationProfileError::InvalidDefinition);
     }
@@ -514,16 +551,15 @@ fn persist_profile(
     if mutation.event.kind != event_expected.0 || mutation.event.payload != event_expected.1 {
         return Err(DelegationProfileError::InvalidDefinition);
     }
-    if let Some(DelegationProfileAppend::Revision(new_revision)) = &mutation.append {
-        if new_revision.delegation_profile_id != head.delegation_profile_id
+    if let Some(DelegationProfileAppend::Revision(new_revision)) = &mutation.append
+        && (new_revision.delegation_profile_id != head.delegation_profile_id
             || new_revision.workspace_id != scope.workspace_id
             || new_revision.revision != head.current_revision
             || new_revision.name != head.name
             || new_revision.name_key != head.name_key
-            || new_revision.created_at != context.recorded_at
-        {
-            return Err(DelegationProfileError::InvalidDefinition);
-        }
+            || new_revision.created_at != context.recorded_at)
+    {
+        return Err(DelegationProfileError::InvalidDefinition);
     }
     match (mutation.expected_version, existing.as_ref()) {
         (None, None) if head.version == 1 => {
@@ -565,10 +601,10 @@ fn persist_profile(
         }
         _ => return Err(DelegationProfileError::VersionConflict),
     }
-    if let Some(DelegationProfileAppend::Revision(revision)) = &mutation.append {
-        if mutation.expected_version.is_none() {
-            insert_profile_revision(tx, revision)?;
-        }
+    if let Some(DelegationProfileAppend::Revision(revision)) = &mutation.append
+        && mutation.expected_version.is_none()
+    {
+        insert_profile_revision(tx, revision)?;
     }
     let persisted = load_profile_typed(tx, &scope.workspace_id, &head.delegation_profile_id)?
         .ok_or(DelegationProfileError::Storage)?;
@@ -593,7 +629,7 @@ fn insert_profile_revision(
 ) -> Result<(), DelegationProfileError> {
     let revision_number =
         to_sql_i64(revision.revision, "DelegationProfile revision").map_err(domain_store_error)?;
-    tx.execute("INSERT INTO delegation_profile_revisions(delegation_profile_id,revision,workspace_id,name,name_key,routing_description,instructions,session_options_json,session_options_descriptor_digest,required_features_json,preferred_features_json,enforced_policy_json,optimization_preference,quality_floor_json,max_concurrency,max_host_delegation_depth,budget_ceiling_json,latency_class,environment_policy_json,native_delegation_policy,warm_policy_json,authored_by_json,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)", params![revision.delegation_profile_id, revision_number, revision.workspace_id, revision.name, revision.name_key, revision.routing_description, revision.instructions, encode(&revision.session_options)?, revision.session_options_descriptor_digest, encode(&revision.required_features)?, encode(&revision.preferred_features)?, encode(&revision.enforced_policy)?, optimization_preference(revision.optimization_preference), revision.quality_floor.as_ref().map(|value| encode(value)).transpose()?, revision.max_concurrency, revision.max_host_delegation_depth, revision.budget_ceiling.as_ref().map(|value| encode(value)).transpose()?, latency_class(revision.latency_class), encode(&revision.environment_policy)?, native_delegation_policy(revision.native_delegation_policy), encode(&revision.warm_policy)?, encode(&revision.authored_by)?, revision.created_at]).map_err(profile_sql_error)?;
+    tx.execute("INSERT INTO delegation_profile_revisions(delegation_profile_id,revision,workspace_id,name,name_key,routing_description,instructions,session_options_json,session_options_descriptor_digest,required_features_json,preferred_features_json,enforced_policy_json,optimization_preference,quality_floor_json,max_concurrency,max_host_delegation_depth,budget_ceiling_json,latency_class,environment_policy_json,native_delegation_policy,warm_policy_json,authored_by_json,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)", params![revision.delegation_profile_id, revision_number, revision.workspace_id, revision.name, revision.name_key, revision.routing_description, revision.instructions, encode(&revision.session_options)?, revision.session_options_descriptor_digest, encode(&revision.required_features)?, encode(&revision.preferred_features)?, encode(&revision.enforced_policy)?, optimization_preference(revision.optimization_preference), revision.quality_floor.as_ref().map(encode).transpose()?, revision.max_concurrency, revision.max_host_delegation_depth, revision.budget_ceiling.as_ref().map(encode).transpose()?, latency_class(revision.latency_class), encode(&revision.environment_policy)?, native_delegation_policy(revision.native_delegation_policy), encode(&revision.warm_policy)?, encode(&revision.authored_by)?, revision.created_at]).map_err(profile_sql_error)?;
     Ok(())
 }
 
@@ -613,7 +649,7 @@ fn load_profile_typed(
     workspace: &str,
     id: &str,
 ) -> Result<Option<CommittedDelegationProfile>, DelegationProfileError> {
-    let row: Option<(String,String,String,String,String,u64,String,String,String,u64)> = connection.query_row("SELECT delegation_profile_id,workspace_id,agent_binding_id,name,name_key,current_revision,status,created_at,updated_at,version FROM delegation_profiles WHERE workspace_id=?1 AND delegation_profile_id=?2", params![workspace,id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,from_row_u64(r,5)?,r.get(6)?,r.get(7)?,r.get(8)?,from_row_u64(r,9)?))).optional().map_err(profile_sql_error)?;
+    let row: Option<DelegationProfileHeadRow> = connection.query_row("SELECT delegation_profile_id,workspace_id,agent_binding_id,name,name_key,current_revision,status,created_at,updated_at,version FROM delegation_profiles WHERE workspace_id=?1 AND delegation_profile_id=?2", params![workspace,id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,from_row_u64(r,5)?,r.get(6)?,r.get(7)?,r.get(8)?,from_row_u64(r,9)?))).optional().map_err(profile_sql_error)?;
     let Some(row) = row else { return Ok(None) };
     let profile = DelegationProfile {
         delegation_profile_id: row.0,
@@ -640,7 +676,7 @@ fn load_profile_revision(
 ) -> Result<Option<DelegationProfileRevision>, DelegationProfileError> {
     let revision_sql =
         to_sql_i64(revision, "DelegationProfile revision").map_err(domain_store_error)?;
-    let row: Option<(u64,String,String,String,String,Option<String>,String,Option<String>,String,String,String,String,Option<String>,u32,u32,Option<String>,String,String,String,String,String,String)> = connection.query_row("SELECT revision,workspace_id,name,name_key,routing_description,instructions,session_options_json,session_options_descriptor_digest,required_features_json,preferred_features_json,enforced_policy_json,optimization_preference,quality_floor_json,max_concurrency,max_host_delegation_depth,budget_ceiling_json,latency_class,environment_policy_json,native_delegation_policy,warm_policy_json,authored_by_json,created_at FROM delegation_profile_revisions WHERE workspace_id=?1 AND delegation_profile_id=?2 AND revision=?3", params![workspace,id,revision_sql], |r| Ok((from_row_u64(r,0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?,r.get(12)?,r.get(13)?,r.get(14)?,r.get(15)?,r.get(16)?,r.get(17)?,r.get(18)?,r.get(19)?,r.get(20)?,r.get(21)?))).optional().map_err(profile_sql_error)?;
+    let row: Option<DelegationProfileRevisionRow> = connection.query_row("SELECT revision,workspace_id,name,name_key,routing_description,instructions,session_options_json,session_options_descriptor_digest,required_features_json,preferred_features_json,enforced_policy_json,optimization_preference,quality_floor_json,max_concurrency,max_host_delegation_depth,budget_ceiling_json,latency_class,environment_policy_json,native_delegation_policy,warm_policy_json,authored_by_json,created_at FROM delegation_profile_revisions WHERE workspace_id=?1 AND delegation_profile_id=?2 AND revision=?3", params![workspace,id,revision_sql], |r| Ok((from_row_u64(r,0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?,r.get(12)?,r.get(13)?,r.get(14)?,r.get(15)?,r.get(16)?,r.get(17)?,r.get(18)?,r.get(19)?,r.get(20)?,r.get(21)?))).optional().map_err(profile_sql_error)?;
     let Some(r) = row else { return Ok(None) };
     Ok(Some(DelegationProfileRevision {
         delegation_profile_id: id.to_owned(),
@@ -763,19 +799,6 @@ fn profile_store_error(error: StoreError) -> DelegationProfileError {
         StoreError::Conflict { .. } => DelegationProfileError::VersionConflict,
         StoreError::Invalid(_) => DelegationProfileError::InvalidDefinition,
         _ => DelegationProfileError::Storage,
-    }
-}
-fn profile_domain_error(error: DelegationProfileError) -> StoreError {
-    match error {
-        DelegationProfileError::NotFound => StoreError::NotFound,
-        DelegationProfileError::VersionConflict => StoreError::Conflict {
-            expected: None,
-            actual: None,
-        },
-        DelegationProfileError::InvalidDefinition | DelegationProfileError::OptionsInvalid => {
-            StoreError::Invalid("DelegationProfile is invalid".into())
-        }
-        _ => StoreError::Database("DelegationProfile transaction failed".into()),
     }
 }
 fn domain_store_error(error: StoreError) -> DelegationProfileError {

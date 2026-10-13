@@ -43,6 +43,14 @@ pub struct ChangeReplicationPolicy {
 }
 
 #[derive(Clone, Debug)]
+pub struct ArchiveWorkspace {
+    pub workspace_id: String,
+    pub expected_version: u64,
+    pub principal_id: String,
+    pub event: EventContext,
+}
+
+#[derive(Clone, Debug)]
 pub struct CreateWorkspaceInstructionRevision {
     pub workspace_id: String,
     pub expected_version: u64,
@@ -1234,6 +1242,91 @@ impl<S: WorkspaceStore> WorkspaceService<S> {
             .create_workspace_idempotent(request, workspace, event)
     }
 
+    /// Archives one owned Workspace through the same idempotent aggregate transaction
+    /// used by its versioned event. SQLite performs the authoritative quiescence checks
+    /// while holding the write transaction, after exact receipt lookup.
+    pub fn archive_idempotent(
+        &self,
+        command: ArchiveWorkspace,
+        request_id: String,
+        request_payload: serde_json::Value,
+    ) -> Result<CommittedWorkspace, StoreError>
+    where
+        S: IdempotentWorkspaceStore,
+    {
+        require_non_empty("workspace_id", &command.workspace_id)?;
+        require_non_empty("principal_id", &command.principal_id)?;
+        require_non_empty("request_id", &request_id)?;
+        if request_payload
+            .get("operation")
+            .and_then(serde_json::Value::as_str)
+            != Some("workspace.archive.v1")
+            || request_payload
+                .get("workspace_id")
+                .and_then(serde_json::Value::as_str)
+                != Some(command.workspace_id.as_str())
+            || request_payload
+                .get("expected_version")
+                .and_then(serde_json::Value::as_u64)
+                != Some(command.expected_version)
+        {
+            return Err(StoreError::Invalid(
+                "Workspace archive request payload does not match the command".to_owned(),
+            ));
+        }
+        validate_event_context(&command.event)?;
+
+        let mut workspace = self
+            .store
+            .get_workspace(&command.workspace_id)?
+            .ok_or(StoreError::NotFound)?;
+        if workspace.owner_principal_id != command.principal_id {
+            return Err(StoreError::NotFound);
+        }
+        if workspace.status != "ACTIVE" && workspace.status != "ARCHIVED" {
+            return Err(StoreError::Invalid(
+                "Workspace archive transition is not ACTIVE -> ARCHIVED".to_owned(),
+            ));
+        }
+        let archived_version = command
+            .expected_version
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Invalid("Workspace version is exhausted".to_owned()))?;
+        workspace.status = "ARCHIVED".to_owned();
+        workspace.version = archived_version;
+        workspace.updated_at = command.event.recorded_at.clone();
+
+        let event = EventDraft {
+            event_id: command.event.event_id,
+            workspace_id: workspace.workspace_id.clone(),
+            entity_type: "Workspace".to_owned(),
+            entity_id: workspace.workspace_id.clone(),
+            origin_runtime_id: command.event.origin_runtime_id,
+            entity_revision: archived_version,
+            hlc_timestamp: command.event.hlc_timestamp,
+            correlation_id: command.event.correlation_id,
+            causation_id: command.event.causation_id,
+            schema_version: 1,
+            event_type: "workspace.archived.v1".to_owned(),
+            payload: json!({
+                "workspace_id": workspace.workspace_id,
+                "archived_by": {"kind": "USER", "principal_id": command.principal_id},
+                "aggregate_version": archived_version,
+            }),
+            recorded_at: command.event.recorded_at,
+        };
+        self.store.commit_workspace_idempotent(
+            WorkspaceCreateRequest {
+                principal_id: command.principal_id,
+                request_id,
+                request_payload,
+            },
+            command.expected_version,
+            workspace,
+            event,
+        )
+    }
+
     pub fn change_replication_policy(
         &self,
         command: ChangeReplicationPolicy,
@@ -1506,7 +1599,7 @@ impl<S: WorkspaceStore> WorkspaceService<S> {
 
     fn build_replication_policy_change(
         &self,
-        command: ChangeReplicationPolicy,
+        mut command: ChangeReplicationPolicy,
         enforce_expected_version: bool,
     ) -> Result<(u64, storage_core::Workspace, EventDraft), StoreError> {
         require_non_empty("workspace_id", &command.workspace_id)?;
@@ -1529,10 +1622,21 @@ impl<S: WorkspaceStore> WorkspaceService<S> {
             ));
         }
         if command.policy == ReplicationPolicy::SelectedFolders {
-            return Err(StoreError::Invalid(
-                "SELECTED_FOLDERS requires the WorkspaceRoot service and is unavailable here"
-                    .to_owned(),
-            ));
+            if command.replication_scope_root_ids.is_empty() {
+                return Err(StoreError::Invalid(
+                    "SELECTED_FOLDERS requires one or more active WorkspaceRoots".to_owned(),
+                ));
+            }
+            let mut unique_root_ids = std::collections::BTreeSet::new();
+            for root_id in &command.replication_scope_root_ids {
+                require_non_empty("workspace_root_id", root_id)?;
+                if !unique_root_ids.insert(root_id) {
+                    return Err(StoreError::Invalid(
+                        "selected WorkspaceRoot IDs must be unique".to_owned(),
+                    ));
+                }
+            }
+            command.replication_scope_root_ids.sort_unstable();
         }
         if command.policy != ReplicationPolicy::SelectedFolders
             && !command.replication_scope_root_ids.is_empty()
@@ -1743,6 +1847,72 @@ mod tests {
                 .map(|row| row.event.clone())
                 .collect())
         }
+
+        fn read_workspace_event_page(
+            &self,
+            workspace_id: &str,
+            origin_runtime_id: &str,
+            after_sequence: u64,
+            limit: usize,
+        ) -> Result<storage_core::WorkspaceEventReplayPage, StoreError> {
+            if workspace_id.trim().is_empty()
+                || origin_runtime_id.trim().is_empty()
+                || !(1..=storage_core::MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE).contains(&limit)
+            {
+                return Err(StoreError::Invalid(
+                    "workspace event replay page request is invalid".to_owned(),
+                ));
+            }
+            let mut events: Vec<_> = self
+                .read_workspace_events(workspace_id)?
+                .into_iter()
+                .filter(|event| {
+                    event.workspace_id == workspace_id
+                        && event.origin_runtime_id == origin_runtime_id
+                })
+                .collect();
+            events.sort_by_key(|event| event.origin_sequence);
+            let head_sequence = events.last().map_or(0, |event| event.origin_sequence);
+            let retained_from_sequence = events.first().map(|event| event.origin_sequence);
+            let cursor_is_ahead = after_sequence > head_sequence;
+            let entries: Vec<_> = events
+                .iter()
+                .filter(|event| event.origin_sequence > after_sequence)
+                .take(limit + 1)
+                .map(|event| storage_core::WorkspaceEventReplayEntry {
+                    origin_sequence: event.origin_sequence,
+                    event_id: event.event_id.clone(),
+                    entity_type: event.entity_type.clone(),
+                    entity_id: event.entity_id.clone(),
+                    entity_revision: event.entity_revision,
+                    event_type: event.event_type.clone(),
+                })
+                .collect();
+            let has_more = entries.len() > limit;
+            let events: Vec<_> = entries.into_iter().take(limit).collect();
+            let mut expected = after_sequence.saturating_add(1);
+            let mut has_gap = false;
+            for event in &events {
+                if event.origin_sequence != expected {
+                    has_gap = true;
+                }
+                expected = event.origin_sequence.saturating_add(1);
+            }
+            if !cursor_is_ahead && expected <= head_sequence && !has_more {
+                has_gap = true;
+            }
+            if !cursor_is_ahead && after_sequence < head_sequence && events.is_empty() {
+                has_gap = true;
+            }
+            Ok(storage_core::WorkspaceEventReplayPage {
+                head_sequence,
+                retained_from_sequence,
+                events,
+                has_more,
+                has_gap,
+                cursor_is_ahead,
+            })
+        }
     }
 
     fn event_context(id: &str, time: &str) -> EventContext {
@@ -1779,7 +1949,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_selected_folders_without_an_active_root() {
+    fn refuses_selected_folders_without_any_selected_root() {
         let service = WorkspaceService::new(MemoryStore::default());
         service
             .create(CreateWorkspace {
@@ -1796,6 +1966,29 @@ mod tests {
             policy: ReplicationPolicy::SelectedFolders,
             replication_scope_root_ids: Vec::new(),
             event: event_context("event-2", "2026-10-06T10:01:00Z"),
+        });
+
+        assert!(matches!(result, Err(StoreError::Invalid(_))));
+    }
+
+    #[test]
+    fn refuses_duplicate_selected_workspace_root_ids() {
+        let service = WorkspaceService::new(MemoryStore::default());
+        service
+            .create(CreateWorkspace {
+                workspace_id: "workspace-duplicate-root".to_owned(),
+                name: "Workspace".to_owned(),
+                owner_principal_id: "owner-1".to_owned(),
+                event: event_context("event-duplicate-root-create", "2026-10-06T10:00:00Z"),
+            })
+            .expect("Workspace created");
+
+        let result = service.change_replication_policy(ChangeReplicationPolicy {
+            workspace_id: "workspace-duplicate-root".to_owned(),
+            expected_version: 1,
+            policy: ReplicationPolicy::SelectedFolders,
+            replication_scope_root_ids: vec!["root-1".to_owned(), "root-1".to_owned()],
+            event: event_context("event-duplicate-root-policy", "2026-10-06T10:01:00Z"),
         });
 
         assert!(matches!(result, Err(StoreError::Invalid(_))));

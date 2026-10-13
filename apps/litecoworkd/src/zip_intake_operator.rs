@@ -4,6 +4,8 @@
 //! supervised isolation boundary with hard resource limits, so ZIP content remains an
 //! opaque Resource until that boundary is qualified.
 
+#![allow(clippy::result_large_err)] // Handlers return full Axum Responses to preserve status, body, and headers.
+
 use super::*;
 
 pub(super) fn routes() -> Router<ApiState> {

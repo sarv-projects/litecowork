@@ -124,6 +124,7 @@ pub trait SuggestionPreferenceStore {
         workspace_id: &str,
     ) -> Result<Vec<SuggestionPreference>, SuggestionServiceError>;
 
+    #[allow(clippy::too_many_arguments)]
     fn set_kind_preference(
         &mut self,
         owner_principal_id: &str,
@@ -198,6 +199,7 @@ pub enum SuggestionOwnerAction {
 }
 
 pub trait SuggestionOwnerActionStore {
+    #[allow(clippy::too_many_arguments)]
     fn apply_owner_action(
         &mut self,
         owner_principal_id: &str,

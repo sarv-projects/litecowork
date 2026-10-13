@@ -3,6 +3,1867 @@
 Update this file when the active story, implementation state, or handoff changes. It is
 operational context; architecture and owning domain contracts remain authoritative.
 
+## E01-S02 request-receipt rollback CODE evidence — 2026-10-13
+
+Added `before_commit_failure_rolls_back_request_receipt_with_workspace_event_and_sequence`
+to call the real SQLite Workspace transaction with a deduplication request and the
+existing `BeforeCommit` failpoint, which runs after the receipt insert. The failure leaves
+the Workspace projection, DomainEvent, per-origin sequence, and `request_dedup` receipt
+absent. Retrying the identical request commits version 1 / origin sequence 1 with one row
+in each table; a further exact replay returns the stored response, validates its digest,
+and creates no duplicate rows. No production behavior changed.
+
+The focused test passed 1/1. A mutation probe that moved `transaction.commit()` ahead of
+the failpoint failed at the zero-Workspace-row assertion, then the source was restored and
+the focused test passed again. The initial test compile found an immutable-borrow lifetime
+in a local assertion closure; replacing it with a helper that borrows the connection per
+check resolved the test-only issue.
+
+Linux WSL2 x86_64, Ubuntu 24.04.4 LTS, rustc 1.98.1, Cargo 1.98.1:
+
+```sh
+cargo test --locked -p storage-sqlite before_commit_failure_rolls_back_request_receipt_with_workspace_event_and_sequence -- --nocapture --test-threads=1
+cargo test --locked -p storage-sqlite
+cargo clippy --locked -p storage-sqlite --all-targets -- -D warnings
+rustfmt --edition 2024 --check crates/storage-sqlite/src/tests.rs
+git diff --check -- crates/storage-sqlite/src/tests.rs
+```
+
+Results: focused test **1/1 passed** after restoring the original transaction order; the
+full package passed **189/189 tests**, 0 doc tests, in 326.60 seconds; strict Clippy,
+rustfmt, and scoped diff whitespace checks passed. This is CODE evidence for the lower-level
+SQLite transaction and exact receipt replay. It does not qualify physical disk/WAL/blob
+exhaustion, the OS key provider, packaged SYSTEM behavior, or owner USER acceptance.
+E01-S02 remains `IN_PROGRESS`; E01-S01 remains `IN_REVIEW`.
+
+Documentation gates: `.venv/bin/python scripts/audit_v1_markdown.py` passed with 156 files,
+56,509 lines, and 0 broken links. Coverage regeneration and validation passed with 103
+documents, 1,668 sections, and 6,302 rows; `.venv/bin/python scripts/validate_implementation_plan.py`
+passed for 67 stories, and `.venv/bin/python scripts/validate_architecture.py` passed for
+142 typed events and current machine contracts. The first read-only implementation-plan
+run found `coverage.csv` stale because the Markdown audit had regenerated
+`V1-AUDIT-INVENTORY.md` after the previous coverage write. Rerunning coverage generation
+after the Markdown audit restored consistency; the subsequent coverage, plan, and
+architecture validators all passed.
+
+Resource audit: one `main` worktree and 26 branches at start/end. Start/end bytes: shared
+`target` 16,144,546,310 / 16,095,776,163; Tauri `target` 9,068,381,165 / 9,068,381,165;
+UI `dist` 923,931 / 923,931; Vite cache 3,123,284 / 3,123,284; owner
+`.playwright-mcp` 133,783 / 133,783. Free space changed from 887,092,137,984 to
+887,053,885,440 bytes. The temp database is test-scoped and was removed. No worktree,
+branch, scratch file, or test process was created or left behind; three existing Playwright
+MCP processes were present at both checks and were left untouched. The shared Cargo target
+remains available and was retained.
+
+The test currently depends on the owner’s uncommitted `RequestDeduplication` field added
+for Workspace archive handling, and its containing test file also has extensive owner
+changes. It cannot be staged as an independently building commit against `HEAD`; no paths
+were staged, committed, or pushed for this slice. The branch remains at `5496548`.
+
+## E01-S04 local stream status reconciliation — 2026-10-13
+
+Corrected the stale local-implementation paragraph in `docs/API.md`. The authenticated
+local route accepts 1–20 unique Conversation IDs, exactly one Task ID, or exactly one
+Runtime ID, each with its matching projection type; it rejects mixed filters. The shared
+subscription schema remains the broader planned envelope. Conversation and Task frames
+re-read authorized projections without exposing event payloads; Runtime inventory emits
+closed invalidations. The local Operator does not yet emit schema-defined `turn.delta`,
+`turn.settled`, or `rich.draft` frames. The E01-S04 review packet now marks older statements
+about unfinished Task/Runtime adapters and replay as checkpoint history superseded by
+later CODE slices.
+
+Existing CODE regressions were rerun on Linux WSL2 x86_64, Rust/Cargo 1.98.1, uv 0.12.23,
+Python 3.13.12:
+
+- `uv run --locked python -m unittest tests/test_operator_stream_contract.py -v` — **5/5 passed**.
+- `cargo test --locked -p litecoworkd authenticated_unix_stream_subscribes_to_two_conversations_and_scopes_updates -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd runtime_inventory_stream_is_authorized_and_emits_bounded_invalidations -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd authenticated_unix_task_stream_catches_up_after_operator_endpoint_rebinds -- --nocapture` — **1/1 passed**.
+
+These are CODE consistency checks of existing local behavior, not packaged desktop, spawned
+daemon restart, cross-OS identity, or owner USER acceptance. E01-S04 remains `IN_PROGRESS`;
+its packaged slow-consumer/reconnect, OS/SYSTEM and owner USER gates remain open. The
+V1 contract audit passed with 0 errors (206 API routes, 158 UI cases, 67 stories); it also
+noted that native Conversation message submission is unavailable and that read-only/disabled
+controls need release review. The Markdown audit passed with 156 files and zero broken
+links; coverage and implementation-plan validation passed with 103 documents and
+6,300 rows across 67 stories. Architecture validation passed for schemas, 142 typed events,
+error codes, OpenAPI, SQLite, Gateway names, product naming, and Markdown links.
+The full-worktree `git diff --check` exits 2 on CRLF lines in the owner-modified
+`implementation/audit-inventory.csv`; that file remains unchanged. Whitespace checks scoped
+to the touched tracked documents/coverage file and the E01-S04 review packet passed.
+
+Disk/worktree audit: one `main` worktree at start and end; no worktree, branch, or persistent
+test fixture was created. `target` measured 16,239,899,404 / 16,239,899,404 bytes;
+Tauri `target` 9,068,381,165 / 9,068,381,165; UI `dist` 923,931 / 923,931; Vite cache
+3,123,284 / 3,123,284; owner `.playwright-mcp` 133,783 / 133,783. Free space changed from
+887,073,640,448 to 887,448,780,800 bytes. At the end, the untracked contract report,
+Markdown audit inventory, Markdown file inventory, and coverage map measured 1,906,
+20,924, 28,340, and 1,153,599 bytes; they remain available to the owner and are not staged.
+No validator, cargo test, or agent process remained. Existing caches and owner data were
+retained.
+
+## E01-S01 Cargo toolchain guard CODE follow-up — 2026-10-13
+
+Closed a local check-script gap: `scripts/check.sh` previously printed Cargo's version but
+did not compare it with the pinned Rust `channel`. It now fails before `uv sync` if Cargo
+reports a different version. The new stub-based regression failed against the old script
+because the script proceeded to `uv sync`; it passes with the guard. The E01-S01 toolchain
+test class passes 5/5 and the root Python suite passes 13/13.
+
+The isolated script/test correction is commit `5496548` (`fix: enforce cargo toolchain pin
+in check script`) and has been pushed to `origin/main`.
+
+The full `scripts/check.sh` run on Linux WSL2 x86_64, Ubuntu 24.04.4, Rust/Cargo 1.98.1,
+uv 0.12.23, and Python 3.13.12 passed formatting, strict workspace Clippy, workspace tests,
+workspace build, Python tests, architecture validation (142 typed events), architecture
+coverage (103 documents / 1,668 sections / 6,299 rows), and implementation-plan validation
+(67 stories / 6,299 rows). The process-scope matrix reports 19 unit passes and five live
+systemd/Bubblewrap tests ignored because this environment lacks the required delegated
+cgroup-v2/systemd setup. The script exited 2 at final `git diff --check` because of CRLF
+line endings in the owner-modified `implementation/audit-inventory.csv`; that file was
+preserved unchanged. This run used the dirty worktree, so it does not replace a clean
+committed-checkout, hosted CI, or owner reference-machine acceptance. E01-S01 remains
+`IN_REVIEW`.
+
+The first full-check attempt found rustfmt differences in the existing uncommitted
+`apps/litecoworkd/src/operator.rs`; targeted formatting with
+`rustfmt --edition 2024 --config skip_children=true apps/litecoworkd/src/operator.rs`
+changed no behavior, and `cargo fmt --all -- --check` then passed. The strict mechanical
+Markdown audit passed with 156 files, 56,291 lines, and zero broken links. Its generated
+Markdown inventory made the coverage CSV stale, so
+`.venv/bin/python scripts/validate_implementation_coverage.py --write` regenerated it to
+6,300 rows; `.venv/bin/python scripts/validate_implementation_plan.py` then passed with 67
+stories and 6,300 rows. The audit-inventory CRLF issue remains because that owner output was
+preserved unchanged.
+
+## E02-S02 selected-folder policy service CODE slice — 2026-10-12
+
+The Workspace domain service now accepts a non-empty, unique set of selected WorkspaceRoot
+IDs and sorts them for deterministic projection/event output. The real SQLite policy
+transaction remains authoritative for confirming that every selected root is ACTIVE and
+belongs to the same Workspace; it commits the policy, root IDs, event, and request receipt
+atomically. Exact replay after the Workspace version advances returns the original result.
+Unknown or paused roots are rejected without a policy/event/receipt commit. The positive
+test also confirms that pausing an already selected root preserves the saved scope, while
+consumers must ignore non-ACTIVE roots. This does not enable transfer behavior.
+
+The first real-SQLite test failed against the previous service guard, which rejected all
+`SELECTED_FOLDERS` policies before storage could validate roots. The desktop/Tauri UI still
+does not offer this policy in local V1: current F00/Experience scope keeps transfers
+disabled, and Settings continues to show a saved non-local policy as inactive with a
+reset-to-local action.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p domain-workspace refuses_selected_folders_without_any_selected_root -- --nocapture` — passed.
+- `cargo test --locked -p domain-workspace refuses_duplicate_selected_workspace_root_ids -- --nocapture` — passed after the test-first failure against missing duplicate validation.
+- `cargo test --locked -p storage-sqlite selected_folders_policy_ -- --nocapture` — **2/2 passed** against real SQLite; includes active roots, deterministic IDs, exact replay, paused/unknown-root denial, and no partial commit.
+- `cargo test --locked -p domain-workspace -p storage-sqlite -p litecoworkd` — **3 domain + 139 daemon + 4 CLI + 181 SQLite tests passed**; doc tests passed (0 defined).
+- `cargo clippy --locked -p domain-workspace -p storage-sqlite -p litecoworkd --all-targets -- -D warnings`, targeted Rust 2024 rustfmt for `lib.rs` and `runtime_binding_tests.rs`, and `git diff --check` — passed.
+- `uv run --locked python scripts/validate_implementation_coverage.py --write`, `uv run --locked python scripts/validate_architecture.py`, and `uv run --locked python scripts/validate_implementation_plan.py` — passed; 94 documents, 1,527 sections, 6,039 coverage rows, and 67 stories.
+
+This adds CODE evidence only. No Tauri selection, folder transfer, packaged SYSTEM test,
+cross-platform qualification, or owner USER acceptance is claimed. E02-S02 remains
+`IN_PROGRESS` because archive provider-stop, keyring-loss recovery, aggregate blob
+reclamation, and SYSTEM/USER gates remain open.
+
+## E02-S02 Task instruction pin route CODE slice — 2026-10-12
+
+## E02-S02 policy idempotency scope CODE correction — 2026-10-12
+
+Independent review found the policy route's canonical idempotency payload omitted both the
+Workspace path ID and `If-Match` version. Because SQLite receipts are scoped globally by
+`(principal_id, request_id)` and replay lookup precedes the version check, the same owner
+could reuse a key/body against another Workspace or a different expected version and get
+the first saved response. The authenticated real-SQLite route regression now retries the
+same key/body with a changed expected version and targets a second Workspace owned by the
+same principal; both return `409`, and the second Workspace remains `LOCAL_ONLY` at version
+1. Exact same-request replay, changed-policy conflict, stale fresh-key conflict, owner
+denial, and path/header mismatch remain covered.
+
+The production handler now includes `workspace_id` and `expected_version` in the canonical
+request payload passed to the existing transactional dedup writer. No schema, event,
+authorization, or policy-transition behavior changed. The test was first run against the
+old handler and failed at the changed-version case (`200` instead of `409`), then passed
+after this correction.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd workspace_policy_route_is_owner_scoped_versioned_and_idempotent -- --nocapture` — **1/1 passed** after the expected red result.
+- `cargo test --locked -p litecoworkd` — **139 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings`, targeted Rust 2024 rustfmt for `operator_ipc_tests.rs`, and `git diff --check` — passed.
+
+This is CODE evidence through the production handler/auth middleware and real SQLite; it
+does not cross IPC framing or qualify packaged SYSTEM/platform or owner USER behavior.
+E02-S02 remains `IN_PROGRESS`.
+
+Disk/worktree audit: one `main` checkout at slice start and end. Start/end byte counts:
+`target` 16,277,172,138 / 16,204,627,862; Tauri `target` 8,676,342,898 / 8,676,342,898;
+UI `dist` 916,087 / 916,087; Vite cache 3,123,284 / 3,123,284; owner
+`.playwright-mcp` 133,783 / 133,783. Free filesystem space was 894,579,208,192 /
+894,648,025,088 bytes. No new worktree, branch, persistent fixture, or process remained;
+temporary SQLite and BlobStore state was fixture-scoped. Build caches and owner data were
+retained.
+
+Selected-folder slice disk/worktree audit: one `main` checkout at start and end. Start/end
+byte counts: `target` 16,277,172,138 / 16,362,475,721; Tauri `target` 8,676,342,898 /
+8,676,342,898; UI `dist` 916,087 / 916,087; Vite cache 3,123,284 / 3,123,284; owner
+`.playwright-mcp` 133,783 / 133,783. Free filesystem space was 894,579,208,192 /
+894,145,482,752 bytes. The Rust build output grew 85,303,583 bytes during verification and
+remains useful for ongoing work; other measured paths were unchanged. No new worktree,
+branch, persistent fixture, or agent process remained. Owner data and caches were retained.
+
+## E02-S02 Task instruction pin route CODE slice — 2026-10-12
+
+Extended the existing real-SQLite instruction-route integration to exercise Task creation
+between instruction revisions. The test creates revision 1 through the authenticated
+production instruction route, creates a Task through the production `POST /v1/tasks`
+handler, and creates revision 2 through the instruction route. It verifies the Task-create
+response and persisted TaskSpec remain pinned to revision 1 while the Workspace pointer is
+revision 2. A narrow `TaskCreateApiState` projection allows the test to invoke the production
+handler without constructing the OS credential-store and stream-admission portions of the
+full Operator state. The same test already checks exact instruction-request replay and
+history pagination. This is CODE evidence using real SQLite, the authenticated route
+middleware, a deterministic test BlobStore key provider, and a fixture lead AgentBinding;
+it is not packaged daemon restart or full Settings/Tauri integration.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd instruction_create_route_commits_first_revision_and_replays_after_advance -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd` — **138 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 --check --config skip_children=true apps/litecoworkd/src/operator_ipc_tests.rs` and `git diff --check` — passed. Checking the owner-modified `operator.rs` reports existing module-order/router-format differences outside this slice; its new projection and handler changes are formatted.
+- `uv run --locked python scripts/validate_architecture.py` — passed; 142 typed events and current contract/link checks.
+- `uv run --locked python scripts/validate_implementation_coverage.py --write` — passed; 87 documents / 1,447 sections / 5,931 rows.
+- `uv run --locked python scripts/validate_implementation_plan.py` — passed; 67 stories / 5,931 coverage rows.
+
+The first test-first build failed because the bounded Task-create state projection did not
+yet exist. A response assertion was corrected to read `task_id` from the nested `TaskView`;
+an exploratory assertion for plan/step fields was removed because the create response
+contract returns only Task and TaskSpec, and the final test asserts the Task is `READY`.
+The final focused and full suite runs pass. E02-S02 remains `IN_PROGRESS`: owner USER
+acceptance, packaged SYSTEM behavior, platform qualification, and the broader
+archive/provider-stop and editor recovery gates are still pending. See
+[E02-S02 review packet](reviews/E02-S02.md).
+
+## E02-S02 authenticated policy route CODE slice — 2026-10-12
+
+Added a bounded state projection for the production Workspace replication-policy PATCH
+handler and a real-SQLite authenticated route regression. The test proves one policy change
+commits version 2 and one event/receipt; exact retry returns the original response despite
+its now-stale `If-Match`; changed-payload reuse and a fresh stale-version write conflict;
+and a non-owner receives 403. A mismatched Workspace path/header also receives 403. Final
+SQLite state remains `METADATA_ONLY` at version 2 with one policy event and one receipt.
+This exercises the handler and auth middleware with a
+real temporary database, but does not cross local IPC framing or validate OS peer
+credentials.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd workspace_policy_route_is_owner_scoped_versioned_and_idempotent -- --nocapture` — **1/1 passed** after the expected test-first compile failure for the missing state projection/route helper.
+- `cargo test --locked -p litecoworkd` — **139 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- Targeted rustfmt for `operator_ipc_tests.rs` and `git diff --check` — passed. The owner-modified `operator.rs` still contains pre-existing rustfmt layout differences.
+
+No additional worktree, branch, persistent fixture, or test process remained; the temporary
+database and BlobStore directory were removed by the test fixture. E02-S02 remains
+`IN_PROGRESS`; see [the review packet](reviews/E02-S02.md).
+
+Disk/worktree audit: the previous checkpoint measured one main worktree and no extra
+branches. Between that checkpoint and this slice's end, `target` measured 16,279,383,620 /
+16,322,308,532 bytes; Tauri `target` remained 8,676,342,898; UI `dist` 916,087; Vite cache
+3,123,284; owner `.playwright-mcp` 133,783. Free filesystem space measured 894,588,022,784 /
+894,539,202,560 bytes. The shared Rust build output grew during compilation and remains
+useful for ongoing V1 verification. No owner data or build cache was removed.
+
+Disk/worktree audit: one main `main` checkout at slice start and end; no new branch, test
+process, persistent fixture, or scratch file remained. Start/end sizes in bytes: `target`
+16,088,323,067 / 16,279,383,620; Tauri `target` 8,676,342,898 / 8,676,342,898; UI `dist`
+916,087 / 916,087; Vite cache 3,123,284 / 3,123,284; owner `.playwright-mcp` 133,783 /
+133,783. Available filesystem space went from 894,780,948,480 to 894,588,022,784 bytes.
+The existing Cargo build output grew during verification and remains useful for the active
+implementation; owner data and shared build caches were preserved. Test-created SQLite and
+BlobStore data was removed by the temporary-directory fixture.
+
+## E01-S04 dependency invalidation history CODE slice — 2026-10-12
+
+Implemented the existing OpenAPI `GET /v1/dependency-edges/{dependencyEdgeId}/invalidations`
+contract through the storage read port, SQLite writer actor, and authenticated local
+Operator router. The query checks Workspace ownership and exact edge membership in SQL,
+returns the closed five-field history projection in stable `(created_at,
+invalidation_record_id)` order, and uses a bounded cursor bound to Workspace, edge, and page
+size. Absent or foreign edges are nondisclosing; an existing edge with no history returns
+an empty page. The real SQLite route fixture verifies continuation, cursor mismatch,
+`no-store`, and response-field closure. This adds only read behavior and does not change
+invalidation production or dependency freshness semantics.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p storage-sqlite dependency_invalidation_page_is_owner_edge_scoped_and_keyset_stable -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite` — **178 passed**, 0 failed/ignored.
+- `cargo test --locked -p litecoworkd dependency_invalidation_history_is_scoped_paginated_and_closed -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd` — **137 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p storage-sqlite --all-targets -- -D warnings` and `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `uv run --locked python scripts/validate_architecture.py`, `uv run --locked python scripts/validate_implementation_plan.py`, and `uv run --locked python scripts/validate_implementation_coverage.py --write` — passed; coverage regenerated at 87 documents, 1,447 sections, 5,925 rows, and the plan contains 67 stories.
+- Targeted edition-2024 rustfmt and `git diff --check` — passed.
+
+These are CODE checks with a real temporary SQLite database and authenticated Axum
+middleware. The tests do not qualify a spawned daemon, separate OS identities, packaged
+desktop behavior, or owner USER acceptance. E01-S04 remains `IN_PROGRESS` with its
+SYSTEM/USER and other Operator-boundary requirements open.
+
+Disk/worktree audit: one main worktree at start and end; no extra worktree, scratch process,
+or persistent test artifact. `target` measured 16 GiB at start and 15 GiB at end; Tauri
+`target` was 8.2 GiB, UI `dist` 908 KiB, Vite cache 3.1 MiB, owner `.playwright-mcp/`
+172 KiB, and filesystem free space 833 GiB at start / 834 GiB at end. Build outputs and
+owner data were retained for ongoing V1 verification.
+
+An independent read-only adversarial review found no blocking implementation issue. It
+recommended explicitly testing a same-owner edge in another Workspace and modeling empty
+history with a separate edge rather than deleting immutable rows. Both fixtures were
+strengthened, then the two focused storage/route tests, strict Clippy for both affected
+packages, targeted rustfmt, and `git diff --check` passed again. The full package suites
+above were run before this fixture-only strengthening.
+
+## E01-S03 Linux process-scope cleanup CODE slice — 2026-10-12
+
+Added deterministic `linux-process-scope` unit coverage for READY timeout and invalid
+markers, READY/GO_CONSUMED stripping before native stdout, direct-child `try_wait` error
+propagation, failed systemd kill, and cgroup disappearance. Both cleanup failures retain a
+retryable `PendingCleanup`; the fixture proves a populated cgroup stays unsettled and a
+retry can finish only after it becomes observably empty and the direct child is reaped.
+This is CODE evidence only. Exec failure injection, live exact membership/limit checks,
+live systemd/cgroup qualification, Attempt admission integration, and owner USER acceptance
+remain open.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p linux-process-scope` — **13 passed, 2 ignored**; one Bubblewrap and three systemd integration tests also ignored for live host requirements.
+- `cargo clippy --locked -p linux-process-scope --all-targets -- -D warnings` — passed.
+- `git diff --check` — passed.
+- `rustfmt --edition 2024 --check crates/linux-process-scope/src/lib.rs` — initially reported owner-dirty import/re-export formatting differences before the correct edition was specified; the edition-pinned check passes in the follow-up slice below.
+
+Disk/worktree audit: one main worktree at slice start and end; no additional worktree,
+scratch file, or test process remains. `target` measured 16 GiB at start and end, owner
+`.playwright-mcp/` data 172 KiB, and filesystem free space 834 GiB. Shared build cache and
+owner data were retained for continued verification.
+
+## E01-S03 process-scope environment preflight — 2026-10-12
+
+Frontier review found `spawn()` started the persistent per-Attempt systemd slice before
+validating PATH/XDG/TMP/locale input. An invalid environment could therefore leave a slice
+with neither a `ManagedScope` nor `PendingCleanup`. `spawn()` now materializes the safe
+environment before cgroup lookup and systemd control. The regression first failed on the
+old order, then passed after the fix; it proves empty PATH returns the expected typed
+input error without invoking systemctl. No durable Task, Trust, Effect, Evidence, or fencing
+behavior changed.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p linux-process-scope invalid_environment_is_rejected_before_starting_attempt_slice -- --nocapture` — **1/1 passed** after the expected test-first failure.
+- `cargo test --locked -p linux-process-scope` — **14 passed, 2 ignored**; one Bubblewrap and three systemd integration tests also ignored for live host requirements.
+- `cargo clippy --locked -p linux-process-scope --all-targets -- -D warnings` — passed.
+- `cargo test --locked -p litecoworkd` — **136 unit + 4 CLI tests passed** after the dependency change.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 --check crates/linux-process-scope/src/lib.rs` — passed.
+- `git diff --check` — passed.
+
+The injected reap-error test exercises cleanup ownership and retry. These tests still do not
+inject failure to spawn systemd-run/the native executable, qualify live cgroup membership
+and limits, integrate scope admission with Attempts, or satisfy SYSTEM/USER evidence.
+
+Disk/worktree audit: one worktree at start and end, no scratch processes or persistent
+test artifacts. `target` decreased from 16 GiB to 15 GiB; UI `dist` was 908 KiB, Vite cache
+3.1 MiB, owner `.playwright-mcp` data 172 KiB, and filesystem free space 834 GiB.
+Shared build output and owner data were retained.
+
+## E01-S02 SQLite full through the bounded writer — 2026-10-12
+
+Added actor-level CODE evidence for SQLite `SQLITE_FULL`. The test applies and reads back
+`max_page_count` on the production writer connection, submits an oversized Workspace
+revision through `StateStore::commit_workspace`, and observes the safe `database disk is
+full` error. Reads and event replay through the same actor still show the original v1
+projection and sole origin sequence 1. After raising the cap on that actor, retrying the
+same v2 Workspace and event commits at sequence 2; replay equals the committed projection.
+The immutable aggregate blob is prepared before the SQLite transaction and may remain
+unreferenced after rollback, as allowed by `docs/STORAGE.md`. This does not simulate
+physical database/WAL/blob-volume exhaustion or exercise the WorkspaceService policy
+command for this failure case.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p storage-sqlite sqlite_full_through_writer_actor_preserves_state_and_allows_retry -- --nocapture` — **1/1 passed** after the final fixture assertion.
+- `cargo test --locked -p storage-sqlite` — **175/175 passed**, 0 doc tests, 199.60 seconds.
+- `cargo clippy --locked -p storage-sqlite --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 --check crates/storage-sqlite/src/tests.rs` — passed. Workspace-wide `cargo fmt --all -- --check` reports existing formatting changes in owner-dirty `apps/litecoworkd/src/operator.rs` and `apps/litecoworkd/src/operator_ipc_tests.rs`; those unrelated files were left untouched.
+- `uv run --locked python scripts/validate_implementation_coverage.py --write` — passed; 87 documents, 1,447 sections, 5,917 traceability rows.
+- `uv run --locked python scripts/validate_architecture.py` — passed; JSON Schemas, 142 typed events, OpenAPI, SQLite, Gateway naming, product naming, and Markdown links.
+- `uv run --locked python scripts/validate_implementation_plan.py` — passed; 67 stories and 5,917 coverage rows.
+- `git diff --check` — passed.
+- Read-only adversarial review confirmed the actor/store path, rollback, continued use, exact revision retry, sequence continuity, and replay claims; no blocking findings.
+
+Disk/worktree audit: one main worktree at slice start and end. `target` measured 14 GiB
+at start and 15 GiB at end,
+Tauri `target` 8.2 GiB, UI `dist` 908 KiB, Vite cache 3.1 MiB, and retained owner
+`.playwright-mcp/` data 172 KiB; filesystem free space was 835 GiB. The test's temporary
+SQLite database and BlobStore directory were removed by its fixture. No additional
+worktree, persistent scratch file, or process was created. Shared build caches and owner
+data were preserved. E01-S02 remains `IN_PROGRESS` pending physical disk and OS credential
+provider/platform qualification, owner review/acceptance, and E01-S01 review.
+
+## E01-S03 guarded expired-lease startup recovery — 2026-10-12
+
+Added an integrated CODE test that exercises the production
+`recover_expired_execution_leases` startup helper against a real temporary SQLite store.
+It creates the Workspace and Task through their services, then seeds one previously
+accepted PlanRevision, Step, Attempt, Task-shared Environment, and expired ExecutionLease
+as historical SQL rows because current planning and Attempt admission are deliberately
+gated. The historical Runtime is ONLINE/READY when that lease is inserted. SQLite
+foreign keys and guards stay enabled; the test runs `pragma_foreign_key_check` before
+restarting the Runtime. A new incarnation is registered and durably marked DEGRADED
+before recovery. Recovery expires the lease, abandons the Attempt, blocks the Step and
+Task with a `STALE_FENCE` blocker, and commits four corresponding events. A second pass
+returns zero and adds no events.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd startup_recovers_expired_lease_with_complete_guarded_graph -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd` — **134 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 --check apps/litecoworkd/src/runtime_recovery_tests.rs apps/litecoworkd/src/runtime.rs` — passed.
+- `git diff --check` — passed.
+- `uv run --locked python scripts/validate_implementation_coverage.py --write` — passed; 87 documents, 1,447 sections, 5,916 traceability rows.
+- `uv run --locked python scripts/validate_architecture.py` — passed; 142 typed events and contract/link checks.
+- `uv run --locked python scripts/validate_implementation_plan.py` — passed; 67 stories and 5,916 coverage rows.
+
+This is CODE evidence for the startup recovery helper and guarded SQLite transaction. The
+test does not spawn `litecoworkd run` through the full local IPC/Operator path or start a
+real worker; the prior execution rows are fixture history, not a newly admitted Attempt.
+Effect reconciliation, process quiescence proof, successful daemon/service-manager
+qualification, OS keychain qualification, and owner USER acceptance remain pending.
+E01-S03 remains `IN_PROGRESS`; see [the review packet](reviews/E01-S03.md).
+
+Disk/worktree audit: one main worktree at start and end. The Rust `target` directory
+measured 15 GiB at slice start and 14 GiB at slice end; Tauri `target` is 8.2 GiB, UI
+`dist` 908 KiB, Vite cache 3.1 MiB, and retained owner `.playwright-mcp/` data 172 KiB.
+The filesystem has 835 GiB available. No additional worktree or persistent fixture was
+created; the temporary SQLite/blob directory was removed by its test fixture. No build
+caches or owner data were deleted.
+
+## E01-S03 unclean-restart registration and lease fencing — 2026-10-12
+
+Extracted the Runtime/incarnation record mapping into `register_runtime_incarnation`, now
+used by `litecoworkd run`. A new CODE test connects the private bootstrap state generator
+to this production mapping and a real `SqliteWorkspaceStore`: after an unclean prior
+state, it verifies stable Runtime identity, a new current incarnation, and persisted
+`recovered_from_unclean_shutdown=true`. It seeds an old active lease with foreign keys
+disabled only for absent Task/Step/Attempt fixture parents; after restoring foreign-key
+checks, stale lease insertion and renewal both fail at the incarnation trigger, and the
+rejected renewal leaves the existing row unchanged.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd unclean_restart_registration_fences_the_previous_incarnation_lease -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd instance_lock_is_released_after_owner_is_killed -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite superseded_runtime_incarnation_cannot_activate_an_execution_lease -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd` — **133 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 --check apps/litecoworkd/src/runtime.rs apps/litecoworkd/src/runtime_recovery_tests.rs` and `git diff --check` — passed.
+- `uv run --locked python scripts/validate_implementation_coverage.py --write` — passed; 87 documents, 5,915 rows.
+- `uv run --locked python scripts/validate_architecture.py` — passed; 142 typed events and contract/link checks.
+- `uv run --locked python scripts/validate_implementation_plan.py` — passed; 67 stories and 5,915 coverage rows.
+
+An initial test fixture failed the private-directory check because its temp directory was
+not explicitly restricted to `0700`; the fixture now applies the same private directory
+permissions as production before opening SQLite. Fixed test keys and device identity do
+not qualify OS credential providers. This CODE test does not run the full `litecoworkd
+run` process, StepAttemptStore lease acquisition/recovery, systemd, macOS/Windows, or owner
+USER acceptance. E01-S03 remains `IN_PROGRESS`; see `implementation/reviews/E01-S03.md`.
+
+Disk/worktree audit: this slice started and ended with one main worktree. `target` remained
+15 GiB; Tauri `target` is 8.2 GiB, UI
+`dist` 908 KiB, Vite cache 3.1 MiB, and retained owner `.playwright-mcp/` data 172 KiB.
+No temporary worktree or scratch process remains; owner data and shared build caches are
+preserved.
+
+## E01-S02 bounded writer saturation and shutdown drain — 2026-10-12
+
+Added a deterministic CODE test against the production SQLite writer and temporary on-disk
+database. A test-only operation gates the worker; a real read and Workspace commit are
+queued with dropped reply receivers, followed by Shutdown. The bounded queue rejects the
+next send as full. Releasing the worker drains the queued commands, then a new store
+instance verifies the persisted revision, event history, and replay projection. Existing
+production behavior passed, so this was a test/evidence slice without a production-code
+change. Abandoned reply delivery is not public caller cancellation: the synchronous API has
+no cancellation contract. This also does not qualify sustained overload, memory, or
+physical disk exhaustion.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p storage-sqlite saturated_writer_drains_abandoned_replies_before_shutdown_and_replay -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite` — **174/174 passed**, 0 doc tests, 191.54 seconds.
+- `cargo clippy --locked -p storage-sqlite --all-targets -- -D warnings` — passed.
+- `uv run --locked python scripts/validate_implementation_coverage.py --write` — passed; 87 documents, 5,914 rows.
+- `uv run --locked python scripts/validate_architecture.py` — passed; 142 typed events and contract/link checks.
+- `uv run --locked python scripts/validate_implementation_plan.py` — passed; 67 stories and 5,914 coverage rows.
+
+Post-slice cleanup audit: one main worktree. `target` remains 14 GiB; UI `dist` 908 KiB,
+Vite cache 3.1 MiB, and owner `.playwright-mcp/` data 172 KiB. No temporary worktree,
+process, or scratch file was created by this slice. These shared build outputs/caches and
+owner data remain in place for continued work.
+
+## E02-S02 Runtime-start revalidation verification — 2026-10-12
+
+The Runtime-incarnation revalidation CODE slice is now rerun after the final fixture
+ordering change. It uses real temporary directories, no-follow handles, WorkspaceRoot
+service transitions, production SQLite transactions, event and receipt writes, and
+startup DEGRADED persistence. The deterministic identity pseudonym projector and BlobStore
+key provider are test fixtures only. The test exposed a Resource aggregate snapshot MIME
+label typo (`application/vnd.litecow.resource+json`); storage now uses the canonical
+`application/vnd.litecowork.resource+json` media type so authenticated BlobStore readback
+works.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd workspace_root_revalidation -- --nocapture` — **2/2 passed**.
+- `cargo test --locked -p storage-sqlite workspace_root_create_serializes_concurrent_parent_child_requests -- --nocapture` — **1/1 passed** after increasing this contention test fixture's busy timeout to 30 seconds.
+- `cargo test --locked -p storage-sqlite -p litecoworkd` — **173 storage tests, 132 daemon tests, and 4 CLI tests passed**; storage doc-tests: 0. An earlier broad run under load had one race assertion failure; the focused test passed, the bounded test timeout was raised, and the complete rerun passed.
+
+This is Linux CODE evidence. It does not qualify packaged daemon restart/IPC, macOS or
+Windows native directory identity, keyring-loss recovery, or owner USER acceptance.
+E02-S02 remains `IN_PROGRESS`; archive provider-stop acknowledgement, aggregate-blob
+reclamation, packaged SYSTEM behavior, broader migration/failure cases, and owner
+acceptance remain open.
+
+Post-slice cleanup audit: one main worktree. `target` is 14 GiB, Tauri `target` 8.2 GiB,
+UI `dist` 908 KiB, Vite cache 3.1 MiB, and retained owner `.playwright-mcp/` data 172 KiB;
+836 GiB remain free. Build outputs and useful caches remain for continued verification.
+No extra worktree, temporary process, or disposable file was created by this slice. No
+owner paths were removed or staged.
+
+## E02-S02 WorkspaceRoot path overlap and SQL rollback — 2026-10-12
+
+SQLite WorkspaceRoot creation now performs bounded decoding and lexical validation of the
+private Unix path locator, then rejects equal or component-wise ancestor/descendant
+canonical paths among non-REVOKED FOLDER roots in the same Workspace. `ACTIVE`, `PAUSED`,
+and `UNAVAILABLE` roots retain their scope; only `REVOKED` releases it. The check follows
+exact RequestId receipt replay and runs before SQL projection writes under `BEGIN
+IMMEDIATE`. Exact directory identity duplicate protection remains in place. Contract policy
+is recorded in `docs/WORLD-RESOURCES.md`; no schema migration was needed.
+
+Fourteen real-SQLite tests cover both parent/child insertion orders, real temporary
+directories, textual-prefix siblings, PAUSED/UNAVAILABLE/REVOKED behavior, the same path in
+two Workspaces, malformed/noncanonical/oversized locators, concurrent SQLite writers,
+duplicate identity replay, and transaction rollback at each SQL projection/event/receipt
+boundary. The first second-Workspace fixture failed because it reused the shared
+`event-create` test ID; giving it a unique event ID fixed the fixture and the isolated case
+passes. Encrypted Resource and WorkspaceRoot aggregate-state blobs are written before the
+SQL transaction, so a SQL rejection may leave immutable unreferenced blobs; deletion without
+a reference fence would be unsafe. SQLite does not fence an external filesystem rename
+between native selection and commit, which remains a qualification boundary.
+
+Linux WSL2 x86_64, rustc/Cargo **1.98.1**:
+
+- `cargo test --locked -p storage-sqlite workspace_root_create_ -- --nocapture` — **14/14 passed**.
+- `cargo test --locked -p storage-sqlite -p litecoworkd` — **171 storage tests + 130 daemon unit tests + 4 CLI tests passed** before the two final scope-boundary tests were added; storage doc-tests: 0. The two added tests are covered by the 14-test focused run.
+- `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings` — passed after the added tests.
+- `rustfmt --edition 2024 --check --config skip_children=true crates/storage-sqlite/src/lib.rs crates/storage-sqlite/src/runtime_binding_tests.rs`, JSON parsing, and `git diff --check` — passed.
+- `uv run --locked python scripts/validate_implementation_coverage.py --write`, `uv run --locked python scripts/validate_architecture.py`, and `uv run --locked python scripts/validate_implementation_plan.py` — passed; 87 documents / 5,912 traceability rows, 142 typed events, 67 backlog stories.
+
+USER and packaged SYSTEM acceptance, macOS/Windows qualification, external rename races,
+archive provider-stop acknowledgements, and safe aggregate-blob reclamation remain open.
+E02-S02 stays `IN_PROGRESS`.
+
+Start/end regeneration and worktree audit: one main worktree only. `target` is 13 GiB,
+Tauri `target` 8.2 GiB, UI `dist` 908 KiB, Vite cache 3.1 MiB, and retained owner
+`.playwright-mcp/` data 172 KiB; 836 GiB remain free. Sizes were unchanged over this slice.
+Rust/Tauri/UI caches remain useful for continued V1 verification. Temporary SQLite
+directories are removed by test fixtures. No extra worktree, branch, process, or persistent
+temporary file was created. No paths were staged or committed because the shared tree
+contains extensive pre-existing owner changes.
+
+## E02-S02 WorkspaceRoot duplicate identity guard — 2026-10-11
+
+WorkspaceRoot creation now checks the candidate keyed directory identity against existing
+non-revoked FOLDER roots for the same Workspace inside the same `BEGIN IMMEDIATE`
+transaction that creates the Resource, location, private bindings, root, events, aggregate
+snapshots, and RequestId receipt. A different RequestId cannot register the same directory
+again while a prior root is ACTIVE, PAUSED, or UNAVAILABLE. The check runs after exact
+receipt lookup, so a retry of the original request returns the original committed result.
+The storage regression first failed before the guard; after the fix it verifies exact
+replay, a conflict for the duplicate identity, and unchanged Resource/location/binding/root,
+event, and receipt row counts. The transaction serializes concurrent contenders around
+this check. This covers exact directory-identity duplication only; parent/child path
+overlap remains unresolved.
+
+Linux WSL2 x86_64, rustc/Cargo **1.98.1**:
+
+- `cargo test --locked -p storage-sqlite workspace_root_create_rejects_duplicate_active_file_identity_without_partial_rows -- --nocapture` — **1/1 passed**; the pre-fix run failed on the duplicate acceptance assertion.
+- `cargo test --locked -p storage-sqlite -p litecoworkd` — **152 storage tests + 128 daemon unit tests + 4 CLI tests passed**; storage doc-tests: 0.
+- `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 --check --config skip_children=true apps/litecoworkd/src/local_filesystem.rs crates/storage-sqlite/src/lib.rs crates/storage-sqlite/src/runtime_binding_tests.rs` — passed.
+
+No public schema changed. The archive operation/quiescence gate, root ancestor overlap,
+root transaction failure injection, Runtime restart/system verification, packaged desktop
+SYSTEM evidence, and owner USER acceptance remain open. E02-S02 remains `IN_PROGRESS`.
+
+Post-slice disk/worktree audit: only the main worktree exists; all 25 pre-existing
+`codex/*` refs remain untouched. `target` is 9.4 GiB, Tauri `target` is 8.2 GiB, UI `dist`
+is 908 KiB, Vite cache is 3.1 MiB, and retained `.playwright-mcp/` owner files are 108 KiB;
+839 GiB remain available. Build caches are retained for ongoing checks. This slice created
+no temporary worktree, branch, file, or background process. The changed files include
+pre-existing owner modifications, so nothing was staged or committed.
+
+## E02-S02 WorkspaceRoot no-follow selection verification — 2026-10-11
+
+Added four real temporary-filesystem tests for native WorkspaceRoot selection: a normal
+directory opens and revalidates with the same held identity; relative, traversal, and `/`
+selections fail; final and intermediate symlinks fail; and replacing the saved directory
+path after opening is detected as an identity change. The intermediate-symlink test first
+failed against the existing implementation: it canonicalized the selection before the
+`O_NOFOLLOW` component walk, which erased the symlink boundary. The opener now performs the
+no-follow open on the user-selected path before canonicalizing, then opens the canonical
+spelling without following links and confirms its device/inode still match the retained
+handle. This closes that path-resolution defect before a root registration can proceed.
+
+On Linux WSL2 x86_64 with rustc **1.98.1** and Cargo **1.98.1**:
+
+- `cargo test --locked -p litecoworkd local_filesystem::tests -- --nocapture` — **4/4 passed** after the fix. The initial run failed 1/4 and exposed the intermediate-symlink issue.
+- `cargo test --locked -p litecoworkd` — **128 daemon unit tests + 4 CLI tests passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 --check --config skip_children=true apps/litecoworkd/src/local_filesystem.rs` — passed.
+
+This is CODE evidence for the Linux path opener only; it does not qualify macOS, packaged
+Tauri/daemon transport, Runtime restart recovery, or owner USER acceptance. Root overlap and
+the atomic Workspace archive/quiescence operation are still absent from production code.
+`E02-S02` remains `IN_PROGRESS`.
+
+Post-slice disk/worktree audit: only the main worktree exists; the 25 existing `codex/*`
+branch refs remain untouched. Build output is `target` 9.3 GiB, Tauri `target` 8.2 GiB,
+UI `dist` 908 KiB, Vite cache 3.1 MiB, and retained `.playwright-mcp/` files 84 KiB;
+filesystem free space is 839 GiB. These caches are used by continuing checks and were
+retained. This slice created no worktree, branch, temp file, or background process. The
+pre-existing owner changes in `local_filesystem.rs` and the rest of the working tree remain
+preserved; nothing was staged or committed.
+
+## E02-S02 desktop instruction editor recovery — 2026-10-11
+
+Implemented and exercised the Settings editor recovery slice. Unsaved text is cached by
+Workspace, and late history/content responses are fenced by selected Workspace plus request
+generation. An unchanged retry retains both idempotency keys and its original Workspace
+version/parent pins. The editor discloses when Resource import succeeded but revision commit
+was stale or unconfirmed, keeps the draft for comparison, and offers the latest committed
+text for explicit adoption. A confirmed commit clears the matching pending request and
+Workspace draft even if selection changed while the request was in flight. Workspace and
+history refresh run after the commit handler; read failures leave the save truthfully
+reported as committed with refresh pending.
+
+Added `apps/litecowork-ui/src/workspaces/workspace-instructions.ts` and seven Node tests.
+The App now uses the module for draft/retry behavior. Settings remains `IN_PROGRESS` for
+the real Tauri/Operator/SQLite integration, foreign/missing/unpinned Resource cases,
+archive/root lifecycle, packaged SYSTEM verification and owner USER acceptance.
+
+On Linux x86_64 with the pinned Node.js **24.21.0** and pnpm **12.10.1**:
+
+- `PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" node --experimental-strip-types --test tests/workspace-instructions.test.ts` — **7/7 passed**.
+- `PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" pnpm build` — API generated-type consistency, TypeScript `tsc --noEmit`, and Vite production build passed. Vite reports the 779 kB JavaScript chunk warning.
+- `PATH="$HOME/.nvm/versions/node/v24.21.0/bin:$PATH" node --experimental-transform-types --test tests/*.test.ts` — **150/150 passed**. Node's strip-only mode cannot run existing tests that import TypeScript parameter properties; transform-types emitted its experimental warning.
+- Browser smoke: `pnpm dev -- --host 127.0.0.1` plus Playwright MCP, with a test-only mocked Tauri invoke bridge. Verified Workspace draft isolation; stale conflict after import preserves draft and shows current text; explicit “Use this version”; committed/refresh-pending truth; and clearing a successful save's cache after switching Workspace mid-request. This does not verify native transport, daemon/storage integration, restart behavior, or packaged WebView. `agent-browser` CLI is not installed; Playwright MCP was used as the available fallback.
+
+The UI build initially failed `api:check` because generated OpenAPI types predated the
+Resource-current-head description update; `pnpm run api:generate` updated only that
+description in `src/api/operator-api.ts`, then the build passed. `git diff --check`, JSON
+parsing, coverage generation (87 docs / 5,907 rows), architecture validation (142 typed
+events), and plan validation (67 stories / 5,907 rows) passed after this record update.
+
+Post-slice disk/worktree check: only the main worktree is listed; 25 existing `codex/*`
+branch refs were preserved and none were created here. `target` is 9.5 GiB, Tauri `target`
+8.2 GiB, UI `dist` 908 KiB, Vite cache 3.1 MiB, and `.playwright-mcp/` 76 KiB; filesystem
+free space is 839 GiB. The two browser log/snapshot files created during this slice were
+removed by exact path; older owner files in `.playwright-mcp/` were preserved. Cargo/Tauri/UI
+build caches remain useful for ongoing verification. The Vite dev server was stopped. No
+paths were staged or committed because extensive pre-existing owner changes remain in the
+checkout.
+
+## E02-S02 instruction ResourceRef negative cases — 2026-10-11
+
+Filled the remaining foreign/missing/unpinned ResourceRef CODE coverage for Workspace
+instruction creation. The authenticated route test uses real SQLite plus the encrypted
+BlobStore and now rejects an explicitly foreign Workspace ID, a Resource ID that exists
+only in another Workspace, missing Resource/revision IDs, and null or omitted revision IDs.
+Scope-shape errors return `400 INVALID_ARGUMENT`; cross-Workspace and missing exact lookups
+return the same `404 NOT_FOUND`. Existing cases in the same test cover mismatched digest,
+non-text media, invalid UTF-8, >64 KiB content, and a readable historical/non-current
+Resource revision. All rejected requests leave Workspace version/current instruction,
+history, events, and receipts unchanged.
+
+A direct SQLite transaction regression also rejects a foreign WorkspaceRef and missing or
+unpinned Resource/revision references, then verifies no Workspace projection, revision,
+instruction event, or RequestId receipt was committed.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p storage-sqlite workspace_instruction_refs_reject_foreign_missing_and_unpinned_resources_without_writes -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd instruction_create_route_rejects_untrusted_resource_content_without_writes -- --nocapture` — **1/1 passed**.
+- `rustfmt --edition 2024 --check --config skip_children=true apps/litecoworkd/src/operator_ipc_tests.rs crates/storage-sqlite/src/workspace_instruction_tests.rs` — passed.
+- `cargo test --locked -p storage-sqlite -p litecoworkd` — **151 storage tests + 124 daemon unit tests + 4 CLI tests passed**; storage doc-tests: 0.
+- `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings` — passed.
+
+Post-slice disk/worktree audit: `git worktree list` contains only the main checkout; the
+25 existing `codex/*` refs remain preserved and this slice created no branch/worktree.
+Regenerable output is `target` 9.5 GiB, Tauri `target` 8.2 GiB, UI `dist` 908 KiB, Vite
+cache 3.1 MiB, and the preserved `.playwright-mcp/` owner files 64 KiB. Filesystem free
+space is 839 GiB. These build caches remain useful for continuous V1 tests. Removed only
+this slice's temporary OpenAPI backup and browser log/snapshot; older owner browser files
+were retained. No agent-started process remains.
+
+E02-S02 remains `IN_PROGRESS`: the Settings browser check uses a mocked invoke bridge, so
+real desktop transport/restart failure injection is open. Archive quiescence, WorkspaceRoot
+identity/overlap/escape validation, packaged SYSTEM qualification, and owner USER acceptance
+also remain open. The current story still blocks dependent E02-S03 completion.
+
+## E02-S02 non-current instruction Resource rejection — 2026-10-11
+
+Closed the historical/non-current Resource negative case for new Workspace instruction
+revisions. The authoritative acceptance item already required non-current references to be
+rejected. `ARCHITECTURE.md`, `docs/CONTEXT.md`, `docs/DATA-MODEL.md`, `docs/API.md`, and the
+OpenAPI create-request description now specify that a new instruction revision must pin the
+Resource's current head at commit. Its immutable pin remains valid if the Resource advances
+later. No schema or migration change was needed.
+
+SQLite now selects `resources.current_revision_id` in the same `BEGIN IMMEDIATE` transaction
+that commits the instruction revision, and rejects the write if the submitted exact
+revision is no longer the current head. The transaction checks an existing idempotency
+receipt first, preserving original-response replay even after both Workspace and Resource
+state advance. The authenticated Operator route continues to validate and read the exact
+pinned content; its storage error mapping returns `400 INVALID_ARGUMENT` for a historical
+pin. This keeps owner authorization and existing historical reads intact while making the
+commit-time check authoritative against a head-advance race.
+
+Added a real-SQLite service test with a two-revision Resource and verified a request pinned
+to revision 1 is rejected after revision 2 is current without changing Workspace version,
+pointer, history, events, or receipts. Added route coverage for a valid, readable historical
+Resource revision returning `400 INVALID_ARGUMENT` with no instruction writes. Extended the
+route replay integration to commit instruction revisions 1 and 2, advance the source
+Resource head, and retry the original revision-1 request; it returns the original response
+and leaves history unchanged.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p storage-sqlite workspace_instruction_revision_rejects_a_noncurrent_resource_revision -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd instruction_create_route_rejects_untrusted_resource_content_without_writes -- --nocapture` — **1/1 passed**, including the historical Resource rejection case.
+- `cargo test --locked -p litecoworkd instruction_create_route_commits_first_revision_and_replays_after_advance -- --nocapture` — **1/1 passed**, including replay after Resource-head advancement.
+- `cargo test --locked -p storage-sqlite -p litecoworkd` — **150 storage tests + 124 daemon unit tests + 4 CLI tests passed**; storage doc-tests passed with zero tests.
+- `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 --check --config skip_children=true crates/storage-sqlite/src/lib.rs crates/storage-sqlite/src/workspace_instruction_tests.rs apps/litecoworkd/src/operator.rs apps/litecoworkd/src/operator_ipc_tests.rs` — passed.
+- `uv run --locked python scripts/validate_implementation_coverage.py --write` — passed; **87 documents / 5,906 rows**.
+- `uv run --locked python scripts/validate_architecture.py` — passed; validated JSON Schemas, **142 typed events**, errors, OpenAPI, SQLite, Gateway names, naming, and Markdown links.
+- `uv run --locked python scripts/validate_implementation_plan.py` — passed; **67 stories / 5,906 coverage rows**.
+- `python3 -m json.tool implementation/backlog.json` and targeted `git diff --check` — passed.
+
+The E02-S02 review packet and backlog were updated. E02-S02 remains `IN_PROGRESS`: foreign
+and missing Resource cases, Settings/Tauri end-to-end editor conflict/recovery behavior,
+Resource-import/commit failure cleanup, Workspace-switch races, archive quiescence, root
+validation, packaged SYSTEM qualification, and owner USER acceptance remain open.
+
+Post-slice disk/worktree audit: `target` **9.5 GiB**, Tauri `target` **8.2 GiB**, UI `dist`
+**904 KiB**, and Vite cache **3.1 MiB**; filesystem **840 GiB available**. These build/test
+outputs remain useful for ongoing V1 verification and were retained. `git worktree list`
+reports only the main checkout. Existing `codex/*` branch refs were present and preserved;
+this slice created no branches or worktrees. A long-running `scripts/build_full_catalog.py`
+process targeting `tmp-catalog-full-20261011/` was already running and was not started by
+this slice, so it and its output were preserved. No owner or unrelated untracked files were
+removed; no paths were staged or committed because the checkout contains extensive owner
+changes.
+
+## E02-S02 SQLite instruction commit and replay CODE slice — 2026-10-11
+
+Added a real-SQLite WorkspaceService regression covering instruction revision 1 with no
+parents, revision 2 with revision 1 as its parent, exact replay after the Workspace
+advances, and changed-input reuse of the original request key. It exposed and fixed two
+storage defects: empty revision-1 parents were rejected because the zero-parent guard
+treated an empty list as containing zero; and the adapter rejected an old idempotent
+request against the newly advanced Workspace version before consulting its durable receipt.
+The version-transition invariant remains enforced for new writes inside the transaction,
+after replay lookup. The test verifies ordered history, the current pointer/version,
+unchanged original commit on replay, changed-payload conflict, and exactly two revision
+events and receipts after replay.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p storage-sqlite workspace_instruction_revision_commit_replays_original_after_workspace_advances -- --nocapture` — **1/1 passed**. The first run failed because storage rejected the valid empty parent list; it passed after the storage guard fix. The extended replay and changed-payload assertions also pass.
+- `cargo test --locked -p storage-sqlite -p litecoworkd` — **147 storage tests + 120 daemon unit tests + 4 CLI tests passed**; storage doc-tests passed with zero tests.
+- `cargo clippy --locked -p storage-sqlite --all-targets -- -D warnings` and `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `cargo test --locked -p storage-sqlite workspace_instruction_ -- --nocapture` — **3/3 passed** for instruction commit/replay, stale version, and injected event failure.
+- `cargo test --locked -p storage-sqlite` after the failure cases — **149/149 passed**; storage doc-tests passed with zero tests. Strict storage Clippy passed again.
+- `cargo test --locked -p litecoworkd instruction_history_rejects_a_mismatched_workspace_header -- --nocapture` — **1/1 passed**; authenticated history request with a mismatched Workspace header returns the public `403 FORBIDDEN` response.
+- `cargo test --locked -p litecoworkd` after the route slice — **121 unit tests + 4 CLI tests passed**; strict daemon Clippy passed again.
+- `cargo test --locked -p litecoworkd instruction_history_does_not_disclose_another_owners_workspace -- --nocapture` — **1/1 passed**; an authenticated non-owner receives the same generic `403 FORBIDDEN` response.
+- `cargo test --locked -p litecoworkd` after owner-scope coverage — **122 unit tests + 4 CLI tests passed**; strict daemon Clippy passed again.
+- `cargo test --locked -p litecoworkd instruction_create_route_commits_first_revision_and_replays_after_advance -- --nocapture` — **1/1 passed** through authenticated Operator routing and real SQLite/BlobStore; revision 1, revision 2, and exact revision-1 retry after Workspace advancement all return the expected immutable result.
+- `cargo test --locked -p litecoworkd` after the create/replay route test — **123 unit tests + 4 CLI tests passed**; strict daemon Clippy passed again.
+- `cargo test --locked -p litecoworkd instruction_create_route_rejects_untrusted_resource_content_without_writes -- --nocapture` — **1/1 passed** for mismatched digest, non-text Resource, invalid UTF-8, and a 65,537-byte Resource; all return `400 INVALID_ARGUMENT` without changing Workspace version, instruction history, events, or receipts.
+- Final `cargo test --locked -p litecoworkd` — **124 unit tests + 4 CLI tests passed**; targeted route tests, strict daemon Clippy, and daemon test rustfmt passed.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` — **50/50 passed**; binary and doc-test targets passed with zero tests.
+- `cargo clippy --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --all-targets` — passed with existing warnings. `-D warnings` fails on existing diagnostics across the owner-modified Tauri bridge crate; the new validator's `manual_contains` diagnostic was fixed.
+- `uv run --locked python scripts/validate_implementation_coverage.py --write` — passed; 87 documents / 1,447 sections / 5,906 rows.
+- `uv run --locked python scripts/validate_architecture.py` — passed; 142 typed events and current schemas/API/storage/links validated.
+- `uv run --locked python scripts/validate_implementation_plan.py` — passed; 67 stories / 5,906 coverage rows. An initial concurrent run raced the coverage generator and correctly reported stale `coverage.csv`; rerunning after generation passed.
+- `rustfmt --edition 2024 --check crates/storage-sqlite/src/workspace_instruction_tests.rs`, daemon test rustfmt check, `python3 -m json.tool implementation/backlog.json`, and `git diff --check` — passed.
+
+E02-S02 remains `IN_PROGRESS`; remaining work includes other Resource scope/revision
+rejection cases, desktop transport/editor recovery, archive quiescence, root validation,
+packaged SYSTEM qualification, and owner USER acceptance. See
+[the E02-S02 review packet](reviews/E02-S02.md). The worktree contains extensive
+pre-existing owner changes; this slice remains unstaged and uncommitted.
+
+The instruction routes now use a narrow `WorkspaceInstructionApiState` projection for the
+same production handlers; authenticated route tests prove Workspace-header and owner
+fences, create first-save plus exact replay after Workspace advancement, ascending history
+pagination, cross-Workspace cursor rejection, and rejection of mismatched digest, non-text,
+invalid UTF-8, and oversized Resource content through production Operator handlers and
+SQLite. The create fixture stores pinned Resource bytes through the encrypted local
+BlobStore. The state projection changes no public API behavior.
+
+The stale-write and injected event-failure storage checks passed both focused and full-suite
+runs. The event trigger proves instruction row, Workspace pointer/version, event, origin
+sequence, and receipt roll back together; the stale request returns `Conflict` without
+changing those committed database values.
+
+Disk/worktree audit after these slices: only the main worktree exists. Regenerable outputs
+are `target` 9.5 GiB, Tauri `target` 8.2 GiB, UI `dist` 904 KiB, and Vite cache 3.1 MiB;
+the filesystem reports 840 GiB available. Build outputs are retained for continuing
+verification. No temporary subagent worktrees, branches, or probe processes remain.
+
+## E02-S02 initial Workspace instruction revision CODE slice — 2026-10-11
+
+Fixed a desktop Tauri validation defect that blocked the first Workspace instruction
+revision. The Settings editor already sends an empty `parent_revisions` list when a
+Workspace has no saved instructions, and the API/schema/storage contracts allow revision
+1 to have no parents. The Tauri command rejected every empty list before sending the
+authenticated Operator request. Its extracted request validator now accepts an empty list
+while still rejecting zero-valued parent IDs and lists larger than the existing 256-parent
+bound. It does not weaken ownership, Resource pin/digest, Workspace version, or storage
+parent checks. This is a narrow CODE fix; it does not verify the complete editor-to-daemon
+save flow or the Workspace instruction lifecycle.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml workspace_instruction_request_tests -- --nocapture` — **2/2 passed**.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml workspace_policy_request_tests -- --nocapture` — **2/2 passed**.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` — **50/50 passed**; the binary/doc test targets also passed with zero tests.
+- `git diff --check -- apps/litecowork-ui/src-tauri/src/lib.rs` — passed.
+
+The first test run exposed an incorrect test assumption that the parent cap was four; the
+test was corrected to exceed the actual 256-parent limit, then both targeted tests and the
+full Tauri suite passed. A second adjacent validation mismatch accepted the nonexistent
+`ACTIVE_TASKS` Workspace policy while rejecting contract value `ACTIVE_TASK_INPUTS`; the
+Tauri policy validator now uses the API enum and continues to reject `SELECTED_FOLDERS`
+until the desktop has validated WorkspaceRoots. The policy tests first failed against the
+old allowlist and passed after alignment. A real-SQLite daemon CODE test now creates a Task
+while instruction revision 1 is current, advances the Workspace projection to revision 2,
+and verifies the persisted TaskSpec remains pinned to revision 1. Its fixture seeds the two
+instruction rows and advances the Workspace pointer directly; it proves Task pin retention,
+not the instruction-authoring transaction. `cargo test --locked -p litecoworkd` passed **120
+unit tests + 4 CLI tests**.
+
+Test setup failures were corrected: the first attempted test placement in `storage-sqlite`
+violated the crate's intentional dependency boundary because `domain-task` is not a storage
+dependency, so the test lives in `litecoworkd`; the first daemon compile needed the
+`CommittedTask.view` field and `StateStore` trait in scope; and its first run required a
+private-mode (0700) SQLite fixture directory. Compilation also reported eight existing
+warnings in the Tauri bridge crate, including unused mutability, dead fields/methods, and
+elided lifetime syntax.
+`rustfmt --edition 2024 --check --config skip_children=true apps/litecowork-ui/src-tauri/src/lib.rs`
+reported formatting differences across the already owner-modified source file; no broad
+formatter rewrite was applied. The added code follows the local function/test style.
+
+E02-S02 remains `IN_PROGRESS`. Instruction storage/Operator transaction and replay tests,
+Tauri end-to-end transport coverage, stale editor comparison, archive quiescence, root
+validation, and the full CODE/SYSTEM/USER gates remain open. See
+[the E02-S02 review packet](reviews/E02-S02.md). Existing owner changes were preserved; no
+paths were staged or committed.
+
+## E01-S03 process lock and stale-lease CODE evidence — 2026-10-11
+
+Added direct regression coverage for two explicit Runtime lifecycle invariants. A child
+copy of the test executable cannot acquire the Runtime lock while the parent process owns
+the same private state directory. The SQLite lifecycle test verifies an old incarnation
+cannot insert an active ExecutionLease after a new incarnation becomes current, and that
+an already active old-incarnation lease cannot be renewed after the restart. The latter
+uses a synthetic row with unrelated missing Task references: foreign-key checks are
+disabled only to seed that row, then re-enabled before the production trigger rejects its
+renewal. This isolates the schema's current-incarnation fence; it is not a complete
+Attempt/Step admission or daemon-process restart test. No production lifecycle behavior
+changed in this evidence slice.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd instance_lock_rejects_a_second_process -- --nocapture` — **1/1 passed**, using the real test executable as a separate lock contender.
+- `cargo test --locked -p litecoworkd instance_lock_is_released_after_owner_is_killed -- --nocapture` — **1/1 passed**; the child persisted `STARTING`, acquired the real Runtime lock, blocked a competing parent acquisition, was killed, and the parent reacquired the lock. `RuntimeLocalState::begin` then preserved the Runtime ID, created a new incarnation ID, and classified the prior unclean start for recovery.
+- `cargo test --locked -p litecoworkd` — **119 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `cargo test --locked -p storage-sqlite superseded_runtime_incarnation_cannot_activate_an_execution_lease -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite` — **146/146 tests passed**; `cargo clippy --locked -p storage-sqlite --all-targets -- -D warnings` passed.
+- Targeted rustfmt and `git diff --check` passed after applying rustfmt.
+- `uv run --locked python scripts/validate_implementation_coverage.py --write`, `uv run --locked python scripts/validate_architecture.py`, and `uv run --locked python scripts/validate_implementation_plan.py` passed; the refreshed inventory reports 87 documents, 1,447 sections, 5,900 traceability rows, 142 typed events, and 67 stories.
+
+This is CODE evidence only. The E01-S03 live systemd stop/expiry, successful daemon
+restart, process identity reconciliation, platform qualification, and owner USER acceptance
+remain open. The new test file is part of the pre-existing untracked owner test module and
+was preserved without staging. Cleanup audit: `git worktree list` reports only the main
+checkout; no temporary branch, extra worktree, or lock-probe child process remains. The
+workspace `target` is 9.5 GiB, Tauri `target` 6.9 GiB, UI `dist` 904 KiB, Vite cache 3.1
+MiB, and 841 GiB is free. These active reproducible build outputs/caches are retained for
+V1 verification; owner `.playwright-mcp/` and all unrelated changes remain preserved.
+
+## E01-S04 Workspace Runtime binding inventory CODE slice — 2026-10-11
+
+The documented full Workspace Runtime-binding inventory now has a typed bounded SQLite
+read and authenticated Operator route. The contract explicitly includes retained PENDING,
+ACTIVE, and REVOKED records, orders by immutable binding ID using binary order, and binds
+the opaque keyset cursor to Workspace and page size (default 50, maximum 200). The storage
+query scopes rows to the owner principal and selected Workspace and returns only persisted
+binding fields; it does not infer Runtime presence/readiness or expose Runtime-local endpoint
+locators. `current-local` remains the distinct exact-incarnation enrollment projection.
+The route checks `X-Workspace-ID` against the path and owner before listing.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1, the focused storage page test passed **1/1**;
+the complete `storage-sqlite` suite passed **145/145**. The focused daemon route test passed
+**1/1** with real temporary SQLite and authenticated same-UID Unix IPC. It verifies page
+ordering/statuses, cursor continuation, changed-limit and malformed cursor denial, missing
+and mismatched Workspace context, foreign-owner denial, and locator-free output. The daemon
+package passed **116 unit tests and 4 CLI tests** before the final addition of the same-UID
+IPC assertion; the focused route test passed again afterward. Then
+`cargo test --workspace --locked` passed with this final test in place, including **145
+storage tests**, **116 daemon unit + 4 CLI tests**, and **5 Windows security helper tests**.
+Six live namespace/systemd qualification tests were ignored because this WSL environment
+does not provide their required user namespaces or delegated systemd cgroups. Workspace
+strict Clippy passed. Architecture validation passed (142 typed events); coverage validation passed (87
+documents / 1,447 sections / 5,899 rows); implementation-plan validation passed (67
+stories). `pnpm api:generate` refreshed OpenAPI-generated types; `corepack pnpm@12.10.1 run
+build` passed API freshness, TypeScript, and Vite production build. Vite emitted its
+500 KiB chunk-size advisory. Targeted rustfmt and `git diff --check` passed.
+
+The first storage fixture omitted the required Runtime capacity sample timestamp; after
+correcting the fixture, its direct revoked-row insert also had to begin at version 1 to
+satisfy the schema's initial-version trigger. No production behavior was changed to satisfy
+either fixture guard. The generic list cursor is deliberately page-size-bound; clients
+restart from the first page after a binding change. Revocation remains out of scope because
+the API requires RuntimeMesh and channel/trigger lease draining and fencing. This is partial
+CODE evidence, not packaged/system or owner USER acceptance.
+
+Cleanup audit after the workspace run: only the main worktree exists; no temporary
+branches/worktrees or scratch files were created. Workspace `target` is 9.4 GiB, Tauri
+`target` 6.9 GiB, UI `dist` 904 KiB, and Vite cache 3.1 MiB; 842 GiB remains free. These
+regenerable outputs are retained for the active V1 verification loop. Owner `.playwright-mcp/`
+and existing unrelated changes remain untouched.
+
+## E01-S04 authenticated Runtime inventory transport CODE slice — 2026-10-11
+
+Runtime-inventory invalidation coverage now crosses the same-UID Unix endpoint and
+`dispatch_ipc_exchange`, including the shared local-peer authentication middleware. The
+SQLite-backed flow receives the initial invalidation, persists an offer and receives the
+next invalidation, verifies neither frame reveals the private endpoint locator, disconnects
+and reconnects across sequential server accepts, and checks malformed, mismatched,
+future-revision, and prior-incarnation cursors request resync with fresh invalidations. It
+also revokes Workspace ownership while a stream is idle, observes clean EOF without another
+projection, restores the fixture owner, and opens another authorized stream to prove slot
+release. A request for an unowned Workspace returns 404 through the same transport. The
+midstream owner change is a direct test-fixture database mutation because the current
+contract does not expose a Workspace-owner transfer command. This is CODE evidence using
+real temporary SQLite and Unix IPC; it does not qualify another OS identity or packaged
+desktop behavior. A Runtime DRAINING transition alone leaves its binding authorized and
+returns an empty offer list, so it does not establish authorization loss.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1, the focused command
+`cargo test --locked -p litecoworkd runtime_inventory_stream_is_authorized_and_emits_bounded_invalidations -- --nocapture`
+passed **1/1**. `cargo test --locked -p litecoworkd` passed **115 unit tests and 4 CLI
+tests**; `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` passed.
+Architecture validation passed with 142 typed events, coverage validation passed with 87
+documents / 1,447 sections / 5,899 traceability rows, and implementation-plan validation
+passed with 67 stories. Targeted rustfmt and `git diff --check` passed.
+An initial test iteration placed the opaque cursor in the IPC request ID and was rejected by
+the frame validator's 128-byte request-ID limit; the regression now uses a short indexed ID.
+An initial midstream check treated a Runtime DRAINING transition as authority revocation;
+the storage contract keeps the active Workspace/EXECUTOR binding authorized and returns an
+empty offer page in that state. The test now removes the owner from the fixture Workspace
+to exercise actual authorization loss, then restores the owner after observing stream EOF.
+
+Cleanup audit: only the main checkout is listed by `git worktree list`; no temporary
+worktrees or branches were created. Workspace `target` is 8.9 GiB, Tauri `target` 6.9 GiB,
+UI `dist` 904 KiB, Vite cache 3.1 MiB, and the filesystem has 843 GiB free. These
+regenerable build outputs and caches are retained for active V1 verification. Owner
+`.playwright-mcp/` and unrelated working-tree files remain preserved.
+
+Broader regression: `cargo test --workspace --locked` passed across all workspace crates,
+including `litecoworkd` (115 unit + 4 CLI), `storage-sqlite` (144), `operator-ipc` (19 unit
++ 3 Unix integration), and `windows-local-security` (5); three Linux cgroup/systemd tests
+were ignored because the required delegated user systemd manager is unavailable. The
+workspace test run preceded the final midstream-owner assertion; after that test change,
+the complete daemon package passed again (**115 + 4**) and workspace strict Clippy passed.
+`cargo build --workspace --locked` and `uv run --locked python -m unittest discover -s
+tests -v` passed (12 Python tests). `scripts/check.sh` verified pinned Rust/uv/Python and
+`uv sync --locked`, then stopped at `cargo fmt --all -- --check` on a pre-existing extra
+trailing blank line in the owner's untracked `crates/storage-sqlite/src/runtime_offer_tests.rs`.
+That file was preserved; the changed daemon test file passes targeted rustfmt.
+
+## E01-S04 Task stream endpoint rebind CODE slice — 2026-10-11
+
+The authenticated Unix Task stream regression now closes its initial listener after the
+client disconnects, commits a Task revision while the client is away, drops and reopens the
+same SQLite database, then rebinds the same owner-only Unix endpoint with a new route
+state/incarnation. Resuming from the last accepted cursor returns the current Task snapshot
+at origin sequence 4; a cursor scoped to another Task requests resync and returns that
+snapshot. This exercises durable cursor recovery across route, store, and endpoint
+reinitialization in one test process. It is CODE evidence, not a spawned `litecoworkd`
+restart or packaged SYSTEM qualification.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd authenticated_unix_task_stream_catches_up_after_operator_endpoint_rebinds -- --nocapture` passed **1/1**.
+- `cargo test --locked -p litecoworkd` passed **115 unit tests and 4 CLI tests**.
+- `rustfmt --edition 2024 --check --config skip_children=true apps/litecoworkd/src/operator_ipc_tests.rs` and `git diff --check` passed after correcting one formatter suggestion.
+
+Cleanup audit: `git worktree list` reports only the main checkout; no additional worktrees
+or temporary branches were created for this slice. Workspace `target` is 9.1 GiB, Tauri
+`target` is 6.9 GiB, UI `dist` is 904 KiB, and Vite cache is 3.1 MiB. The filesystem has
+842 GiB free. These build outputs/caches are retained because they support the active V1
+verification loop and are reproducible. The unrelated owner `.playwright-mcp/` directory
+and broad existing source/document changes were preserved.
+
+See [the E01-S04 review packet](reviews/E01-S04.md). Daemon-process restart, packaged
+reconnect/slow-consumer behavior, OS qualification, and owner USER acceptance remain open.
+
+## E02-S01 responsive desktop shell CODE/SYSTEM slice — 2026-10-11
+
+Removed the browser and native-window 760px width floors and added a labeled, keyboard-
+dismissible navigation drawer for viewports at or below 900px. At 620px and below the
+top bar, page spacing, headings, and Task composer use compact single-column layout. The
+drawer moves focus to its close control, traps Tab navigation, makes main content inert,
+closes on Escape, backdrop, navigation selection, or desktop resize, and restores focus to
+the trigger when dismissed. No product data or domain behavior changed.
+
+Verification on Linux x86_64 with Node.js 24.21.0, pnpm 12.10.1, and system Google Chrome:
+
+- `corepack pnpm@12.10.1 run build` passed (API freshness, TypeScript, Vite production build).
+- `node --experimental-transform-types --test tests/responsive-layout.test.ts` passed 3/3.
+- `node --experimental-transform-types --test tests/*.test.ts` passed 143/143.
+- `node --check scripts/check-responsive-layout.mjs` passed.
+- `node scripts/check-responsive-layout.mjs` launched the Vite preview and Chrome through
+  the Chrome DevTools Protocol. At 1280, 640, 512, and 375 CSS-pixel widths, document and
+  body scroll widths stayed at or below viewport width. At 640px, checks covered dialog
+  semantics, inert main content, close-control focus, Tab/Shift+Tab wrapping, Escape,
+  backdrop, close-button, and navigation-selection dismissal with restored trigger focus,
+  and focus transfer to the active desktop
+  navigation item after resizing above 900px; desktop widths hide both mobile-only controls.
+  This is browser-level CODE/SYSTEM evidence,
+  not a packaged Tauri WebView, physical 200%-zoom, or owner USER acceptance run.
+
+`cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` passed
+46/46 unit tests. Required validators passed: coverage generation (87 documents, 1,447
+sections, 5,896 rows), implementation plan (67 stories), and architecture (142 typed
+events and current schema/API/storage/link contracts), with architecture run twice.
+`git diff --check` passed. The Chrome script cleans up its Chrome/Vite process group and
+temporary profile. No worktrees were added. Disk audit: 842 GiB free; UI `dist` is 904 KiB,
+Vite cache 3.1 MiB, workspace `target` 9.1 GiB, Tauri `target` 6.9 GiB. Build outputs and
+caches remain useful for active V1 work and are retained.
+
+The shell behavior is a partial E02-S01 slice. First-run Workspace setup, offline/reconnect
+qualification, packaged daemon, pinned frozen-install/toolchain rejection checks, native
+WebView, cross-platform, and owner acceptance gates remain open. Review details are in
+[E02-S01](reviews/E02-S01.md). Cleanup audit: the browser script exited its Chrome and Vite
+children and removed its temporary profile; no extra worktrees were created. Existing UI
+and Rust `target` build caches are retained for active V1 work.
+
+## E01-S03 spawned daemon startup failure SYSTEM evidence — 2026-10-11
+
+Ran the actual `target/debug/litecoworkd run --data-dir <private temporary directory>`
+process. The user systemd `default.target` was active, but `org.freedesktop.secrets` was
+unavailable (`busctl --user status` returned “No such device or address”). The daemon
+exited 1 before serving IPC, persisted a truthful `DEGRADED` Runtime with
+`RUNTIME_OS_PRINCIPAL_UNAVAILABLE`, and the real `status` subcommand read that durable
+state and reported `NOT_RUNNING`. The temporary directory was automatically removed.
+This verifies the real CLI/process startup failure and status projection; it does not
+qualify successful startup, clean shutdown, daemon restart, or Secret Service behavior.
+The host also lacks delegated writable cgroup access, so live process-scope/systemd
+qualification remains pending.
+
+## E01-S02 migration and BlobStore failure CODE evidence — 2026-10-11
+
+Added CODE evidence for migration source-checksum drift on reopen, reads after the scoped
+encryption key becomes unavailable, and a symlinked BlobPurpose directory. The checksum
+tamper test expects `CorruptSchema` and confirms `user_version` did not change. The
+purpose-directory test rejects `put`, `get`, and `remove` and confirms the redirected
+outside sentinel remains byte-for-byte unchanged. No production code changed.
+
+Focused tests passed 1/1 each:
+
+- `cargo test --locked -p storage-sqlite schema_drift_and_unknown_newer_versions_fail_closed -- --nocapture`
+- `cargo test --locked -p storage-sqlite blob::tests::refuses_symlinked_blob_directory_ancestors -- --nocapture`
+- `cargo test --locked -p storage-sqlite blob::tests::unavailable_key_provider_fails_closed_without_plaintext_blob -- --nocapture`
+
+`cargo test --locked -p storage-sqlite` passed **144/144** tests plus doc tests on Linux
+WSL2 x86_64 (rustc/Cargo 1.98.1). OS credential-service and filesystem-capacity
+qualification remain open. `uv run --locked python scripts/validate_implementation_coverage.py --write`
+passed (87 documents, 1,447 sections, 5,889 traceability rows); implementation-plan
+validation passed (67 stories); architecture validation passed twice, including after
+coverage generation. `git diff --check` passed. Rustfmt check on the two edited modules
+initially reported our three formatting differences plus the known trailing blank line in
+owner-created untracked `crates/storage-sqlite/src/runtime_offer_tests.rs`; our formatting
+differences were corrected, and a child-skipping targeted check is recorded after rerun.
+Cleanup audit: one worktree, no temporary subagent worktrees or slice scratch artifacts,
+842 GiB free, `target` 9.3 GiB and Tauri `target` 7.1 GiB. Both build caches are retained
+for active V1 Rust/Tauri work.
+
+## E01-S04 multi-Conversation Operator stream CODE slice — 2026-10-11
+
+The authenticated local `/v1/stream` route now accepts one to 20 unique Conversation
+filters. The existing one-filter stream path remains in place; the multi-filter path reads
+all projections from one SQLite snapshot, binds its opaque cursor to the canonical filter
+set, and tracks one message frontier and projection revision per Conversation. Catch-up
+pages emit scoped message upserts, skip unchanged Conversation snapshots, and still emit
+changed snapshots for active-turn-only state. Owner authorization is rechecked during idle
+polling; history gaps require replacement snapshots. Every emitted message passes through
+the existing 1 MiB serializer. The stream subscription limit is 32 KiB and multi-filter
+cursors are capped at 14 KiB.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd authenticated_unix_stream_subscribes_to_two_conversations_and_scopes_updates -- --nocapture` — **1/1 passed** using the real same-UID Unix IPC dispatcher and SQLite store; it covers shared snapshot sequence with reversed filter order, malformed and filter-mismatched cursor resync, empty/duplicate/mixed/over-limit filter denial, a scoped update, disconnect, reconnect with the emitted cursor, two post-disconnect messages replayed across separate pages, and idle owner revocation closing the stream before another projection.
+- `cargo test --locked -p litecoworkd twenty_maximum_escaped_message_frontiers_fit_the_stream_cursor_bound -- --nocapture` — **1/1 passed**, round-tripping a cursor with 20 maximum-length escaped IDs and projection revisions.
+- `cargo test --locked -p litecoworkd batch_replay_sends_changed_turn_state_and_skips_unchanged_conversations -- --nocapture` — **1/1 passed**, covering active-turn-only snapshots and omission of unchanged filters.
+- `uv run --locked python -m unittest tests/test_operator_stream_contract.py -v` — **5/5 passed**, including subscription, ready-frame, and projection cursor bounds.
+- `cargo test --locked -p litecoworkd` — **115/115 unit tests and 4/4 CLI tests passed**. `cargo test --locked -p operator-ipc` — **19/19 unit and 3/3 Unix endpoint integration tests passed**.
+- `cargo clippy --locked -p operator-ipc -p storage-sqlite -p litecoworkd --all-targets -- -D warnings` — **passed**.
+- Architecture validation, coverage regeneration, and implementation-plan validation passed (87 documents, 1,447 sections, 5,888 traceability rows, 67 stories); architecture validation passed again after generation.
+- `rustfmt --edition 2024 --check` on the changed stream/IPC Rust files and `git diff --check` passed. `cargo fmt --all -- --check` reports a pre-existing extra trailing blank line in owner-created, untracked `crates/storage-sqlite/src/runtime_offer_tests.rs`; that owner file was preserved.
+- The storage snapshot race remains covered by `cargo test --locked -p storage-sqlite conversation_batch_snapshot_shares_origin_frontier_and_read_snapshot -- --nocapture` (**1/1 passed**) and the full SQLite package (**144/144 passed**) from the preceding storage slice.
+
+This is partial CODE evidence. Daemon and IPC CODE regression, strict Clippy, and
+architecture/plan validators pass. Packaged reconnect and revocation tests, OS
+qualification, and owner USER acceptance remain open. The desktop stream still
+subscribes to one selected Conversation. The first sizing test showed that 12 KiB did not
+fit maximum escaped IDs; the verified limit was raised to 14 KiB before the passing run.
+Cleanup audit found one worktree, no temporary worktrees or slice-specific scratch
+artifacts, 843 GiB free, a 9.6 GiB Rust `target`, and a 7.1 GiB Tauri `target`. Both active
+build caches were retained as regenerable V1 caches.
+
+## E01-S04 atomic multi-Conversation storage snapshot CODE slice — 2026-10-11
+
+`RichPresentationStore` now exposes a bounded batch read for up to 20 distinct
+Conversation projections. SQLite authorizes the selected Workspace once, captures the
+durable origin frontier, and reads each requested projection, active turn, and latest
+message frontier within the same read transaction. The existing singular read delegates
+to this batch path, keeping one implementation of projection semantics. Missing or
+cross-Workspace Conversations and unauthorized principals fail closed. No schema
+migration was needed.
+
+A deterministic two-Conversation race test pauses after capturing the shared frontier,
+commits a message and matching event to the second Conversation through another SQLite
+connection, and verifies both projections retain the pre-commit snapshot. It then reads
+the event page from the common frontier and confirms the post-snapshot message is
+available after the captured per-Conversation message frontier.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p storage-sqlite conversation_batch_snapshot_shares_origin_frontier_and_read_snapshot -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite rich_presentation_tests -- --nocapture` — **21/21 passed**.
+- `cargo test --locked -p storage-sqlite` — **144/144 passed**.
+- `cargo test --locked -p litecoworkd` — **112 unit tests and 4 CLI tests passed**.
+- `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings` — **passed**.
+- `rustfmt --edition 2024 --check` on the three changed Rust files and `git diff --check` on the storage slice — **passed**.
+
+This is storage CODE evidence only; the stream route still accepts one Conversation filter.
+Multi-filter cursor binding, per-Conversation fan-out/catch-up, the desktop state map,
+packaged SYSTEM evidence, and owner USER acceptance remain open. E01-S04 remains
+IN_PROGRESS. Cleanup audit found only the main worktree. The workspace Rust target cache
+measures 9.5 GiB and the Tauri target cache 7.1 GiB; both are retained as useful build
+caches for the active V1 work. No slice-specific scratch files or additional worktrees
+were created.
+
+## E01-S04 Runtime offers inventory route CODE slice — 2026-10-11
+
+The authenticated local Operator now serves `GET /v1/runtimes/{runtime_id}/offers`.
+The selected Workspace must be active, owned by the local principal, and have an ACTIVE
+Runtime binding with the EXECUTOR role. SQLite checks that authority and reads a bounded
+page of fresh `AGENT_ENDPOINT` offers from the current READY/DEGRADED incarnation in one
+read transaction. The route applies deterministic keyset pagination; cursors bind the
+Workspace, Runtime, incarnation, and page size. A restarted Runtime invalidates a cursor.
+The response excludes Runtime-private endpoint locators, is marked `no-store`, and does
+not treat an offer as authorization. Future-observed and expired entries are omitted.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p storage-sqlite runtime_offer -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd runtime_offer -- --nocapture` — **4/4 passed**
+  (two route tests and two same-UID IPC tests).
+- `cargo test --locked -p litecoworkd authenticated_unix_ipc_runtime_offer_route_requires_workspace_context -- --nocapture`
+  — **1/1 passed** using the same-UID Unix socket dispatcher and real SQLite store.
+- Full `cargo test --locked -p storage-sqlite` — **142/142 passed**; full
+  `cargo test --locked -p litecoworkd` — **110/110 unit tests and 4/4 CLI tests passed**.
+- `uv run --locked python -m unittest tests/test_runtime_offers_contract.py -v` —
+  **1/1 passed**. `uv run --locked python scripts/validate_architecture.py` passed;
+  generated coverage and `uv run --locked python scripts/validate_implementation_plan.py`
+  passed with 87 architecture documents, 1,447 sections, 5,885 traceability rows, 142
+  typed events, and 67 backlog stories. Desktop generated API type freshness passed.
+- `cargo fmt --all -- --check` and `git diff --check` passed.
+- `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings`
+  passed. Its first run identified an overlong positional storage method; the query is now
+  represented by a typed request object. From `apps/litecowork-ui`,
+  `node scripts/generate-operator-api-types.mjs --check` passed.
+
+These are CODE results for the local Linux/SQLite/Unix path. The store test proves owner
+and binding denial, expiry and future-observation filtering, keyset ordering, stale
+incarnation rejection, and locator redaction. The IPC tests exercise missing Workspace
+context and a positive populated Workspace/Runtime/offer response over the same-UID socket,
+including the `no-store` response and locator absence. Windows/macOS transport
+qualification, packaged desktop inventory consumption, SYSTEM qualification, and owner
+USER acceptance remain open. E01-S04 stays IN_PROGRESS.
+
+## E01-S04 Task presentation stream CODE slice — 2026-10-11
+
+The local daemon now serves one owner-authorized Task presentation stream over authenticated
+IPC. Each update is a complete bounded Task snapshot whose decimal `origin_sequence` is read
+in the same SQLite transaction as its Task, current Plan Steps, and resolvable Artifact
+versions. Opaque cursors bind Workspace, Runtime, Task, projection version, and source
+frontier. Replay gaps are checked across the full cursor interval, even when an event page
+is truncated. Tauri forwards the authenticated duplex stream with one-frame WebView credit;
+the Task panel validates and replaces whole snapshots, resumes from only its last accepted
+cursor, and marks the retained display stale while a resync replacement is pending. Finite
+snapshot refresh remains a fallback; progress is still read separately.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1 and Node.js 24.21.0:
+
+- `cargo test --locked -p storage-sqlite` — **141/141 passed**; the focused
+  `workspace_event_replay_detects_gap_beyond_truncated_page` regression also passed **1/1**.
+- `cargo test --locked -p litecoworkd authenticated_unix_task_stream_refreshes_after_task_event_committed_past_snapshot -- --nocapture`
+  — **1/1 passed** through the real temporary SQLite store and same-UID Unix IPC path,
+  including reconnect catch-up and foreign-Task cursor resync.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` —
+  **45/45 passed**; the crate reports eight existing Rust warnings.
+- `node --experimental-transform-types --test tests/*.test.ts` — **135/135 passed**;
+  `tsc --noEmit`, generated Operator API freshness, and Vite production build passed. The
+  build reports the existing 768.91 kB main-chunk advisory.
+- `cargo fmt --all -- --check` and `git diff --check` passed. Architecture validation
+  passed. After refreshing generated coverage, implementation-plan validation passed with
+  87 architecture documents, 1,447 sections, 5,884 traceability rows, 142 typed events,
+  and 67 backlog stories. `scripts/check.sh` passed workspace format, strict Clippy,
+  workspace tests/build, nine Python checks, and both contract/backlog validators. Tauri
+  tests and the pinned Node 24 UI suite/build ran separately because the workspace script
+  does not include the desktop crate or WebView frontend.
+
+This is CODE evidence. Runtime-inventory streaming, packaged WebView reconnect/slow-consumer
+behavior, Windows/macOS host qualification, the full E01-S04 SYSTEM gate, and owner USER
+acceptance remain open. See [the E01-S04 review packet](reviews/E01-S04.md).
+
+## E08-S08 OpenIntelligentUI comparison handoff — 2026-10-11
+
+The pinned [OpenIntelligentUI reference and comparison plan](../docs/REFERENCE-IMPLEMENTATIONS.md#openintelligentui-exact-files)
+is recorded for E08-S08 at commit
+[`f6e4388b26a64b9a0714943b08a1ce622b924eec`](https://github.com/CopilotKit/OpenIntelligentUI/tree/f6e4388b26a64b9a0714943b08a1ce622b924eec).
+When implementing E08-S08, run its stated viability and matched renderer tests, then
+finalize the speed and suitability assessment from recorded measurements. Until those
+tests run, the relative speed statements remain hypotheses; OpenIntelligentUI is a UX
+and test reference, not an approved renderer dependency. No upstream runtime was tested
+or integrated in this documentation update.
+
+## E01-S04 deterministic Conversation snapshot/replay race CODE slice — 2026-10-11
+
+Added a barrier-controlled SQLite concurrency test around the real bounded Conversation
+presentation read. The test pauses the reader after its origin sequence is captured inside
+the read transaction, then commits a new Conversation message and matching domain event
+atomically from an independent SQLite connection before allowing the snapshot query to
+finish. The snapshot consistently excludes both post-frontier records and retains the old
+message frontier. Bounded event replay from the captured sequence returns the new event,
+and the follow-up projection read after the snapshot's message frontier returns the new
+message. This verifies that reconnect/catch-up can fill the interval without advancing a
+cursor beyond the projection state it represents; the synchronization uses channels, not
+timing sleeps.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p storage-sqlite conversation_snapshot_frontier_replays_writer_committed_after_snapshot_capture -- --nocapture`
+  — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite` — **140/140 passed**.
+- `cargo test --locked -p litecoworkd authenticated_unix_stream_sends_correlated_handshake_and_authorized_snapshot -- --nocapture`
+  — **1/1 passed** on the real SQLite and same-UID Unix stream path.
+- `cargo clippy --locked -p storage-sqlite -p litecoworkd -- -D warnings` and
+  `cargo fmt --all -- --check` — passed.
+- Repository-wide `scripts/check.sh` — **passed**: workspace formatting, strict Clippy,
+  Rust tests/builds, UI generated-API/TypeScript/Vite build, eight Python checks, and the
+  architecture/coverage/implementation-plan validators. Validation reported 142 typed
+  events, 87 documents, 1,447 sections, 5,883 traceability rows, and 67 stories. Six
+  live-systemd/cgroup integration cases remain ignored because this WSL2 host does not
+  qualify those behaviors.
+
+This is CODE evidence for snapshot isolation and storage/event catch-up. It does not by
+itself qualify the packaged desktop stream or OS transports. See
+[the E01-S04 review packet](reviews/E01-S04.md).
+
+## E01-S03 authenticated Runtime lifecycle over SQLite and Unix IPC — 2026-10-11
+
+Closed the local CODE evidence gap for `GET /v1/runtime-lifecycle`: the test registers a
+Runtime/incarnation in a real temporary SQLite store, commits its transition to
+`DEGRADED`, and sends the request through an OS-credential-checked same-UID Unix socket,
+the production IPC dispatcher, the actual lifecycle handler, and its authentication
+middleware. The correlated framed response carries `Cache-Control: no-store`, persisted
+Runtime/incarnation/version values, and fixed safe blocker copy; private blocker codes,
+local boot identity, and unavailable Task inventories are omitted. A request bound to a
+superseded incarnation returns a correlated `503 RUNTIME_UNAVAILABLE`. A post-request
+storage read confirms that the GET did not mutate the persisted `DEGRADED` state/version.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd authenticated_unix_runtime_lifecycle -- --nocapture`
+  — **1/1 passed**.
+- `cargo test --locked -p litecoworkd operator_ipc_tests -- --nocapture` — **9/9 passed**.
+- `cargo clippy --locked -p litecoworkd -- -D warnings` — passed.
+- `cargo test --locked -p litecoworkd` — **105 unit + 4 CLI tests passed**.
+
+This is CODE evidence using the real storage adapter, Unix peer credentials, frame codec,
+dispatcher, route, and auth middleware in one test process; it is not a spawned packaged
+daemon or cross-identity/system qualification. Linux live systemd stop/expiry, macOS and
+Windows host behavior, packaged desktop interaction, E01-S02 qualification, and owner
+USER acceptance remain pending. See [the E01-S03 review packet](reviews/E01-S03.md).
+
+## E01-S04 one-frame desktop stream backpressure CODE slice — 2026-10-11
+
+Closed the native-to-WebView buffering gap in the local Conversation stream. The Tauri
+bridge assigns each frame a session-scoped ID and keeps at most one unacknowledged frame
+per session. The UI acknowledges after applying or safely discarding the frame; stale,
+duplicate, and foreign acknowledgements cannot release the pending slot. The native IPC
+reader waits for that exact acknowledgment before reading another frame. Unsubscribe
+cancels the wait and drops the duplex connection, and a five-second acknowledgment
+deadline closes an unresponsive stream. This keeps a stalled WebView from accumulating an
+unbounded Tauri event backlog and propagates pressure to the existing bounded IPC writer.
+The acknowledgment remains a Tauri-local flow-control detail; the Operator stream schema
+did not change.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1, Node.js 24.21.0, and pnpm 12.10.1:
+
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` — **42/42
+  passed**, including frame-ID fencing, single-slot admission, timeout cleanup, and
+  cancellation while waiting for credit. The crate reports eight existing Rust warnings.
+- `cargo test --locked -p operator-ipc` — **22/22 passed** (19 unit and 3 Unix lifecycle
+  tests). The new unread-peer case stalls a bounded frame write, cancels it, and proves
+  shared in-flight body capacity is released.
+- `cargo test --locked -p litecoworkd authenticated_unix_stream_sends_correlated_handshake_and_authorized_snapshot -- --nocapture`
+  — **1/1 passed** for the real SQLite/same-UID Unix stream path and >100-message reconnect
+  catch-up behavior.
+- `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH node --experimental-transform-types --test apps/litecowork-ui/tests/*.test.ts`
+  — **125/125 passed**.
+- `cd apps/litecowork-ui && corepack pnpm@12.10.1 run build` — generated API freshness,
+  TypeScript, and Vite production build passed. The existing main JavaScript chunk advisory
+  is 760.68 kB.
+- `cargo fmt --all -- --check` and `git diff --check` passed after the CODE slice.
+
+The CODE path now has an explicit one-frame WebView credit bound and a cancellable IPC
+write case. It still needs a packaged WebView stall/recovery SYSTEM run; these local tests
+do not qualify Windows/macOS host transport, a packaged daemon restart, cross-identity
+denial, Task/Runtime projections, or owner USER acceptance. E01-S04 remains IN_PROGRESS.
+See [the E01-S04 review packet](reviews/E01-S04.md).
+
+## E01-S04 desktop Conversation stream consumption CODE slice — 2026-10-11
+
+The desktop Conversation view now starts a scoped stream only after loading the selected
+Workspace/Conversation history. Its controller registers the event listener before the
+native subscribe command, fences every envelope to its session and selected identities,
+advances resume state only from accepted outer cursors, and reconnects with bounded
+backoff. Live snapshots merge into loaded history without dropping paginated messages.
+The Tauri bridge uses the existing authenticated local IPC stream, and unsubscribe cancels
+the same duplex connection. Stream failures and reconnect state are shown as saved-history
+updates; the UI does not claim that a provider turn is running or completed.
+
+The long-lived client frame reader now waits without an idle timeout between messages,
+because this stream protocol has no heartbeat. Once a frame starts, the remaining length
+prefix has a five-second deadline; body reads retain the progress-refreshed five-second
+idle deadline, 1 MiB frame ceiling, and shared in-flight body budget. The old bounded-idle
+reader remains available for exchanges that need it.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1, Node.js 24.21.0, and pnpm 12.10.1:
+
+- `cargo test -p operator-ipc` passed **18 unit + 3 Unix lifecycle integration tests**;
+  the new regression test first failed to compile for the missing session-reader API, then
+  passed with idle wait and partial-frame timeout assertions.
+- `cargo check -p operator-ipc --target x86_64-pc-windows-gnu --locked` passed. This
+  checks the Windows IPC adapter's source and types, not named-pipe host behavior.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --no-run`
+  compiled the Tauri desktop crate. Its 8 existing Rust warnings remain.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml conversation_stream_bridge::tests -- --nocapture`
+  passed **4/4** bridge validation/envelope tests.
+- The selected UI helper tests passed **35/35** using Node's experimental type stripping.
+- `corepack pnpm@12.10.1 run build` passed generated OpenAPI freshness, TypeScript, and
+  Vite production build. Vite retains its existing main-chunk size advisory.
+- `scripts/check.sh` passed the complete workspace format/Clippy/test/build gate, eight
+  Python tests, architecture validation (142 typed events), coverage validation (87
+  documents, 1,447 sections, 5,879 rows), and implementation-plan validation (67 stories).
+  The workspace run includes `litecoworkd` 103 unit + 4 CLI tests, `storage-sqlite`
+  138 tests, and `operator-ipc` 18 unit + 3 Unix lifecycle integration tests. Six
+  live-systemd/cgroup integration cases were ignored because this WSL2 host does not
+  qualify those behaviors.
+
+- After adding a direct exhausted-admission test, `cargo test --locked -p litecoworkd`
+  passed **104 unit + 4 CLI tests**, and `cargo clippy --locked -p litecoworkd -- -D
+  warnings`, `cargo fmt --all -- --check`, and `git diff --check` passed. The new case
+  reaches the production stream handler with zero permits and checks the bounded
+  `429 CAPACITY_EXCEEDED` response before any Conversation storage read.
+
+This adds CODE coverage only. It does not prove packaged desktop behavior, long-idle stream
+behavior in a running app, cross-identity denial, reconnect against a restarted daemon,
+macOS/Windows host behavior, or owner USER acceptance. Task/Runtime stream projections,
+complete replay/race semantics, slow-consumer coverage, and remaining E01-S04
+routes/lifecycle controls remain open. See the [E01-S04 review
+packet](reviews/E01-S04.md).
+
+## E01-S04 authenticated Conversation stream CODE slice — 2026-10-11
+
+The local daemon now routes `POST /v1/stream` through the same OS-authenticated IPC
+adapter and Workspace-owner middleware. The first implemented subscription is deliberately
+bounded to one `conversation_presentation` and one Conversation ID; it rejects task,
+Runtime-inventory, multi-Conversation, and mismatched Workspace filters explicitly. The
+subscription body has its separate 16 KiB framing limit. At most two stream sessions may
+be active. The IPC dispatcher sends a correlated empty 200 handshake, then forwards
+individual length-prefixed frames without collecting the long-lived body. Each message
+retains the 1 MiB ceiling and five-second write deadline. Daemon shutdown signals stream
+bodies before joining request workers.
+
+The route validates resume cursor bindings to Workspace, local origin Runtime, Conversation,
+and projection version, checks the bounded replay page for a gap/future cursor, then emits
+`stream.ready`, an optional `stream.resync_required`, and the authorized Conversation
+snapshot. It polls metadata-only event pages and re-reads the authorized snapshot after
+committed Workspace events; domain-event payloads never cross the boundary. The cursor
+origin begins at the same-read `origin_sequence` in that snapshot, so a concurrent event
+between subscription and poll is not skipped. The reducer now accepts the replacement
+snapshot after a resync marker while retaining the authenticated session.
+
+An adversarial review found that an idle disconnected peer could otherwise retain a stream
+slot until a later event or shutdown. The IPC dispatcher now concurrently monitors the
+request side while waiting for the next response frame: EOF/reset cancels the body and drops
+its admission permit, and bytes after the sole subscription request terminate the exchange.
+The real Unix IPC test closes the client during an idle period, confirms the server settles
+and both stream permits are available, opens a fresh stream, then verifies shutdown EOF.
+No heartbeat frame was added to the projection protocol. Windows source shares this path,
+but named-pipe host behavior still needs platform qualification.
+
+Verification on Linux WSL2 x86_64, rustc/Cargo 1.98.1, Node 24.21.0, and pnpm 12.10.1:
+
+- `cargo test --locked -p litecoworkd authenticated_unix_stream_sends_correlated_handshake_and_authorized_snapshot -- --nocapture` — **1/1 passed**. It uses a real temporary SQLite store and authenticated Unix socket; checks request correlation, stream MIME/empty handshake, exact semantic USER/AGENT snapshot shape, a committed Workspace event refresh, and clean EOF after shutdown.
+- `cargo test --locked -p operator-ipc` — **20/20 passed** (17 unit tests, 3 Unix lifecycle integration tests), including length limits, shared body budget, EOF/truncation distinction, correlation, and timeout behavior.
+- `cargo test --locked -p litecoworkd` — **107/107 passed** (103 unit tests and 4 CLI tests); the stream integration test also proves idle disconnect cleanup and stream-slot reuse.
+- `cargo clippy --locked -p litecoworkd -- -D warnings`, `cargo fmt --all -- --check`, and `cargo check --locked -p operator-ipc --target x86_64-pc-windows-gnu` passed. Windows cross-compilation is source/type evidence only, not named-pipe host qualification.
+- `uv run --locked python -m unittest tests.test_operator_stream_contract -v` — **2/2 passed** for strict bounded subscription and stream-frame schema fixtures.
+- With Node.js 24.21.0 and pnpm 12.10.1, `pnpm run api:generate`, `pnpm run api:check`, `node --experimental-transform-types --test tests/*.test.ts`, and `pnpm build` passed. The full UI helper suite passed **115/115** and the production Vite build completed with the existing 741.97 kB main-chunk advisory.
+
+This is partial CODE evidence, not E01-S04 completion. Remaining stream work includes Task and Runtime inventory projection adapters, full reconnect/replay semantics and adversarial cursor cases, real desktop stream consumption/reconnect, slow-consumer/capacity denial tests, and deterministic snapshot-versus-writer race coverage. Linux packaged behavior, macOS/Windows host qualification, remaining E01-S04 routes/lifecycle controls, SYSTEM evidence, and owner USER acceptance remain open. See the [review packet](reviews/E01-S04.md).
+
+## E01-S04 bounded event replay storage CODE slice — 2026-10-11
+
+The authenticated Conversation presentation read now returns the selected Runtime's
+durable `origin_sequence` frontier from the same SQLite read transaction as the bounded
+message/presentation/active-turn projection. The read checks the allocator head against
+persisted events and fails closed on corruption. OpenAPI and generated TypeScript expose
+the frontier separately from `projection_revision`, `stream_cursor`, and message
+`next_cursor`. Focused storage and daemon tests passed; the daemon test compares the
+returned frontier with the fixture's durable event head. This verifies the read path and
+wire field, not a concurrent-writer race or a live stream/reconnect path. Deterministic
+race coverage and the authenticated stream transport/projection adapter remain open.
+
+`cargo fmt --all -- --check` passed. Under Node.js 24.21.0 with pnpm 12.11.2, the
+generated API check, focused presentation-stream suite (19/19), TypeScript check, and Vite
+production build passed; Vite reports the existing 741.68 kB main-chunk advisory. The API
+generator is pinned at `openapi-typescript` 7.13.0.
+
+The reducer's malformed-snapshot case was observed failing first: the prior code silently
+filtered an invalid item and accepted a partial snapshot. It now validates every snapshot
+item before replacing state and rejects invalid upserts without cursor advancement. The
+oversized-snapshot test begins with `stream.ready` but no snapshot, proving the first
+oversized snapshot is not accepted. Focused reducer tests pass 19/19. JSON Schema fixture
+validation and a production projection adapter remain open.
+
+Added a bounded `EventStore` replay-page operation scoped to one Workspace and origin
+Runtime. It reads the durable head, retained floor, and at most 500 event identity/type/
+revision rows in one SQLite read transaction, ordered by the existing per-origin sequence.
+It explicitly reports future cursors and missing retained sequences; event payloads and
+aggregate-state references are not returned. The sequence is durable across daemon restart.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p domain-workspace` — **2/2 passed**.
+- `cargo test --locked -p storage-sqlite workspace_event_replay_pages_use_stable_origin_sequences_and_reject_gaps -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite` — **137/137 passed**.
+
+Replay now also fails closed if the maximum persisted event sequence exceeds its durable
+allocator head. The corruption test first failed because the reader returned a page, then
+passed after the same-snapshot integrity check was added. Verification after this fix:
+
+- `cargo test --locked -p storage-sqlite workspace_event_replay_rejects_allocator_head_behind_persisted_events -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite` — **138/138 passed**, 185.27 seconds.
+
+The focused CODE tests cover bounded paging, restart/resume, origin isolation, a cursor
+ahead of the durable head, a missing retained event row, and the allocator-head corruption
+case. No stream route, logical-to-local transport binding, cursor filter/version
+integrity, live event delivery, slow-consumer handling, or desktop reconnect behavior is
+implemented. The Conversation snapshot now carries the same-read origin frontier, but no
+deterministic concurrent-writer proof or stream cursor binding exists yet.
+See the [E01-S04 review packet](reviews/E01-S04.md).
+
+## E01-S02 BlobStore deletion CODE evidence — 2026-10-11
+
+Added tests for the existing safe deletion behavior: repeated removal of a missing blob
+succeeds; a symlink path and a directory path are rejected; the symlink target remains
+unchanged. `cargo test --locked -p storage-sqlite` passed **135 tests** on Linux WSL2
+x86_64 with rustc/Cargo 1.98.1. The exact commands and limits are in
+[the E01-S02 review packet](reviews/E01-S02.md). No production deletion code changed.
+E01-S02 remains in progress pending OS credential-service/platform qualification,
+filesystem capacity evidence, E01-S01 review, and owner acceptance.
+
+## E01-S03 startup failure and finalized recovery blocker CODE slice — 2026-10-11
+
+Added fault-injection coverage for post-registration startup failure persistence. Tests
+prove the exact current Runtime/incarnation and expected version are used for the durable
+DEGRADED transition; local state retains the specific safe blocker; a rejected catalog
+transition leaves local state DEGRADED and returns both the startup and durable-transition
+failure; and a local status write failure after a successful catalog transition does not
+claim clean shutdown. Startup now also persists the final blocker set after bounded expired
+lease recovery and before opening Operator IPC, so `litecoworkd status` and the lifecycle
+route do not disagree about a late recovery failure. A failure to persist this final local
+projection prevents endpoint admission. The initial RECOVERING-to-DEGRADED catalog CAS now
+also fails closed without retry: on error, startup adds the safe
+`RUNTIME_LIFECYCLE_TRANSITION_FAILED` code to private local status and returns before lease
+recovery or Operator admission. If that local write also fails, the returned error includes
+both failures. The catalog outcome is treated as ambiguous and is never claimed DEGRADED by
+this path.
+
+On Linux WSL2 x86_64 with Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd registered_startup_failure -- --nocapture` — **3/3 passed**.
+- `cargo test --locked -p litecoworkd final_recovery_blockers -- --nocapture` — **1/1 passed**.
+- `cargo test --locked -p litecoworkd initial_degraded_transition_failure -- --nocapture` — **2/2 passed**.
+- `cargo test --locked -p litecoworkd` — **102 unit tests and 4 CLI integration tests passed**.
+
+These are CODE tests using a fake lifecycle store and private temporary directories. They
+do not exercise a spawned daemon, actual SQLite/provider failures, OS service recovery, or
+owner USER acceptance. The latest `scripts/check.sh` passed workspace formatting, strict
+Clippy, Rust tests/build (including 102 daemon unit plus 4 CLI integration tests and 136
+storage tests), six Python checks, architecture validation, coverage validation (87
+documents / 1,446 sections / 5,875 rows), implementation-plan validation, and
+`git diff --check`.
+Linux systemd stop/expiry, macOS/Windows host qualification, and owner USER acceptance
+remain pending. See [the E01-S03 review packet](reviews/E01-S03.md).
+
+## E01-S04 Unix IPC mutation replay CODE slice — 2026-10-11
+
+Corrected the API transport convention: local IPC frame `request_id` correlates one
+exchange; mutations carry the stable `Idempotency-Key` logical header, and `If-Match`
+remains the expected-version header. Refactored Workspace creation to use the shared
+idempotency-key parser, production storage commit seam, and a narrow store/principal/Runtime
+route state projection. A real Unix socket/frame test drives the actual Workspace-create
+handler against a temporary SQLite store and proves retries with distinct frame IDs but the same key and
+payload return the original Workspace body and `X-Correlation-ID`; changed payload under
+that key returns `409` without creating a second Workspace. See
+[the E01-S04 review packet](reviews/E01-S04.md).
+
+On Linux WSL2 x86_64 with Rust/Cargo 1.98.1, `cargo test --locked -p litecoworkd
+operator_ipc_tests -- --nocapture` passed **6/6**, and `cargo test --locked -p litecoworkd`
+passed **102 unit tests plus 4 CLI integration tests**. The Unix socket and SQLite test
+does not qualify a spawned daemon, another OS identity, packaged desktop behavior, Windows
+pipes, or event-stream replay. See the review packet for the exact scope.
+
+The shared `scripts/check.sh` run passed after both S03 and S04 changes: workspace format,
+strict Clippy, Rust tests/build, six Python checks, architecture validation, and implementation
+coverage/plan validation (87 documents / 1,446 sections / 5,875 rows). It included the
+100-unit/4-integration daemon suite, 136 storage tests, 12 IPC unit tests, 2 Unix endpoint
+integration tests, and 5 Windows local-security helper tests. Linux systemd and owner USER
+gates remain pending.
+
+## E01-S03 authenticated Runtime lifecycle status projection — 2026-10-11
+
+Implemented the read-only `GET /v1/runtime-lifecycle` path from the SQLite lifecycle
+catalog through authenticated Operator IPC and the Tauri Settings surface. Storage reads
+the exact Runtime and current incarnation in one SQL statement, validates persisted
+state, and omits OS-local identity. The route returns no-store persisted policy,
+availability, incarnation and fixed safe blocker projections; dependent Task/Automation
+lists remain omitted. The Tauri bridge requires the Runtime/incarnation from the local
+readiness handshake, rejects unknown/private fields and stale response identity, and
+uses the existing bounded response reader. Settings shows persisted availability,
+recovery state and safe resolution hints while preserving the independent process/API
+status and its explicit degraded execution state.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1, Node.js 24.21.0 and pnpm 12.10.1:
+
+- `cargo test --locked -p storage-sqlite lifecycle_snapshot_is_current_incarnation_scoped_and_reads_latest_catalog_state -- --nocapture` — passed **1/1**.
+- `cargo test --locked -p litecoworkd runtime_lifecycle_view_tests -- --nocapture` — passed **2/2**.
+- `cargo test --locked -p litecoworkd operator_ipc_tests -- --nocapture` — passed **5/5**, including the existing local-peer authentication middleware tests.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml runtime_lifecycle_bridge::tests -- --nocapture` — passed **4/4**.
+- `pnpm build` — API generation freshness, TypeScript compilation and Vite production build passed; Vite reported the existing large-bundle advisory.
+- `node --experimental-transform-types --test tests/*.test.ts` — passed **106/106**.
+
+An initial UI build caught a Settings prop-name error during integration; the binding was
+corrected and the build was rerun successfully. These are CODE tests and decoder/UI build
+evidence. No spawned daemon request exercised the new endpoint over the OS IPC socket,
+and no rendered desktop or owner USER flow was run. Windows/macOS and systemd behavior
+remain unqualified. The lifecycle route itself does not alter or reconcile durable state.
+See `implementation/reviews/E01-S03.md`; E01-S03 remains `IN_PROGRESS` with E01-S02,
+SYSTEM and owner USER gates pending.
+
+### Managed Linux unit filesystem CODE tests — 2026-10-11
+
+Added temporary-filesystem tests around the existing managed systemd unit installer.
+They check the exact service body and private directory/file modes, refresh only a
+LiteCowork-marked stale unit, preserve an unmarked conflicting unit, and reject symlinked
+unit/configuration paths without touching the link target. On Linux WSL2 x86_64 with
+Rust/Cargo 1.98.1:
+
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml systemd_user_service::tests -- --nocapture` — passed **6/6**.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` — passed **32/32**.
+
+These tests do not call `systemctl` or qualify live service stop/restart behavior. The
+environment has no available Secret Service and its user systemd manager is degraded, so
+live service qualification remains pending. No host service was started or modified. See
+the [E01-S03 review packet](reviews/E01-S03.md).
+
+## E01-S04 ResourceLocation native bridge/UI CODE slice — 2026-10-11
+
+The existing owner-scoped ResourceLocation endpoint is now reachable from the Library
+Resource detail through a finite Tauri command. The native bridge derives the fixed
+`/v1/resources/{resource_id}/locations` route from the trusted Operator client, sends the
+selected `X-Workspace-ID`, uses the bounded response reader, and decodes only the closed
+public OpenAPI projection. The UI loads observations on demand, labels them as committed
+observations rather than a provider probe, and fences displayed/loading/error state by
+Workspace and Resource. Starting a refresh clears the previous rows, so a failed refresh
+does not leave stale observations displayed as current.
+
+On Linux WSL2 x86_64 with rustc/Cargo 1.98.1, Node.js 24.21.0 and pnpm 12.10.1:
+
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml resource_location_bridge::tests -- --nocapture` — passed **2/2**.
+- `node --experimental-transform-types --test tests/resource-location-api.test.ts` from `apps/litecowork-ui` — passed **6/6**, including cross-Workspace/Resource stale-state fencing.
+- `node --experimental-transform-types --test tests/*.test.ts` — passed **106/106**.
+- `pnpm build` — OpenAPI generation freshness, TypeScript compilation, and Vite production build passed. Vite reported the existing large-bundle advisory (739.88 kB main chunk).
+
+Rust reports existing warnings in unrelated Tauri bridges. The decoder/helper tests do not
+exercise native command-to-daemon routing or a rendered desktop interaction; loading,
+error, accessibility, packaged OS and owner USER evidence remain open. E01-S04 remains
+`IN_PROGRESS`; see `implementation/reviews/E01-S04.md`.
+
+### IPC frame validation and deadline CODE tests — 2026-10-11
+
+Added direct `operator-ipc` tests for malformed/control/oversized request IDs, absolute
+and traversal paths, duplicate case-insensitive headers, forbidden Authorization,
+body-length and protocol-version mismatches, response correlation, partial frame/header
+timeouts, per-chunk deadline refresh, stalled-body timeout, and body-budget release. On
+Linux WSL2 x86_64 with Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p operator-ipc -- --nocapture` — passed **12 unit tests**, **2 Unix endpoint integration tests**, 0 doc tests.
+- `cargo test --locked -p litecoworkd operator_ipc_tests -- --nocapture` — passed **5/5**.
+
+Timeout tests have outer guards to prevent a deadline regression from hanging the suite.
+This is CODE evidence only: it does not implement event streaming/replay or qualify
+separate-identity denial, packaged desktop/daemon behavior, Windows pipe ACLs, or the
+unspecified local event-stream binding. See the [E01-S04 review packet](reviews/E01-S04.md).
+
+## E01-S02 encrypted blob scope-authentication CODE slice — 2026-10-11
+
+Added a real `FileBlobStore` negative test that writes valid ciphertext under two existing
+scope paths, then transplants the first envelope into the second Workspace path and into a
+second purpose path. The test uses the same fixed key and identical plaintext/BlobRef for
+all scopes, so the expected `blob authentication failed` result demonstrates AEAD
+associated-data binding to both Workspace and purpose rather than missing-path or
+key-separation behavior. `cargo test --locked -p storage-sqlite
+rejects_valid_ciphertext_transplanted_across_workspace_or_purpose -- --nocapture` passed
+**1/1** on Linux WSL2 x86_64 with rustc/Cargo 1.98.1. `cargo test --locked -p
+storage-sqlite` then passed the complete storage package suite, **132/132** plus 0 doc
+tests. At that earlier checkpoint, the workspace gate remained to be rerun; the subsequent
+directory-boundary section below records its successful completion. The earlier E01-S02 text claiming
+the daemon lacked device identity and Runtime Workspace-binding persistence/query was
+stale: current source persists installation identity and has source-integrated local
+enrollment/query; these remain subject to production key-store and OS qualification. See
+the E01-S02 epic and review packet.
+
+### E01-S02 BlobStore directory-boundary hardening — 2026-10-11
+
+A test-first Unix regression test reproduced writes escaping a symlinked configured blob
+root. `FileBlobStore` now checks the configured root and each Workspace/purpose directory
+before reading, writing, or removing an object. The focused regression passed **1/1**;
+BlobStore tests passed **10/10**, and ResourceIndex tests passed **11/11** on Linux WSL2
+x86_64 with Rust/Cargo 1.98.1. The full package rerun is underway. The behavior rejects
+static symlink redirection; concurrent same-user directory replacement races remain
+outside the claim. `cargo test --locked -p storage-sqlite` passed **136/136** tests and 0
+doc tests. See [the E01-S02 review packet](reviews/E01-S02.md).
+The full `scripts/check.sh` gate then passed, including workspace Rust tests, Clippy, the
+six repository Python tests, architecture/schema/link validation, implementation-plan
+validation, and coverage validation (87 documents, 1,446 sections, 5,872 rows).
+
+## E01-S04 generated Operator API type CODE slice — 2026-10-10
+
+The desktop now generates TypeScript schema and operation types from the canonical
+`docs/schemas/operator-api.openapi.yaml` with pinned `openapi-typescript` 7.13.0. The
+Artifact API's wire types are derived from those generated OpenAPI definitions, and the
+UI build runs a byte-for-byte generation freshness check before TypeScript compilation.
+This adds no generic browser transport: authenticated local Operator access still uses
+the native Tauri IPC bridge. The recursive `JsonValue` schema is mapped to one explicit
+recursive TypeScript alias to avoid the generator's self-referential inline type output.
+
+Verified in `apps/litecowork-ui` on Linux WSL2 x86_64 with Node.js 24.21.0 and pnpm
+12.10.1:
+
+- `pnpm run api:check` — passed; generated output matches the OpenAPI source.
+- A temporary stale-output fixture was rejected by the generator check, then restored;
+  `pnpm run api:check` passed again.
+- `pnpm build` — passed freshness check, `tsc --noEmit`, and Vite production build.
+- `node --experimental-transform-types --test tests/*.test.ts` — **100/100 passed**.
+- `pnpm install --frozen-lockfile --ignore-scripts` parsed the lockfile but exited with
+  `ERR_PNPM_IGNORED_BUILDS` for the existing `esbuild@0.25.12` lifecycle policy. No
+  lifecycle approval or project policy change was made. The successful build used the
+  already installed dependency tree.
+
+Vite reports the existing 734.98 kB main-chunk advisory. Generated types and artifact
+operation typing are a CODE slice, not a complete generated API client or E01-S04
+completion. Event streaming, remaining routes, Windows and packaged SYSTEM qualification,
+and owner USER acceptance remain open. See `implementation/reviews/E01-S04.md`.
+
+## E01-S04 Windows authenticated IPC source slice — 2026-10-10
+
+Added a Windows named-pipe path to the authenticated local Operator boundary. The
+isolated `windows-local-security` crate extracts the current TokenLogonSid, builds a
+protected DACL for that SID and SYSTEM, rejects remote clients, and creates local pipe
+instances. `storage-sqlite` binds the Runtime installation to a keyed logon-SID
+fingerprint. `operator-ipc` derives a domain-separated pipe name, uses the shared frame
+and 128 MiB RAII body budget, limits admitted connections to eight, and rejects a peer
+that disconnects during admission without terminating the listener. Tauri derives the
+endpoint from trusted `app_data_dir`; the daemon now dispatches Windows and Unix
+connections through the same Axum auth middleware, response allowlist, handler timeout,
+and bounded drain. There is no HTTP/bearer fallback.
+
+Verified with rustc/Cargo 1.98.1 on Linux WSL2:
+
+- `cargo test --locked -p litecoworkd operator_ipc_tests -- --nocapture` — passed **5/5**.
+- `cargo test --locked -p litecoworkd` — passed **93** daemon unit tests and **4** CLI tests.
+- `cargo check --locked -p litecoworkd --bin litecoworkd` and
+  `cargo clippy --locked -p litecoworkd --bin litecoworkd -- -D warnings` — passed.
+- `cargo test --locked -p operator-ipc` — passed **6/6** (4 unit, 2 Unix lifecycle).
+- `cargo test --locked -p windows-local-security` — passed **5/5** host-independent tests.
+- Windows GNU `cargo check` and Clippy (`-D warnings`) passed for both
+  `operator-ipc` and `windows-local-security`.
+- With `LIBSQLITE3_SYS_USE_PKG_CONFIG=1 PKG_CONFIG_ALLOW_CROSS=1`, Windows-target daemon
+  `cargo check` and Clippy (`-D warnings`) passed. This uses host SQLite pkg-config
+  metadata to type-check the daemon's Windows Rust cfg; it does not build or link Windows
+  SQLite.
+- The resulting Windows-target Clippy run exposed one Windows-only `drop_non_drop` warning
+  in `runtime.rs`; explicit selection-handle release is now compiled only on Linux/macOS,
+  where the handle owns an OS descriptor. Windows-target daemon Clippy now passes with
+  warnings denied.
+- `cargo fmt --all -- --check`, architecture validation, implementation-plan validation,
+  generated coverage (87 documents / 5,864 rows), and `git diff --check` — passed.
+- The ordinary bundled-SQLite `litecoworkd` Windows cross-check still stops before app
+  compilation because MinGW GCC is absent. The pkg-config fallback above is Rust cfg
+  type-check evidence only.
+- Tauri Windows cross-check updated its nested lockfile to include the security crate,
+  then stopped in `tauri-build`: `icons/icon.ico` and `x86_64-w64-mingw32-windres` are
+  absent. A temporary one-pixel test icon was removed. Neither full Windows app source
+  was type-checked by these failed commands.
+
+No Windows host, alternate account/logon session, actual DACL, packaging, or pipe
+restart/system behavior was exercised. `docs/LOCAL-OPERATOR-IPC.md`,
+`docs/NETWORK-SECURITY.md`, E01, the backlog and the E01-S04 review packet now distinguish
+source implementation from the still-pending CODE/SYSTEM/USER evidence. E01-S04 remains
+`IN_PROGRESS`; event replay/stream transport, remaining routes, generated client and
+lifecycle commands are still open.
+
+## E01-S02 RuntimeWorkspaceBinding migration continuity CODE slice — 2026-10-10
+
+Added a real SQLite upgrade test for the previously unverified v2→v3 authorization
+backfill. The fixture uses the immutable v1/v2 SQL and seeds one active and one revoked
+Runtime with distinct role sets. It applies v3, injects failure during the v4 table
+rebuild, confirms the v3 schema boundary and both migrated bindings remain committed,
+then retries through schema v15 and confirms statuses, roles, timestamps, and IDs are
+unchanged. `cargo test --locked -p storage-sqlite
+runtime_workspace_binding_migration_preserves_authorization_across_v4_retry -- --nocapture`
+passed **1/1**. The SQLite page is in-memory; no OS keyring is accessed. This is CODE
+evidence, not a packaged upgrade test or owner acceptance. E01-S02 remains `IN_PROGRESS`
+with E01-S01 and owner SYSTEM/USER gates pending. Review packet:
+`implementation/reviews/E01-S02.md`.
+
+## E01-S04 presentation reducer schema-guard CODE slice — 2026-10-10
+
+Tightened schema checks in the existing pure presentation reducer:
+`stream.ready.projection_version` must be at least 1; `stream.resync_required` must carry
+a nonempty reason and match the reducer's active Workspace before clearing projection or
+transient state; and the `stream.ready`, `stream.resync_required`, `turn.delta`, and
+`rich.draft` envelopes reject fields outside the closed wire schema, and rich-draft
+event payloads reject undeclared fields. The projection-floor
+and resync-reason tests failed first against the old behavior, then passed after the guards.
+The final focused stream suite passed **15/15**, all UI helper tests passed **100/100**,
+and `pnpm build` passed TypeScript and Vite compilation. Verification was rerun on the
+pinned Node.js 24.21.0 and pnpm 12.10.1 toolchain. Vite reports the existing 734.98 kB
+main-chunk advisory. See
+`implementation/reviews/E01-S04.md`.
+
+This remains reducer-only CODE evidence. The stream frame schema's generic `projection`
+payload has no typed snapshot/upsert mapping, the reducer still contains internal shapes
+not represented in the wire schema, and local IPC remains one exchange per connection.
+Do not claim a stream decoder, replay, backpressure, reconnect, or transport integration.
+The next stream implementation slice needs a contract-defined payload mapping and a
+local streaming transport binding before it can safely satisfy E01-S04 reconnect
+acceptance. The reviewed API and IPC contracts do not select local long-lived framed
+streaming versus cursor polling; resolve that transport binding at contract level before
+implementing it. Other E01-S04 work remains dependency-ready.
+
+## E01-S04 ResourceLocation and exact-revision header CODE checkpoint — 2026-10-10
+
+Added the authenticated `GET /v1/resources/{resource_id}/locations` projection: explicit
+Workspace selection, owner authorization, non-disclosing cross-Workspace `NOT_FOUND`,
+empty arrays for Resources with no locations, stable ordering, committed-only freshness,
+private-locator omission, and `Cache-Control: no-store`. Storage performs the projection
+in one Workspace/Resource-scoped SQLite statement; the read creates no event or Effect.
+The local IPC response allowlist and daemon forwarding now preserve the required
+`X-Resource-Revision-Id` header used by Tauri's exact-revision content preview, while
+filtering arbitrary response headers. See `implementation/reviews/E01-S04.md`.
+
+Test-first evidence: the framed-header test first failed because the IPC response omitted
+the revision header, then passed after the finite allowlist/forwarding change. The focused
+commands passed: location response/auth/scope/no-store test (**1**), authenticated Unix
+exact-header frame test (**1**), SQLite freshness/scope/privacy test (**1**), and
+`cargo test --locked -p operator-ipc` (**3**). `cargo fmt --all` passed. The final
+`scripts/check.sh` gate passed with rustc 1.98.1, Cargo 1.98.1, uv 0.12.23, and Python
+3.13.12: workspace format, Clippy (`-D warnings`), all workspace tests/builds, Python
+tests, architecture and implementation-plan validators, coverage, and `git diff --check`.
+The daemon suite passed 85 unit plus 4 CLI tests; storage-sqlite passed 130 tests; the
+separate Tauri Rust suite passed 21 tests. Six live systemd/cgroup integration tests were
+ignored because this WSL2 host does not qualify those behaviors. Architecture validation
+reported 142 typed events; plan coverage reported **87** architecture documents, **1,444**
+sections, **5,859** traceability rows, and **67** stories. Pinned `uv run --locked`
+validators were used because the system Python lacks `openapi_spec_validator`.
+
+E01-S04 remains `IN_PROGRESS`: Windows pipe source is now present, while event replay/stream
+backpressure/reconnect, remaining routes, packaged SYSTEM qualification, cross-identity
+tests and owner USER acceptance remain open. E01-S03 SYSTEM/USER and E01-S01 prerequisite
+gates also remain open. This is a CODE checkpoint only and does not qualify packaged
+desktop behavior or close E01-S04.
+
+## E01-S03 bounded shutdown CODE checkpoint — 2026-10-10
+
+Implemented bounded local Operator shutdown settlement. Admission closes before durable
+`DRAINING`; admitted handlers receive a 60-second drain, cancellable work gets a bounded
+five-second settle attempt, Tokio teardown is capped at five seconds, and the endpoint
+thread is joined for at most 70 seconds. Handler deadlines that may leave `spawn_blocking`
+work alive, listener/thread failures, and missed bounds all prevent `STOPPING`/`STOPPED`;
+the durable incarnation remains unclean at `DRAINING`. Added listener-race, request-deadline,
+worker-cancellation, thread-timeout, and durable lifecycle/fencing coverage. See
+`implementation/reviews/E01-S03.md` for commands and exact limits.
+
+The final `scripts/check.sh` run passed with Rust/Cargo 1.98.1, uv 0.12.23, and Python
+3.13.12: format, workspace Clippy (`-D warnings`), all workspace tests/build, Python tests,
+architecture and implementation-plan validators, coverage, and `git diff --check`. The
+daemon suite passed 83 unit plus 4 CLI tests; storage-sqlite passed 129 tests. Coverage now
+reports 87 architecture documents, 1,444 sections, 5,845 traceability rows, and 142 typed
+events. The six declared systemd/cgroup integration tests were ignored. `systemctl --user
+is-system-running` returns `degraded` in this WSL environment; live systemd stop/expiry and
+owner USER acceptance remain pending. E01-S03 stays `IN_PROGRESS`; E01-S02 OS keyring /
+SYSTEM qualification and E01-S01 owner acceptance also remain pending. E01-S04 authenticated
+IPC code completion is the next dependency-ready local slice and does not waive these gates.
+
 ## Full modular documentation/source re-audit — 2026-10-10
 
 Re-read all **119 tracked Markdown files** through a module-partitioned full-line audit.
@@ -4043,3 +5904,868 @@ This pass finalizes planning/contracts only. It does not claim E03-S06-S11 or E0
 source implementation, real agent installation/auth/update support, SecretStore credential
 slot execution, descriptor-driven composer behavior, or LiteSPM cross-agent bridge
 qualification.
+
+The full `scripts/check.sh` was rerun after this slice and passed: strict workspace Clippy,
+workspace compilation/tests (including `litecoworkd` 102 unit + 4 CLI integration, 137
+storage tests, 12 `operator-ipc` unit + 2 Unix integration tests, and 5 Windows security
+helper tests), six Python checks, architecture validation (142 typed events), coverage/plan
+validation (87 documents, 1,446 sections, 5,876 rows), and `git diff --check`. The focused
+replay test was rerun after adding the expired-prefix case and passed 1/1; formatting and
+all three validators passed again. This remains CODE evidence, not local stream SYSTEM or
+USER acceptance.
+
+## Runtime inventory invalidation stream CODE slice — 2026-10-11
+
+Completed a Runtime inventory projection over the authenticated local duplex stream. It
+emits only closed `OFFERS_CHANGED` invalidations, checks Workspace owner and active
+EXECUTOR binding at subscription and while streaming, binds opaque cursors to Runtime
+incarnation, resyncs malformed/future/mismatched cursors, and caps revisions to JSON-safe
+integers. The desktop Settings consumer reports its connection state, rereads its
+authorized profile/offer projection after invalidation, and schedules a reread at the
+earliest offer expiry. Details and exact commands are in `implementation/reviews/E01-S04.md`.
+The route regression also mutates a real cursor's version, Workspace, Runtime, incarnation,
+projection version, and revision; every invalid cursor resyncs to the current invalidation,
+and sequential subscriptions prove the stream permit is released. API guidance now matches
+the Settings consumer's authorized `/agent-profiles` refresh path.
+
+Verification on Linux WSL2 x86_64: `cargo test --locked -p litecoworkd` passed 112 unit
+and 4 CLI tests; the Tauri crate passed 46 tests; the pinned Node.js 24.21.0 UI suite passed
+140 tests; the production UI build passed API generation freshness, TypeScript, and Vite;
+the Runtime subscription test passed against Tauri; operator stream contract tests passed
+4/4; architecture validation passed; generated architecture coverage and plan validation
+passed (87 documents, 1,447 sections, 5,886 rows, 67 stories); strict `litecoworkd` Clippy
+passed. `cargo fmt --check -p litecoworkd` passed. Workspace-wide formatting check still
+reports one owner-worktree formatting difference in
+`crates/storage-sqlite/src/runtime_offer_tests.rs` (an extra blank line); that file was not
+changed for this slice. `git diff --check` passed. Vite reports its existing main-chunk
+size advisory; Tauri reports existing Rust warnings.
+
+After the slice, `git worktree list` showed only the main checkout. The generated ignored
+`apps/litecowork-ui/dist` output (about 904 KiB) was removed. Reusable Rust caches remain
+(`target`: 9.1 GiB; Tauri target: 7.1 GiB) to avoid recompiling the active backlog; the
+filesystem had about 844 GiB free. No temporary subagent worktrees or scratch files remain.
+E01-S04 remains IN_PROGRESS; packaged/system and owner USER acceptance are open.
+
+## Workspace archive fail-closed slice — 2026-10-11
+
+Implemented the first real Workspace archive vertical slice under E02-S02. Settings now
+provides an explicit archive review/confirmation and a read-only archived state. Tauri calls
+the authenticated local Operator archive route with Workspace identity, `If-Match`, and an
+idempotency key; it retains the same request identity for retrying an ambiguous outcome at
+the same Workspace version. The Tauri error projection displays only known blocker labels
+and bounded counts, discarding unknown provider fields.
+
+The Operator route enforces selected Workspace/path identity, owner scope, required version
+and safe idempotency-key syntax. WorkspaceService validates that the canonical request
+payload identifies the exact archive command. SQLite checks the request and event shape,
+owner, expected version, ACTIVE-to-ARCHIVED transition and quiescence under an immediate
+write transaction. Exact receipt replay remains before stale-version and new-write checks.
+The storage seam rejects ARCHIVED projections with an unrelated event or a request payload
+that does not match the event transition.
+
+Archive quiescence now blocks: nonterminal Tasks, enabled Automations, persisted
+AutomationCursors (even for disabled Automations, because no durable TriggerHost stop
+acknowledgement is implemented), unsettled Automation occurrences/Conversation turns/
+Invocations, active Agent Sessions, Grants, CapabilityActivations, SecretLeases, execution
+and control leases, live persistent Environments, active WorkspaceRoots, ACTIVE/DRAINING
+channel hosts, unresolved Effects and pending Approvals. Channel hosts and Automation
+cursors remain fail-closed until provider shutdown can be durably acknowledged. Archiving
+does not silently stop a provider, revoke roots, destroy Environments, or delete files.
+
+Focused verification on Linux WSL2 x86_64, rustc/Cargo 1.98.1:
+
+- `cargo test --locked -p storage-sqlite -p litecoworkd workspace_archive -- --nocapture` —
+  8 SQLite archive tests and 2 daemon route tests passed, including replay, ownership,
+  stale/missing version, request/event mismatch, active channel/CapabilityActivation,
+  disabled Automation cursor, unresolved Effect and nonterminal Task blockers.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` — full Tauri suite passed 53/53; existing warnings remain in adjacent bridge code.
+- Before the final archive hardening, `cargo test --locked -p storage-sqlite -p litecoworkd` —
+  158 SQLite tests, 130 daemon unit tests and 4 CLI tests passed.
+- Node.js 24.21.0 `node --experimental-transform-types --test tests/*.test.ts` — 150/150
+  UI helper tests passed. `pnpm build` passed generated API freshness, TypeScript and Vite;
+  Vite reports the existing 781.46 kB main bundle advisory.
+- `uv run --locked python scripts/validate_architecture.py` and
+  `uv run --locked python scripts/validate_implementation_plan.py` passed after regenerating
+  coverage; the plan has 67 stories and 5,911 rows. Strict combined storage/daemon Clippy
+  passed; Tauri Clippy passed with existing warnings. `git diff --check` passed.
+
+The initial observed-Effect fixture insertion was rejected by the schema's initial-PROPOSED
+trigger; the test now transitions from PROPOSED to OBSERVED only after a test-only trigger
+disable. The earlier implementation-plan validation correctly reported stale generated
+coverage; regeneration and both validators then passed. Real daemon-process/Tauri IPC,
+packaged behavior, restart/failure recovery, provider-stop acknowledgement, OS qualification
+and owner USER acceptance are not proven. E02-S02 stays IN_PROGRESS.
+
+After this major slice, the worktree audit found one checkout and no subagent-created
+worktrees. The UI build output remains 908 KiB, `.playwright-mcp` is 172 KiB, and Rust
+`target` is 9.8 GiB; these are retained as existing/reusable outputs while V1 verification
+continues. No owner files, untracked work, or caches were deleted; nothing was staged or
+committed because the checkout contains a broad pre-existing owner change set.
+
+## E01-S04 Runtime capability-host inventory — 2026-10-12
+
+Added the authenticated local `GET /v1/runtimes/{runtimeId}/capability-hosts` route and
+SQLite projection. The read transaction fences the selected Workspace owner, ACTIVE
+EXECUTOR binding, and current Runtime incarnation, then reads normalized host observations
+and active-use counts scoped to that Workspace. Keyset cursors bind Workspace, Runtime,
+incarnation, and page size. Expired/future observations retain reported state while health
+projects as `UNKNOWN`; private provider references are omitted. OpenAPI, API/Data Model
+contracts, and generated TypeScript types are aligned. No provider or LiteSPM semantics
+were added.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1, Node.js 24.21.0, pnpm 12.10.1, Python 3.13.12:
+
+- Focused SQLite inventory test — **1/1 passed**.
+- Authenticated same-UID Unix IPC route test with real SQLite — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite` — **176/176 passed**, 266.33 seconds.
+- `cargo test --locked -p litecoworkd` — **135 unit + 4 CLI tests passed**.
+- Strict Clippy passed for `storage-sqlite` and `litecoworkd`.
+- OpenAPI type generation/freshness, TypeScript, and Vite production build passed; Vite
+  printed its existing large-chunk advisory.
+- Architecture validator, coverage regeneration (**87 documents, 1,447 sections, 5,917
+  rows**), and implementation-plan validator (**67 stories**) passed.
+- `git diff --check` passed.
+
+This is CODE evidence only. Packaged desktop, cross-identity, Windows/macOS, restart/replay,
+and owner USER gates remain open; E01-S04 remains `IN_PROGRESS`.
+
+Disk/worktree audit: one checkout at start and end, no temporary worktrees or persistent
+fixtures. `target` was 15 GiB at both observed boundaries; UI `dist` is 908 KiB, Vite cache
+3.1 MiB, retained owner `.playwright-mcp/` is 172 KiB, and 834 GiB is free. The large Rust
+cache remains useful for ongoing V1 verification. No owner data, untracked files, or caches
+were deleted. Nothing was staged or committed because the worktree contains the owner's
+broad pre-existing architecture/source pass.
+
+## E01-S04 retained-event loss during stream catch-up — 2026-10-12
+
+Cursor validation occurred before lazy stream polling. A valid Conversation resume cursor
+could therefore pass admission, then encounter event-history loss in the gap before
+catch-up without emitting the required resync marker. The single- and multi-Conversation
+catch-up branches now read the bounded Workspace/origin event page before advancing; a
+gap sends `stream.resync_required` and an owner-authorized replacement snapshot. The
+single-Conversation stream then resumes missed-message catch-up from the prior message
+frontier.
+
+The authenticated Unix IPC reconnect test still proves successful 101-message paged
+catch-up. Its second resume is exercised through the production route with an authenticated
+local-peer marker so the lazy body can be paused deterministically: the cursor is validated
+while event sequence 4 exists, that exact retained row is removed before body catch-up,
+and the test proves the gap marker, replacement snapshot at sequence 4, and subsequent
+delivery of the message missed during retention loss. The row deletion is a test fixture;
+there is no production event-retention worker.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1, uv 0.12.23, Python 3.13.12:
+
+- Focused `authenticated_unix_stream_sends_correlated_handshake_and_authorized_snapshot` —
+  **1/1 passed** after a test-first failure reproduced the missing resync frame.
+- `cargo test --locked -p litecoworkd` — **135 unit + 4 CLI tests passed**.
+- `cargo test --locked -p storage-sqlite workspace_event_replay -- --nocapture` — **3/3 passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- Targeted rustfmt, `git diff --check`, and the Operator stream contract tests — **5/5 passed**.
+- Coverage regeneration, architecture validation, and implementation-plan validation —
+  passed at 87 documents, 1,447 sections, 5,919 traceability rows, and 67 stories.
+
+The slice adds CODE evidence only; packaged stream behavior, platform/identity qualification,
+restart qualification, and owner USER acceptance remain open. Disk/worktree measurements
+were 15 GiB `target`, 908 KiB UI `dist`, 3.1 MiB Vite cache, 172 KiB owner
+`.playwright-mcp`, one checkout, and 834 GiB free at both observed boundaries. No persistent
+fixtures or temporary worktrees were created; shared build output and owner data were kept.
+
+## E01-S04 multi-Conversation resync pagination correction — 2026-10-12
+
+An adversarial review found that multi-Conversation gap recovery sent one message per
+replacement snapshot but advanced each cursor to the latest message, potentially skipping
+later pages. The resync serializer now advances only to the last included message when a
+snapshot has another page and marks catch-up active until those pages are delivered. The
+new focused cursor test verifies per-Conversation frontiers, snapshot-completion state,
+and the catch-up signal. The real SQLite-backed multi-Conversation route test also removes
+a retained event after a valid cursor is admitted, verifies both bounded replacement
+snapshots, and recovers every message from both filters exactly once. The existing
+authenticated Unix IPC single-filter retained-history regression still passes.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1:
+
+- Targeted rustfmt check — passed.
+- New `batch_resync_cursor_stays_at_delivered_message_pages_and_requests_catch_up` —
+  **1/1 passed**.
+- Existing authenticated Unix IPC stream/reconnect/retention-loss regression — **1/1 passed**.
+- `authenticated_unix_stream_subscribes_to_two_conversations_and_scopes_updates` —
+  **1/1 passed**, including retained-event loss after valid multi-filter cursor admission.
+- `cargo test --locked -p litecoworkd` — **136 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+
+This is CODE evidence only. The existing retention-loss route fixture directly inserts
+projection messages and removes a Workspace event; it does not atomically commit a message
+with its matching DomainEvent or model a production retention worker. Packaged, platform,
+restart/replay, and owner USER gates remain open. Disk/worktree baseline was one checkout,
+15 GiB `target`, 908 KiB UI `dist`, 3.1 MiB Vite cache, 172 KiB retained owner
+`.playwright-mcp`, and 834 GiB free. End measurements and cleanup are recorded after final
+validation: one checkout/worktree, `target` 15 GiB, UI `dist` 908 KiB, Vite cache 3.1 MiB,
+owner `.playwright-mcp` 172 KiB, and 834 GiB free. No temporary worktrees, persistent test
+fixtures, or orphan test processes remained. The complete daemon suite passed **136 unit +
+4 CLI tests**, strict Clippy and all 5 Operator stream contract tests passed, and architecture,
+coverage, and plan validators passed at 87 documents, 1,447 sections, 5,920 traceability
+rows, and 67 stories. Shared build output and owner data remain intact.
+
+## E01-S04 Task stream replay/snapshot retention race — 2026-10-12
+
+The Task stream now rereads its bounded Workspace/origin event page after the authorized
+Task snapshot and before advancing the cursor. A deterministic route regression removes
+sequence 5 after the initial replay read, then commits sequence 6 after the sequence-5
+snapshot but before replay confirmation. The stream withholds the stale snapshot, retries
+from the previous cursor, and emits `stream.resync_required` plus a fresh Task snapshot at
+sequence 6. The test traverses the production SQLite-backed route; its direct event-row
+deletion is a fixture and does not claim a production retention worker. Existing endpoint
+rebind coverage remains over authenticated same-UID Unix IPC.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1:
+
+- The focused `authenticated_unix_task_stream_catches_up_after_operator_endpoint_rebinds`
+  regression passed **1/1** after a test-first run failed on the missing resync marker.
+- `cargo test --locked -p litecoworkd` passed **136 unit + 4 CLI tests**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` passed.
+- Coverage regeneration wrote 87 documents and 5,921 rows; architecture validation passed;
+  implementation-plan validation passed for 67 stories and 5,921 coverage rows.
+- Targeted rustfmt and `git diff --check` passed.
+
+This adds CODE evidence only. Packaged daemon restart/replay, packaged desktop reconnect,
+Windows/macOS transport qualification, and owner USER acceptance remain open; E01-S04
+remains `IN_PROGRESS`.
+
+Disk/worktree audit: one checkout/worktree at start and end; no agent-created worktrees,
+branches, persistent test fixtures, or orphan test processes. `target` was 15 GiB at both
+boundaries; UI `dist` 908 KiB, Vite cache 3.1 MiB, retained owner `.playwright-mcp` 172 KiB,
+and 834 GiB free. Shared Cargo output and owner data remain intact.
+
+## E01-S02 WorkspaceService idempotent `SQLITE_FULL` path — 2026-10-12
+
+Added a production-path regression for the gap left by the lower-level writer test. The
+test uses a temporary on-disk SQLite database, constrains the real writer's `max_page_count`
+to its current allocation, then submits valid idempotent Workspace replication-policy
+commands through `WorkspaceService` until SQLite reports `SQLITE_FULL`. It verifies the
+failed principal/request has no idempotency receipt, and that projection, event sequence,
+and replay remain at the latest successful command. It restores writer capacity, retries
+the exact failed command and payload, then repeats the request to verify the saved response
+digest and absence of a duplicate event. The cap does not identify which statement first
+hit `SQLITE_FULL`; this proves failed-command atomicity, not that receipt insertion itself
+was the failing statement. Aggregate state blobs can remain unreferenced after a failed
+transaction or duplicate replay and are removed with the test `TempDir`. No production code
+changed. This does not represent physical disk/WAL/blob-filesystem exhaustion.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1:
+
+- Focused `sqlite_full_workspace_policy_command_rolls_back_idempotency_receipt_and_retries`
+  — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite` — **177/177 passed**, 0 doc tests, 255.97 seconds.
+- `cargo clippy --locked -p storage-sqlite --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 --check crates/storage-sqlite/src/tests.rs` — passed.
+- The test-only SQLite `TempDir` cleaned up on exit.
+
+Disk/worktree audit: one checkout/worktree at start and end; no new worktree or branch.
+`target` remained 15 GiB, UI `dist` 908 KiB, Vite cache 3.1 MiB, owner `.playwright-mcp`
+172 KiB, filesystem free 834 GiB. No orphan test process or persistent test artifacts
+remained. Existing caches and owner data were retained.
+
+## E01-S04 Unix IPC peer rejection CODE slice — 2026-10-12
+
+Added a real local-socket regression for the Unix listener's rejected-peer branch. The
+client queues malformed bytes before admission; the listener observes kernel peer
+credentials, returns `PeerRejected` without exposing an authenticated/frame-capable
+connection, and the client observes closure. A subsequent same-UID client is accepted by
+the same listener. The production daemon's accept loop treats `PeerRejected` as nonfatal
+and dispatches only successful connections. This test does not establish cross-UID or
+cross-platform denial; those remain SYSTEM/USER gates. No production code changed.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1:
+
+- Focused Unix lifecycle rejection test — **1/1 passed**.
+- `cargo test --locked -p operator-ipc` — **19 unit + 4 Unix lifecycle tests passed**.
+- `cargo clippy --locked -p operator-ipc --all-targets -- -D warnings` — passed.
+- `cargo test --locked -p litecoworkd operator_ipc_tests -- --nocapture` — **23/23 passed**;
+  4 CLI tests were filtered.
+- Targeted rustfmt and `git diff --check` passed.
+
+Disk/worktree audit: one checkout/worktree at start and end; no added worktree or branch.
+`target` grew from 15 GiB to 16 GiB during IPC/daemon compilation; UI `dist` 908 KiB,
+Vite cache 3.1 MiB, owner `.playwright-mcp` 172 KiB, and filesystem free 834 GiB. The
+additional Cargo output is retained as a shared cache for ongoing V1 verification. The
+private test socket directory self-cleaned; there were no persistent fixtures, scratch
+artifacts, or orphan processes. Owner data remain intact.
+
+## E01-S04 Resource dependents CODE slice — 2026-10-12
+
+Implemented the existing authenticated
+`GET /v1/resources/{resource_id}/dependents` route across the Operator handler, storage
+read interface, and SQLite writer actor. The read is owner/Workspace scoped, bounded,
+stable-keyset paginated from one transaction snapshot, and returns each edge's latest
+invalidation plus a freshness projection derived from revision DAG heads. It verifies the
+edge against the dependent ArtifactVersion's authoritative pinned input refs or the
+VerificationRun's nested ResourceInput references; projection drift yields `UNKNOWN`.
+Multiple source DAG heads yield `CONFLICTED`; missing/corrupt source state is not promoted
+to a confident freshness value. The cursor is bound to Workspace, Resource, and limit,
+missing/foreign Resources return nondisclosing 404, and successful responses set
+`Cache-Control: no-store`.
+
+Linux WSL2 x86_64, rustc/Cargo 1.98.1. Focused storage and real SQLite-backed authenticated
+route tests passed **1/1** each. `cargo test --locked -p storage-sqlite` passed **179/179**
+in 368.53 seconds; `cargo test --locked -p litecoworkd` passed **138 unit + 4 CLI tests**
+in 60.78 seconds. Strict Clippy passed for both packages. Targeted rustfmt and
+`git diff --check` passed. Coverage regenerated 87 documents and 5,926 rows; architecture and implementation-plan
+validators passed for 67 stories and 5,926 coverage rows. Exact
+commands and the initial corrected test expectation are recorded in
+`implementation/reviews/E01-S04.md`.
+
+This provides CODE evidence only; packaged behavior, cross-identity and Windows/macOS
+qualification, packaged restart/replay, and owner USER acceptance remain open. E01-S04
+remains `IN_PROGRESS`.
+
+Disk/worktree audit: one checkout/worktree at start and end. No agent-created branches or
+worktrees, persistent fixtures, scratch output, or orphan test processes. `target` measured
+16,117,839,219 bytes at slice end and remains as a shared Cargo cache (the starting record
+was rounded to 15 GiB). UI `dist` measured 916,087 bytes, Vite cache 3,123,284 bytes,
+retained owner `.playwright-mcp` 133,783 bytes, and filesystem free space
+894,774,571,008 bytes. Temporary SQLite directories self-cleaned; owner data
+and shared build output were retained. No files were staged or committed because the
+pre-existing owner worktree has interleaved changes in the storage and Operator
+registration/test files this slice also needs; forming a safe isolated commit would risk
+staging unrelated owner work.
+
+## E01-S03 Linux process-scope exec-failure cleanup CODE slice — 2026-10-12
+
+`linux-process-scope::spawn` now preserves cleanup ownership when the Attempt slice has
+started but the `systemd-run` launcher cannot be spawned. A successful slice stop returns
+the original exec error. If stop fails, `CleanupPending` retains an `AttemptSlice` handle
+with the exact owned slice and systemd command paths; its stop-only retry neither claims a
+child process exists nor attempts to kill a worker that never started. The contract now
+states this childless cleanup case explicitly in `docs/RUNTIME-LIFECYCLE.md`; the E01-S03
+story and review packet record the added evidence.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1. Focused tests passed **2/2**. The full
+`linux-process-scope` suite passed **16 unit tests**, with 2 unit tests, 1 combined-scope
+test, and 3 live systemd/cgroup integration tests ignored. Strict crate Clippy, the
+`x86_64-pc-windows-gnu` compile of the fail-closed unsupported API, targeted Rust 2024
+formatting, coverage generation (87 documents / 5,927 rows), architecture validation (142
+events), implementation-plan validation (67 stories), and `git diff --check` passed. Full
+commands, intermediate corrected test-fixture errors, and remaining OS/USER gates are in
+`implementation/reviews/E01-S03.md`.
+
+This is CODE evidence only. Live systemd/cgroup membership and kernel-limit qualification,
+same-UID escape behavior, Attempt admission, cross-platform behavior, and owner USER
+acceptance remain open; E01-S03 is still `IN_PROGRESS`.
+
+Disk/worktree audit: one checkout on `main` at slice start and end, no additional branches
+or worktrees. Start byte measurements: `target` 16,117,839,219; UI `dist` 916,087; Vite
+cache 3,123,284; owner `.playwright-mcp` 133,783; free filesystem space 894,774,571,008.
+End measurements: `target` 16,117,968,161; UI `dist` 916,087; Vite cache 3,123,284;
+owner `.playwright-mcp` 133,783; free filesystem space 894,776,872,960 bytes. One checkout
+remained, with no agent-created branch or worktree, scratch file, lingering test process, or
+persistent fixture. The package tests used self-cleaning temporary directories; the shared
+Cargo cache and owner data remain intact.
+The shared `target` cache and owner data were retained.
+
+## E01-S03 started-slice cleanup ownership CODE follow-up — 2026-10-12
+
+Closed the pre-launch ownership gap found during adversarial review: if Attempt-slice
+startup succeeds but cgroup resolution/parent validation fails, a failed stop retains the
+exact slice and optional parent event path in `PendingCleanup`. Retry attempts to stop the
+slice and requires positive unit-state or cgroup-v2 quiescence evidence; independent proof
+may settle cleanup even when a retry stop errors. Ambiguous systemd start-command errors
+also retain exact-slice cleanup ownership. Tests cover two consecutive stop failures and
+a retry after its first positive proof was unavailable.
+The public API no longer leaks a private observer type; the fail-closed Windows API has the
+same optional event-path shape.
+
+Linux WSL2 x86_64, Rust/Cargo 1.98.1. `cargo test --locked -p linux-process-scope --
+--nocapture` passed 19 unit tests; 2 live qualification unit tests, the combined-scope test,
+and 3 systemd/cgroup integration tests were ignored for environment requirements. Strict
+crate Clippy, Windows GNU API compilation, rustfmt, diff checks, architecture validation
+(142 events), and plan validation (67 stories / 5,928 rows) passed. Exact commands and
+scope limitations are recorded in `implementation/reviews/E01-S03.md`. The host lacks a
+delegated writable cgroup-v2 path, so this remains CODE evidence and E01-S03 stays
+`IN_PROGRESS`.
+
+Disk/worktree audit for the E01-S03 follow-up: one checkout on `main` at start and end.
+The preceding checkpoint measured `target` 16,117,968,161 bytes, UI `dist` 916,087, Vite
+cache 3,123,284, owner `.playwright-mcp` 133,783, and free filesystem space
+894,776,872,960 bytes. End measurements: `target` 16,120,344,149; UI `dist` 916,087;
+Vite cache 3,123,284; owner `.playwright-mcp` 133,783; free space 894,768,312,320 bytes.
+No additional worktree/branch, scratch output, persistent fixture, or test process remained.
+The shared Cargo cache and owner data were retained.
+
+## E01-S04 Task stream restart/reconnect CODE follow-up — 2026-10-12
+
+Extended the real SQLite and authenticated Unix IPC Task-stream test across store close,
+reopen, and endpoint rebind with a new route-state incarnation value. Reconnect with the last
+pre-outage cursor first receives the full durable projection at origin sequence 4 with the
+missed Task revision; a subsequent commit arrives on that stream at sequence 5. The route
+state value does not register a durable Runtime incarnation. Foreign-cursor resync and the
+existing retained-event race remain covered with their updated sequence frontiers. The
+reconnect assertions cross authenticated Unix IPC; the later retained-event race exercises
+the production route directly with an authenticated-peer extension. The test reinitializes
+route/store state within one process; packaged daemon process restart, platform qualification,
+packaged desktop reconnect, and owner USER acceptance remain open. The focused test passed
+1/1, the full daemon suite
+passed 138 unit + 4 CLI tests, strict Clippy, targeted rustfmt, and diff checks passed.
+Exact commands and limitations are in `implementation/reviews/E01-S04.md`.
+
+The follow-up regenerated coverage to 87 documents / 5,929 rows; architecture validation
+passed for 142 typed events, implementation-plan validation passed for 67 stories / 5,929
+rows, and `git diff --check` passed. One `main` worktree remained throughout. Disk start
+measurements (the prior checkpoint) were `target` 16,120,344,149 bytes, UI `dist` 916,087,
+Vite cache 3,123,284, owner `.playwright-mcp` 133,783, free space 894,768,312,320 bytes.
+End measurements were `target` 16,140,270,597, UI `dist` 916,087, Vite cache 3,123,284,
+owner `.playwright-mcp` 133,783, and free space 894,746,320,896 bytes. No new worktree,
+branch, scratch output, persistent fixture, or test process remained; shared build output and
+owner data were retained.
+
+## E01-S03 startup recovery failure CODE slice — 2026-10-12
+
+Factored production expired-lease startup recovery and final blocker persistence into the
+pre-Operator helper. A temporary SQLite trigger injects failure during the first durable
+recovery event insert against a valid historical execution graph. The focused integration
+test verifies the failed transaction leaves lease/Attempt/Step/Task states and versions
+unchanged, commits no recovery events, persists
+`EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED` in private lifecycle state, then recovers and
+replays idempotently after the fault is removed. This is same-process CODE evidence; it
+does not exercise a spawned daemon, OS credential provider, service manager, or USER gate.
+
+On Linux WSL2 x86_64 with Rust/Cargo 1.98.1, the focused test passed 1/1 and
+`cargo test --locked -p litecoworkd` passed 138 unit + 4 CLI tests. Strict daemon Clippy,
+targeted rustfmt, `git diff --check`, architecture validation (142 typed events), coverage
+generation (87 documents / 1,447 sections / 5,929 rows), and plan validation (67 stories)
+passed. Exact commands and limitations are in [E01-S03 review packet](reviews/E01-S03.md).
+
+## E02-S01 pinned Node runtime guard CODE slice — 2026-10-12
+
+The UI package now rejects unsupported Node versions at install time and before its
+development, production build, preview, API type generation/check, and Tauri commands. The
+`>=24.21.0 <25` version helper and focused unit test reject Node 22, older 24 patch levels,
+other majors, prereleases, and malformed version strings. The guard, production build, and
+all 151 UI helper tests pass with Node 24.21.0 / pnpm 12.10.1. Node 22.23.1 fails both
+install and build with the explicit required range. Corepack resolves the pinned pnpm
+12.10.1 while the ambient pnpm is 12.11.2; an isolated `engineStrict` incompatible-engine
+fixture is rejected. Frozen install still stops on pnpm's unapproved `esbuild@0.25.12`
+build-script policy, with the lockfile unchanged. No dependency script or policy was
+approved. Exact evidence is in [E02-S01 review packet](reviews/E02-S01.md).
+
+Disk/worktree audit for the UI guard slice: one `main` checkout at start and end. `target`
+was 16,088,323,067 bytes, Tauri `target` 8,676,342,898, UI `dist` 916,087, Vite cache
+3,123,284, and owner `.playwright-mcp` 133,783 at both boundaries. Free space decreased
+from 894,789,283,840 to 894,783,893,504 bytes. The external Chrome DevTools MCP processes
+observed at the end predated the slice and were preserved. No agent-created worktree,
+branch, browser process, or persistent fixture remained; shared build caches and owner data
+were retained.
+
+## Documentation-to-implementation reconciliation handoff — 2026-10-13
+
+This is a documentation/status update, **not an implementation milestone**. Reconciled architecture/schema fixes have been mapped to existing backlog/epics and release evidence in [V1-CONTRACT-RECONCILIATION-2026-10-13.md](V1-CONTRACT-RECONCILIATION-2026-10-13.md). In particular, E03-S03 remains blocked by Runtime-owned planning isolation and missing trusted plan-submit producer context; the contained-planner alternative is conditional, not operational. E03-S02 native Send remains unqualified. E07-S00 Windows WorkspaceRoot restart identity/revalidation remains unqualified despite distinct Windows IPC/ConPTY work. E08-S03 private automatically learned memory is a V1 target, not present source capability; E13-S03/S04 must collect real per-OS/provider and end-to-end fault evidence. No story status is promoted, no product source is changed, and no CODE/SYSTEM/USER or owner approval is implied by this entry. The working tree contains other uncommitted changes; preserve them and refer to exact review packets before resuming.
+## Documentation reconciliation validation — 2026-10-13
+
+After updating existing implementation handoffs and 12 backlog stories, `.venv/bin/python scripts/validate_architecture.py` passed (142 typed events; JSON Schema, OpenAPI, SQLite, Gateway/product names and links). `scripts/audit_v1_contracts.py` passed (206 OpenAPI routes, 158 UIV1 cases, 67 stories, zero findings). `scripts/audit_v1_design_depth.py --strict` passed (20 domains, 226 functions, 187 Settings controls, zero unmapped/duplicate signatures/structural blockers). `scripts/validate_design_owner_consistency.py` passed (34 checks, zero issues). Generated implementation coverage passed at 103 architecture documents, 1,668 sections and 6,282 rows. Scoped `git diff --check` on files edited in this handoff passed. A broad `git diff --check` flagged CRLF/trailing-whitespace lines in the existing `implementation/audit-inventory.csv`; that unrelated inventory was preserved.
+
+All results above are **documentation/contract evidence only**. They do not change existing backlog statuses or satisfy CODE/SYSTEM/USER/release gates. No application source was modified by this handoff.
+
+## E02-S03 upload GC and WorkspaceRoot Resume CODE evidence — 2026-10-12
+
+The upload blob collector now has a real-SQLite restart regression for the crash window
+after physical object removal but before durable `DELETING` fence release. After reopening
+the store, collection treats the missing object as an idempotent deletion and clears the
+persisted fence. The full storage-sqlite suite passes 187/187, including in-flight writer
+serialization, accepted shared-digest retention, crash before/after BlobStore put, deletion
+failure retry, and missing-object retry.
+
+The daemon's production WorkspaceRoot Resume helper now has direct real-filesystem and
+real-SQLite CODE tests. Startup revalidation first binds the unchanged folder in a new
+Runtime incarnation; Resume then commits PAUSED→ACTIVE and replays the exact result after
+closing and reopening the store without a second status event; the restart test compares
+the complete committed status result with the replayed result. Replacing the directory
+after startup revalidation returns the unavailable outcome, leaves root intent PAUSED,
+marks the location UNAVAILABLE, removes that incarnation's invalid binding pair, and emits
+no USER_RESUMED event. Restoring the original folder is insufficient for Resume until a
+later Runtime revalidation restores availability; the owner then performs a separate
+successful Resume. A stale expected version creates no receipt. A PAUSED root whose
+location is UNAVAILABLE cannot be resumed directly. An injected idempotency-receipt insert
+failure proves root/location projections, private binding observations, events (including
+aggregate snapshot references), and receipt roll back together. The tests use deterministic
+fixture identity pseudonyms and BlobStore keys; directory opening/no-follow identity
+comparison, Runtime readiness, SQLite transactions, events and receipts are real.
+
+Exact CODE verification on Linux WSL2 x86_64, kernel
+`6.18.40.1-microsoft-standard-WSL2`, rustc `1.98.1 (48a229cea 2026-09-01)`, Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`:
+
+- `cargo test --locked -p storage-sqlite` — **187 passed, 0 failed**.
+- `cargo test --locked -p litecoworkd workspace_root_resume_ -- --nocapture` — **3 passed**.
+- `cargo test --locked -p litecoworkd` — **142 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings` — passed.
+- Targeted Rust 2024 rustfmt completed for the changed Rust files.
+- With Node.js 24.21.0 and pnpm 12.10.1, `node --experimental-transform-types --test tests/*.test.ts` — **150 passed**; `pnpm run build` passed after regenerating stale Operator API types from OpenAPI. Vite reported its existing >500 kB chunk advisory.
+
+This is CODE evidence only. Packaged daemon/IPC restart, Tauri UI response fencing and
+idempotency-key behavior, macOS/Windows identity, production OS credential continuity,
+provider lifecycle fault injection, and owner USER acceptance remain open. E02-S03 stays
+`IN_PROGRESS`; see the [E02-S03 review packet](reviews/E02-S03.md). OpenAPI and the owning
+API/flow/resource docs now match the fresh-resume behavior. Route shape, event schemas, and
+SQLite schema/migrations did not change.
+
+Worktree/disk audit for this slice: one `main` checkout at start and end; no extra
+worktrees or branches; no cargo/test processes remained. `target` grew from
+16,277,418,338 to 16,449,982,768 bytes (+172,564,430) during storage/daemon builds. The
+Tauri target remained 8,676,342,898 bytes; UI `dist` remained 916,087 bytes; Vite cache
+remained 3,123,284 bytes; owner `.playwright-mcp` remained 133,783 bytes. Available disk
+space changed from 889,654,280,192 to 889,256,599,552 bytes (-397,680,640). Shared Rust
+build outputs are retained for subsequent verification; test temporary directories were
+removed by their fixtures, and owner data/caches were preserved.
+
+
+## E02-S03 WorkspaceRoot status UI CODE slice — 2026-10-12
+
+The Library pause/resume action now uses a tested status-action helper. Exact Workspace/root/action/version retries retain one RequestId until a complete matching response is confirmed. Validation checks Workspace/root/resource identity, non-empty display name, policy and location enums, requested lifecycle transition, and a one-step version advance; Resume additionally requires `AVAILABLE`. Errors and malformed responses reload owner-scoped root pages through the affected root, merge only refreshed rows, retain an existing row if the root is missing, and preserve the RequestId for retry. Workspace switches and root-list generation changes fence late action and refresh results. Root rows show lifecycle separately from last committed ResourceLocation availability, and Remove access has a folder-specific accessible name.
+
+With Node 24.21.0, pnpm 12.10.1, Vite 6.4.4 on Linux WSL2 x86_64:
+
+- Focused `node --experimental-transform-types --test tests/workspace-root-status.test.ts` — **9 passed**.
+- Full `node --experimental-transform-types --test tests/*.test.ts` — **159 passed**.
+- `corepack pnpm@12.10.1 run build` — passed generated API check, TypeScript and Vite build. Vite reports a ~785 kB minified JavaScript chunk advisory.
+
+This is UI CODE evidence only. No packaged Tauri/daemon interaction, cross-platform OS qualification, provider run, or owner USER acceptance was performed. E02-S03 remains `IN_PROGRESS`; see [review packet](reviews/E02-S03.md).
+
+WorkspaceRoot UI slice resource audit: one `main` worktree at start/end. Available disk
+space changed from 889,459,707,904 to 889,438,322,688 bytes (−21,385,216). Shared Rust
+`target` remained 16,212,754,204 bytes; UI `dist` measured 919,202 bytes (+3,115 from
+start); Vite cache remained 3,123,284 bytes; owner `.playwright-mcp` measured 133,783 bytes
+at both boundaries. The Home page loaded in browser preview with browser-only Runtime
+unavailable status; initial console contained a missing favicon 404. The Vite preview
+process was stopped, the two dated preview artifacts were removed, and the pre-existing
+Playwright MCP service and owner artifacts were preserved. No temporary worktree/branch
+or remaining build/test process was found.
+
+## E02-S03 WorkspaceRoot Add/Revoke UI CODE slice — 2026-10-12
+
+Add and Revoke now retain exact idempotency keys across ambiguous failures and validate
+complete committed projections before updating Library rows. Focused WorkspaceRoot helper
+tests pass 11/11; the full UI helper suite passes 161/161; the Node 24.21.0 / pnpm 12.10.1
+production build passes with the existing large-chunk advisory. The Add native chooser,
+packaged Tauri/daemon interaction, OS qualification, and owner USER acceptance remain open.
+See [E02-S03 review packet](reviews/E02-S03.md). E02-S03 remains `IN_PROGRESS`.
+
+Add/Revoke UI slice resource audit: one `main` worktree at start/end. Available disk moved
+from 889,438,322,688 to 889,449,934,848 bytes (+11,612,160). Shared Rust `target` stayed
+16,212,754,204 bytes; UI `dist` measured 920,769 bytes (+1,567); Vite cache stayed
+3,123,284 bytes; owner `.playwright-mcp` stayed 133,783 bytes. The regenerated `dist` is
+retained; no temporary worktree/branch, dev server, test process or browser artifact
+remained. Owner caches/data were preserved.
+
+## E02-S03 WorkspaceRoot adversarial follow-up — 2026-10-12
+
+The Add server idempotency key is now a process-local HMAC of the random UI request seed,
+selected folder bytes, Workspace/version, and policies. Exact same-folder retry stays stable;
+different selected folders cannot reuse one server receipt key. Only the HMAC is sent as
+`Idempotency-Key`; no path bytes appear in the key or public projection. Status refresh
+validates every root projection before merging; malformed same-Workspace list items retain
+the existing row and report refresh failure. Add/Revoke response validators safely reject
+null/primitive input. Verification: 13 focused and 163 total UI tests pass; all 54 Tauri
+library tests pass; production UI build passes (existing ~786 kB chunk advisory). This is
+CODE evidence only and does not satisfy packaged Tauri/OS or owner USER gates. See
+[E02-S03 review packet](reviews/E02-S03.md).
+
+Adversarial follow-up resource checkpoint: one `main` worktree; no created branch/worktree,
+server, test process, or browser output remained. End sizes: root `target` 16,212,754,204
+bytes; Tauri `target` 9,068,381,165 bytes; UI `dist` 920,978 bytes; Vite cache 3,123,284
+bytes; owner `.playwright-mcp` 133,783 bytes. Free space: 889,039,757,312 bytes. The
+Tauri target start measurement was missed; last earlier recorded size was 8,676,342,898
+bytes, and no isolated delta is claimed. Shared Rust build outputs are retained. Scoped
+whitespace check passed; broad `git diff --check` still flags owner-modified
+`implementation/audit-inventory.csv`, preserved unchanged by this slice.
+
+## E02-S03 exact-pin index-rebuild retry UI CODE — 2026-10-12
+
+Replaced the untested inline retry branch with a tested helper that keeps the exact
+Workspace/Resource/revision/digest and RequestId through transient/ambiguous errors,
+validates full result identity and outcome/reason, clears after a committed receipt, and
+disables retry for stale pins requiring Library reload. Retry state is session-local and
+makes no durable index-health claim. Five focused tests and all 168 UI helper tests pass;
+production build passes with the existing ~788 kB chunk advisory. No packaged provider/OS
+or owner USER gate was exercised. E02-S03 remains `IN_PROGRESS`; see the
+[E02-S03 review packet](reviews/E02-S03.md).
+
+Exact-pin retry slice resource audit: one `main` worktree at start/end. Free disk moved from
+889,039,757,312 to 889,036,439,552 bytes (−3,317,760). Root `target` remained
+16,212,754,204 bytes; Tauri `target` remained 9,068,381,165 bytes; UI `dist` grew from
+920,978 to 922,306 bytes (+1,328); Vite cache remained 3,123,284 bytes; owner
+`.playwright-mcp` remained 133,783 bytes. The regenerated `dist` remains for subsequent UI
+builds. No extra worktree/branch/server/test process/browser artifact remained.
+
+## E02-S03 Resource index rebuild/search storage CODE — 2026-10-12
+
+Added a real-SQLite regression,
+`uploaded_text_index_rebuild_search_and_restart_preserve_exact_pins`, in
+`crates/storage-sqlite/src/resource_upload_gc_tests.rs`. It creates a managed text Resource
+through production resumable upload, chunk, and commit operations; removes only the
+rebuildable index projection; rebuilds with exact Workspace/Resource/revision/digest pins;
+and replays the same RequestId and payload to verify the durable receipt. It searches the
+rebuilt projection and checks the exact pins, bounded snippet, normalized term count, and
+source byte spans. It confirms query terms are absent from SQLite, closes and reopens
+SQLite and the encrypted BlobStore with the deterministic test key, and gets the same search
+result. It also verifies Workspace isolation and that ContextDocument revocation removes
+the Resource from search and blocks another rebuild.
+
+Environment: Linux WSL2 x86_64; rustc `1.98.1 (48a229cea 2026-09-01)`; Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`.
+
+- `cargo test --locked -p storage-sqlite uploaded_text_index_rebuild_search_and_restart_preserve_exact_pins -- --nocapture` — **1 passed**.
+- `cargo test --locked -p storage-sqlite` — **188 passed, 0 failed**.
+- `rustfmt --edition 2024 crates/storage-sqlite/src/resource_upload_gc_tests.rs` — completed.
+
+An initial test assertion used query appearance order for match spans; it was corrected to
+the normalized-term order in the contract. The fixture's ContextDocument timestamp was
+also moved after Resource creation. This is local storage CODE evidence only; production
+OS key providers, key-loss/rotation, daemon/Tauri interaction, cross-platform behavior,
+and owner USER acceptance remain open. No production source, schema, migration, API, or
+event behavior changed. E02-S03 remains `IN_PROGRESS`; see the
+[E02-S03 review packet](reviews/E02-S03.md).
+
+Resource audit for this slice: one `main` worktree at start/end; no additional worktree,
+branch or Cargo/Rust process remained. Available disk changed from 889,019,183,104 to
+889,015,562,240 bytes (−3,620,864); root `target` changed from 16,212,754,204 to
+16,211,870,599 bytes (−883,605). Tauri `target` remained 9,068,381,165 bytes; UI `dist`
+922,306 bytes; Vite cache 3,123,284 bytes; owner `.playwright-mcp` 133,783 bytes.
+Temporary SQLite and BlobStore test data was removed by the fixtures; shared build outputs
+and owner data were preserved.
+
+## E02-S03 indexed-search token boundary CODE — 2026-10-12
+
+Ran the existing `resource_index::tests::query_rejects_overlong_token_instead_of_broadening_and_search`
+unit regression. It proves a normalized 128-character query term is accepted and a
+129-character term is rejected alone and beside a valid term, so the tokenizer does not
+silently weaken AND search. `cargo test --locked -p storage-sqlite
+query_rejects_overlong_token_instead_of_broadening_and_search -- --nocapture` passed **1/1**.
+Linux WSL2 x86_64; rustc `1.98.1 (48a229cea 2026-09-01)`; Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`. This is query-normalization CODE evidence only. Provider/UI
+search integration and owner USER acceptance remain open; no source code changed.
+
+Resource audit for this narrow verification: one `main` worktree; root `target` measured
+16,211,870,599 bytes, Tauri `target` 9,068,381,165 bytes, UI `dist` 922,306 bytes, Vite
+cache 3,123,284 bytes, `.playwright-mcp` 133,783 bytes, and available disk 889,013,829,632
+bytes. The focused test reused the existing build; no worktree, branch, process, or output
+was created. Owner data and shared build caches remain untouched.
+
+## E02-S03 Resource index key-loss fail-closed CODE — 2026-10-12
+
+Extended `uploaded_text_index_rebuild_search_and_restart_preserve_exact_pins` to reopen
+the persisted indexed Resource under a test BlobStore key provider that cannot return the
+referenced ResourceIndex key. Indexed search returns a storage error and never falls back
+to plaintext; the valid provider then reopens the fixture for the remaining Workspace and
+revocation assertions. This exercises missing-key behavior through the real SQLite search
+service, with deterministic test-only key providers. It does not qualify production OS
+keyring loss, key rotation/recovery, or packaged daemon behavior.
+
+- `cargo test --locked -p storage-sqlite uploaded_text_index_rebuild_search_and_restart_preserve_exact_pins -- --nocapture` — **1 passed**.
+- `cargo test --locked -p storage-sqlite` — **188 passed, 0 failed**.
+- `cargo clippy --locked -p storage-sqlite --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 crates/storage-sqlite/src/resource_upload_gc_tests.rs` — completed.
+
+Environment: Linux WSL2 x86_64; rustc `1.98.1 (48a229cea 2026-09-01)`; Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`. No API/schema/event or production code changed.
+E02-S03 remains `IN_PROGRESS`; see the [review packet](reviews/E02-S03.md).
+
+Resource audit: one `main` worktree throughout. Start free space was 889,013,088,256 bytes;
+start root `target` 16,211,870,599 bytes, Tauri `target` 9,068,381,165 bytes, UI `dist`
+922,306 bytes, Vite cache 3,123,284 bytes, `.playwright-mcp` 133,783 bytes. End free space
+was 888,984,776,704 bytes (−28,311,552). Root `target` ended at 16,239,122,142 bytes
+(+27,251,543); Tauri `target`, UI `dist`, Vite cache, and owner `.playwright-mcp` were
+unchanged. The Rust test and Clippy build output remains in the shared target for subsequent
+work; no temporary worktree, branch, process, or test fixture remained.
+
+## E02-S03 source-span preview helper UI CODE — 2026-10-12
+
+The existing UI `source-span-highlights` tests passed **4/4** with Node.js 22.23.1 using
+`node --experimental-transform-types --test tests/source-span-highlights.test.ts`. They cover
+ASCII spans, UTF-8 byte to UTF-16 offset conversion across multibyte characters and emoji,
+fallback for malformed/split/duplicate/overlapping/out-of-bounds spans, and plain preview
+on revision/digest mismatch. Node emitted its standard experimental transform-types warning.
+No source/build output changed; this is helper CODE evidence only, with authenticated
+search-to-preview, packaged Tauri, and owner USER gates still open.
+
+Resource audit: one `main` worktree; free space 888,985,481,216 bytes; root `target`
+16,239,122,142 bytes; Tauri `target` 9,068,381,165 bytes; UI `dist` 922,306 bytes; Vite
+cache 3,123,284 bytes; owner `.playwright-mcp` 133,783 bytes. No temporary files, worktrees,
+branches, or processes were created.
+
+## E02-S03 UI helper regression cross-check — 2026-10-12
+
+Ran the complete current UI helper test set with the installed Node.js 22.23.1:
+`node --experimental-transform-types --test tests/*.test.ts` from
+`apps/litecowork-ui`. Result: **168 passed, 0 failed**. Node printed the expected experimental
+TypeScript transform warning. The repository pins Node.js 24.21.0, so this is an extra
+regression cross-check, not pinned-toolchain/build qualification.
+
+Resource audit: one `main` worktree; free space moved from 888,985,481,216 to
+888,984,518,656 bytes (−962,560); root/Tauri targets, UI `dist`, Vite cache, and owner
+`.playwright-mcp` sizes were unchanged. The test command left no Node test process or output.
+
+## E02-S03 upload resume validation UI CODE — 2026-10-12
+
+Added the production `resource-upload-resume.ts` helper and switched Library upload
+resumption to its exact identity, lifecycle, expiry, chunk-size, and accepted-range checks.
+The helper pins Workspace/path/media/size/ContextDocument, requires the expected full-file
+digest, permits only live OPEN or CONTENT_RECEIVED sessions with <=4 MiB chunks, and
+verifies alignment, uniqueness, bounds, and SHA-256 for every accepted range against the
+reselected file. Five focused tests cover exact and mismatched identities, terminal/expired
+sessions, chunk bounds, same-size changed bytes, and malformed/tampered ranges.
+
+On Linux WSL2 x86_64 with Node 24.21.0, pnpm 12.10.1, Vite 6.4.4:
+
+- `node --experimental-transform-types --test tests/resource-upload-resume.test.ts` — **5 passed**.
+- `node --experimental-transform-types --test tests/*.test.ts` — **173 passed, 0 failed**.
+- `corepack pnpm@12.10.1 run build` — API type check, TypeScript, and Vite passed; the existing ~789 kB chunk advisory remains.
+
+Initial TDD run failed because the helper module/export was not yet present; all tests passed
+after implementation. The build regenerated the ignored UI `dist`, retained for follow-on
+verification. These are CODE gates only; full upload orchestration, packaged Tauri/daemon,
+provider/OS, crash/restart, and owner USER evidence remain open. E02-S03 remains
+`IN_PROGRESS`; see the [review packet](reviews/E02-S03.md).
+
+Resource audit: one `main` worktree. Before this slice's build, free space was 888,983,420,928
+bytes; root `target` 16,239,122,142 bytes; Tauri `target` 9,068,381,165 bytes; UI `dist`
+922,306 bytes; Vite cache 3,123,284 bytes; `.playwright-mcp` 133,783 bytes. End free space
+was 888,983,117,824 bytes (−303,104); root and Tauri targets and Vite cache were unchanged;
+UI `dist` grew to 923,162 bytes (+856) and is retained. Owner `.playwright-mcp` remained
+133,783 bytes. No temporary worktree, branch, process, or test artifact remained.
+
+
+## E02-S03 upload resume adversarial correction CODE follow-up — 2026-10-12
+
+Closed four upload-resume review gaps in the existing production helper and Library flow.
+ContextDocument `owner_ref` must now match its exact two-field Workspace variant; accepted
+range entries must be non-null closed records before offsets or digests are read, so null,
+primitive, and extra-field entries return `false`. The changed-suffix test keeps the
+acknowledged prefix byte-identical and same total file size while changing only unuploaded
+bytes; the range check still matches but the full session digest check denies resume. The
+COMMITTED recovery branch now calls the same helper as ordinary commit, which writes a newly
+allocated RequestId to local resume storage before IPC and returns the same ID on retry.
+
+TDD evidence: the initial test import failed because the RequestId helper did not yet exist;
+after its test seam was added, the focused run exposed the expected nested-extra-field
+acceptance and null-range TypeError. After the validation guards and App wiring, the focused
+upload-resume suite passes **8/8**, including rejection when metadata persistence reports
+failure. `writeUploadResume` now throws on failed non-null metadata writes, so its callers do
+not send their next IPC request without the retry identity; clearing a record after confirmed
+commit remains best-effort. The pinned full UI helper suite passes **176/176** on Node.js
+24.21.0. `corepack pnpm@12.10.1 run build` passes the API type freshness check,
+TypeScript and Vite; the existing ~789 kB minified chunk advisory remains.
+
+These are CODE checks of production helpers and their call-site wiring. They do not exercise
+a full upload/recovery orchestration run, daemon restart, packaged Tauri/provider/OS behavior,
+or owner USER acceptance. E02-S03 remains `IN_PROGRESS`; see
+[the review packet](reviews/E02-S03.md).
+
+Resource audit: one `main` worktree at start and end, no new branch or background process.
+At start/end, root `target` was 16,239,122,142 bytes, Tauri `target` 9,068,381,165 bytes,
+UI `dist` was 923,162 bytes at start and 923,878 bytes at end (+716); Vite cache remained
+3,123,284 bytes and owner `.playwright-mcp` 133,783 bytes. Available filesystem space
+changed from 888,974,532,608 to 888,971,718,656 bytes. The production build regenerated
+`dist`, retained for ongoing review. No temporary fixture, worktree or test process remains.
+
+## E02-S02 authenticated Workspace archive IPC CODE — 2026-10-13
+
+Added two `litecoworkd` regressions in `apps/litecoworkd/src/operator_ipc_tests.rs`. A
+same-UID Unix IPC request now exercises the archive route through `dispatch_ipc_exchange`
+and real SQLite. The success case closes the store/socket, reopens the same database and
+BlobStore, then replays the same idempotency key under a new frame ID. It verifies the
+ARCHIVED version-2 response, identical replay body/headers, one `workspace.archived.v1`
+event, and one request receipt. This covers store reopen and endpoint rebind, not a daemon
+process restart. The blocked case returns `WORKSPACE_NOT_QUIESCENT` with
+`ACTIVE_CHANNEL_HOSTS: 1` and verifies the Workspace remains ACTIVE/version 1 with no event
+or request receipt. Its test-only channel fixture temporarily removes the channel
+assignment admission trigger, so the fixture is discarded without reopening the database;
+it is not provider-stop evidence.
+
+Verification on Linux WSL2 x86_64, rustc `1.98.1 (48a229cea 2026-09-01)`, Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`:
+
+- `cargo test --locked -p litecoworkd workspace_archive_unix_ipc -- --nocapture --test-threads=1` — 2 passed.
+- `cargo test --locked -p litecoworkd` — 144 unit tests and 4 CLI tests passed.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 apps/litecoworkd/src/operator_ipc_tests.rs` — completed.
+
+The first test run failed when the blocked fixture was reopened: SQLite rejected the missing
+migration trigger as a corrupt schema. The negative assertions now run before the fixture is
+discarded. No production source, schema, API, event, or migration changed. E02-S02 remains
+`IN_PROGRESS`; packaged Settings/Tauri/daemon startup, full daemon process restart,
+provider-stop acknowledgement, cross-platform qualification, and owner USER acceptance are
+still pending. See the [E02-S02 review packet](reviews/E02-S02.md).
+
+Resource audit: one `main` worktree at start/end; 26 local branches at start, no branch
+created; no additional worktree or surviving Cargo/test process. At start/end respectively,
+root `target` measured 16,239,899,404 / 16,144,546,310 bytes, Tauri `target`
+9,068,381,165 / 9,068,381,165, UI `dist` 923,931 / 923,931, Vite cache
+3,123,284 / 3,123,284, and owner `.playwright-mcp` 133,783 / 133,783. Available disk space
+changed from 887,438,835,712 to 887,094,464,512 bytes. Cargo test/Clippy changed the shared
+root build output; it was retained for follow-on checks. Temporary SQLite/BlobStore fixtures
+were removed by their tests; owner data and caches were preserved.
+
+## E02-S02 authenticated instruction Unix IPC CODE — 2026-10-13
+
+Added a same-UID Unix IPC regression for the production Workspace instruction routes through
+`dispatch_ipc_exchange`. The first instruction POST commits revision 1, its event, and its
+idempotency receipt; the response frame is written but not read by the caller. After SQLite
+store reopen, the exact request retries with the same Idempotency-Key and a new transport
+frame ID. The replayed response body and correlation header match the committed receipt and
+event; event, revision, and receipt counts remain one. The test then creates revision 2,
+walks the two one-item history pages over IPC, rejects cursor reuse against another
+Workspace, and confirms that event payloads do not contain instruction text. The fixture
+uses a private temporary directory, real SQLite, and encrypted FileBlobStore content with a
+fixed test key.
+
+Verification on Linux WSL2 x86_64, Rust/Cargo 1.98.1:
+
+- `cargo test --locked -p litecoworkd workspace_instruction_unix_ipc_replays_unobserved_response_and_paginates_history -- --nocapture --test-threads=1` — **1 passed**.
+- `cargo test --locked -p litecoworkd` — **145 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `rustfmt --edition 2024 --check apps/litecoworkd/src/operator_ipc_tests.rs` and `git diff --check` — passed.
+
+This verifies the same-UID transport, route behavior, receipt replay after storage reopen,
+and local instruction history. The test injects a fixed principal into its narrow route
+state; it does not verify production Runtime identity binding, a daemon-process crash or
+restart, packaged Tauri behavior, a real keyring, cross-platform IPC, or owner USER
+acceptance. E02-S02 remains `IN_PROGRESS`; see the [review packet](reviews/E02-S02.md).
+
+Resource audit: one `main` worktree and 26 branches at start/end; no worktree or branch was
+created. At start/end, root `target` was 18,540,961,140 / 18,551,824,391 bytes
+(+10,863,251); Tauri `target` 10,569,419,749 / 10,569,419,749; UI `dist` 923,931 / 923,931;
+Vite cache 3,123,284 / 3,123,284; owner `.playwright-mcp` 133,783 / 133,783;
+`implementation/coverage.csv` 1,154,151 / 1,154,151; `implementation/machine-inventory.json`
+238,955 / 238,955; and `implementation/ARCHITECTURE-COVERAGE.md` 15,887 / 15,887 bytes.
+Free space changed from 886,869,041,152 to 886,496,149,504 bytes (−372,891,648), which is
+not accounted for by the named paths. Three pre-existing Playwright MCP processes remain
+running; no Cargo, test, Vite, or new process remained. The tests removed their temporary
+SQLite/BlobStore directories. The incremental Cargo target is retained for further checks;
+owner data and caches were preserved.
+
+## E02-S02 Tauri instruction bridge transport CODE — 2026-10-13
+
+Extracted testable instruction-list/create bridge helpers while preserving readiness
+validation in the production Tauri wrappers. Fixed both bridge routes to target
+`/v1/workspaces/{id}/instructions/revisions`; allowed URI delimiters in Workspace IDs are
+percent-encoded while the original ID remains in `X-Workspace-ID`. IDs containing path
+separators or dot traversal segments are rejected before transport, preserving the shared
+IPC path guard. A Unix fixture uses the real native IPC client and checks same-UID peer
+authentication, readiness, history pagination and query encoding, create headers/body,
+projection, stale-version mapping, and reserved query/fragment delimiters. The fixture
+responder is hand-authored and does not run the daemon router/auth/SQLite; this is CODE
+evidence only. E02-S02 remains `IN_PROGRESS`.
+
+On Linux WSL2 x86_64, rustc `1.98.1 (48a229cea 2026-09-01)` and Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`:
+
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --lib workspace_instruction_bridge -- --nocapture` — 5 passed.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml` — 59 library tests passed; binary and doc-test targets had 0 tests.
+- `cargo clippy --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --all-targets` — passed with 26 existing warnings; the new helpers add none.
+- `rustfmt --edition 2024 --check apps/litecowork-ui/src-tauri/src/workspace_instruction_bridge_tests.rs` and scoped `git diff --check` — passed. Whole-file recursive rustfmt from `lib.rs` reports existing owner-edited formatting differences and was not applied.
+- `cargo test --locked -p litecoworkd workspace_instruction_unix_ipc_replays_unobserved_response_and_paginates_history -- --nocapture --test-threads=1` — 1 passed; daemon source was unchanged by this Tauri slice.
+
+The separate daemon route test uses real SQLite and receipt replay. The Tauri fixture is
+still a hand-authored responder and does not join the daemon route, authorization, or SQLite
+in one process flow. Packaged Tauri/provider SYSTEM behavior, restart evidence,
+cross-platform qualification, and owner USER acceptance remain pending.

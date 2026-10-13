@@ -53,13 +53,21 @@ pub(crate) async fn delegation_profile_request(
     tauri::async_runtime::spawn_blocking(move || {
         if !valid_id(&workspace_id)
             || profile_id.as_deref().is_some_and(|value| !valid_id(value))
-            || agent_binding_id.as_deref().is_some_and(|value| !valid_id(value))
-            || cursor.as_ref().is_some_and(|value| value.is_empty() || value.len() > 2048)
-            || request_id.as_deref().is_some_and(|value| !valid_request_id(value))
+            || agent_binding_id
+                .as_deref()
+                .is_some_and(|value| !valid_id(value))
+            || cursor
+                .as_ref()
+                .is_some_and(|value| value.is_empty() || value.len() > 2048)
+            || request_id
+                .as_deref()
+                .is_some_and(|value| !valid_request_id(value))
             || revision
                 .as_ref()
                 .is_some_and(|value| super::bounded_json_bytes(value, 64 * 1024).is_err())
-            || name.as_ref().is_some_and(|value| value.trim().is_empty() || value.len() > 256)
+            || name
+                .as_ref()
+                .is_some_and(|value| value.trim().is_empty() || value.len() > 256)
         {
             return Err("Worker profile request is invalid".to_owned());
         }
@@ -67,8 +75,13 @@ pub(crate) async fn delegation_profile_request(
         let (client, _) = operator_client(&app)?;
         let request = match operation.as_str() {
             "list" => {
-                if profile_id.is_some() || agent_binding_id.is_some() || expected_version.is_some()
-                    || request_id.is_some() || revision.is_some() || name.is_some() || status.is_some()
+                if profile_id.is_some()
+                    || agent_binding_id.is_some()
+                    || expected_version.is_some()
+                    || request_id.is_some()
+                    || revision.is_some()
+                    || name.is_some()
+                    || status.is_some()
                 {
                     return Err("Worker profile request is invalid".to_owned());
                 }
@@ -83,16 +96,24 @@ pub(crate) async fn delegation_profile_request(
                 request
             }
             "create" => {
-                if profile_id.is_some() || cursor.is_some() || expected_version.is_some()
-                    || name.is_some() || status.is_some()
+                if profile_id.is_some()
+                    || cursor.is_some()
+                    || expected_version.is_some()
+                    || name.is_some()
+                    || status.is_some()
                 {
                     return Err("Worker profile request is invalid".to_owned());
                 }
-                let binding = agent_binding_id.as_deref().filter(|value| valid_id(value))
+                let binding = agent_binding_id
+                    .as_deref()
+                    .filter(|value| valid_id(value))
                     .ok_or_else(|| "Worker profile agent selection is invalid".to_owned())?;
-                let request_id = request_id.as_deref().filter(|value| valid_request_id(value))
+                let request_id = request_id
+                    .as_deref()
+                    .filter(|value| valid_request_id(value))
                     .ok_or_else(|| "Worker profile request identity is invalid".to_owned())?;
-                let revision = revision.ok_or_else(|| "Worker profile revision is missing".to_owned())?;
+                let revision =
+                    revision.ok_or_else(|| "Worker profile revision is missing".to_owned())?;
                 client
                     .post("/v1/delegation-profiles".to_owned())
                     .header("X-Workspace-ID", &workspace_id)
@@ -104,16 +125,26 @@ pub(crate) async fn delegation_profile_request(
                     }))
             }
             "revise" => {
-                if agent_binding_id.is_some() || cursor.is_some() || name.is_some() || status.is_some() {
+                if agent_binding_id.is_some()
+                    || cursor.is_some()
+                    || name.is_some()
+                    || status.is_some()
+                {
                     return Err("Worker profile request is invalid".to_owned());
                 }
-                let id = profile_id.as_deref().filter(|value| valid_id(value))
+                let id = profile_id
+                    .as_deref()
+                    .filter(|value| valid_id(value))
                     .ok_or_else(|| "Worker profile selection is invalid".to_owned())?;
-                let version = expected_version.filter(|value| *value > 0)
+                let version = expected_version
+                    .filter(|value| *value > 0)
                     .ok_or_else(|| "Worker profile version is invalid".to_owned())?;
-                let request_id = request_id.as_deref().filter(|value| valid_request_id(value))
+                let request_id = request_id
+                    .as_deref()
+                    .filter(|value| valid_request_id(value))
                     .ok_or_else(|| "Worker profile request identity is invalid".to_owned())?;
-                let revision = revision.ok_or_else(|| "Worker profile revision is missing".to_owned())?;
+                let revision =
+                    revision.ok_or_else(|| "Worker profile revision is missing".to_owned())?;
                 client
                     .post(format!("/v1/delegation-profiles/{id}/revisions"))
                     .header("X-Workspace-ID", &workspace_id)
@@ -122,16 +153,27 @@ pub(crate) async fn delegation_profile_request(
                     .json(&revision)
             }
             "duplicate" => {
-                if agent_binding_id.is_some() || cursor.is_some() || revision.is_some() || status.is_some() {
+                if agent_binding_id.is_some()
+                    || cursor.is_some()
+                    || revision.is_some()
+                    || status.is_some()
+                {
                     return Err("Worker profile request is invalid".to_owned());
                 }
-                let id = profile_id.as_deref().filter(|value| valid_id(value))
+                let id = profile_id
+                    .as_deref()
+                    .filter(|value| valid_id(value))
                     .ok_or_else(|| "Worker profile selection is invalid".to_owned())?;
-                let version = expected_version.filter(|value| *value > 0)
+                let version = expected_version
+                    .filter(|value| *value > 0)
                     .ok_or_else(|| "Worker profile version is invalid".to_owned())?;
-                let request_id = request_id.as_deref().filter(|value| valid_request_id(value))
+                let request_id = request_id
+                    .as_deref()
+                    .filter(|value| valid_request_id(value))
                     .ok_or_else(|| "Worker profile request identity is invalid".to_owned())?;
-                let name = name.as_deref().filter(|value| !value.trim().is_empty() && value.len() <= 256)
+                let name = name
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty() && value.len() <= 256)
                     .ok_or_else(|| "Worker profile name is invalid".to_owned())?;
                 client
                     .post(format!("/v1/delegation-profiles/{id}/duplicate"))
@@ -141,16 +183,27 @@ pub(crate) async fn delegation_profile_request(
                     .json(&serde_json::json!({ "name": name }))
             }
             "status" => {
-                if agent_binding_id.is_some() || cursor.is_some() || revision.is_some() || name.is_some() {
+                if agent_binding_id.is_some()
+                    || cursor.is_some()
+                    || revision.is_some()
+                    || name.is_some()
+                {
                     return Err("Worker profile request is invalid".to_owned());
                 }
-                let id = profile_id.as_deref().filter(|value| valid_id(value))
+                let id = profile_id
+                    .as_deref()
+                    .filter(|value| valid_id(value))
                     .ok_or_else(|| "Worker profile selection is invalid".to_owned())?;
-                let version = expected_version.filter(|value| *value > 0)
+                let version = expected_version
+                    .filter(|value| *value > 0)
                     .ok_or_else(|| "Worker profile version is invalid".to_owned())?;
-                let request_id = request_id.as_deref().filter(|value| valid_request_id(value))
+                let request_id = request_id
+                    .as_deref()
+                    .filter(|value| valid_request_id(value))
                     .ok_or_else(|| "Worker profile request identity is invalid".to_owned())?;
-                let status = status.as_deref().filter(|value| ["ENABLED", "DISABLED", "ARCHIVED"].contains(value))
+                let status = status
+                    .as_deref()
+                    .filter(|value| ["ENABLED", "DISABLED", "ARCHIVED"].contains(value))
                     .ok_or_else(|| "Worker profile status is invalid".to_owned())?;
                 client
                     .post(format!("/v1/delegation-profiles/{id}/status"))
@@ -165,9 +218,16 @@ pub(crate) async fn delegation_profile_request(
             .send()
             .map_err(|_| "Local worker profile service is unavailable".to_owned())?;
         let status = response.status();
-        let content_type = response.header("content-type").unwrap_or("application/json").to_owned();
+        let content_type = response
+            .header("content-type")
+            .unwrap_or("application/json")
+            .to_owned();
         let body = read_response(response)?;
-        Ok(DelegationProfileWriteResponse { status, content_type, body_base64: BASE64_STANDARD.encode(body) })
+        Ok(DelegationProfileWriteResponse {
+            status,
+            content_type,
+            body_base64: BASE64_STANDARD.encode(body),
+        })
     })
     .await
     .map_err(|_| "Worker profile request did not complete".to_owned())?

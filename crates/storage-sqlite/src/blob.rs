@@ -90,6 +90,13 @@ impl<K: WorkspaceBlobKeyProvider> BlobStore for FileBlobStore<K> {
             media_type: media_type.to_owned(),
         };
         let path = self.object_path(workspace_id, purpose, &blob.digest)?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| StoreError::Invalid("blob path has no parent".to_owned()))?;
+        match validate_private_directory_tree(&self.root, parent) {
+            Ok(()) | Err(StoreError::NotFound) => {}
+            Err(error) => return Err(error),
+        }
         if path.exists() {
             let existing = self.get(workspace_id, purpose, &blob)?;
             if existing != bytes {
@@ -127,10 +134,7 @@ impl<K: WorkspaceBlobKeyProvider> BlobStore for FileBlobStore<K> {
         envelope.extend_from_slice(&nonce);
         envelope.extend_from_slice(&ciphertext);
 
-        let parent = path
-            .parent()
-            .ok_or_else(|| StoreError::Invalid("blob path has no parent".to_owned()))?;
-        ensure_private_directory(parent)?;
+        ensure_private_directory_tree(&self.root, parent)?;
         let mut temp = NamedTempFile::new_in(parent).map_err(io_error)?;
         temp.write_all(&envelope).map_err(io_error)?;
         temp.as_file().sync_all().map_err(io_error)?;
@@ -163,7 +167,7 @@ impl<K: WorkspaceBlobKeyProvider> BlobStore for FileBlobStore<K> {
         let parent = path
             .parent()
             .ok_or_else(|| StoreError::Invalid("blob path has no parent".to_owned()))?;
-        validate_private_directory(parent)?;
+        validate_private_directory_tree(&self.root, parent)?;
         let path_metadata = fs::symlink_metadata(&path).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 StoreError::NotFound
@@ -256,7 +260,7 @@ impl<K: WorkspaceBlobKeyProvider> BlobStore for FileBlobStore<K> {
         let parent = path
             .parent()
             .ok_or_else(|| StoreError::Invalid("blob path has no parent".to_owned()))?;
-        match validate_private_directory(parent) {
+        match validate_private_directory_tree(&self.root, parent) {
             Ok(()) => {}
             Err(StoreError::NotFound) => return Ok(()),
             Err(error) => return Err(error),
@@ -397,6 +401,44 @@ fn ensure_private_directory(path: &Path) -> Result<(), StoreError> {
     validate_private_directory(path)
 }
 
+fn ensure_private_directory_tree(root: &Path, target: &Path) -> Result<(), StoreError> {
+    let relative = target.strip_prefix(root).map_err(|_| {
+        StoreError::Invalid("blob directory is outside the configured root".to_owned())
+    })?;
+    ensure_private_directory(root)?;
+
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(StoreError::Invalid(
+                "blob directory path is not normalized beneath its root".to_owned(),
+            ));
+        };
+        current.push(name);
+        ensure_private_directory(&current)?;
+    }
+    Ok(())
+}
+
+fn validate_private_directory_tree(root: &Path, target: &Path) -> Result<(), StoreError> {
+    let relative = target.strip_prefix(root).map_err(|_| {
+        StoreError::Invalid("blob directory is outside the configured root".to_owned())
+    })?;
+    validate_private_directory(root)?;
+
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(StoreError::Invalid(
+                "blob directory path is not normalized beneath its root".to_owned(),
+            ));
+        };
+        current.push(name);
+        validate_private_directory(&current)?;
+    }
+    Ok(())
+}
+
 fn validate_private_directory(path: &Path) -> Result<(), StoreError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -441,6 +483,17 @@ mod tests {
     use super::*;
     use std::fs::OpenOptions;
     use std::sync::Arc;
+
+    fn private_tempdir() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().expect("temporary blob directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("restrict temporary blob root");
+        }
+        directory
+    }
 
     #[derive(Clone)]
     struct FixedKeys;
@@ -520,7 +573,7 @@ mod tests {
 
     #[test]
     fn encrypted_blobs_round_trip_and_are_workspace_scoped() {
-        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let directory = private_tempdir();
         let store = Arc::new(FileBlobStore::new(directory.path(), FixedKeys));
         let blob = store
             .put(
@@ -546,7 +599,7 @@ mod tests {
 
     #[test]
     fn unavailable_key_provider_fails_closed_without_plaintext_blob() {
-        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let directory = private_tempdir();
         let store = FileBlobStore::new(directory.path(), MissingKeys);
         assert!(matches!(
             store.put("workspace-a", BlobPurpose::Artifact, b"secret", MEDIA_TYPE),
@@ -556,11 +609,21 @@ mod tests {
             fs::read_dir(directory.path()).expect("blob root").count(),
             0
         );
+
+        let encrypted_store = FileBlobStore::new(directory.path(), FixedKeys);
+        let blob = encrypted_store
+            .put("workspace-a", BlobPurpose::Artifact, b"secret", MEDIA_TYPE)
+            .expect("write ciphertext while key is available");
+        let unavailable_store = FileBlobStore::new(directory.path(), MissingKeys);
+        assert!(matches!(
+            unavailable_store.get("workspace-a", BlobPurpose::Artifact, &blob),
+            Err(StoreError::Blob(_))
+        ));
     }
 
     #[test]
     fn resource_index_tokens_are_stable_and_workspace_scoped() {
-        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let directory = private_tempdir();
         let store = FileBlobStore::new(directory.path(), WorkspaceScopedKeys);
         let (version, token) = store
             .resource_index_token("workspace-a", None, "architecture")
@@ -580,7 +643,7 @@ mod tests {
 
     #[test]
     fn rejects_wrong_purpose_and_corrupted_ciphertext() {
-        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let directory = private_tempdir();
         let store = FileBlobStore::new(directory.path(), FixedKeys);
         let blob = store
             .put(
@@ -623,12 +686,279 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn rejects_valid_ciphertext_transplanted_across_workspace_or_purpose() {
+        let directory = private_tempdir();
+        let store = FileBlobStore::new(directory.path(), FixedKeys);
+        let bytes = b"same plaintext and BlobRef across scopes";
+        let aggregate = store
+            .put(
+                "workspace-a",
+                BlobPurpose::AggregateState,
+                bytes,
+                MEDIA_TYPE,
+            )
+            .expect("aggregate blob committed");
+        let other_workspace = store
+            .put(
+                "workspace-b",
+                BlobPurpose::AggregateState,
+                bytes,
+                MEDIA_TYPE,
+            )
+            .expect("other Workspace blob committed");
+        let other_purpose = store
+            .put("workspace-a", BlobPurpose::Artifact, bytes, MEDIA_TYPE)
+            .expect("other purpose blob committed");
+        assert_eq!(aggregate, other_workspace);
+        assert_eq!(aggregate, other_purpose);
+
+        let aggregate_path = store
+            .object_path(
+                "workspace-a",
+                BlobPurpose::AggregateState,
+                &aggregate.digest,
+            )
+            .expect("aggregate object path");
+        let aggregate_envelope = fs::read(aggregate_path).expect("aggregate envelope");
+
+        let other_workspace_path = store
+            .object_path(
+                "workspace-b",
+                BlobPurpose::AggregateState,
+                &other_workspace.digest,
+            )
+            .expect("other Workspace object path");
+        fs::write(&other_workspace_path, &aggregate_envelope)
+            .expect("transplant envelope to another Workspace");
+        assert!(matches!(
+            store.get(
+                "workspace-b",
+                BlobPurpose::AggregateState,
+                &other_workspace
+            ),
+            Err(StoreError::Integrity(message)) if message == "blob authentication failed"
+        ));
+
+        let other_purpose_path = store
+            .object_path("workspace-a", BlobPurpose::Artifact, &other_purpose.digest)
+            .expect("other purpose object path");
+        fs::write(&other_purpose_path, &aggregate_envelope)
+            .expect("transplant envelope to another purpose");
+        assert!(matches!(
+            store.get("workspace-a", BlobPurpose::Artifact, &other_purpose),
+            Err(StoreError::Integrity(message)) if message == "blob authentication failed"
+        ));
+    }
+
+    #[test]
+    fn remove_is_idempotent_for_missing_blob_objects() {
+        let directory = private_tempdir();
+        let store = FileBlobStore::new(directory.path(), FixedKeys);
+        let blob = store
+            .put(
+                "workspace-a",
+                BlobPurpose::Artifact,
+                b"remove me",
+                MEDIA_TYPE,
+            )
+            .expect("blob committed");
+        let path = store
+            .object_path("workspace-a", BlobPurpose::Artifact, &blob.digest)
+            .expect("object path");
+
+        store
+            .remove("workspace-a", BlobPurpose::Artifact, &blob)
+            .expect("first deletion succeeds");
+        assert!(!path.exists(), "the exact object was removed");
+        store
+            .remove("workspace-a", BlobPurpose::Artifact, &blob)
+            .expect("deleting an absent object is idempotent");
+        store
+            .remove("workspace-a", BlobPurpose::Artifact, &blob)
+            .expect("repeated deletion remains idempotent");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_to_remove_unsafe_blob_objects() {
+        use std::os::unix::fs::symlink;
+
+        let directory = private_tempdir();
+        let sentinel = tempfile::NamedTempFile::new().expect("outside sentinel");
+        fs::write(sentinel.path(), b"must remain untouched").expect("sentinel contents");
+        let store = FileBlobStore::new(directory.path(), FixedKeys);
+        let blob = store
+            .put(
+                "workspace-a",
+                BlobPurpose::Artifact,
+                b"replace me",
+                MEDIA_TYPE,
+            )
+            .expect("blob committed");
+        let path = store
+            .object_path("workspace-a", BlobPurpose::Artifact, &blob.digest)
+            .expect("object path");
+
+        fs::remove_file(&path).expect("remove original object for adversarial setup");
+        symlink(sentinel.path(), &path).expect("replace object with symlink");
+        assert!(matches!(
+            store.remove("workspace-a", BlobPurpose::Artifact, &blob),
+            Err(StoreError::Integrity(_))
+        ));
+        assert!(
+            fs::symlink_metadata(&path)
+                .expect("unsafe object remains for diagnosis")
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read(sentinel.path()).expect("sentinel remains readable"),
+            b"must remain untouched"
+        );
+
+        fs::remove_file(&path).expect("remove symlink before second case");
+        fs::create_dir(&path).expect("replace object with directory");
+        assert!(matches!(
+            store.remove("workspace-a", BlobPurpose::Artifact, &blob),
+            Err(StoreError::Integrity(_))
+        ));
+        assert!(path.is_dir(), "unsafe directory remains untouched");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_symlinked_blob_directory_ancestors() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let temporary = tempfile::tempdir().expect("temporary blob test root");
+        let external_root = tempfile::tempdir().expect("external target directory");
+        fs::set_permissions(external_root.path(), fs::Permissions::from_mode(0o700))
+            .expect("restrict external target directory");
+        let linked_root = temporary.path().join("linked-root");
+        symlink(external_root.path(), &linked_root).expect("link configured blob root");
+        let linked_root_store = FileBlobStore::new(&linked_root, FixedKeys);
+
+        assert!(matches!(
+            linked_root_store.put(
+                "workspace-a",
+                BlobPurpose::Artifact,
+                b"must stay in configured root",
+                MEDIA_TYPE,
+            ),
+            Err(StoreError::Io(_))
+        ));
+        assert_eq!(
+            fs::read_dir(external_root.path())
+                .expect("external root remains readable")
+                .count(),
+            0,
+            "a symlinked configured root must not receive blob directories"
+        );
+
+        let configured_root = temporary.path().join("blob-root");
+        fs::create_dir(&configured_root).expect("create real configured root");
+        fs::set_permissions(&configured_root, fs::Permissions::from_mode(0o700))
+            .expect("restrict real configured root");
+        let workspace_directory = hex::encode(Sha256::digest(b"workspace-a"));
+        let linked_workspace = configured_root.join(workspace_directory);
+        symlink(external_root.path(), &linked_workspace).expect("link Workspace directory");
+        let workspace_link_store = FileBlobStore::new(&configured_root, FixedKeys);
+
+        assert!(matches!(
+            workspace_link_store.put(
+                "workspace-a",
+                BlobPurpose::Artifact,
+                b"must stay in workspace scope",
+                MEDIA_TYPE,
+            ),
+            Err(StoreError::Io(_))
+        ));
+        assert_eq!(
+            fs::read_dir(external_root.path())
+                .expect("external target remains readable")
+                .count(),
+            0,
+            "a symlinked Workspace directory must not receive purpose/object files"
+        );
+
+        let external_store = FileBlobStore::new(external_root.path(), FixedKeys);
+        let outside_blob = external_store
+            .put(
+                "workspace-a",
+                BlobPurpose::Artifact,
+                b"preserve external object",
+                MEDIA_TYPE,
+            )
+            .expect("create an object outside the configured root");
+        let outside_path = external_store
+            .object_path("workspace-a", BlobPurpose::Artifact, &outside_blob.digest)
+            .expect("external object path");
+        assert!(matches!(
+            workspace_link_store.get("workspace-a", BlobPurpose::Artifact, &outside_blob),
+            Err(StoreError::Io(_))
+        ));
+        assert!(matches!(
+            workspace_link_store.remove("workspace-a", BlobPurpose::Artifact, &outside_blob),
+            Err(StoreError::Io(_))
+        ));
+        assert_eq!(
+            external_store
+                .get("workspace-a", BlobPurpose::Artifact, &outside_blob)
+                .expect("external object remains readable"),
+            b"preserve external object"
+        );
+        assert!(outside_path.is_file(), "external object remains present");
+
+        let purpose_link_root = temporary.path().join("purpose-link-root");
+        fs::create_dir(&purpose_link_root).expect("create purpose-link root");
+        fs::set_permissions(&purpose_link_root, fs::Permissions::from_mode(0o700))
+            .expect("restrict purpose-link root");
+        let purpose_workspace = purpose_link_root.join(hex::encode(Sha256::digest(b"workspace-a")));
+        fs::create_dir(&purpose_workspace).expect("create real Workspace directory");
+        fs::set_permissions(&purpose_workspace, fs::Permissions::from_mode(0o700))
+            .expect("restrict Workspace directory");
+        let purpose_path = purpose_workspace.join("artifact");
+        symlink(external_root.path(), &purpose_path).expect("link purpose directory");
+        let purpose_link_store = FileBlobStore::new(&purpose_link_root, FixedKeys);
+        let purpose_object = purpose_link_store
+            .object_path("workspace-a", BlobPurpose::Artifact, &outside_blob.digest)
+            .expect("purpose-scoped object path");
+        let purpose_object_name = purpose_object.file_name().expect("object filename");
+        let external_bytes = fs::read(&outside_path).expect("read external ciphertext");
+        let purpose_external_object = external_root.path().join(purpose_object_name);
+        fs::write(&purpose_external_object, &external_bytes)
+            .expect("place sentinel at redirected object path");
+
+        assert!(matches!(
+            purpose_link_store.put(
+                "workspace-a",
+                BlobPurpose::Artifact,
+                b"must stay in purpose scope",
+                MEDIA_TYPE,
+            ),
+            Err(StoreError::Io(_))
+        ));
+        assert!(matches!(
+            purpose_link_store.get("workspace-a", BlobPurpose::Artifact, &outside_blob),
+            Err(StoreError::Io(_))
+        ));
+        assert!(matches!(
+            purpose_link_store.remove("workspace-a", BlobPurpose::Artifact, &outside_blob),
+            Err(StoreError::Io(_))
+        ));
+        assert_eq!(
+            fs::read(&purpose_external_object).expect("redirected sentinel remains"),
+            external_bytes
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn refuses_preexisting_blob_directory_with_broad_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let directory = private_tempdir();
         let store = FileBlobStore::new(directory.path(), FixedKeys);
         let path = store
             .object_path("workspace-a", BlobPurpose::Artifact, &digest(b"private"))
@@ -649,7 +979,7 @@ mod tests {
     fn refuses_to_read_blob_from_directory_with_broad_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let directory = private_tempdir();
         let store = FileBlobStore::new(directory.path(), FixedKeys);
         let blob = store
             .put("workspace-a", BlobPurpose::Artifact, b"private", MEDIA_TYPE)

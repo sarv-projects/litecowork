@@ -265,6 +265,7 @@ paths:
     post:
       tags: [workspaces]
       operationId: archiveWorkspace
+      description: Owner-authenticated terminal transition. Requires the selected Workspace path/header to match, current If-Match, and an idempotency key. Returns WORKSPACE_NOT_QUIESCENT with safe blocker kind/count entries while durable work or authority remains. A persisted AutomationCursor is active trigger-host ownership even when its Automation is disabled; channel hosts also block until a durable drain acknowledgement is supported. This operation does not stop providers or destroy Environments, roots, Resources, or files.
       parameters: [{$ref: '#/components/parameters/WorkspaceId'}, {$ref: '#/components/parameters/IdempotencyKey'}, {$ref: '#/components/parameters/IfMatch'}]
       responses:
         '200':
@@ -277,10 +278,11 @@ paths:
     get:
       tags: [workspaces, runtimes]
       operationId: listWorkspaceRuntimeBindings
+      description: Returns the selected Workspace owner's retained PENDING, ACTIVE, and REVOKED RuntimeWorkspaceBinding records in ascending binary runtime_workspace_binding_id order. The opaque keyset cursor is bound to the Workspace and page size; page size defaults to 50 and is capped at 200. This control-plane inventory does not imply current Runtime presence or readiness.
       parameters: [{$ref: '#/components/parameters/WorkspaceId'}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
       responses:
         '200':
-          description: Runtime installations authorized for the selected Workspace
+          description: Owner-authorized retained Runtime binding inventory for the selected Workspace
           content:
             application/json:
               schema: {$ref: '#/components/schemas/RuntimeWorkspaceBindingPage'}
@@ -1567,9 +1569,11 @@ paths:
         in: path
         required: true
         schema: {type: string}
+      - {$ref: '#/components/parameters/Cursor'}
+      - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Runtime offers with expiry and compatibility evidence
+          description: Current, unexpired offer observations visible through the selected Workspace's active Runtime binding; cursor is bound to that Workspace, Runtime, incarnation, and page size
           content:
             application/json:
               schema: {$ref: '#/components/schemas/RuntimeOfferPage'}
@@ -1578,6 +1582,7 @@ paths:
     get:
       tags: [runtimes]
       operationId: listRuntimeCapabilityHosts
+      description: Workspace-owner and active EXECUTOR binding scoped page for the Runtime's exact current incarnation. Ordered by host_instance_id; expired or future-dated observations retain state but return health UNKNOWN. Activation counts include only the selected Workspace. Provider-private references are omitted.
       parameters:
       - name: runtimeId
         in: path
@@ -1587,7 +1592,9 @@ paths:
       - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Normalized provider host state and LiteCowork activation-use count; upstream handles are omitted
+          description: Normalized current-incarnation provider host observations and selected-Workspace LiteCowork activation-use counts; cursor binds Workspace, Runtime, incarnation, and page size
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/CapabilityHostInstancePage'}
@@ -2946,6 +2953,7 @@ paths:
     get:
       tags: [resources]
       operationId: listResourceLocations
+      description: Returns all committed public location observations in stable location_id order. Availability and freshness describe the last stored observation and never trigger a live provider probe. Provider and locator references are excluded.
       parameters:
       - name: resourceId
         in: path
@@ -3058,7 +3066,7 @@ paths:
       tags: [resources]
       operationId: resumeWorkspaceRoot
       summary: Resume a paused persistent folder scope
-      description: Requires the current WorkspaceRoot version and an idempotency key. Only PAUSED roots can be resumed, and only when the current Runtime incarnation has an AVAILABLE location and matching identity bindings from its startup revalidation. This request does not itself reopen or revalidate the folder. UNAVAILABLE roots require Runtime identity revalidation before a separate resume action.
+      description: Requires the current WorkspaceRoot version and an idempotency key. Only PAUSED roots can be resumed while the last committed ResourceLocation is AVAILABLE. A fresh request reopens the saved private folder locator without following symlinks, compares its live directory identity with the prior authorized bindings and keyed Resource identity, and atomically refreshes the locator and identity bindings for the current READY or DEGRADED Runtime incarnation with the resume transition. The prior binding pair may belong to an earlier Runtime incarnation. Exact replay returns the committed receipt without reopening the folder. A location recorded UNAVAILABLE must first be restored by Runtime identity revalidation; a WorkspaceRoot whose status is UNAVAILABLE cannot use this action.
       parameters:
       - name: rootId
         in: path
@@ -3068,7 +3076,7 @@ paths:
       - {$ref: '#/components/parameters/IdempotencyKey'}
       responses:
         '200':
-          description: WorkspaceRoot resumed after current-incarnation identity validation
+          description: WorkspaceRoot resumed after fresh directory identity validation and current-incarnation binding refresh
           content:
             application/json:
               schema: {$ref: '#/components/schemas/WorkspaceRoot'}
@@ -5837,30 +5845,41 @@ components:
       additionalProperties: false
       required: [item_key, kind, payload_version, source_refs, order_key, freshness, payload]
       properties:
-        item_key: {type: string, minLength: 1}
-        kind: {type: string, enum: [TEXT, ACTIVITY, TASK_CARD, USER_REQUEST, APPROVAL, ARTIFACT, CITATION, CODE, DIFF, TABLE, CHART, IMAGE, BROWSER, TERMINAL, MCP_APP, ERROR]}
-        payload_version: {type: integer, minimum: 1}
-        source_refs: {type: array, items: {type: object, additionalProperties: true}}
-        occurred_at: {type: [string, 'null'], format: date-time}
-        order_key: {type: string, minLength: 1}
+        item_key: {type: string, minLength: 1, maxLength: 256}
+        kind: {type: string, enum: [TEXT, ACTIVITY, TASK_CARD, USER_REQUEST, APPROVAL, ARTIFACT, CITATION, CODE, DIFF, TABLE, CHART, IMAGE, BROWSER, TERMINAL, MCP_APP, ERROR, UNSUPPORTED]}
+        payload_version: {type: integer, minimum: 1, maximum: 9007199254740991}
+        source_refs:
+          type: array
+          maxItems: 64
+          items:
+            type: object
+            additionalProperties: false
+            required: [kind, id]
+            properties:
+              kind: {type: string, enum: [MESSAGE, TASK, STEP, RESOURCE_REVISION, ARTIFACT_VERSION, USER_REQUEST, APPROVAL, INVOCATION]}
+              id: {type: string, minLength: 1, maxLength: 256}
+              revision: {type: string, maxLength: 128}
+        occurred_at: {type: [string, 'null'], maxLength: 64, format: date-time}
+        order_key: {type: string, minLength: 1, maxLength: 256}
         status: {type: [string, 'null'], enum: [IN_PROGRESS, WAITING, NEEDS_USER, COMPLETE, INCOMPLETE, FAILED, UNAVAILABLE, UNKNOWN, null]}
-        label: {type: [string, 'null']}
+        label: {type: [string, 'null'], maxLength: 512}
         freshness: {type: string, enum: [CURRENT, STALE, UNKNOWN]}
-        payload: {type: object}
+        payload: {type: object, maxProperties: 64, additionalProperties: {$ref: '#/components/schemas/JsonValue'}}
     ConversationPresentationSnapshot:
       type: object
       additionalProperties: false
-      required: [workspace_id, conversation_id, projection_revision, stream_cursor, items, active_turn]
+      required: [workspace_id, conversation_id, projection_revision, stream_cursor, origin_sequence, items, active_turn]
       properties:
         workspace_id: {type: string, minLength: 1}
         conversation_id: {type: string, minLength: 1}
-        projection_revision: {type: integer, minimum: 1}
-        stream_cursor: {type: string, minLength: 1}
+        projection_revision: {type: integer, minimum: 1, maximum: 9007199254740991}
+        stream_cursor: {type: string, minLength: 1, description: 'Opaque cursor identifying this Conversation projection snapshot; not the message pagination cursor or durable event frontier.'}
+        origin_sequence: {type: string, pattern: '^(0|[1-9][0-9]{0,18})$', description: 'Durable SQLite-compatible origin event frontier as a decimal string, captured in the same read snapshot as this projection.'}
         items:
           type: array
           maxItems: 100
           items: {$ref: '#/components/schemas/ConversationPresentationMessage'}
-        next_cursor: {type: [string, 'null']}
+        next_cursor: {type: [string, 'null'], description: 'Conversation message pagination cursor.'}
         active_turn: {oneOf: [{$ref: '#/components/schemas/ConversationTurnPresentation'}, {type: 'null'}]}
     ConversationTurnPresentation:
       type: object
@@ -7051,6 +7070,7 @@ components:
         platform_kind: {type: string, minLength: 1}
     ResourceLocationView:
       type: object
+      additionalProperties: false
       required: [location_id, resource_id, availability, writable, observed_at, freshness]
       properties:
         location_id: {type: string}
@@ -7370,7 +7390,7 @@ components:
           items: {$ref: '#/components/schemas/WorkspaceInstructionRevision'}
         next_cursor: {type: [string, 'null']}
     CreateWorkspaceInstructionRevisionRequest:
-      description: Creates instructions from a pinned, same-Workspace UTF-8 text Resource no larger than 64 KiB.
+      description: Creates instructions from the current head of a pinned, same-Workspace UTF-8 text Resource no larger than 64 KiB. Historical or conflicted/non-current heads are rejected. The immutable instruction pin remains valid if the Resource later advances.
       type: object
       additionalProperties: false
       required: [parent_revisions, content_ref, content_digest]

@@ -99,7 +99,7 @@ Entry in creation Customize flow, later Coworker Settings, and contextual `Conne
 
 **Scopes:** conversation-only (never auto-save), Coworker-private (automatic default), Workspace-shared (explicit configured rules), personal-shared (explicit separately authorized). Access to Gmail/file/Drive is not permission to mine every item into long-term memory. Protected categories and sensitive third-party data are never automatically stored in long-term inferred memory. Temporary chat disables memory extraction from that conversation, including deferred task summaries, unless user explicitly overrides with a reviewed save.
 
-**Learning:** queued candidate extraction via qualified agent-backed capability (no independent Core reasoning), at meaningful turn or Task-result boundaries; candidate includes assertion, class (preference/fact/decision/status/procedure), confidence and evidence, source refs and freshness, scope eligibility. Deterministic gate tests scope, source trust, sensitivity rules, relevance, retention and budget. Reconcile with existing memory; versioned supersession for corrections, mark conflict/stale where ambiguous, do not silently merge incompatible claims. Automatic private commit within preauthorized rules; broadened shared scope requires prior explicit policy. `quiet`: no modal per-save, optional subtle indicator for salient changes, complete activity history and edit/revoke/delete in Memory & Knowledge.
+**Learning:** the user is informed in Quick Create that the narrowly eligible low-risk confirmed private learning default is AUTO_CONFIRMED_PRIVATE, with REVIEW_ALL and OFF available; no automatic inferred memory or shared-memory commit is enabled without a separately reviewed policy. Queued candidate extraction via qualified agent-backed capability (no independent Core reasoning), at meaningful turn or Task-result boundaries; candidate includes assertion, class (preference/fact/decision/status/procedure), confidence and evidence, source refs and freshness, scope eligibility. Deterministic gate tests scope, source trust, sensitivity rules, relevance, retention and budget. Reconcile with existing memory; versioned supersession for corrections, mark conflict/stale where ambiguous, do not silently merge incompatible claims. Automatic private commit within preauthorized rules; broadened shared scope requires prior explicit policy. `quiet`: no modal per-save, optional subtle indicator for salient changes, complete activity history and edit/revoke/delete in Memory & Knowledge.
 
 **Retrieval:** query based on current Task/turn and authorized scopes; search (deterministic first, optional semantic provider), fetch bounded pinned revision, recheck final authorization/freshness before attaching. `Context used` lists real sent attachments/retrieval receipts, never asserts an agent read all indexed files. Native harness hidden transcripts/prompts are not synchronized. Changing chief preserves LiteCowork memory, not private agent-owned history.
 
@@ -154,26 +154,27 @@ CoworkerCapabilityAssignment {
   current_revision, version
 }
 
-CoworkerMemoryPolicy {
-  mode: OFF | AUTOMATIC_PRIVATE | AUTOMATIC_WITH_APPROVED_SHARING
-  eligible_source_kinds[]
-  disabled_for_temporary_conversations: true
-  extraction_budget?, retention_policy_ref?, notification_mode: QUIET
-}
+# Learning policy and candidate/memory records are NOT independently declared here.
+# The authoritative proposed shapes are CoworkerLearningPolicyRevision,
+# LearningCandidate and MemoryRecordMetadata in LEARNING.md / DATA-MODEL.md.
+# User-authored memory/context is a ContextDocument/ResourceRevision, not
+# a fabricated LearningCandidate or another memory database.
 
-MemoryCandidate { # proposal/work queue; not automatically an authoritative fact
-  candidate_id, workspace_id, coworker_id, source_refs[]
-  source_digests[], extractor_identity, proposed_scope, classification
-  content_ref, status: QUEUED | EVALUATING | ACCEPTED | REJECTED | CONFLICTED
-  dedupe_key, created_at, expires_at, version
-}
-
-MemoryRecordMetadata { # on versioned Resource ContextDocument, not a second blob store
-  scope_owner_ref, learning_method: EXPLICIT | AUTOMATIC
-  support_refs[], confidence_label?, observed_at?, review_after?, supersedes_ref?
-  sensitivity_tier, extraction_receipt_ref, access_policy_version
-}
 ```
+
+**Memory policy normalization, no second memory state machine:** The user-facing
+OFF maps to LearningPolicy OFF; Review all maps to REVIEW_ALL; quiet automatic
+private-memory mode maps to AUTO_CONFIRMED_PRIVATE or, after explicit informed
+owner selection, AUTO_CONFIRMED_AND_LOW_RISK_INFERRED_PRIVATE. There is NO
+AUTOMATIC_WITH_APPROVED_SHARING commit mode. Explicit Workspace/personal sharing
+creates a separately versioned owner-authored ContextDocument/share/grant; it never
+broadens an automatically learned COWORKER_PRIVATE MemoryRecord. Candidate
+NEW/CLASSIFIED/NEEDS_REVIEW/AUTO_COMMIT_ELIGIBLE/COMMITTED/terminal transitions,
+LearningService and learning.* events are owned only by LEARNING.md. The legacy
+CoworkerContextPolicy.require_user_confirmation_for_memory is not the new policy
+and does not override the approved policy revision. UI manual Add Memory writes
+an authorized user-authored ContextDocument via ResourceService; it must not forge
+a LearningCandidate, automatic learning receipt, or provider source evidence.
 
 **Additional required invariants:**
 - Coworker-owned Conversations must belong to the same Workspace. `owner_coworker_id` cannot be reassigned silently to another Coworker. Global ordinary conversation need not have one.
@@ -192,17 +193,13 @@ conversation.coworker.assigned.v1       # only at creation; immutable origin
 coworker.capability_assignment.created.v1
 coworker.capability_assignment.revised.v1
 coworker.capability_assignment.revoked.v1
-coworker.memory_policy.revised.v1
-coworker.memory_candidate.status_changed.v1
-coworker.memory_record.committed.v1
-coworker.memory_record.superseded.v1
 coworker.responsibility.created.v1
 coworker.responsibility.revised.v1
 coworker.responsibility.status_changed.v1
 coworker.responsibility.health_changed.v1  # only if derived change is persisted; otherwise omit
 ```
 
-Every event has authenticated actor/service identity, Workspace and entity ID, `entity_revision`, immutable source references and timestamps, RequestId/causation/correlation, and redacted payload. Events never contain credentials, provider handles, native hidden reasoning, raw memory extracted from private sources, or OAuth callback URLs. Resource revision/create/status and existing automation/Task events continue to be emitted by their owners; no duplicate `task.started` from ResponsibilityService.
+Memory lifecycle uses only LEARNING.md target event names (coworker.learning_policy.revised.v1 and learning.candidate.* / learning.memory.*) rather than independent coworker.memory_* aliases. These remain *unpromoted candidates* until event schema, API and migrations land together. Every event has authenticated actor/service identity, Workspace and entity ID, `entity_revision`, immutable source references and timestamps, RequestId/causation/correlation, and redacted payload. Events never contain credentials, provider handles, native hidden reasoning, raw memory extracted from private sources, or OAuth callback URLs. Resource revision/create/status and existing automation/Task events continue to be emitted by their owners; no duplicate `task.started` from ResponsibilityService.
 
 ### Services and APIs (proposed)
 
@@ -212,8 +209,7 @@ CoworkerConversationService.create/list/reopen/last_active
 CoworkerAssignmentService.assign/revise/revoke/list
 StandingResponsibilityService.prepare_draft/commit/enable/pause/resume/complete/list
 StandingResponsibilityProjection.get_detail/list_runs/get_health
-MemoryLearningPolicyService.get/revise
-MemoryCandidateCoordinator.enqueue/evaluate/reconcile/commit/expire
+LearningService and CoworkerLearningPolicyRevision (single owner in LEARNING.md; do not add a competing MemoryCandidateCoordinator)
 PersonalContextService.retrieve_scoped/list_sources/revoke
 TriggerCoordinator.claim/observe/misfire_reconcile
 TaskService.admit/resume/pause/cancel/verify
@@ -223,7 +219,7 @@ NeedsYouService aggregate UserRequests/Approvals
 Suggested UI route families:
 - `/v1/coworkers/{id}/conversations`, `POST /v1/coworkers/{id}/conversations`
 - `/v1/coworkers/{id}/capability-assignments`, `POST/PATCH/DELETE`
-- `/v1/coworkers/{id}/memory-policy`, `GET/PATCH`
+- `/v1/coworkers/{id}/learning-policy` and `/learning-candidates` via LEARNING.md target routes (not two memory-policy endpoints)
 - `/v1/coworkers/{id}/memory`, `GET` from filtered ContextDocuments; `PATCH/DELETE` through ResourceService semantics
 - `/v1/coworkers/{id}/responsibilities`, `GET/POST` (draft and commit separated)
 - `/v1/responsibilities/{id}`, `GET/PATCH`, `/pause`, `/resume`, `/run-now`, `/history`
@@ -233,13 +229,13 @@ Do not override currently documented concrete API paths, IDL or contracts; exact
 
 ## 9. Complete critical flows
 
-**F-C01 Create Quick:** user submits identity/purpose + RequestId → validate Workspace/name/version → create CoworkerRevision; default eligible lead binding or null → create first Conversation referencing Coworker → open composer. If creation response times out, replay same RequestId returns same Coworker+Conversation; never duplicates.
+**F-C01 Create Quick (two recoverable owner commits):** one UI onboarding intent derives distinct, stable idempotency keys for CoworkerService.create and CoworkerConversationService.create; the first commits a CoworkerRevision with an eligible lead or null. After its receipt, the client creates a same-Workspace Conversation pinned to that Coworker. A lost Coworker create receipt is resolved by the original key, not a second identity; a lost Conversation create receipt is likewise reconciled by its own key. If Conversation creation fails, the Coworker stays created and UI offers Retry first chat; never claim both atomic without a dedicated transaction-owner contract. No automatic Task, trigger, model inference or connector is created.
 
 **F-C02 Create Advanced:** stage optional agent/worker scopes, memory settings, connectors (each authenticated independently), responsibilities as *drafts* → final review commits Coworker → separately confirms enabling standing triggers only after dependency checks. Partial OAuth failure does not erase Coworker draft; no implicit enabled Automation.
 
 **F-C03 Add on demand:** Coworker says it needs Calendar → present provider `Connect` entry → user signs in via provider secure flow → attach existing Connection to Coworker policy → readiness check → original waiting Task revalidates current scope and resumes when safe. Do not repeat action until idempotency/Effect reconciled.
 
-**F-C04 User creates recurring work:** user asks to check daily + brief weekly → native chief proposes responsibility with Goal+Routines+Automations → host validates recurrence, timezone, sources, budgets, source and execution placement → user enables → atomic durable snapshot/outbox → each trigger fires independently through standard TriggerCoordinator and materializes pinned Tasks.
+**F-C04 User creates recurring work:** user asks to check daily + brief weekly. Native chief can supply a typed suggestion via a *qualified* proposal-capability contract; otherwise its committed message is inert and the user opens an explicit prefilled Routine/Automation editor. The owner reviews Goals/Routines/Automations separately; each canonical service validates recurrence, timezone, sources, budgets and execution placement. The optional StandingResponsibility grouping has no independent trigger engine. Only owner-confirmed enabling writes each durable definition/outbox; trigger-host readiness receipts gate ENABLED. Partial activation remains PAUSED/BLOCKED with a repair plan. Each real trigger fires independently through TriggerCoordinator and materializes one pinned Task.
 
 **F-C05 Proactive signal:** connector event authorized → normalize event/cursor → deterministic filter/dedupe → within standing budget? if no meaningful change, NO_ACTION record and no notification; if interest, propose Suggestion; if explicitly preauthorized exact action, commit a Task through normal path. Reader content cannot issue an authorization instruction.
 
@@ -411,3 +407,38 @@ Agent installation, native sign-in, API-key/provider configuration and agent upd
 handled in Settings > Agent Registry and reused by every permitted Coworker/Workspace
 binding. If a Coworker selects an agent requiring setup, the Coworker chat keeps the draft
 and links directly to that agent's setup panel.
+
+
+## 15. Connector, learning, run-continuation, and unified-mode reconciliation — 2026-10-10
+
+The final connector/auth/workflow contract is
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md). The final correction-to-memory/
+instruction/skill contract is [Learning](LEARNING.md). Exact upstream implementation
+references are [Reference Implementations](REFERENCE-IMPLEMENTATIONS.md).
+
+Additional frozen product decisions:
+
+1. **No global Cowork/Code split.** Code is a New-menu preset and Task intent. Agent choice
+   still rebuilds Model/Reasoning/native controls from AgentControlDescriptor.
+2. **Direct connectors are first-class.** Highest-value systems should not require users to
+   hunt for arbitrary MCP servers. LiteSPM still owns connector package lifecycle and
+   cross-agent exposure.
+3. **Credential owner is explicit.** Default desktop path keeps supported public-client
+   tokens in local SecretStore. Nango/Arcade/Composio/other hosted backends are optional.
+4. **Event reachability is separate from credential custody.** A relay may queue signed
+   bounded hints while the laptop sleeps without holding the account's general refresh
+   token or provider content.
+5. **Workflow engines are capabilities.** Existing deterministic workflows do not become
+   the Coworker's planner or scheduler.
+6. **Learning is typed.** Memory may quietly commit only under LearningPolicy. Instruction,
+   Skill, Routine, Automation and permission changes use reviewed/versioned paths.
+7. **Run continuation is on demand.** Automation history links to canonical Tasks. Continue
+   creates/returns one follow-up Conversation; it does not create hidden chats for every
+   background run.
+8. **Own computer is logical.** A Coworker may have durable private Resources/browser
+   preferences, while actual browser/terminal/computer execution uses normal Environment
+   and lease allocation.
+
+## V1 detailed design integration — 2026-10-12
+
+The Coworker chat composer reuses the identical native adaptive UI and ConversationTurn semantics of NATIVE-COMPOSER-LLD.md. DESKTOP-SHELL-LLD.md owns roster and Settings interaction details. Changing lead after a saved Task never mutates pinned provenance. The user may use chat without creating a Coworker. Preserve last-active owner identity and unsent drafts across roster switching.

@@ -1038,3 +1038,50 @@ The selected agent's panel may show:
 
 Users should not reinstall one LiteSPM package for every agent when a qualified
 cross-agent bridge exists.
+
+
+## Unified launch presets, connection ownership, learning, and run continuation
+
+### One product, no Cowork versus Code fork
+
+Coding is a work intent, not a second information architecture. The New menu may offer
+**Chat**, **Code task**, **Research**, **Work with files**, and **Automation** presets. A
+Code task can preselect repository/folder, coding AgentBinding, worktree policy and
+verification defaults, but it creates the same canonical Conversation/Task structures and
+uses the same Work/Needs You/Artifacts/Workbench.
+
+### Connection experience
+
+Normal path is Find app -> Connect/sign in -> review account/access -> Done. Advanced
+details identify package/provider and exact qualified revision, credential owner
+(**On this device** or named external backend), connected account display hint, granted
+provider scopes, Coworker assignment, connection health and event-delivery mode.
+
+The UI never asks users to paste OAuth codes/tokens into chat. Task-time Connect returns to
+the exact blocked Task and revalidates it.
+
+### Automation Runs and Continue
+
+Run detail foregrounds the actual Task result: trigger, Coworker, pinned revisions,
+outputs, blockers and evidence. Actions may include **Continue**, **Run again**, and
+**View activity**. Continue creates/opens the Task's one canonical follow-up Conversation.
+The chat begins with a trusted run-context card, not synthesized old assistant messages.
+Diagnostics may state native session resumed or durable context rebuilt.
+
+### Learning
+
+Corrections should improve a Coworker without turning chat into a settings dashboard.
+Policy-qualified private memory may show a quiet Remembered notice. Instruction, Skill,
+Routine or Automation changes go to compact review with exact source/diff/tests.
+Useful, Not relevant, Fix result and Don't do this again are feedback inputs, not direct
+permission/config mutations.
+
+### Terminal and computer
+
+Browser/Computer/Terminal remain implementation capabilities in Workbench. Terminal is
+advanced and never required to use the product. Activity summarizes meaningful outcomes
+first and exposes commands/tool JSON only on inspection.
+
+## V1 detailed design integration — 2026-10-12
+
+Detailed shell Settings/sidebars/Workbench and animation reducers live in DESKTOP-SHELL-LLD.md; native chat / @ model selection in NATIVE-COMPOSER-LLD.md; Chrome modes/profile imports/takeover in CHROME-BROWSER-LLD.md; normalized central rendering and fallbacks in RENDERING-CONFORMANCE-LLD.md. Existing presentation and conversation honesty rules still apply. New chat starts with right Workbench closed unless explicit prior user preference. No native Chrome claim from Tauri WebView alone.

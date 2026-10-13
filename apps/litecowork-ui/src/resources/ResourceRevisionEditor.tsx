@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { resourceLocationApi, resourceLocationStateForSelection, type ResourceLocationView, type ResourceLocationLoadState } from "./resource-location-api";
 import "./resource-revision-editor.css";
 
 type Resource = {
@@ -119,6 +120,13 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
   const [compareError, setCompareError] = useState<string | null>(null);
   const [comparison, setComparison] = useState<RevisionComparison | null>(null);
   const comparisonRequest = useRef(0);
+  const [locationState, setLocationState] = useState<ResourceLocationLoadState | null>(null);
+  const locationsRequest = useRef(0);
+  const selectedLocationState = resourceLocationStateForSelection(
+    locationState,
+    resource.workspaceId,
+    resource.resourceId,
+  );
 
   useEffect(() => {
     comparisonRequest.current += 1;
@@ -129,6 +137,12 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
     setComparison(null);
     setCompareOpen(false);
     return () => { comparisonRequest.current += 1; };
+  }, [resource.resourceId, resource.workspaceId]);
+
+  useEffect(() => {
+    locationsRequest.current += 1;
+    setLocationState(null);
+    return () => { locationsRequest.current += 1; };
   }, [resource.resourceId, resource.workspaceId]);
 
   useEffect(() => {
@@ -277,6 +291,27 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
       }
     } finally {
       if (request === comparisonRequest.current) setCompareBusy(false);
+    }
+  };
+
+  const loadResourceLocations = async () => {
+    const request = ++locationsRequest.current;
+    const selection = { workspaceId: resource.workspaceId, resourceId: resource.resourceId };
+    setLocationState({ ...selection, busy: true, error: null, locations: null });
+    try {
+      const locations = await resourceLocationApi.list(selection.workspaceId, selection.resourceId);
+      if (request === locationsRequest.current) {
+        setLocationState({ ...selection, busy: false, error: null, locations });
+      }
+    } catch (cause) {
+      if (request === locationsRequest.current) {
+        setLocationState({
+          ...selection,
+          busy: false,
+          error: messageOf(cause, "Saved Resource locations are unavailable."),
+          locations: null,
+        });
+      }
     }
   };
 
@@ -548,6 +583,40 @@ export function ResourceRevisionEditor({ resource, onClose, onCommitted }: { res
         <span><strong>Current revision</strong>{detail.currentRevisionId ?? "Conflicted or unavailable"}</span>
         <span><strong>Context status</strong>{context?.status ?? "Not a ContextDocument"}</span>
       </div>
+      <section className="resource-location-observations" aria-labelledby="resource-location-observations-title">
+        <div className="section-heading">
+          <div><h3 id="resource-location-observations-title">Saved locations</h3><p>Availability and freshness come from stored observations; loading this list does not contact a provider.</p></div>
+          <button className="quiet-button" type="button" disabled={selectedLocationState?.busy} onClick={() => void loadResourceLocations()}>
+            {selectedLocationState?.busy
+              ? "Loading…"
+              : selectedLocationState?.error
+                ? "Try again"
+                : selectedLocationState?.locations === null || !selectedLocationState
+                  ? "Show locations"
+                  : "Refresh locations"}
+          </button>
+        </div>
+        {selectedLocationState?.busy && <p className="inline-status" role="status">Loading saved location observations…</p>}
+        {selectedLocationState?.error && <p className="inline-error" role="alert">{selectedLocationState.error}</p>}
+        {selectedLocationState?.locations !== null && selectedLocationState?.locations !== undefined
+          && !selectedLocationState.busy && selectedLocationState.locations.length === 0 && !selectedLocationState.error
+          && <p className="inline-status" role="status">No saved location observations are recorded for this Resource.</p>}
+        {selectedLocationState?.locations && selectedLocationState.locations.length > 0 && <ul className="resource-location-list">
+          {selectedLocationState.locations.map((location: ResourceLocationView) => <li key={location.location_id}>
+            <h4>Location {location.location_id}</h4>
+            <dl>
+              <div><dt>Availability</dt><dd>{location.availability}</dd></div>
+              <div><dt>Freshness</dt><dd>{location.freshness}</dd></div>
+              <div><dt>Write access</dt><dd>{location.writable ? "Writable" : "Read-only"}</dd></div>
+              {location.runtime_id && <div><dt>Runtime ID</dt><dd>{location.runtime_id}</dd></div>}
+              {location.environment_id && <div><dt>Environment ID</dt><dd>{location.environment_id}</dd></div>}
+              {location.connection_id && <div><dt>Connection ID</dt><dd>{location.connection_id}</dd></div>}
+              <div><dt>Last observed</dt><dd>{location.observed_at}</dd></div>
+              {location.last_checked_at && <div><dt>Observation checked</dt><dd>{location.last_checked_at}</dd></div>}
+            </dl>
+          </li>)}
+        </ul>}
+      </section>
       {context ? <p className="resource-context-owner">{context.kind} · owner-authored ContextDocument</p> : <p className="inline-status">Revision editing is available only for owner-authored ContextDocuments.</p>}
       {context && <section className="resource-context-status" aria-labelledby="resource-context-status-title">
         <div><h3 id="resource-context-status-title">Context availability</h3><p>Current status: <strong>{context.status}</strong></p></div>

@@ -276,3 +276,15 @@ include textual summaries; checklists use textual boxes; deliverables list authe
 links or supported attachments; MCP Apps receive a fallback description and LiteCowork
 deep-link. Approval/UserRequest channel rules remain those of their owning domains. A
 weaker channel never gains stronger authority from rich formatting.
+
+
+## Automation follow-up presentation
+
+When a user continues an Automation Task, the initial run-context summary is a host-bound
+control/presentation, not model-generated conversation history. RichResponse may enhance
+subsequent agent answers normally, but cannot rewrite trigger/Task/Artifact/Evidence truth
+or imply native-session continuity when the adapter used a durable cold rebuild.
+
+## V1 detailed design integration — 2026-10-12
+
+RENDERING-CONFORMANCE-LLD.md defines native output fallback and conformance golden corpus. RichPresentation is optional; never treat generated React/HTML/JS controls as authorized Core actions. The main semantic message stays available, accessible and complete. Unsupported vendor-specific native output must render safe diagnostic detail rather than silently disappear.

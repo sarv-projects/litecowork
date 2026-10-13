@@ -11,8 +11,10 @@ are the Rust/Python tooling authorities. Desktop pins are
 The pnpm config pins the engine-validation target and turns strict dependency engine
 checking on. `scripts/check.sh` remains the Rust/Python and
 architecture-contract entry point; it does not install or validate the UI toolchain. The
-desktop dependency graph was lockfile-resolved with lifecycle scripts disabled, but the
-Node 24 UI build has not been run. The desktop supports pnpm only; npm is not a supported
+UI pins `openapi-typescript` 7.13.0 for generated schema/operation types and checks their
+freshness in every production build. A Node 24.21.0 build has passed. A frozen-lockfile
+install currently stops at pnpm's ignored `esbuild` lifecycle-script policy, so dependency
+bootstrap is not yet qualified from a clean checkout. The desktop supports pnpm only; npm is not a supported
 installer because it has a separate lockfile/configuration contract, and pnpm 12 reads
 project policy from `pnpm-workspace.yaml`, not npm's `.npmrc`. These pins qualify the
 declared toolchain only; they do
@@ -28,7 +30,7 @@ a candidate fails qualification.
 | UI components | Accessible Radix primitives, CSS tokens/Tailwind where useful | Existing DESIGN-SYSTEM/MOTION drive appearance; no wholesale copied template |
 | Local storage | SQLite WAL, FK on, one bounded write executor; rusqlite 0.40.2 is the provisional first adapter | Preserves the single-writer transaction boundary in the current slice; controlled system-SQLite SP02 samples show no decisive driver performance winner, so rusqlite remains provisional |
 | Search | SQLite FTS5 for deterministic metadata/text search | Semantic retrieval remains a separate qualified provider |
-| Operator transport | Typed HTTP/OpenAPI + resumable event stream through Axum; shared framed Unix IPC for the current Linux/macOS desktop source path | The daemon and Tauri source now use authenticated Unix IPC on Linux/macOS, with peer-UID checks and no bearer/loopback fallback. This source has not been built or OS-qualified. Windows fails closed pending named-pipe DACL/SID support; macOS sandbox bookmark handling remains a separate release gate (SP03). |
+| Operator transport | Typed HTTP/OpenAPI + resumable event stream through Axum; shared framed Unix IPC and Windows named-pipe source paths | The daemon and Tauri source use authenticated Unix IPC on Linux/macOS and now include Windows named pipes with current-logon-SID/SYSTEM DACLs and remote-client rejection. Windows helper crates cross-compile, but the full daemon/Tauri target builds and all OS/system qualification remain open; macOS sandbox bookmark handling is a separate release gate (SP03). |
 | Rust tests | cargo test, proptest, fault injection, fixture/contract suites | Test command/event transaction and legal transitions, not only methods |
 | UI tests | Vitest + Testing Library; browser harness Playwright; native app driver where supported | Browser tests cannot prove native Tauri integration; OS-specific real-app test gate |
 | Parsing/retrieval | Isolated optional Python provider; Docling candidate plus type-specific parsers | Parsing/OCR libraries are valuable, but untrusted CPU/memory-heavy input stays outside Core |
@@ -73,8 +75,10 @@ scripts/check.sh
 ```
 
 For the desktop UI, install Node.js 24.21.0 and pnpm 12.10.1, then from
-`apps/litecowork-ui` use `pnpm install --frozen-lockfile`. This is the dependency
-bootstrap command, not a claim that the current unverified source builds.
+`apps/litecowork-ui` use `pnpm install --frozen-lockfile`, then `pnpm build`. The current
+lockfile install may stop at the repository's ignored `esbuild` build-script policy; the
+owner must review any lifecycle approval separately. The UI build currently passes from
+the existing installed dependency tree and checks generated OpenAPI type freshness.
 
 `uv` reads `.python-version` and provisions Python 3.13.12 as needed. Windows setup uses
 the official PowerShell installers linked in [SOURCES](SOURCES.md), followed by the same

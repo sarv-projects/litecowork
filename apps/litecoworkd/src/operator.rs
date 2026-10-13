@@ -1,13 +1,20 @@
+// Axum handlers preserve complete error Responses so status, headers, and bodies pass
+// through the shared Operator boundary without reconstruction.
+#![allow(clippy::result_large_err)]
+
 use crate::agents::{
     AgentInstallation, PlanningDispatchBlocker, discover_local_installations,
     prepare_local_task_planning,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::local_filesystem::open_selected_directory;
+#[cfg(test)]
+use axum::routing::patch;
 use axum::{
     Json, Router,
     body::{Body, Bytes, to_bytes},
-    extract::{DefaultBodyLimit, Path, Query, State},
-    http::{HeaderMap, Request, StatusCode, header},
+    extract::{DefaultBodyLimit, FromRef, Path, Query, State},
+    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -17,25 +24,43 @@ use base64::{
     engine::general_purpose::{STANDARD as BASE64, URL_SAFE_NO_PAD},
 };
 use domain_task::{CreateStandaloneTask, PreparePlanningAssignment, ReviseTaskSpec, TaskService};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use domain_workspace::AddWorkspaceRoot;
 use domain_workspace::{
-    AddWorkspaceRoot, ChangeReplicationPolicy, ChangeWorkspaceRootStatus,
+    ArchiveWorkspace, ChangeReplicationPolicy, ChangeWorkspaceRootStatus,
     CreateResourceRevisionUploadSession, CreateResourceUploadSession, CreateWorkspace,
     CreateWorkspaceInstructionRevision, EventContext, ResourceService, ResourceUploadService,
     SetContextDocumentStatus as SetContextDocumentStatusCommand, SetWorkspaceDefaultAgentBinding,
     WorkspaceRootService, WorkspaceService,
 };
+use http_body::Body as HttpBody;
 #[cfg(unix)]
-use operator_ipc::unix::{PeerCredentials, UnixEndpoint};
+use operator_ipc::unix::{
+    AuthenticatedUnixConnection, PeerCredentials, TransportError as UnixTransportError,
+    UnixEndpoint, UnixIpcListener,
+};
+#[cfg(windows)]
+use operator_ipc::windows::{
+    AuthenticatedWindowsConnection, TransportError as WindowsTransportError, WindowsEndpoint,
+    WindowsIpcListener,
+};
 use operator_ipc::{
     DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, InFlightBodyBudget, LogicalHeader, PROTOCOL_VERSION,
     ResponseHeader,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::ffi::OsString;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::path::PathBuf;
 use std::{
-    ffi::OsString,
-    path::{Path as FsPath, PathBuf},
-    sync::{Arc, mpsc},
+    path::Path as FsPath,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
     thread::{self, JoinHandle},
 };
 use storage_core::{
@@ -46,16 +71,17 @@ use storage_core::{
     ResourceRevisionRecord, ResourceSearchRecord, ResourceStore, ResourceSummary,
     ResourceTextIndexRebuildRequest, ResourceTextMatchSpan, ResourceUploadChunkInput,
     ResourceUploadContentRange, ResourceUploadSessionRecord, ResourceUploadState,
-    ResourceUploadStore, RuntimeOfferRecord, RuntimeWorkspaceBindingRecord,
-    RuntimeWorkspaceBindingStore, StateStore, StoreError, SuggestionTaskAcceptanceStore, TaskStore,
-    TaskSummaryRecord, TaskView, Workspace, WorkspaceCreateRequest,
-    WorkspaceInstructionRevisionRecord, WorkspaceRootRecord, WorkspaceRootStatusAction,
+    ResourceUploadStore, RuntimeIncarnationRecord, RuntimeLifecycleStore, RuntimeOfferRecord,
+    RuntimeWorkspaceBindingRecord, RuntimeWorkspaceBindingStore, StateStore, StoreError,
+    SuggestionTaskAcceptanceStore, TaskStore, TaskSummaryRecord, TaskView, Workspace,
+    WorkspaceCreateRequest, WorkspaceInstructionRevisionRecord, WorkspaceRootRecord,
+    WorkspaceRootStatusAction,
 };
 use storage_sqlite::{
     CoworkerEventContext, RuntimeOsPrincipalIdentity, SqliteCoworkerStore, SqliteWorkspaceStore,
 };
 use tokio::sync::oneshot as tokio_oneshot;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio::{task::JoinSet, time::timeout};
 use tower::ServiceExt;
 
@@ -69,15 +95,26 @@ mod conversation_operator;
 mod coworker_operator;
 #[path = "delegation_profiles_operator.rs"]
 mod delegation_profiles_operator;
+#[path = "dependency_invalidations_operator.rs"]
+mod dependency_invalidations_operator;
 #[path = "goal_operator.rs"]
 mod goal_operator;
 #[cfg(all(test, unix))]
 #[path = "operator_ipc_tests.rs"]
 mod operator_ipc_tests;
+#[cfg(all(test, unix))]
+#[path = "operator_runtime_binding_tests.rs"]
+mod operator_runtime_binding_tests;
 #[path = "presentation_operator.rs"]
 mod presentation_operator;
+#[path = "resource_dependencies_operator.rs"]
+mod resource_dependencies_operator;
 #[path = "routine_operator.rs"]
 mod routine_operator;
+#[path = "runtime_capability_hosts_operator.rs"]
+mod runtime_capability_hosts_operator;
+#[path = "runtime_offers_operator.rs"]
+mod runtime_offers_operator;
 #[path = "suggestions_operator.rs"]
 mod suggestions_operator;
 #[path = "zip_intake_operator.rs"]
@@ -89,13 +126,480 @@ struct ApiState {
     principal_id: String,
     runtime_id: String,
     local_incarnation_id: String,
+    lifecycle_blockers: Vec<RuntimeLifecycleBlocker>,
     runtime_identity: Arc<RuntimeOsPrincipalIdentity>,
+    stream_admission: Arc<tokio::sync::Semaphore>,
+    runtime_inventory_revision: Arc<AtomicU64>,
+    stream_shutdown: tokio::sync::watch::Receiver<bool>,
+}
+
+#[derive(Clone)]
+struct RuntimeLifecycleApiState {
+    store: SqliteWorkspaceStore,
+    runtime_id: String,
+    local_incarnation_id: String,
+    lifecycle_blockers: Vec<RuntimeLifecycleBlocker>,
+}
+
+#[derive(Clone)]
+struct RuntimeWorkspaceBindingsApiState {
+    store: SqliteWorkspaceStore,
+    principal_id: String,
+    runtime_id: String,
+    local_incarnation_id: String,
+}
+
+impl RuntimeLifecycleApiState {
+    #[cfg(test)]
+    fn new(
+        store: SqliteWorkspaceStore,
+        runtime_id: String,
+        local_incarnation_id: String,
+        lifecycle_blockers: Vec<RuntimeLifecycleBlocker>,
+    ) -> Self {
+        Self {
+            store,
+            runtime_id,
+            local_incarnation_id,
+            lifecycle_blockers,
+        }
+    }
+}
+
+impl axum::extract::FromRef<ApiState> for RuntimeLifecycleApiState {
+    fn from_ref(state: &ApiState) -> Self {
+        Self {
+            store: state.store.clone(),
+            runtime_id: state.runtime_id.clone(),
+            local_incarnation_id: state.local_incarnation_id.clone(),
+            lifecycle_blockers: state.lifecycle_blockers.clone(),
+        }
+    }
+}
+
+impl axum::extract::FromRef<ApiState> for RuntimeWorkspaceBindingsApiState {
+    fn from_ref(state: &ApiState) -> Self {
+        Self {
+            store: state.store.clone(),
+            principal_id: state.principal_id.clone(),
+            runtime_id: state.runtime_id.clone(),
+            local_incarnation_id: state.local_incarnation_id.clone(),
+        }
+    }
+}
+
+/// The Workspace-create route depends only on the durable store and authenticated
+/// local identity. Keeping that projection explicit lets route tests exercise the
+/// production handler without manufacturing an OS credential-store identity.
+#[derive(Clone)]
+struct WorkspaceCreateApiState {
+    store: SqliteWorkspaceStore,
+    principal_id: String,
+    runtime_id: String,
+}
+
+impl axum::extract::FromRef<ApiState> for WorkspaceCreateApiState {
+    fn from_ref(state: &ApiState) -> Self {
+        Self {
+            store: state.store.clone(),
+            principal_id: state.principal_id.clone(),
+            runtime_id: state.runtime_id.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct WorkspaceInstructionApiState {
+    store: SqliteWorkspaceStore,
+    principal_id: String,
+    runtime_id: String,
+}
+
+#[derive(Clone)]
+struct WorkspacePolicyApiState {
+    store: SqliteWorkspaceStore,
+    principal_id: String,
+    runtime_id: String,
+}
+
+/// Task creation needs only durable Workspace/Task state and the authenticated local
+/// identity. Keep this projection small so the production route can be exercised without
+/// constructing OS identity and stream-admission state in route tests.
+#[derive(Clone)]
+struct TaskCreateApiState {
+    store: SqliteWorkspaceStore,
+    principal_id: String,
+    runtime_id: String,
+}
+
+#[derive(Clone)]
+struct WorkspaceArchiveApiState {
+    store: SqliteWorkspaceStore,
+    principal_id: String,
+    runtime_id: String,
+}
+
+impl axum::extract::FromRef<ApiState> for WorkspaceArchiveApiState {
+    fn from_ref(state: &ApiState) -> Self {
+        Self {
+            store: state.store.clone(),
+            principal_id: state.principal_id.clone(),
+            runtime_id: state.runtime_id.clone(),
+        }
+    }
+}
+
+impl axum::extract::FromRef<ApiState> for WorkspaceInstructionApiState {
+    fn from_ref(state: &ApiState) -> Self {
+        Self {
+            store: state.store.clone(),
+            principal_id: state.principal_id.clone(),
+            runtime_id: state.runtime_id.clone(),
+        }
+    }
+}
+
+impl axum::extract::FromRef<ApiState> for WorkspacePolicyApiState {
+    fn from_ref(state: &ApiState) -> Self {
+        Self {
+            store: state.store.clone(),
+            principal_id: state.principal_id.clone(),
+            runtime_id: state.runtime_id.clone(),
+        }
+    }
+}
+
+impl axum::extract::FromRef<ApiState> for TaskCreateApiState {
+    fn from_ref(state: &ApiState) -> Self {
+        Self {
+            store: state.store.clone(),
+            principal_id: state.principal_id.clone(),
+            runtime_id: state.runtime_id.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RuntimeLifecycleBlocker {
+    pub(crate) code: String,
+    pub(crate) created_at: String,
+}
+
+#[derive(Serialize)]
+struct RuntimeLifecycleBlockerView {
+    blocker_id: String,
+    code: &'static str,
+    safe_message: &'static str,
+    resolution_hint: &'static str,
+    created_at: String,
+}
+
+#[derive(Serialize)]
+struct RuntimeLifecycleView {
+    runtime_id: String,
+    startup_policy: String,
+    incarnation: RuntimeIncarnationRecord,
+    availability: String,
+    blockers: Vec<RuntimeLifecycleBlockerView>,
 }
 
 pub struct OperatorServer {
     shutdown: Option<tokio_oneshot::Sender<()>>,
     admission_stopped: Option<mpsc::Receiver<()>>,
-    thread: Option<JoinHandle<()>>,
+    thread: Option<JoinHandle<Result<(), String>>>,
+}
+
+enum OperatorIpcEndpoint {
+    #[cfg(unix)]
+    Unix {
+        endpoint: UnixEndpoint,
+        expected_peer_uid: u32,
+    },
+    #[cfg(windows)]
+    Windows(WindowsEndpoint),
+}
+
+enum OperatorIpcListener {
+    #[cfg(unix)]
+    Unix {
+        listener: UnixIpcListener,
+        expected_peer_uid: u32,
+    },
+    #[cfg(windows)]
+    Windows(WindowsIpcListener),
+}
+
+enum OperatorIpcConnection {
+    #[cfg(unix)]
+    Unix(AuthenticatedUnixConnection),
+    #[cfg(windows)]
+    Windows(AuthenticatedWindowsConnection),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperatorAcceptError {
+    Rejected,
+    Capacity,
+    Failed,
+}
+
+impl OperatorIpcEndpoint {
+    fn derive(
+        data_directory: &FsPath,
+        runtime_identity: &RuntimeOsPrincipalIdentity,
+    ) -> Result<Self, String> {
+        operator_ipc::require_os_local_ipc().map_err(|_| {
+            "authenticated local Operator IPC is unsupported on this platform".to_owned()
+        })?;
+        #[cfg(unix)]
+        {
+            let expected_peer_uid = runtime_identity
+                .principal
+                .unix_uid()
+                .ok_or_else(|| "Unix IPC requires a bound effective UID".to_owned())?;
+            let endpoint = UnixEndpoint::derive(data_directory)
+                .map_err(|_| "local Operator IPC endpoint is unsafe".to_owned())?;
+            Ok(Self::Unix {
+                endpoint,
+                expected_peer_uid,
+            })
+        }
+        #[cfg(windows)]
+        {
+            if runtime_identity.principal.windows_logon_sid().is_none() {
+                return Err("Windows IPC requires a bound logon-session identity".to_owned());
+            }
+            let endpoint = WindowsEndpoint::derive(data_directory)
+                .map_err(|_| "local Operator IPC endpoint is unsafe".to_owned())?;
+            Ok(Self::Windows(endpoint))
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (data_directory, runtime_identity);
+            Err("authenticated local Operator IPC is unsupported on this platform".to_owned())
+        }
+    }
+
+    fn bind(self) -> Result<OperatorIpcListener, String> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix {
+                endpoint,
+                expected_peer_uid,
+            } => endpoint
+                .bind()
+                .map(|listener| OperatorIpcListener::Unix {
+                    listener,
+                    expected_peer_uid,
+                })
+                .map_err(|_| "local Operator IPC endpoint is unsafe".to_owned()),
+            #[cfg(windows)]
+            Self::Windows(endpoint) => endpoint
+                .bind()
+                .map(OperatorIpcListener::Windows)
+                .map_err(|_| "local Operator IPC endpoint is unsafe".to_owned()),
+        }
+    }
+}
+
+impl OperatorIpcListener {
+    async fn accept(&self) -> Result<OperatorIpcConnection, OperatorAcceptError> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix {
+                listener,
+                expected_peer_uid,
+            } => listener
+                .accept(|peer: PeerCredentials| peer.uid == *expected_peer_uid)
+                .await
+                .map(OperatorIpcConnection::Unix)
+                .map_err(|error| match error {
+                    UnixTransportError::PeerRejected => OperatorAcceptError::Rejected,
+                    UnixTransportError::CapacityExceeded => OperatorAcceptError::Capacity,
+                    _ => OperatorAcceptError::Failed,
+                }),
+            #[cfg(windows)]
+            Self::Windows(listener) => listener
+                .accept()
+                .await
+                .map(OperatorIpcConnection::Windows)
+                .map_err(|error| match error {
+                    WindowsTransportError::PeerRejected => OperatorAcceptError::Rejected,
+                    WindowsTransportError::CapacityExceeded => OperatorAcceptError::Capacity,
+                    _ => OperatorAcceptError::Failed,
+                }),
+        }
+    }
+}
+
+impl OperatorIpcConnection {
+    async fn read_request(
+        &mut self,
+        budget: &Arc<InFlightBodyBudget>,
+    ) -> Result<operator_ipc::RequestFrame, String> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(connection) => connection
+                .read_request(budget)
+                .await
+                .map_err(|_| "local Operator IPC request could not be read".to_owned()),
+            #[cfg(windows)]
+            Self::Windows(connection) => connection
+                .read_request(budget)
+                .await
+                .map_err(|_| "local Operator IPC request could not be read".to_owned()),
+        }
+    }
+
+    async fn write_response(&mut self, frame: &operator_ipc::ResponseFrame) -> Result<(), String> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(connection) => connection
+                .write_response(frame)
+                .await
+                .map_err(|_| "local Operator IPC response could not be sent".to_owned()),
+            #[cfg(windows)]
+            Self::Windows(connection) => connection
+                .write_response(frame)
+                .await
+                .map_err(|_| "local Operator IPC response could not be sent".to_owned()),
+        }
+    }
+
+    async fn write_stream_response(
+        &mut self,
+        frame: &operator_ipc::ResponseFrame,
+    ) -> Result<(), String> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(connection) => connection
+                .write_stream_response(frame)
+                .await
+                .map_err(|_| "local Operator stream handshake could not be sent".to_owned()),
+            #[cfg(windows)]
+            Self::Windows(connection) => connection
+                .write_stream_response(frame)
+                .await
+                .map_err(|_| "local Operator stream handshake could not be sent".to_owned()),
+        }
+    }
+
+    async fn write_stream_message(
+        &mut self,
+        message: &[u8],
+        budget: &Arc<InFlightBodyBudget>,
+    ) -> Result<(), String> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(connection) => connection
+                .write_stream_message(message, budget)
+                .await
+                .map_err(|_| "local Operator stream message could not be sent".to_owned()),
+            #[cfg(windows)]
+            Self::Windows(connection) => connection
+                .write_stream_message(message, budget)
+                .await
+                .map_err(|_| "local Operator stream message could not be sent".to_owned()),
+        }
+    }
+
+    async fn wait_for_stream_disconnect(&mut self) -> Result<(), String> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(connection) => connection
+                .wait_for_stream_disconnect()
+                .await
+                .map_err(|_| "local Operator stream peer closed or sent invalid data".to_owned()),
+            #[cfg(windows)]
+            Self::Windows(connection) => connection
+                .wait_for_stream_disconnect()
+                .await
+                .map_err(|_| "local Operator stream peer closed or sent invalid data".to_owned()),
+        }
+    }
+}
+
+#[cfg(any(unix, windows))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OperatorRequestSettlement {
+    Complete,
+    MayStillBeRunning,
+    Failed,
+}
+
+#[cfg(any(unix, windows))]
+fn request_worker_failed(
+    result: Result<OperatorRequestSettlement, tokio::task::JoinError>,
+) -> bool {
+    !matches!(result, Ok(OperatorRequestSettlement::Complete))
+}
+
+#[cfg(any(unix, windows))]
+async fn drain_operator_workers(
+    workers: &mut JoinSet<OperatorRequestSettlement>,
+    mut worker_failed: bool,
+    deadline: std::time::Duration,
+    abort_settle_timeout: std::time::Duration,
+) -> Result<(), String> {
+    let drain = async {
+        while let Some(result) = workers.join_next().await {
+            worker_failed |= request_worker_failed(result);
+        }
+    };
+    if timeout(deadline, drain).await.is_err() {
+        workers.abort_all();
+        let settle_aborted = async { while workers.join_next().await.is_some() {} };
+        let _ = timeout(abort_settle_timeout, settle_aborted).await;
+        return Err("local Operator request drain deadline expired".to_owned());
+    }
+    if worker_failed {
+        Err("a local Operator request task failed".to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(any(unix, windows))]
+async fn poll_ready_future<F: std::future::Future>(future: F) -> Option<F::Output> {
+    use std::task::Poll;
+
+    let mut future = std::pin::pin!(future);
+    std::future::poll_fn(|context| match future.as_mut().poll(context) {
+        Poll::Ready(output) => Poll::Ready(Some(output)),
+        Poll::Pending => Poll::Ready(None),
+    })
+    .await
+}
+
+#[cfg(any(unix, windows))]
+fn finish_operator_runtime(
+    runtime: tokio::runtime::Runtime,
+    result: Result<(), String>,
+    shutdown_timeout: std::time::Duration,
+) -> Result<(), String> {
+    runtime.shutdown_timeout(shutdown_timeout);
+    result
+}
+
+fn finish_operator_thread(joined: thread::Result<Result<(), String>>) -> Result<(), String> {
+    joined.unwrap_or_else(|_| Err("local Operator endpoint thread panicked".to_owned()))
+}
+
+#[cfg(any(unix, windows))]
+fn finish_operator_thread_with_timeout(
+    worker_thread: JoinHandle<Result<(), String>>,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    while !worker_thread.is_finished() {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            drop(worker_thread);
+            return Err("local Operator endpoint thread shutdown deadline expired".to_owned());
+        }
+        thread::sleep(remaining.min(std::time::Duration::from_millis(10)));
+    }
+    finish_operator_thread(worker_thread.join())
 }
 
 /// Marker added only after the local IPC adapter has authenticated the OS peer.
@@ -105,7 +609,14 @@ pub struct OperatorServer {
 struct AuthenticatedLocalPeer;
 
 const MAX_OPERATOR_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+const OPERATOR_STREAM_OUTPUT_RESERVATION_BYTES: usize = 8 * 1024 * 1024;
 const OPERATOR_HANDLER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+#[cfg(any(unix, windows))]
+const OPERATOR_ABORT_SETTLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(any(unix, windows))]
+const OPERATOR_RUNTIME_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(any(unix, windows))]
+const OPERATOR_THREAD_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(70);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,6 +626,7 @@ struct WorkspaceListResponse {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct NativeWorkspaceRootSelectionRequest {
     workspace_id: String,
     expected_workspace_version: u64,
@@ -230,6 +742,22 @@ struct TaskListQuery {
 struct ConversationTaskListQuery {
     cursor: Option<String>,
     limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeWorkspaceBindingListQuery {
+    cursor: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeWorkspaceBindingListCursor {
+    version: u8,
+    workspace_id: String,
+    limit: usize,
+    after_binding_id: String,
 }
 
 #[derive(Serialize)]
@@ -576,22 +1104,23 @@ impl OperatorServer {
         principal_id: String,
         runtime_id: String,
         runtime_incarnation_id: String,
-        expected_peer_uid: u32,
+        lifecycle_blockers: Vec<RuntimeLifecycleBlocker>,
         runtime_identity: storage_sqlite::RuntimeOsPrincipalIdentity,
     ) -> Result<Self, String> {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
-            operator_ipc::require_os_local_ipc().map_err(|_| {
-                "authenticated local Operator IPC is unsupported on this platform".to_owned()
-            })?;
-            let endpoint = UnixEndpoint::derive(data_directory)
-                .map_err(|_| "local Operator IPC endpoint is unsafe".to_owned())?;
+            let endpoint = OperatorIpcEndpoint::derive(data_directory, &runtime_identity)?;
+            let (stream_shutdown_sender, stream_shutdown) = tokio::sync::watch::channel(false);
             let state = ApiState {
                 store,
                 principal_id,
                 runtime_id,
                 local_incarnation_id: runtime_incarnation_id,
+                lifecycle_blockers,
                 runtime_identity: Arc::new(runtime_identity),
+                stream_admission: Arc::new(tokio::sync::Semaphore::new(2)),
+                runtime_inventory_revision: Arc::new(AtomicU64::new(1)),
+                stream_shutdown,
             };
             let sweeper_state = state.clone();
             let app = build_operator_router(state);
@@ -600,7 +1129,7 @@ impl OperatorServer {
             let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
             let thread = thread::Builder::new()
             .name("litecowork-operator-ipc".to_owned())
-            .spawn(move || {
+            .spawn(move || -> Result<(), String> {
                 let runtime = match tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
                     .build()
@@ -608,52 +1137,70 @@ impl OperatorServer {
                     Ok(runtime) => runtime,
                     Err(_) => {
                         let _ = ready_sender.send(false);
-                        return;
+                        return Err("local Operator endpoint thread failed to initialize".to_owned());
                     }
                 };
-                runtime.block_on(async move {
-                    // Tokio's UnixListener must be created from_std inside the
-                    // owning Runtime; no listener is created outside this thread.
+                let run_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    runtime.block_on(async move {
                     let listener = match endpoint.bind() {
                         Ok(listener) => listener,
                         Err(_) => {
                             let _ = ready_sender.send(false);
-                            return;
+                            return Err("local Operator endpoint thread failed to initialize".to_owned());
                         }
                     };
                     let budget = match InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES) {
                         Ok(budget) => budget,
                         Err(_) => {
                             let _ = ready_sender.send(false);
-                            return;
+                            return Err("local Operator endpoint thread failed to initialize".to_owned());
                         }
                     };
                     if ready_sender.send(true).is_err() {
-                        return;
+                        return Err("local Operator endpoint thread failed to initialize".to_owned());
                     }
-                    let mut workers = JoinSet::new();
+                    let mut workers: JoinSet<OperatorRequestSettlement> = JoinSet::new();
+                    let mut worker_failed = false;
+                    let mut listener_failed = false;
                     let mut expiry_tick = tokio::time::interval(std::time::Duration::from_secs(30));
                     expiry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                     loop {
                         tokio::select! {
                             _ = &mut shutdown_receiver => {
+                                let _ = stream_shutdown_sender.send(true);
+                                if let Some(Err(error)) = poll_ready_future(listener.accept()).await {
+                                    listener_failed |= error == OperatorAcceptError::Failed;
+                                }
                                 break;
                             }
                             worker = workers.join_next(), if !workers.is_empty() => {
-                                let _ = worker;
+                                worker_failed |= worker.is_some_and(request_worker_failed);
                             }
-                            accepted = listener.accept(|peer: PeerCredentials| peer.uid == expected_peer_uid) => {
+                            accepted = listener.accept() => {
                                 match accepted {
                                     Ok(connection) => {
                                         let router = app.clone();
                                         let budget = budget.clone();
                                         workers.spawn(async move {
-                                            let _ = dispatch_ipc_exchange(router, connection, budget).await;
+                                            match dispatch_ipc_exchange(
+                                                router,
+                                                connection,
+                                                budget,
+                                                OPERATOR_HANDLER_DEADLINE,
+                                            )
+                                            .await
+                                            {
+                                                Ok(settlement) => settlement,
+                                                Err(_) => OperatorRequestSettlement::Failed,
+                                            }
                                         });
                                     }
-                                    Err(operator_ipc::unix::TransportError::PeerRejected)
-                                    | Err(operator_ipc::unix::TransportError::CapacityExceeded) => {}
-                                    Err(_) => break,
+                                    Err(OperatorAcceptError::Rejected)
+                                    | Err(OperatorAcceptError::Capacity) => {}
+                                    Err(OperatorAcceptError::Failed) => {
+                                        listener_failed = true;
+                                        break;
+                                    }
                                 }
                             }
                             _ = expiry_tick.tick() => {
@@ -663,13 +1210,27 @@ impl OperatorServer {
                     }
                     drop(listener);
                     let _ = admission_stopped_sender.send(());
-                    if timeout(std::time::Duration::from_secs(60), async {
-                        while workers.join_next().await.is_some() {}
-                    }).await.is_err() {
-                        workers.abort_all();
-                        while workers.join_next().await.is_some() {}
+                    drain_operator_workers(
+                        &mut workers,
+                        worker_failed,
+                        std::time::Duration::from_secs(60),
+                        OPERATOR_ABORT_SETTLE_TIMEOUT,
+                    )
+                    .await?;
+                    if listener_failed {
+                        return Err("local Operator listener stopped unexpectedly".to_owned());
                     }
+                    Ok(())
+                    })
+                }));
+                let run_result = run_result.unwrap_or_else(|_| {
+                    Err("local Operator endpoint thread panicked".to_owned())
                 });
+                finish_operator_runtime(
+                    runtime,
+                    run_result,
+                    OPERATOR_RUNTIME_SHUTDOWN_TIMEOUT,
+                )
             })
             .map_err(|_| "could not start the local Operator endpoint".to_owned())?;
             match ready_receiver.recv() {
@@ -679,12 +1240,15 @@ impl OperatorServer {
                     thread: Some(thread),
                 }),
                 _ => {
-                    let _ = thread.join();
+                    let _ = finish_operator_thread_with_timeout(
+                        thread,
+                        OPERATOR_THREAD_SHUTDOWN_TIMEOUT,
+                    );
                     Err("local Operator endpoint failed to initialize".to_owned())
                 }
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (
                 data_directory,
@@ -692,15 +1256,14 @@ impl OperatorServer {
                 principal_id,
                 runtime_id,
                 runtime_incarnation_id,
-                expected_peer_uid,
                 runtime_identity,
             );
             Err("authenticated local Operator IPC is unsupported on this platform".to_owned())
         }
     }
 
-    pub fn stop(mut self) {
-        self.shutdown_server();
+    pub fn stop(mut self) -> Result<(), String> {
+        self.shutdown_server()
     }
 
     pub fn stop_admission(&mut self) -> Result<(), String> {
@@ -715,17 +1278,92 @@ impl OperatorServer {
         Ok(())
     }
 
-    fn shutdown_server(&mut self) {
-        let _ = self.stop_admission();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+    fn shutdown_server(&mut self) -> Result<(), String> {
+        let admission_result = self.stop_admission();
+        let thread_result = self.thread.take().map_or(Ok(()), |thread| {
+            #[cfg(any(unix, windows))]
+            {
+                finish_operator_thread_with_timeout(thread, OPERATOR_THREAD_SHUTDOWN_TIMEOUT)
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                finish_operator_thread(thread.join())
+            }
+        });
+        admission_result.and(thread_result)
     }
 }
 
+fn runtime_lifecycle_routes() -> Router<RuntimeLifecycleApiState> {
+    Router::new().route("/v1/runtime-lifecycle", get(get_runtime_lifecycle))
+}
+
+fn runtime_workspace_bindings_routes() -> Router<RuntimeWorkspaceBindingsApiState> {
+    Router::new()
+        .route(
+            "/v1/workspaces/{workspace_id}/runtime-bindings",
+            get(list_workspace_runtime_bindings),
+        )
+        .route(
+            "/v1/workspaces/{workspace_id}/runtime-bindings/current-local",
+            get(get_current_local_runtime_binding),
+        )
+}
+
+fn workspace_instruction_routes() -> Router<WorkspaceInstructionApiState> {
+    Router::new().route(
+        "/v1/workspaces/{workspace_id}/instructions/revisions",
+        get(list_workspace_instruction_revisions).post(create_workspace_instruction_revision),
+    )
+}
+
+#[cfg(test)]
+fn workspace_policy_routes() -> Router<WorkspacePolicyApiState> {
+    Router::new().route(
+        "/v1/workspaces/{workspace_id}",
+        patch(update_workspace_policy),
+    )
+}
+
+fn workspace_archive_routes() -> Router<WorkspaceArchiveApiState> {
+    Router::new().route(
+        "/v1/workspaces/{workspace_id}/archive",
+        post(archive_workspace),
+    )
+}
+
+#[cfg(test)]
+fn runtime_workspace_bindings_router(state: RuntimeWorkspaceBindingsApiState) -> Router {
+    runtime_workspace_bindings_routes()
+        .route_layer(middleware::from_fn(authenticate))
+        .with_state(state)
+}
+
+#[cfg(test)]
+fn runtime_lifecycle_router(state: RuntimeLifecycleApiState) -> Router {
+    runtime_lifecycle_routes()
+        .route_layer(middleware::from_fn(authenticate))
+        .with_state(state)
+}
+
 fn build_operator_router(state: ApiState) -> Router {
+    let lifecycle_state = RuntimeLifecycleApiState::from_ref(&state);
+    let runtime_workspace_bindings_state = RuntimeWorkspaceBindingsApiState::from_ref(&state);
+    let workspace_instruction_state = WorkspaceInstructionApiState::from_ref(&state);
+    let workspace_archive_state = WorkspaceArchiveApiState::from_ref(&state);
+    let runtime_offers_state = runtime_offers_operator::RuntimeOffersApiState::from_ref(&state);
+    let runtime_capability_hosts_state =
+        runtime_capability_hosts_operator::RuntimeCapabilityHostsApiState::from_ref(&state);
+    let dependency_invalidations_state =
+        dependency_invalidations_operator::DependencyInvalidationsApiState::from_ref(&state);
+    let resource_dependencies_state =
+        resource_dependencies_operator::ResourceDependenciesApiState::from_ref(&state);
     Router::new()
         .merge(artifact_operator::routes())
+        .merge(
+            dependency_invalidations_operator::routes().with_state(dependency_invalidations_state),
+        )
+        .merge(resource_dependencies_operator::routes().with_state(resource_dependencies_state))
         .merge(automation_operator::router())
         .merge(coworker_operator::routes())
         .merge(conversation_operator::routes())
@@ -734,6 +1372,14 @@ fn build_operator_router(state: ApiState) -> Router {
         .merge(suggestions_operator::routes())
         .merge(presentation_operator::routes())
         .merge(routine_operator::routes())
+        .merge(runtime_workspace_bindings_routes().with_state(runtime_workspace_bindings_state))
+        .merge(workspace_instruction_routes().with_state(workspace_instruction_state))
+        .merge(workspace_archive_routes().with_state(workspace_archive_state))
+        .merge(runtime_offers_operator::runtime_offers_routes().with_state(runtime_offers_state))
+        .merge(
+            runtime_capability_hosts_operator::runtime_capability_hosts_routes()
+                .with_state(runtime_capability_hosts_state),
+        )
         .merge(zip_intake_operator::routes())
         // This route is accepted only over authenticated local IPC. It is not part of
         // OpenAPI and no HTTP listener is mounted by the desktop Runtime.
@@ -743,6 +1389,7 @@ fn build_operator_router(state: ApiState) -> Router {
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
         .route("/v1/operator/readiness", get(operator_readiness))
+        .merge(runtime_lifecycle_routes().with_state(lifecycle_state))
         .route("/v1/agent-installations", get(list_agent_installations))
         .route("/v1/agent-profiles", get(list_agent_profiles))
         .route("/v1/agent-profiles/probe", post(probe_local_agent_profile))
@@ -796,6 +1443,10 @@ fn build_operator_router(state: ApiState) -> Router {
             get(list_resource_revisions),
         )
         .route(
+            "/v1/resources/{resource_id}/locations",
+            get(list_resource_locations),
+        )
+        .route(
             "/v1/resources/{resource_id}/text-index/rebuild",
             post(rebuild_resource_text_index),
         )
@@ -840,39 +1491,45 @@ fn build_operator_router(state: ApiState) -> Router {
             axum::routing::patch(set_workspace_default_agent_binding),
         )
         .route(
-            "/v1/workspaces/{workspace_id}/runtime-bindings/current-local",
-            get(list_workspace_runtime_bindings),
-        )
-        .route(
             "/v1/workspaces/{workspace_id}/runtime-bindings/local-enrollment",
             post(enroll_local_runtime),
-        )
-        .route(
-            "/v1/workspaces/{workspace_id}/instructions/revisions",
-            get(list_workspace_instruction_revisions).post(create_workspace_instruction_revision),
         )
         .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
         .route_layer(middleware::from_fn(authenticate))
         .with_state(state)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn dispatch_ipc_exchange(
     router: Router,
-    mut connection: operator_ipc::unix::AuthenticatedUnixConnection,
+    mut connection: OperatorIpcConnection,
     budget: std::sync::Arc<InFlightBodyBudget>,
-) -> Result<(), String> {
-    // Reserve bounded response capacity before admitting/dispatching the request. This
-    // prevents concurrent handlers from buffering unaccounted response bodies and keeps
-    // the 128 MiB shared frame budget meaningful under same-UID load.
-    let response_permit = budget
-        .reserve_bytes(MAX_OPERATOR_RESPONSE_BYTES)
-        .map_err(|_| "local Operator IPC is at capacity".to_owned())?;
-    let frame = connection
-        .read_request(&budget)
-        .await
-        .map_err(|_| "local Operator IPC request could not be read".to_owned())?;
+    handler_deadline: std::time::Duration,
+) -> Result<OperatorRequestSettlement, String> {
+    let frame = connection.read_request(&budget).await?;
     let (frame_header, budgeted_body) = frame.into_parts();
+    let is_stream = frame_header.method == "POST"
+        && frame_header
+            .path_and_query
+            .split('?')
+            .next()
+            .is_some_and(|path| path == "/v1/stream");
+    // Reserve bounded response capacity before dispatching unary requests. Stream
+    // frames are reserved individually by the framed writer so a long session does
+    // not hold a 16 MiB unary-response reservation.
+    let response_permit = if is_stream {
+        Some(
+            budget
+                .reserve_bytes(OPERATOR_STREAM_OUTPUT_RESERVATION_BYTES)
+                .map_err(|_| "local Operator IPC is at capacity".to_owned())?,
+        )
+    } else {
+        Some(
+            budget
+                .reserve_bytes(MAX_OPERATOR_RESPONSE_BYTES)
+                .map_err(|_| "local Operator IPC is at capacity".to_owned())?,
+        )
+    };
     let method = axum::http::Method::from_bytes(frame_header.method.as_bytes())
         .map_err(|_| "local Operator IPC method is invalid".to_owned())?;
     let uri = frame_header
@@ -893,16 +1550,133 @@ async fn dispatch_ipc_exchange(
     }
     request.extensions_mut().insert(AuthenticatedLocalPeer);
 
-    let response = match timeout(OPERATOR_HANDLER_DEADLINE, router.oneshot(request)).await {
-        Ok(Ok(response)) => response,
+    let (response, may_still_be_running) = match timeout(handler_deadline, router.oneshot(request))
+        .await
+    {
+        Ok(Ok(response)) => (response, false),
         Ok(Err(never)) => match never {},
-        Err(_) => operator_error(
-            StatusCode::GATEWAY_TIMEOUT,
-            "TIMEOUT",
-            "The local Operator request exceeded its time limit; check current state before retrying",
+        Err(_) => (
+            operator_error(
+                StatusCode::GATEWAY_TIMEOUT,
+                "TIMEOUT",
+                "The local Operator request exceeded its time limit; check current state before retrying",
+            ),
+            true,
         ),
     };
+    if is_stream && !may_still_be_running {
+        let status = response.status().as_u16();
+        let response_headers = operator_response_headers(response.headers());
+        if status == StatusCode::OK.as_u16()
+            && response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .is_some_and(|value| value == "application/vnd.litecowork.operator-stream+json")
+        {
+            let handshake = operator_ipc::ResponseFrame::new_bytes(
+                ResponseHeader {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: frame_header.request_id,
+                    status,
+                    headers: response_headers,
+                    body_length: 0,
+                },
+                Bytes::new(),
+                &budget,
+            )
+            .map_err(|_| "local Operator stream handshake could not be framed".to_owned())?;
+            connection.write_stream_response(&handshake).await?;
+            // Cover the bounded initial snapshot and one generated update before
+            // their Bytes allocations enter the response body. The framed writer
+            // applies an additional exact-size reservation while writing each frame.
+            let _stream_output_permit = response_permit;
+            let mut body = Box::pin(response.into_body());
+            loop {
+                let frame = tokio::select! {
+                    biased;
+                    _ = connection.wait_for_stream_disconnect() => {
+                        return Err("local Operator stream peer closed or sent invalid data".to_owned());
+                    }
+                    frame = std::future::poll_fn(|context| body.as_mut().poll_frame(context)) => frame,
+                };
+                match frame {
+                    Some(Ok(frame)) => {
+                        if let Ok(data) = frame.into_data() {
+                            connection.write_stream_message(&data, &budget).await?;
+                        }
+                    }
+                    Some(Err(_)) => {
+                        return Err("local Operator stream projection failed".to_owned());
+                    }
+                    None => return Ok(OperatorRequestSettlement::Complete),
+                }
+            }
+        }
+        // Invalid subscriptions and stream admission failures remain ordinary
+        // correlated unary responses on the same authenticated transport.
+        drop(response_permit);
+        let permit = budget
+            .reserve_bytes(MAX_OPERATOR_RESPONSE_BYTES)
+            .map_err(|_| "local Operator IPC is at capacity".to_owned())?;
+        let response_body = to_bytes(response.into_body(), MAX_OPERATOR_RESPONSE_BYTES)
+            .await
+            .map_err(|_| "local Operator IPC response exceeded its limit".to_owned())?;
+        let response_frame = operator_ipc::ResponseFrame::new_bytes_with_reservation(
+            ResponseHeader {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: frame_header.request_id,
+                status,
+                headers: response_headers,
+                body_length: response_body.len() as u64,
+            },
+            response_body,
+            permit,
+        )
+        .map_err(|_| "local Operator IPC response could not be framed".to_owned())?;
+        connection.write_response(&response_frame).await?;
+        return Ok(OperatorRequestSettlement::Complete);
+    }
     let status = response.status().as_u16();
+    let response_headers = operator_response_headers(response.headers());
+    let settlement = if may_still_be_running {
+        OperatorRequestSettlement::MayStillBeRunning
+    } else {
+        OperatorRequestSettlement::Complete
+    };
+    let response_body = match to_bytes(response.into_body(), MAX_OPERATOR_RESPONSE_BYTES).await {
+        Ok(response_body) => response_body,
+        Err(_) if may_still_be_running => return Ok(settlement),
+        Err(_) => return Err("local Operator IPC response exceeded its limit".to_owned()),
+    };
+    let response_frame = match operator_ipc::ResponseFrame::new_bytes_with_reservation(
+        ResponseHeader {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: frame_header.request_id,
+            status,
+            headers: response_headers,
+            body_length: response_body.len() as u64,
+        },
+        response_body,
+        match response_permit {
+            Some(permit) => permit,
+            None => budget
+                .reserve_bytes(MAX_OPERATOR_RESPONSE_BYTES)
+                .map_err(|_| "local Operator IPC is at capacity".to_owned())?,
+        },
+    ) {
+        Ok(response_frame) => response_frame,
+        Err(_) if may_still_be_running => return Ok(settlement),
+        Err(_) => return Err("local Operator IPC response could not be framed".to_owned()),
+    };
+    match connection.write_response(&response_frame).await {
+        Ok(()) => Ok(settlement),
+        Err(_) if may_still_be_running => Ok(settlement),
+        Err(_) => Err("local Operator IPC response could not be sent".to_owned()),
+    }
+}
+
+#[cfg(any(unix, windows))]
+fn operator_response_headers(headers: &HeaderMap) -> Vec<LogicalHeader> {
     let mut response_headers = Vec::new();
     for name in [
         header::CONTENT_TYPE,
@@ -910,7 +1684,7 @@ async fn dispatch_ipc_exchange(
         header::CACHE_CONTROL,
         header::ETAG,
     ] {
-        if let Some(value) = response.headers().get(&name)
+        if let Some(value) = headers.get(&name)
             && let Ok(value) = value.to_str()
         {
             response_headers.push(LogicalHeader {
@@ -922,9 +1696,10 @@ async fn dispatch_ipc_exchange(
     for name in [
         "x-content-type-options",
         "x-resource-media-type",
+        "x-resource-revision-id",
         "x-correlation-id",
     ] {
-        if let Some(value) = response.headers().get(name)
+        if let Some(value) = headers.get(name)
             && let Ok(value) = value.to_str()
         {
             response_headers.push(LogicalHeader {
@@ -933,25 +1708,7 @@ async fn dispatch_ipc_exchange(
             });
         }
     }
-    let response_body = to_bytes(response.into_body(), MAX_OPERATOR_RESPONSE_BYTES)
-        .await
-        .map_err(|_| "local Operator IPC response exceeded its limit".to_owned())?;
-    let response_frame = operator_ipc::ResponseFrame::new_bytes_with_reservation(
-        ResponseHeader {
-            protocol_version: PROTOCOL_VERSION,
-            request_id: frame_header.request_id,
-            status,
-            headers: response_headers,
-            body_length: response_body.len() as u64,
-        },
-        response_body,
-        response_permit,
-    )
-    .map_err(|_| "local Operator IPC response could not be framed".to_owned())?;
-    connection
-        .write_response(&response_frame)
-        .await
-        .map_err(|_| "local Operator IPC response could not be sent".to_owned())
+    response_headers
 }
 
 #[derive(Serialize)]
@@ -971,6 +1728,221 @@ async fn operator_readiness(State(state): State<ApiState>) -> Json<OperatorReadi
         local_incarnation_id: state.local_incarnation_id,
         api_contract_version: 1,
     })
+}
+
+async fn get_runtime_lifecycle(
+    State(state): State<RuntimeLifecycleApiState>,
+) -> Result<Response, Response> {
+    let snapshot = state
+        .store
+        .read_local_lifecycle_snapshot(&state.runtime_id, &state.local_incarnation_id)
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Runtime lifecycle status is unavailable",
+            )
+        })?
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "RUNTIME_UNAVAILABLE",
+                "Current Runtime incarnation could not be verified",
+            )
+        })?;
+
+    runtime_lifecycle_response(
+        snapshot,
+        &state.runtime_id,
+        &state.local_incarnation_id,
+        state.lifecycle_blockers,
+    )
+}
+
+fn runtime_lifecycle_response(
+    snapshot: storage_core::LocalRuntimeLifecycleSnapshot,
+    expected_runtime_id: &str,
+    expected_incarnation_id: &str,
+    lifecycle_blockers: Vec<RuntimeLifecycleBlocker>,
+) -> Result<Response, Response> {
+    if snapshot.runtime_id != expected_runtime_id
+        || snapshot.incarnation.runtime_id != expected_runtime_id
+        || snapshot.incarnation.runtime_incarnation_id != expected_incarnation_id
+        || !matches!(
+            snapshot.startup_policy.as_str(),
+            "MANUAL" | "LOGIN_BACKGROUND" | "ALWAYS_ON_SERVICE"
+        )
+        || !matches!(
+            snapshot.availability.as_str(),
+            "PAIRING"
+                | "STARTING"
+                | "RECOVERING"
+                | "ONLINE"
+                | "DEGRADED"
+                | "DRAINING"
+                | "OFFLINE"
+                | "REVOKED"
+        )
+        || !matches!(
+            snapshot.incarnation.recovery_state.as_str(),
+            "STARTING" | "RECOVERING" | "READY" | "DEGRADED" | "DRAINING" | "STOPPING" | "STOPPED"
+        )
+    {
+        return Err(operator_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "RUNTIME_UNAVAILABLE",
+            "Current Runtime lifecycle status is invalid",
+        ));
+    }
+
+    let blockers = lifecycle_blockers
+        .into_iter()
+        .enumerate()
+        .map(|(index, blocker)| {
+            let (code, safe_message, resolution_hint) =
+                runtime_lifecycle_blocker_copy(&blocker.code);
+            RuntimeLifecycleBlockerView {
+                blocker_id: format!("local-runtime:{expected_runtime_id}:blocker:{}", index + 1),
+                code,
+                safe_message,
+                resolution_hint,
+                created_at: blocker.created_at,
+            }
+        })
+        .collect();
+    let view = RuntimeLifecycleView {
+        runtime_id: snapshot.runtime_id,
+        startup_policy: snapshot.startup_policy,
+        incarnation: snapshot.incarnation,
+        availability: snapshot.availability,
+        blockers,
+    };
+    let mut response = Json(view).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+fn runtime_lifecycle_blocker_copy(code: &str) -> (&'static str, &'static str, &'static str) {
+    match code {
+        "TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED" => (
+            "DEPENDENCY_UNAVAILABLE",
+            "Task execution admission is unavailable in this Runtime.",
+            "Wait until local Task execution services are available before assigning work.",
+        ),
+        "TRUST_EFFECT_RECONCILIATION_NOT_INTEGRATED" => (
+            "DEPENDENCY_UNAVAILABLE",
+            "Trust and Effect reconciliation is unavailable in this Runtime.",
+            "Do not dispatch external work until reconciliation support is available.",
+        ),
+        "ATTEMPT_PROCESS_SCOPE_RECOVERY_REQUIRED" => (
+            "RUNTIME_UNAVAILABLE",
+            "Interrupted Attempt containment needs recovery.",
+            "Resolve local Attempt process-scope recovery before enabling execution.",
+        ),
+        "ATTEMPT_PROCESS_SCOPE_IDENTITY_UNAVAILABLE" => (
+            "RUNTIME_UNAVAILABLE",
+            "Runtime cannot verify prior Attempt containment state.",
+            "Review local Runtime recovery state before enabling execution.",
+        ),
+        "EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED" => (
+            "RUNTIME_UNAVAILABLE",
+            "Expired execution lease recovery did not complete.",
+            "Keep work stopped until the local Runtime has reconciled expired leases.",
+        ),
+        _ => (
+            "RUNTIME_UNAVAILABLE",
+            "Runtime recovery has unresolved requirements.",
+            "Review the local Runtime status and retry recovery when it is safe.",
+        ),
+    }
+}
+
+#[cfg(test)]
+mod runtime_lifecycle_view_tests {
+    use super::{RuntimeLifecycleBlocker, runtime_lifecycle_response};
+    use axum::{
+        body::to_bytes,
+        http::{StatusCode, header},
+    };
+    use serde_json::Value;
+    use storage_core::{LocalRuntimeLifecycleSnapshot, RuntimeIncarnationRecord};
+
+    fn snapshot() -> LocalRuntimeLifecycleSnapshot {
+        LocalRuntimeLifecycleSnapshot {
+            runtime_id: "runtime-lifecycle-view".to_owned(),
+            startup_policy: "MANUAL".to_owned(),
+            availability: "DEGRADED".to_owned(),
+            incarnation: RuntimeIncarnationRecord {
+                runtime_incarnation_id: "incarnation-current".to_owned(),
+                runtime_id: "runtime-lifecycle-view".to_owned(),
+                process_started_at: "2026-10-11T09:00:00Z".to_owned(),
+                litecowork_version: "0.1.0-test".to_owned(),
+                recovered_from_unclean_shutdown: true,
+                recovery_state: "DEGRADED".to_owned(),
+                ready_at: None,
+                stopped_at: None,
+                version: 2,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn lifecycle_view_is_no_store_safe_and_preserves_late_degraded_blockers() {
+        let blocker_created_at = "2026-10-11T09:03:00Z".to_owned();
+        let response = runtime_lifecycle_response(
+            snapshot(),
+            "runtime-lifecycle-view",
+            "incarnation-current",
+            vec![RuntimeLifecycleBlocker {
+                code: "EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED".to_owned(),
+                created_at: blocker_created_at.clone(),
+            }],
+        )
+        .expect("valid exact-incarnation lifecycle projection");
+
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let body = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("bounded lifecycle response");
+        let value: Value = serde_json::from_slice(&body).expect("JSON lifecycle view");
+        assert_eq!(value["availability"], "DEGRADED");
+        assert_eq!(value["incarnation"]["recovery_state"], "DEGRADED");
+        assert_eq!(value["blockers"][0]["created_at"], blocker_created_at);
+        assert_eq!(value["blockers"][0]["code"], "RUNTIME_UNAVAILABLE");
+        assert_eq!(
+            value["blockers"][0]["safe_message"],
+            "Expired execution lease recovery did not complete."
+        );
+        assert_eq!(
+            value["blockers"][0]["blocker_id"],
+            "local-runtime:runtime-lifecycle-view:blocker:1"
+        );
+        assert!(value.get("dependent_tasks").is_none());
+        assert!(value.get("dependent_automations").is_none());
+        assert!(value["blockers"][0].get("code").is_some());
+        assert!(
+            value
+                .to_string()
+                .find("EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED")
+                .is_none()
+        );
+        assert!(value.to_string().find("os_boot_id").is_none());
+        assert!(value.to_string().find("local_principal_id").is_none());
+    }
+
+    #[test]
+    fn lifecycle_view_rejects_a_superseded_incarnation() {
+        let error = runtime_lifecycle_response(
+            snapshot(),
+            "runtime-lifecycle-view",
+            "incarnation-old",
+            Vec::new(),
+        )
+        .expect_err("old incarnation cannot project current lifecycle state");
+        assert_eq!(error.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
 }
 
 async fn create_resource(
@@ -1486,6 +2458,294 @@ async fn get_resource_detail(
         header::HeaderValue::from_static("no-store"),
     );
     Ok(response)
+}
+
+async fn list_resource_locations(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(resource_id): Path<String>,
+) -> Result<Response, Response> {
+    resource_locations_response(&state.store, &state.principal_id, &headers, &resource_id)
+}
+
+fn resource_locations_response(
+    store: &SqliteWorkspaceStore,
+    principal_id: &str,
+    headers: &HeaderMap,
+    resource_id: &str,
+) -> Result<Response, Response> {
+    let workspace_id = selected_workspace(headers)?;
+    ensure_workspace_owner_for(store, principal_id, &workspace_id)?;
+    let locations = store
+        .list_resource_locations(&workspace_id, resource_id)
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Resource locations are unavailable",
+            )
+        })?
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Resource is unavailable",
+            )
+        })?;
+    let mut response = Json(locations).into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
+}
+
+#[cfg(test)]
+mod resource_location_response_tests {
+    use super::resource_locations_response;
+    use axum::{
+        body::to_bytes,
+        http::{HeaderMap, HeaderValue, StatusCode, header},
+    };
+    use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
+    use rusqlite::Connection;
+    use serde_json::{Value, json};
+    use std::{fs, sync::Arc, time::Duration};
+    use storage_core::{BlobPurpose, StoreError};
+    use storage_sqlite::{
+        FileBlobStore, SqliteConfig, SqliteWorkspaceStore, WorkspaceBlobKey,
+        WorkspaceBlobKeyProvider,
+    };
+    use zeroize::Zeroizing;
+
+    const OWNER: &str = "location-route-owner";
+    const FOREIGN_PRINCIPAL: &str = "location-route-foreign";
+    const WORKSPACE_A: &str = "location-route-workspace-a";
+    const WORKSPACE_B: &str = "location-route-workspace-b";
+    const RESOURCE_B: &str = "location-route-resource-b";
+    const RESOURCE_EMPTY: &str = "location-route-resource-empty";
+    const REVISION_B: &str = "location-route-revision-b";
+    const LOCATION_B: &str = "location-route-location-b";
+    const DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const NOW: &str = "2026-10-10T10:00:00Z";
+
+    #[derive(Clone)]
+    struct TestKeys;
+
+    impl WorkspaceBlobKeyProvider for TestKeys {
+        fn current_key(
+            &self,
+            _workspace_id: &str,
+            _purpose: BlobPurpose,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            Ok(WorkspaceBlobKey {
+                version: 1,
+                bytes: Zeroizing::new([37_u8; 32]),
+            })
+        }
+
+        fn key_by_version(
+            &self,
+            workspace_id: &str,
+            purpose: BlobPurpose,
+            version: u32,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            if version != 1 {
+                return Err(StoreError::Blob("unknown test key version".to_owned()));
+            }
+            self.current_key(workspace_id, purpose)
+        }
+    }
+
+    struct Fixture {
+        _directory: tempfile::TempDir,
+        store: SqliteWorkspaceStore,
+    }
+
+    fn event(event_id: &str) -> EventContext {
+        EventContext {
+            event_id: event_id.to_owned(),
+            origin_runtime_id: "location-route-runtime".to_owned(),
+            hlc_timestamp: NOW.to_owned(),
+            correlation_id: format!("correlation-{event_id}"),
+            causation_id: None,
+            recorded_at: NOW.to_owned(),
+        }
+    }
+
+    fn workspace_headers(workspace_id: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-workspace-id",
+            HeaderValue::from_str(workspace_id).expect("valid test Workspace header"),
+        );
+        headers
+    }
+
+    fn fixture() -> Fixture {
+        let directory = tempfile::tempdir().expect("temporary fixture directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+                .expect("private fixture directory");
+        }
+        let database = directory.path().join("state.sqlite3");
+        let blobs = Arc::new(FileBlobStore::new(directory.path().join("blobs"), TestKeys));
+        let store = SqliteWorkspaceStore::open(
+            &database,
+            blobs,
+            SqliteConfig {
+                writer_queue_capacity: 8,
+                busy_timeout: Duration::from_secs(2),
+            },
+        )
+        .expect("SQLite store opens");
+        for (workspace_id, event_id) in [
+            (WORKSPACE_A, "location-route-workspace-a-created"),
+            (WORKSPACE_B, "location-route-workspace-b-created"),
+        ] {
+            WorkspaceService::new(store.clone())
+                .create(CreateWorkspace {
+                    workspace_id: workspace_id.to_owned(),
+                    name: format!("Location route {workspace_id}"),
+                    owner_principal_id: OWNER.to_owned(),
+                    event: event(event_id),
+                })
+                .expect("Workspace commits");
+        }
+
+        let mut connection = Connection::open(&database).expect("fixture database opens");
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON;")
+            .expect("foreign keys enabled");
+        let transaction = connection.transaction().expect("fixture transaction");
+        transaction
+            .execute(
+                "INSERT INTO resources(resource_id,workspace_id,kind,provider_identity_json,display_name,current_revision_id,sensitivity,context_document_json,provenance_json,created_at,updated_at,version)
+                 VALUES (?1,?2,'FILE','{}','private-name.txt',?3,'PERSONAL',NULL,'{}',?4,?4,1)",
+                rusqlite::params![RESOURCE_B, WORKSPACE_B, REVISION_B, NOW],
+            )
+            .expect("Resource fixture");
+        transaction
+            .execute(
+                "INSERT INTO resource_revisions(resource_revision_id,resource_id,content_digest,size_bytes,media_type,observed_at,created_by_json)
+                 VALUES (?1,?2,?3,12,'text/plain',?4,'{}')",
+                rusqlite::params![REVISION_B, RESOURCE_B, DIGEST, NOW],
+            )
+            .expect("revision fixture");
+        transaction
+            .execute(
+                "INSERT INTO resource_locations(location_id,resource_id,provider_ref,locator_ref_id,availability,writable,observed_revision_id,observed_digest,observed_at,last_checked_at)
+                 VALUES (?1,?2,'private-provider-ref','opaque-private-locator','AVAILABLE',0,?3,?4,?5,?5)",
+                rusqlite::params![LOCATION_B, RESOURCE_B, REVISION_B, DIGEST, NOW],
+            )
+            .expect("location fixture");
+        transaction
+            .execute(
+                "INSERT INTO resources(resource_id,workspace_id,kind,provider_identity_json,display_name,current_revision_id,sensitivity,context_document_json,provenance_json,created_at,updated_at,version)
+                 VALUES (?1,?2,'FILE','{}','empty.txt',NULL,'PERSONAL',NULL,'{}',?3,?3,1)",
+                rusqlite::params![RESOURCE_EMPTY, WORKSPACE_B, NOW],
+            )
+            .expect("Resource without locations fixture");
+        transaction.commit().expect("fixture commits");
+        Fixture {
+            _directory: directory,
+            store,
+        }
+    }
+
+    #[tokio::test]
+    async fn resource_location_response_authorizes_scopes_and_is_noncacheable_public_json() {
+        let fixture = fixture();
+        let missing_workspace =
+            resource_locations_response(&fixture.store, OWNER, &HeaderMap::new(), RESOURCE_B)
+                .expect_err("Workspace must be explicit");
+        assert_eq!(missing_workspace.status(), StatusCode::BAD_REQUEST);
+
+        let forbidden = resource_locations_response(
+            &fixture.store,
+            FOREIGN_PRINCIPAL,
+            &workspace_headers(WORKSPACE_B),
+            RESOURCE_B,
+        )
+        .expect_err("foreign principal cannot read a Workspace");
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+        let hidden = resource_locations_response(
+            &fixture.store,
+            OWNER,
+            &workspace_headers(WORKSPACE_A),
+            RESOURCE_B,
+        )
+        .expect_err("Resource outside selected Workspace is hidden");
+        assert_eq!(hidden.status(), StatusCode::NOT_FOUND);
+
+        let missing_resource = resource_locations_response(
+            &fixture.store,
+            OWNER,
+            &workspace_headers(WORKSPACE_B),
+            "missing-location-route-resource",
+        )
+        .expect_err("absent Resource is not disclosed as an empty list");
+        assert_eq!(missing_resource.status(), StatusCode::NOT_FOUND);
+
+        let response = resource_locations_response(
+            &fixture.store,
+            OWNER,
+            &workspace_headers(WORKSPACE_B),
+            RESOURCE_B,
+        )
+        .expect("owner reads Resource location");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+        let body = to_bytes(response.into_body(), 4096)
+            .await
+            .expect("small location response");
+        let actual: Value = serde_json::from_slice(&body).expect("location JSON");
+        assert_eq!(
+            actual,
+            json!([{
+                "location_id": LOCATION_B,
+                "resource_id": RESOURCE_B,
+                "runtime_id": null,
+                "environment_id": null,
+                "connection_id": null,
+                "availability": "AVAILABLE",
+                "writable": false,
+                "observed_revision_id": REVISION_B,
+                "observed_digest": DIGEST,
+                "observed_at": NOW,
+                "last_checked_at": NOW,
+                "freshness": "CURRENT"
+            }])
+        );
+        let serialized = serde_json::to_string(&actual).expect("response JSON serializes");
+        assert!(!serialized.contains("private-provider-ref"));
+        assert!(!serialized.contains("opaque-private-locator"));
+        assert!(!serialized.contains("locator_ref_id"));
+        assert!(!serialized.contains("provider_ref"));
+
+        let empty_response = resource_locations_response(
+            &fixture.store,
+            OWNER,
+            &workspace_headers(WORKSPACE_B),
+            RESOURCE_EMPTY,
+        )
+        .expect("owner reads Resource with no committed locations");
+        assert_eq!(empty_response.status(), StatusCode::OK);
+        assert_eq!(
+            empty_response.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+        let body = to_bytes(empty_response.into_body(), 4096)
+            .await
+            .expect("small empty location response");
+        assert_eq!(body.as_ref(), b"[]");
+    }
 }
 
 /// Owner-only revocation/restoration. This transition fences new content-read
@@ -2270,12 +3530,12 @@ async fn expire_upload_if_due(
 /// admission steps; this route never starts a native agent session or labels the Task
 /// as working.
 async fn create_task(
-    State(state): State<ApiState>,
+    State(state): State<TaskCreateApiState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
-    let workspace = ensure_workspace_owner(&state, &workspace_id)?;
+    let workspace = ensure_workspace_owner_for(&state.store, &state.principal_id, &workspace_id)?;
     if workspace.status != "ACTIVE" {
         return Err(operator_error(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -2793,6 +4053,7 @@ fn parse_task_planning_readiness_request(
 /// Builds the read-only, owner-scoped readiness projection. Keeping this function
 /// independent of transport state makes the no-mutation contract directly testable;
 /// it still only prepares an internal bounded packet and never dispatches it.
+#[allow(clippy::too_many_arguments)]
 fn task_planning_readiness_projection(
     store: SqliteWorkspaceStore,
     principal_id: String,
@@ -3178,7 +4439,15 @@ fn decode_task_cursor(
 }
 
 fn ensure_workspace_owner(state: &ApiState, workspace_id: &str) -> Result<Workspace, Response> {
-    let workspace = state.store.get_workspace(workspace_id).map_err(|_| {
+    ensure_workspace_owner_for(&state.store, &state.principal_id, workspace_id)
+}
+
+fn ensure_workspace_owner_for(
+    store: &SqliteWorkspaceStore,
+    principal_id: &str,
+    workspace_id: &str,
+) -> Result<Workspace, Response> {
+    let workspace = store.get_workspace(workspace_id).map_err(|_| {
         operator_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "INTERNAL",
@@ -3186,7 +4455,7 @@ fn ensure_workspace_owner(state: &ApiState, workspace_id: &str) -> Result<Worksp
         )
     })?;
     workspace
-        .filter(|workspace| workspace.owner_principal_id == state.principal_id)
+        .filter(|workspace| workspace.owner_principal_id == principal_id)
         .ok_or_else(|| {
             operator_error(
                 StatusCode::FORBIDDEN,
@@ -4537,7 +5806,7 @@ fn idempotent_id(prefix: &str, principal_id: &str, request_id: &str, label: &str
 
 impl Drop for OperatorServer {
     fn drop(&mut self) {
-        self.shutdown_server();
+        let _ = self.shutdown_server();
     }
 }
 
@@ -4558,6 +5827,7 @@ async fn authenticate(request: Request<Body>, next: Next) -> Response {
 
 /// Native-only local IPC operation. The path arrives only from a Tauri command after a
 /// native folder picker; this route is not part of the public Operator/OpenAPI surface.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn create_workspace_root_from_native_selection(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -4639,35 +5909,24 @@ async fn create_workspace_root_from_native_selection(
         ));
     }
 
-    #[cfg(unix)]
-    let selected_path = {
-        use std::os::unix::ffi::OsStringExt;
-        let raw_path = URL_SAFE_NO_PAD
-            .decode(request.selected_path_base64.as_bytes())
-            .map_err(|_| {
-                operator_error(
-                    StatusCode::BAD_REQUEST,
-                    "INVALID_ARGUMENT",
-                    "Selected folder is invalid",
-                )
-            })?;
-        if raw_path.is_empty() || raw_path.len() > 32 * 1024 || raw_path.contains(&0) {
-            return Err(operator_error(
+    use std::os::unix::ffi::OsStringExt;
+    let raw_path = URL_SAFE_NO_PAD
+        .decode(request.selected_path_base64.as_bytes())
+        .map_err(|_| {
+            operator_error(
                 StatusCode::BAD_REQUEST,
                 "INVALID_ARGUMENT",
                 "Selected folder is invalid",
-            ));
-        }
-        PathBuf::from(OsString::from_vec(raw_path))
-    };
-    #[cfg(not(unix))]
-    let selected_path: PathBuf = {
+            )
+        })?;
+    if raw_path.is_empty() || raw_path.len() > 32 * 1024 || raw_path.contains(&0) {
         return Err(operator_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "UNAVAILABLE",
-            "Persistent folder access is not qualified on this platform",
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Selected folder is invalid",
         ));
-    };
+    }
+    let selected_path = PathBuf::from(OsString::from_vec(raw_path));
 
     let opened = open_selected_directory(&selected_path).map_err(|_| {
         operator_error(
@@ -4760,6 +6019,19 @@ async fn create_workspace_root_from_native_selection(
         location_availability: committed.location.availability,
         version: committed.root.version,
     }))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+async fn create_workspace_root_from_native_selection(
+    State(_state): State<ApiState>,
+    _headers: HeaderMap,
+    _body: Bytes,
+) -> Result<Json<WorkspaceRootCreatedResponse>, Response> {
+    Err(operator_error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "UNAVAILABLE",
+        "Persistent folder access is not qualified on this platform",
+    ))
 }
 
 async fn list_workspaces(
@@ -4974,14 +6246,169 @@ fn map_agent_store_error(error: storage_core::StoreError, message: &'static str)
     }
 }
 
+fn publish_runtime_offer_and_notify(
+    store: &SqliteWorkspaceStore,
+    inventory_revision: &AtomicU64,
+    offer: RuntimeOfferRecord,
+    message: &'static str,
+) -> Result<(), Response> {
+    store
+        .publish_runtime_offer(offer)
+        .map_err(|error| map_agent_store_error(error, message))?;
+    advance_runtime_inventory_revision(inventory_revision).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Runtime inventory revision limit has been reached",
+        )
+    })?;
+    Ok(())
+}
+
+const MAX_SAFE_JSON_INTEGER: u64 = 9_007_199_254_740_991;
+
+fn advance_runtime_inventory_revision(revision: &AtomicU64) -> Result<(), ()> {
+    revision
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            current
+                .checked_add(1)
+                .filter(|next| *next <= MAX_SAFE_JSON_INTEGER)
+        })
+        .map(|_| ())
+        .map_err(|_| ())
+}
+
 async fn list_workspace_runtime_bindings(
-    State(state): State<ApiState>,
+    State(state): State<RuntimeWorkspaceBindingsApiState>,
     Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+    Query(query): Query<RuntimeWorkspaceBindingListQuery>,
 ) -> Result<Json<RuntimeWorkspaceBindingPageResponse>, Response> {
-    ensure_workspace_owner(&state, &workspace_id)?;
+    if selected_workspace(&headers)? != workspace_id {
+        return Err(operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Workspace access is unavailable",
+        ));
+    }
+    ensure_workspace_owner_for(&state.store, &state.principal_id, &workspace_id)?;
+    let limit = query.limit.unwrap_or(50);
+    if !(1..=200).contains(&limit) {
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Runtime Workspace binding page limit must be between 1 and 200",
+        ));
+    }
+    let after_binding_id = if let Some(encoded) = query.cursor.as_deref() {
+        if encoded.is_empty() || encoded.len() > 2048 {
+            return Err(runtime_workspace_binding_cursor_invalid());
+        }
+        let bytes = URL_SAFE_NO_PAD
+            .decode(encoded.as_bytes())
+            .map_err(|_| runtime_workspace_binding_cursor_invalid())?;
+        let cursor: RuntimeWorkspaceBindingListCursor = serde_json::from_slice(&bytes)
+            .map_err(|_| runtime_workspace_binding_cursor_invalid())?;
+        if cursor.version != 1
+            || cursor.workspace_id != workspace_id
+            || cursor.limit != limit
+            || !valid_runtime_workspace_binding_id(&cursor.after_binding_id)
+        {
+            return Err(runtime_workspace_binding_cursor_invalid());
+        }
+        Some(cursor.after_binding_id)
+    } else {
+        None
+    };
+    let mut items = state
+        .store
+        .list_workspace_runtime_bindings(storage_core::RuntimeWorkspaceBindingPageRequest {
+            owner_principal_id: state.principal_id.clone(),
+            workspace_id: workspace_id.clone(),
+            after_binding_id,
+            limit: limit + 1,
+        })
+        .map_err(|error| match error {
+            storage_core::StoreError::Invalid(_) => operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Runtime Workspace binding page is invalid",
+            ),
+            _ => operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Workspace Runtime bindings are unavailable",
+            ),
+        })?;
+    let has_more = items.len() > limit;
+    if has_more {
+        items.pop();
+    }
+    let next_cursor = if has_more {
+        let cursor = items
+            .last()
+            .map(|item| {
+                serde_json::to_vec(&RuntimeWorkspaceBindingListCursor {
+                    version: 1,
+                    workspace_id: workspace_id.clone(),
+                    limit,
+                    after_binding_id: item.runtime_workspace_binding_id.clone(),
+                })
+                .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
+                .map_err(|_| {
+                    operator_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "INTERNAL",
+                        "Runtime Workspace binding cursor could not be created",
+                    )
+                })
+            })
+            .transpose()?;
+        if cursor.as_ref().is_some_and(|cursor| cursor.len() > 2048) {
+            return Err(operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Runtime Workspace binding cursor exceeded its size limit",
+            ));
+        }
+        cursor
+    } else {
+        None
+    };
+    Ok(Json(RuntimeWorkspaceBindingPageResponse {
+        items,
+        next_cursor,
+    }))
+}
+
+fn runtime_workspace_binding_cursor_invalid() -> Response {
+    operator_error(
+        StatusCode::BAD_REQUEST,
+        "INVALID_ARGUMENT",
+        "Runtime Workspace binding cursor is invalid or does not match this query",
+    )
+}
+
+fn valid_runtime_workspace_binding_id(value: &str) -> bool {
+    !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
+}
+
+async fn get_current_local_runtime_binding(
+    State(state): State<RuntimeWorkspaceBindingsApiState>,
+    Path(workspace_id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<RuntimeWorkspaceBindingPageResponse>, Response> {
+    if selected_workspace(&headers)? != workspace_id {
+        return Err(operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Workspace access is unavailable",
+        ));
+    }
+    ensure_workspace_owner_for(&state.store, &state.principal_id, &workspace_id)?;
     let lookup = LocalRuntimeWorkspaceBindingLookup {
         owner_principal_id: state.principal_id.clone(),
-        workspace_id: workspace_id.clone(),
+        workspace_id,
         runtime_id: state.runtime_id.clone(),
         runtime_incarnation_id: state.local_incarnation_id.clone(),
     };
@@ -5209,9 +6636,10 @@ async fn probe_local_agent_profile(
                 "Probe observations could not be normalized",
             )
         })?;
-        state_for_probe
-            .store
-            .publish_runtime_offer(RuntimeOfferRecord {
+        publish_runtime_offer_and_notify(
+            &state_for_probe.store,
+            &state_for_probe.runtime_inventory_revision,
+            RuntimeOfferRecord {
                 runtime_id: runtime_id.clone(),
                 runtime_incarnation_id: incarnation_id.clone(),
                 offer_kind: "AGENT_ENDPOINT".to_owned(),
@@ -5221,10 +6649,9 @@ async fn probe_local_agent_profile(
                 constraints,
                 observed_at: now.clone(),
                 expires_at: add_seconds(&now, 120)?,
-            })
-            .map_err(|error| {
-                map_agent_store_error(error, "Codex Runtime offer could not be recorded")
-            })?;
+            },
+            "Codex Runtime offer could not be recorded",
+        )?;
         let profiles = state_for_probe
             .store
             .list_agent_profiles(&state_for_probe.principal_id, &scoped_workspace, &now)
@@ -5358,9 +6785,10 @@ async fn probe_local_opencode_profile(
                 "Probe observations could not be normalized",
             )
         })?;
-        state_for_probe
-            .store
-            .publish_runtime_offer(RuntimeOfferRecord {
+        publish_runtime_offer_and_notify(
+            &state_for_probe.store,
+            &state_for_probe.runtime_inventory_revision,
+            RuntimeOfferRecord {
                 runtime_id: runtime_id.clone(),
                 runtime_incarnation_id: incarnation_id.clone(),
                 offer_kind: "AGENT_ENDPOINT".to_owned(),
@@ -5370,10 +6798,9 @@ async fn probe_local_opencode_profile(
                 constraints,
                 observed_at: observed_at.clone(),
                 expires_at: add_seconds(&observed_at, 120)?,
-            })
-            .map_err(|error| {
-                map_agent_store_error(error, "OpenCode Runtime offer could not be recorded")
-            })?;
+            },
+            "OpenCode Runtime offer could not be recorded",
+        )?;
         let profiles = state_for_probe
             .store
             .list_agent_profiles(
@@ -5649,25 +7076,11 @@ async fn enable_agent_binding(
 }
 
 async fn create_workspace(
-    State(state): State<ApiState>,
+    State(state): State<WorkspaceCreateApiState>,
     headers: HeaderMap,
     Json(body): Json<CreateWorkspaceBody>,
 ) -> Result<Response, Response> {
-    let request_id = headers
-        .get("idempotency-key")
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| {
-            !value.is_empty()
-                && value.len() <= 128
-                && value.bytes().all(|byte| byte.is_ascii_graphic())
-        })
-        .ok_or_else(|| {
-            operator_error(
-                StatusCode::BAD_REQUEST,
-                "INVALID_ARGUMENT",
-                "A valid Idempotency-Key is required",
-            )
-        })?;
+    let request_id = idempotency_key(&headers)?;
     let normalized_name = body.name.trim().to_owned();
     if normalized_name.is_empty() || normalized_name.chars().count() > 160 {
         return Err(operator_error(
@@ -5712,31 +7125,25 @@ async fn create_workspace(
         owner_principal_id: state.principal_id.clone(),
         event: context,
     };
-    let service = WorkspaceService::new(state.store.clone());
-    let committed = service
-        .create_idempotent_with_policy(
-            command,
-            policy.clone(),
-            request_id.to_owned(),
-            json!({ "operation": "workspace.create.v1", "name": normalized_name, "replication_policy": policy.as_str() }),
-        )
-        .map_err(|error| match error {
-            storage_core::StoreError::Invalid(_) => operator_error(
-                StatusCode::BAD_REQUEST,
-                "INVALID_ARGUMENT",
-                "Workspace request is invalid",
-            ),
-            storage_core::StoreError::Conflict { .. } => operator_error(
-                StatusCode::CONFLICT,
-                "CONFLICT",
-                "Idempotency key was already used for a different request",
-            ),
-            _ => operator_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "INTERNAL",
-                "Workspace could not be created",
-            ),
-        })?;
+    let committed =
+        commit_workspace_creation(&state.store, command, policy, request_id, normalized_name)
+            .map_err(|error| match error {
+                storage_core::StoreError::Invalid(_) => operator_error(
+                    StatusCode::BAD_REQUEST,
+                    "INVALID_ARGUMENT",
+                    "Workspace request is invalid",
+                ),
+                storage_core::StoreError::Conflict { .. } => operator_error(
+                    StatusCode::CONFLICT,
+                    "CONFLICT",
+                    "Idempotency key was already used for a different request",
+                ),
+                _ => operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Workspace could not be created",
+                ),
+            })?;
     let mut response = (StatusCode::CREATED, Json(committed.workspace)).into_response();
     let correlation_id = header::HeaderValue::from_bytes(committed.event.correlation_id.as_bytes())
         .map_err(|_| {
@@ -5751,6 +7158,25 @@ async fn create_workspace(
         correlation_id,
     );
     Ok(response)
+}
+
+fn commit_workspace_creation(
+    store: &SqliteWorkspaceStore,
+    command: CreateWorkspace,
+    policy: ReplicationPolicy,
+    request_id: String,
+    normalized_name: String,
+) -> Result<storage_core::CommittedWorkspace, StoreError> {
+    WorkspaceService::new(store.clone()).create_idempotent_with_policy(
+        command,
+        policy.clone(),
+        request_id,
+        json!({
+            "operation": "workspace.create.v1",
+            "name": normalized_name,
+            "replication_policy": policy.as_str()
+        }),
+    )
 }
 
 async fn get_workspace(
@@ -5785,11 +7211,10 @@ async fn get_workspace(
     }
 }
 
-async fn update_workspace_policy(
-    State(state): State<ApiState>,
+async fn archive_workspace(
+    State(state): State<WorkspaceArchiveApiState>,
     headers: HeaderMap,
     Path(workspace_id): Path<String>,
-    Json(body): Json<UpdateWorkspacePolicyBody>,
 ) -> Result<Response, Response> {
     if selected_workspace(&headers)? != workspace_id {
         return Err(operator_error(
@@ -5798,7 +7223,7 @@ async fn update_workspace_policy(
             "Workspace access is unavailable",
         ));
     }
-    let _workspace = state
+    let workspace = state
         .store
         .get_workspace(&workspace_id)
         .map_err(|_| {
@@ -5864,10 +7289,131 @@ async fn update_workspace_policy(
             "Workspace request could not be initialized",
         )
     })?;
+    let request_payload = json!({
+        "operation": "workspace.archive.v1",
+        "workspace_id": workspace_id,
+        "expected_version": expected_version,
+    });
+    let committed = WorkspaceService::new(state.store.clone())
+        .archive_idempotent(
+            ArchiveWorkspace {
+                workspace_id: workspace.workspace_id,
+                expected_version,
+                principal_id: state.principal_id,
+                event: context,
+            },
+            request_id.to_owned(),
+            request_payload,
+        )
+        .map_err(|error| match error {
+            StoreError::Invalid(_) => operator_error(
+                StatusCode::CONFLICT,
+                "INVALID_TRANSITION",
+                "Workspace cannot be archived from its current state",
+            ),
+            StoreError::Conflict { .. } => operator_error(
+                StatusCode::CONFLICT,
+                "STALE_WORKSPACE_VERSION",
+                "Workspace changed; refresh before archiving",
+            ),
+            StoreError::NotFound => operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Workspace is unavailable",
+            ),
+            StoreError::WorkspaceNotQuiescent { blockers } => {
+                let details = serde_json::to_value(blockers)
+                    .unwrap_or_else(|_| json!({"blockers": "unavailable"}));
+                operator_error_with_details(
+                    StatusCode::CONFLICT,
+                    "WORKSPACE_NOT_QUIESCENT",
+                    "Workspace has active work or authority and cannot be archived yet",
+                    Some(json!({"blockers": details})),
+                )
+            }
+            _ => operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Workspace could not be archived",
+            ),
+        })?;
+    let mut response = Json(committed.workspace).into_response();
+    if let Ok(value) = header::HeaderValue::from_str(&committed.event.correlation_id) {
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static("x-correlation-id"), value);
+    }
+    Ok(response)
+}
+
+async fn update_workspace_policy(
+    State(state): State<WorkspacePolicyApiState>,
+    headers: HeaderMap,
+    Path(workspace_id): Path<String>,
+    Json(body): Json<UpdateWorkspacePolicyBody>,
+) -> Result<Response, Response> {
+    if selected_workspace(&headers)? != workspace_id {
+        return Err(operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Workspace access is unavailable",
+        ));
+    }
+    let _workspace = ensure_workspace_owner_for(&state.store, &state.principal_id, &workspace_id)?;
+    let expected_version = headers
+        .get(header::IF_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim().trim_matches('"').parse::<u64>())
+        .transpose()
+        .map_err(|_| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "If-Match must contain a Workspace version",
+            )
+        })?
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "If-Match is required",
+            )
+        })?;
+    let request_id = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 200
+                && value.bytes().all(|byte| byte.is_ascii_graphic())
+        })
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "A valid Idempotency-Key is required",
+            )
+        })?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Workspace request could not be initialized",
+        )
+    })?;
+    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Workspace request could not be initialized",
+        )
+    })?;
     let policy = body.replication_policy;
     let roots = body.replication_scope_root_ids;
     let request_payload = json!({
         "operation": "workspace.policy.update.v1",
+        "workspace_id": workspace_id,
+        "expected_version": expected_version,
         "replication_policy": policy.as_str(),
         "replication_scope_root_ids": roots.clone(),
     });
@@ -6020,7 +7566,7 @@ async fn set_workspace_default_agent_binding(
 }
 
 async fn create_workspace_instruction_revision(
-    State(state): State<ApiState>,
+    State(state): State<WorkspaceInstructionApiState>,
     headers: HeaderMap,
     Path(workspace_id): Path<String>,
     Json(body): Json<CreateWorkspaceInstructionRevisionBody>,
@@ -6251,7 +7797,7 @@ async fn create_workspace_instruction_revision(
 }
 
 async fn list_workspace_instruction_revisions(
-    State(state): State<ApiState>,
+    State(state): State<WorkspaceInstructionApiState>,
     headers: HeaderMap,
     Path(workspace_id): Path<String>,
     Query(query): Query<InstructionHistoryQuery>,
@@ -6365,6 +7911,15 @@ async fn list_workspace_instruction_revisions(
 }
 
 fn operator_error(status: StatusCode, code: &'static str, message: &'static str) -> Response {
+    operator_error_with_details(status, code, message, None)
+}
+
+fn operator_error_with_details(
+    status: StatusCode,
+    code: &'static str,
+    message: &'static str,
+    details: Option<Value>,
+) -> Response {
     let correlation_id = new_id("cor").unwrap_or_else(|_| "cor_unavailable".to_owned());
     let retryable = status.is_server_error()
         || matches!(
@@ -6378,7 +7933,7 @@ fn operator_error(status: StatusCode, code: &'static str, message: &'static str)
             message,
             retryable,
             correlation_id: correlation_id.clone(),
-            details: None,
+            details,
         }),
     )
         .into_response();
@@ -6915,5 +8470,235 @@ mod task_planning_readiness_tests {
         assert!(body.get("planning_packet").is_none());
         assert!(body.get("endpoint_id").is_none());
         assert_eq!(row_counts(&fixture.database), before);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod shutdown_settlement_tests {
+    use super::{
+        OperatorRequestSettlement, drain_operator_workers, finish_operator_runtime,
+        finish_operator_thread, finish_operator_thread_with_timeout, poll_ready_future,
+        request_worker_failed,
+    };
+    use std::{sync::mpsc, thread, time::Duration};
+    use tokio::{runtime::Builder, task::JoinSet};
+
+    fn run_on_current_thread<F: std::future::Future>(future: F) -> F::Output {
+        Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test Tokio runtime")
+            .block_on(future)
+    }
+
+    #[test]
+    fn shutdown_probe_observes_ready_accept_errors_without_waiting_for_new_connections() {
+        let (ready, pending) = run_on_current_thread(async {
+            (
+                poll_ready_future(std::future::ready(Err::<(), _>("listener failed"))).await,
+                poll_ready_future(std::future::pending::<()>()).await,
+            )
+        });
+
+        assert_eq!(ready, Some(Err("listener failed")));
+        assert_eq!(pending, None);
+    }
+
+    #[test]
+    fn completed_request_workers_settle_cleanly() {
+        let result = run_on_current_thread(async {
+            let mut workers = JoinSet::new();
+            workers.spawn(async { OperatorRequestSettlement::Complete });
+            drain_operator_workers(
+                &mut workers,
+                false,
+                Duration::from_secs(1),
+                Duration::from_millis(10),
+            )
+            .await
+        });
+
+        assert_eq!(result, Ok(()));
+    }
+
+    #[test]
+    fn cancelled_request_worker_prevents_clean_settlement() {
+        let result = run_on_current_thread(async {
+            let mut workers = JoinSet::new();
+            workers.spawn(std::future::pending::<OperatorRequestSettlement>());
+            workers.abort_all();
+            drain_operator_workers(
+                &mut workers,
+                false,
+                Duration::from_secs(1),
+                Duration::from_millis(10),
+            )
+            .await
+        });
+
+        assert_eq!(
+            result.err().as_deref(),
+            Some("a local Operator request task failed")
+        );
+    }
+
+    #[test]
+    fn drain_deadline_aborts_and_joins_workers_but_reports_unsettled_shutdown() {
+        let (result, workers_empty) = run_on_current_thread(async {
+            let mut workers = JoinSet::new();
+            workers.spawn(std::future::pending::<OperatorRequestSettlement>());
+            let result = drain_operator_workers(
+                &mut workers,
+                false,
+                Duration::from_millis(1),
+                Duration::from_millis(10),
+            )
+            .await;
+            (result, workers.is_empty())
+        });
+
+        assert_eq!(
+            result.err().as_deref(),
+            Some("local Operator request drain deadline expired")
+        );
+        assert!(
+            workers_empty,
+            "cooperatively cancelled request tasks should settle within the abort window"
+        );
+    }
+
+    #[test]
+    fn unabortable_blocking_worker_does_not_extend_the_drain_deadline() {
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("test Tokio runtime");
+        let (started_sender, started_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (finished_sender, finished_receiver) = mpsc::channel();
+        let mut workers = JoinSet::new();
+        runtime.block_on(async {
+            workers.spawn_blocking(move || {
+                started_sender.send(()).expect("test start signal");
+                release_receiver.recv().expect("test release signal");
+                finished_sender.send(()).expect("test finished signal");
+                OperatorRequestSettlement::Complete
+            });
+        });
+        started_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("blocking request starts");
+
+        let result = runtime.block_on(drain_operator_workers(
+            &mut workers,
+            false,
+            Duration::from_millis(10),
+            Duration::from_millis(10),
+        ));
+
+        assert_eq!(
+            result.err().as_deref(),
+            Some("local Operator request drain deadline expired")
+        );
+        assert!(matches!(
+            finished_receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        release_sender.send(()).expect("release blocking request");
+        runtime.block_on(async { while workers.join_next().await.is_some() {} });
+        runtime.shutdown_timeout(Duration::from_secs(1));
+        finished_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("blocking request finishes before test exit");
+    }
+
+    #[test]
+    fn a_handler_deadline_outcome_prevents_clean_settlement() {
+        assert!(request_worker_failed(Ok(
+            OperatorRequestSettlement::MayStillBeRunning
+        )));
+        assert!(request_worker_failed(Ok(OperatorRequestSettlement::Failed)));
+        assert!(!request_worker_failed(Ok(
+            OperatorRequestSettlement::Complete
+        )));
+    }
+
+    #[test]
+    fn runtime_shutdown_timeout_does_not_wait_for_unfinished_blocking_work() {
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("test Tokio runtime");
+        let (started_sender, started_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (finished_sender, finished_receiver) = mpsc::channel();
+        runtime.spawn_blocking(move || {
+            started_sender.send(()).expect("test start signal");
+            release_receiver.recv().expect("test release signal");
+            finished_sender.send(()).expect("test finished signal");
+        });
+        started_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("blocking operation starts");
+
+        let result = finish_operator_runtime(
+            runtime,
+            Err("worker did not settle".to_owned()),
+            Duration::from_millis(10),
+        );
+
+        assert_eq!(result, Err("worker did not settle".to_owned()));
+        assert!(matches!(
+            finished_receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        release_sender.send(()).expect("release blocking operation");
+        finished_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("detached operation is released before test exit");
+    }
+
+    #[test]
+    fn endpoint_thread_join_timeout_detaches_and_reports_failure() {
+        let (started_sender, started_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (finished_sender, finished_receiver) = mpsc::channel();
+        let worker_thread = thread::spawn(move || {
+            started_sender.send(()).expect("thread start signal");
+            release_receiver.recv().expect("thread release signal");
+            finished_sender.send(()).expect("thread finished signal");
+            Ok(())
+        });
+        started_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("endpoint thread starts");
+
+        let result = finish_operator_thread_with_timeout(worker_thread, Duration::from_millis(10));
+
+        assert_eq!(
+            result.err().as_deref(),
+            Some("local Operator endpoint thread shutdown deadline expired")
+        );
+        assert!(matches!(
+            finished_receiver.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        release_sender.send(()).expect("release endpoint thread");
+        finished_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("detached endpoint thread is released before test exit");
+    }
+
+    #[test]
+    fn panicked_operator_thread_is_a_failed_settlement() {
+        let joined: thread::Result<Result<(), String>> = Err(Box::new("simulated server panic"));
+        let result = finish_operator_thread(joined);
+
+        assert_eq!(
+            result.err().as_deref(),
+            Some("local Operator endpoint thread panicked")
+        );
     }
 }

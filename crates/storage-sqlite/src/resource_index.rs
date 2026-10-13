@@ -172,6 +172,7 @@ pub(crate) fn list_key_versions(
 
 /// Select only exact current revisions in the requested Workspace and only active
 /// ContextDocuments. `tokens_by_version` contains HMAC tokens derived before this call.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn search_candidates(
     connection: &Connection,
     workspace_id: &str,
@@ -459,6 +460,7 @@ pub(crate) fn materialize_matches(
 /// Unsupported, oversized, invalid UTF-8, or control-heavy inputs are skipped without
 /// creating a partial index. Blob/key failures remain errors so callers can surface a
 /// repairable indexing failure rather than silently claiming the revision was indexed.
+#[allow(clippy::too_many_arguments)]
 pub fn prepare(
     blobs: &dyn BlobStore,
     workspace_id: &str,
@@ -656,11 +658,11 @@ pub fn snippet(text: &str, terms: &[String], maximum_chars: usize) -> Option<Str
         .fold(
             Vec::<(usize, usize)>::new(),
             |mut ranges, (start, character)| {
-                if let Some((_, prior_end)) = ranges.last_mut() {
-                    if *prior_end == start {
-                        *prior_end = start + character.len_utf8();
-                        return ranges;
-                    }
+                if let Some((_, prior_end)) = ranges.last_mut()
+                    && *prior_end == start
+                {
+                    *prior_end = start + character.len_utf8();
+                    return ranges;
                 }
                 ranges.push((start, start + character.len_utf8()));
                 ranges
@@ -874,6 +876,17 @@ mod tests {
     use std::sync::Arc;
     use zeroize::Zeroizing;
 
+    fn private_blob_tempdir() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().expect("temporary blob directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+                .expect("restrict temporary blob root");
+        }
+        directory
+    }
+
     struct StableWorkspaceKeys;
 
     impl WorkspaceBlobKeyProvider for StableWorkspaceKeys {
@@ -982,7 +995,7 @@ mod tests {
 
     #[test]
     fn materialized_search_keeps_spans_paired_with_exact_revision_and_digest() {
-        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let directory = private_blob_tempdir();
         let blobs = FileBlobStore::new(directory.path(), StableWorkspaceKeys);
         let bytes = "Résumé 🧭\nThe indexed phrase is durable.".as_bytes();
         let content_digest = source_digest(bytes);
@@ -1076,7 +1089,7 @@ mod tests {
 
     #[test]
     fn preparation_stores_only_encrypted_snapshot_and_workspace_keyed_tokens() {
-        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let directory = private_blob_tempdir();
         let blobs = Arc::new(FileBlobStore::new(directory.path(), StableWorkspaceKeys));
         let bytes = b"Architecture decisions stay revision scoped.";
         let prepared = prepare(
@@ -1125,7 +1138,7 @@ mod tests {
 
     #[test]
     fn missing_workspace_key_fails_closed_without_plaintext_index_fallback() {
-        let directory = tempfile::tempdir().expect("temporary blob directory");
+        let directory = private_blob_tempdir();
         let blobs = FileBlobStore::new(directory.path(), MissingWorkspaceKeys);
         let bytes = b"plain text must not be indexed without its Workspace key";
         let result = prepare(

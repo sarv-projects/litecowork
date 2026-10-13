@@ -1,4 +1,7 @@
 //! Authenticated Workspace catalog and versioned commands for worker profiles.
+// Route handlers intentionally return full Axum Responses to preserve status, body, and headers.
+#![allow(clippy::result_large_err)]
+
 use super::*;
 use domain_responsibility::{
     CommittedDelegationProfile, DelegationProfileCommand, DelegationProfileCommandScope,

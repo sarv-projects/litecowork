@@ -192,6 +192,13 @@ mod linux {
     #[must_use = "dropping PendingCleanup loses retry ownership of an unsettled process scope"]
     #[derive(Debug)]
     pub enum PendingCleanup {
+        /// The Attempt slice was created but the `systemd-run` process never started.
+        /// No worker exists; retry only the exact owned slice stop operation.
+        AttemptSlice {
+            commands: SystemdCommands,
+            slice_unit: String,
+            cgroup_events: Option<PathBuf>,
+        },
         PreWorker {
             commands: SystemdCommands,
             unit: String,
@@ -207,6 +214,7 @@ mod linux {
     impl PendingCleanup {
         pub fn unit_name(&self) -> &str {
             match self {
+                Self::AttemptSlice { slice_unit, .. } => slice_unit,
                 Self::PreWorker { unit, .. } => unit,
                 Self::ManagedScope { scope } => scope.unit_name(),
             }
@@ -214,6 +222,9 @@ mod linux {
 
         pub fn retry_kill_and_wait(&mut self, timeout: Duration) -> Result<ExitStatus, ScopeError> {
             match self {
+                Self::AttemptSlice { .. } => Err(ScopeError::InvalidInput(
+                    "Attempt slice cleanup has no launcher child; use retry_stop",
+                )),
                 Self::PreWorker {
                     commands,
                     unit,
@@ -248,9 +259,34 @@ mod linux {
             }
         }
 
+        /// Retries cleanup when the Attempt slice started but launcher exec never did.
+        /// Other pending states require their child/cgroup-aware `retry_kill_and_wait` path.
+        pub fn retry_stop(&mut self, timeout: Duration) -> Result<(), ScopeError> {
+            match self {
+                Self::AttemptSlice {
+                    commands,
+                    slice_unit,
+                    cgroup_events,
+                } => {
+                    let _ = stop_attempt_slice(commands, slice_unit, timeout);
+                    prove_preworker_quiescent(
+                        commands,
+                        slice_unit,
+                        cgroup_events.as_deref(),
+                        timeout,
+                    )
+                }
+                Self::PreWorker { .. } | Self::ManagedScope { .. } => Err(
+                    ScopeError::InvalidInput("pending cleanup owns a launcher child"),
+                ),
+            }
+        }
+
         pub fn limits_are_enforced(&self) -> Result<bool, ScopeError> {
             match self {
-                Self::PreWorker { .. } => Err(ScopeError::QuiescenceUnobservable),
+                Self::AttemptSlice { .. } | Self::PreWorker { .. } => {
+                    Err(ScopeError::QuiescenceUnobservable)
+                }
                 Self::ManagedScope { scope } => scope.limits_are_enforced(),
             }
         }
@@ -288,6 +324,14 @@ mod linux {
         /// cgroup-v2 `populated=0` evidence from the stable parent slice before returning.
         /// This does not reconcile external Effects or prove a provider-side operation stopped.
         pub fn kill_and_wait(&mut self, timeout: Duration) -> Result<ExitStatus, ScopeError> {
+            self.kill_and_wait_with(timeout, wait_child_until)
+        }
+
+        fn kill_and_wait_with(
+            &mut self,
+            timeout: Duration,
+            wait_child: impl FnOnce(&mut Child, Instant) -> Result<ExitStatus, ScopeError>,
+        ) -> Result<ExitStatus, ScopeError> {
             let _ = run_control(
                 &self.commands.systemctl,
                 [
@@ -304,7 +348,7 @@ mod linux {
                 .checked_add(timeout)
                 .ok_or(ScopeError::InvalidInput("timeout overflow"))?;
             self.cgroup_observer.wait_until_empty(deadline)?;
-            let status = wait_child_until(&mut self.child, deadline)?;
+            let status = wait_child(&mut self.child, deadline)?;
             stop_attempt_slice(&self.commands, &self.slice_unit, CONTROL_TIMEOUT)?;
             Ok(status)
         }
@@ -335,10 +379,33 @@ mod linux {
     pub fn spawn(commands: &SystemdCommands, spec: LaunchSpec) -> Result<ManagedScope, ScopeError> {
         validate_paths(commands, &spec)?;
         validate_limits(spec.limits)?;
+        let environment = safe_environment(&spec.environment)?;
         let mount = cgroup2_mount()?;
+        spawn_with(
+            commands,
+            spec,
+            environment,
+            mount,
+            start_attempt_slice,
+            |command| command.spawn(),
+        )
+    }
+
+    fn spawn_with(
+        commands: &SystemdCommands,
+        spec: LaunchSpec,
+        environment: Vec<(&'static str, String)>,
+        mount: CgroupMount,
+        start_slice: impl FnOnce(
+            &SystemdCommands,
+            &str,
+            &CgroupMount,
+        ) -> Result<(PathBuf, CgroupPopulatedObserver), ScopeError>,
+        launch_command: impl FnOnce(&mut Command) -> io::Result<Child>,
+    ) -> Result<ManagedScope, ScopeError> {
         let unit = unit_name(spec.attempt_id);
         let slice_unit = attempt_slice_name(spec.attempt_id);
-        let (slice_cgroup, cgroup_observer) = start_attempt_slice(commands, &slice_unit, &mount)?;
+        let (slice_cgroup, cgroup_observer) = start_slice(commands, &slice_unit, &mount)?;
 
         let mut cmd = Command::new(&commands.systemd_run);
         cmd.arg("--user")
@@ -363,7 +430,7 @@ mod linux {
             .arg(&commands.env)
             .arg("-i");
 
-        for (name, value) in safe_environment(&spec.environment)? {
+        for (name, value) in environment {
             cmd.arg(format!("{name}={value}"));
         }
         cmd.arg(&commands.scope_gate)
@@ -377,11 +444,15 @@ mod linux {
         // Keep the manager's user-bus environment for systemd-run itself. `env -i` clears
         // it before the trusted gate/native agent begins; only explicit non-secret
         // path/locale values are placed in the child environment.
-        let mut child = match cmd.spawn() {
+        let mut child = match launch_command(&mut cmd) {
             Ok(child) => child,
             Err(error) => {
-                stop_attempt_slice(commands, &slice_unit, CONTROL_TIMEOUT)?;
-                return Err(ScopeError::Io(error));
+                return Err(fail_attempt_slice(
+                    commands,
+                    &slice_unit,
+                    cgroup_observer,
+                    ScopeError::Io(error),
+                ));
             }
         };
         let stdout = match child.stdout.take() {
@@ -496,6 +567,68 @@ mod linux {
         Ok(managed)
     }
 
+    fn fail_attempt_slice(
+        commands: &SystemdCommands,
+        slice_unit: &str,
+        cgroup_observer: CgroupPopulatedObserver,
+        cause: ScopeError,
+    ) -> ScopeError {
+        match stop_and_prove_attempt_slice(commands, slice_unit, &cgroup_observer, CONTROL_TIMEOUT)
+        {
+            Ok(()) => cause,
+            Err(cleanup_error) => ScopeError::CleanupPending {
+                cause: Box::new(cause),
+                cleanup_error: Box::new(cleanup_error),
+                pending: Box::new(PendingCleanup::AttemptSlice {
+                    commands: commands.clone(),
+                    slice_unit: slice_unit.to_owned(),
+                    cgroup_events: Some(cgroup_observer.events_path),
+                }),
+            },
+        }
+    }
+
+    fn fail_started_attempt_slice(
+        commands: &SystemdCommands,
+        slice_unit: &str,
+        cgroup_events: Option<PathBuf>,
+        cause: ScopeError,
+    ) -> ScopeError {
+        let cleanup = stop_attempt_slice(commands, slice_unit, CONTROL_TIMEOUT).and_then(|()| {
+            prove_preworker_quiescent(
+                commands,
+                slice_unit,
+                cgroup_events.as_deref(),
+                CONTROL_TIMEOUT,
+            )
+        });
+        match cleanup {
+            Ok(()) => cause,
+            Err(cleanup_error) => ScopeError::CleanupPending {
+                cause: Box::new(cause),
+                cleanup_error: Box::new(cleanup_error),
+                pending: Box::new(PendingCleanup::AttemptSlice {
+                    commands: commands.clone(),
+                    slice_unit: slice_unit.to_owned(),
+                    cgroup_events,
+                }),
+            },
+        }
+    }
+
+    fn stop_and_prove_attempt_slice(
+        commands: &SystemdCommands,
+        slice_unit: &str,
+        cgroup_observer: &CgroupPopulatedObserver,
+        timeout: Duration,
+    ) -> Result<(), ScopeError> {
+        stop_attempt_slice(commands, slice_unit, timeout)?;
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or(ScopeError::InvalidInput("timeout overflow"))?;
+        cgroup_observer.wait_until_empty(deadline)
+    }
+
     fn validate_paths(commands: &SystemdCommands, spec: &LaunchSpec) -> Result<(), ScopeError> {
         for path in [
             &commands.systemd_run,
@@ -568,29 +701,42 @@ mod linux {
         }
     }
 
-    fn abort_scope(
+    fn abort_scope_with(
         mut scope: ManagedScope,
         timeout: Duration,
-    ) -> Result<Option<String>, (ManagedScope, ScopeError)> {
-        match scope.kill_and_wait(timeout) {
+        wait_child: impl FnOnce(&mut Child, Instant) -> Result<ExitStatus, ScopeError>,
+    ) -> Result<Option<String>, Box<(ManagedScope, ScopeError)>> {
+        match scope.kill_and_wait_with(timeout, wait_child) {
             Ok(_) => Ok(take_stderr_diagnostic(&mut scope.child)),
             Err(cleanup_error) => {
                 // Try a bounded direct-process reap, but retain the full scope even when
                 // that succeeds: it does not prove the recursive cgroup is empty.
                 let _ = kill_direct_until(&mut scope.child, timeout);
-                Err((scope, cleanup_error))
+                Err(Box::new((scope, cleanup_error)))
             }
         }
     }
 
     fn fail_scope(scope: ManagedScope, cause: ScopeError, timeout: Duration) -> ScopeError {
-        match abort_scope(scope, timeout) {
+        fail_scope_with(scope, cause, timeout, wait_child_until)
+    }
+
+    fn fail_scope_with(
+        scope: ManagedScope,
+        cause: ScopeError,
+        timeout: Duration,
+        wait_child: impl FnOnce(&mut Child, Instant) -> Result<ExitStatus, ScopeError>,
+    ) -> ScopeError {
+        match abort_scope_with(scope, timeout, wait_child) {
             Ok(diagnostic) => with_gate_diagnostic(cause, diagnostic),
-            Err((scope, cleanup_error)) => ScopeError::CleanupPending {
-                cause: Box::new(cause),
-                cleanup_error: Box::new(cleanup_error),
-                pending: Box::new(PendingCleanup::ManagedScope { scope }),
-            },
+            Err(scope_and_error) => {
+                let (scope, cleanup_error) = *scope_and_error;
+                ScopeError::CleanupPending {
+                    cause: Box::new(cause),
+                    cleanup_error: Box::new(cleanup_error),
+                    pending: Box::new(PendingCleanup::ManagedScope { scope }),
+                }
+            }
         }
     }
 
@@ -616,7 +762,7 @@ mod linux {
         slice_unit: &str,
         mut child: Child,
         cgroup_events: Option<PathBuf>,
-    ) -> Result<Option<String>, (PendingCleanup, ScopeError)> {
+    ) -> Result<Option<String>, Box<(PendingCleanup, ScopeError)>> {
         let _ = run_control(
             &commands.systemctl,
             [
@@ -630,7 +776,7 @@ mod linux {
             CONTROL_TIMEOUT,
         );
         if !kill_direct_until(&mut child, CONTROL_TIMEOUT) {
-            return Err((
+            return Err(Box::new((
                 PendingCleanup::PreWorker {
                     commands: commands.clone(),
                     unit: unit.to_owned(),
@@ -639,12 +785,12 @@ mod linux {
                     cgroup_events,
                 },
                 ScopeError::QuiescenceTimeout,
-            ));
+            )));
         }
         let status = match child.try_wait() {
             Ok(Some(status)) => status,
             Ok(None) => {
-                return Err((
+                return Err(Box::new((
                     PendingCleanup::PreWorker {
                         commands: commands.clone(),
                         unit: unit.to_owned(),
@@ -653,10 +799,10 @@ mod linux {
                         cgroup_events,
                     },
                     ScopeError::QuiescenceTimeout,
-                ));
+                )));
             }
             Err(error) => {
-                return Err((
+                return Err(Box::new((
                     PendingCleanup::PreWorker {
                         commands: commands.clone(),
                         unit: unit.to_owned(),
@@ -665,13 +811,13 @@ mod linux {
                         cgroup_events,
                     },
                     ScopeError::Io(error),
-                ));
+                )));
             }
         };
         if let Err(error) =
             prove_preworker_quiescent(commands, unit, cgroup_events.as_deref(), CONTROL_TIMEOUT)
         {
-            return Err((
+            return Err(Box::new((
                 PendingCleanup::PreWorker {
                     commands: commands.clone(),
                     unit: unit.to_owned(),
@@ -680,10 +826,10 @@ mod linux {
                     cgroup_events,
                 },
                 error,
-            ));
+            )));
         }
         if let Err(error) = stop_attempt_slice(commands, slice_unit, CONTROL_TIMEOUT) {
-            return Err((
+            return Err(Box::new((
                 PendingCleanup::PreWorker {
                     commands: commands.clone(),
                     unit: unit.to_owned(),
@@ -692,7 +838,7 @@ mod linux {
                     cgroup_events,
                 },
                 error,
-            ));
+            )));
         }
         let _ = status;
         Ok(take_stderr_diagnostic(&mut child))
@@ -708,11 +854,14 @@ mod linux {
     ) -> ScopeError {
         match terminate_scope(commands, unit, slice_unit, child, cgroup_events) {
             Ok(diagnostic) => with_gate_diagnostic(cause, diagnostic),
-            Err((pending, cleanup_error)) => ScopeError::CleanupPending {
-                cause: Box::new(cause),
-                cleanup_error: Box::new(cleanup_error),
-                pending: Box::new(pending),
-            },
+            Err(pending_and_error) => {
+                let (pending, cleanup_error) = *pending_and_error;
+                ScopeError::CleanupPending {
+                    cause: Box::new(cause),
+                    cleanup_error: Box::new(cleanup_error),
+                    pending: Box::new(pending),
+                }
+            }
         }
     }
 
@@ -956,27 +1105,47 @@ mod linux {
         slice_unit: &str,
         mount: &CgroupMount,
     ) -> Result<(PathBuf, CgroupPopulatedObserver), ScopeError> {
-        run_control(
+        start_attempt_slice_with_resolver(commands, slice_unit, mount, resolve_scope_cgroup)
+    }
+
+    fn start_attempt_slice_with_resolver(
+        commands: &SystemdCommands,
+        slice_unit: &str,
+        mount: &CgroupMount,
+        resolve: impl FnOnce(
+            &SystemdCommands,
+            &str,
+            &CgroupMount,
+            Duration,
+        ) -> Result<(PathBuf, PathBuf), ScopeError>,
+    ) -> Result<(PathBuf, CgroupPopulatedObserver), ScopeError> {
+        if let Err(error) = run_control(
             &commands.systemctl,
             ["--user", "--no-pager", "start"],
             Some(slice_unit),
             CONTROL_TIMEOUT,
-        )?;
-        let (slice_cgroup, _) =
-            match resolve_scope_cgroup(commands, slice_unit, mount, CONTROL_TIMEOUT) {
-                Ok(resolved) => resolved,
-                Err(error) => {
-                    let _ = stop_attempt_slice(commands, slice_unit, CONTROL_TIMEOUT);
-                    return Err(error);
-                }
-            };
-        let events_path = slice_cgroup.join("cgroup.events");
-        match CgroupPopulatedObserver::require_empty_parent(events_path) {
-            Ok(observer) => Ok((slice_cgroup, observer)),
+        ) {
+            return Err(fail_started_attempt_slice(
+                commands, slice_unit, None, error,
+            ));
+        }
+        let (slice_cgroup, _) = match resolve(commands, slice_unit, mount, CONTROL_TIMEOUT) {
+            Ok(resolved) => resolved,
             Err(error) => {
-                let _ = stop_attempt_slice(commands, slice_unit, CONTROL_TIMEOUT);
-                Err(error)
+                return Err(fail_started_attempt_slice(
+                    commands, slice_unit, None, error,
+                ));
             }
+        };
+        let events_path = slice_cgroup.join("cgroup.events");
+        match CgroupPopulatedObserver::require_empty_parent(events_path.clone()) {
+            Ok(observer) => Ok((slice_cgroup, observer)),
+            Err(error) => Err(fail_started_attempt_slice(
+                commands,
+                slice_unit,
+                Some(events_path),
+                error,
+            )),
         }
     }
 
@@ -1219,7 +1388,20 @@ mod linux {
         ))
     }
 
-    fn wait_child_until(child: &mut Child, deadline: Instant) -> Result<ExitStatus, ScopeError> {
+    trait ChildWait {
+        fn try_wait(&mut self) -> io::Result<Option<ExitStatus>>;
+    }
+
+    impl ChildWait for Child {
+        fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+            Child::try_wait(self)
+        }
+    }
+
+    fn wait_child_until(
+        child: &mut impl ChildWait,
+        deadline: Instant,
+    ) -> Result<ExitStatus, ScopeError> {
         loop {
             match child.try_wait() {
                 Ok(Some(status)) => return Ok(status),
@@ -1230,9 +1412,165 @@ mod linux {
         }
     }
 
+    pub use {
+        AgentEnvironment as PublicAgentEnvironment, LaunchSpec as PublicLaunchSpec,
+        ManagedScope as PublicManagedScope, PendingCleanup as PublicPendingCleanup,
+        ResourceLimits as PublicResourceLimits, ScopeError as PublicScopeError,
+        SystemdCommands as PublicSystemdCommands,
+    };
+
     #[cfg(test)]
     mod tests {
         use super::*;
+        use std::os::unix::fs::PermissionsExt;
+
+        fn test_systemctl(directory: &Path) -> (PathBuf, PathBuf) {
+            let path = directory.join("systemctl-test");
+            let log = directory.join("systemctl.log");
+            fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$3\" >> \"{}\"\n[ \"$3\" != kill ]\n",
+                    log.display()
+                ),
+            )
+            .expect("write fake systemctl executable");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                .expect("fake systemctl is executable");
+            (path, log)
+        }
+
+        fn test_systemctl_failing_start(directory: &Path) -> (PathBuf, PathBuf) {
+            let path = directory.join("systemctl-failing-start-test");
+            let log = directory.join("systemctl-failing-start.log");
+            fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' \"$3\" >> \"{}\"\nexit 1\n",
+                    log.display()
+                ),
+            )
+            .expect("write failing fake systemctl executable");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                .expect("fake systemctl is executable");
+            (path, log)
+        }
+
+        fn test_systemctl_ambiguous_start(directory: &Path) -> (PathBuf, PathBuf) {
+            let path = directory.join("systemctl-ambiguous-start-test");
+            let log = directory.join("systemctl-ambiguous-start.log");
+            let stop_count = directory.join("systemctl-ambiguous-start-stop-count");
+            fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s %s\\n' \"$3\" \"$4\" >> \"{}\"\ncase \"$3\" in start) exit 1 ;; stop) count=$(cat \"{}\" 2>/dev/null || echo 0); count=$((count + 1)); echo \"$count\" > \"{}\"; [ \"$count\" -gt 1 ] || exit 1 ;; show) echo inactive ;; esac\nexit 0\n",
+                    log.display(),
+                    stop_count.display(),
+                    stop_count.display(),
+                ),
+            )
+            .expect("write ambiguous-start fake systemctl");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                .expect("fake systemctl is executable");
+            (path, log)
+        }
+
+        fn test_systemctl_stop_fails_once(directory: &Path) -> (PathBuf, PathBuf) {
+            let path = directory.join("systemctl-stop-fails-once-test");
+            let log = directory.join("systemctl-stop-fails-once.log");
+            let failed_once = directory.join("systemctl-stop-failed-once");
+            fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s %s\\n' \"$3\" \"$4\" >> \"{}\"\nif [ \"$3\" = stop ] && [ ! -e \"{}\" ]; then touch \"{}\"; exit 1; fi\nexit 0\n",
+                    log.display(),
+                    failed_once.display(),
+                    failed_once.display(),
+                ),
+            )
+            .expect("write one-shot stop failure fake");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                .expect("fake systemctl is executable");
+            (path, log)
+        }
+
+        fn test_systemctl_stop_fails_twice(directory: &Path) -> (PathBuf, PathBuf) {
+            let path = directory.join("systemctl-stop-fails-twice-test");
+            let log = directory.join("systemctl-stop-fails-twice.log");
+            let stop_count = directory.join("systemctl-stop-count");
+            fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s %s\\n' \"$3\" \"$4\" >> \"{}\"\nif [ \"$3\" = stop ]; then count=$(cat \"{}\" 2>/dev/null || echo 0); count=$((count + 1)); echo \"$count\" > \"{}\"; [ \"$count\" -gt 2 ] || exit 1; fi\nexit 0\n",
+                    log.display(),
+                    stop_count.display(),
+                    stop_count.display(),
+                ),
+            )
+            .expect("write two-shot stop failure fake");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                .expect("fake systemctl is executable");
+            (path, log)
+        }
+
+        fn test_systemctl_stop_fails_on_retry(directory: &Path) -> (PathBuf, PathBuf) {
+            let path = directory.join("systemctl-stop-fails-on-retry-test");
+            let log = directory.join("systemctl-stop-fails-on-retry.log");
+            let stop_count = directory.join("systemctl-stop-retry-count");
+            fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s %s\\n' \"$3\" \"$4\" >> \"{}\"\nif [ \"$3\" = stop ]; then count=$(cat \"{}\" 2>/dev/null || echo 0); count=$((count + 1)); echo \"$count\" > \"{}\"; [ \"$count\" -ne 2 ] || exit 1; fi\nexit 0\n",
+                    log.display(),
+                    stop_count.display(),
+                    stop_count.display(),
+                ),
+            )
+            .expect("write retry-stop failure fake");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                .expect("fake systemctl is executable");
+            (path, log)
+        }
+
+        fn test_managed_scope(
+            systemctl: PathBuf,
+            parent_events: PathBuf,
+            child: Child,
+        ) -> ManagedScope {
+            ManagedScope {
+                commands: SystemdCommands {
+                    systemd_run: PathBuf::from("/usr/bin/systemd-run"),
+                    systemctl,
+                    scope_gate: PathBuf::from("/usr/bin/litecowork-scope-gate"),
+                    env: PathBuf::from("/usr/bin/env"),
+                },
+                unit: "litecowork-attempt-test.scope".to_owned(),
+                slice_unit: "litecowork-attempt-test.slice".to_owned(),
+                cgroup_events: parent_events
+                    .parent()
+                    .expect("parent cgroup directory exists")
+                    .join("worker/cgroup.events"),
+                cgroup_observer: CgroupPopulatedObserver {
+                    events_path: parent_events,
+                },
+                child,
+                limits: ResourceLimits {
+                    memory_max_bytes: 1024,
+                    cpu_quota_percent: 100,
+                    tasks_max: 8,
+                },
+            }
+        }
+
+        fn test_child() -> Child {
+            Command::new("/bin/sh")
+                .args(["-c", "exec sleep 2"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("test child starts")
+        }
 
         fn valid_spec() -> (SystemdCommands, LaunchSpec) {
             (
@@ -1290,6 +1628,337 @@ mod linux {
         }
 
         #[test]
+        fn invalid_environment_is_rejected_before_starting_attempt_slice() {
+            let directory = tempfile::tempdir().expect("temporary test directory");
+            let (systemctl, log) = test_systemctl_failing_start(directory.path());
+            let (mut commands, mut spec) = valid_spec();
+            commands.systemctl = systemctl;
+            spec.environment.search_path.clear();
+
+            assert!(matches!(
+                spawn(&commands, spec),
+                Err(ScopeError::InvalidInput("agent PATH must not be empty"))
+            ));
+            assert!(
+                !log.exists(),
+                "invalid caller environment must not start or stop a systemd slice"
+            );
+        }
+
+        #[test]
+        fn exec_failure_returns_original_error_when_slice_cleanup_succeeds() {
+            let directory = tempfile::tempdir().expect("temporary process-scope fixture");
+            let (systemctl, log) = test_systemctl(directory.path());
+            let (mut commands, mut spec) = valid_spec();
+            commands.systemctl = systemctl;
+            spec.environment.search_path = vec![PathBuf::from("/usr/bin")];
+            let environment = safe_environment(&spec.environment).expect("valid environment");
+            let mount = CgroupMount {
+                root: directory.path().to_owned(),
+                mountpoint: directory.path().to_owned(),
+            };
+            let slice_events = directory.path().join("slice/cgroup.events");
+            fs::create_dir_all(slice_events.parent().expect("slice directory"))
+                .expect("create parent slice fixture");
+            fs::write(&slice_events, "populated 0\n").expect("slice is empty");
+            let launch_calls = std::cell::Cell::new(0);
+
+            let error = spawn_with(
+                &commands,
+                spec,
+                environment,
+                mount,
+                |_, _, _| {
+                    let observer =
+                        CgroupPopulatedObserver::require_empty_parent(slice_events.clone())?;
+                    Ok((slice_events.parent().unwrap().to_owned(), observer))
+                },
+                |_| {
+                    launch_calls.set(launch_calls.get() + 1);
+                    Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "injected exec failure",
+                    ))
+                },
+            )
+            .expect_err("launcher exec failure must be returned");
+
+            assert!(
+                matches!(error, ScopeError::Io(ref error) if error.kind() == io::ErrorKind::NotFound)
+            );
+            assert_eq!(launch_calls.get(), 1, "no worker process was admitted");
+            assert_eq!(
+                fs::read_to_string(log)
+                    .expect("slice stop was logged")
+                    .trim(),
+                "stop"
+            );
+        }
+
+        #[test]
+        fn exec_failure_retains_slice_cleanup_for_exact_retry() {
+            let directory = tempfile::tempdir().expect("temporary process-scope fixture");
+            let (systemctl, log) = test_systemctl_stop_fails_twice(directory.path());
+            let (mut commands, mut spec) = valid_spec();
+            commands.systemctl = systemctl;
+            spec.environment.search_path = vec![PathBuf::from("/usr/bin")];
+            let environment = safe_environment(&spec.environment).expect("valid environment");
+            let mount = CgroupMount {
+                root: directory.path().to_owned(),
+                mountpoint: directory.path().to_owned(),
+            };
+            let slice_events = directory.path().join("slice/cgroup.events");
+            fs::create_dir_all(slice_events.parent().expect("slice directory"))
+                .expect("create parent slice fixture");
+            fs::write(&slice_events, "populated 0\n").expect("slice is empty");
+            let launch_calls = std::cell::Cell::new(0);
+
+            let error = spawn_with(
+                &commands,
+                spec,
+                environment,
+                mount,
+                |_, _, _| {
+                    let observer =
+                        CgroupPopulatedObserver::require_empty_parent(slice_events.clone())?;
+                    Ok((slice_events.parent().unwrap().to_owned(), observer))
+                },
+                |_| {
+                    launch_calls.set(launch_calls.get() + 1);
+                    Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "injected exec failure",
+                    ))
+                },
+            )
+            .expect_err("failed stop must retain cleanup ownership");
+            let ScopeError::CleanupPending {
+                cause,
+                cleanup_error,
+                mut pending,
+            } = error
+            else {
+                panic!("failed slice stop must return a retryable cleanup handle");
+            };
+            assert!(
+                matches!(*cause, ScopeError::Io(ref error) if error.kind() == io::ErrorKind::NotFound)
+            );
+            assert!(matches!(*cleanup_error, ScopeError::Control(_)));
+            assert_eq!(
+                pending.unit_name(),
+                "litecowork-attempt-01010101010101010101010101010101.slice"
+            );
+            assert!(matches!(*pending, PendingCleanup::AttemptSlice { .. }));
+            fs::remove_file(&slice_events).expect("make quiescence proof unavailable");
+            assert!(matches!(
+                pending.retry_stop(Duration::from_millis(20)),
+                Err(ScopeError::QuiescenceTimeout)
+            ));
+            assert!(matches!(
+                pending.retry_stop(Duration::from_millis(20)),
+                Err(ScopeError::QuiescenceTimeout)
+            ));
+            fs::write(&slice_events, "populated 0\n").expect("restore positive empty proof");
+            pending
+                .retry_stop(Duration::from_secs(1))
+                .expect("later retry settles after positive proof returns");
+            assert_eq!(launch_calls.get(), 1, "retry never launches a worker");
+            assert_eq!(
+                fs::read_to_string(log)
+                    .expect("both stop attempts were logged")
+                    .lines()
+                    .collect::<Vec<_>>(),
+                [
+                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
+                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
+                    "show --value",
+                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
+                    "show --value",
+                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
+                    "show --value",
+                ]
+            );
+        }
+
+        #[test]
+        fn started_slice_retains_cleanup_when_parent_validation_and_stop_fail() {
+            let directory = tempfile::tempdir().expect("temporary process-scope fixture");
+            let (systemctl, log) = test_systemctl_stop_fails_once(directory.path());
+            let commands = SystemdCommands {
+                systemd_run: PathBuf::from("/usr/bin/systemd-run"),
+                systemctl,
+                scope_gate: PathBuf::from("/usr/bin/litecowork-scope-gate"),
+                env: PathBuf::from("/usr/bin/env"),
+            };
+            let slice_unit = "litecowork-attempt-01010101010101010101010101010101.slice";
+            let cgroup = directory.path().join("slice");
+            let events = cgroup.join("cgroup.events");
+            fs::create_dir_all(&cgroup).expect("create slice cgroup fixture");
+            fs::write(&events, "populated 1\n")
+                .expect("initially populated slice fails validation");
+            let mount = CgroupMount {
+                root: directory.path().to_owned(),
+                mountpoint: directory.path().to_owned(),
+            };
+
+            let error =
+                start_attempt_slice_with_resolver(&commands, slice_unit, &mount, |_, _, _, _| {
+                    Ok((cgroup.clone(), PathBuf::from("slice")))
+                })
+                .expect_err("failed validation and stop retain cleanup ownership");
+            let ScopeError::CleanupPending {
+                cause,
+                cleanup_error,
+                mut pending,
+            } = error
+            else {
+                panic!("failed stop must retain the started Attempt slice");
+            };
+            assert!(matches!(*cause, ScopeError::QuiescenceUnobservable));
+            assert!(matches!(*cleanup_error, ScopeError::Control(_)));
+            assert_eq!(pending.unit_name(), slice_unit);
+            assert!(matches!(
+                &*pending,
+                PendingCleanup::AttemptSlice {
+                    cgroup_events: Some(path),
+                    ..
+                } if path == &events
+            ));
+
+            fs::write(&events, "populated 0\n").expect("restore positive empty proof");
+            pending
+                .retry_stop(Duration::from_secs(1))
+                .expect("retry stops the exact slice and proves it empty");
+            assert_eq!(
+                fs::read_to_string(log)
+                    .expect("start and stop operations were logged")
+                    .lines()
+                    .collect::<Vec<_>>(),
+                [
+                    "start litecowork-attempt-01010101010101010101010101010101.slice",
+                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
+                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
+                    "show --value",
+                ]
+            );
+        }
+
+        #[test]
+        fn ambiguous_slice_start_failure_retains_exact_cleanup_ownership() {
+            let directory = tempfile::tempdir().expect("temporary process-scope fixture");
+            let (systemctl, log) = test_systemctl_ambiguous_start(directory.path());
+            let commands = SystemdCommands {
+                systemd_run: PathBuf::from("/usr/bin/systemd-run"),
+                systemctl,
+                scope_gate: PathBuf::from("/usr/bin/litecowork-scope-gate"),
+                env: PathBuf::from("/usr/bin/env"),
+            };
+            let slice_unit = "litecowork-attempt-01010101010101010101010101010101.slice";
+            let mount = CgroupMount {
+                root: directory.path().to_owned(),
+                mountpoint: directory.path().to_owned(),
+            };
+
+            let error =
+                start_attempt_slice_with_resolver(&commands, slice_unit, &mount, |_, _, _, _| {
+                    panic!("a failed start must not resolve a cgroup")
+                })
+                .expect_err("ambiguous start failure must preserve cleanup ownership");
+            let ScopeError::CleanupPending {
+                cause,
+                cleanup_error,
+                mut pending,
+            } = error
+            else {
+                panic!("ambiguous start and failed stop must retain a retry handle");
+            };
+            assert!(matches!(*cause, ScopeError::Control(_)));
+            assert!(matches!(*cleanup_error, ScopeError::Control(_)));
+            assert_eq!(pending.unit_name(), slice_unit);
+            pending
+                .retry_stop(Duration::from_secs(1))
+                .expect("retry stops the slice and observes inactive unit state");
+            assert_eq!(
+                fs::read_to_string(log)
+                    .expect("start, stop, retry, and state query are logged")
+                    .lines()
+                    .collect::<Vec<_>>(),
+                [
+                    "start litecowork-attempt-01010101010101010101010101010101.slice",
+                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
+                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
+                    "show --value",
+                ]
+            );
+        }
+
+        #[test]
+        fn exec_failure_retains_slice_when_quiescence_cannot_be_proven() {
+            let directory = tempfile::tempdir().expect("temporary process-scope fixture");
+            let (systemctl, log) = test_systemctl_stop_fails_on_retry(directory.path());
+            let (mut commands, mut spec) = valid_spec();
+            commands.systemctl = systemctl;
+            spec.environment.search_path = vec![PathBuf::from("/usr/bin")];
+            let environment = safe_environment(&spec.environment).expect("valid environment");
+            let mount = CgroupMount {
+                root: directory.path().to_owned(),
+                mountpoint: directory.path().to_owned(),
+            };
+            let slice_events = directory.path().join("slice/cgroup.events");
+            fs::create_dir_all(slice_events.parent().expect("slice directory"))
+                .expect("create parent slice fixture");
+            fs::write(&slice_events, "populated 0\n").expect("slice is initially empty");
+
+            let error = spawn_with(
+                &commands,
+                spec,
+                environment,
+                mount,
+                |_, _, _| {
+                    let observer =
+                        CgroupPopulatedObserver::require_empty_parent(slice_events.clone())?;
+                    Ok((slice_events.parent().unwrap().to_owned(), observer))
+                },
+                |_| {
+                    fs::remove_file(&slice_events).expect("remove quiescence evidence");
+                    Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "injected exec failure",
+                    ))
+                },
+            )
+            .expect_err("missing post-stop quiescence evidence must not settle cleanup");
+            let ScopeError::CleanupPending {
+                cleanup_error,
+                mut pending,
+                ..
+            } = error
+            else {
+                panic!("unobservable Attempt slice must retain retry ownership");
+            };
+            assert!(matches!(*cleanup_error, ScopeError::QuiescenceUnobservable));
+            assert_eq!(
+                pending.unit_name(),
+                "litecowork-attempt-01010101010101010101010101010101.slice"
+            );
+            fs::write(&slice_events, "populated 0\n").expect("restore positive empty proof");
+            pending
+                .retry_stop(Duration::from_secs(1))
+                .expect("positive empty proof settles cleanup even if repeated stop fails");
+            assert_eq!(
+                fs::read_to_string(log)
+                    .expect("initial stop, retry, and quiescence query are logged")
+                    .lines()
+                    .collect::<Vec<_>>(),
+                [
+                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
+                    "stop litecowork-attempt-01010101010101010101010101010101.slice",
+                    "show --value",
+                ]
+            );
+        }
+
+        #[test]
         fn observer_parent_must_be_a_strict_ancestor_of_worker_cgroup() {
             let parent = Path::new("/sys/fs/cgroup/user.slice/litecowork-attempt.slice");
             assert!(cgroup_is_descendant(
@@ -1306,14 +1975,23 @@ mod linux {
         #[test]
         fn scope_gate_handshake_accepts_only_the_exact_marker() {
             let mut child = Command::new("sh")
-                .args(["-c", "printf 'LITECOWORK_SCOPE_GATE_V1\\n'"])
+                .args([
+                    "-c",
+                    "printf 'LITECOWORK_SCOPE_GATE_V1\\nLITECOWORK_SCOPE_GO_CONSUMED_V1\\nnative-output'",
+                ])
                 .stdout(Stdio::piped())
                 .spawn()
                 .expect("test shell starts");
             let stdout = child.stdout.take().expect("stdout is piped");
-            let remaining = wait_for_marker(stdout, GATE_READY, Duration::from_secs(1))
+            let stdout = wait_for_marker(stdout, GATE_READY, Duration::from_secs(1))
                 .expect("exact gate marker is accepted");
-            drop(remaining);
+            let mut stdout = wait_for_marker(stdout, GATE_GO_CONSUMED, Duration::from_secs(1))
+                .expect("exact GO-consumed marker is accepted");
+            let mut native_output = Vec::new();
+            stdout
+                .read_to_end(&mut native_output)
+                .expect("remaining worker stdout is readable");
+            assert_eq!(native_output, b"native-output");
             assert!(child.wait().expect("shell is reaped").success());
 
             let mut child = Command::new("sh")
@@ -1328,14 +2006,157 @@ mod linux {
             ));
             assert!(child.wait().expect("shell is reaped").success());
         }
-    }
 
-    pub use {
-        AgentEnvironment as PublicAgentEnvironment, LaunchSpec as PublicLaunchSpec,
-        ManagedScope as PublicManagedScope, PendingCleanup as PublicPendingCleanup,
-        ResourceLimits as PublicResourceLimits, ScopeError as PublicScopeError,
-        SystemdCommands as PublicSystemdCommands,
-    };
+        #[test]
+        fn gate_readiness_timeout_is_reported_before_worker_admission() {
+            let mut child = Command::new("/bin/sh")
+                .args(["-c", "sleep 0.05; printf 'LITECOWORK_SCOPE_GATE_V1\\n'"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("delayed gate starts");
+            let stdout = child.stdout.take().expect("gate stdout is piped");
+            assert!(matches!(
+                wait_for_marker(stdout, GATE_READY, Duration::from_millis(1)),
+                Err(ScopeError::Control(message))
+                    if message == "scope gate did not become ready before the deadline"
+            ));
+            assert!(child.wait().expect("delayed gate exits").success());
+        }
+
+        #[test]
+        fn direct_child_reap_failure_is_not_treated_as_quiescence() {
+            let directory = tempfile::tempdir().expect("temporary cgroup fixture");
+            let parent_events = directory.path().join("slice/cgroup.events");
+            fs::create_dir_all(parent_events.parent().expect("slice directory"))
+                .expect("create parent cgroup fixture");
+            fs::write(&parent_events, "populated 0\n").expect("parent is observably empty");
+            let (systemctl, log) = test_systemctl(directory.path());
+            let scope = test_managed_scope(systemctl, parent_events, test_child());
+
+            let error = fail_scope_with(
+                scope,
+                ScopeError::Control("injected pre-worker failure".to_owned()),
+                Duration::from_secs(1),
+                |_child, _deadline| {
+                    Err(ScopeError::Io(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "injected child reap failure",
+                    )))
+                },
+            );
+            let ScopeError::CleanupPending {
+                cleanup_error,
+                pending,
+                ..
+            } = error
+            else {
+                panic!("child reap error must retain cleanup ownership");
+            };
+            assert!(matches!(
+                *cleanup_error,
+                ScopeError::Io(error) if error.kind() == io::ErrorKind::PermissionDenied
+            ));
+
+            let PendingCleanup::ManagedScope { mut scope } = *pending else {
+                panic!("child reap error retains the managed scope");
+            };
+            let status = scope
+                .kill_and_wait(Duration::from_secs(1))
+                .expect("retained scope can retry child reaping");
+            assert!(!status.success(), "the test worker was terminated");
+            assert!(
+                fs::read_to_string(&log)
+                    .expect("systemctl commands are logged")
+                    .lines()
+                    .any(|line| line == "stop"),
+                "slice teardown follows the successful retry"
+            );
+        }
+
+        #[test]
+        fn failed_systemd_kill_retains_retry_handle_until_cgroup_is_empty() {
+            let directory = tempfile::tempdir().expect("temporary cgroup fixture");
+            let parent_events = directory.path().join("slice/cgroup.events");
+            fs::create_dir_all(parent_events.parent().expect("slice directory"))
+                .expect("create parent cgroup fixture");
+            fs::write(&parent_events, "populated 1\n").expect("parent has live process");
+            let (systemctl, log) = test_systemctl(directory.path());
+            let scope = test_managed_scope(systemctl, parent_events.clone(), test_child());
+
+            let error = fail_scope(
+                scope,
+                ScopeError::Control("injected pre-worker failure".to_owned()),
+                Duration::from_millis(40),
+            );
+            let ScopeError::CleanupPending { pending, .. } = error else {
+                panic!("unobserved live cgroup must retain cleanup ownership");
+            };
+            assert_eq!(pending.unit_name(), "litecowork-attempt-test.scope");
+            assert!(
+                fs::read_to_string(&log)
+                    .expect("systemctl kill invocation is logged")
+                    .lines()
+                    .any(|line| line == "kill"),
+                "the fake systemd kill request fails while cgroup evidence remains populated"
+            );
+
+            let PendingCleanup::ManagedScope { mut scope } = *pending else {
+                panic!("managed failure retains its managed scope");
+            };
+            assert!(matches!(
+                scope.kill_and_wait(Duration::from_millis(20)),
+                Err(ScopeError::QuiescenceTimeout)
+            ));
+            assert_eq!(scope.unit_name(), "litecowork-attempt-test.scope");
+
+            fs::write(&parent_events, "populated 0\n").expect("publish recursive empty proof");
+            let status = scope
+                .kill_and_wait(Duration::from_secs(1))
+                .expect("retry settles only after empty cgroup and child reap");
+            assert!(!status.success(), "the test worker was terminated");
+            assert!(
+                fs::read_to_string(&log)
+                    .expect("systemctl stop invocation is logged")
+                    .lines()
+                    .any(|line| line == "stop"),
+                "slice teardown follows positive empty-cgroup evidence"
+            );
+        }
+
+        #[test]
+        fn cgroup_disappearance_is_unobservable_and_pending_retryable() {
+            let directory = tempfile::tempdir().expect("temporary cgroup fixture");
+            let parent_events = directory.path().join("slice/cgroup.events");
+            fs::create_dir_all(parent_events.parent().expect("slice directory"))
+                .expect("create parent cgroup fixture");
+            let (systemctl, _) = test_systemctl(directory.path());
+            let scope = test_managed_scope(systemctl, parent_events.clone(), test_child());
+
+            let error = fail_scope(
+                scope,
+                ScopeError::Control("injected cgroup disappearance".to_owned()),
+                Duration::from_millis(40),
+            );
+            let ScopeError::CleanupPending {
+                cleanup_error,
+                pending,
+                ..
+            } = error
+            else {
+                panic!("missing cgroup proof must retain cleanup ownership");
+            };
+            assert!(matches!(*cleanup_error, ScopeError::QuiescenceUnobservable));
+            assert_eq!(pending.unit_name(), "litecowork-attempt-test.scope");
+            let PendingCleanup::ManagedScope { mut scope } = *pending else {
+                panic!("managed failure retains its managed scope");
+            };
+
+            fs::write(&parent_events, "populated 0\n").expect("restore an observable empty proof");
+            scope
+                .kill_and_wait(Duration::from_secs(1))
+                .expect("retry settles after evidence becomes observable");
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1351,8 +2172,8 @@ mod bubblewrap;
 
 #[cfg(target_os = "linux")]
 pub use bubblewrap::{
-    BubblewrapLaunchSpec, ReadOnlyRuntimeMount, bubblewrap_binary_is_trusted,
-    prepare_bubblewrap_command, spawn_bubblewrapped,
+    BubblewrapLaunchSpec, PreparedBubblewrapCommand, ReadOnlyRuntimeMount,
+    bubblewrap_binary_is_trusted, prepare_bubblewrap_command, spawn_bubblewrapped,
 };
 
 #[cfg(not(target_os = "linux"))]
@@ -1463,7 +2284,15 @@ mod unsupported {
     }
     #[must_use = "dropping PendingCleanup loses retry ownership of an unsettled process scope"]
     #[derive(Debug)]
+    // Keep the public cleanup shape aligned with the Linux backend on platforms where
+    // spawning is fail-closed; no Windows/macOS process scope is constructed here.
+    #[allow(clippy::large_enum_variant)]
     pub enum PendingCleanup {
+        AttemptSlice {
+            commands: SystemdCommands,
+            slice_unit: String,
+            cgroup_events: Option<PathBuf>,
+        },
         PreWorker {
             commands: SystemdCommands,
             unit: String,
@@ -1478,9 +2307,13 @@ mod unsupported {
     impl PendingCleanup {
         pub fn unit_name(&self) -> &str {
             match self {
+                Self::AttemptSlice { slice_unit, .. } => slice_unit,
                 Self::PreWorker { unit, .. } => unit,
                 Self::ManagedScope { .. } => "",
             }
+        }
+        pub fn retry_stop(&mut self, _timeout: Duration) -> Result<(), ScopeError> {
+            Err(unsupported())
         }
         pub fn retry_kill_and_wait(
             &mut self,

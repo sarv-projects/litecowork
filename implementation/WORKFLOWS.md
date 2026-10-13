@@ -28,12 +28,12 @@ ChatGPT documents file previews and iterative artifact work.
 | Personal obligations/calendar / Muse examples | Read connector, extracted proposal, human-approved mutation | U06/U09 | Mostly replace; calendar/timezone correctness and account access required |
 | Browse/form/reservation preparation / Muse | API→DOM→accessibility→computer, takeover/approval | U10/U11 | Prepare and hand off final sensitive action; no CAPTCHA or site restriction bypass |
 | Spending tracker/dashboard / Muse artifact pattern | Data capability + sandboxed renderer + versioned Artifact | U12 | Can replace supported data; sources must refresh under policy |
-| Scheduled research/site change review / persistent assistants | Routine/Automation/occurrence/health with bounded producer | U13/U14 | Can replace; laptop must be awake for local-only inputs; cloud eligible otherwise |
+| Scheduled research/site change review / persistent assistants | Routine/Automation/occurrence/health with bounded producer | U13/U14 | Desktop V1 requires the qualified local Runtime awake; no promised cloud fallback before E11 |
 | Editable profile/continuity / Muse pattern | ContextDocument revisions + scoped retrieval + durable Task | U15/U16 | Replace explicit continuity; no invisible autonomous memory proposal V1 |
 | Learn repeated browser work / Teach-a-task pattern | Bounded semantic demonstration→reviewed SkillProposal→LiteSPM | U17 | Can replace qualified sites; drift and package contract can block publishing |
 | Rich output refinement / ChatGPT file work | Workbench renderer + immutable versions and conflict-safe edits | U05/U12 | Can replace renderer-qualified artifacts; not arbitrary vendor-private app semantics |
-| Background cloud work / Cowork category | Same Task→new cloud Attempt after reconciliation/fencing | U18/U19 | Laptop may close for portable work; local apps never teleport |
-| Remote workstation / our release requirement | Paired headless Runtime + explicit resource/environment placement | U20 | Can replace eligible remote tasks; network/auth/OS provider limits apply |
+| Background cloud work / Cowork category (**post-V1 E11**) | Same Task→new cloud Attempt after reconciliation/fencing | U18/U19 | Not a desktop V1 release promise; laptop-close continuation only after qualified E11 |
+| Remote workstation (**post-V1 E12**) | Paired headless Runtime + explicit resource/environment placement | U20 | Not a desktop V1 release promise; eligible remote tasks require E12 qualification |
 
 ## Conclusion and claim threshold
 
@@ -49,3 +49,20 @@ Compare a baseline native harness/local app and LiteCowork on the same fixtures 
 permitted; no marketing efficiency multiplier until measured. Keep local-model comparison
 separate from premium-provider comparison. Real private workflows run in owner-approved
 test accounts and private datasets; published evidence remains sanitized.
+
+
+## Added 2026-10-10 integration and learning acceptance workflows
+
+| Workflow | Architecture path | Acceptance |
+|---|---|---|
+| Connect first-party app locally | ConnectorPackage -> PKCE/loopback -> SecretStore -> Connection | token absent from logs/events; refresh/revoke; scopes do not silently widen |
+| Event while laptop asleep | provider/EventRelay hint -> TriggerCoordinator -> authorized fetch -> occurrence | duplicate/reorder/offline replay, revoked account, prompt injection, misfire |
+| Existing external workflow | Task Step -> CapabilityInvocation -> WorkflowBackend -> Effect/Evidence | TEST vs PRODUCTION, timeout-after-effect, cancellation ambiguity, outage |
+| Continue scheduled run | occurrence -> Task -> unique follow-up Conversation | duplicate Continue same Conversation; no cursor change; resume or honest rebuild |
+| Correct Coworker once | correction -> LearningCandidate -> memory/instruction path | third-party content cannot auto-learn; conflicts/revoke/temporary chat |
+| Successful procedure to Skill | work -> redaction -> SkillProposal -> isolated tests -> LiteSPM | no secrets/task IDs; no automatic publication; drift requalification |
+| Start Code task | New preset -> same Conversation/Task + coding defaults | no separate history/store/mode; agent switch preserves native controls |
+
+## V1 detailed design integration — 2026-10-12
+
+Cross-workflow Task/Automation/Effect/NeedsYou/browser control event and recovery logic is expanded in ../docs/V1-WORKFLOW-EVENT-LLD.md; function ownership in ../docs/V1-FUNCTION-FILE-CATALOG.md, USER evidence in V1-DESIGN-COVERAGE.md. UI status labels must be grounded in exact persisted state; separate trigger enabled from Task execution.

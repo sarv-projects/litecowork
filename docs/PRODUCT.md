@@ -210,3 +210,27 @@ The Agent Registry is the single setup surface:
 
 None of those steps silently authorizes work. See AGENT-CONTROL.md and
 implementation/UI.md.
+
+
+## Connector breadth, learning, and unified-mode product contract
+
+LiteCowork should feel integrated without becoming a workflow-engine clone. Highest-value
+apps can have direct first-party ConnectorPackages; MCP/community packages extend breadth;
+qualified Activepieces compatibility may add connectors; existing external workflows can
+be invoked through optional WorkflowBackendAdapters. None is mandatory.
+
+Credential custody is visible. Supported desktop public-client flows keep tokens in local
+SecretStore; a hosted auth provider is named when selected. Event delivery while the
+machine sleeps is a separate relay/hosting concern.
+
+Coworkers may improve from corrections, but learn means a typed durable change with
+source/provenance. Private memory can be quiet under policy; behavioral instructions,
+Skills, Routines, Automations and permissions use their own review owners.
+
+The product remains one cowork shell. Code task is a convenience preset; users do not
+enter a separate Cowork/Code universe and lose history, files, Workbench, Automations or
+native agent controls when task type changes.
+
+## V1 detailed design integration — 2026-10-12
+
+The V1 user-facing promised experience and precise gaps are indexed in V1-DESIGN-INDEX.md and implementation/V1-DESIGN-COVERAGE.md. Native agent controls, functional Chrome side browser, reliable takeover, rich result rendering and end-to-end automation must be qualified before marketed as supported. A simple Conversation never requires Coworker creation.

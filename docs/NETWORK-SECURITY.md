@@ -67,11 +67,11 @@ expected aggregate version where applicable. Remote Operator access uses authent
 TLS and the same Principal/policy checks.
 
 The current desktop source path uses owner-only Unix IPC plus kernel-reported peer UID
-checks on Linux/macOS. The Runtime validates an installation-scoped OS-principal binding
-before starting the endpoint, and Tauri authenticates the daemon peer before sending a
-frame. The Operator application handlers remain the authorization boundary. Windows has
-no named-pipe implementation and fails closed. This source integration is not yet
-build-, system-, or OS-qualified; do not describe it as production-ready until the
+checks on Linux/macOS. Windows now uses a local named pipe with the current logon
+SID/SYSTEM DACL, remote-client rejection, and a Runtime installation binding. The Runtime
+validates the applicable binding before starting the endpoint. The Operator application
+handlers remain the authorization boundary. This source integration is not yet fully
+cross-build-, system-, or OS-qualified; do not describe it as production-ready until the
 qualification gates in [`LOCAL-OPERATOR-IPC.md`](LOCAL-OPERATOR-IPC.md) pass. Readiness
 confirms only Operator API serving for the reported local incarnation, not Task execution
 readiness or Mesh registration. No loopback HTTP/bearer fallback is present in the desktop
@@ -190,7 +190,15 @@ location UNAVAILABLE; an ACTIVE root becomes UNAVAILABLE while a PAUSED root rem
 PAUSED. Exact later recovery can reactivate only a previously UNAVAILABLE root and never
 resumes a PAUSED root. No path substitution or broader-root fallback is permitted. These
 failures are root-local and do not block unrelated Runtime services. Current source support
-is Linux/macOS only and is not OS-qualified. The separate
+for this root-revalidation path is Linux/macOS only and is not OS-qualified. Windows
+named-pipe IPC and ConPTY support do **not** establish Windows WorkspaceRoot identity
+revalidation. Until a handle-based root-identity/reparse-point and restart-rebind
+implementation passes Windows-specific tests, affected roots MUST remain UNAVAILABLE
+for indexed reads or mutable Task capabilities (no permissive path fallback). The UI
+must surface the root-specific unsupported/qualification status while unrelated Operator
+services remain available. Windows V1 release qualification must cover junctions,
+reparse-point races, case/volume changes, replacement roots, reboot/reconnect, the WSL
+boundary and revocation. The separate
 OS-principal credential validation occurs before storage open; if that key is unavailable,
 startup fails closed before root revalidation, so this specific key-loss case does not yet
 persist UNAVAILABLE root transitions.
@@ -255,3 +263,44 @@ classes.
 
 Remote Operator access must not inherit local install/update/native-config/secret-write
 privileges merely because the principal can read the Workspace.
+
+
+## Local OAuth loopback, hosted auth, and EventRelay threat model
+
+The accepted local-first connector architecture is
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md).
+
+For a public desktop OAuth recipe, the Runtime binds an ephemeral listener to loopback only
+on an OS-selected random port, generates fresh high-entropy state and PKCE
+verifier/challenge, opens the system browser, validates the exact callback, exchanges the
+code, stores credential material directly in SecretStore, and tears the listener down after
+one terminal result. Never bind the callback on all interfaces or accept a callback merely
+because it reaches localhost.
+
+Threat tests include local port squatting, host confusion, state replay, duplicate
+callback, stale callback after cancel, wrong issuer, parameter tampering, callback path
+injection, PKCE downgrade, process restart between authorization and exchange,
+token-exchange success followed by local commit failure, and log/crash-dump leakage.
+
+A provider requiring a confidential client/stable HTTPS callback must use a declared
+deployment/user-owned OAuth app or optional AuthBackend; it cannot hide a client secret in
+the desktop binary. The UI names the credential/auth owner before sign-in.
+
+EventRelay is a separate attack surface. Its default envelope is a signed bounded wake/event
+hint, not mail/document/chat content. It cannot resolve a SecretRef, mint a Task, or claim
+the provider object was fetched.
+
+Official provider references rechecked 2026-10-10:
+
+- Google desktop OAuth, PKCE and loopback:
+  https://developers.google.com/identity/protocols/oauth2/native-app
+- Slack PKCE/public clients and desktop bot-scope limitation:
+  https://docs.slack.dev/authentication/using-pkce/
+- Microsoft desktop/public-client OAuth and PKCE:
+  https://learn.microsoft.com/en-us/windows/apps/develop/security/oauth2
+- Microsoft desktop redirect/public-client configuration:
+  https://learn.microsoft.com/en-us/azure/active-directory/develop/scenario-desktop-overview
+
+## V1 detailed design integration — 2026-10-12
+
+Browser connection decisions and Chrome profile restrictions are detailed in CHROME-BROWSER-LLD.md. Do not expose CDP endpoints/tokens to the renderer or network; local attach needs peer/origin permissions, explicit user confirmation, session lifetime and detach. Browser cookies/tokens/protected credentials are not importable via data copying. Chrome 136+ remote debug default-profile restrictions and Chrome 144+ consent APIs are version dependent.

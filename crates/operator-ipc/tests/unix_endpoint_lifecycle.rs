@@ -1,8 +1,13 @@
 #![cfg(unix)]
 
-use operator_ipc::unix::{TransportError, UnixEndpoint};
+use operator_ipc::{
+    InFlightBodyBudget, LogicalHeader, PROTOCOL_VERSION, RequestFrame, RequestHeader,
+    ResponseFrame, ResponseHeader,
+    unix::{TransportError, UnixEndpoint},
+};
 use std::{
     fs,
+    io::{Read, Write},
     os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
@@ -90,4 +95,161 @@ fn separate_process_cannot_replace_an_active_endpoint() {
         .expect("incumbent still accepts connections");
     drop(accepted);
     drop(client);
+}
+
+#[test]
+fn rejected_peer_is_dropped_before_frame_admission_and_listener_remains_usable() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime builds");
+    runtime.block_on(async {
+        let directory = PrivateTempDir::new();
+        let endpoint = UnixEndpoint::derive(&directory.0).expect("endpoint derives");
+        let listener = endpoint.bind().expect("endpoint binds");
+
+        let mut rejected_peer = UnixStream::connect(endpoint.socket_path())
+            .expect("untrusted local process reaches the admission boundary");
+        rejected_peer
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("rejection observation is bounded");
+        rejected_peer
+            .write_all(&[0xff; 8])
+            .expect("untrusted peer sends bytes before server admission");
+
+        let (credentials_sender, credentials_receiver) = std::sync::mpsc::channel();
+        let rejected = listener
+            .accept(move |credentials| {
+                credentials_sender
+                    .send(credentials)
+                    .expect("record observed peer credentials");
+                false
+            })
+            .await;
+        assert!(matches!(rejected, Err(TransportError::PeerRejected)));
+        let observed = credentials_receiver
+            .recv()
+            .expect("peer credentials are captured before rejection");
+
+        let mut rejected_bytes = [0; 1];
+        let rejected_read = rejected_peer.read(&mut rejected_bytes);
+        match rejected_read {
+            Ok(0) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe
+                ) => {}
+            result => panic!("rejected peer must observe socket closure, got {result:?}"),
+        }
+
+        let authorized_client = endpoint
+            .connect(|_| true)
+            .await
+            .expect("a later authorized local peer still connects");
+        let authorized_server = listener
+            .accept(|_| true)
+            .await
+            .expect("rejected peer did not consume admission permanently");
+        assert_eq!(observed, authorized_server.peer_credentials());
+        drop((authorized_client, authorized_server));
+    });
+}
+
+#[test]
+fn authenticated_stream_session_has_correlated_handshake_messages_and_clean_eof() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime builds");
+    runtime.block_on(async {
+        let directory = PrivateTempDir::new();
+        let endpoint = UnixEndpoint::derive(&directory.0).expect("endpoint derives");
+        let listener = endpoint.bind().expect("endpoint binds");
+        let budget = InFlightBodyBudget::new(2 * 1024 * 1024).expect("body budget");
+
+        let mut client = endpoint.connect(|_| true).await.expect("client connects");
+        let mut server = listener
+            .accept(|_| true)
+            .await
+            .expect("authenticated test peer is accepted");
+        let request = RequestFrame::new(
+            RequestHeader {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: "stream-request-1".to_owned(),
+                method: "POST".to_owned(),
+                path_and_query: "/v1/stream".to_owned(),
+                headers: vec![
+                    LogicalHeader {
+                        name: "Content-Type".to_owned(),
+                        value: "application/json".to_owned(),
+                    },
+                    LogicalHeader {
+                        name: "X-Workspace-ID".to_owned(),
+                        value: "workspace-a".to_owned(),
+                    },
+                ],
+                body_length: 2,
+            },
+            b"{}".to_vec(),
+            &budget,
+        )
+        .expect("subscription request is valid");
+
+        client
+            .write_request(&request)
+            .await
+            .expect("request writes");
+        let received = server.read_request(&budget).await.expect("request reads");
+        assert_eq!(received.header.request_id, "stream-request-1");
+
+        let handshake = ResponseFrame::new(
+            ResponseHeader {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: "stream-request-1".to_owned(),
+                status: 200,
+                headers: vec![LogicalHeader {
+                    name: "Content-Type".to_owned(),
+                    value: "application/vnd.litecowork.operator-stream+json".to_owned(),
+                }],
+                body_length: 0,
+            },
+            Vec::new(),
+            &budget,
+        )
+        .expect("stream handshake is valid");
+        server
+            .write_stream_response(&handshake)
+            .await
+            .expect("server accepts stream handshake");
+        let received_handshake = client
+            .read_stream_response(&budget)
+            .await
+            .expect("client accepts correlated stream handshake");
+        assert_eq!(received_handshake.header.status, 200);
+
+        server
+            .write_stream_message(br#"{"type":"stream.ready"}"#, &budget)
+            .await
+            .expect("server writes stream message");
+        let message = client
+            .read_stream_message(&budget)
+            .await
+            .expect("client reads stream message")
+            .expect("stream message precedes EOF");
+        assert_eq!(message.body(), br#"{"type":"stream.ready"}"#);
+
+        drop(server);
+        assert!(
+            client
+                .read_stream_message(&budget)
+                .await
+                .expect("clean disconnect ends the stream")
+                .is_none()
+        );
+        assert!(matches!(
+            client.read_response(&budget).await,
+            Err(operator_ipc::unix::TransportError::InvalidExchangeState)
+        ));
+    });
 }

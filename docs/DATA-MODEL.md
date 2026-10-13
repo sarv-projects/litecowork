@@ -52,7 +52,8 @@ WorkspaceInstructionRevision {
 
 Instruction revisions are immutable, limited to 64 KiB of UTF-8 text, digest-checked, and
 treated as untrusted content. Their pinned Resource revision must belong to the same
-Workspace. Tasks pin the selected revision. Updating Workspace instructions affects future
+Workspace and be its current head at commit; the immutable instruction pin remains valid
+if that Resource later advances. Tasks pin the selected revision. Updating Workspace instructions affects future
 Tasks; an existing Task changes context only through an explicit TaskSpecRevision.
 Creation is Hub-authoritative and carries `If-Match` plus explicit `parent_revisions`.
 Revision 1 has no parents; an ordinary edit must name exactly the current instruction
@@ -660,6 +661,11 @@ by LiteCowork. Window title/document observation is not part of application inve
 incarnation, readiness, compatibility, observation time, and expiry; it contains no local
 endpoint locator.
 
+The Operator offers projection is Workspace-scoped: the authenticated owner must have an
+ACTIVE `RuntimeWorkspaceBinding` with the `EXECUTOR` role. It includes only current-
+incarnation, non-expired observations. RuntimeOffers remain advisory inventory; they do not
+grant Workspace access, a capability, or permission to invoke a provider.
+
 ## Environment
 
 ```text
@@ -971,9 +977,10 @@ compatibility is advisory and must be rechecked at admission.
 or replicated Task aggregate. It reports normalized provider identity, isolation,
 readiness, health freshness, and LiteCowork use counts; process IDs, package internals,
 credentials, and LiteSPM protocol fields remain private/opaque. Its active Activation
-count is derived from local `CapabilityActivationHostBinding` rows joined to nonterminal
+count is derived from `CapabilityActivationHostBinding` rows joined to nonterminal
 `CapabilityActivation` records (`STARTING`, `ACTIVE`, or `STOPPING`), never independently
-incremented. `CapabilityActivation.health` is the result of that Activation's readiness
+incremented. A Workspace-authorized Operator view scopes this derived count to the selected
+Workspace so it does not reveal use from another Workspace. `CapabilityActivation.health` is the result of that Activation's readiness
 check; host health is the latest shared-instance health observation. They have different
 scopes and timestamps. Host observations are tied to a Runtime incarnation and expire;
 after restart the provider adapter must revalidate before reuse. Both host instances and
@@ -996,10 +1003,23 @@ LiteCowork persists only normalized references and the digest/version used by a 
 Connection {
   connection_id: ConnectionId
   workspace_id: WorkspaceId
+
+  connector_ref: string
+  connector_revision_digest: Sha256Digest
+  auth_recipe_id: string
   external_provider_ref: string
   account_ref: string?
+  account_display_hint: string?
+
+  granted_scopes: string[]
+  scope_set_digest: Sha256Digest
   secret_refs: SecretRef[]
-  status: CONNECTING | CONNECTED | DEGRADED | REAUTH_REQUIRED | DISCONNECTED
+  token_expires_at: Timestamp?
+  refresh_capable: bool
+
+  status: CONNECTING | CONNECTED | DEGRADED | REAUTH_REQUIRED | REVOKED | DISCONNECTED
+  last_health_at: Timestamp?
+  last_health_reason: string?
   created_at: Timestamp
   updated_at: Timestamp
   version: u64
@@ -2350,7 +2370,7 @@ form because provenance, verification, and staleness depend on an exact revision
 - A managed ArtifactVersion points only to committed content whose digest has been verified; an external ArtifactVersion pins a Resource/revision and records any digest the provider supplies.
 - Evidence and AuditRecord are append-only. Corrections append new records.
 - AutomationOccurrence pins immutable AutomationRevision, RoutineRevision, trigger ID, trigger-host Runtime, input/provenance fields, and occurrence key; its occurrence key is independent of definition revision. Only claim, blocker, Task-link, status, and update fields may change. Its Task link is assigned at most once during CLAIMED→STARTED/WAITING_DEPENDENCY and must point back to the same AutomationOccurrence. Status changes follow the state machine; terminal states are immutable. A nonterminal occurrence can advance only while its pinned Runtime has an ACTIVE TRIGGER_HOST binding; revocation waits for every such occurrence to settle.
-- An archived Workspace has no nonterminal Tasks, unsettled Conversation turns/Invocations, enabled Automations, active grants/SecretLeases/control leases, or live persistent Environment workload. Watchers are stopped; retained environments may remain suspended. It admits no new Task or inbound channel work. Archived Routines cannot be selected for new Tasks or Automations.
+- An archived Workspace has no nonterminal Tasks, unsettled Conversation turns/Invocations, enabled Automations, active grants/CapabilityActivations/SecretLeases/execution or control leases, unresolved Effects, pending Approvals, or live persistent Environment workload. Watchers are stopped; until channel-host drain acknowledgement is durable, an ACTIVE or DRAINING ChannelHostAssignment blocks archive. Retained environments may remain suspended. It admits no new Task or inbound channel work. Archived Routines cannot be selected for new Tasks or Automations.
 - Resource identity is stable across locations; unavailable locations do not imply a Resource is absent, and stale source revisions invalidate downstream evidence without mutating its history.
 - A Task cannot be completed while a mandatory criterion lacks its required evidence,
   an Approval is unresolved, a required child Attempt is active, or an Effect remains
@@ -2410,3 +2430,117 @@ and case-folded by the owning service using `NFC(NFC(trim(name)).casefold())`; t
 ## Accepted Coworker target additions (draft, not current SQLite)
 
 See [Coworker target](COWORKERS-TARGET.md), sections 8-9. An ordinary Conversation has NULL owner_coworker_id; a Coworker-owned Conversation pins one same-Workspace Coworker and cannot silently change owner. Last activity is an authoritative server-derived cursor/order projection. StandingResponsibility / Revision link existing Goal, Routine and Automation revisions to a Coworker, with immutable title/purpose/stop criteria, budgets, notification and approval policy. CoworkerCapabilityAssignment references a shared installed/connected capability with an independently revocable access ceiling. CoworkerMemoryPolicy defines eligible sources and quiet automatic-learning mode, while MemoryCandidate records source digest/receipt/reconciliation state and MemoryRecordMetadata extends Resource-backed ContextDocuments. Handoff between Coworkers creates a separate recipient Task/association, never inherited private context. These models are NOT yet in the canonical SQLite schema, and no live API or status claims may assume they exist until migrated and verified.
+
+
+## Accepted connector, workflow, learning, and follow-up target records
+
+The complete target fields, validation rules and service ownership are in
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md) and [Learning](LEARNING.md).
+The records below are accepted target contracts, not claims that the current SQLite
+schema or Operator API already implements them. Machine schemas are promoted only by the
+owning implementation story together with migrations and executable contract tests.
+
+~~~text
+AuthAttempt {
+  auth_attempt_id: AuthAttemptId
+  workspace_id: WorkspaceId
+  connector_ref: string
+  connector_revision_digest: Sha256Digest
+  auth_recipe_id: string
+  requested_scope_digest: Sha256Digest
+  state_digest: Sha256Digest
+  callback_binding_digest: Sha256Digest?
+  status: CREATED | WAITING_BROWSER | CALLBACK_RECEIVED |
+          COMPLETED | CANCELLED | EXPIRED | FAILED
+  expires_at: Timestamp
+  created_at: Timestamp
+  updated_at: Timestamp
+  version: u64
+}
+
+TaskConversationLink {
+  task_id: TaskId
+  conversation_id: ConversationId
+  relation: PRIMARY_FOLLOW_UP
+  created_by: PrincipalRef
+  created_at: Timestamp
+}
+
+WorkflowRunBinding { # Runtime-local encrypted operational binding
+  invocation_id: CapabilityInvocationId
+  runtime_id: RuntimeId
+  runtime_incarnation: RuntimeIncarnation
+  backend_connection_id: ConnectionId
+  external_run_ref_ciphertext: bytes
+  external_run_ref_digest: Sha256Digest
+  created_at: Timestamp
+}
+~~~
+
+PKCE verifiers, authorization codes and token bytes are not AuthAttempt fields.
+Workflow run handles are not replicated. There is at most one PRIMARY_FOLLOW_UP
+Conversation per Task. Continue creates or returns that link on demand; unattended
+Automations do not create hidden chat spam.
+
+~~~text
+LearningCandidate {
+  candidate_id: LearningCandidateId
+  workspace_id: WorkspaceId
+  coworker_id: CoworkerId
+  kind: MEMORY_FACT | MEMORY_PREFERENCE | INSTRUCTION_PATCH |
+        SKILL_PROPOSAL | ROUTINE_PROPOSAL | AUTOMATION_PROPOSAL
+  source_kind: USER_EXPLICIT | USER_CORRECTION | USER_FEEDBACK |
+               TASK_OUTCOME | REPEATED_PATTERN | DEMONSTRATION
+  proposed_payload_ref: ResourceRef?
+  source_digest: Sha256Digest
+  redaction_report_ref: ResourceRef?
+  classifier_version: string
+  confidence: number?
+  state: NEW | CLASSIFIED | NEEDS_REVIEW | AUTO_COMMIT_ELIGIBLE |
+         COMMITTED | DISMISSED | REJECTED | SUPERSEDED
+  reason_codes: string[]
+  created_at: Timestamp
+  updated_at: Timestamp
+  version: u64
+}
+
+CoworkerLearningPolicyRevision {
+  coworker_id: CoworkerId
+  revision: u64
+  memory_mode: OFF | REVIEW_ALL | AUTO_CONFIRMED_PRIVATE |
+               AUTO_CONFIRMED_AND_LOW_RISK_INFERRED_PRIVATE
+  eligible_source_kinds: string[]
+  candidate_retention_days: u32
+  instruction_patch_mode: REVIEW_REQUIRED
+  skill_mode: REVIEW_REQUIRED
+  routine_mode: REVIEW_REQUIRED
+  automation_mode: REVIEW_REQUIRED
+  notify_on_memory_commit: NEVER | IMPORTANT_ONLY | ALWAYS
+  created_at: Timestamp
+}
+
+MemoryRecordMetadata {
+  memory_id: MemoryRecordId
+  workspace_id: WorkspaceId
+  coworker_id: CoworkerId
+  context_document_id: ContextDocumentId
+  source_candidate_id: LearningCandidateId
+  memory_class: FACT | PREFERENCE | WORKING_STYLE | PROJECT_CONTEXT
+  certainty: CONFIRMED | INFERRED
+  scope: COWORKER_PRIVATE
+  source_digest: Sha256Digest
+  committed_at: Timestamp
+  expires_at: Timestamp?
+  superseded_by: MemoryRecordId?
+  status: ACTIVE | SUPERSEDED | REVOKED | PURGE_PENDING
+  version: u64
+}
+~~~
+
+Memory content remains Resource/ContextDocument-backed. Instructions, Skills, Routines,
+Automations and permissions are not encoded as memory rows and cannot be auto-promoted
+from one another.
+
+## V1 detailed design integration — 2026-10-12
+
+BrowserProfile, BrowserSessionProjection, import preview and UI layout state in CHROME-BROWSER-LLD.md are proposed projections/provider-local records until explicitly promoted. Browser secrets, cookies and Chrome user data directories are NOT ordinary Resource/Artifact or event fields. Reuse existing Runtime, Environment, ControlLease, Workspace and Attempt identities. Composer native tokens are owned by a versioned harness descriptor, not a new global model/provider aggregate.

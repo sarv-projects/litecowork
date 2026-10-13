@@ -3,6 +3,18 @@
 //! This adapter has no provider transport. A successful PROPOSED commit is a necessary
 //! precondition for future dispatch, but is not itself a Trust decision or dispatch.
 use super::*;
+
+type EvidenceStorageRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+);
 use domain_effects::{EffectError, EffectRecord, EffectState, EvidenceLevel, EvidenceRecord};
 use serde::Serialize;
 use storage_core::{
@@ -406,6 +418,8 @@ fn authorize_task(connection: &Connection, workspace: &str, task: &str) -> Resul
     }
 }
 
+// Keep all independently checked runtime, Attempt, Invocation, and fence bindings explicit.
+#[allow(clippy::too_many_arguments)]
 fn validate_live_fence(
     connection: &Connection,
     workspace: &str,
@@ -1142,6 +1156,8 @@ fn transition_event(from: &EffectState, to: &EffectState) -> Result<&'static str
     })
 }
 
+// Event identity, aggregate revision, and the event payload are distinct durable fields.
+#[allow(clippy::too_many_arguments)]
 fn write_event(
     tx: &Transaction<'_>,
     workspace: &str,
@@ -1403,19 +1419,7 @@ fn sqlite_now(connection: &Connection) -> Result<String, StoreError> {
     canonicalize_utc_timestamp(&value)
 }
 
-fn read_evidence_row(
-    row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<(
-    String,
-    String,
-    String,
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    String,
-)> {
+fn read_evidence_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceStorageRow> {
     Ok((
         row.get(0)?,
         row.get(1)?,
@@ -1428,19 +1432,7 @@ fn read_evidence_row(
         row.get(8)?,
     ))
 }
-fn parse_evidence_row(
-    row: (
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<String>,
-        String,
-    ),
-) -> Result<EvidenceRecord, StoreError> {
+fn parse_evidence_row(row: EvidenceStorageRow) -> Result<EvidenceRecord, StoreError> {
     let (
         evidence_id,
         task_id,

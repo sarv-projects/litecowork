@@ -1,5 +1,17 @@
 //! Coworker persistence through the existing bounded SQLite writer.
 use super::*;
+
+type AutomationRevisionStorageRow = (
+    String,
+    u64,
+    String,
+    Option<String>,
+    Option<u64>,
+    String,
+    String,
+    String,
+    String,
+);
 use domain_responsibility::*;
 use serde::{Deserialize, Serialize};
 
@@ -489,7 +501,7 @@ fn load_automation_revision(
     revision: u64,
 ) -> Result<Option<AutomationRevision>, DomainError> {
     let revision_sql = sql_u64(revision, "Automation revision")?;
-    let raw: Option<(String, u64, String, Option<String>, Option<u64>, String, String, String, String)> = connection.query_row(
+    let raw: Option<AutomationRevisionStorageRow> = connection.query_row(
         "SELECT routine_id, routine_revision, triggers_json, coworker_id, coworker_revision, execution_policy_json, authored_by_json, created_at, automation_id FROM automation_revisions WHERE workspace_id = ?1 AND automation_id = ?2 AND revision = ?3",
         params![workspace, id, revision_sql], |row| Ok((row.get(0)?, from_row_u64(row, 1)?, row.get(2)?, row.get(3)?, row_u64_opt(row, 4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
     ).optional().map_err(sql_error)?;
@@ -1409,6 +1421,8 @@ pub(super) fn load_automation_cursor(
     ).optional().map_err(sql_error)
 }
 
+// The versioned cursor key and update fields stay explicit at this SQLite CAS boundary.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn update_automation_cursor_revision(
     connection: &Connection,
     workspace_id: &str,
@@ -1430,6 +1444,8 @@ pub(super) fn update_automation_cursor_revision(
     }
 }
 
+// Event identity and aggregate identity remain separate persisted fields at this boundary.
+#[allow(clippy::too_many_arguments)]
 fn write_event(
     tx: &Transaction<'_>,
     scope: &OwnerCommandScope,

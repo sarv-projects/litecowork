@@ -283,27 +283,23 @@ mod manual_run_bridge_tests {
 
     #[test]
     fn manual_run_bridge_rejects_non_object_inputs_and_missing_identity() {
-        assert!(
-            manual_run_request(
-                "workspace-1",
-                Some("automation-1"),
-                Some(1),
-                Some("request-1"),
-                Some(1),
-                Some(&json!([])),
-            )
-            .is_err()
-        );
-        assert!(
-            manual_run_request(
-                "workspace-1",
-                None,
-                Some(1),
-                Some("request-1"),
-                Some(1),
-                Some(&json!({})),
-            )
-            .is_err()
-        );
+        assert!(manual_run_request(
+            "workspace-1",
+            Some("automation-1"),
+            Some(1),
+            Some("request-1"),
+            Some(1),
+            Some(&json!([])),
+        )
+        .is_err());
+        assert!(manual_run_request(
+            "workspace-1",
+            None,
+            Some(1),
+            Some("request-1"),
+            Some(1),
+            Some(&json!({})),
+        )
+        .is_err());
     }
 }

@@ -14,6 +14,29 @@ use domain_responsibility::{
     SuggestionStatus, SuggestionVisibility,
 };
 
+type StoredSuggestionRow = (
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    u64,
+);
+
 pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +88,7 @@ impl SqliteSuggestionStore {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn list(
         &self,
         principal_id: &str,
@@ -610,6 +634,7 @@ struct PreparedPreferenceChange {
     resolved_suggestions: Vec<Suggestion>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_preference_change(
     connection: &mut Connection,
     blobs: &dyn BlobStore,
@@ -1255,6 +1280,7 @@ impl SuggestionOwnerActionStore for SqliteSuggestionStore {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn settle_expired_bounded(
     connection: &mut Connection,
     blobs: &dyn BlobStore,
@@ -1310,6 +1336,7 @@ fn settle_expired_bounded(
     Ok((settled, more_due))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn expire_one(
     connection: &mut Connection,
     blobs: &dyn BlobStore,
@@ -1447,6 +1474,7 @@ fn expire_one(
     Ok(true)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_owner_action(
     connection: &mut Connection,
     blobs: &dyn BlobStore,
@@ -1769,6 +1797,7 @@ fn expiry_receipt(
         .map_err(|_| SuggestionServiceError::Storage)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_expiry_event(
     tx: &Transaction<'_>,
     workspace: &str,
@@ -1794,6 +1823,7 @@ fn write_expiry_event(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_suggestion_event(
     tx: &Transaction<'_>,
     workspace: &str,
@@ -1821,6 +1851,7 @@ fn write_suggestion_event(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_domain_event(
     tx: &Transaction<'_>,
     workspace: &str,
@@ -1974,7 +2005,7 @@ fn load_suggestion_optional(
     workspace: &str,
     id: &str,
 ) -> Result<Option<Suggestion>, SuggestionReadError> {
-    let row: Option<(Option<String>, String, String, String, String, String, String, Option<String>, Option<String>, Option<String>, String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, u64)> = connection.query_row(
+    let row: Option<StoredSuggestionRow> = connection.query_row(
         "SELECT coworker_id, dedupe_key, kind, reason, source_refs_json, goal_refs_json, proposed_action, proposed_by_json, proposed_task_spec_json, estimated_cost_json, status, created_at, expires_at, snoozed_until, resolved_at, resolved_by_json, resolution_reason, result_task_id, latency_class_hint, version FROM suggestions WHERE workspace_id = ?1 AND suggestion_id = ?2",
         params![workspace, id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?, row.get(16)?, row.get(17)?, row.get(18)?, from_row_u64(row, 19)?)),

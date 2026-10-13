@@ -3,6 +3,17 @@ use super::*;
 use domain_responsibility::{OccurrenceIdentity, TriggerDefinition, TriggerSpec};
 use storage_core::AutomationTaskAdmission;
 
+type PinnedAutomationAdmissionRow = (
+    String,
+    i64,
+    i64,
+    String,
+    i64,
+    Option<String>,
+    Option<i64>,
+    String,
+);
+
 pub(super) fn validate_task_admission(
     tx: &Transaction<'_>,
     commit: &TaskCreateCommit,
@@ -33,7 +44,7 @@ fn validate_admission(
         ));
     }
     let automation_revision_sql = to_sql_i64(admission.automation_revision, "Automation revision")?;
-    let pinned: Option<(String, i64, i64, String, i64, Option<String>, Option<i64>, String)> = tx.query_row(
+    let pinned: Option<PinnedAutomationAdmissionRow> = tx.query_row(
         "SELECT a.status, a.current_revision, a.version, ar.routine_id, ar.routine_revision, ar.coworker_id, ar.coworker_revision, ar.triggers_json
          FROM automations a JOIN automation_revisions ar
            ON ar.workspace_id = a.workspace_id AND ar.automation_id = a.automation_id AND ar.revision = a.current_revision

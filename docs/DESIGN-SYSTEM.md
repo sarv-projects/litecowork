@@ -438,3 +438,19 @@ States:
 - Broken / Repair
 
 Every state must have one obvious next action and an accessible textual explanation.
+
+
+## Unified-mode control rule — 2026-10-10
+
+Do not use a persistent top-level segmented control to split Cowork and Code. That would
+duplicate navigation/history/composer concepts and make Agent capability look like product
+mode. Use the standard New action/menu for intent presets such as Chat, Code task, Research,
+Work with files and Automation.
+
+The composer remains one component whose dependent controls come from the selected
+AgentControlDescriptor. A preset may reveal contextual host controls, but cannot replace
+native Agent/Model/Reasoning controls or move the user into a second visual shell.
+
+## V1 detailed design integration — 2026-10-12
+
+Use DESKTOP-SHELL-LLD.md for dimension, panel, focus, menu and settings semantics. Keep a single right Workbench shell; animated resizing never permits chat clipping or inaccessible controls. Component tokens must support high contrast, RTL/long names, 200/400% zoom, keyboard resizing and reduced motion. Use RENDERING-CONFORMANCE-LLD.md to prevent vendor output styles breaking central presentation.

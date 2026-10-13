@@ -3,6 +3,8 @@
 //! Wire authority: https://developers.openai.com/codex/app-server . Native
 //! payloads stay private. No payload is logged, persisted, or auto-approved.
 //! This module does not establish descendant-writer quiescence or Trust grants.
+#![allow(dead_code)] // The unqualified native transport remains staged until admitted dispatch and descendant settlement are integrated.
+
 use std::{
     collections::HashMap,
     ffi::OsString,
@@ -810,14 +812,14 @@ impl CodexAppServer {
                 );
                 NativeEventKind::ServerRequest(value)
             } else {
-                if method == "serverRequest/resolved" {
-                    if let Some(id) = value.pointer("/params/requestId") {
-                        let key = match request_key(id) {
-                            Ok(key) => key,
-                            Err(error) => return self.poison(error),
-                        };
-                        self.server_requests.remove(&key);
-                    }
+                if method == "serverRequest/resolved"
+                    && let Some(id) = value.pointer("/params/requestId")
+                {
+                    let key = match request_key(id) {
+                        Ok(key) => key,
+                        Err(error) => return self.poison(error),
+                    };
+                    self.server_requests.remove(&key);
                 }
                 NativeEventKind::Notification(value)
             }
@@ -919,10 +921,10 @@ impl CodexAppServer {
                     ApprovalDecision::Decline => "decline",
                     ApprovalDecision::Cancel => "cancel",
                 };
-                if let Some(available) = &request.available_decisions {
-                    if !available.iter().any(|value| value == decision) {
-                        return Err(TransportError::UnsupportedReply);
-                    }
+                if let Some(available) = &request.available_decisions
+                    && !available.iter().any(|value| value == decision)
+                {
+                    return Err(TransportError::UnsupportedReply);
                 }
                 Some(json!({"decision":decision}))
             }
@@ -1090,7 +1092,7 @@ fn validated_absolute_path(path: &Path) -> Result<String, TransportError> {
     let value = path.to_str().ok_or(TransportError::InvalidRequestInput)?;
     #[cfg(windows)]
     let has_dot_segment = value
-        .split(|character| character == '/' || character == '\\')
+        .split(['/', '\\'])
         .any(|segment| matches!(segment, "." | ".."));
     #[cfg(not(windows))]
     let has_dot_segment = value

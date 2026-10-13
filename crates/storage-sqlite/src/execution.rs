@@ -12,6 +12,13 @@ use storage_core::{
 
 pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
+struct ExpiryStateRefs {
+    task: AggregateStateRef,
+    step: AggregateStateRef,
+    attempt: AggregateStateRef,
+    lease: AggregateStateRef,
+}
+
 #[derive(Clone)]
 pub struct SqliteStepAttemptStore {
     store: SqliteWorkspaceStore,
@@ -204,10 +211,12 @@ impl StepAttemptStore for SqliteStepAttemptStore {
                 command,
                 current,
                 updated,
-                task_state,
-                step_state,
-                attempt_state,
-                lease_state,
+                ExpiryStateRefs {
+                    task: task_state,
+                    step: step_state,
+                    attempt: attempt_state,
+                    lease: lease_state,
+                },
             )
         })
     }
@@ -397,15 +406,14 @@ fn canonicalize_recovery_events(command: &mut ExpireExecutionLease) -> Result<()
             ));
         }
         validate_timestamp(&event.hlc_timestamp)?;
-        if let Some(causation_id) = &event.causation_id {
-            if causation_id.trim().is_empty()
+        if let Some(causation_id) = &event.causation_id
+            && (causation_id.trim().is_empty()
                 || causation_id.len() > 256
-                || causation_id.chars().any(char::is_control)
-            {
-                return Err(StoreError::Invalid(
-                    "lease expiry event causation ID is invalid".to_owned(),
-                ));
-            }
+                || causation_id.chars().any(char::is_control))
+        {
+            return Err(StoreError::Invalid(
+                "lease expiry event causation ID is invalid".to_owned(),
+            ));
         }
         event.recorded_at = canonicalize_utc_timestamp(&event.recorded_at)?;
     }
@@ -434,11 +442,14 @@ fn expire_transaction(
     command: ExpireExecutionLease,
     expected: ExpiryMaterial,
     updated: ExpiryCommitMaterial,
-    task_state: AggregateStateRef,
-    step_state: AggregateStateRef,
-    attempt_state: AggregateStateRef,
-    lease_state: AggregateStateRef,
+    state_refs: ExpiryStateRefs,
 ) -> Result<storage_core::CommittedExecutionLeaseMutation, StoreError> {
+    let ExpiryStateRefs {
+        task: task_state,
+        step: step_state,
+        attempt: attempt_state,
+        lease: lease_state,
+    } = state_refs;
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_database_error)?;

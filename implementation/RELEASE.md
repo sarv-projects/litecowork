@@ -67,3 +67,11 @@ their own deployment and recovery evidence passes.
 
 Keep completed evidence in an execution record separate from this initial planned backlog.
 The initial docs cannot satisfy any product release gate by themselves.
+
+## V1 detailed design integration — 2026-10-12
+
+V1 browser native provider, agent command parity, semantic/native rendering and full Settings/Workbench/automation must pass V1-DESIGN-COVERAGE.md UAT and owning CODE/SYSTEM/USER gates before marketing/release. Produce a per-OS/harness/browser qualification matrix, screenshot/accessibility report and durable fault-recovery evidence. Post-V1 cloud/remote remain explicitly excluded.
+
+## 2026-10-13 release-claim rejection checklist
+
+G3 is **BLOCKED for any advertised capability** lacking the following actual evidence: (1) E03-S02 native Conversation Send and E03-S03 isolated authenticated planning/plan-submit on a real native agent; (2) E07-S00 Windows root identity/rebind (including junction/reparse/WSL and restart) before advertising Windows root-backed Task operations; (3) E08-S03 eligible private automatic learning with typed candidate/commit/revocation and real USER controls; (4) E07/E08 browser takeover and PTY/ConPTY tested on each claimed OS; (5) E03/E04/E13 durable Effect reconciliation, independent verification and negative failure tests. Mark unsupported combinations **UNAVAILABLE/BLOCKED** in the exact supported matrix; do not show a generic green V1 qualification if a mandatory advertised path is missing. CODE + SYSTEM + USER evidence, incident drill and owner decision remain required separately from green architecture validators. [Owner/story/evidence map](V1-CONTRACT-RECONCILIATION-2026-10-13.md).

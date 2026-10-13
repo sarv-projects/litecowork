@@ -102,6 +102,7 @@ pub trait ConversationTurnStore: Send + Sync {
 
     /// Only lifecycle changes with a canonical event in EVENTS.md are accepted here.
     /// Native session admission and the OPEN -> RUNNING start command remain closed.
+    #[allow(clippy::too_many_arguments)]
     fn transition_conversation_turn(
         &self,
         principal_id: &str,

@@ -120,3 +120,19 @@ load it. Continue with the semantic Conversation response and deterministic safe
 renderers, and record a sanitized local diagnostic. Guidance integrity failure does not
 block ordinary Conversation or Task work. The Agent receives no partial or unverified
 asset bytes.
+
+
+## Learning host-operation boundary
+
+Host guidance may teach an agent to propose memory, instruction, Skill, Routine or
+Automation candidates through LearningService. It must not expose a generic "rewrite my
+persistent config" capability.
+
+A future host operation that commits private memory is allowed only for a specific
+LearningCandidate already marked AUTO_COMMIT_ELIGIBLE by Core policy; the model cannot
+supply arbitrary replacement text at commit time. Host guidance itself never authorizes
+learning or action.
+
+## V1 detailed design integration — 2026-10-12
+
+Agent-authored native commands and @ tokens are interpreted according to versioned harness descriptors (NATIVE-COMPOSER-LLD.md). Host Guidance cannot grant capabilities, change verified task state, render executable HTML or take browser control; rich output safety and fallback are in RENDERING-CONFORMANCE-LLD.md.

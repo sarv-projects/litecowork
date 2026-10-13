@@ -14,9 +14,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::time::timeout;
 
 use crate::{
-    InFlightBodyBudget, MAX_HEADER_BYTES, ProtocolError, RequestFrame, RequestHeader,
-    ResponseFrame, ResponseHeader, validate_request, validate_request_fields,
-    validate_request_length, validate_response, validate_response_fields, validate_response_length,
+    InFlightBodyBudget, MAX_HEADER_BYTES, MAX_STREAM_FRAME_BYTES, ProtocolError, RequestFrame,
+    RequestHeader, ResponseFrame, ResponseHeader, StreamMessage, validate_request,
+    validate_request_fields, validate_request_length, validate_response, validate_response_fields,
+    validate_response_length,
 };
 
 /// Reads one request. Authenticate the peer before calling this function.
@@ -139,6 +140,101 @@ pub async fn write_response<W: AsyncWrite + Unpin + ?Sized>(
     validate_response(&frame.header, frame.body.len())?;
     write_frame_header(writer, &frame.header).await?;
     writer.write_all(&frame.body).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+/// Reads one length-prefixed UTF-8/JSON stream payload. The caller validates its
+/// message schema after decoding; this layer enforces the transport size and memory
+/// budget before allocating the body. A failed or cancelled read requires closing
+/// the connection because a partial message cannot be resumed safely.
+pub async fn read_stream_message<R: AsyncRead + Unpin + ?Sized>(
+    reader: &mut R,
+    budget: &Arc<InFlightBodyBudget>,
+    idle_deadline: Duration,
+) -> Result<Option<StreamMessage>, ProtocolError> {
+    let mut length_bytes = [0_u8; 4];
+    let first_byte = timeout(idle_deadline, reader.read(&mut length_bytes[..1]))
+        .await
+        .map_err(|_| timeout_error())??;
+    if first_byte == 0 {
+        return Ok(None);
+    }
+    timeout(idle_deadline, reader.read_exact(&mut length_bytes[1..]))
+        .await
+        .map_err(|_| timeout_error())??;
+    let length = u32::from_be_bytes(length_bytes) as usize;
+    if length == 0 {
+        return Err(ProtocolError::InvalidFrame);
+    }
+    if length > MAX_STREAM_FRAME_BYTES {
+        return Err(ProtocolError::LimitExceeded);
+    }
+
+    let permit = budget.reserve_bytes(length)?;
+    let mut body = vec![0_u8; length];
+    read_body_with_progress(reader, &mut body, idle_deadline).await?;
+    Ok(Some(StreamMessage {
+        body: bytes::Bytes::from(body),
+        _permit: permit,
+    }))
+}
+
+/// Reads one stream message for a long-lived client session.
+///
+/// Waiting between frames has no idle deadline because the stream protocol does
+/// not require heartbeat traffic. Once a frame starts, the remaining length prefix
+/// uses `frame_deadline`, and the body uses that idle deadline refreshed after each
+/// complete 64 KiB chunk. Size and in-flight memory limits match
+/// [`read_stream_message`].
+pub async fn read_stream_message_for_session<R: AsyncRead + Unpin + ?Sized>(
+    reader: &mut R,
+    budget: &Arc<InFlightBodyBudget>,
+    frame_deadline: Duration,
+) -> Result<Option<StreamMessage>, ProtocolError> {
+    let mut length_bytes = [0_u8; 4];
+    let first_byte = reader.read(&mut length_bytes[..1]).await?;
+    if first_byte == 0 {
+        return Ok(None);
+    }
+    timeout(frame_deadline, reader.read_exact(&mut length_bytes[1..]))
+        .await
+        .map_err(|_| timeout_error())??;
+    let length = u32::from_be_bytes(length_bytes) as usize;
+    if length == 0 {
+        return Err(ProtocolError::InvalidFrame);
+    }
+    if length > MAX_STREAM_FRAME_BYTES {
+        return Err(ProtocolError::LimitExceeded);
+    }
+
+    let permit = budget.reserve_bytes(length)?;
+    let mut body = vec![0_u8; length];
+    read_body_with_progress(reader, &mut body, frame_deadline).await?;
+    Ok(Some(StreamMessage {
+        body: bytes::Bytes::from(body),
+        _permit: permit,
+    }))
+}
+
+/// Writes one length-prefixed stream payload, reserving shared in-flight body
+/// capacity for the duration of the write. Callers apply the per-session write
+/// deadline and close the connection if the write fails or is cancelled.
+pub async fn write_stream_message<W: AsyncWrite + Unpin + ?Sized>(
+    writer: &mut W,
+    body: &[u8],
+    budget: &Arc<InFlightBodyBudget>,
+) -> Result<(), ProtocolError> {
+    if body.is_empty() {
+        return Err(ProtocolError::InvalidFrame);
+    }
+    if body.len() > MAX_STREAM_FRAME_BYTES {
+        return Err(ProtocolError::LimitExceeded);
+    }
+    let _permit = budget.reserve_bytes(body.len())?;
+    let length = u32::try_from(body.len()).map_err(|_| ProtocolError::LimitExceeded)?;
+    writer.write_all(&length.to_be_bytes()).await?;
+    writer.write_all(body).await?;
     writer.flush().await?;
     Ok(())
 }

@@ -4,6 +4,7 @@ import {
   type DelegationProfile,
 } from "../coworkers/delegation-profile-api";
 import { desktopDelegationProfileCatalogApi } from "../coworkers/desktop-delegation-profile-api";
+import { scheduleOfferExpiryRefresh } from "./agent-offer-expiry";
 import "./agent-catalog-settings.css";
 
 export type AgentInstallation = {
@@ -68,6 +69,7 @@ export type AgentCatalogSettingsProps = {
   selectedDefaultLeadBindingId: string | null;
   installations: AgentInstallation[];
   profiles: AgentProfile[];
+  runtimeInventoryStreamStatus?: "CONNECTING" | "LIVE" | "RECONNECTING" | "UNAVAILABLE";
   bindings: AgentBinding[];
   loading?: boolean;
   error?: string | null;
@@ -293,10 +295,10 @@ function latestObservation(profile: AgentProfile): AgentProfileObservation | und
   return [...profile.observations].sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt))[0];
 }
 
-function readiness(observation: AgentProfileObservation | undefined): Readiness {
+function readiness(observation: AgentProfileObservation | undefined, nowMs: number): Readiness {
   if (!observation) return { label: "No current offer", tone: "quiet", detail: "Refresh the profile through its supported adapter to request a current Runtime observation." };
   const expiry = Date.parse(observation.offerExpiresAt);
-  if (!Number.isFinite(expiry) || expiry <= Date.now()) {
+  if (!Number.isFinite(expiry) || expiry <= nowMs) {
     return { label: "Offer expired", tone: "quiet", detail: "This observation is historical. Refresh it before using it to configure a binding." };
   }
   if (!observation.compatible) return { label: "Not compatible", tone: "caution", detail: "The Runtime did not mark this endpoint compatible for current admission." };
@@ -312,12 +314,12 @@ function readiness(observation: AgentProfileObservation | undefined): Readiness 
   }
 }
 
-function freshCompatibleOffer(profile: AgentProfile): boolean {
+function freshCompatibleOffer(profile: AgentProfile, nowMs: number): boolean {
   const offer = latestObservation(profile);
   return !!offer
     && offer.compatible
     && Number.isFinite(Date.parse(offer.offerExpiresAt))
-    && Date.parse(offer.offerExpiresAt) > Date.now()
+    && Date.parse(offer.offerExpiresAt) > nowMs
     && ["AVAILABLE", "STARTABLE", "READY"].includes(offer.readiness);
 }
 
@@ -349,12 +351,15 @@ function capabilitySummary(profile: AgentProfile): string[] {
 export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
   const {
     workspaceId, workspaceName, workspaceActive, runtimeReady, runtimeEnrolled,
-    selectedDefaultLeadBindingId, installations, profiles, bindings, loading = false,
+    selectedDefaultLeadBindingId, installations, profiles, runtimeInventoryStreamStatus = "UNAVAILABLE", bindings, loading = false,
     error, actionMessage, actionError, busyAction, defaultAgentBusy = false, onRefresh, onProbeCodex,
     onProbeOpenCode, onCreateBinding, onEnableBinding, onSetDefaultLead,
   } = props;
   const [leadEligibleByProfile, setLeadEligibleByProfile] = useState<Record<string, boolean>>({});
   const [clearDefaultPrompt, setClearDefaultPrompt] = useState<{ workspaceId: string; bindingId: string } | null>(null);
+  const [offerClock, setOfferClock] = useState(() => Date.now());
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
   const profileApi = useMemo(() => workspaceId ? desktopDelegationProfileCatalogApi(workspaceId) : null, [workspaceId]);
   const [workerProfiles, setWorkerProfiles] = useState<DelegationProfile[]>([]);
   const [workerProfilesError, setWorkerProfilesError] = useState<string | null>(null);
@@ -367,6 +372,13 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
   const [workerProfileLifecycleBusy, setWorkerProfileLifecycleBusy] = useState<string | null>(null);
   const workerProfileGeneration = useRef(0);
   const workerProfileRequestIds = useRef(new Map<string, string>());
+  useEffect(() => scheduleOfferExpiryRefresh(
+    profiles.flatMap(profile => profile.observations),
+    () => {
+      setOfferClock(Date.now());
+      onRefreshRef.current();
+    },
+  ), [profiles]);
   useEffect(() => {
     const generation = ++workerProfileGeneration.current;
     setWorkerProfiles([]);
@@ -584,15 +596,24 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
           <div><h3 id="agent-profiles-title">Observed profiles</h3><p>Profiles describe adapter identity and advertised capabilities. They are not enabled Workspace access.</p></div>
           <span className="agent-catalog__count">{hasWorkspace ? profiles.length : 0}</span>
         </div>
+        <p className="agent-catalog__footnote" role="status" aria-live="polite">
+          {runtimeInventoryStreamStatus === "LIVE"
+            ? "Runtime offer updates are connected. Notifications trigger a fresh authorized inventory read."
+            : runtimeInventoryStreamStatus === "RECONNECTING"
+              ? "Runtime offer updates are reconnecting. Shown observations may be stale; refresh profiles to check now."
+              : runtimeInventoryStreamStatus === "CONNECTING"
+                ? "Connecting to Runtime offer updates…"
+                : "Live Runtime offer updates are unavailable. Refresh profiles to check current observations."}
+        </p>
         {!hasWorkspace ? null : profiles.length === 0 ? <p className="agent-catalog__empty">No adapter profile has been observed in this Workspace. Use an available explicit Codex or OpenCode probe above to request one.</p> : (
           <div className="agent-catalog__profiles">
             {profiles.map((profile) => {
               const observation = latestObservation(profile);
-              const state = readiness(observation);
+              const state = readiness(observation, offerClock);
               const probe = profile.providerKey === "CODEX" ? codexProbeDiagnostic(observation) : null;
               const openCodeProbe = profile.providerKey === "OPENCODE" ? openCodeProbeDiagnostic(observation) : null;
               const isBound = profileIdsBound.has(profile.agentProfileId);
-              const offerReady = freshCompatibleOffer(profile);
+              const offerReady = freshCompatibleOffer(profile, offerClock);
               const protocols = [...new Set(profile.endpoints.map((endpoint) => humanize(endpoint.protocol)))];
               const features = capabilitySummary(profile);
               return <article className="agent-catalog__profile" key={profile.agentProfileId}>

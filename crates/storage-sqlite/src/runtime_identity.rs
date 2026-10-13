@@ -101,7 +101,7 @@ impl OsRuntimeDeviceIdentityProvider {
         // The `ed25519-dalek/zeroize` feature implements Drop for SigningKey and
         // zeroizes its private scalar. Limit its lifetime to public-key derivation.
         let public_key = {
-            let signing_key = SigningKey::from_bytes(&*seed);
+            let signing_key = SigningKey::from_bytes(&seed);
             signing_key.verifying_key().to_bytes()
         };
         let mut device_digest = Sha256::new();

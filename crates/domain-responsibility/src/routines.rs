@@ -503,13 +503,12 @@ fn validate_routine_input_contract(input: &RoutineRevisionInput) -> Result<(), R
         {
             return Err(RoutineError::InvalidDefinition);
         }
-        if let Some(limit) = binding.get("max_bytes") {
-            if limit
+        if let Some(limit) = binding.get("max_bytes")
+            && limit
                 .as_u64()
                 .is_none_or(|value| value == 0 || value > 16 * 1024)
-            {
-                return Err(RoutineError::InvalidDefinition);
-            }
+        {
+            return Err(RoutineError::InvalidDefinition);
         }
         let parts = pointer_parts(pointer).ok_or(RoutineError::InvalidDefinition)?;
         if parts.len() != 1 {
@@ -521,8 +520,8 @@ fn validate_routine_input_contract(input: &RoutineRevisionInput) -> Result<(), R
             return Err(RoutineError::InvalidDefinition);
         }
         let field_object = field.as_object().ok_or(RoutineError::InvalidDefinition)?;
-        if kind == "TEXT" {
-            if !keys(field_object, &["type", "maxLength", "minLength", "enum"])
+        if kind == "TEXT"
+            && (!keys(field_object, &["type", "maxLength", "minLength", "enum"])
                 || field_object
                     .get("maxLength")
                     .and_then(Value::as_u64)
@@ -539,10 +538,9 @@ fn validate_routine_input_contract(input: &RoutineRevisionInput) -> Result<(), R
                 || field_object
                     .get("enum")
                     .and_then(Value::as_array)
-                    .is_some_and(|values| values.iter().any(|value| !value.is_string()))
-            {
-                return Err(RoutineError::InvalidDefinition);
-            }
+                    .is_some_and(|values| values.iter().any(|value| !value.is_string())))
+        {
+            return Err(RoutineError::InvalidDefinition);
         }
         if kind == "RESOURCE_REF" {
             if !keys(

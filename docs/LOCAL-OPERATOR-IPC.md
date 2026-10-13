@@ -5,19 +5,25 @@ process and the local `litecoworkd` Runtime. It is a transport adapter for the l
 Operator operations in `API.md`; it does not change their authorization, idempotency,
 Workspace scoping, or response semantics.
 
-## Implementation status (2026-10-09)
+## Implementation status (2026-10-10)
 
-The daemon and Tauri source are connected through the framed Unix transport on Linux/macOS.
-The daemon validates its installation-scoped OS-principal binding before binding the
-endpoint; both sides compare kernel peer credentials before frame I/O; the existing Axum
-routes remain the single Operator handler path. The Tauri bearer/loopback descriptor client
-has been removed. The Rust workspace test suite passed on 2026-10-09, including 18
-`litecoworkd` tests and the `operator-ipc` crate tests. These results establish code-level
-test coverage only: they do not establish real IPC-provider behavior or qualification on
-Linux, macOS, or Windows. Windows currently fails closed because its named-pipe transport
-and logon-SID ACL are not implemented. Platform qualification, keyring/provider behavior,
-and real desktop-to-daemon IPC qualification remain release requirements; this is not a
-production-safety claim.
+The daemon and Tauri source share bounded framed IPC dispatch on Linux/macOS and Windows.
+Unix continues to compare kernel peer credentials with the validated installation
+binding. Windows now has a local named-pipe adapter whose protected DACL grants the current
+logon SID and SYSTEM, rejects remote clients, and is installed before frame parsing; the
+Runtime persists a keyed logon-SID binding. Both platform adapters feed the same Axum
+handlers, authorization middleware, response allowlist, body budget, and bounded drain.
+The Tauri bearer/loopback descriptor client has been removed. Windows support is present
+in source and cross-compiles for `operator-ipc` and `windows-local-security`. The daemon's
+Windows-target Rust source also passes `cargo check` and Clippy with warnings denied when
+`libsqlite3-sys` is directed to host pkg-config metadata; this type-checks the Windows Rust
+configuration but does not build or link Windows SQLite. The normal bundled-SQLite daemon
+cross-check stops because MinGW GCC is unavailable, and the Tauri cross-check stops in
+`tauri-build` because MinGW `windres` is unavailable. No Windows host
+has exercised pipe ACLs, connect/disconnect behavior, or the desktop-to-daemon path. These
+results establish only partial CODE evidence; they do not establish packaged or OS
+qualification. Linux/macOS provider behavior and real desktop-to-daemon qualification
+remain release requirements; this is not a production-safety claim.
 
 The focused auth-boundary test also exercises same-process Unix socket dispatch through
 `dispatch_ipc_exchange` into an auth-protected readiness handler. Separate cases verify
@@ -142,7 +148,10 @@ before this binding is treated as production-ready.
   ID, Operator contract version, and serving state. The desktop verifies these against
   native Runtime status before normal requests.
 - On graceful shutdown, stop admission, finish or reject bounded in-flight requests,
-  close the listener, and remove only the endpoint instance created by this process.
+  close the listener, and remove only the endpoint instance created by this process. The
+  Runtime may persist a clean stop only after all admitted request tasks complete without
+  an ambiguous handler timeout and the endpoint thread exits successfully; a failed or
+  expired drain leaves the Runtime unclean.
 - On crash recovery, inspect endpoint ownership and type before stale cleanup. Never
   unlink an active endpoint based only on a stale status file.
 
@@ -185,6 +194,12 @@ headers: allowlisted response headers
 body_length: u64
 ```
 
+The frame `request_id` identifies one transport exchange and is echoed only to correlate
+its response. A reconnect retry uses a new frame `request_id`. Mutating Operator commands
+carry the separate logical `Idempotency-Key` header; the caller preserves that same key
+and payload across retries so the durable command receipt can resolve an ambiguous prior
+commit. The adapter never derives the idempotency key from the frame correlation ID.
+
 Initial limits:
 
 ```text
@@ -213,9 +228,9 @@ or cancelled read or write leaves the one-exchange stream unusable; close it and
 mutation only with the original `Idempotency-Key`.
 Lengths are checked before allocation. Reject unsupported protocol versions, absolute
 URLs, path traversal, duplicate/forbidden headers, mismatched request IDs, short frames,
-and bodies exceeding the operation's own stricter limit. Each connection carries exactly
-one exchange; bytes after the declared body are never interpreted as another request, and
-the server closes the connection after its response. A failed or
+and bodies exceeding the operation's own stricter limit. Each unary connection carries
+exactly one request/response exchange; bytes after the declared body are never interpreted
+as another request, and the server closes the connection after its response. A failed or
 ambiguous request is returned as a transport error; the client retries mutations only
 with the original `Idempotency-Key`.
 
@@ -223,7 +238,65 @@ Logical headers initially permitted are `X-Workspace-ID`, `Idempotency-Key`, `If
 `Content-Type`, `Content-Range`, and `X-Chunk-SHA256`. Pagination and search values are
 carried only in `path_and_query`, not promoted into additional headers.
 `Authorization`, `Host`, `Origin`, cookies, proxy headers, and hop-by-hop headers are
-forbidden on IPC.
+forbidden on IPC. Response headers are independently allowlisted as `Content-Type`,
+`Content-Length`, `Cache-Control`, `ETag`, `X-Content-Type-Options`,
+`X-Resource-Media-Type`, `X-Resource-Revision-Id`, and `X-Correlation-ID`. The exact
+Resource revision header is required by the desktop's pinned content preview and must
+survive the frame boundary; arbitrary response headers remain filtered and rejected.
+
+### Authenticated local stream session
+
+The logical `WS /v1/stream` subscription maps to a dedicated long-lived local session;
+ordinary one-request/one-response connections keep the protocol above unchanged. The
+desktop opens the same OS-authenticated Unix socket or named pipe and sends one bounded
+`RequestFrame` with `POST /v1/stream`, the selected `X-Workspace-ID`, and the JSON
+`Subscribe` body. The daemon authenticates the OS peer before reading the body and applies
+the same Operator middleware and Workspace-owner authorization. `Subscribe.workspace_id`
+must equal the selected Workspace header. The subscription body is limited to 32 KiB;
+this accommodates a bounded 14 KiB multi-Conversation resume cursor with up to 20 message
+frontiers while keeping the subscription small relative to ordinary Operator requests.
+
+After the route accepts the subscription, the daemon sends one correlated `ResponseFrame`
+with status 200, an empty body, and content type
+`application/vnd.litecowork.operator-stream+json`. It then writes each
+`operator-stream.schema.json` object as a separate `u32-be length` followed by exactly
+that many UTF-8 JSON bytes. The client reads one frame at a time; the server never
+concatenates an unbounded stream in memory. Each JSON message is at most 1 MiB. EOF ends
+the session. A subscription starts with `stream.ready`, followed by an authorized
+projection snapshot and then changes committed after that snapshot's captured frontier.
+The initial snapshot is the first bounded message page; later committed messages arrive as
+single-message Conversation upserts. The opaque cursor binds the durable event sequence and
+private message frontier, so reconnect resumes missed message upserts even when catch-up
+spans multiple 100-message pages. Manual history pagination keeps its own forward cursor.
+Reconnect sends the last fully applied opaque cursor; the fresh snapshot replaces stale
+client state before later updates are applied. If the cursor binding or retained history
+is invalid, the server sends `stream.resync_required` and a fresh snapshot, then catches up
+from its last safe message frontier. Domain event payloads are never sent on this feed.
+
+Long-lived sessions share OS peer authentication, the existing eight-connection cap and
+the Runtime body budget, with a separate limit of two simultaneous stream sessions so
+they cannot occupy every Operator connection. Each write has a five-second deadline; a
+slow consumer is disconnected when that deadline expires. The client sends exactly one
+request frame and keeps the duplex connection open while consuming response frames; it
+sends no further request-side bytes and does not half-close the connection to cancel. While
+waiting for the next projection frame, the daemon concurrently monitors the request side:
+EOF or a transport reset ends the stream and releases its session slot, while any byte after
+the subscription is rejected as an invalid exchange. Thus an idle disconnected client is
+detected without an application heartbeat frame. The stream client never retries a mutation;
+it cancels by closing the duplex connection and reconnects with a fresh transport request
+ID and its last completely applied stream cursor. Shutdown cancels stream sessions before
+joining request workers, so a disconnected subscriber cannot hold Runtime shutdown open.
+
+The native Tauri bridge carries at most one IPC frame that has not yet been reduced by the
+WebView. Each emitted frame has a session-scoped `frameId`; after validating and applying
+or safely discarding that frame, the UI acknowledges the exact ID through a native command.
+The native reader does not read another IPC frame until this acknowledgement arrives. A
+stale, duplicate, or foreign acknowledgement is rejected and cannot release another
+frame's credit. Unsubscribe cancels an acknowledgement wait and drops the duplex
+connection; an unacknowledged frame also closes the stream after five seconds. This
+one-frame bridge bound lets a stalled WebView apply pressure back to the daemon's bounded
+IPC writer rather than queueing an unbounded sequence of Tauri events. The acknowledgement
+is local Tauri flow control and does not change the Operator stream wire schema.
 
 Artifact text publication uses the ordinary authenticated Operator route
 `POST /v1/artifacts/{artifact_id}/text-version`; its expected content and Resource heads

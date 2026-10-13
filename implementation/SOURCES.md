@@ -1,6 +1,6 @@
 # Research sources and repository reference guide
 
-Snapshot checked 2026-10-06. This is a navigation list, not permission to copy code or a
+Snapshot checked 2026-10-10. This is a navigation list, not permission to copy code or a
 claim that every rolling page remains accurate. Before implementation, open the current
 upstream document/repository at the version in use, record access date and applicable
 license, and confirm the described feature is shipped. Vendor examples are vendor-reported;
@@ -43,6 +43,7 @@ our parity requires the real-use cases in [WORKFLOWS](WORKFLOWS.md) and [TESTING
 | R-MUSE | Vendor product-design account — How We Designed Muse | [https://introducing.muse.ai/](https://introducing.muse.ai/) | Study proactive background work, goals, Ideas, identity, rich outputs and approval UI. Examples are vendor-reported. |
 | R-MUSE-SAFETY | Meta AI research/vendor technical account — Muse agent safety architecture | [https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse](https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse) | Study credential boundary and constrained browser representations; do not assume equivalent implementation. |
 | R-CHATGPT-WORK | Official product docs — ChatGPT Work | [https://learn.chatgpt.com/docs/web](https://learn.chatgpt.com/docs/web) | Research/files/apps/output workflows; rollout and surface may change. |
+| R-OPENINTELLIGENTUI | GitHub implementation — CopilotKit OpenIntelligentUI | [https://github.com/CopilotKit/OpenIntelligentUI](https://github.com/CopilotKit/OpenIntelligentUI) | E08-S08 UX and renderer test reference only; use the pinned commit/files in [REFERENCE-IMPLEMENTATIONS](../docs/REFERENCE-IMPLEMENTATIONS.md). Do not adopt arbitrary generated HTML/JS or its CSP as a LiteCowork rendering boundary. |
 | R-CHATGPT-FILES | Official product docs — ChatGPT file artifacts | [https://learn.chatgpt.com/docs/artifacts-viewer?surface=app](https://learn.chatgpt.com/docs/artifacts-viewer?surface=app) | Study document/spreadsheet/slide previews and iterative artifact interaction. |
 | R-OPENCLAW | GitHub implementation — OpenClaw project | [https://github.com/openclaw/openclaw](https://github.com/openclaw/openclaw) | Study daemon/gateway ownership, durable schedules, message ingress, plugins, secrets, deployment. License and current code must be checked before reuse. |
 | R-OPENCLAW-DOCKER | Official deployment docs — OpenClaw Docker install | [https://docs.openclaw.ai/install/docker](https://docs.openclaw.ai/install/docker) | Reference container/volume/service update flows for later LiteCowork cloud deployment. |
@@ -108,3 +109,26 @@ LiteCowork contracts; explicit decision not to reuse where appropriate. Never le
 reference override Task/effect/trust/fencing contracts. OpenClaw receives special future
 attention for cloud deployment, gateway operations and channel integration, while its
 agent, task store and authority model remain independent.
+
+
+## 2026-10-10 pinned implementation references
+
+The exact repository revisions, licenses, file paths, and decisions for the final
+Agenta/Eigent/CAMEL/integration-system deep dive are maintained in
+[Reference Implementations](../docs/REFERENCE-IMPLEMENTATIONS.md). That file is the
+canonical source map for source-level borrowing and MUST be consulted before adapting code.
+
+Key checked repositories:
+
+- Agenta — https://github.com/Agenta-AI/agenta at 4bc51903a1597d3ef8f1ac17f2d6f472ba7c8137.
+- Eigent — https://github.com/eigent-ai/eigent at 2ffa2e4ef19356e87479845f2aa1600bc2fde671.
+- CAMEL — https://github.com/camel-ai/camel at 24fde60ad739b4be8f8f533fea9ba54256fbc4a2.
+- Activepieces — https://github.com/activepieces/activepieces at 65bfba72b855ed6c8c3b4c24ad5d12a8960b1aa7.
+- n8n — https://github.com/n8n-io/n8n at 7424f0ca0452f9dc9fe4cf6627ecbf0b315ed1e3.
+- Nango — https://github.com/NangoHQ/nango at b309bc1716f9a868e7cf3af0a403a7b0da093df2.
+- Arcade portable plugin — https://github.com/arcadeai-labs/arcade at 41ff1e9aea3a410c85a6b0f61147c073ef606924.
+- Arcade MCP — https://github.com/ArcadeAI/arcade-mcp at 79a2dc90d347e4cd1a96366a2d94c8ddc356f1c3.
+- Composio — https://github.com/ComposioHQ/composio next at f9ce49953598e13371c406ac346846696a4d8385.
+
+Do not copy implementation source from this list merely because it is public. The exact
+checked license and path-level restrictions in REFERENCE-IMPLEMENTATIONS.md apply.

@@ -130,7 +130,13 @@ def schema_docs() -> list[str]:
 
 
 def implementation_plan_docs() -> list[str]:
-    excluded = {"implementation/ARCHITECTURE-COVERAGE.md", "implementation/CURRENT-RUN.md"}
+    excluded = {
+        "implementation/ARCHITECTURE-COVERAGE.md",
+        "implementation/CURRENT-RUN.md",
+        # Generated exhaustive audit output; excluding it avoids a self-referential
+        # coverage-digest loop while its source documents remain covered individually.
+        "implementation/DOC-AUDIT-2026-10-10.md",
+    }
     return sorted(
         path.relative_to(ROOT).as_posix()
         for path in PLAN.rglob("*.md")
@@ -621,8 +627,27 @@ def read_doc_mappings(previous: list[dict[str, str]]) -> dict[str, str]:
             "README.md": "E02-S01",
             "apps/litecowork-ui/README.md": "E02-S01",
             "docs/AGENT-CONTROL.md": "E03-S06",
+            "docs/CHROME-BROWSER-LLD.md": "E07-S01",
             "docs/COWORKER-FLOWS.md": "E09-S02",
             "docs/COWORKERS-TARGET.md": "E08-S01",
+            "docs/CONNECTORS-WORKFLOWS.md": "E04-S02",
+            "docs/DESKTOP-SHELL-LLD.md": "E02-S01",
+            "docs/LEARNING.md": "E08-S03",
+            "docs/NATIVE-COMPOSER-LLD.md": "E03-S02",
+            "docs/REFERENCE-IMPLEMENTATIONS.md": "E13-S03",
+            "docs/RENDERING-CONFORMANCE-LLD.md": "E08-S06",
+            "docs/V1-DESIGN-INDEX.md": "E01-S01",
+            "docs/V1-FUNCTION-FILE-CATALOG.md": "E01-S01",
+            "docs/V1-WORKFLOW-EVENT-LLD.md": "E09-S02",
+            "docs/V1-SETTINGS-CONTRACT-LEDGER.md": "E02-S01",
+            "docs/V1-FUNCTION-CONTRACT-LEDGER.md": "E01-S01",
+            "docs/V1-UI-ACTION-STATE-LEDGER.md": "E08-S01",
+            "docs/V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md": "E09-S02",
+            "docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md": "E13-S03",
+            "docs/V1-AGENT-MEMORY-FAST-PATH-LLD.md": "E08-S03",
+            "docs/V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md": "E03-S06",
+            "docs/V1-INTEGRATED-TERMINAL-LLD.md": "E07-S01",
+            "docs/V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md": "E13-S03",
             "docs/FLOWS.md": "E13-S03",
             "docs/PRESENTATION-RUNTIME.md": "E08-S06",
             "docs/adr/README.md": "E01-S01",

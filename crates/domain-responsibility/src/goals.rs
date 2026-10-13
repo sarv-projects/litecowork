@@ -470,6 +470,15 @@ fn decide(
     }
 }
 
+fn fingerprint(command: &GoalCommand) -> Result<String, GoalError> {
+    let bytes =
+        serde_json_canonicalizer::to_vec(command).map_err(|_| GoalError::InvalidDefinition)?;
+    Ok(format!(
+        "sha256:{}",
+        hex::encode(sha2::Sha256::digest(bytes))
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,13 +550,4 @@ mod tests {
             Err(GoalError::VersionOverflow)
         );
     }
-}
-
-fn fingerprint(command: &GoalCommand) -> Result<String, GoalError> {
-    let bytes =
-        serde_json_canonicalizer::to_vec(command).map_err(|_| GoalError::InvalidDefinition)?;
-    Ok(format!(
-        "sha256:{}",
-        hex::encode(sha2::Sha256::digest(bytes))
-    ))
 }

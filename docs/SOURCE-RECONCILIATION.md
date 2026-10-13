@@ -18,6 +18,11 @@ discarded; each entry's destination or disposition is listed below.
 
 ## Entry-by-entry disposition
 
+The left column contains filenames from the **historical supplied reference ZIP**, not
+necessarily files currently present in this repository. Old ADR names and numbers below
+are input identifiers mapped to the present ADR filenames in the right column, not broken
+links or current architecture authorities.
+
 | Reference entry | LiteCowork disposition |
 |---|---|
 | `ARCHITECTURE.md` | Reconciled into root `ARCHITECTURE.md`; current LiteCowork name and direct-capability safety condition added. |
@@ -122,3 +127,27 @@ contract specification, not evidence that a runtime implementation exists.
 LiteSPM integration is intentionally limited to its recorded selected service. Its MCP,
 plugin, package, authentication and supervision wire contracts remain deferred until the
 actual service contract is provided or independently verified with user authorization.
+
+
+## 2026-10-10 upstream-reference reconciliation
+
+The source-reconciliation rule now also applies to the pinned external implementation map
+in [Reference Implementations](REFERENCE-IMPLEMENTATIONS.md). A checked upstream commit is
+evidence for that revision only. Before adapting source or relying on provider behavior,
+re-open the current upstream file/docs, compare license/API/security assumptions, and record
+any divergence.
+
+LiteCowork target architecture remains authoritative when an upstream framework uses a
+different Task/session/permission model.
+
+### OpenIntelligentUI review for E08-S08
+
+At `f6e4388b26a64b9a0714943b08a1ce622b924eec`, OpenIntelligentUI is a useful UX and
+test-design reference for semantic-first text/native/interactive selection, streamed
+preview/final states, local iframe controls, explicit follow-up messages, bounded resize
+reports, and narrow host-bridge failure behavior. The exact files and decisions are in
+[Reference Implementations](REFERENCE-IMPLEMENTATIONS.md). Its generated HTML/CSS/JavaScript
+iframe runtime and CSP (`unsafe-inline`, `unsafe-eval`, and selected CDN origins) are
+excluded from LiteCowork's RichPresentation implementation. LiteCowork keeps the closed
+block schema, deterministic renderer, Core-assigned provenance, and semantic fallback in
+[Rich Response](RICH-RESPONSE.md). No source code or dependency was adopted.

@@ -440,3 +440,28 @@ support embedded views.
 ## Coworker assignment and task-time connection repair target
 
 The prospective CoworkerCapabilityAssignment is an authorization ceiling and never replaces the live Workspace/Runtime/Task grant, activation, lease, Trust and Effect dispatch transaction. A missing connector can create a typed UserRequest offering provider-owned Connect, after which the pending Task rechecks fresh grants and receipts. Cancelled auth leaves the Task waiting. Removing a Coworker assignment does not uninstall or revoke a shared connector; disconnecting globally requires dependent-Coworker impact review. Invocations remain pinned to the originating AgentSession, capability and authorization scope; existing AMBIGUOUS external actions require reconciliation before retry. No new invocation routes or automatic dispatch are authorized by this target-only contract.
+
+
+## External workflow invocation and connector credential binding
+
+For a ConnectorPackage action or WorkflowBackend execution, the existing
+CapabilityInvocation/Effect state machine remains authoritative.
+
+- The Invocation references normalized capability/workflow descriptor and Connection ID,
+  never raw OAuth/API-key bytes.
+- Dispatch obtains only the exact SecretLease/provider credential handle required.
+- External workflow handles live in Runtime-local encrypted WorkflowRunBinding.
+- Cancel means provider cancellation request; terminal cancellation/rollback must be
+  observed independently.
+- Timeout after a possible write is AMBIGUOUS until reconciliation; retry cannot assume
+  the workflow or connector did nothing.
+- Provider progress/events may update observations but cannot append LiteCowork Plan Steps
+  or complete the Task.
+- Connector/package revision changes during active Invocation do not mutate pinned
+  execution; new work re-resolves compatibility.
+
+See [Connectors & Workflows](CONNECTORS-WORKFLOWS.md).
+
+## V1 detailed design integration — 2026-10-12
+
+V1 browser form sends, file uploads/downloads, shell writes and external connector sends use existing Invocation/Effect/outbox ambiguity and grants, even if invoked by a native agent. CHROME-BROWSER-LLD.md and V1-WORKFLOW-EVENT-LLD.md map user takeover and provider retry races. No automatic duplicate external action after a lost receipt.

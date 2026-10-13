@@ -24,8 +24,17 @@ import type { AgentProviderKey } from "./agents/agent-catalog-api";
 import { desktopAgentCatalogApi } from "./agents/desktop-agent-catalog-api";
 import { ZipIntakeNotice } from "./resources/ZipIntakeNotice";
 import { isSensitiveOrGenerated, resourceDisplayName, resourceFolderRelativePath, resourceIndexAction, validateResourceFileSelection } from "./resources/resource-intake";
+import {
+  matchesResourceUploadIdentity,
+  prepareResourceUploadCommitRequestId,
+  receivedUploadRangesMatchFile,
+  resumableResourceUploadSession,
+  type ResourceUploadContextDocument,
+  type ResourceUploadIdentity,
+} from "./resources/resource-upload-resume.ts";
 import { ResourceRevisionEditor } from "./resources/ResourceRevisionEditor";
 import { TaskResourceTextPreview } from "./resources/TaskResourceTextPreview";
+import { performResourceIndexRebuild } from "./resources/resource-index-rebuild.ts";
 import { validateResourceSourceHighlights, type ResourceSourceMatch, type SourceHighlightResult } from "./resources/source-span-highlights";
 import { TaskAttentionPage } from "./needs-you/TaskAttentionPage";
 import { maybeDesktopSuggestionApi } from "./suggestions/desktop-suggestion-api";
@@ -36,7 +45,29 @@ import {
   type TaskPlanningReadinessView,
 } from "./tasks/planning-readiness";
 import { canOfferLocalRuntimeStart } from "./runtime/runtime-start-readiness";
+import { RuntimeInventoryStreamController, type RuntimeInventoryStreamStatus } from "./runtime/runtime-inventory-stream.ts";
+import { desktopRuntimeInventoryStreamDriver } from "./runtime/desktop-runtime-inventory-stream.ts";
 import { ConversationsPage } from "./conversations/ConversationsPage";
+import {
+  WorkspaceInstructionDraftCache,
+  canApplyWorkspaceInstructionResponse,
+  getOrCreateInstructionSave,
+  instructionSaveFailureKind,
+  instructionSaveRefreshKind,
+  workspaceInstructionByteLength,
+  type PendingWorkspaceInstructionSave,
+} from "./workspaces/workspace-instructions.ts";
+import {
+  isCurrentWorkspaceRootRequest,
+  performWorkspaceRootStatusAction,
+  resourceLocationAvailabilityLabel,
+} from "./workspaces/workspace-root-status.ts";
+import {
+  clearWorkspaceRootMutationRequest,
+  isWorkspaceRootAddResponse,
+  isWorkspaceRootRevokeResponse,
+  workspaceRootMutationRequest,
+} from "./workspaces/workspace-root-mutations.ts";
 
 type Page = "Home" | "Conversations" | "Work" | "Library" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Routines" | "Automations" | "Settings";
 type RuntimeStatus = {
@@ -49,6 +80,29 @@ type RuntimeStatus = {
   operatorReady: boolean;
   daemonAvailable: boolean;
   detail: string | null;
+};
+type RuntimeLifecycleView = {
+  runtimeId: string;
+  startupPolicy: "MANUAL" | "LOGIN_BACKGROUND" | "ALWAYS_ON_SERVICE";
+  incarnation: {
+    runtimeIncarnationId: string;
+    runtimeId: string;
+    processStartedAt: string;
+    litecoworkVersion: string;
+    recoveredFromUncleanShutdown: boolean;
+    recoveryState: "STARTING" | "RECOVERING" | "READY" | "DEGRADED" | "DRAINING" | "STOPPING" | "STOPPED";
+    readyAt: string | null;
+    stoppedAt: string | null;
+    version: number;
+  };
+  availability: "PAIRING" | "STARTING" | "RECOVERING" | "ONLINE" | "DEGRADED" | "DRAINING" | "OFFLINE" | "REVOKED";
+  blockers: Array<{
+    blockerId: string;
+    code: "DEPENDENCY_UNAVAILABLE" | "RUNTIME_UNAVAILABLE";
+    safeMessage: string;
+    resolutionHint: string;
+    createdAt: string;
+  }>;
 };
 type WorkspaceView = {
   workspaceId: string;
@@ -176,10 +230,7 @@ type ResourceUploadView = {
   state: string;
   expiresAt: string;
 };
-type ContextDocumentCreateMetadata = {
-  kind: "WORKSPACE_NOTES";
-  owner_ref: { kind: "WORKSPACE"; workspace_id: string };
-};
+type ContextDocumentCreateMetadata = ResourceUploadContextDocument;
 type LocalUploadResume = {
   workspaceId: string;
   fileKey: string;
@@ -302,34 +353,26 @@ function readUploadResumes(): Record<string, LocalUploadResume> {
   }
 }
 
-function writeUploadResume(key: string, resume: LocalUploadResume | null): void {
+function writeUploadResume(key: string, resume: LocalUploadResume | null): boolean {
   try {
     const records = readUploadResumes();
     if (resume) records[key] = resume;
     else delete records[key];
     localStorage.setItem(UPLOAD_RESUME_KEY, JSON.stringify(records));
+    return true;
   } catch {
-    // Resume metadata is a convenience only; never fail or persist file content here.
+    // Do not start the next transfer/commit request without its retry identity saved.
+    // Clearing after a confirmed commit is best-effort because replay remains safe.
+    if (resume) {
+      throw new Error("Could not persist resource upload recovery metadata; the next upload request was not sent.");
+    }
+    return false;
   }
 }
 
 function fileResumeKey(workspaceId: string, file: File): string {
   const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
   return JSON.stringify([workspaceId, relative, file.size, file.lastModified]);
-}
-
-function resourceContextDocumentMatches(
-  actual: ResourceUploadView["contextDocument"] | undefined,
-  expected: ContextDocumentCreateMetadata | null,
-): boolean {
-  if (!expected) return actual == null;
-  return actual != null
-    && Object.keys(actual).length === 2
-    && Object.prototype.hasOwnProperty.call(actual, "kind")
-    && Object.prototype.hasOwnProperty.call(actual, "owner_ref")
-    && actual.kind === expected.kind
-    && actual.owner_ref.kind === expected.owner_ref.kind
-    && actual.owner_ref.workspace_id === expected.owner_ref.workspace_id;
 }
 
 async function digestHex(bytes: ArrayBuffer): Promise<string> {
@@ -347,6 +390,58 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function App() {
   const [page, setPage] = useState<Page>("Home");
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const navigationTriggerRef = useRef<HTMLButtonElement>(null);
+  const navigationDrawerRef = useRef<HTMLElement>(null);
+  const closeNavigation = useCallback(() => {
+    setNavigationOpen(false);
+    window.requestAnimationFrame(() => {
+      if (window.innerWidth <= 900) navigationTriggerRef.current?.focus();
+    });
+  }, []);
+  useEffect(() => {
+    if (!navigationOpen) return;
+    const focusableElements = () => Array.from(
+      navigationDrawerRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    navigationDrawerRef.current?.querySelector<HTMLElement>(".sidebar-close")?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeNavigation();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusableElements();
+      const first = elements[0];
+      const last = elements.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const closeOnDesktopResize = () => {
+      if (window.innerWidth > 900) {
+        setNavigationOpen(false);
+        window.requestAnimationFrame(() => {
+          const activeNavigationItem = navigationDrawerRef.current?.querySelector<HTMLElement>('[aria-current="page"]');
+          (activeNavigationItem ?? navigationDrawerRef.current?.querySelector<HTMLElement>(".brand"))?.focus();
+        });
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", closeOnDesktopResize);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", closeOnDesktopResize);
+    };
+  }, [navigationOpen, closeNavigation]);
   const [draft, setDraft] = useState("");
   const [taskSaving, setTaskSaving] = useState(false);
   const taskSavingRef = useRef(false);
@@ -356,6 +451,10 @@ function App() {
   const [taskInputSelections, setTaskInputSelections] = useState<Record<string, TaskInputSelection[]>>({});
   const [resourceNameCache, setResourceNameCache] = useState<Record<string, string>>({});
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
+  const [runtimeLifecycle, setRuntimeLifecycle] = useState<{ identity: string; view: RuntimeLifecycleView } | null>(null);
+  const [runtimeLifecycleLoading, setRuntimeLifecycleLoading] = useState(false);
+  const [runtimeLifecycleError, setRuntimeLifecycleError] = useState<string | null>(null);
+  const runtimeRefreshGeneration = useRef(0);
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
@@ -364,6 +463,8 @@ function App() {
   const [agentInstallationError, setAgentInstallationError] = useState<string | null>(null);
   const [agentProfiles, setAgentProfiles] = useState<AgentProfileView[]>([]);
   const [agentProfileError, setAgentProfileError] = useState<string | null>(null);
+  const [runtimeInventoryStreamStatus, setRuntimeInventoryStreamStatus] = useState<RuntimeInventoryStreamStatus | "UNAVAILABLE">("UNAVAILABLE");
+  const agentProfilesGeneration = useRef(0);
   const [agentBindings, setAgentBindings] = useState<AgentBindingView[]>([]);
   const [agentBindingError, setAgentBindingError] = useState<string | null>(null);
   const [delegationProfiles, setDelegationProfiles] = useState<DelegationProfileCatalogItem[]>([]);
@@ -381,20 +482,16 @@ function App() {
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceCreateBusy, setWorkspaceCreateBusy] = useState(false);
   const [workspacePolicyBusy, setWorkspacePolicyBusy] = useState(false);
+  const [workspaceArchiveBusy, setWorkspaceArchiveBusy] = useState(false);
+  const pendingWorkspaceArchive = useRef<{ workspaceId: string; version: number; requestId: string } | null>(null);
   const [workspaceDefaultAgentBusy, setWorkspaceDefaultAgentBusy] = useState(false);
   const [workspaceInstructions, setWorkspaceInstructions] = useState<WorkspaceInstructionView[]>([]);
   const [instructionText, setInstructionText] = useState("");
+  const instructionDrafts = useRef(new WorkspaceInstructionDraftCache());
   const [instructionBusy, setInstructionBusy] = useState(false);
   const [instructionMessage, setInstructionMessage] = useState<string | null>(null);
   const [latestInstructionsAfterConflict, setLatestInstructionsAfterConflict] = useState<string | null>(null);
-  const [pendingInstructions, setPendingInstructions] = useState<{
-    workspaceId: string;
-    text: string;
-    requestId: string;
-    resourceRequestId: string;
-    expectedVersion: number;
-    parentRevisions: number[];
-  } | null>(null);
+  const [pendingInstructions, setPendingInstructions] = useState<PendingWorkspaceInstructionSave | null>(null);
   const instructionGeneration = useRef(0);
   const [pendingWorkspaceRequest, setPendingWorkspaceRequest] = useState<{ name: string; requestId: string } | null>(null);
   const [resources, setResources] = useState<ResourceView[]>([]);
@@ -434,11 +531,43 @@ function App() {
   }, [selectedWorkspaceId]);
 
   const refreshRuntime = async () => {
+    const generation = ++runtimeRefreshGeneration.current;
     try {
       const status = await invoke<RuntimeStatus>("get_runtime_status");
+      if (generation !== runtimeRefreshGeneration.current) return;
       setRuntime(status);
       setRuntimeError(status.detail);
+      const runtimeId = status.runtimeId;
+      const incarnationId = status.localIncarnationId;
+      if (!status.operatorReady || !runtimeId || !incarnationId) {
+        setRuntimeLifecycle(null);
+        setRuntimeLifecycleLoading(false);
+        setRuntimeLifecycleError(null);
+        return;
+      }
+      const identity = `${runtimeId}:${incarnationId}`;
+      setRuntimeLifecycle(null);
+      setRuntimeLifecycleLoading(true);
+      setRuntimeLifecycleError(null);
+      try {
+        const view = await invoke<RuntimeLifecycleView>("get_runtime_lifecycle", { runtimeId, incarnationId });
+        if (generation !== runtimeRefreshGeneration.current) return;
+        if (view.runtimeId !== runtimeId || view.incarnation.runtimeId !== runtimeId || view.incarnation.runtimeIncarnationId !== incarnationId) {
+          throw new Error("Lifecycle identity changed");
+        }
+        setRuntimeLifecycle({ identity, view });
+        setRuntimeLifecycleLoading(false);
+      } catch {
+        if (generation === runtimeRefreshGeneration.current) {
+          setRuntimeLifecycleLoading(false);
+          setRuntimeLifecycleError("Persisted Runtime lifecycle details are unavailable for this incarnation.");
+        }
+      }
     } catch {
+      if (generation !== runtimeRefreshGeneration.current) return;
+      setRuntimeLifecycle(null);
+      setRuntimeLifecycleLoading(false);
+      setRuntimeLifecycleError(null);
       setRuntimeError("Desktop Runtime status is unavailable.");
     }
   };
@@ -448,8 +577,10 @@ function App() {
       const items = await invoke<WorkspaceView[]>("list_workspaces");
       setWorkspaces(items);
       setWorkspaceError(null);
+      return true;
     } catch {
       setWorkspaceError("Workspace list is unavailable until the local Operator API is ready.");
+      return false;
     }
   };
 
@@ -463,12 +594,15 @@ function App() {
   };
 
   const refreshAgentProfiles = async (workspaceId: string) => {
+    const generation = ++agentProfilesGeneration.current;
     if (!workspaceId) { setAgentProfiles([]); setAgentProfileError(null); return; }
     try {
       const page = await invoke<AgentProfilePageView>("list_agent_profiles", { workspaceId });
+      if (generation !== agentProfilesGeneration.current || selectedWorkspaceIdRef.current !== workspaceId) return;
       setAgentProfiles(page.items);
       setAgentProfileError(null);
     } catch {
+      if (generation !== agentProfilesGeneration.current || selectedWorkspaceIdRef.current !== workspaceId) return;
       setAgentProfiles([]);
       setAgentProfileError("Agent profiles and current Runtime offers are unavailable. Start the local Runtime and try again.");
     }
@@ -645,6 +779,27 @@ function App() {
   }, [page, runtime?.operatorReady, selectedWorkspaceId]);
 
   useEffect(() => {
+    const executorBinding = runtimeBindings.some(binding => binding.workspaceId === selectedWorkspaceId
+      && binding.runtimeId === runtime?.runtimeId && binding.status === "ACTIVE" && binding.roles.includes("EXECUTOR"));
+    if (page !== "Settings" || runtime?.operatorReady !== true || !runtime?.runtimeId
+      || !runtime.localIncarnationId || !selectedWorkspaceId || !executorBinding) {
+      setRuntimeInventoryStreamStatus("UNAVAILABLE");
+      return;
+    }
+    const controller = new RuntimeInventoryStreamController(
+      selectedWorkspaceId,
+      runtime.runtimeId,
+      desktopRuntimeInventoryStreamDriver,
+      () => {
+        if (selectedWorkspaceIdRef.current === selectedWorkspaceId) void refreshAgentProfiles(selectedWorkspaceId);
+      },
+      setRuntimeInventoryStreamStatus,
+    );
+    controller.start();
+    return () => { void controller.dispose(); };
+  }, [page, runtime?.operatorReady, runtime?.runtimeId, runtime?.localIncarnationId, selectedWorkspaceId, runtimeBindings]);
+
+  useEffect(() => {
     const generation = ++delegationProfileGeneration.current;
     setDelegationProfiles([]);
     setDelegationProfileError(null);
@@ -716,15 +871,22 @@ function App() {
   useEffect(() => {
     const generation = ++instructionGeneration.current;
     setWorkspaceInstructions([]);
-    setInstructionText("");
+    const savedDraft = instructionDrafts.current.get(selectedWorkspaceId);
+    setInstructionText(savedDraft ?? "");
     setInstructionMessage(null);
     setLatestInstructionsAfterConflict(null);
     if (!selectedWorkspaceId) return;
+    const requestContext = { workspaceId: selectedWorkspaceId, generation };
+    const isCurrent = () => canApplyWorkspaceInstructionResponse(
+      requestContext,
+      { workspaceId: selectedWorkspaceIdRef.current, generation: instructionGeneration.current },
+    );
     let active = true;
     void invoke<WorkspaceInstructionView[]>("list_workspace_instructions", { workspaceId: selectedWorkspaceId })
       .then(async (revisions) => {
-        if (!active || generation !== instructionGeneration.current) return;
+        if (!active || !isCurrent()) return;
         setWorkspaceInstructions(revisions);
+        if (savedDraft !== undefined) return;
         const current = revisions.at(-1);
         const resourceId = current?.contentRef.resource_id;
         const revisionId = current?.contentRef.revision_id;
@@ -734,10 +896,12 @@ function App() {
           resourceId,
           revisionId,
         });
-        if (active && generation === instructionGeneration.current) setInstructionText(content);
+        if (active && isCurrent() && instructionDrafts.current.get(selectedWorkspaceId) === undefined) {
+          setInstructionText(content);
+        }
       })
       .catch((error) => {
-        if (active && generation === instructionGeneration.current) {
+        if (active && isCurrent()) {
           const detail = typeof error === "string" ? error : error instanceof Error ? error.message : "";
           setInstructionMessage(detail.includes("revision changed after selection")
             ? "The Resource linked to these instructions has changed. LiteCowork kept the pinned revision and did not show newer content."
@@ -746,6 +910,17 @@ function App() {
       });
     return () => { active = false; };
   }, [selectedWorkspaceId, runtime?.operatorReady]);
+
+  const changeWorkspaceInstructions = (text: string) => {
+    if (selectedWorkspaceId) instructionDrafts.current.set(selectedWorkspaceId, text);
+    setInstructionText(text);
+  };
+
+  const useLatestWorkspaceInstructions = () => {
+    if (selectedWorkspaceId) instructionDrafts.current.delete(selectedWorkspaceId);
+    setInstructionText(latestInstructionsAfterConflict ?? "");
+    setLatestInstructionsAfterConflict(null);
+  };
 
   useEffect(() => {
     if (!selectedWorkspaceId) return;
@@ -758,8 +933,10 @@ function App() {
     setRuntimeError(null);
     try {
       const status = await invoke<RuntimeStatus>("start_local_runtime");
+      runtimeRefreshGeneration.current += 1;
       setRuntime(status);
       setRuntimeError(status.detail);
+      await refreshRuntime();
       await refreshWorkspaces();
     } catch (error) {
       setRuntimeError(typeof error === "string" ? error : "Runtime startup failed.");
@@ -959,6 +1136,33 @@ function App() {
     }
   };
 
+  const archiveWorkspace = async () => {
+    const workspace = workspaces.find((item) => item.workspaceId === selectedWorkspaceId);
+    if (!workspace || workspace.status !== "ACTIVE" || workspaceArchiveBusy) return;
+    setWorkspaceArchiveBusy(true);
+    setWorkspaceError(null);
+    let pending = pendingWorkspaceArchive.current;
+    if (!pending || pending.workspaceId !== workspace.workspaceId || pending.version !== workspace.version) {
+      pending = { workspaceId: workspace.workspaceId, version: workspace.version, requestId: crypto.randomUUID() };
+      pendingWorkspaceArchive.current = pending;
+    }
+    try {
+      const updated = await invoke<WorkspaceView>("archive_workspace", {
+        workspaceId: workspace.workspaceId,
+        expectedVersion: workspace.version,
+        requestId: pending.requestId,
+      });
+      pendingWorkspaceArchive.current = null;
+      setWorkspaces((items) => items.map((item) => item.workspaceId === updated.workspaceId ? updated : item));
+    } catch (error) {
+      const message = typeof error === "string" ? error : "Workspace could not be archived.";
+      await refreshWorkspaces();
+      setWorkspaceError(message);
+    } finally {
+      setWorkspaceArchiveBusy(false);
+    }
+  };
+
   const setWorkspaceDefaultAgent = async (agentBindingId: string | null) => {
     const workspace = workspaces.find((item) => item.workspaceId === selectedWorkspaceId);
     if (!workspace || workspaceDefaultAgentBusy) return;
@@ -984,93 +1188,114 @@ function App() {
     const workspace = workspaces.find((item) => item.workspaceId === selectedWorkspaceId);
     if (!workspace || instructionBusy || workspace.status !== "ACTIVE") return;
     const generation = instructionGeneration.current;
-    const size = new TextEncoder().encode(instructionText).byteLength;
+    const size = workspaceInstructionByteLength(instructionText);
     if (size > 64 * 1024) {
       setInstructionMessage("Workspace instructions are limited to 64 KiB of UTF-8 text.");
       return;
     }
-    const pending = pendingInstructions?.workspaceId === workspace.workspaceId && pendingInstructions.text === instructionText
-      ? pendingInstructions
-      : {
-          workspaceId: workspace.workspaceId,
-          text: instructionText,
-          requestId: crypto.randomUUID(),
-          resourceRequestId: crypto.randomUUID(),
-          expectedVersion: workspace.version,
-          parentRevisions: workspaceInstructions.length > 0 ? [workspaceInstructions[workspaceInstructions.length - 1].revision] : [],
-        };
+    const pending = getOrCreateInstructionSave(pendingInstructions, {
+      workspaceId: workspace.workspaceId,
+      text: instructionText,
+      expectedVersion: workspace.version,
+      parentRevisions: workspaceInstructions.length > 0 ? [workspaceInstructions[workspaceInstructions.length - 1].revision] : [],
+    }, () => crypto.randomUUID());
     setPendingInstructions(pending);
     setInstructionBusy(true);
     setInstructionMessage("Saving a versioned Workspace instruction revision…");
+    const requestContext = { workspaceId: workspace.workspaceId, generation };
+    const isCurrent = () => canApplyWorkspaceInstructionResponse(
+      requestContext,
+      { workspaceId: selectedWorkspaceIdRef.current, generation: instructionGeneration.current },
+    );
+    let resourceImported = false;
     try {
-      const bytes = new TextEncoder().encode(pending.text);
-      let binary = "";
-      for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-        binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+      try {
+        const bytes = new TextEncoder().encode(pending.text);
+        let binary = "";
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        const resource = await invoke<ResourceView>("import_resource", {
+          workspaceId: workspace.workspaceId,
+          displayName: "workspace-instructions.txt",
+          mediaType: "text/plain; charset=utf-8",
+          contentBase64: btoa(binary),
+          requestId: `${pending.resourceRequestId}-instructions`,
+        });
+        resourceImported = true;
+        if (isCurrent()) {
+          setResources((current) => [resource, ...current.filter((item) => item.resourceId !== resource.resourceId)]);
+        }
+        await invoke<WorkspaceInstructionView>("create_workspace_instruction_revision", {
+          workspaceId: workspace.workspaceId,
+          expectedVersion: pending.expectedVersion,
+          parentRevisions: pending.parentRevisions,
+          resourceId: resource.resourceId,
+          resourceRevisionId: resource.resourceRevisionId,
+          contentDigest: resource.contentDigest,
+          requestId: pending.requestId,
+        });
+      } catch (error) {
+        const stale = typeof error === "string" && error.includes("STALE_WORKSPACE_VERSION");
+        const failureKind = instructionSaveFailureKind({ stale, resourceImported });
+        if (failureKind === "STALE" || failureKind === "STALE_AFTER_RESOURCE_IMPORT") {
+          setPendingInstructions((current) => current?.requestId === pending.requestId ? null : current);
+          if (isCurrent()) {
+            setInstructionMessage(failureKind === "STALE_AFTER_RESOURCE_IMPORT"
+              ? "This Workspace changed while you were editing. No instruction revision was saved; the text Resource was imported and remains in the Library. Your draft is still here. Review the latest revision before saving again."
+              : "This Workspace changed while you were editing. Your text is still here; review the latest revision, then save again.");
+          }
+          await refreshWorkspaces();
+          try {
+            const revisions = await invoke<WorkspaceInstructionView[]>("list_workspace_instructions", { workspaceId: workspace.workspaceId });
+            if (isCurrent()) {
+              setWorkspaceInstructions(revisions);
+              const latestResourceId = revisions[revisions.length - 1]?.contentRef.resource_id;
+              const latestRevisionId = revisions[revisions.length - 1]?.contentRef.revision_id;
+              if (latestResourceId && latestRevisionId) {
+                const latestText = await invoke<string>("preview_resource_text", {
+                  workspaceId: workspace.workspaceId,
+                  resourceId: latestResourceId,
+                  revisionId: latestRevisionId,
+                });
+                if (isCurrent()) {
+                  setLatestInstructionsAfterConflict(latestText);
+                }
+              }
+            }
+          } catch (reloadError) {
+            const detail = typeof reloadError === "string" ? reloadError : reloadError instanceof Error ? reloadError.message : "";
+            if (detail.includes("revision changed after selection") && isCurrent()) {
+              setInstructionMessage("The latest saved instruction points to a Resource revision that has advanced. Newer bytes were not substituted; your draft is still here.");
+            }
+          }
+        } else if (isCurrent()) {
+          setInstructionMessage(failureKind === "RESOURCE_IMPORTED"
+            ? "The text Resource was imported, but its instruction revision was not confirmed. It may remain in the Library. Retry this unchanged draft to reconcile with the same request IDs."
+            : typeof error === "string"
+              ? error
+              : "Workspace instructions could not be saved. Retry to safely resume the same request.");
+        }
+        return;
       }
-      const resource = await invoke<ResourceView>("import_resource", {
-        workspaceId: workspace.workspaceId,
-        displayName: "workspace-instructions.txt",
-        mediaType: "text/plain; charset=utf-8",
-        contentBase64: btoa(binary),
-        requestId: `${pending.resourceRequestId}-instructions`,
-      });
-      if (generation === instructionGeneration.current && selectedWorkspaceIdRef.current === workspace.workspaceId) {
-        setResources((current) => [resource, ...current.filter((item) => item.resourceId !== resource.resourceId)]);
-      }
-      await invoke<WorkspaceInstructionView>("create_workspace_instruction_revision", {
-        workspaceId: workspace.workspaceId,
-        expectedVersion: pending.expectedVersion,
-        parentRevisions: pending.parentRevisions,
-        resourceId: resource.resourceId,
-        resourceRevisionId: resource.resourceRevisionId,
-        contentDigest: resource.contentDigest,
-        requestId: pending.requestId,
-      });
-      if (generation === instructionGeneration.current && selectedWorkspaceIdRef.current === workspace.workspaceId) {
-        setPendingInstructions(null);
+
+      setPendingInstructions((current) => current?.requestId === pending.requestId ? null : current);
+      instructionDrafts.current.delete(workspace.workspaceId);
+      if (isCurrent()) {
         setInstructionMessage("Workspace instructions saved. New Tasks can pin this revision; existing Tasks remain unchanged.");
         setLatestInstructionsAfterConflict(null);
       }
-      await refreshWorkspaces();
-      const revisions = await invoke<WorkspaceInstructionView[]>("list_workspace_instructions", { workspaceId: workspace.workspaceId });
-      if (generation === instructionGeneration.current && selectedWorkspaceIdRef.current === workspace.workspaceId) {
-        setWorkspaceInstructions(revisions);
+      const workspaceRefreshed = await refreshWorkspaces();
+      let historyRefreshed = false;
+      try {
+        const revisions = await invoke<WorkspaceInstructionView[]>("list_workspace_instructions", { workspaceId: workspace.workspaceId });
+        historyRefreshed = true;
+        if (isCurrent()) setWorkspaceInstructions(revisions);
+      } catch {
+        historyRefreshed = false;
       }
-    } catch (error) {
-      if (typeof error === "string" && error.includes("STALE_WORKSPACE_VERSION")) {
-        if (generation === instructionGeneration.current && selectedWorkspaceIdRef.current === workspace.workspaceId) {
-          setPendingInstructions(null);
-          setInstructionMessage("This Workspace changed while you were editing. Your text is still here; review the latest revision, then save again.");
-        }
-        await refreshWorkspaces();
-        try {
-          const revisions = await invoke<WorkspaceInstructionView[]>("list_workspace_instructions", { workspaceId: workspace.workspaceId });
-          if (generation === instructionGeneration.current && selectedWorkspaceIdRef.current === workspace.workspaceId) {
-            setWorkspaceInstructions(revisions);
-            const latestResourceId = revisions[revisions.length - 1]?.contentRef.resource_id;
-            const latestRevisionId = revisions[revisions.length - 1]?.contentRef.revision_id;
-            if (latestResourceId && latestRevisionId) {
-              const latestText = await invoke<string>("preview_resource_text", {
-                workspaceId: workspace.workspaceId,
-                resourceId: latestResourceId,
-                revisionId: latestRevisionId,
-              });
-              if (generation === instructionGeneration.current && selectedWorkspaceIdRef.current === workspace.workspaceId) {
-                setLatestInstructionsAfterConflict(latestText);
-              }
-            }
-          }
-        } catch (reloadError) {
-          const detail = typeof reloadError === "string" ? reloadError : reloadError instanceof Error ? reloadError.message : "";
-          if (detail.includes("revision changed after selection")
-            && generation === instructionGeneration.current
-            && selectedWorkspaceIdRef.current === workspace.workspaceId) {
-            setInstructionMessage("The latest saved instruction points to a Resource revision that has advanced. Newer bytes were not substituted; your draft is still here.");
-          }
-        }
-      } else if (generation === instructionGeneration.current && selectedWorkspaceIdRef.current === workspace.workspaceId) {
-        setInstructionMessage(typeof error === "string" ? error : "Workspace instructions could not be saved. Retry to safely resume the same request.");
+      if (isCurrent() && instructionSaveRefreshKind({ workspace: workspaceRefreshed, history: historyRefreshed }) === "REFRESH_PENDING") {
+        setInstructionMessage("Workspace instructions were saved, but current status or history could not refresh. The revision is committed; reopen Settings or switch back to refresh it.");
       }
     } finally {
       setInstructionBusy(false);
@@ -1146,21 +1371,26 @@ function App() {
           pausedFileName = displayName;
           break;
         }
-        const sessionIdentityMatches = session
-          && session.workspaceId === workspaceId
-          && session.displayName === displayName
-          && session.mediaType === mediaType
-          && session.folderRelativePath === folderRelativePath
-          && session.expectedSizeBytes === file.size
-          && resourceContextDocumentMatches(session.contextDocument, contextDocument);
-        const sessionMatches = sessionIdentityMatches
-          && session !== null
-          && session.expectedDigest === expectedDigest
-          && session.chunkSizeBytes > 0
-          && session.chunkSizeBytes <= 4_194_304
-          && session.chunkSizeBytes <= 4 * 1024 * 1024
-          && ["OPEN", "CONTENT_RECEIVED"].includes(session.state)
-          && Date.parse(session.expiresAt) > Date.now();
+        const expectedUploadIdentity: ResourceUploadIdentity = {
+          workspaceId,
+          displayName,
+          mediaType,
+          folderRelativePath,
+          sizeBytes: file.size,
+          contextDocument,
+        };
+        const sessionIdentityMatches = Boolean(
+          session && matchesResourceUploadIdentity(session, expectedUploadIdentity),
+        );
+        const sessionMatches = Boolean(
+          session
+          && resumableResourceUploadSession(
+            session,
+            expectedUploadIdentity,
+            expectedDigest,
+            Date.now(),
+          ),
+        );
         if (session?.state === "COMMITTED") {
           if (sessionIdentityMatches && session.expectedDigest === null) {
             const recordedResource = session.committedResourceId ? ` Recorded Resource ID: ${session.committedResourceId}.` : " Its Resource mapping is unavailable.";
@@ -1178,10 +1408,15 @@ function App() {
             if (!session.committedResourceId) {
               throw new Error("This upload is marked committed, but its Resource mapping is unavailable. No duplicate upload was started; review the Workspace before retrying.");
             }
+            const commitRequestId = prepareResourceUploadCommitRequestId(
+              resume,
+              (nextResume) => writeUploadResume(resumeKey, nextResume),
+              () => crypto.randomUUID(),
+            );
             const recovered = await invoke<ResourceView>("commit_resource_upload", {
               workspaceId,
               uploadId: session.uploadId,
-              requestId: resume.commitRequestId ?? crypto.randomUUID(),
+              requestId: commitRequestId,
             });
             if (recovered.resourceId !== session.committedResourceId) {
               throw new Error("The recovered commit does not match the Resource recorded by the upload session.");
@@ -1195,21 +1430,8 @@ function App() {
           }
         }
         let canResume = Boolean(sessionMatches);
-        if (session && canResume && file.size > 0) {
-          for (const range of session.receivedRanges) {
-            const chunkIndex = Math.floor(range.startOffset / session.chunkSizeBytes);
-            const start = chunkIndex * session.chunkSizeBytes;
-            const endExclusive = Math.min(start + session.chunkSizeBytes, file.size);
-            if (range.startOffset !== start || range.endOffsetInclusive + 1 !== endExclusive) {
-              canResume = false;
-              break;
-            }
-            const existingBytes = await file.slice(start, endExclusive).arrayBuffer();
-            if (`sha256:${await digestHex(existingBytes)}` !== range.sha256) {
-              canResume = false;
-              break;
-            }
-          }
+        if (session && canResume) {
+          canResume = await receivedUploadRangesMatchFile(file, session);
         }
         if (!canResume) {
           if (resourcePauseRequested.current) {
@@ -1288,9 +1510,11 @@ function App() {
           pausedFileName = displayName;
           break;
         }
-        const commitRequestId = resume.commitRequestId ?? crypto.randomUUID();
-        resume.commitRequestId = commitRequestId;
-        writeUploadResume(resumeKey, resume);
+        const commitRequestId = prepareResourceUploadCommitRequestId(
+          resume,
+          (nextResume) => writeUploadResume(resumeKey, nextResume),
+          () => crypto.randomUUID(),
+        );
         const imported = await invoke<ResourceView>("commit_resource_upload", {
           workspaceId,
           uploadId: session.uploadId,
@@ -1454,12 +1678,23 @@ function App() {
   };
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar" aria-label="Main navigation">
-        <a className="brand" href="#home" onClick={(event) => { event.preventDefault(); setPage("Home"); }}>
-          <span className="brand-mark" aria-hidden="true">L</span>
-          <span>LiteCowork</span>
-        </a>
+    <div className={`app-shell ${navigationOpen ? "navigation-open" : ""}`}>
+      {navigationOpen && <button className="sidebar-backdrop" type="button" tabIndex={-1} aria-label="Close main navigation" onClick={closeNavigation} />}
+      <aside
+        id="main-navigation"
+        ref={navigationDrawerRef}
+        className={`sidebar ${navigationOpen ? "is-open" : ""}`}
+        aria-label="Main navigation"
+        role={navigationOpen ? "dialog" : undefined}
+        aria-modal={navigationOpen ? true : undefined}
+      >
+        <div className="sidebar-heading">
+          <a className="brand" href="#home" onClick={(event) => { event.preventDefault(); setPage("Home"); closeNavigation(); }}>
+            <span className="brand-mark" aria-hidden="true">L</span>
+            <span>LiteCowork</span>
+          </a>
+          <button className="icon-button sidebar-close" type="button" aria-label="Close navigation" onClick={closeNavigation}>×</button>
+        </div>
 
         <div className="workspace-switcher" aria-label={`Local Runtime ${runtime?.state ?? "status unknown"}; Operator API ${runtime?.operatorReady ? "serving" : "not ready"}`}>
           <span className={`workspace-dot ${runtime?.operatorReady ? "online" : ""}`} aria-hidden="true" />
@@ -1483,7 +1718,11 @@ function App() {
                 type="button"
                 disabled={taskSaving}
                 aria-current={page === item.label ? "page" : undefined}
-                onClick={() => { if (item.label === "Work") setOpenedTask(null); setPage(item.label); }}
+                onClick={() => {
+                  if (item.label === "Work") setOpenedTask(null);
+                  setPage(item.label);
+                  if (navigationOpen) closeNavigation();
+                }}
               >
                 <span className="nav-icon" aria-hidden="true">{item.icon}</span>
                 <span>{item.label}</span>
@@ -1505,8 +1744,20 @@ function App() {
         </div>
       </aside>
 
-      <main className="main-area">
+      <main className="main-area" inert={navigationOpen} aria-hidden={navigationOpen || undefined}>
         <header className="topbar">
+          <button
+            ref={navigationTriggerRef}
+            className="icon-button mobile-navigation-toggle"
+            type="button"
+            aria-label="Open main navigation"
+            aria-controls="main-navigation"
+            aria-expanded={navigationOpen}
+            onClick={() => setNavigationOpen(true)}
+          >
+            <span aria-hidden="true">☰</span>
+            <span>Menu</span>
+          </button>
           <div className="breadcrumbs"><span>LiteCowork</span><span className="crumb-separator">/</span><strong>{page}</strong></div>
           <div className="topbar-actions">
             <button className="icon-button help-button" type="button" aria-label="Help">?</button>
@@ -1520,7 +1771,7 @@ function App() {
         ) : page === "Work" ? (
           <WorkPage key={selectedWorkspaceId} selectedWorkspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={runtime?.operatorReady === true} initialTaskId={openedTask?.workspaceId === selectedWorkspaceId ? openedTask.taskId : null} />
         ) : page === "Library" ? (
-          <LibraryPage selectedWorkspaceId={selectedWorkspaceId} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item))} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => setPage("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
+          <LibraryPage selectedWorkspaceId={selectedWorkspaceId} selectedWorkspaceIdRef={selectedWorkspaceIdRef} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item))} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => setPage("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
         ) : page === "Needs You" ? (
           <TaskAttentionPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} operatorReady={runtime?.operatorReady === true} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); setPage("Work"); }} />
         ) : page === "Coworkers" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
@@ -1581,7 +1832,7 @@ function App() {
             setPage("Work");
           }} />
         ) : page === "Settings" ? (
-          <SettingsPage runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} agents={agentInstallations} agentError={agentInstallationError} refreshAgents={refreshAgentInstallations} agentProfiles={agentProfiles} agentProfileError={agentProfileError} agentBindings={agentBindings} agentBindingError={agentBindingError} agentActionMessage={agentActionMessage} agentActionError={agentActionError} agentActionBusy={agentActionBusy} onProbeCodex={probeCodexProfile} onProbeOpenCode={probeOpenCodeProfile} onRefreshAgentProfiles={() => refreshAgentProfiles(selectedWorkspaceId)} onRefreshAgentBindings={() => refreshAgentBindings(selectedWorkspaceId)} onCreateAgentBinding={createAgentBinding} onEnableAgentBinding={enableAgentBinding} runtimeBindings={runtimeBindings} runtimeBindingError={runtimeBindingError} runtimeBindingsLoading={runtimeBindingsLoading} runtimeEnrollmentBusy={runtimeEnrollmentBusy} runtimeEnrollmentMessage={runtimeEnrollmentMessage} runtimeEnrollmentError={runtimeEnrollmentError} onEnrollLocalRuntime={enrollLocalRuntime} onRefreshRuntimeBindings={() => refreshRuntimeBindings(selectedWorkspaceId)} workspaces={workspaces} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} setWorkspaceName={setWorkspaceName} createWorkspace={createWorkspace} workspaceCreateBusy={workspaceCreateBusy} selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={setSelectedWorkspaceId} onUpdatePolicy={updateWorkspacePolicy} policyBusy={workspacePolicyBusy} onSetDefaultAgentBinding={setWorkspaceDefaultAgent} defaultAgentBusy={workspaceDefaultAgentBusy} instructions={instructionText} onInstructionsChange={setInstructionText} instructionHistory={workspaceInstructions} instructionMessage={instructionMessage} instructionBusy={instructionBusy} onSaveInstructions={saveWorkspaceInstructions} latestInstructionsAfterConflict={latestInstructionsAfterConflict} onUseLatestInstructions={() => { setInstructionText(latestInstructionsAfterConflict ?? ""); setLatestInstructionsAfterConflict(null); }} />
+          <SettingsPage runtime={runtime} runtimeLifecycle={runtimeLifecycle?.identity === `${runtime?.runtimeId}:${runtime?.localIncarnationId}` ? runtimeLifecycle.view : null} runtimeLifecycleLoading={runtimeLifecycleLoading} runtimeLifecycleError={runtimeLifecycleError} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} agents={agentInstallations} agentError={agentInstallationError} refreshAgents={refreshAgentInstallations} agentProfiles={agentProfiles} agentProfileError={agentProfileError} runtimeInventoryStreamStatus={runtimeInventoryStreamStatus} agentBindings={agentBindings} agentBindingError={agentBindingError} agentActionMessage={agentActionMessage} agentActionError={agentActionError} agentActionBusy={agentActionBusy} onProbeCodex={probeCodexProfile} onProbeOpenCode={probeOpenCodeProfile} onRefreshAgentProfiles={() => refreshAgentProfiles(selectedWorkspaceId)} onRefreshAgentBindings={() => refreshAgentBindings(selectedWorkspaceId)} onCreateAgentBinding={createAgentBinding} onEnableAgentBinding={enableAgentBinding} runtimeBindings={runtimeBindings} runtimeBindingError={runtimeBindingError} runtimeBindingsLoading={runtimeBindingsLoading} runtimeEnrollmentBusy={runtimeEnrollmentBusy} runtimeEnrollmentMessage={runtimeEnrollmentMessage} runtimeEnrollmentError={runtimeEnrollmentError} onEnrollLocalRuntime={enrollLocalRuntime} onRefreshRuntimeBindings={() => refreshRuntimeBindings(selectedWorkspaceId)} workspaces={workspaces} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} setWorkspaceName={setWorkspaceName} createWorkspace={createWorkspace} workspaceCreateBusy={workspaceCreateBusy} selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={setSelectedWorkspaceId} onUpdatePolicy={updateWorkspacePolicy} policyBusy={workspacePolicyBusy} onArchiveWorkspace={archiveWorkspace} archiveBusy={workspaceArchiveBusy} onSetDefaultAgentBinding={setWorkspaceDefaultAgent} defaultAgentBusy={workspaceDefaultAgentBusy} instructions={instructionText} onInstructionsChange={changeWorkspaceInstructions} instructionHistory={workspaceInstructions} instructionMessage={instructionMessage} instructionBusy={instructionBusy} onSaveInstructions={saveWorkspaceInstructions} latestInstructionsAfterConflict={latestInstructionsAfterConflict} onUseLatestInstructions={useLatestWorkspaceInstructions} />
         ) : (
           <PlaceholderPage page={page} onSettings={() => setPage("Settings")} />
         )}
@@ -2294,6 +2545,9 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
 
 type SettingsPageProps = {
   runtime: RuntimeStatus | null;
+  runtimeLifecycle: RuntimeLifecycleView | null;
+  runtimeLifecycleLoading: boolean;
+  runtimeLifecycleError: string | null;
   runtimeError: string | null;
   runtimeBusy: boolean;
   startRuntime: () => Promise<void>;
@@ -2303,6 +2557,7 @@ type SettingsPageProps = {
   refreshAgents: () => Promise<void>;
   agentProfiles: AgentProfileView[];
   agentProfileError: string | null;
+  runtimeInventoryStreamStatus: RuntimeInventoryStreamStatus | "UNAVAILABLE";
   agentBindings: AgentBindingView[];
   agentBindingError: string | null;
   agentActionMessage: string | null;
@@ -2324,7 +2579,7 @@ type SettingsPageProps = {
   onEnableAgentBinding: (binding: AgentBindingView) => Promise<void>;
   workspaces: WorkspaceView[];
   workspaceError: string | null;
-  refreshWorkspaces: () => Promise<void>;
+  refreshWorkspaces: () => Promise<boolean>;
   workspaceName: string;
   setWorkspaceName: (name: string) => void;
   createWorkspace: () => Promise<void>;
@@ -2333,6 +2588,8 @@ type SettingsPageProps = {
   onSelectWorkspace: (id: string) => void;
   onUpdatePolicy: (policy: string) => Promise<void>;
   policyBusy: boolean;
+  onArchiveWorkspace: () => Promise<void>;
+  archiveBusy: boolean;
   onSetDefaultAgentBinding: (agentBindingId: string | null) => Promise<void>;
   defaultAgentBusy: boolean;
   instructions: string;
@@ -2354,7 +2611,9 @@ function profileHasFreshAdmissionOffer(profile: AgentProfileView): boolean {
     && (latest.readiness === "AVAILABLE" || latest.readiness === "STARTABLE" || latest.readiness === "READY");
 }
 
-function SettingsPage({ runtime, runtimeError, runtimeBusy, startRuntime, refreshRuntime, agents, agentError, refreshAgents, agentProfiles, agentProfileError, agentBindings, agentBindingError, agentActionMessage, agentActionError, agentActionBusy, onProbeCodex, onProbeOpenCode, onRefreshAgentProfiles, onRefreshAgentBindings, onCreateAgentBinding, onEnableAgentBinding, runtimeBindings, runtimeBindingError, runtimeBindingsLoading, runtimeEnrollmentBusy, runtimeEnrollmentMessage, runtimeEnrollmentError, onEnrollLocalRuntime, onRefreshRuntimeBindings, workspaces, workspaceError, refreshWorkspaces, workspaceName, setWorkspaceName, createWorkspace, workspaceCreateBusy, selectedWorkspaceId, onSelectWorkspace, onUpdatePolicy, policyBusy, onSetDefaultAgentBinding, defaultAgentBusy, instructions, onInstructionsChange, instructionHistory, instructionMessage, instructionBusy, onSaveInstructions, latestInstructionsAfterConflict, onUseLatestInstructions }: SettingsPageProps) {
+function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runtimeLifecycleError, runtimeError, runtimeBusy, startRuntime, refreshRuntime, agents, agentError, refreshAgents, agentProfiles, agentProfileError, runtimeInventoryStreamStatus, agentBindings, agentBindingError, agentActionMessage, agentActionError, agentActionBusy, onProbeCodex, onProbeOpenCode, onRefreshAgentProfiles, onRefreshAgentBindings, onCreateAgentBinding, onEnableAgentBinding, runtimeBindings, runtimeBindingError, runtimeBindingsLoading, runtimeEnrollmentBusy, runtimeEnrollmentMessage, runtimeEnrollmentError, onEnrollLocalRuntime, onRefreshRuntimeBindings, workspaces, workspaceError, refreshWorkspaces, workspaceName, setWorkspaceName, createWorkspace, workspaceCreateBusy, selectedWorkspaceId, onSelectWorkspace, onUpdatePolicy, policyBusy, onArchiveWorkspace, archiveBusy, onSetDefaultAgentBinding, defaultAgentBusy, instructions, onInstructionsChange, instructionHistory, instructionMessage, instructionBusy, onSaveInstructions, latestInstructionsAfterConflict, onUseLatestInstructions }: SettingsPageProps) {
+  const [archiveConfirmationFor, setArchiveConfirmationFor] = useState<string | null>(null);
+  useEffect(() => setArchiveConfirmationFor(null), [selectedWorkspaceId]);
   const selectedWorkspace = workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId);
   const currentRuntimeBinding = runtimeBindings.find((binding) => binding.workspaceId === selectedWorkspaceId && binding.runtimeId === runtime?.runtimeId && binding.status === "ACTIVE")
     ?? runtimeBindings.find((binding) => binding.workspaceId === selectedWorkspaceId && binding.runtimeId === runtime?.runtimeId);
@@ -2371,7 +2630,10 @@ function SettingsPage({ runtime, runtimeError, runtimeBusy, startRuntime, refres
         </div>
         {runtimeError && <p className="inline-error" role="alert">{runtimeError}</p>}
         {runtime?.runtimeId && <dl className="runtime-details"><div><dt>Runtime</dt><dd>{runtime.runtimeId}</dd></div><div><dt>Incarnation</dt><dd>{runtime.localIncarnationId}</dd></div></dl>}
-        {!!runtime?.blockers.length && <div className="blocker-list"><strong>Unavailable services</strong><ul>{runtime.blockers.map((blocker) => <li key={blocker}>{blocker.replaceAll("_", " ").toLowerCase()}</li>)}</ul></div>}
+        {runtimeLifecycle && <dl className="runtime-details"><div><dt>Startup policy</dt><dd>{runtimeLifecycle.startupPolicy}</dd></div><div><dt>Persisted availability</dt><dd>{runtimeLifecycle.availability}</dd></div><div><dt>Recovery state</dt><dd>{runtimeLifecycle.incarnation.recoveryState}</dd></div></dl>}
+        {runtimeLifecycleLoading && runtime?.operatorReady && <p className="composer-hint" role="status">Loading persisted lifecycle details…</p>}
+        {runtimeLifecycleError && runtime?.operatorReady && <p className="inline-error" role="status">{runtimeLifecycleError}</p>}
+        {!!(runtimeLifecycle?.blockers.length ?? runtime?.blockers.length) && <div className="blocker-list"><strong>Unavailable services</strong><ul>{runtimeLifecycle ? runtimeLifecycle.blockers.map((blocker) => <li key={blocker.blockerId}><span>{blocker.safeMessage}</span><small>{blocker.resolutionHint}</small></li>) : runtime?.blockers.map((blocker) => <li key={blocker}>{blocker.replaceAll("_", " ").toLowerCase()}</li>)}</ul></div>}
         <div className="button-row">
           {canOfferLocalRuntimeStart(runtime) && <button className="primary-button" type="button" onClick={() => void startRuntime()} disabled={runtimeBusy}>{runtimeBusy ? "Starting…" : "Start local Runtime"}</button>}
           <button className="quiet-button" type="button" onClick={() => void refreshRuntime()}>Refresh status</button>
@@ -2399,6 +2661,20 @@ function SettingsPage({ runtime, runtimeError, runtimeBusy, startRuntime, refres
             ? <><span className="status-pill muted">This computer only</span><small>V1 keeps this Workspace on this computer. Cloud continuation and remote Runtimes are not active.</small></>
             : <><span className="status-pill muted">Saved policy · {selectedWorkspace.replicationPolicy.replaceAll("_", " ")} · inactive</span><small>This local V1 build does not transfer Workspace data to cloud or remote Runtimes. The saved policy is not being applied.</small><button className="quiet-button" type="button" disabled={policyBusy || selectedWorkspace.status !== "ACTIVE"} onClick={() => void onUpdatePolicy("LOCAL_ONLY")}>{policyBusy ? "Updating…" : "Set this computer only"}</button></>}
         </div>}
+        {selectedWorkspace && <section className="workspace-policy-form" aria-labelledby="workspace-archive-title">
+          <div className="section-heading">
+            <div><h3 id="workspace-archive-title">Workspace lifecycle</h3><p>Archiving makes this Workspace and its history read-only. It does not delete local files or records.</p></div>
+            <span className={`status-pill ${selectedWorkspace.status === "ARCHIVED" ? "muted" : "warning"}`}>{selectedWorkspace.status}</span>
+          </div>
+          {selectedWorkspace.status === "ACTIVE" ? <>
+            <small>Before archiving, finish active Tasks and Conversation turns, disable Automations, settle approvals and effects, revoke active grants, stop persistent workloads, and pause or revoke selected roots. The local Runtime will check again atomically.</small>
+            {archiveConfirmationFor === selectedWorkspace.workspaceId ? <div className="button-row" role="group" aria-label="Confirm Workspace archive">
+              <span>This is a terminal, read-only transition. You can keep the Workspace instead.</span>
+              <button className="quiet-button" type="button" onClick={() => setArchiveConfirmationFor(null)} disabled={archiveBusy}>Keep Workspace</button>
+              <button className="danger-button" type="button" onClick={() => void onArchiveWorkspace()} disabled={archiveBusy}>{archiveBusy ? "Archiving…" : "Confirm archive"}</button>
+            </div> : <button className="quiet-button" type="button" onClick={() => setArchiveConfirmationFor(selectedWorkspace.workspaceId)} disabled={archiveBusy || runtime?.operatorReady !== true}>Review archive</button>}
+          </> : <p className="inline-status" role="status">This Workspace is archived and read-only.</p>}
+        </section>}
         {selectedWorkspace && <div className="workspace-instructions-form">
           <div className="section-heading">
             <div><h3>Workspace instructions</h3><p>Shared guidance for future work in this Workspace.</p></div>
@@ -2466,6 +2742,7 @@ function SettingsPage({ runtime, runtimeError, runtimeBusy, startRuntime, refres
         selectedDefaultLeadBindingId={selectedWorkspace?.defaultAgentBindingId ?? null}
         installations={agents}
         profiles={agentProfiles}
+        runtimeInventoryStreamStatus={runtimeInventoryStreamStatus === "STOPPED" ? "UNAVAILABLE" : runtimeInventoryStreamStatus}
         bindings={agentBindings}
         error={[agentError, agentProfileError, agentBindingError].filter(Boolean).join(" ") || null}
         actionMessage={agentActionMessage}
@@ -2513,7 +2790,7 @@ function PlaceholderPage({ page, onSettings }: { page: Page; onSettings: () => v
   );
 }
 
-function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, rootStatusRequestKeys, resourceIndexRequestKeys, workspaceVersion, operatorReady, resources, onRevisionCommitted, onRefreshResources, selectedTaskInputs, onToggleTaskInput, onClearTaskInputs, onUseSelectedInTask, nextCursor, pageBusy, onLoadMore, busy, pausePending, onPauseImport, message, onFiles, onPreview, onClosePreview, previewResourceId, previewResourceName, preview, previewHighlights, previewError }: { selectedWorkspaceId: string; artifactApi: ReturnType<typeof desktopArtifactApi>; onOpenArtifactSource: (ref: PinnedResourceRef) => void; rootStatusRequestKeys: { current: Map<string, string> }; resourceIndexRequestKeys: { current: Map<string, string> }; workspaceVersion: number | null; operatorReady: boolean; resources: ResourceView[]; onRevisionCommitted: (resource: ResourceView) => void; onRefreshResources: () => void; selectedTaskInputs: TaskInputSelection[]; onToggleTaskInput: (resource: { resourceId: string; resourceRevisionId: string; displayName: string }) => void; onClearTaskInputs: () => void; onUseSelectedInTask: () => void; nextCursor: string | null; pageBusy: boolean; onLoadMore: () => Promise<void>; busy: boolean; pausePending: boolean; onPauseImport: () => void; message: string | null; onFiles: (files: FileList | File[] | null, contextDocument?: ContextDocumentCreateMetadata | null) => Promise<void>; onPreview: (resourceId: string, displayName: string, revisionId: string, searchPin?: PreviewSearchPin) => Promise<void>; onClosePreview: () => void; previewResourceId: string | null; previewResourceName: string | null; preview: string | null; previewHighlights: SourceHighlightResult | null; previewError: string | null }) {
+function LibraryPage({ selectedWorkspaceId, selectedWorkspaceIdRef, artifactApi, onOpenArtifactSource, rootStatusRequestKeys, resourceIndexRequestKeys, workspaceVersion, operatorReady, resources, onRevisionCommitted, onRefreshResources, selectedTaskInputs, onToggleTaskInput, onClearTaskInputs, onUseSelectedInTask, nextCursor, pageBusy, onLoadMore, busy, pausePending, onPauseImport, message, onFiles, onPreview, onClosePreview, previewResourceId, previewResourceName, preview, previewHighlights, previewError }: { selectedWorkspaceId: string; selectedWorkspaceIdRef: { current: string }; artifactApi: ReturnType<typeof desktopArtifactApi>; onOpenArtifactSource: (ref: PinnedResourceRef) => void; rootStatusRequestKeys: { current: Map<string, string> }; resourceIndexRequestKeys: { current: Map<string, string> }; workspaceVersion: number | null; operatorReady: boolean; resources: ResourceView[]; onRevisionCommitted: (resource: ResourceView) => void; onRefreshResources: () => void; selectedTaskInputs: TaskInputSelection[]; onToggleTaskInput: (resource: { resourceId: string; resourceRevisionId: string; displayName: string }) => void; onClearTaskInputs: () => void; onUseSelectedInTask: () => void; nextCursor: string | null; pageBusy: boolean; onLoadMore: () => Promise<void>; busy: boolean; pausePending: boolean; onPauseImport: () => void; message: string | null; onFiles: (files: FileList | File[] | null, contextDocument?: ContextDocumentCreateMetadata | null) => Promise<void>; onPreview: (resourceId: string, displayName: string, revisionId: string, searchPin?: PreviewSearchPin) => Promise<void>; onClosePreview: () => void; previewResourceId: string | null; previewResourceName: string | null; preview: string | null; previewHighlights: SourceHighlightResult | null; previewError: string | null }) {
   const folderInput = useRef<HTMLInputElement>(null);
   const rootListGeneration = useRef(0);
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRootView[]>([]);
@@ -2652,32 +2929,49 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
   }, [query, selectedWorkspaceId, resources, busy, searchMode, searchKind, searchFreshness, resourceIndexRefreshNonce]);
   const rebuildResourceTextIndex = async (resource: ResourceView) => {
     if (!selectedWorkspaceId || !operatorReady || rebuildBusyResourceId) return;
-    const pendingKey = `${selectedWorkspaceId}:${resource.resourceId}:${resource.resourceRevisionId}:${resource.contentDigest}`;
-    const requestId = resourceIndexRequestKeys.current.get(pendingKey) ?? crypto.randomUUID();
-    resourceIndexRequestKeys.current.set(pendingKey, requestId);
+    const workspaceId = selectedWorkspaceId;
+    const pin = {
+      workspaceId,
+      resourceId: resource.resourceId,
+      resourceRevisionId: resource.resourceRevisionId,
+      contentDigest: resource.contentDigest,
+    };
     setRebuildBusyResourceId(resource.resourceId);
     setIndexActionMessage(null);
     setIndexActionError(null);
     try {
-      const result = await invoke<ResourceTextIndexRebuildView>("rebuild_resource_text_index", {
-        workspaceId: selectedWorkspaceId,
-        resourceId: resource.resourceId,
-        resourceRevisionId: resource.resourceRevisionId,
-        contentDigest: resource.contentDigest,
-        requestId,
+      const outcome = await performResourceIndexRebuild({
+        requests: resourceIndexRequestKeys.current,
+        pin,
+        createRequestId: () => crypto.randomUUID(),
+        execute: (requestId, exactPin) => invoke<ResourceTextIndexRebuildView>("rebuild_resource_text_index", {
+          workspaceId: exactPin.workspaceId,
+          resourceId: exactPin.resourceId,
+          resourceRevisionId: exactPin.resourceRevisionId,
+          contentDigest: exactPin.contentDigest,
+          requestId,
+        }),
       });
-      if (result.workspaceId !== selectedWorkspaceId
-        || result.resourceId !== resource.resourceId
-        || result.resourceRevisionId !== resource.resourceRevisionId
-        || result.contentDigest !== resource.contentDigest
-        || result.requestId !== requestId) {
-        throw new Error("The local Runtime returned a result for a different Resource revision.");
+      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      if (outcome.kind === "failed") {
+        const retryPin = outcome.retryPin ? {
+          workspaceId: outcome.retryPin.workspaceId,
+          resourceId: outcome.retryPin.resourceId,
+          revisionId: outcome.retryPin.resourceRevisionId,
+          contentDigest: outcome.retryPin.contentDigest,
+        } : null;
+        setIndexRetryPin((current) => current?.workspaceId === pin.workspaceId
+          && current.resourceId === pin.resourceId
+          && current.revisionId === pin.resourceRevisionId
+          && current.contentDigest === pin.contentDigest ? retryPin : retryPin ?? current);
+        setIndexActionError(outcome.message);
+        return;
       }
-      resourceIndexRequestKeys.current.delete(pendingKey);
-      setIndexRetryPin((current) => current?.workspaceId === selectedWorkspaceId
-        && current.resourceId === resource.resourceId
-        && current.revisionId === resource.resourceRevisionId
-        && current.contentDigest === resource.contentDigest ? null : current);
+      const result = outcome.receipt;
+      setIndexRetryPin((current) => current?.workspaceId === pin.workspaceId
+        && current.resourceId === pin.resourceId
+        && current.revisionId === pin.resourceRevisionId
+        && current.contentDigest === pin.contentDigest ? null : current);
       setResourceIndexRefreshNonce((current) => current + 1);
       if (result.outcome === "INDEXED") {
         setIndexActionMessage(`Encrypted local text index rebuilt for “${resource.displayName}”.`);
@@ -2689,19 +2983,6 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
                 : "this file type is not supported";
         setIndexActionMessage(`“${resource.displayName}” was not indexed because ${reason}.`);
       }
-    } catch (error) {
-      const message = typeof error === "string" ? error : error instanceof Error ? error.message : "The local text index could not be rebuilt.";
-      if (message.includes("Reload the Library")) {
-        setIndexRetryPin(null);
-      } else {
-        setIndexRetryPin({
-          workspaceId: selectedWorkspaceId,
-          resourceId: resource.resourceId,
-          revisionId: resource.resourceRevisionId,
-          contentDigest: resource.contentDigest,
-        });
-      }
-      setIndexActionError(message);
     } finally {
       setRebuildBusyResourceId(null);
     }
@@ -2762,6 +3043,14 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
   const addPersistentFolder = async () => {
     if (!selectedWorkspaceId || workspaceVersion === null || rootAdding || busy) return;
     const generation = rootListGeneration.current;
+    const request = {
+      action: "add" as const,
+      workspaceId: selectedWorkspaceId,
+      expectedVersion: workspaceVersion,
+      watchPolicy: "METADATA",
+      replicationPolicy: "NONE",
+    };
+    const mutation = workspaceRootMutationRequest(rootStatusRequestKeys.current, request, () => crypto.randomUUID());
     setRootAdding(true);
     setRootError(null);
     setRootMessage(null);
@@ -2771,13 +3060,17 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
         expectedWorkspaceVersion: workspaceVersion,
         watchPolicy: "METADATA",
         replicationPolicy: "NONE",
-        requestId: crypto.randomUUID(),
+        requestId: mutation.requestId,
       });
-      if (!root) return;
-      if (generation !== rootListGeneration.current) return;
-      if (root.workspaceId !== selectedWorkspaceId || root.status !== "ACTIVE") {
-        throw new Error("The Runtime returned a folder outside this Workspace.");
+      if (!root) {
+        clearWorkspaceRootMutationRequest(rootStatusRequestKeys.current, mutation.key);
+        return;
       }
+      if (!isWorkspaceRootAddResponse(root, request)) {
+        throw new Error("The Runtime returned an invalid persistent folder receipt.");
+      }
+      clearWorkspaceRootMutationRequest(rootStatusRequestKeys.current, mutation.key);
+      if (generation !== rootListGeneration.current) return;
       setWorkspaceRoots((current) => [root, ...current.filter((item) => item.workspaceRootId !== root.workspaceRootId)]);
       setRootMessage(`“${root.displayName}” was saved as a persistent folder scope. Folder watching and indexing are not active in this build.`);
     } catch (error) {
@@ -2808,6 +3101,13 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
     const confirmed = window.confirm(`Remove LiteCowork's saved access to “${root.displayName}”? Existing replicated copies are not deleted.`);
     if (!confirmed) return;
     const generation = rootListGeneration.current;
+    const request = {
+      action: "revoke" as const,
+      workspaceId: selectedWorkspaceId,
+      workspaceRootId: root.workspaceRootId,
+      expectedVersion: root.version,
+    };
+    const mutation = workspaceRootMutationRequest(rootStatusRequestKeys.current, request, () => crypto.randomUUID());
     setRootRevokingId(root.workspaceRootId);
     setRootError(null);
     setRootMessage(null);
@@ -2816,8 +3116,12 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
         workspaceId: selectedWorkspaceId,
         workspaceRootId: root.workspaceRootId,
         expectedVersion: root.version,
-        requestId: crypto.randomUUID(),
+        requestId: mutation.requestId,
       });
+      if (!isWorkspaceRootRevokeResponse(revoked, request)) {
+        throw new Error("The Runtime returned an invalid folder removal receipt.");
+      }
+      clearWorkspaceRootMutationRequest(rootStatusRequestKeys.current, mutation.key);
       if (generation !== rootListGeneration.current) return;
       setWorkspaceRoots((current) => current.map((item) => item.workspaceRootId === revoked.workspaceRootId ? revoked : item));
       setRootMessage(`Access to “${revoked.displayName}” was revoked. Existing replicated copies are unchanged.`);
@@ -2836,37 +3140,57 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
       return;
     }
     const generation = rootListGeneration.current;
-    const requestKey = JSON.stringify([selectedWorkspaceId, root.workspaceRootId, action, root.version]);
-    const requestId = rootStatusRequestKeys.current.get(requestKey) ?? crypto.randomUUID();
-    rootStatusRequestKeys.current.set(requestKey, requestId);
+    const request = {
+      workspaceId: selectedWorkspaceId,
+      workspaceRootId: root.workspaceRootId,
+      action,
+      expectedVersion: root.version,
+    } as const;
+    const isCurrentRequest = () => isCurrentWorkspaceRootRequest(
+      selectedWorkspaceId,
+      generation,
+      selectedWorkspaceIdRef.current,
+      rootListGeneration.current,
+    );
     setRootStatusAction({ workspaceRootId: root.workspaceRootId, action });
     setRootError(null);
     setRootMessage(null);
     try {
-      const updated = await invoke<WorkspaceRootView>(action === "pause" ? "pause_workspace_root" : "resume_workspace_root", {
-        workspaceId: selectedWorkspaceId,
-        workspaceRootId: root.workspaceRootId,
-        expectedVersion: root.version,
-        requestId,
+      const outcome = await performWorkspaceRootStatusAction({
+        requests: rootStatusRequestKeys.current,
+        request,
+        createRequestId: () => crypto.randomUUID(),
+        execute: (requestId) => invoke<WorkspaceRootView>(action === "pause" ? "pause_workspace_root" : "resume_workspace_root", {
+          workspaceId: selectedWorkspaceId,
+          workspaceRootId: root.workspaceRootId,
+          expectedVersion: root.version,
+          requestId,
+        }),
+        list: (cursor) => invoke<WorkspaceRootPageView>("list_workspace_roots", { workspaceId: selectedWorkspaceId, cursor }),
+        isCurrent: isCurrentRequest,
+        onRefreshStart: () => setRootBusy(true),
       });
-      const committedStatus = action === "pause" ? "PAUSED" : "ACTIVE";
-      if (updated.workspaceId !== selectedWorkspaceId
-        || updated.workspaceRootId !== root.workspaceRootId
-        || updated.status !== committedStatus
-        || updated.version !== root.version + 1
-        || (action === "resume" && updated.locationAvailability !== "AVAILABLE")) {
-        throw new Error("The Runtime did not confirm this folder status change.");
+      if (outcome.kind === "stale" || !isCurrentRequest()) return;
+      if (outcome.kind === "confirmed") {
+        setWorkspaceRoots((current) => current.map((item) => item.workspaceRootId === outcome.root.workspaceRootId ? outcome.root : item));
+        setRootMessage(action === "pause"
+          ? `“${outcome.root.displayName}” is paused. Its saved permission remains; folder watching and indexing are not active in this build.`
+          : `“${outcome.root.displayName}” is active again. Folder watching and indexing are not active in this build.`);
+      } else {
+        if (outcome.refreshedRoots.length > 0) {
+          const refreshedById = new Map(outcome.refreshedRoots.map((item) => [item.workspaceRootId, item]));
+          setWorkspaceRoots((current) => current.map((item) => refreshedById.get(item.workspaceRootId) ?? item));
+        }
+        const refreshStatus = outcome.refreshError
+          ? ` The latest folder status could not be confirmed: ${outcome.refreshError}`
+          : outcome.targetFound
+            ? " The folder list was reloaded; check its saved status before trying again."
+            : " The folder list was reloaded, but the affected folder was not found; its previous row is retained.";
+        setRootError(`${outcome.failureMessage}${refreshStatus}`);
+        setRootBusy(false);
       }
-      rootStatusRequestKeys.current.delete(requestKey);
-      if (generation !== rootListGeneration.current) return;
-      setWorkspaceRoots((current) => current.map((item) => item.workspaceRootId === updated.workspaceRootId ? updated : item));
-      setRootMessage(action === "pause"
-        ? `“${updated.displayName}” is paused. Its saved permission remains; folder watching and indexing are not active in this build.`
-        : `“${updated.displayName}” is active again. Folder watching and indexing are not active in this build.`);
-    } catch (error) {
-      if (generation === rootListGeneration.current) setRootError(typeof error === "string" ? error : error instanceof Error ? error.message : "Persistent folder status could not be updated.");
     } finally {
-      if (generation === rootListGeneration.current) setRootStatusAction(null);
+      if (isCurrentRequest()) setRootStatusAction(null);
     }
   };
   const hasSearchFilters = Boolean(searchKind || searchFreshness);
@@ -2886,6 +3210,7 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
         <div className="section-heading"><div><h2>Persistent folders</h2><p>Register a selected folder as a persistent scope. LiteCowork does not yet watch or index its contents in this build.</p></div><button className="quiet-button" type="button" disabled={!selectedWorkspaceId || !operatorReady || workspaceVersion === null || rootAdding || busy} onClick={() => void addPersistentFolder()}>{rootAdding ? "Opening folder picker…" : "Add persistent folder"}</button></div>
         {!operatorReady && selectedWorkspaceId && <p className="inline-status" role="status">Start the local Runtime to manage persistent folders.</p>}
         {rootBusy && workspaceRoots.length === 0 && <p className="inline-status" role="status">Loading persistent folders…</p>}
+        {rootBusy && workspaceRoots.length > 0 && <p className="inline-status" role="status">Refreshing persistent folder status…</p>}
         {rootError && <p className="inline-error" role="status">{rootError}</p>}
         {rootMessage && <p className="inline-status" role="status" aria-live="polite">{rootMessage}</p>}
         {workspaceRoots.length > 0 && <ul className="resource-list persistent-folder-list">{workspaceRoots.map((root) => {
@@ -2893,9 +3218,7 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
           const controlsDisabled = !operatorReady || rootBusy || rootStatusAction !== null || rootRevokingId !== null;
           return <li key={root.workspaceRootId}>
             <span className="resource-file-icon" aria-hidden="true">▱</span>
-            <span><strong>{root.displayName}</strong><small>{root.status === "PAUSED" && root.locationAvailability === "UNAVAILABLE"
-              ? "Paused · folder identity could not be verified. Remove this saved scope and add the intended folder again."
-              : workspaceRootStatusLabel(root.status)}</small></span>
+            <span><strong>{root.displayName}</strong><small>{workspaceRootStatusLabel(root.status)}</small><small>{resourceLocationAvailabilityLabel(root.locationAvailability)}</small></span>
             <span className="resource-preview-unavailable">Metadata policy · inactive</span>
             <span className="persistent-folder-actions">
               {root.status === "ACTIVE" && <button className="quiet-button" type="button" aria-label={`Pause ${root.displayName}`} disabled={controlsDisabled} onClick={() => void updatePersistentFolderStatus(root, "pause")}>
@@ -2904,7 +3227,7 @@ function LibraryPage({ selectedWorkspaceId, artifactApi, onOpenArtifactSource, r
               {root.status === "PAUSED" && <button className="quiet-button" type="button" aria-label={`Resume ${root.displayName}`} disabled={controlsDisabled} onClick={() => void updatePersistentFolderStatus(root, "resume")}>
                 {actionPending && rootStatusAction?.action === "resume" ? "Checking folder…" : "Revalidate & resume"}
               </button>}
-              {root.status !== "REVOKED" && <button className="quiet-button" type="button" disabled={controlsDisabled} onClick={() => void revokePersistentFolder(root)}>
+              {root.status !== "REVOKED" && <button className="quiet-button" type="button" aria-label={`Remove access to ${root.displayName}`} disabled={controlsDisabled} onClick={() => void revokePersistentFolder(root)}>
                 {rootRevokingId === root.workspaceRootId ? "Removing…" : "Remove access"}
               </button>}
             </span>

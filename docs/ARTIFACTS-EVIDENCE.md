@@ -124,7 +124,7 @@ version and the principal-scoped Idempotency-Key fingerprints Workspace, Artifac
 action and expected version. The writer commits status/version, the full Artifact aggregate
 snapshot, transition event and receipt atomically. An identical retry returns the original
 recorded result even after subsequent archival; a changed payload with the same key returns
-`IDEMPOTENCY_CONFLICT`. Fresh commands require an ACTIVE Workspace. An already-archived
+HTTP `409 CONFLICT`. Fresh commands require an ACTIVE Workspace. An already-archived
 archive with current If-Match stores a no-op receipt without another event or version bump.
 
 Both managed and linked Artifacts support these local metadata transitions. No content is
@@ -322,3 +322,17 @@ references it. Evidence and Effect history is retained according to workspace po
 cannot be removed while required for an open Task, dispute, or reconciliation. Blob
 replication verifies per-chunk integrity when chunked and the final digest before marking
 the target version available.
+
+
+## Connector and external-workflow evidence
+
+A connector/workflow provider's success response is an observation, not automatically
+Evidence that the user's desired postcondition holds. Provider receipts may support an
+Effect claim when provenance/identity is verifiable; a produced document/file still enters
+the normal Resource/Artifact/version pipeline and acceptance criteria may require an
+independent read-back or verifier.
+
+External workflow node logs are never imported wholesale as trusted Evidence. Normalize
+only bounded exact receipts/output refs required by the Task. Unknown/partial provider
+outcome remains ambiguous and cannot be upgraded because the workflow engine displayed
+green.

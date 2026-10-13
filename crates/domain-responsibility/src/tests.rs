@@ -190,7 +190,7 @@ fn trigger_placement_and_unique_ids_are_enforced() {
         runtime_id: None,
         trigger: TriggerDefinition::Manual,
     };
-    assert_eq!(validate_triggers(&[manual.clone()]), Ok(()));
+    assert_eq!(validate_triggers(std::slice::from_ref(&manual)), Ok(()));
     assert_eq!(validate_triggers(&[]), Err(DomainError::InvalidDefinition));
     assert_eq!(
         validate_triggers(&[manual.clone(), manual.clone()]),
@@ -225,7 +225,7 @@ fn source_replacement_requires_new_trigger_id_but_instruction_edit_does_not() {
         },
     };
     assert_eq!(
-        check_trigger_identity(&[old.clone()], &[old.clone()]),
+        check_trigger_identity(std::slice::from_ref(&old), std::slice::from_ref(&old)),
         Ok(())
     );
     let changed = TriggerSpec {
@@ -238,7 +238,7 @@ fn source_replacement_requires_new_trigger_id_but_instruction_edit_does_not() {
     };
     assert_eq!(
         check_trigger_identity(
-            &[changed.clone()],
+            std::slice::from_ref(&changed),
             &[TriggerSpec {
                 trigger: TriggerDefinition::Manual,
                 ..changed.clone()
@@ -248,11 +248,11 @@ fn source_replacement_requires_new_trigger_id_but_instruction_edit_does_not() {
     );
     assert_eq!(
         check_trigger_identity(
-            &[changed.clone()],
+            std::slice::from_ref(&changed),
             &[TriggerSpec {
                 trigger_id: "new".into(),
                 trigger: TriggerDefinition::Manual,
-                ..changed
+                ..changed.clone()
             }]
         ),
         Ok(())

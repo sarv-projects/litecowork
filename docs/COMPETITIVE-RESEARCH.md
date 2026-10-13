@@ -197,3 +197,40 @@ Sources: [Grok Bot overview](https://docs.x.ai/grok-bot/overview), [Skills and r
 | Grok Bot | Bot chat | Bot roster, Routines, Library, Marketplace, computer takeover, approval cards | Implicit shared-computer scope between Coworkers |
 
 This benchmark changes LiteCowork's acceptance criteria and UI design; it does not prove those competitor capabilities are reliable under our workloads. Open-source README/roadmap claims remain claims until reproduced. Closed products' cloud availability is explicitly not used as evidence for local desktop durability.
+
+
+## 2026-10-10 deep dive — learning coworkers, workflow backends, and visual orchestration
+
+A source-level review of Agenta, Eigent/CAMEL, Activepieces, n8n, Nango, Arcade and
+Composio changed implementation detail but not LiteCowork's control-plane ownership.
+Exact pinned commits/files/licenses are recorded in
+[Reference Implementations](REFERENCE-IMPLEMENTATIONS.md).
+
+- **Agenta:** borrow the user-facing unification of scheduled and event-driven work,
+  explicit run history, run-to-session continuation, and the separation between memory,
+  skills, instructions and future triggers. LiteCowork keeps stricter revision/Trust
+  control: a model proposes persistent changes; it does not receive a generic arbitrary
+  configuration-commit authority.
+- **Eigent/CAMEL:** borrow the calm visual desktop shell, coherent multi-agent activity
+  timeline, decomposition/retry/replan test cases, and conditional browser/terminal/MCP
+  toolkit lifecycle ideas. CAMEL does not become LiteCowork's planner or Task authority;
+  native Codex/Claude/OpenCode/etc. remain first-class AgentBindings under the existing
+  Plan/Step/Attempt model.
+- **Activepieces:** investigate a qualified community-Piece compatibility provider and
+  support a user-owned Activepieces deployment as a workflow backend.
+- **n8n:** support a user-owned instance through a bounded WorkflowBackendAdapter. Do not
+  embed or white-label the engine by default.
+- **Nango / Arcade / Composio:** optional Auth/Tool/Connector backends only.
+- **Product IA:** do not fork the product into Cowork versus Code. Code is a launch preset
+  and Task intent inside the same Conversation/Task architecture.
+- **Credentials and events:** local provider credentials and remote event reachability are
+  separate concerns. A future EventRelay can carry minimal signed wake/event metadata
+  without becoming the token vault.
+
+Normative targets:
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md) and
+[Learning](LEARNING.md).
+
+## V1 detailed design integration — 2026-10-12
+
+Use V1-DESIGN-INDEX.md and implementation/V1-DESIGN-COVERAGE.md to distinguish current code gaps from target competitor parity: native / @ and session/model semantics; managed Chrome and optional explicit existing-session attach; verified work/cowork and rendering. Claims require an exact-date vendor source and own real feature tests; do not infer account availability or planned V1 parity from a marketing screenshot.

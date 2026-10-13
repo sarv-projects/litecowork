@@ -33,6 +33,7 @@ enum SafetyControl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SafetyEvidence {
     Proven,
+    #[cfg(test)]
     Unsupported,
     Unknown,
 }

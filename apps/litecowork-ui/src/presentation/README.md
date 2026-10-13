@@ -18,13 +18,15 @@ authenticated Operator projection/stream and source-owning routes must be connec
 the caller. Approval and UserRequest items point users to their owning route; this
 renderer cannot resolve them. Artifact and Task callbacks are navigation only.
 
-`TaskPresentationPanel` currently re-fetches the authenticated finite Task snapshot every
-five seconds while its panel intersects the viewport and the desktop document is visible.
-It stops polling when hidden or unmounted, serializes snapshot requests, and ignores
-results after the selected Task changes. This is a snapshot refresh fallback, not a live
-stream: it does not synthesize activity or progress, and source freshness remains whatever
-the snapshot endpoint reports.
+`TaskPresentationPanel` consumes the authenticated local Task snapshot stream and replaces
+its projection only after a complete, closed snapshot passes Workspace/Task/session and
+revision checks. It resumes from the last accepted opaque cursor and reconnects with bounded
+backoff. The authenticated finite snapshot read still runs every five seconds while the
+panel intersects the viewport and the desktop document is visible; it acts as a fallback
+and never overwrites a newer stream snapshot. Progress is fetched separately and is not
+claimed to arrive on the Task stream. Snapshot freshness remains whatever the source
+projection reports.
 
-This is not yet a complete Presentation Runtime integration: authenticated stream
-transport/projection wiring, real Artifact preview/editors, browser/terminal control leases,
-MCP App sandboxing, and end-to-end rendering are separate implementation stories.
+This is not yet a complete Presentation Runtime integration: Runtime-inventory and
+transient turn/rich-draft streams, real Artifact preview/editors, browser/terminal control
+leases, MCP App sandboxing, and packaged end-to-end rendering remain separate work.

@@ -147,11 +147,30 @@ StreamReadyFrame {
 }
 ```
 
-`projection_types` may request `conversation_presentation` and `task_presentation`.
+The planned `projection_types` include `conversation_presentation` and `task_presentation`.
 Snapshot reads establish the current projection revision before stream deltas are applied.
 Each update carries its source identity, projection revision, and cursor. The client
 replaces an older item when the same `item_key` advances to a newer source revision; it
-never orders items by network arrival time.
+never orders items by network arrival time. The current local adapter supports one
+Conversation presentation subscription or one Task presentation subscription. It emits a
+fresh authorized snapshot after committed Workspace events. Runtime inventory, per-item
+deltas, and transient turn/rich-draft delivery remain unimplemented; unsupported filters
+are rejected explicitly.
+
+A Task stream snapshot uses the existing `TaskPresentationSnapshot` fields and adds the
+decimal `origin_sequence` captured in the same SQLite read transaction as the Task,
+current-plan Steps, and resolvable Artifact versions. The outer opaque cursor binds
+Workspace, local origin Runtime, Task ID, projection version, and this durable source
+frontier. `projection_revision` follows the nonzero origin sequence as a monotonic ordering
+value; the opaque cursor remains the only resume token. Replay returns a new authorized
+full Task snapshot, not raw DomainEvents or a partial update. One Task ID is supported per
+subscription in the first local adapter, and cursor mismatch, future position, or a replay
+gap requires a resync marker and replacement snapshot. The desktop Task panel consumes
+these authenticated full-snapshot frames and atomically replaces its saved projection;
+finite snapshot reads remain a fallback, while progress is still read separately. The
+controller resumes only from the last accepted opaque cursor and fences frames to the
+selected Workspace, Task, and stream session. Packaged reconnect behavior remains to be
+qualified.
 
 Live assistant text may be sent as bounded, transient frames:
 
@@ -248,8 +267,12 @@ transaction failure is ordinary garbage-collection input.
 
 `GET /v1/conversations/{conversationId}/presentation` returns an authorized bounded
 `ConversationPresentationSnapshot`. The snapshot contains committed message summaries,
-available RichPresentation refs, linked trusted projection refs, active-turn state, and
-the snapshot projection revision/cursor. It does not embed arbitrary presentation blobs.
+available RichPresentation refs, linked trusted projection refs, active-turn state, the
+projection revision/cursor, and `origin_sequence`: the durable local event frontier read
+in the same SQLite snapshot as the projection. `next_cursor` paginates semantic messages;
+`stream_cursor` is an opaque cursor for the returned projection snapshot; `origin_sequence`
+is the durable source frontier used to resume event delivery. They are separate values.
+The response does not embed arbitrary presentation blobs.
 `GET /v1/rich-presentations/{presentationId}` authorizes the exact Workspace/message link,
 fetches the bounded document, and verifies its digest before returning it. The response
 uses `no-store`; clients validate Workspace, Conversation, Message, schema version,
@@ -283,7 +306,7 @@ the currently active retry/session. Retry, settlement, cancellation, disconnect,
 resync fence old drafts. A draft can be discarded at any time without affecting the
 message or turn.
 
-The Operator stream frame union is:
+The planned Operator stream frame union is:
 
 ```text
 OperatorStreamFrame =
@@ -465,3 +488,18 @@ A Coworker conversation uses the identical ConversationMessage semantic truth an
 The right Workbench shell is the common host for exact ArtifactVersion/File previews, validated RichPresentation expansions, Browser/Computer control surfaces, eligible Terminal sessions, and sandboxed MCP Apps. Opening a Workbench surface is a user navigation decision, not proof that the associated capability was invoked. Background results remain inline until the user opens them.
 
 The shell maintains bounded navigation history of exact object/provider refs and remembers layout separately from authorization. Reopen/restart re-resolves each ref and may fall back to Start, Locked, or Revoked. Surface providers cannot add global toolbar commands outside the host allowlist. Dirty editable Artifact state blocks destructive navigation with Save/Discard/Stay; Browser/Computer control uses actual lease epoch; Terminal shows real process identity/state; MCP Apps retain sandbox/origin constraints.
+
+
+## Run-context card is host-bound presentation
+
+The Automation/Task Continue experience may render a host-owned run-context card containing
+committed Task status, trigger provenance, Artifact/Evidence refs and blockers. These fields
+come from Core projections, not model-authored rich content.
+
+The card is not a fabricated ConversationMessage and cannot contain invented historical
+assistant turns. If rich presentation fails, the same run context remains available as
+ordinary trusted host UI plus semantic conversation content.
+
+## V1 detailed design integration — 2026-10-12
+
+Renderer-type coverage, source event normalization, semantic answer authority, markdown/terminal/diff/native fallback and Workbench media constraints are expanded in RENDERING-CONFORMANCE-LLD.md. Native provider output unknown to the registry must remain accessible as bounded safe fallback; renderer failure cannot hide committed message, verify Task or authorize an Effect. Browser view only reports live when provider delivers a qualified actual interactive surface.

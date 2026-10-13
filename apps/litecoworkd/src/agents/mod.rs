@@ -17,23 +17,22 @@ mod planning;
 // invoke this operation with a Runtime-admitted endpoint binding.
 pub(crate) use codex_app_server::NativeEnvironment;
 pub(crate) use codex_profile_probe::{
-    AuthenticationObservation, CodexProfileProbe, ListedModelOption, ModelCatalogObservation,
-    Observation, ProbeFailure, ProbeReadiness, probe_codex_profile,
+    AuthenticationObservation, ProbeReadiness, probe_codex_profile,
 };
 pub(crate) use opencode_profile_probe::{
     OpenCodeProbeReadiness, opencode_native_environment, probe_opencode_profile,
 };
 pub(crate) use opencode_server::{
-    OpenCodeEnvironment, OpenCodeError, OpenCodeEvent, OpenCodeEventStream, OpenCodeProcessState,
-    OpenCodeServer, OpenCodeServerConfig, OpenCodeServerProtocol,
+    OpenCodeEnvironment, OpenCodeError, OpenCodeProcessState, OpenCodeServer, OpenCodeServerConfig,
+    OpenCodeServerProtocol,
 };
 
 use serde::Serialize;
 use std::sync::{Mutex, OnceLock};
 
 const INVENTORY_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
-static INVENTORY_CACHE: OnceLock<Mutex<Option<(std::time::Instant, Vec<AgentInstallation>)>>> =
-    OnceLock::new();
+type CachedInventory = Option<(std::time::Instant, Vec<AgentInstallation>)>;
+static INVENTORY_CACHE: OnceLock<Mutex<CachedInventory>> = OnceLock::new();
 
 #[derive(Clone, Debug, Serialize)]
 pub struct AgentInstallation {
@@ -164,9 +163,7 @@ fn is_version_shaped(candidate: &str) -> bool {
     if candidate.is_empty() || candidate.len() > 48 {
         return false;
     }
-    let core_end = candidate
-        .find(|character| character == '-' || character == '+')
-        .unwrap_or(candidate.len());
+    let core_end = candidate.find(['-', '+']).unwrap_or(candidate.len());
     let core = &candidate[..core_end];
     let segments: Vec<_> = core.split('.').collect();
     if segments.len() != 3
@@ -192,7 +189,4 @@ fn is_version_shaped(candidate: &str) -> bool {
 }
 
 // Pure storage-backed preflight; never starts an unrestricted native provider.
-pub(crate) use planning::{
-    LocalPlanningPreflight, LocalPlanningPreflightView, PlanningDispatchBlocker,
-    prepare_local_task_planning,
-};
+pub(crate) use planning::{PlanningDispatchBlocker, prepare_local_task_planning};

@@ -17,6 +17,7 @@ domain-workspace = { path = "../../crates/domain-workspace" }
 domain-task = { path = "../../crates/domain-task" }
 domain-responsibility = { path = "../../crates/domain-responsibility" }
 fs2 = "0.4"
+futures-util = "0.3"
 getrandom = "0.3"
 hex = "0.4"
 http-body = "1.0"

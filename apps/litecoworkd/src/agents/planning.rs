@@ -42,6 +42,8 @@ pub(crate) struct LocalPlanningPreflightView {
 /// No Debug/Serialize implementation: a model prompt is not diagnostic output.
 pub(crate) struct LocalPlanningPreflight {
     view: LocalPlanningPreflightView,
+    // Retained for the future admission path that will construct the native session.
+    #[allow(dead_code)]
     packet: TaskPlanningPacket,
 }
 
@@ -49,12 +51,16 @@ impl LocalPlanningPreflight {
     pub(crate) fn view(&self) -> &LocalPlanningPreflightView {
         &self.view
     }
+    // Task/Attempt planning admission and session reservation are not integrated yet.
+    #[allow(dead_code)]
     pub(crate) fn packet(&self) -> &TaskPlanningPacket {
         &self.packet
     }
 
     /// A mandatory check before session reservation, not after process startup.
     /// Readiness probes and installed executables cannot satisfy these boundaries.
+    // Task/Attempt admission remains fail-closed until isolation and settlement are integrated.
+    #[allow(dead_code)]
     pub(crate) fn require_dispatch(&self) -> Result<(), StoreError> {
         Err(StoreError::Invalid("native Task planning dispatch is unavailable until isolation and lifecycle qualification are implemented".to_owned()))
     }

@@ -20,6 +20,16 @@ const MAX_RUNTIME_MOUNTS: usize = 32;
 const MAX_SCRATCH_BYTES: u64 = 512 * 1024 * 1024;
 const SYSTEM_RUNTIME_ROOTS: [&str; 6] = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/opt"];
 
+/// Canonical executable, validated arguments, output directory, resource limits, and
+/// Attempt ID produced for a Bubblewrap launch.
+pub type PreparedBubblewrapCommand = (
+    PathBuf,
+    Vec<OsString>,
+    PathBuf,
+    crate::ResourceLimits,
+    [u8; 16],
+);
+
 /// Trusted host runtime tree exposed read-only at one explicit sandbox path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadOnlyRuntimeMount {
@@ -75,16 +85,7 @@ pub fn spawn_bubblewrapped(
 /// tests; it does not itself execute or attest a worker.
 pub fn prepare_bubblewrap_command(
     spec: &BubblewrapLaunchSpec,
-) -> Result<
-    (
-        PathBuf,
-        Vec<OsString>,
-        PathBuf,
-        crate::ResourceLimits,
-        [u8; 16],
-    ),
-    ScopeError,
-> {
+) -> Result<PreparedBubblewrapCommand, ScopeError> {
     let bubblewrap = trusted_bubblewrap(&spec.bubblewrap)?;
     let input_root = private_directory(&spec.input_root, "input root")?;
     let output_root = private_directory(&spec.output_root, "output root")?;
@@ -364,6 +365,13 @@ fn arg(value: impl Into<OsString>) -> OsString {
     value.into()
 }
 
+/// Runtime capability probe. The user-visible result must remain unavailable unless a
+/// separate Environment integration also proves output limits, egress, authority, and
+/// durable recovery.
+pub fn bubblewrap_binary_is_trusted(path: &Path) -> bool {
+    trusted_bubblewrap(path).is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,11 +616,4 @@ mod tests {
         std::thread::sleep(Duration::from_millis(25));
         assert!(!accepted, "sandbox reached the host loopback listener");
     }
-}
-
-/// Runtime capability probe. The user-visible result must remain unavailable unless a
-/// separate Environment integration also proves output limits, egress, authority, and
-/// durable recovery.
-pub fn bubblewrap_binary_is_trusted(path: &Path) -> bool {
-    trusted_bubblewrap(path).is_ok()
 }

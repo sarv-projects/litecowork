@@ -22,3 +22,12 @@ These checks prove traceability and contract inventory consistency. They do not 
 features work. Each planned story still requires its CODE, SYSTEM, and owner USER case to be
 implemented and pass with real providers and target environments where applicable. See
 [what remains uncovered](ARCHITECTURE-COVERAGE.md#not-covered-by-this-plan-yet).
+
+
+## Target docs added after the 2026-10-10 generated coverage snapshot
+
+docs/REFERENCE-IMPLEMENTATIONS.md, docs/CONNECTORS-WORKFLOWS.md and docs/LEARNING.md are
+architecture inputs added by the final connector/learning research pass. They do not create
+executable API/SQL/event objects yet. The next implementation story that promotes one must
+regenerate machine/coverage inventory; until then the generated CSV remains a snapshot of
+current canonical machine contracts, not a reason to pretend target routes are shipped.

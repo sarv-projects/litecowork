@@ -150,6 +150,8 @@ not alter the ConversationMessage or turn outcome.
 settles only after stop is observed; a completion/failure that wins the stop race remains
 the recorded outcome.
 
+**Coworker-owned Conversation target admission (not yet served):** ConversationService/CoworkerConversationService must validate immutable same-Workspace owner_coworker_id, use explicit Conversation override -> current Coworker default -> Workspace default, and reject an invalid first configured binding instead of falling through. ContextService may attach only eligible, current Coworker instructions and authorized Memory/ContextDocument receipts; native memory is not imported. TaskService must derive Coworker origin from the owned Conversation on chat->Task materialization and reject a conflicting caller-supplied coworker_id, except a separate explicitly reviewed cross-Coworker handoff. This requires matching Operator API and storage/schema promotion before shipping.
+
 ConversationService owns structured UserRequest creation/resolution. A response is
 append-only, validated against the request schema, and cannot stand in for an Approval.
 Only the trusted InvocationRunner may materialize `EXTERNAL_AUTHORIZATION` requests from
@@ -541,8 +543,7 @@ reuse.
 
 ### ProviderCircuitService
 
-Owns per-Runtime provider failure windows and `CLOSED/OPEN/HALF_OPEN` call-admission
-circuit transitions. It does not start, restart, stop, share, or remove provider processes;
+Owns per-Runtime, **Core-mediated LiteSPM capability provider invocation** failure windows and `CLOSED/OPEN/HALF_OPEN` call-admission circuit transitions. This is not a general native-agent model router and never overrides a gateway/provider's own connection/model breaker. Telemetry may observe gateway/model outage with source provenance, but Core cannot synthesize model-level availability or change native agent provider configuration. It does not start, restart, stop, share, or remove provider processes;
 LiteSPM owns package/provider process lifecycle, and Environment/Channel owners manage
 their own adapters. Provider health observations feed the host view and may open this
 circuit, but a circuit state is not itself proof that a process stopped. The service does
@@ -882,18 +883,30 @@ Defined in `CHANNELS.md`.
 
 ### ConnectionService
 
-Owns connection references and lifecycle metadata. It never stores provider credential
-bytes. Account-specific authorization and package behavior remain with the external
-provider/LiteSPM contract. Provider-owned setup creates or updates the Connection after
-its authentication flow; Operator API exposes only normalized metadata, status, and
-disconnect. Provider-specific setup UI, callbacks, and credential exchange are outside
-the Operator API and remain deferred with the integration contract.
+Owns normalized Connection/AuthAttempt lifecycle and coordinates a qualified
+ConnectorRuntime/AuthBackend with SecretStore. It never stores provider credential bytes
+in domain rows. Connector implementation, provider-specific token exchange and package
+lifecycle stay behind ports owned by the connector/LiteSPM layer. The full target is
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md); current executable routes remain only
+the subset implemented by their owning story.
 
 ```text
 list(WorkspaceId, ConnectionQuery, Cursor?, Limit) -> Page<ConnectionSummary>
 get(ConnectionId) -> ConnectionView
-disconnect(ConnectionId, expected_version) -> ConnectionView
+begin_auth(ConnectorRef, AuthRecipeId, RequestedFeatures, RequestId) -> AuthStartReceipt
+complete_auth(AuthAttemptId, ProviderCallback, RequestId) -> ConnectionView
+cancel_auth(AuthAttemptId, RequestId) -> AuthAttemptView
+refresh(ConnectionId, reason, RequestId) -> ConnectionView
+test(ConnectionId, RequestId) -> ConnectionHealthView
+disconnect(ConnectionId, expected_version, RequestId) -> ConnectionView
+revoke(ConnectionId, expected_version, RequestId) -> ConnectionView
+resolve_capabilities(ConnectionId, CapabilityQuery) -> Page<CapabilityDescriptor>
 ```
+
+Public-desktop OAuth may use a Runtime-local loopback/PKCE host; confidential/provider-
+specific flows may use a deployment callback or optional AuthBackendAdapter. In every case
+the model receives neither passwords nor tokens. A Connection commit contains SecretRefs,
+scope/account metadata and health only.
 
 ### ChannelService
 
@@ -1453,3 +1466,78 @@ without leaking secrets.
 ## New Coworker target ownership proposals
 
 Future CoworkerConversationService will own the Coworker/Conversation association and last-active projection; existing ConversationService owns turns/messages and TaskService owns executions. StandingResponsibilityService owns only reviewed linkage/configuration and enable fences; RoutineService and TriggerCoordinator continue to own definitions, occurrences, cursors and Task admission. CoworkerCapabilityAssignmentService records user-approved ceilings and delegates actual use to CapabilityBroker and Trust. MemoryCandidateCoordinator schedules eligible agent-backed extraction, while ResourceService owns the committed ContextDocument metadata/revision. These are target interfaces, not implemented services. UserRequest/Needs You and Notification maintain their existing authorities; no shadow planner, task engine, installer or global model provider.
+
+
+## Connector, workflow, learning, and follow-up target services
+
+These are accepted target ports/services. They do not promote unimplemented Operator
+routes or machine schemas by documentation alone.
+
+### ConnectorRuntimeAdapter
+
+~~~text
+describe(ConnectorRef) -> ConnectorDescriptor
+health(ConnectionId) -> HealthObservation
+search_actions(ConnectionId, query, limit) -> ActionDescriptor[]
+get_action(ConnectionId, action_key) -> ActionDescriptor
+invoke(ConnectionId, action_key, NormalizedInput, InvocationContext, idempotency_key?)
+  -> ProviderInvocationReceipt
+reconcile(ProviderInvocationReceipt) -> ProviderOutcome
+cancel(ProviderInvocationReceipt) -> CancelObservation
+list_triggers(ConnectionId) -> TriggerDescriptor[]
+subscribe(TriggerRequest) -> TriggerSubscriptionReceipt
+unsubscribe(SubscriptionRef) -> ProviderOutcome
+poll(TriggerRequest, opaque_cursor?) -> TriggerPollBatch
+~~~
+
+### WorkflowBackendAdapter
+
+~~~text
+health(ConnectionId) -> HealthObservation
+list_workflows(ConnectionId, query?, cursor?, limit) -> Page<WorkflowDescriptor>
+get_workflow(ConnectionId, WorkflowRef) -> WorkflowDescriptor
+validate_input(ConnectionId, WorkflowRef, JsonObject) -> ValidationResult
+invoke(ConnectionId, WorkflowRef, JsonObject, TEST|PRODUCTION, idempotency_key?, InvocationContext)
+  -> ExternalWorkflowRunReceipt
+get_run(ConnectionId, ExternalRunRef) -> ExternalWorkflowRunView
+stream_run(ConnectionId, ExternalRunRef, cursor?) -> Stream<ExternalWorkflowEvent>
+cancel_run(ConnectionId, ExternalRunRef) -> CancelObservation
+normalize_result(ConnectionId, ExternalRunRef) -> WorkflowResultEnvelope
+~~~
+
+An external workflow is one capability execution. Its own graph/status is not imported as
+LiteCowork Plan/Step/Task authority.
+
+### LearningService
+
+~~~text
+observe_user_message(MessageId) -> LearningObservationResult
+observe_task_outcome(TaskId) -> LearningObservationResult
+observe_feedback(FeedbackId) -> LearningObservationResult
+observe_demonstration(DemonstrationId) -> LearningObservationResult
+classify(LearningCandidateId, classifier_version) -> LearningCandidateView
+list(CoworkerId, state?, kind?, Cursor?, Limit) -> Page<LearningCandidateView>
+get(LearningCandidateId) -> LearningCandidateView
+approve(LearningCandidateId, expected_version, RequestId) -> LearningCommitReceipt
+dismiss(LearningCandidateId, expected_version, RequestId) -> LearningCandidateView
+reject(LearningCandidateId, reason, expected_version, RequestId) -> LearningCandidateView
+auto_commit_eligible(CoworkerId, batch_limit) -> AutoCommitBatchResult
+reconcile_conflicts(CoworkerId) -> LearningConflictReport
+~~~
+
+Only policy-qualified private memory can use the quiet automatic commit path.
+
+### Task follow-up Conversation
+
+~~~text
+ConversationService.open_task_follow_up(TaskId, RequestId) -> ConversationView
+~~~
+
+The command is idempotent and returns the one PRIMARY_FOLLOW_UP Conversation for that
+Task. It verifies Workspace/Task/Coworker provenance before creating the link. It never
+invents old messages. A qualified native resume point may be reused; otherwise context is
+rebuilt from immutable TaskSpec/Artifacts/Evidence.
+
+## V1 detailed design integration — 2026-10-12
+
+V1-FUNCTION-FILE-CATALOG.md enumerates proposed implementation responsibilities, not deployed service methods. Assign each to existing owner, then implement typed domain and Operator service together with storage transaction, effects, version fences and UI bridge. Browser control must be lease-mediated; rich renderer functions are read-only presentation; native command execution belongs to faithful adapter, not a Core command shell.

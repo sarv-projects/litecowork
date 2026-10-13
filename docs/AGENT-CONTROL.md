@@ -356,6 +356,7 @@ AgentAuthDescriptor {
          EXPIRED | DEGRADED | ERROR
   account_label?: string                 # sanitized display only
   methods: AgentAuthMethodDescriptor[]
+  credential_slots: AgentCredentialSlotDescriptor[]  # required; may be empty
 }
 
 AgentAuthMethodDescriptor {
@@ -713,7 +714,7 @@ function configure_binding(request):
     validate_json(request.configuration, descriptor.configuration.fields)
 
     for credential in request.credential_bindings:
-        slot = descriptor.auth.credential_slots[credential.slot_id]
+        slot = find_unique(descriptor.auth.credential_slots, lambda s: s.credential_slot_id == credential.slot_id)
         require slot.storage_owner == LITECOWORK_SECRET_STORE
         require SecretStore.exists_and_owned(credential.secret_ref)
 
@@ -738,7 +739,7 @@ function configure_binding(request):
 function submit_secret(workspace_id, agent_id, slot_id, secret_bytes):
     require_local_authenticated_owner()
     descriptor = require_fresh_descriptor(agent_id)
-    slot = descriptor.auth.credential_slots[slot_id]
+    slot = find_unique(descriptor.auth.credential_slots, lambda s: s.credential_slot_id == slot_id)
     require slot.storage_owner == LITECOWORK_SECRET_STORE
 
     secret_ref = SecretStore.write(
@@ -1153,3 +1154,23 @@ The implementation plan MUST split this contract into reviewable stories:
 
 No story may claim “supports agent X” merely because it appears in the ACP Registry or its
 binary is installed.
+
+
+## Unified composer preset rule
+
+Agent selection remains the root composer control in every work intent. Code task,
+Research, Work with files and similar launch presets may preconfigure host-level defaults,
+but they do not replace AgentControlDescriptor or create a second composer protocol.
+
+Agent-native sign-in/provider configuration remains AgentModule-owned. App/connector OAuth
+from [Connectors & Workflows](CONNECTORS-WORKFLOWS.md) is a separate ConnectionService
+concern; never mix an Agent provider key with a Gmail/Calendar/Slack Connection simply
+because both appear in Settings.
+
+## V1 detailed design integration — 2026-10-12
+
+The editor and local control functions required for true native parity are in NATIVE-COMPOSER-LLD.md. The descriptor governs native slash/custom collision, @ file/agent mentions, model/reasoning/mode and per-agent compatibility. Native command execution must occur through the faithful harness adapter, not string execution in React. Cross-agent switches preserve text/attachments and invalidate owner-specific tokens; qualification is per exact OS/harness/version.
+
+## Agent card, auto-discovery and logo qualification — V1
+
+[V1 Agent Discovery & Catalog LLD](V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md) extends the AgentModule discovery/observation UI with distinct DETECTED, INSTALLED, CONFIGURED, AUTHENTICATED and READY axes; versioned safe multi-OS/WSL/PATH/package probes; user-picked exact path only as fallback; offline reviewed logos/attribution; and accessibility/repair actions. An OAuth account, ACP registry record or routing-gateway model catalog never proves that a native agent binary is installed or qualified. Native config is preserved and not silently modified; actual session/model/command support still requires provider conformance. TLM-013–023 are target tests.

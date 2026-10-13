@@ -6,7 +6,7 @@
 use super::*;
 use domain_responsibility::*;
 use serde::{Deserialize, Serialize};
-use storage_core::{RoutineTaskAdmission, TaskCreateCommit};
+use storage_core::TaskCreateCommit;
 
 /// Revalidates a manual Routine materialization while Task creation's IMMEDIATE SQLite
 /// transaction is held. This closes the race with Routine archive/revision changes and
@@ -123,6 +123,24 @@ pub(super) fn validate_task_admission(
 }
 
 pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
+
+type RoutineRevisionStorageRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+);
 type Decision = Box<dyn Fn(&mut dyn RoutineTransaction) -> Result<Routine, RoutineError> + Send>;
 
 #[derive(Clone, Debug)]
@@ -454,7 +472,7 @@ fn load_revision(
     revision: u64,
 ) -> Result<Option<RoutineRevision>, RoutineError> {
     let revision_sql = sql_u64(revision, "Routine revision")?;
-    let raw: Option<(String, String, String, String, String, String, String, String, String, Option<String>, String, Option<String>, String, String, String)> = connection.query_row(
+    let raw: Option<RoutineRevisionStorageRow> = connection.query_row(
         "SELECT objective_template, instructions, input_schema_json, constraints_json, non_goals_json, required_outputs_json, acceptance_criteria_json, approvals_required_json, input_bindings_json, preferred_agent_binding_id, placement_preference_json, budget_ceiling_json, required_capabilities_json, verification_policy_json, authored_by_json FROM routine_revisions WHERE workspace_id = ?1 AND routine_id = ?2 AND revision = ?3",
         params![workspace, id, revision_sql], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?)),
     ).optional().map_err(sql_error)?;

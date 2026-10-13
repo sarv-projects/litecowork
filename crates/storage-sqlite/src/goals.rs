@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 type Decision = Box<dyn Fn(&mut dyn GoalTransaction) -> Result<Goal, GoalError> + Send>;
+type GoalRow = (Option<String>, String, u64, String, String, String, u64);
 const MAX_GOAL_PROGRESS_EVIDENCE_REFS: usize = 1_000;
 
 #[derive(Clone, Debug)]
@@ -192,10 +193,10 @@ impl SqliteGoalStore {
                 let declared_refs: Vec<String> = decode(refs_json)?;
                 let declared_refs: std::collections::BTreeSet<_> = declared_refs.into_iter().collect();
                 let evidence_limit = evidence_remaining.min(200);
-                if declared_refs.len() > evidence_limit {
-                    if !limitations.contains(&GoalProgressLimitation::EvidenceListTruncated) {
-                        limitations.push(GoalProgressLimitation::EvidenceListTruncated);
-                    }
+                if declared_refs.len() > evidence_limit
+                    && !limitations.contains(&GoalProgressLimitation::EvidenceListTruncated)
+                {
+                    limitations.push(GoalProgressLimitation::EvidenceListTruncated);
                 }
                 let mut committed_refs = Vec::new();
                 let inspected_refs: Vec<_> = declared_refs.into_iter().take(evidence_limit).collect();
@@ -390,7 +391,7 @@ fn load_goal(
     workspace: &str,
     id: &str,
 ) -> Result<Option<(Goal, GoalRevision)>, GoalError> {
-    let raw: Option<(Option<String>, String, u64, String, String, String, u64)> = connection.query_row(
+    let raw: Option<GoalRow> = connection.query_row(
         "SELECT coworker_id, status, current_revision, created_at, updated_at, workspace_id, version FROM goals WHERE workspace_id = ?1 AND goal_id = ?2",
         params![workspace, id], |row| Ok((row.get(0)?, row.get(1)?, from_row_u64(row, 2)?, row.get(3)?, row.get(4)?, row.get(5)?, from_row_u64(row, 6)?)),
     ).optional().map_err(sql_error)?;

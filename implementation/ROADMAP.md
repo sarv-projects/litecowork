@@ -124,3 +124,52 @@ branches only after equivalent behavior has CODE + SYSTEM evidence.
 
 The detailed current-source refactor map is in
 [AGENT-MODULE-AUDIT.md](AGENT-MODULE-AUDIT.md).
+
+
+## Connector/workflow/learning implementation refinement — 2026-10-10
+
+No new control plane is introduced. Accepted designs map into existing epics:
+
+1. **E04-S01/S02/S03/S06:** SecretStore, ConnectorPackage qualification, AuthAttempt/
+   ConnectionService, progressive discovery, connector Invocation/Effect reconciliation
+   and cross-agent LiteSPM exposure.
+2. **E08-S03:** LearningCandidate/CoworkerLearningPolicy/private memory
+   conflict/revocation. Instruction changes remain Coworker revisions.
+3. **E09-S02/S03/S04:** real schedule/provider trigger hosts, connector event subscription,
+   optional EventRelay, honest missed-run/history and notifications.
+4. **E03-S02 + E09-S02:** idempotent Task follow-up Conversation for Automation Continue,
+   with native-resume optimization only after AgentModule qualification.
+5. **E10-S01/S02:** connector/skill package UX plus Activepieces community-Piece
+   compatibility spike and package-security fixtures.
+6. **E04/E09:** external WorkflowBackendAdapter; qualify one user-owned backend end to end
+   before broad provider claims.
+
+Suggested dependency order:
+
+~~~text
+SecretStore/Connection schema
+ -> one read-only direct connector
+ -> one reconciled write
+ -> provider trigger + scheduled occurrence
+ -> first-party app bundle
+ -> Task follow-up Conversation
+ -> EventRelay spike
+ -> external WorkflowBackend
+ -> Activepieces Piece compatibility
+ -> optional hosted auth/tool backends
+ -> broader catalog qualification
+
+Parallel after Coworker ownership:
+LearningCandidate -> private memory -> instruction diff review -> Skill/Routine proposals
+~~~
+
+Do not mark any row complete from architecture work alone. Each machine promotion updates
+migrations/OpenAPI/events/coverage and passes CODE/SYSTEM/USER evidence.
+
+## V1 detailed design integration — 2026-10-12
+
+Prioritize the critical path: E03 native conversation send + agent control/composer -> E08 unified right Workbench/semantic rendering -> E07 qualified Chrome/Computer provider and takeover -> E04/E05/E09/E10 integrated delegated workflows -> E13 actual OS/user release qualification. Existing dependencies govern actual scheduling; parallel independent Rust/UI/adapter fixture lanes after typed contracts freeze (AGENTS.md). See V1-DESIGN-COVERAGE.md for UAT IDs.
+
+## 2026-10-13 critical-path gate reconciliation
+
+Do not add a second roadmap or change story dependencies. Before claiming G1, E03-S01/S02 must prove a real provider-backed Send/Stop/reconnect; E07-S00 must qualify a Runtime-owned planner isolation mechanism, then E03-S03 must activate a producer-authenticated planner and atomically accept its versioned plan. E01-S04 owns authenticated transport/ErrorCode correctness. G2 additionally requires E08-S03's scoped private learner and E07/E08's qualified browser/terminal/shell surfaces; Windows root identity and restart behavior remain fail-closed until E02-S03/E07-S00 real Windows tests pass. G3's E13-S03/S04 release matrix must record remaining unsupported OS/provider cells rather than silently accept them. Full existing-story trace and tests: [V1 contract reconciliation](V1-CONTRACT-RECONCILIATION-2026-10-13.md).

@@ -250,3 +250,7 @@ When enabled:
 ## Coworker truthful activity target
 
 Switching Coworkers updates the selected identity only after an actual navigation state change and preserved draft decision. Conversation streams animate only while a provider turn is truly active. Memory auto-learning uses at most a quiet temporary indicator after committed changes, not each extracted candidate. Standing responsibility status and trigger activity derive from real event/Task projections; do not pulse while a machine sleeps or invent heartbeats. Reconnect rehydrates exact committed Task/Conversation/Notification state without replaying old typing, notifications, or completion animations. Workbench open/close honors unsaved draft, reduced motion and explicit user control.
+
+## V1 detailed design integration — 2026-10-12
+
+DESKTOP-SHELL-LLD.md makes the existing 80/120/180/280ms motion tokens concrete for sidebar open/close, Workbench resize/max, native command palette, streaming commit, takeover and layout restoration. All motion corresponds to a true state or user action; reconnect and persisted messages do not replay typing animation. prefer-reduced-motion and keyboard/focus tests required. Browser video and large lists are not continuously re-animated.

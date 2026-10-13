@@ -11,7 +11,7 @@ conflict and writes no transition event. UI projections never cause transitions.
 ACTIVE -> ARCHIVED
 ```
 
-WorkspaceService alone archives a Workspace. Archive is allowed only when every Task is terminal and every Automation is DISABLED. Quiescence also requires Conversation turns and scoped Invocations to be settled, no active grants/SecretLeases/control leases, and persistent Environments with no live workload. Authorized watchers/triggers stop before the read-only transition. Retained Environment state may remain suspended under storage/backup policy; archive never silently destroys it. Unknown provider quiescence blocks archive with `WORKSPACE_NOT_QUIESCENT`. The transition is terminal in v1. Reads remain available; existing authorized Artifact/Resource downloads remain available. Every domain mutation is rejected, including Task changes, capability grants/activation, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel materialization. Archiving does not delete data or erase copies already replicated to another Runtime. A replication-policy change is an ACTIVE -> ACTIVE versioned update; it affects future transfers and never silently deletes existing remote copies.
+WorkspaceService alone archives a Workspace. Archive is allowed only when every Task is terminal and every Automation is DISABLED. A persisted AutomationCursor remains an active trigger-host ownership record, even when its Automation definition is disabled; archive blocks until that cursor is removed after the host is durably stopped. Quiescence also requires Conversation turns and scoped Invocations to be settled, no active grants/CapabilityActivations/SecretLeases/execution or control leases, no unresolved Effects or pending Approvals, and persistent Environments with no live workload. Authorized watchers/triggers stop before the read-only transition; until channel-host drain acknowledgement is durable, ACTIVE or DRAINING ChannelHostAssignments block archive. Retained Environment state may remain suspended under storage/backup policy; archive never silently destroys it. Unknown provider quiescence blocks archive with `WORKSPACE_NOT_QUIESCENT`. The transition is terminal in v1. Reads remain available; existing authorized Artifact/Resource downloads remain available. Every domain mutation is rejected, including Task changes, capability grants/activation, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel materialization. Archiving does not delete data or erase copies already replicated to another Runtime. A replication-policy change is an ACTIVE -> ACTIVE versioned update; it affects future transfers and never silently deletes existing remote copies.
 
 `default_agent_binding_id` changes are ACTIVE -> ACTIVE Workspace aggregate updates.
 WorkspaceService validates that the selected binding exists in the same Workspace and is
@@ -1327,3 +1327,47 @@ No turn or Task transition waits for this aggregate.
 ## Coworker standing responsibility and learning target (not yet implemented)
 
 StandingResponsibility: DRAFT -> ENABLED <-> PAUSED -> COMPLETED/EXPIRED/ARCHIVED. The group is fenced by Coworker ACTIVE status and provider readiness at each new proactive admission, not by historic edit-time checks alone. Health is a derived HEALTHY/DEGRADED/BLOCKED/UNKNOWN projection, not an independently authoritative status. MemoryCandidate: QUEUED -> EVALUATING -> ACCEPTED/REJECTED/CONFLICTED; Accepted creates an immutable Resource-backed ContextDocument revision only after deterministic policy checks and provenance. Deletion/revocation remains ResourceService-owned. Connection assignment: ENABLED <-> PAUSED -> REVOKED; it is an access ceiling, never a CapabilityGrant. These are accepted target states and MUST NOT appear in the shipped API/event allowlist until their owning schemas and persistence are implemented.
+
+
+## Target AuthAttempt, Connection, and LearningCandidate state machines
+
+These accepted target state machines are specified by
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md) and [Learning](LEARNING.md); current
+machine contracts remain unchanged until implementation.
+
+~~~text
+AuthAttempt:
+CREATED -> WAITING_BROWSER -> CALLBACK_RECEIVED -> COMPLETED
+   |             |                    |
+   +-> CANCELLED +-> CANCELLED        +-> FAILED
+   +-> EXPIRED   +-> EXPIRED
+                 +-> FAILED
+~~~
+
+Only one callback may win. Terminal attempts never reopen. A restart that loses verifier
+or listener state fails/expires the attempt; it never reconstructs a secret from a digest.
+
+~~~text
+Connection:
+CONNECTING -> CONNECTED -> DEGRADED -> CONNECTED
+                         -> REAUTH_REQUIRED -> CONNECTED
+CONNECTED|DEGRADED|REAUTH_REQUIRED -> DISCONNECTED
+CONNECTED|DEGRADED|REAUTH_REQUIRED -> REVOKED
+~~~
+
+REVOKED is terminal for that Connection identity in v1.
+
+~~~text
+LearningCandidate:
+NEW -> CLASSIFIED
+CLASSIFIED -> AUTO_COMMIT_ELIGIBLE -> COMMITTED
+CLASSIFIED -> NEEDS_REVIEW -> COMMITTED | DISMISSED | REJECTED
+NEW|CLASSIFIED|NEEDS_REVIEW|AUTO_COMMIT_ELIGIBLE -> SUPERSEDED
+~~~
+
+Candidate terminal states never reopen; changed content creates a new candidate.
+Automatic action autonomy and automatic memory remain independent.
+
+## V1 detailed design integration — 2026-10-12
+
+New LLD sections label UI and provider phases for readability but do not add canonical enum values. Implementation must map every UI state to an actual existing state/transition or intentionally promote a new typed state+event+storage migration. Agent switch, Browser takeover and safe automation pause need epoch/version fences, not only optimistic animation.

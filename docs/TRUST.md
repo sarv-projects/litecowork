@@ -290,3 +290,28 @@ The default Add Connection UX skips per-operation permission switches; provider 
 Advanced users may create reusable plain-language rules for a Coworker/responsibility, but they compile only into bounded existing policy dimensions; they are never free-form authorization executable by the model. The consumer vocabulary may offer **Allow within this approved routine**, **Ask before acting**, **Hand off to me**, and **Not allowed**. A rule is bound to exact principal/account/resource/action classes and cannot override hard Workspace/admin/provider restrictions.
 
 Routine Test runs use the same rules and approvals as normal execution. A changed recipient, destination, account, capability digest, source scope, or consequential action invalidates stale standing approval. User-friendly rules reduce repeated prompts; they do not weaken the atomic grant/lease/Effect boundary.
+
+
+## Connector, workflow backend, and learning authority refinements
+
+Connector authentication proves an external account relationship; it does not authorize
+every action the account could perform. OAuth scopes are provider ceilings, Coworker
+assignment is an eligibility ceiling, CapabilityGrant is LiteCowork authority, ApprovalUse
+is a decision where applicable, and SecretLease is the credential-use boundary.
+
+An external workflow backend is treated like any other consequential capability. Starting
+a production workflow can have multiple external Effects; a successful start receipt does
+not prove desired completion. Cancellation is a request, never assumed rollback.
+Unknown/partial outcome blocks unsafe retry until reconciliation or owner decision.
+
+Learning has no permission authority. A memory, instruction patch, SkillProposal, Routine
+proposal, external document, email, webpage, MCP description or worker result cannot mint a
+Grant, change an Approval, widen Connection scope, enable an Automation or alter channel
+assurance. Only normal authenticated/versioned owners may make those transitions.
+
+Automatic learning is allowed only for the narrow private-memory path in
+[Learning](LEARNING.md). Instructions, Skills, Routines and Automations require review.
+
+## V1 detailed design integration — 2026-10-12
+
+CHROME-BROWSER-LLD.md clarifies consent, high-trust attach to signed-in Chrome, user/agent exclusive control epochs, site/origin grants, no cookie extraction and ambiguous external submits. Input control, observation permission and actual website action authority are three distinct checks. Browser page/model output cannot grant new scopes. Native harness parity does not excuse bypassing LiteCowork-mediated Effect/Grant policy.

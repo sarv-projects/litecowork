@@ -59,8 +59,8 @@ Do not include volatile timestamps/random IDs.
 | Secret/OAuth | revoked/expired | auth error | WAITING_RESOURCE; re-auth; new SecretLease |
 | BlobStore | unavailable | storage error | pause Artifact publication; retry; never create version referencing missing blob |
 | StateStore | unavailable | storage error | stop authoritative mutations; UI may show cached read-only state |
-| Mesh partition | transport/heartbeat | retain local safe work under policy; no conflicting new cross-runtime lease |
-| Hub unavailable | failed calls | cross-device coordination pauses; local policy governs existing attempts |
+| Mesh partition | transport/heartbeat loss | missed authenticated heartbeats or partitioned transport, checked against the Runtime lease/epoch | retain local safe work under policy; no conflicting new cross-runtime lease |
+| Hub unavailable | failed calls | bounded failed hub requests plus failed reachability/health checks | cross-device coordination pauses; local policy governs existing attempts |
 | Event projection | bug/corruption | checksum/invariant | rebuild projection from journal |
 | External effect | timeout after send | missing definitive response | mark AMBIGUOUS; reconcile before retry |
 | Verifier | crash | run timeout | retry verifier or alternate verifier; Task remains VERIFYING |
@@ -132,6 +132,8 @@ Budget exhaustion produces BLOCKED/NEEDS_USER with failure summary.
   is durable.
 - new lease epoch supersedes all older epochs.
 - stale runtime reconnect cannot mutate using cached authority.
+- Native external effects outside Core are classified `HANDOFF_REQUIRED`/`LOCAL_BOUND`
+  as appropriate and are not falsely fenced by a LiteCowork lease.
 
 ## Provider call circuit breaker
 
@@ -152,7 +154,6 @@ circuit is open.
 Circuit state is operational runtime health, not Task outcome or a CapabilityGrant. Its
 transition is versioned and emits `provider.circuit.changed.v1` so all projections report
 consistent availability after restart or replication.
-- native external effects outside Core are classified HANDOFF_REQUIRED/LOCAL_BOUND as appropriate and are not falsely fenced.
 
 ## Projection recovery
 
@@ -182,3 +183,26 @@ A Coworker run blocked by expired OAuth, missing connector, disabled Skill, unqu
 Recovery must distinguish **installation truth**, **authentication truth**, **Workspace
 binding authorization**, and **session readiness**. Repairing one never silently repairs
 or enables the others.
+
+
+## Connector, OAuth, and external-workflow recovery
+
+Connection/auth recovery follows [Connectors & Workflows](CONNECTORS-WORKFLOWS.md).
+
+- Lost OAuth callback/verifier/listener state creates a failed/expired AuthAttempt; never
+  reconstruct secret state from durable digests.
+- Token exchange succeeded but local Connection commit failed: do not expose Connected;
+  revoke/purge newly returned provider credentials best-effort and require safe retry.
+- Refresh invalid_grant/revocation -> REAUTH_REQUIRED; dependent work waits rather than
+  silently switching account.
+- Timeout after connector/workflow mutation -> Effect/Invocation remains ambiguous until
+  provider reconciliation or owner decision.
+- External workflow cancellation acknowledgement is not proof downstream effects stopped.
+- Provider run handle loss falls back to durable LiteCowork Invocation/Effect truth; it
+  cannot be guessed from Task status.
+- EventRelay loss/duplicates/reordering use receipt/idempotency/cursor rules and normal
+  Automation misfire policy rather than fabricating missed provider events.
+
+## V1 detailed design integration — 2026-10-12
+
+See V1-WORKFLOW-EVENT-LLD.md for cross-module retry/ambiguity table and CHROME-BROWSER-LLD.md for manual takeover epoch, form-edit invalidation and browser reconnect. Replaying agent/DOM actions blindly after uncertain external effect is forbidden. UI must retain saved draft and request identity; semantic results reproject without stream duplication.

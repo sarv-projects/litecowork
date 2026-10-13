@@ -29,6 +29,10 @@ export type RichPresentationRefView = {
 export type ConversationSnapshotView = {
   workspace_id: string;
   conversation_id: string;
+  /** Omitted only for the local empty state immediately after Conversation creation. */
+  projection_revision?: number;
+  stream_cursor?: string;
+  origin_sequence?: string;
   messages: ConversationMessageView[];
   next_cursor: string | null;
   active_turn: { status: string } | null;
@@ -61,7 +65,44 @@ export function appendConversationPage(
     seen.add(message.message_id);
     return true;
   });
-  return { ...current, messages: [...current.messages, ...additional], next_cursor: page.next_cursor };
+  return { ...current, ...page, messages: [...current.messages, ...additional] };
+}
+
+/**
+ * Apply a fresh live-window snapshot without discarding pages the user already loaded.
+ * Conversation messages are append-only, so unseen committed messages can be merged by
+ * stable identity while refreshed rows replace their prior presentation references.
+ */
+export function mergeConversationStreamSnapshot(
+  current: ConversationSnapshotView | null,
+  live: ConversationSnapshotView,
+  workspaceId: string,
+  conversationId: string,
+): ConversationSnapshotView {
+  if (live.workspace_id !== workspaceId || live.conversation_id !== conversationId
+    || (current && (current.workspace_id !== workspaceId || current.conversation_id !== conversationId))) {
+    throw new Error("Live Conversation snapshot does not match the selected Conversation.");
+  }
+  const byId = new Map((current?.messages ?? []).map(message => [message.message_id, message]));
+  for (const message of live.messages) byId.set(message.message_id, message);
+  const messages = [...byId.values()].sort((left, right) =>
+    left.created_at.localeCompare(right.created_at) || left.message_id.localeCompare(right.message_id));
+  let nextCursor = current?.stream_cursor === undefined ? live.next_cursor : current.next_cursor;
+  if (current && current.stream_cursor !== undefined && current.next_cursor !== null) {
+    const currentCursorIndex = messages.findIndex(message => message.message_id === current.next_cursor);
+    const liveCursorIndex = live.next_cursor === null ? -1 : messages.findIndex(message => message.message_id === live.next_cursor);
+    if (liveCursorIndex > currentCursorIndex) nextCursor = live.next_cursor;
+  }
+  return {
+    ...current,
+    ...live,
+    workspace_id: workspaceId,
+    conversation_id: conversationId,
+    messages,
+    // The live stream snapshot is the first bounded page. Keep the deeper
+    // forward-pagination position already reached by the selected history.
+    next_cursor: nextCursor,
+  };
 }
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -107,7 +148,12 @@ export function parseConversationList(value: unknown, workspaceId: string): Conv
 export function parseConversationSnapshot(value: unknown, workspaceId: string, conversationId: string): ConversationSnapshotView {
   if (!record(value) || value.workspace_id !== workspaceId || value.conversation_id !== conversationId
     || !Array.isArray(value.items) || value.items.length > 100
-    || !(value.active_turn === null || record(value.active_turn))) throw new Error("Conversation history is invalid.");
+    || !(value.active_turn === null || record(value.active_turn))
+    || !Number.isSafeInteger(value.projection_revision) || (value.projection_revision as number) < 1
+    || !boundedText(value.stream_cursor, 2048)
+    || typeof value.origin_sequence !== "string" || !/^(0|[1-9][0-9]{0,18})$/.test(value.origin_sequence)) {
+    throw new Error("Conversation history or source frontier is invalid.");
+  }
   if (value.next_cursor !== undefined && value.next_cursor !== null
     && !(boundedText(value.next_cursor) && /^[A-Za-z0-9_-]+$/.test(value.next_cursor))) {
     throw new Error("Conversation pagination cursor is invalid.");
@@ -135,5 +181,14 @@ export function parseConversationSnapshot(value: unknown, workspaceId: string, c
       rich_presentation: parseRichPresentationRef(entry.rich_presentation, message.message_id),
     };
   });
-  return { workspace_id: workspaceId, conversation_id: conversationId, messages, next_cursor: (value.next_cursor as string | null | undefined) ?? null, active_turn: value.active_turn as { status: string } | null };
+  return {
+    workspace_id: workspaceId,
+    conversation_id: conversationId,
+    projection_revision: value.projection_revision as number,
+    stream_cursor: value.stream_cursor,
+    origin_sequence: value.origin_sequence,
+    messages,
+    next_cursor: (value.next_cursor as string | null | undefined) ?? null,
+    active_turn: value.active_turn as { status: string } | null,
+  };
 }

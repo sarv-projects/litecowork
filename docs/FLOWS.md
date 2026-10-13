@@ -30,19 +30,14 @@ UI: show the selected policy and its scope; an archived Workspace is visibly rea
 Actors: User, Operator UI, ConversationService, AgentTurnCoordinator,
 AgentSessionSupervisor, active AgentBinding.
 
-Preconditions: Workspace is ACTIVE; an enabled Conversation override or Workspace-default
-AgentBinding and compatible AgentEndpoint are available; the user message and selected
-context pass Workspace scope. If none is eligible, the draft is retained and the user is
-directed to connect/enable/select an AgentBinding before a turn is created.
+Preconditions: Workspace is ACTIVE; for current ordinary Conversations, an explicit Conversation override or Workspace default is selected. For the accepted **Coworker-owned Conversation target**, select explicit Conversation override, else immutable owning Coworker's current allowed default binding, else Workspace default. First configured binding must be eligible, enabled and compatible; never skip an invalid selection to a different provider. Selected context also passes Coworker/Workspace/source checks. Without an eligible binding, retain draft and request setup before persisting a turn. The Coworker resolution branch is not claimed served until Coworker association/API promotion.
 
 1. User submits a message. ConversationService appends the ConversationMessage and
    ConversationTurn before dispatch.
 2. AgentTurnCoordinator starts a fresh `AgentSessionScope.CONVERSATION` session bound to
    this ConversationTurn;
    it has a `conversation_id` and no Task, Step, Attempt, lease, or Environment.
-3. ContextService sends the current WorkspaceInstructionRevision, selected visible
-   messages, and explicitly attached ResourceRefs. No task-only material is implicitly
-   included.
+3. ContextService sends the current WorkspaceInstructionRevision, selected visible messages and explicitly attached ResourceRefs. Once Coworker-owned Conversation admission is qualified, it additionally resolves the immutable Conversation Coworker owner, its pinned/eligible role instruction and *only the scoped context actually selected by native-agent tool invocation or explicitly approved prefetch policy*. Low-trust Memory/ContextDocuments are separately source-grant/revocation checked, size-bounded, and recorded in ContextUsed receipts; native private memory is untouched. No task-only material is implicitly included.
 4. The agent produces a response. ConversationService appends it with the producing
    AgentSession, AgentBinding, and ConversationTurn provenance. The coordinator observes
    adapter quiescence, closes the session, and releases its host-use reference before the
@@ -69,8 +64,7 @@ it does not fail a Task. An explicit retry moves that same turn back to RUNNING,
 its retry ordinal, and creates a replacement Conversation session. Prior partial agent
 output remains provenance-tagged and is not treated as a final response.
 
-UI: ordinary conversation; no Task card or fake Live Desk lane. Show the selected agent
-only when the user opens advanced details.
+UI: ordinary conversation; no Task card or fake Live Desk lane. The current selected native agent, compatible model and reasoning/mode controls remain discoverable in the shared composer (per NATIVE-COMPOSER-LLD), with advanced native details under disclosure. Do not hide agent identity until a user opens advanced settings.
 
 ## F02 — Conversation materializes a Task
 
@@ -80,8 +74,8 @@ first configured choice is authoritative; if unavailable, return `AGENT_UNAVAILA
 keep the composer draft, and create no Task or ConversationTurn. First-use setup runs
 before the user resubmits.
 
-1. User asks for outcome-oriented work or explicitly creates a Task from a message.
-2. ConversationService persists the ConversationMessage.
+1. User asks for outcome-oriented work or explicitly creates a Task from a message. When source Conversation has immutable owner_coworker_id, TaskService derives that exact origin server-side. A client-supplied different/null Coworker is rejected; a reviewed cross-Coworker handoff creates a distinct destination Task with exact source refs and independent grants.
+2. ConversationService persists the ConversationMessage (or verifies and reuses an already committed source message under the same Workspace and origin).
 3. TaskService creates Task + TaskSpecRevision(1), pins the current
    WorkspaceInstructionRevision, and binds the source message in one transaction; if the
    message and Task originate in one command, both commit together.
@@ -2174,11 +2168,20 @@ at most 100 candidates per 30-second tick. Cleanup failures are non-fatal to Ope
 availability and leave the fence intact for retry. The local implementation journals
 session creation and lifecycle transitions, but not operational reservations/GC state.
 
+The daemon shares a per-Workspace/digest operation mutex across store clones. A chunk writer
+holds it from reservation through blob readback and receipt commit; the collector holds it
+from physical removal through durable fence release. A collector may claim while a writer is
+in flight, but the fence then makes that writer's receipt fail before the collector removes
+the object. This prevents a delayed BlobStore put from recreating an untracked orphan after
+GC has deleted it.
+
 **Tests to add in the later verification pass:** Crash after reservation but before blob
 write; crash after encrypted blob write but before receipt; shared-digest reservation and
 accepted-reference retention; collector versus concurrent reservation/receipt; collector
 restart with a persisted DELETING fence; missing-object retry; BlobStore remove failure
-keeps the fence and retries; bounded batches and expiry order; zero-byte commit; exact 4-MiB and final
+keeps the fence and retries; a barrier-controlled delayed BlobStore put racing physical
+collection must return Busy and leave no untracked object after fence release; bounded batches
+and expiry order; zero-byte commit; exact 4-MiB and final
 short chunk boundaries; 100-MiB maximum and +1 byte rejection; missing/out-of-order chunk;
 wrong total/range/index; incorrect per-chunk and whole-content hashes; same-index exact
 replay and changed-byte conflict; same chunk RequestId with changed payload conflicts;
@@ -2886,9 +2889,12 @@ watching/indexing are not implemented by this source slice.
    the saved directory without following symlinks, checks its current file identity against
    the private prior binding and keyed Resource projection, and retains the verified handle
    through the atomic status/binding/event/receipt commit. The transaction also requires the
-   ResourceLocation to be `AVAILABLE`, the current Runtime incarnation, and `READY` or
-   `DEGRADED` Runtime state. `UNAVAILABLE` is recovered only by Runtime identity
-   revalidation; a successful startup revalidation does not resume a previously paused root.
+   ResourceLocation to be `AVAILABLE` and the current Runtime incarnation to be `READY` or
+   `DEGRADED`. The prior binding pair may be from an earlier Runtime incarnation; a
+   successful commit refreshes both bindings for the current incarnation. If a PAUSED root's
+   ResourceLocation is `UNAVAILABLE`, Runtime identity revalidation must restore availability
+   before the owner can resume it. A root whose status is `UNAVAILABLE` cannot be resumed by
+   this action; successful startup revalidation does not resume a previously paused root.
    An exact idempotent replay returns its original receipt without another filesystem read.
    This check proves identity at resume admission only. Future filesystem consumers must
    independently revalidate/use a qualified handle-based provider; no watcher/content reader
@@ -2915,8 +2921,10 @@ implicit resume, response loss after commit, malformed/mismatched UI response, W
 switch during request, and an owner workflow that pauses a folder, restarts LiteCowork,
 confirms identity recovery leaves it paused, then explicitly resumes it. Also qualify and
 test replacement of the directory after startup revalidation and before a fresh resume; the
-resume path must reject that swap and persist the resulting unavailable location. Verify
-that exact replay does not re-open the path or mutate state.
+resume path must reject that swap, preserve PAUSED intent, and persist the resulting
+unavailable location. After restoring the original folder, verify Runtime revalidation
+restores availability before a separate owner Resume. Verify that exact replay does not
+re-open the path or mutate state.
 
 ## F105 — Pin an exact Coworker revision to a paused Automation
 
@@ -4379,3 +4387,34 @@ as native and do not receive fabricated LiteCowork/LiteSPM Effect evidence.
 ## Coworker chat-first and proactive responsibility target flows
 
 The accepted user-experience flows CF01–CF18 are specified in [Coworker flows](COWORKER-FLOWS.md), including creation, optional setup, task-time connectors, reviewed schedules, proactive no-change, Needs You, sleep/recovery, external sends, revocation, chief switch, drift, pause, verification, notifications, handoffs, generated integrations, quiet memory, and global stop. These are proposed reconciliation requirements and NOT existing executable F-number flow implementations. Existing F18/F19/F40/F41/F55/F72 remain the transactional owners; new contracts must pass schema/authorization/replay tests before activation. The concrete UI control matrix is [implementation/UI](../implementation/UI.md).
+
+
+## Connector/workflow/learning target flow pack — 2026-10-10
+
+The following accepted target flows are fully specified, including pseudocode and edge-case
+matrices, in [Connectors & Workflows](CONNECTORS-WORKFLOWS.md) and
+[Learning](LEARNING.md). They are intentionally not assigned new F-numbers until the
+owning implementation stories promote related machine contracts and coverage rows.
+
+1. Direct public-desktop OAuth: catalog -> PKCE/loopback -> SecretStore -> Connection.
+2. Token refresh/revoke/scope downgrade while a Task is waiting or running.
+3. Provider/EventRelay hint while local Runtime sleeps -> dedupe -> authorized fetch ->
+   canonical AutomationOccurrence.
+4. External workflow capability: Task Step -> CapabilityInvocation -> backend run ->
+   Effect reconciliation -> verifier.
+5. Activepieces community Piece qualification -> normalized connector descriptors ->
+   isolated fixture -> LiteSPM publication.
+6. Automation run -> user chooses Continue -> one idempotent Task follow-up Conversation,
+   with qualified native resume or durable-context rebuild.
+7. User correction -> LearningCandidate -> policy-qualified private memory commit.
+8. Behavioral correction -> reviewed typed InstructionPatch -> CoworkerRevision.
+9. Repeated successful procedure -> redacted/tested SkillProposal -> explicit LiteSPM
+   publication.
+10. Code task launch preset -> same Conversation/Task runtime, not a separate Code mode.
+
+When implementation starts, promote each target into numbered flows with exact owning
+stories, SQL/OpenAPI/events and CODE/SYSTEM/USER evidence.
+
+## V1 detailed design integration — 2026-10-12
+
+Implementation V1-DESIGN-COVERAGE.md adds UIV1-001–UIV1-158 user and failure journeys for shell, native composer / @, agent switching, Chrome import/attach, takeover, Workbench and output conformance. The current canonical numbered flows remain primary; map new UAT cases to flow/story machine coverage when implementing. Do not treat this addendum as a new standalone flow registry.

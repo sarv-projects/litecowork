@@ -255,3 +255,38 @@ bytes never are.
 **Native surface** — Agent-owned slash commands, @ references, input types,
 provider/model/session controls, extensions, subagents, config and related harness behavior
 preserved by LiteCowork.
+
+
+## Connector, workflow, and learning terms
+
+**ConnectorPackage** — LiteSPM-managed package describing provider authentication, actions,
+triggers and resource normalization. Installation/connection is not authority.
+
+**AuthRecipe** — provider-specific recipe for public PKCE, confidential OAuth, device code,
+API key, service account, native session or no-auth setup.
+
+**AuthAttempt** — bounded connection-setup transaction containing non-secret state/digests;
+OAuth codes, PKCE verifier and token bytes are never durable domain fields.
+
+**AuthBackendAdapter** — optional provider that performs credential/auth flow for a
+Connection. It is not required by default local connector architecture.
+
+**WorkflowBackendAdapter** — adapter to an existing deterministic workflow system. One run
+is a capability execution, not a LiteCowork Task/Plan replacement.
+
+**EventRelay** — optional service carrying minimal signed event/wake hints when a TriggerHost
+is unreachable. It is not a general account token vault or Task authority.
+
+**LearningCandidate** — typed, provenance-bound proposal derived from eligible correction,
+feedback, Task outcome or demonstration. It has no authority until category policy commits
+or reviews it.
+
+**CoworkerLearningPolicy** — versioned policy controlling whether narrowly safe private
+memory may auto-commit. It is independent of proactive action autonomy.
+
+**Task follow-up Conversation** — one idempotent Conversation linked to a Task when the user
+chooses Continue. It may reuse a qualified native resume point but durable Task context is
+the correctness floor.
+
+**Code task preset** — UI preset for repository/folder/agent/worktree/verification defaults;
+not a separate mode, store, Conversation type or scheduler.

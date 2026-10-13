@@ -15,35 +15,63 @@ pub(crate) struct ArtifactReadResponse {
 }
 
 fn valid_id(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 160 && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    !value.is_empty()
+        && value.len() <= 160
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 #[tauri::command]
 pub(crate) async fn artifact_library_command(
-    app: AppHandle, workspace_id: String, artifact_id: String, action: String,
-    expected_version: u64, idempotency_key: String,
+    app: AppHandle,
+    workspace_id: String,
+    artifact_id: String,
+    action: String,
+    expected_version: u64,
+    idempotency_key: String,
 ) -> Result<ArtifactReadResponse, String> {
-    if !valid_id(&workspace_id) || !valid_id(&artifact_id)
+    if !valid_id(&workspace_id)
+        || !valid_id(&artifact_id)
         || !matches!(action.as_str(), "promote" | "archive")
-        || expected_version == 0 || expected_version > 9_007_199_254_740_991
-        || idempotency_key.is_empty() || idempotency_key.len() > 128
+        || expected_version == 0
+        || expected_version > 9_007_199_254_740_991
+        || idempotency_key.is_empty()
+        || idempotency_key.len() > 128
         || !idempotency_key.bytes().all(|byte| byte.is_ascii_graphic())
-    { return Err("Artifact Library request is invalid".to_owned()); }
+    {
+        return Err("Artifact Library request is invalid".to_owned());
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let (client, _) = operator_client(&app)?;
-        let response = client.post(format!("/v1/artifacts/{artifact_id}/{action}"))
+        let response = client
+            .post(format!("/v1/artifacts/{artifact_id}/{action}"))
             .header("X-Workspace-ID", workspace_id)
             .header("If-Match", format!("\"{expected_version}\""))
             .header("Idempotency-Key", idempotency_key)
-            .send().map_err(|_| "Local Artifact Library service is unavailable".to_owned())?;
+            .send()
+            .map_err(|_| "Local Artifact Library service is unavailable".to_owned())?;
         let status = response.status();
-        let content_type = response.header("content-type").unwrap_or("application/json").to_owned();
+        let content_type = response
+            .header("content-type")
+            .unwrap_or("application/json")
+            .to_owned();
         let mut bytes = Vec::new();
-        response.take(MAX_ARTIFACT_METADATA_BYTES as u64 + 1).read_to_end(&mut bytes)
+        response
+            .take(MAX_ARTIFACT_METADATA_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
             .map_err(|_| "Artifact Library response could not be read".to_owned())?;
-        if bytes.len() > MAX_ARTIFACT_METADATA_BYTES { return Err("Artifact Library response exceeds its size limit".to_owned()); }
-        Ok(ArtifactReadResponse { status, content_type, body_base64: BASE64_STANDARD.encode(bytes) })
-    }).await.map_err(|_| "Artifact Library request did not complete".to_owned())?
+        if bytes.len() > MAX_ARTIFACT_METADATA_BYTES {
+            return Err("Artifact Library response exceeds its size limit".to_owned());
+        }
+        Ok(ArtifactReadResponse {
+            status,
+            content_type,
+            body_base64: BASE64_STANDARD.encode(bytes),
+        })
+    })
+    .await
+    .map_err(|_| "Artifact Library request did not complete".to_owned())?
 }
 
 pub(crate) const MAX_LOCAL_SAVE_BYTES: u64 = 10 * 1024 * 1024;
@@ -96,7 +124,9 @@ pub(crate) async fn artifact_save_as(
             || !valid_id(resource_id)
             || current_version < version
         {
-            return Err("Artifact identity or Workspace does not match the selected version".to_owned());
+            return Err(
+                "Artifact identity or Workspace does not match the selected version".to_owned(),
+            );
         }
 
         let version_path = format!("/v1/artifacts/{artifact_id}/versions/{version}");
@@ -144,9 +174,18 @@ pub(crate) async fn artifact_save_as(
             .get("storage_ref")
             .and_then(serde_json::Value::as_object)
             .ok_or_else(|| "Artifact blob metadata is invalid".to_owned())?;
-        if storage_ref.get("digest").and_then(serde_json::Value::as_str) != Some(content_digest)
-            || storage_ref.get("size_bytes").and_then(serde_json::Value::as_u64) != Some(content_size)
-            || storage_ref.get("media_type").and_then(serde_json::Value::as_str) != Some(media_type)
+        if storage_ref
+            .get("digest")
+            .and_then(serde_json::Value::as_str)
+            != Some(content_digest)
+            || storage_ref
+                .get("size_bytes")
+                .and_then(serde_json::Value::as_u64)
+                != Some(content_size)
+            || storage_ref
+                .get("media_type")
+                .and_then(serde_json::Value::as_str)
+                != Some(media_type)
         {
             return Err("Artifact blob metadata does not match its version".to_owned());
         }
@@ -162,11 +201,10 @@ pub(crate) async fn artifact_save_as(
         )?;
 
         let safe_name = safe_export_name(display_name, &artifact_id, version);
-        let Some(destination) = rfd::FileDialog::new()
-            .set_file_name(&safe_name)
-            .save_file()
-        else {
-            return Ok(ArtifactSaveAsResult { status: "CANCELLED" });
+        let Some(destination) = rfd::FileDialog::new().set_file_name(&safe_name).save_file() else {
+            return Ok(ArtifactSaveAsResult {
+                status: "CANCELLED",
+            });
         };
 
         // The Operator's ArtifactReadStore resolves this exact ArtifactVersion and
@@ -226,7 +264,8 @@ fn get_json_bounded(
     if body.len() > MAX_ARTIFACT_METADATA_BYTES {
         return Err("Artifact metadata exceeds the desktop read limit".to_owned());
     }
-    serde_json::from_slice(&body).map_err(|_| "Artifact metadata has an unsupported shape".to_owned())
+    serde_json::from_slice(&body)
+        .map_err(|_| "Artifact metadata has an unsupported shape".to_owned())
 }
 
 fn verify_artifact_resource_revision(
@@ -286,14 +325,22 @@ fn verify_artifact_resource_revision(
                 return Err("Artifact ResourceRevision belongs to a different Resource".to_owned());
             }
             if found_revision_id == resource_revision_id {
-                if revision.get("content_digest").and_then(serde_json::Value::as_str)
+                if revision
+                    .get("content_digest")
+                    .and_then(serde_json::Value::as_str)
                     != Some(content_digest)
-                    || revision.get("size_bytes").and_then(serde_json::Value::as_u64)
+                    || revision
+                        .get("size_bytes")
+                        .and_then(serde_json::Value::as_u64)
                         != Some(content_size)
-                    || revision.get("media_type").and_then(serde_json::Value::as_str)
+                    || revision
+                        .get("media_type")
+                        .and_then(serde_json::Value::as_str)
                         != Some(media_type)
                 {
-                    return Err("Artifact ResourceRevision metadata does not match its version".to_owned());
+                    return Err(
+                        "Artifact ResourceRevision metadata does not match its version".to_owned(),
+                    );
                 }
                 return Ok(());
             }
@@ -306,9 +353,14 @@ fn verify_artifact_resource_revision(
             Some(value)
                 if !value.is_empty()
                     && value.len() <= 4096
-                    && seen_cursors.insert(value.clone()) => cursor = Some(value),
+                    && seen_cursors.insert(value.clone()) =>
+            {
+                cursor = Some(value)
+            }
             Some(_) => return Err("Artifact ResourceRevision pagination is invalid".to_owned()),
-            None => return Err("Artifact ResourceRevision does not exist in this Workspace".to_owned()),
+            None => {
+                return Err("Artifact ResourceRevision does not exist in this Workspace".to_owned());
+            }
         }
     }
     Err("Artifact ResourceRevision is beyond the bounded desktop history lookup".to_owned())
@@ -354,7 +406,9 @@ fn verify_artifact_download(
     bytes: &[u8],
 ) -> Result<(), String> {
     if response_media_type.is_none_or(|value| !value.eq_ignore_ascii_case(expected_media_type)) {
-        return Err("Downloaded Artifact media type does not match its immutable version".to_owned());
+        return Err(
+            "Downloaded Artifact media type does not match its immutable version".to_owned(),
+        );
     }
     if response_content_length != Some(expected_size) || bytes.len() as u64 != expected_size {
         return Err("Downloaded Artifact size does not match its immutable version".to_owned());
@@ -373,18 +427,25 @@ fn safe_export_name(display_name: &str, artifact_id: &str, version: u64) -> Stri
         .chars()
         .filter(|character| {
             !character.is_control()
-                && !matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
+                && !matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
         })
         .collect();
     safe = safe.trim().trim_end_matches('.').to_owned();
     if safe.is_empty() || safe == "." || safe == ".." {
         return format!("artifact-{artifact_id}-v{version}");
     }
-    let (stem, extension) = safe.rsplit_once('.').filter(|(stem, extension)| !stem.is_empty() && !extension.is_empty())
+    let (stem, extension) = safe
+        .rsplit_once('.')
+        .filter(|(stem, extension)| !stem.is_empty() && !extension.is_empty())
         .map(|(stem, extension)| (stem.to_owned(), format!(".{extension}")))
         .unwrap_or((safe, String::new()));
     let suffix = format!("-v{version}");
-    let maximum_stem_bytes = 240_usize.saturating_sub(suffix.len()).saturating_sub(extension.len());
+    let maximum_stem_bytes = 240_usize
+        .saturating_sub(suffix.len())
+        .saturating_sub(extension.len());
     let mut stem = stem;
     if stem.len() > maximum_stem_bytes {
         let mut boundary = maximum_stem_bytes;
@@ -431,7 +492,8 @@ pub(crate) fn write_export_atomically(destination: &Path, bytes: &[u8]) -> Resul
             Err(_) => return Err("File could not be saved to the selected location".to_owned()),
         }
     }
-    let temporary = temporary.ok_or_else(|| "File could not be saved to the selected location".to_owned())?;
+    let temporary =
+        temporary.ok_or_else(|| "File could not be saved to the selected location".to_owned())?;
     if fs::rename(&temporary, destination).is_err() {
         let _ = fs::remove_file(&temporary);
         return Err("File could not be saved to the selected location".to_owned());
@@ -478,22 +540,44 @@ mod save_as_tests {
     fn native_save_as_rejects_media_and_size_mismatches() {
         let expected_digest = format!("sha256:{:x}", sha2::Sha256::digest(b"expected"));
         assert!(verify_artifact_download(
-            Some("application/octet-stream"), Some(8), "text/plain", 8, &expected_digest, b"expected"
-        ).is_err());
+            Some("application/octet-stream"),
+            Some(8),
+            "text/plain",
+            8,
+            &expected_digest,
+            b"expected"
+        )
+        .is_err());
         assert!(verify_artifact_download(
-            Some("text/plain"), Some(7), "text/plain", 8, &expected_digest, b"expected"
-        ).is_err());
+            Some("text/plain"),
+            Some(7),
+            "text/plain",
+            8,
+            &expected_digest,
+            b"expected"
+        )
+        .is_err());
         assert!(verify_artifact_download(
-            Some("text/plain"), Some(8), "text/plain", 8, &expected_digest, b"short"
-        ).is_err());
+            Some("text/plain"),
+            Some(8),
+            "text/plain",
+            8,
+            &expected_digest,
+            b"short"
+        )
+        .is_err());
     }
 
     #[test]
     fn failed_native_save_as_rename_preserves_existing_destination() {
         use std::{fs, time::SystemTime};
 
-        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let root = std::env::temp_dir().join(format!("litecowork-save-as-{}-{nonce}", std::process::id()));
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("litecowork-save-as-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let destination = root.join("existing");
         fs::create_dir(&destination).unwrap();
@@ -521,39 +605,83 @@ pub(crate) async fn artifact_read(
     limit: Option<u32>,
 ) -> Result<ArtifactReadResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if !valid_id(&workspace_id) || artifact_id.as_deref().is_some_and(|id| !valid_id(id)) || task_id.as_deref().is_some_and(|id| !valid_id(id))
-            || cursor.as_ref().is_some_and(|value| value.is_empty() || value.len() > 2048)
+        if !valid_id(&workspace_id)
+            || artifact_id.as_deref().is_some_and(|id| !valid_id(id))
+            || task_id.as_deref().is_some_and(|id| !valid_id(id))
+            || cursor
+                .as_ref()
+                .is_some_and(|value| value.is_empty() || value.len() > 2048)
             || limit.is_some_and(|value| !(1..=200).contains(&value))
-            || library_status.as_deref().is_some_and(|status| !["TRANSIENT", "SAVED", "ARCHIVED"].contains(&status))
-        { return Err("Artifact selection is invalid".to_owned()); }
+            || library_status
+                .as_deref()
+                .is_some_and(|status| !["TRANSIENT", "SAVED", "ARCHIVED"].contains(&status))
+        {
+            return Err("Artifact selection is invalid".to_owned());
+        }
         let artifact = artifact_id.as_deref().unwrap_or("");
         let path = match operation.as_str() {
             "list" => "/v1/artifacts".to_owned(),
             "library" => "/v1/library".to_owned(),
-            "task" if task_id.is_some() => format!("/v1/tasks/{}/artifacts", task_id.as_deref().unwrap_or("")),
+            "task" if task_id.is_some() => {
+                format!("/v1/tasks/{}/artifacts", task_id.as_deref().unwrap_or(""))
+            }
             "get" if artifact_id.is_some() => format!("/v1/artifacts/{artifact}"),
-            "version" | "content" if artifact_id.is_some() && version.is_some_and(|value| value > 0 && value <= 9_007_199_254_740_991) => {
-                let suffix = if operation == "content" { "/content" } else { "" };
-                format!("/v1/artifacts/{artifact}/versions/{}{suffix}", version.unwrap_or(0))
+            "version" | "content"
+                if artifact_id.is_some()
+                    && version.is_some_and(|value| value > 0 && value <= 9_007_199_254_740_991) =>
+            {
+                let suffix = if operation == "content" {
+                    "/content"
+                } else {
+                    ""
+                };
+                format!(
+                    "/v1/artifacts/{artifact}/versions/{}{suffix}",
+                    version.unwrap_or(0)
+                )
             }
             _ => return Err("Artifact operation is unavailable".to_owned()),
         };
         let (client, _) = operator_client(&app)?;
         let mut request = client.get(path).header("X-Workspace-ID", workspace_id);
         if matches!(operation.as_str(), "list" | "library") {
-            if let Some(status) = library_status { request = request.query(&[("library_status", status)]); }
-            if let Some(cursor) = cursor { request = request.query(&[("cursor", cursor)]); }
+            if let Some(status) = library_status {
+                request = request.query(&[("library_status", status)]);
+            }
+            if let Some(cursor) = cursor {
+                request = request.query(&[("cursor", cursor)]);
+            }
             request = request.query(&[("limit", limit.unwrap_or(50).to_string())]);
         }
-        let response = request.send().map_err(|_| "Local Artifact service is unavailable".to_owned())?;
+        let response = request
+            .send()
+            .map_err(|_| "Local Artifact service is unavailable".to_owned())?;
         let status = response.status();
-        let content_type = response.header("content-type").unwrap_or("application/octet-stream").to_owned();
-        let maximum = if operation == "content" && response.is_success() { 10 * 1024 * 1024 } else { 1024 * 1024 };
+        let content_type = response
+            .header("content-type")
+            .unwrap_or("application/octet-stream")
+            .to_owned();
+        let maximum = if operation == "content" && response.is_success() {
+            10 * 1024 * 1024
+        } else {
+            1024 * 1024
+        };
         let mut bytes = Vec::new();
-        response.take(maximum as u64 + 1).read_to_end(&mut bytes).map_err(|_| "Artifact response could not be read".to_owned())?;
-        if bytes.len() > maximum { return Err("Artifact response exceeds the desktop transfer limit".to_owned()); }
-        Ok(ArtifactReadResponse { status, content_type, body_base64: BASE64_STANDARD.encode(bytes) })
-    }).await.map_err(|_| "Artifact request did not complete".to_owned())?
+        response
+            .take(maximum as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "Artifact response could not be read".to_owned())?;
+        if bytes.len() > maximum {
+            return Err("Artifact response exceeds the desktop transfer limit".to_owned());
+        }
+        Ok(ArtifactReadResponse {
+            status,
+            content_type,
+            body_base64: BASE64_STANDARD.encode(bytes),
+        })
+    })
+    .await
+    .map_err(|_| "Artifact request did not complete".to_owned())?
 }
 
 /// Returns only immutable publication preconditions; the bridge never accepts a path,
@@ -579,18 +707,29 @@ pub(crate) async fn artifact_append_text_version(
     idempotency_key: String,
     content: String,
 ) -> Result<ArtifactReadResponse, String> {
-    if expected_artifact_version == 0 || expected_content_version == 0 || expected_resource_version == 0
-        || idempotency_key.is_empty() || idempotency_key.len() > 128
+    if expected_artifact_version == 0
+        || expected_content_version == 0
+        || expected_resource_version == 0
+        || idempotency_key.is_empty()
+        || idempotency_key.len() > 128
         || !idempotency_key.bytes().all(|byte| byte.is_ascii_graphic())
         || content.len() > 1_048_576
-    { return Err("Artifact text publication request is invalid".to_owned()); }
+    {
+        return Err("Artifact text publication request is invalid".to_owned());
+    }
     let body = serde_json::json!({
         "expected_content_version": expected_content_version,
         "expected_resource_version": expected_resource_version,
         "expected_parent_resource_revision_id": expected_parent_resource_revision_id,
         "content": content,
     });
-    artifact_operator_request(app, workspace_id, artifact_id, Some((expected_artifact_version, idempotency_key, body))).await
+    artifact_operator_request(
+        app,
+        workspace_id,
+        artifact_id,
+        Some((expected_artifact_version, idempotency_key, body)),
+    )
+    .await
 }
 
 async fn artifact_operator_request(
@@ -612,16 +751,31 @@ async fn artifact_operator_request(
                 .header("Idempotency-Key", request_id)
                 .json(&body)
                 .send(),
-            None => client.get(format!("/v1/artifacts/{artifact_id}/edit-head"))
+            None => client
+                .get(format!("/v1/artifacts/{artifact_id}/edit-head"))
                 .header("X-Workspace-ID", &workspace_id)
                 .send(),
-        }.map_err(|_| "Local Artifact service is unavailable".to_owned())?;
+        }
+        .map_err(|_| "Local Artifact service is unavailable".to_owned())?;
         let status = response.status();
-        let content_type = response.header("content-type").unwrap_or("application/json").to_owned();
+        let content_type = response
+            .header("content-type")
+            .unwrap_or("application/json")
+            .to_owned();
         let mut bytes = Vec::new();
-        response.take(1024 * 1024 + 1).read_to_end(&mut bytes)
+        response
+            .take(1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
             .map_err(|_| "Artifact response could not be read".to_owned())?;
-        if bytes.len() > 1024 * 1024 { return Err("Artifact response exceeds the desktop transfer limit".to_owned()); }
-        Ok(ArtifactReadResponse { status, content_type, body_base64: BASE64_STANDARD.encode(bytes) })
-    }).await.map_err(|_| "Artifact request did not complete".to_owned())?
+        if bytes.len() > 1024 * 1024 {
+            return Err("Artifact response exceeds the desktop transfer limit".to_owned());
+        }
+        Ok(ArtifactReadResponse {
+            status,
+            content_type,
+            body_base64: BASE64_STANDARD.encode(bytes),
+        })
+    })
+    .await
+    .map_err(|_| "Artifact request did not complete".to_owned())?
 }

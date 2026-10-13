@@ -705,15 +705,14 @@ impl EnvironmentLifecycleRequest {
                 "READY transition requires a Runtime-local provider binding; other transitions must not supply one".to_owned(),
             ));
         }
-        if let Some(binding) = &provider_binding {
-            if binding.environment_id != environment_id
+        if let Some(binding) = &provider_binding
+            && (binding.environment_id != environment_id
                 || binding.runtime_id != proposed.identity.runtime_id
-                || binding.provider_kind != proposed.config.provider_kind
-            {
-                return Err(StoreError::Invalid(
-                    "provider binding does not match the Environment identity".to_owned(),
-                ));
-            }
+                || binding.provider_kind != proposed.config.provider_kind)
+        {
+            return Err(StoreError::Invalid(
+                "provider binding does not match the Environment identity".to_owned(),
+            ));
         }
         Ok(Self {
             identity,

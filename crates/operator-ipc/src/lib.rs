@@ -7,10 +7,16 @@
 pub mod async_io;
 #[cfg(unix)]
 pub mod unix;
+#[cfg(any(windows, test))]
+pub mod windows;
 
-/// True only where this crate provides an OS-authenticated Unix socket transport.
+/// True only where this crate provides an OS-authenticated local IPC transport.
 /// Unsupported platforms must fail closed; no TCP or bearer fallback is provided.
-pub const OS_LOCAL_IPC_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+pub const OS_LOCAL_IPC_SUPPORTED: bool = cfg!(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows"
+));
 
 /// Explicit platform gate for callers that must not substitute another transport.
 pub fn require_os_local_ipc() -> Result<(), UnsupportedPlatform> {
@@ -50,6 +56,13 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const PRIVATE_LOCAL_ROOT_SELECTION_PATH: &str = "/__litecowork_local/workspace-root-selection";
 pub const MAX_HEADER_BYTES: usize = 16 * 1024;
 pub const MAX_BODY_BYTES: usize = 100 * 1024 * 1024;
+/// The subscription document is deliberately much smaller than ordinary request bodies.
+pub const MAX_STREAM_SUBSCRIBE_BYTES: usize = 32 * 1024;
+/// Maximum payload retained for one local Operator stream message.
+pub const MAX_STREAM_FRAME_BYTES: usize = 1024 * 1024;
+/// The stream contract bounds each output write so slow clients cannot retain a
+/// Runtime worker indefinitely.
+pub const STREAM_WRITE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 pub const MAX_REQUEST_ID_BYTES: usize = 128;
 pub const MAX_PATH_BYTES: usize = 8 * 1024;
 pub const MAX_HEADER_COUNT: usize = 32;
@@ -155,6 +168,20 @@ pub struct ResponseFrame {
     pub header: ResponseHeader,
     body: bytes::Bytes,
     _permit: Option<BodyBudgetPermit>,
+}
+
+/// One bounded stream payload whose in-flight body budget remains reserved while
+/// the decoded message is retained by its caller.
+#[derive(Debug)]
+pub struct StreamMessage {
+    body: bytes::Bytes,
+    _permit: BodyBudgetPermit,
+}
+
+impl StreamMessage {
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
 }
 
 impl ResponseFrame {
@@ -471,10 +498,9 @@ fn validate_response_fields(header: &ResponseHeader) -> Result<(), ProtocolError
         .headers
         .iter()
         .find(|header| header.name.eq_ignore_ascii_case("content-length"))
+        && content_length.value.parse::<u64>().ok() != Some(header.body_length)
     {
-        if content_length.value.parse::<u64>().ok() != Some(header.body_length) {
-            return Err(ProtocolError::InvalidFrame);
-        }
+        return Err(ProtocolError::InvalidFrame);
     }
     validate_headers(&header.headers, HeaderKind::Response)
 }
@@ -518,7 +544,12 @@ fn read_body<R: Read>(reader: &mut R, length: u64) -> Result<Vec<u8>, ProtocolEr
 }
 
 fn validate_request_length(header: &RequestHeader, length: u64) -> Result<(), ProtocolError> {
-    if length > MAX_BODY_BYTES as u64 || header.body_length != length {
+    let maximum = if header.method == "POST" && header.path_and_query == "/v1/stream" {
+        MAX_STREAM_SUBSCRIBE_BYTES as u64
+    } else {
+        MAX_BODY_BYTES as u64
+    };
+    if length > maximum || header.body_length != length {
         return Err(ProtocolError::LimitExceeded);
     }
     Ok(())
@@ -608,6 +639,7 @@ fn validate_headers(headers: &[LogicalHeader], kind: HeaderKind) -> Result<(), P
                     | "cache-control"
                     | "x-content-type-options"
                     | "x-resource-media-type"
+                    | "x-resource-revision-id"
                     | "x-correlation-id"
                     | "etag"
             ),
@@ -617,4 +649,521 @@ fn validate_headers(headers: &[LogicalHeader], kind: HeaderKind) -> Result<(), P
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        InFlightBodyBudget, LogicalHeader, MAX_STREAM_FRAME_BYTES, MAX_STREAM_SUBSCRIBE_BYTES,
+        PROTOCOL_VERSION, ProtocolError, RequestHeader, ResponseHeader, async_io, validate_request,
+        validate_request_length,
+    };
+    use serde::Serialize;
+    use std::{future::Future, io::ErrorKind, time::Duration};
+    use tokio::io::{AsyncWriteExt, DuplexStream};
+    use tokio::time::timeout;
+
+    fn request_header(
+        request_id: &str,
+        path_and_query: &str,
+        headers: Vec<LogicalHeader>,
+        body_length: u64,
+    ) -> RequestHeader {
+        RequestHeader {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: request_id.to_owned(),
+            method: "POST".to_owned(),
+            path_and_query: path_and_query.to_owned(),
+            headers,
+            body_length,
+        }
+    }
+
+    fn frame_bytes<T: Serialize>(header: &T, body: &[u8]) -> Vec<u8> {
+        let header = serde_json::to_vec(header).expect("header serializes");
+        let mut frame = Vec::with_capacity(4 + header.len() + body.len());
+        frame.extend_from_slice(&(header.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&header);
+        frame.extend_from_slice(body);
+        frame
+    }
+
+    fn block_on<T>(future: impl Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("test runtime builds")
+            .block_on(future)
+    }
+
+    async fn feed(stream: &mut DuplexStream, bytes: &[u8]) {
+        stream.write_all(bytes).await.expect("test frame writes");
+    }
+
+    #[test]
+    fn request_validation_rejects_malformed_ids_paths_and_headers() {
+        let cases = [
+            request_header("", "/v1/tasks", Vec::new(), 0),
+            request_header("request\nforged", "/v1/tasks", Vec::new(), 0),
+            request_header(&"x".repeat(129), "/v1/tasks", Vec::new(), 0),
+            request_header("absolute", "https://localhost/v1/tasks", Vec::new(), 0),
+            request_header("traversal", "/v1/tasks/../secrets", Vec::new(), 0),
+            request_header(
+                "encoded-traversal",
+                "/v1/tasks/%2e%2e/secrets",
+                Vec::new(),
+                0,
+            ),
+            request_header(
+                "duplicate",
+                "/v1/tasks",
+                vec![
+                    LogicalHeader {
+                        name: "X-Workspace-ID".to_owned(),
+                        value: "workspace-a".to_owned(),
+                    },
+                    LogicalHeader {
+                        name: "x-workspace-id".to_owned(),
+                        value: "workspace-b".to_owned(),
+                    },
+                ],
+                0,
+            ),
+            request_header(
+                "forbidden-header",
+                "/v1/tasks",
+                vec![LogicalHeader {
+                    name: "Authorization".to_owned(),
+                    value: "Bearer not-allowed".to_owned(),
+                }],
+                0,
+            ),
+        ];
+
+        for header in cases {
+            assert!(
+                validate_request(&header, 0).is_err(),
+                "unsafe request should be rejected: {header:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn request_validation_rejects_body_length_mismatch_and_unknown_protocol_version() {
+        let header = request_header("length-mismatch", "/v1/tasks", Vec::new(), 4);
+        assert!(matches!(
+            validate_request(&header, 3),
+            Err(ProtocolError::InvalidFrame)
+        ));
+
+        let mut unsupported = request_header("old-version", "/v1/tasks", Vec::new(), 0);
+        unsupported.protocol_version += 1;
+        assert!(matches!(
+            validate_request(&unsupported, 0),
+            Err(ProtocolError::UnsupportedVersion)
+        ));
+    }
+
+    #[test]
+    fn stream_subscription_body_has_its_own_small_transport_limit() {
+        let stream_header = request_header(
+            "stream-body-limit",
+            "/v1/stream",
+            Vec::new(),
+            (MAX_STREAM_SUBSCRIBE_BYTES + 1) as u64,
+        );
+        assert!(matches!(
+            validate_request_length(&stream_header, stream_header.body_length),
+            Err(ProtocolError::LimitExceeded)
+        ));
+
+        let ordinary_header = request_header(
+            "ordinary-body-limit",
+            "/v1/tasks",
+            Vec::new(),
+            (MAX_STREAM_SUBSCRIBE_BYTES + 1) as u64,
+        );
+        assert!(validate_request_length(&ordinary_header, ordinary_header.body_length).is_ok());
+    }
+
+    #[test]
+    fn async_request_reader_times_out_on_incomplete_header() {
+        block_on(async {
+            let (_writer, mut reader) = tokio::io::duplex(128);
+            let budget = InFlightBodyBudget::new(32).expect("body budget");
+            let result = timeout(
+                Duration::from_secs(1),
+                async_io::read_request_with_deadlines(
+                    &mut reader,
+                    &budget,
+                    Duration::from_millis(10),
+                    Duration::from_millis(10),
+                ),
+            )
+            .await
+            .expect("outer guard prevents a hanging regression");
+
+            assert!(matches!(
+                result,
+                Err(ProtocolError::Io(error)) if error.kind() == ErrorKind::TimedOut
+            ));
+        });
+    }
+
+    #[test]
+    fn stream_messages_are_bounded_length_prefixed_and_budgeted() {
+        block_on(async {
+            let (mut client, mut server) = tokio::io::duplex(MAX_STREAM_FRAME_BYTES + 16);
+            let budget = std::sync::Arc::new(
+                InFlightBodyBudget::new(MAX_STREAM_FRAME_BYTES * 2).expect("body budget"),
+            );
+            let payload = br#"{"type":"stream.ready"}"#;
+            assert!(matches!(
+                async_io::write_stream_message(
+                    &mut client,
+                    &vec![b'x'; MAX_STREAM_FRAME_BYTES + 1],
+                    &budget,
+                )
+                .await,
+                Err(ProtocolError::LimitExceeded)
+            ));
+            let writer_budget = budget.clone();
+            let writer = tokio::spawn(async move {
+                async_io::write_stream_message(&mut client, payload, &writer_budget).await
+            });
+            let message =
+                async_io::read_stream_message(&mut server, &budget, Duration::from_secs(1))
+                    .await
+                    .expect("stream message reads")
+                    .expect("message exists before EOF");
+            writer
+                .await
+                .expect("writer task completes")
+                .expect("stream message writes");
+            assert_eq!(message.body(), payload);
+        });
+    }
+
+    #[test]
+    fn stalled_stream_writer_can_be_cancelled_and_releases_its_body_budget() {
+        block_on(async {
+            let budget = std::sync::Arc::new(InFlightBodyBudget::new(1024).expect("body budget"));
+            let (mut writer, _unread_peer) = tokio::io::duplex(8);
+            let payload = vec![b'x'; 512];
+
+            let write = timeout(
+                Duration::from_millis(10),
+                async_io::write_stream_message(&mut writer, &payload, &budget),
+            )
+            .await;
+            assert!(
+                write.is_err(),
+                "an unread peer stalls the bounded frame write"
+            );
+
+            let permit = budget
+                .reserve_bytes(1024)
+                .expect("cancelling a stalled write releases reserved body capacity");
+            drop(permit);
+        });
+    }
+
+    #[test]
+    fn stream_reader_distinguishes_clean_eof_between_messages() {
+        block_on(async {
+            let (mut writer, mut reader) = tokio::io::duplex(16);
+            writer.shutdown().await.expect("writer closes cleanly");
+            let budget = InFlightBodyBudget::new(16).expect("body budget");
+
+            let message =
+                async_io::read_stream_message(&mut reader, &budget, Duration::from_secs(1))
+                    .await
+                    .expect("clean EOF is not a malformed frame");
+
+            assert!(message.is_none());
+        });
+    }
+
+    #[test]
+    fn stream_session_reader_waits_through_idle_gaps_but_bounds_partial_frames() {
+        block_on(async {
+            let (mut writer, mut reader) = tokio::io::duplex(64);
+            let budget = std::sync::Arc::new(InFlightBodyBudget::new(64).expect("body budget"));
+
+            let idle = timeout(
+                Duration::from_millis(10),
+                async_io::read_stream_message_for_session(
+                    &mut reader,
+                    &budget,
+                    Duration::from_millis(50),
+                ),
+            )
+            .await;
+            assert!(
+                idle.is_err(),
+                "an idle stream remains open without a reader timeout"
+            );
+
+            let payload = br#"{"type":"stream.ready"}"#;
+            async_io::write_stream_message(&mut writer, payload, &budget)
+                .await
+                .expect("a later complete frame writes");
+            let message = async_io::read_stream_message_for_session(
+                &mut reader,
+                &budget,
+                Duration::from_millis(50),
+            )
+            .await
+            .expect("frame reads after an idle gap")
+            .expect("the session remains open");
+            assert_eq!(message.body(), payload);
+
+            let (mut partial_writer, mut partial_reader) = tokio::io::duplex(64);
+            feed(&mut partial_writer, &[0, 0]).await;
+            let partial = async_io::read_stream_message_for_session(
+                &mut partial_reader,
+                &budget,
+                Duration::from_millis(10),
+            )
+            .await;
+            assert!(matches!(
+                partial,
+                Err(ProtocolError::Io(error)) if error.kind() == ErrorKind::TimedOut
+            ));
+        });
+    }
+
+    #[test]
+    fn stream_reader_rejects_zero_and_oversized_lengths_before_body_allocation() {
+        block_on(async {
+            let budget = InFlightBodyBudget::new(MAX_STREAM_FRAME_BYTES).expect("body budget");
+            for (length, expected) in [
+                (0_u32, ProtocolError::InvalidFrame),
+                (
+                    (MAX_STREAM_FRAME_BYTES as u32) + 1,
+                    ProtocolError::LimitExceeded,
+                ),
+            ] {
+                let (mut writer, mut reader) = tokio::io::duplex(8);
+                feed(&mut writer, &length.to_be_bytes()).await;
+                assert!(matches!(
+                    async_io::read_stream_message(&mut reader, &budget, Duration::from_secs(1))
+                        .await,
+                    Err(error) if std::mem::discriminant(&error) == std::mem::discriminant(&expected)
+                ));
+                let permit = budget
+                    .reserve_bytes(MAX_STREAM_FRAME_BYTES)
+                    .expect("invalid lengths never reserve body capacity");
+                drop(permit);
+            }
+        });
+    }
+
+    #[test]
+    fn stream_reader_releases_budget_after_message_is_dropped() {
+        block_on(async {
+            let payload = br#"{"type":"stream.ready"}"#;
+            let budget = InFlightBodyBudget::new(payload.len()).expect("body budget");
+            let (mut writer, mut reader) = tokio::io::duplex(64);
+            let writer_budget = budget.clone();
+            let writer_task = tokio::spawn(async move {
+                async_io::write_stream_message(&mut writer, payload, &writer_budget).await
+            });
+            let message =
+                async_io::read_stream_message(&mut reader, &budget, Duration::from_secs(1))
+                    .await
+                    .expect("message read")
+                    .expect("message exists");
+            writer_task
+                .await
+                .expect("writer task completes")
+                .expect("message writes");
+            assert!(matches!(
+                budget.reserve_bytes(1),
+                Err(ProtocolError::CapacityExceeded)
+            ));
+            drop(message);
+            let permit = budget
+                .reserve_bytes(payload.len())
+                .expect("dropping message releases its budget reservation");
+            drop(permit);
+        });
+    }
+
+    #[test]
+    fn async_request_reader_times_out_on_partial_header_prefix_and_json() {
+        block_on(async {
+            let budget = InFlightBodyBudget::new(32).expect("body budget");
+            let header = request_header("partial-header", "/v1/tasks", Vec::new(), 0);
+            let encoded = frame_bytes(&header, b"");
+            let prefix_length = u32::from_be_bytes(encoded[..4].try_into().expect("prefix"));
+            let partial_json = [encoded[..2].to_vec(), encoded[..7].to_vec()];
+            assert!(prefix_length > 3);
+
+            for partial in partial_json {
+                let (mut writer, mut reader) = tokio::io::duplex(128);
+                feed(&mut writer, &partial).await;
+                let result = timeout(
+                    Duration::from_secs(1),
+                    async_io::read_request_with_deadlines(
+                        &mut reader,
+                        &budget,
+                        Duration::from_millis(10),
+                        Duration::from_millis(10),
+                    ),
+                )
+                .await
+                .expect("outer guard prevents a hanging regression");
+
+                assert!(matches!(
+                    result,
+                    Err(ProtocolError::Io(error)) if error.kind() == ErrorKind::TimedOut
+                ));
+            }
+        });
+    }
+
+    #[test]
+    fn async_request_reader_releases_reserved_capacity_after_body_timeout() {
+        block_on(async {
+            let (mut writer, mut reader) = tokio::io::duplex(256);
+            let budget = InFlightBodyBudget::new(8).expect("body budget");
+            let header = request_header("partial-body", "/v1/tasks", Vec::new(), 8);
+            let encoded = frame_bytes(&header, b"abc");
+            feed(&mut writer, &encoded).await;
+
+            let result = timeout(
+                Duration::from_secs(1),
+                async_io::read_request_with_deadlines(
+                    &mut reader,
+                    &budget,
+                    Duration::from_millis(100),
+                    Duration::from_millis(10),
+                ),
+            )
+            .await
+            .expect("outer guard prevents a hanging regression");
+
+            assert!(matches!(
+                result,
+                Err(ProtocolError::Io(error)) if error.kind() == ErrorKind::TimedOut
+            ));
+            let permit = budget
+                .reserve_bytes(8)
+                .expect("failed read released its reserved body capacity");
+            drop(permit);
+        });
+    }
+
+    #[test]
+    fn async_request_reader_refreshes_idle_deadline_after_each_complete_chunk() {
+        block_on(async {
+            let (mut writer, mut reader) = tokio::io::duplex(192 * 1024);
+            let budget = InFlightBodyBudget::new(192 * 1024).expect("body budget");
+            let chunk = vec![b'x'; 64 * 1024];
+            let body_length = (chunk.len() * 3) as u64;
+            let header = request_header("chunk-progress", "/v1/tasks", Vec::new(), body_length);
+            let encoded = frame_bytes(&header, b"");
+            let encoded_prefix_length = 4 + usize::try_from(u32::from_be_bytes(
+                encoded[..4].try_into().expect("header length prefix"),
+            ))
+            .expect("header length fits in memory");
+            let encoded_header = &encoded[..encoded_prefix_length];
+            let reader_budget = budget.clone();
+            let read = tokio::spawn(async move {
+                async_io::read_request_with_deadlines(
+                    &mut reader,
+                    &reader_budget,
+                    Duration::from_millis(100),
+                    Duration::from_millis(30),
+                )
+                .await
+            });
+
+            feed(&mut writer, encoded_header).await;
+            for _ in 0..3 {
+                feed(&mut writer, &chunk).await;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+
+            let result = timeout(Duration::from_secs(1), read)
+                .await
+                .expect("outer guard prevents a hanging regression")
+                .expect("reader task completes");
+            let frame = result.expect("each complete chunk refreshes the idle deadline");
+            assert_eq!(frame.body().len(), 192 * 1024);
+        });
+    }
+
+    #[test]
+    fn async_request_reader_still_times_out_after_complete_progress_then_stall() {
+        block_on(async {
+            let (mut writer, mut reader) = tokio::io::duplex(64 * 1024 + 256);
+            let body_length = 64 * 1024 + 1;
+            let budget = InFlightBodyBudget::new(body_length).expect("body budget");
+            let header = request_header(
+                "progress-then-stall",
+                "/v1/tasks",
+                Vec::new(),
+                body_length as u64,
+            );
+            let encoded = frame_bytes(&header, b"");
+            let header_end =
+                4 + u32::from_be_bytes(encoded[..4].try_into().expect("header length prefix"))
+                    as usize;
+            let reader_budget = budget.clone();
+            let read = tokio::spawn(async move {
+                async_io::read_request_with_deadlines(
+                    &mut reader,
+                    &reader_budget,
+                    Duration::from_millis(100),
+                    Duration::from_millis(10),
+                )
+                .await
+            });
+
+            feed(&mut writer, &encoded[..header_end]).await;
+            feed(&mut writer, &vec![b'x'; 64 * 1024]).await;
+            let result = timeout(Duration::from_secs(1), read)
+                .await
+                .expect("outer guard prevents a hanging regression")
+                .expect("reader task completes");
+
+            assert!(matches!(
+                result,
+                Err(ProtocolError::Io(error)) if error.kind() == ErrorKind::TimedOut
+            ));
+            let permit = budget
+                .reserve_bytes(body_length)
+                .expect("timeout after progress releases reserved capacity");
+            drop(permit);
+        });
+    }
+
+    #[test]
+    fn async_response_reader_rejects_a_mismatched_request_id() {
+        block_on(async {
+            let (mut writer, mut reader) = tokio::io::duplex(128);
+            let budget = InFlightBodyBudget::new(32).expect("body budget");
+            let header = ResponseHeader {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: "different-request".to_owned(),
+                status: 200,
+                headers: Vec::new(),
+                body_length: 0,
+            };
+            feed(&mut writer, &frame_bytes(&header, b"")).await;
+
+            let result = async_io::read_response_with_deadlines(
+                &mut reader,
+                "expected-request",
+                &budget,
+                Duration::from_millis(100),
+                Duration::from_millis(100),
+            )
+            .await;
+
+            assert!(matches!(result, Err(ProtocolError::InvalidFrame)));
+        });
+    }
 }

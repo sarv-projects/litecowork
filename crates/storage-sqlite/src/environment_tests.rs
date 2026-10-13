@@ -103,7 +103,11 @@ fn v11_to_v15_migrations_are_ordered_atomic_and_retryable() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
     let v14_receipts: i64 = connection
-        .query_row("SELECT COUNT(*) FROM schema_migrations WHERE version = 14", [], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 14",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!((version, v14_receipts), (13, 0));
 
@@ -112,7 +116,11 @@ fn v11_to_v15_migrations_are_ordered_atomic_and_retryable() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
     let v15_receipts: i64 = connection
-        .query_row("SELECT COUNT(*) FROM schema_migrations WHERE version = 15", [], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 15",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!((version, v15_receipts), (14, 0));
 
@@ -134,7 +142,10 @@ fn v11_to_v15_migrations_are_ordered_atomic_and_retryable() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!((version, migration_receipts, rich_table), (SCHEMA_VERSION, 5, 1));
+    assert_eq!(
+        (version, migration_receipts, rich_table),
+        (SCHEMA_VERSION, 5, 1)
+    );
 }
 
 fn adapter(store: &SqliteWorkspaceStore) -> SqliteEnvironmentStore {

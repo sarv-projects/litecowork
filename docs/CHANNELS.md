@@ -259,3 +259,16 @@ Channel actions are independently authorized (`view`, `steer`, `respond to an ex
 replied-to UserRequest`, `safe approval`, `sensitive approval`). A sender's permission to
 message a bot does not grant any of these. Sensitive Approval resolution requires an
 assurance level at least equal to the Approval's `required_assurance` and is auditable.
+
+
+## EventRelay and learning boundary
+
+EventRelay is not a human ChannelBinding. A relay carries bounded trigger hints for
+Automation delivery; human channels carry authenticated messages into Conversation/Task
+flows. Do not reuse channel assurance or reply permissions as provider-event authority.
+
+Messages arriving through Slack/Teams/email/other channels are untrusted learning sources
+unless the authenticated owner/source policy explicitly qualifies them. Third-party channel
+content cannot automatically become Coworker memory, instructions or a standing
+responsibility. See [Learning](LEARNING.md) and
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md).

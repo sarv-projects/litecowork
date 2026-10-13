@@ -665,3 +665,19 @@ provider cleanup. Record launch and preparation p50/p95 latency, CPU/memory/disk
 provider/OS versions, and every unavailable control. A worktree-only or mock-only run does
 not pass. Any unqualified OS/provider combination remains unavailable for native Task
 execution regardless of results on other platforms.
+
+
+## Connector/workflow/learning benchmark additions to schedule with implementation
+
+The final 2026-10-10 architecture requires benchmark coverage when its machine contracts
+are promoted: OAuth loopback latency/failure recovery, 10k-action progressive discovery,
+connector write reconciliation, event-relay duplicate/offline recovery, external workflow
+handoff overhead versus direct deterministic capability, Task follow-up warm-resume versus
+durable cold rebuild, and learning false-positive/contradiction/redaction rates.
+
+Do not assign benchmark pass numbers before implementations and oracles exist. A vendor
+demo or one successful account connection is not benchmark evidence.
+
+## V1 detailed design integration — 2026-10-12
+
+V1-DESIGN-COVERAGE.md introduces coverage cases (not fabricated performance results) for 10k tool rows, long native output, 50 Coworkers, 100 connections, large files, provider startup, side-browser frame mapping and cross-agent handoff. Benchmark budgets need measured baseline per OS/harness; existing canonical benchmark IDs remain authoritative. Distinguish visual frame rate from actual Task throughput.

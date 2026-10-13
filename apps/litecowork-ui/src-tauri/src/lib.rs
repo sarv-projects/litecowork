@@ -1,8 +1,12 @@
-use serde::Serialize;
 use base64::{
     engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD},
     Engine as _,
 };
+use operator_ipc::{
+    BudgetedBody, InFlightBodyBudget, LogicalHeader, RequestFrame, RequestHeader, ResponseFrame,
+    StreamMessage, DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, MAX_BODY_BYTES, PROTOCOL_VERSION,
+};
+use serde::Serialize;
 use std::{
     fs,
     io::{self, Read, Write},
@@ -11,43 +15,43 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use operator_ipc::{
-    BudgetedBody, InFlightBodyBudget, LogicalHeader, RequestFrame, RequestHeader,
-    DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, MAX_BODY_BYTES, PROTOCOL_VERSION,
-};
 use tauri::{AppHandle, Manager};
 
 mod artifact_bridge;
-mod conversation_bridge;
-mod resource_save_bridge;
 mod automation_bridge;
+mod conversation_bridge;
+mod conversation_stream_bridge;
 mod coworker_bridge;
 mod delegation_profile_bridge;
 mod delegation_profile_write_bridge;
 mod goal_bridge;
-mod suggestions_bridge;
 mod presentation_bridge;
+mod resource_location_bridge;
+mod resource_save_bridge;
 mod routine_bridge;
-mod zip_intake_bridge;
+mod runtime_lifecycle_bridge;
+mod suggestions_bridge;
 #[cfg(target_os = "linux")]
 mod systemd_user_service;
-
+mod zip_intake_bridge;
 #[cfg(all(test, unix))]
 mod workspace_instruction_bridge_tests;
-#[cfg(unix)]
-use operator_ipc::unix::{PeerCredentials, UnixEndpoint};
-#[cfg(unix)]
-use std::sync::{
-    Arc,
-    OnceLock,
-    atomic::{AtomicU64, Ordering},
-};
 
 #[cfg(unix)]
+use operator_ipc::unix::{AuthenticatedUnixConnection, PeerCredentials, UnixEndpoint};
+#[cfg(windows)]
+use operator_ipc::windows::{AuthenticatedWindowsConnection, WindowsEndpoint};
+#[cfg(any(unix, windows))]
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, OnceLock,
+};
+
+#[cfg(any(unix, windows))]
 static OPERATOR_REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 static OPERATOR_IPC_RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 static OPERATOR_IPC_BODY_BUDGET: OnceLock<Arc<InFlightBodyBudget>> = OnceLock::new();
 
 const RUNTIME_STARTUP_DEADLINE: Duration = Duration::from_secs(5);
@@ -57,6 +61,9 @@ const OPERATOR_READINESS_PROBE_TIMEOUT: Duration = Duration::from_millis(400);
 const MAX_RUNTIME_STATUS_BYTES: usize = 1024 * 1024;
 const MAX_TASK_INPUT_REFS: usize = 256;
 const MAX_INSTRUCTION_PARENTS: usize = 256;
+
+#[cfg(any(unix, windows))]
+static WORKSPACE_ROOT_REQUEST_KEY: OnceLock<Result<[u8; 32], String>> = OnceLock::new();
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,8 +90,9 @@ async fn get_runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
             .config_dir()
             .map_err(|_| "LiteCowork user configuration directory is unavailable".to_owned())
             .and_then(|config_dir| {
-                let state_dir = app.path().app_data_dir()
-                    .map_err(|_| "LiteCowork application data directory is unavailable".to_owned())?;
+                let state_dir = app.path().app_data_dir().map_err(|_| {
+                    "LiteCowork application data directory is unavailable".to_owned()
+                })?;
                 let daemon = daemon_executable(&app)?;
                 systemd_user_service::verify_active(&config_dir, &daemon, &state_dir, deadline)
             })
@@ -93,23 +101,27 @@ async fn get_runtime_status(app: AppHandle) -> Result<RuntimeStatus, String> {
             // authenticated Operator API may answer while Linux's delegated unit
             // contract is unverified; do not present that as a fully ready Runtime.
             status.state = "DEGRADED".to_owned();
-            if !status.blockers.iter().any(|blocker| blocker == "LINUX_SYSTEMD_SERVICE_UNVERIFIED") {
-                status.blockers.push("LINUX_SYSTEMD_SERVICE_UNVERIFIED".to_owned());
+            if !status
+                .blockers
+                .iter()
+                .any(|blocker| blocker == "LINUX_SYSTEMD_SERVICE_UNVERIFIED")
+            {
+                status
+                    .blockers
+                    .push("LINUX_SYSTEMD_SERVICE_UNVERIFIED".to_owned());
             }
             let api_detail = status.detail.take();
             status.detail = Some(match api_detail {
-                Some(detail) => format!(
-                    "{detail}; {error}. Linux delegated containment is unavailable"
-                ),
-                None => format!(
-                    "{error}. Linux delegated containment is unavailable"
-                ),
+                Some(detail) => {
+                    format!("{detail}; {error}. Linux delegated containment is unavailable")
+                }
+                None => format!("{error}. Linux delegated containment is unavailable"),
             });
         }
         status
     })
-        .await
-        .map_err(|_| "Runtime status operation did not complete".to_owned())
+    .await
+    .map_err(|_| "Runtime status operation did not complete".to_owned())
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -304,25 +316,33 @@ impl From<AgentProfileWire> for AgentProfileView {
             agent_profile_id: profile.agent_profile_id,
             provider_key: profile.provider_key,
             display_name: profile.display_name,
-            endpoints: profile.endpoints.into_iter().map(|endpoint| AgentEndpointView {
-                endpoint_id: endpoint.endpoint_id,
-                agent_profile_id: endpoint.agent_profile_id,
-                protocol: endpoint.protocol,
-                topology: endpoint.topology,
-                protocol_version: endpoint.protocol_version,
-                capabilities: endpoint.capabilities,
-            }).collect(),
+            endpoints: profile
+                .endpoints
+                .into_iter()
+                .map(|endpoint| AgentEndpointView {
+                    endpoint_id: endpoint.endpoint_id,
+                    agent_profile_id: endpoint.agent_profile_id,
+                    protocol: endpoint.protocol,
+                    topology: endpoint.topology,
+                    protocol_version: endpoint.protocol_version,
+                    capabilities: endpoint.capabilities,
+                })
+                .collect(),
             discovered_at: profile.discovered_at,
-            observations: profile.observations.into_iter().map(|observation| AgentProfileObservationView {
-                endpoint_id: observation.endpoint_id,
-                runtime_id: observation.runtime_id,
-                runtime_incarnation_id: observation.runtime_incarnation_id,
-                compatible: observation.compatible,
-                readiness: observation.readiness,
-                observed_at: observation.observed_at,
-                offer_expires_at: observation.offer_expires_at,
-                constraints: observation.constraints,
-            }).collect(),
+            observations: profile
+                .observations
+                .into_iter()
+                .map(|observation| AgentProfileObservationView {
+                    endpoint_id: observation.endpoint_id,
+                    runtime_id: observation.runtime_id,
+                    runtime_incarnation_id: observation.runtime_incarnation_id,
+                    compatible: observation.compatible,
+                    readiness: observation.readiness,
+                    observed_at: observation.observed_at,
+                    offer_expires_at: observation.offer_expires_at,
+                    constraints: observation.constraints,
+                })
+                .collect(),
         }
     }
 }
@@ -740,10 +760,22 @@ impl TryFrom<TaskPlanningReadinessWire> for TaskPlanningReadinessView {
     type Error = String;
 
     fn try_from(value: TaskPlanningReadinessWire) -> Result<Self, Self::Error> {
-        let valid_status = matches!(value.task_status.as_str(),
-            "READY" | "RUNNING" | "WAITING_USER" | "BLOCKED" | "VERIFYING"
-                | "NEEDS_USER" | "INCOMPLETE" | "PAUSE_REQUESTED" | "PAUSED"
-                | "COMPLETED" | "FAILED" | "CANCEL_REQUESTED" | "CANCELLED");
+        let valid_status = matches!(
+            value.task_status.as_str(),
+            "READY"
+                | "RUNNING"
+                | "WAITING_USER"
+                | "BLOCKED"
+                | "VERIFYING"
+                | "NEEDS_USER"
+                | "INCOMPLETE"
+                | "PAUSE_REQUESTED"
+                | "PAUSED"
+                | "COMPLETED"
+                | "FAILED"
+                | "CANCEL_REQUESTED"
+                | "CANCELLED"
+        );
         let known_timestamp = value.observed_at.len() <= 128
             && value.observed_at.contains('T')
             && (value.observed_at.ends_with('Z') || value.observed_at.contains('+'));
@@ -759,7 +791,9 @@ impl TryFrom<TaskPlanningReadinessWire> for TaskPlanningReadinessView {
             || value.plan_created
             || value.blockers.len() > 10
         {
-            return Err("Local Runtime returned an unsupported planning readiness response".to_owned());
+            return Err(
+                "Local Runtime returned an unsupported planning readiness response".to_owned(),
+            );
         }
         let mut seen = std::collections::HashSet::new();
         if value.blockers.iter().any(|blocker| !seen.insert(*blocker)) {
@@ -786,7 +820,9 @@ fn validate_task_planning_readiness_identity(
     expected_task_version: u64,
 ) -> Result<TaskPlanningReadinessView, String> {
     if view.task_id != expected_task_id || view.task_version != expected_task_version {
-        return Err("Task changed; reload the latest Task before checking planning readiness".to_owned());
+        return Err(
+            "Task changed; reload the latest Task before checking planning readiness".to_owned(),
+        );
     }
     Ok(view)
 }
@@ -803,11 +839,16 @@ impl From<TaskViewWire> for TaskDetailView {
             status: view.task.status,
             task_version: view.task.version,
             objective: view.current_spec_revision.objective,
-            input_refs: view.current_spec_revision.input_refs.into_iter().map(|input| PinnedResourceRefView {
-                workspace_id: input.workspace_id,
-                resource_id: input.resource_id,
-                revision_id: input.revision_id,
-            }).collect(),
+            input_refs: view
+                .current_spec_revision
+                .input_refs
+                .into_iter()
+                .map(|input| PinnedResourceRefView {
+                    workspace_id: input.workspace_id,
+                    resource_id: input.resource_id,
+                    revision_id: input.revision_id,
+                })
+                .collect(),
             plan_spec_revision: None,
             plan_is_stale: false,
             planned_steps: Vec::new(),
@@ -1123,11 +1164,15 @@ impl From<ResourceUploadWire> for ResourceUploadView {
             expected_resource_version: wire.expected_resource_version,
             parent_revision_ids: wire.parent_revision_ids,
             chunk_size_bytes: wire.chunk_size_bytes,
-            received_ranges: wire.received_ranges.into_iter().map(|range| UploadRangeView {
-                start_offset: range.start_offset,
-                end_offset_inclusive: range.end_offset_inclusive,
-                sha256: range.sha256,
-            }).collect(),
+            received_ranges: wire
+                .received_ranges
+                .into_iter()
+                .map(|range| UploadRangeView {
+                    start_offset: range.start_offset,
+                    end_offset_inclusive: range.end_offset_inclusive,
+                    sha256: range.sha256,
+                })
+                .collect(),
             next_missing_offset: wire.next_missing_offset,
             state: wire.state,
             expires_at: wire.expires_at,
@@ -1430,32 +1475,95 @@ async fn list_workspace_roots(
     cursor: Option<String>,
 ) -> Result<WorkspaceRootPageView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.trim().is_empty() || cursor.as_deref().is_some_and(|value| value.is_empty() || value.len() > 2048) {
+        if workspace_id.trim().is_empty()
+            || cursor
+                .as_deref()
+                .is_some_and(|value| value.is_empty() || value.len() > 2048)
+        {
             return Err("Persistent folder list request is invalid".to_owned());
         }
         let (client, workspace_url) = operator_client(&app)?;
         let mut request = client
-            .get(format!("{}/workspace-roots", workspace_url.trim_end_matches("/workspaces")))
+            .get(format!(
+                "{}/workspace-roots",
+                workspace_url.trim_end_matches("/workspaces")
+            ))
             .header("X-Workspace-ID", &workspace_id)
             .query(&[("limit", "100")]);
         if let Some(cursor) = cursor.as_deref() {
             request = request.query(&[("cursor", cursor)]);
         }
-        let response = request.send().map_err(|_| "Persistent folders are unavailable".to_owned())?;
+        let response = request
+            .send()
+            .map_err(|_| "Persistent folders are unavailable".to_owned())?;
         let body = read_bounded_response(response)?;
-        let page: WorkspaceRootPageWire = serde_json::from_slice(&body)
-            .map_err(|_| "Local Runtime returned an unsupported persistent folder list".to_owned())?;
-        if page.items.len() > 100 || page.next_cursor.as_deref().is_some_and(|value| value.is_empty() || value.len() > 2048) {
+        let page: WorkspaceRootPageWire = serde_json::from_slice(&body).map_err(|_| {
+            "Local Runtime returned an unsupported persistent folder list".to_owned()
+        })?;
+        if page.items.len() > 100
+            || page
+                .next_cursor
+                .as_deref()
+                .is_some_and(|value| value.is_empty() || value.len() > 2048)
+        {
             return Err("Local Runtime returned an invalid persistent folder page".to_owned());
         }
-        let items: Vec<WorkspaceRootView> = page.items.into_iter().map(WorkspaceRootView::from).collect();
+        let items: Vec<WorkspaceRootView> = page
+            .items
+            .into_iter()
+            .map(WorkspaceRootView::from)
+            .collect();
         if items.iter().any(|item| item.workspace_id != workspace_id) {
             return Err("Local Runtime returned a folder from a different Workspace".to_owned());
         }
-        Ok(WorkspaceRootPageView { items, next_cursor: page.next_cursor })
+        Ok(WorkspaceRootPageView {
+            items,
+            next_cursor: page.next_cursor,
+        })
     })
     .await
     .map_err(|_| "Persistent folder list request did not complete".to_owned())?
+}
+
+fn derive_workspace_root_add_idempotency_key(
+    key: &[u8; 32],
+    request_seed: &str,
+    workspace_id: &str,
+    expected_workspace_version: u64,
+    watch_policy: &str,
+    replication_policy: &str,
+    selected_path: &[u8],
+) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let version = expected_workspace_version.to_string();
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts a 32-byte key");
+    for value in [
+        b"litecowork.workspace-root.add.v1".as_slice(),
+        request_seed.as_bytes(),
+        workspace_id.as_bytes(),
+        version.as_bytes(),
+        watch_policy.as_bytes(),
+        replication_policy.as_bytes(),
+        selected_path,
+    ] {
+        mac.update(&(value.len() as u64).to_be_bytes());
+        mac.update(value);
+    }
+    format!("{:x}", mac.finalize().into_bytes())
+}
+
+fn workspace_root_request_key() -> Result<&'static [u8; 32], String> {
+    WORKSPACE_ROOT_REQUEST_KEY
+        .get_or_init(|| {
+            let mut key = [0; 32];
+            getrandom::fill(&mut key)
+                .map_err(|_| "Persistent folder request identity is unavailable".to_owned())?;
+            Ok(key)
+        })
+        .as_ref()
+        .map_err(Clone::clone)
 }
 
 #[tauri::command]
@@ -1470,9 +1578,17 @@ async fn add_workspace_root(
     tauri::async_runtime::spawn_blocking(move || {
         if workspace_id.trim().is_empty()
             || workspace_id.len() > 200
-            || !workspace_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-            || !matches!(watch_policy.as_str(), "METADATA" | "CONTENT_DIGESTS" | "SELECTED_TEXT_EXTRACTION")
-            || !matches!(replication_policy.as_str(), "NONE" | "ACTIVE_TASKS" | "SELECTED_WORKSPACE_POLICY")
+            || !workspace_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || !matches!(
+                watch_policy.as_str(),
+                "METADATA" | "CONTENT_DIGESTS" | "SELECTED_TEXT_EXTRACTION"
+            )
+            || !matches!(
+                replication_policy.as_str(),
+                "NONE" | "ACTIVE_TASKS" | "SELECTED_WORKSPACE_POLICY"
+            )
             || request_id.is_empty()
             || request_id.len() > 128
             || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
@@ -1486,9 +1602,20 @@ async fn add_workspace_root(
             return Ok(None);
         };
         #[cfg(unix)]
-        let selected_path_base64 = {
+        let (selected_path_base64, request_id) = {
             use std::os::unix::ffi::OsStrExt;
-            URL_SAFE_NO_PAD.encode(selected_path.as_os_str().as_bytes())
+            let selected_path = selected_path.as_os_str().as_bytes();
+            let request_key = workspace_root_request_key()?;
+            let scoped_request_id = derive_workspace_root_add_idempotency_key(
+                request_key,
+                &request_id,
+                &workspace_id,
+                expected_workspace_version,
+                &watch_policy,
+                &replication_policy,
+                selected_path,
+            );
+            (URL_SAFE_NO_PAD.encode(selected_path), scoped_request_id)
         };
         #[cfg(not(unix))]
         let selected_path_base64: String = {
@@ -1515,7 +1642,9 @@ async fn add_workspace_root(
             || root.display_name.trim().is_empty()
             || root.status != "ACTIVE"
         {
-            return Err("Local Runtime returned a persistent folder for a different request".to_owned());
+            return Err(
+                "Local Runtime returned a persistent folder for a different request".to_owned(),
+            );
         }
         Ok(Some(WorkspaceRootView::from(root)))
     })
@@ -1535,7 +1664,9 @@ async fn revoke_workspace_root(
         let valid_id = |value: &str| {
             !value.is_empty()
                 && value.len() <= 200
-                && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
         };
         if !valid_id(&workspace_id)
             || !valid_id(&workspace_root_id)
@@ -1546,7 +1677,10 @@ async fn revoke_workspace_root(
             return Err("Persistent folder removal request is invalid".to_owned());
         }
         let (client, workspace_url) = operator_client(&app)?;
-        let base = format!("{}/workspace-roots", workspace_url.trim_end_matches("/workspaces"));
+        let base = format!(
+            "{}/workspace-roots",
+            workspace_url.trim_end_matches("/workspaces")
+        );
         let response = client
             .post(format!("{base}/{workspace_root_id}/revoke"))
             .header("X-Workspace-ID", &workspace_id)
@@ -1682,13 +1816,27 @@ async fn list_tasks(
 ) -> Result<TaskPageView, String> {
     tauri::async_runtime::spawn_blocking(move || {
         const STATUSES: &[&str] = &[
-            "READY", "RUNNING", "WAITING_USER", "BLOCKED", "VERIFYING", "NEEDS_USER",
-            "INCOMPLETE", "PAUSE_REQUESTED", "PAUSED", "COMPLETED", "FAILED",
-            "CANCEL_REQUESTED", "CANCELLED",
+            "READY",
+            "RUNNING",
+            "WAITING_USER",
+            "BLOCKED",
+            "VERIFYING",
+            "NEEDS_USER",
+            "INCOMPLETE",
+            "PAUSE_REQUESTED",
+            "PAUSED",
+            "COMPLETED",
+            "FAILED",
+            "CANCEL_REQUESTED",
+            "CANCELLED",
         ];
         if workspace_id.trim().is_empty()
-            || status.as_deref().is_some_and(|value| !STATUSES.contains(&value))
-            || cursor.as_deref().is_some_and(|value| value.is_empty() || value.len() > 2048)
+            || status
+                .as_deref()
+                .is_some_and(|value| !STATUSES.contains(&value))
+            || cursor
+                .as_deref()
+                .is_some_and(|value| value.is_empty() || value.len() > 2048)
             || limit.is_some_and(|value| !(1..=100).contains(&value))
         {
             return Err("Task list request is invalid".to_owned());
@@ -1748,17 +1896,29 @@ async fn create_task(
             || !preferred_lead_agent_binding_id
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-            || coworker_id.as_deref().is_some_and(|id| id.trim().is_empty() || id.len() > 200 || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-'))
+            || coworker_id.as_deref().is_some_and(|id| {
+                id.trim().is_empty()
+                    || id.len() > 200
+                    || !id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            })
             || (coworker_id.is_none() && expected_coworker_version.is_some())
             || expected_coworker_version.is_some_and(|version| version == 0)
             || input_refs.iter().any(|input| {
                 input.workspace_id != workspace_id
                     || input.resource_id.trim().is_empty()
                     || input.resource_id.len() > 200
-                    || !input.resource_id.bytes().all(|byte| byte.is_ascii_graphic())
+                    || !input
+                        .resource_id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_graphic())
                     || input.revision_id.trim().is_empty()
                     || input.revision_id.len() > 200
-                    || !input.revision_id.bytes().all(|byte| byte.is_ascii_graphic())
+                    || !input
+                        .revision_id
+                        .bytes()
+                        .all(|byte| byte.is_ascii_graphic())
             })
             || request_id.is_empty()
             || request_id.len() > 128
@@ -1798,24 +1958,33 @@ async fn create_task(
                 "placement_preference": "AUTO",
             }))
             .send()
-            .map_err(|_| "Local Task service is unavailable; retry this save to reconcile it".to_owned())?;
+            .map_err(|_| {
+                "Local Task service is unavailable; retry this save to reconcile it".to_owned()
+            })?;
         let body = read_bounded_response(response)?;
         let view: TaskViewWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned unsupported Task details".to_owned())?;
         if view.task.workspace_id != workspace_id
             || view.task.origin_coworker_id != coworker_id
-            || (view.task.origin_coworker_id.is_some() != view.task.origin_coworker_revision.is_some())
+            || (view.task.origin_coworker_id.is_some()
+                != view.task.origin_coworker_revision.is_some())
             || view.task.current_spec_revision != 1
             || view.current_spec_revision.task_id != view.task.task_id
             || view.current_spec_revision.revision != view.task.current_spec_revision
             || view.current_spec_revision.objective != objective
-            || view.current_spec_revision.input_refs != input_refs.iter().map(|input| PinnedResourceRefWire {
-                workspace_id: input.workspace_id.clone(),
-                resource_id: input.resource_id.clone(),
-                revision_id: input.revision_id.clone(),
-            }).collect::<Vec<_>>()
+            || view.current_spec_revision.input_refs
+                != input_refs
+                    .iter()
+                    .map(|input| PinnedResourceRefWire {
+                        workspace_id: input.workspace_id.clone(),
+                        resource_id: input.resource_id.clone(),
+                        revision_id: input.revision_id.clone(),
+                    })
+                    .collect::<Vec<_>>()
         {
-            return Err("Local Runtime returned a Task that does not match this save request".to_owned());
+            return Err(
+                "Local Runtime returned a Task that does not match this save request".to_owned(),
+            );
         }
         Ok(TaskDetailView::from(view))
     })
@@ -1961,7 +2130,9 @@ async fn list_task_spec_revisions(
         let valid_id = |value: &str| {
             !value.trim().is_empty()
                 && value.len() <= 200
-                && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
         };
         if !valid_id(&workspace_id) || !valid_id(&task_id) {
             return Err("Task specification history selection is invalid".to_owned());
@@ -1974,8 +2145,10 @@ async fn list_task_spec_revisions(
             .send()
             .map_err(|_| "Task specification history is unavailable".to_owned())?;
         let body = read_bounded_response(response)?;
-        let revisions: Vec<TaskSpecHistoryRevisionWire> = serde_json::from_slice(&body)
-            .map_err(|_| "Local Runtime returned unsupported Task specification history".to_owned())?;
+        let revisions: Vec<TaskSpecHistoryRevisionWire> =
+            serde_json::from_slice(&body).map_err(|_| {
+                "Local Runtime returned unsupported Task specification history".to_owned()
+            })?;
         if revisions.is_empty() {
             return Err("Local Runtime returned no initial Task specification revision".to_owned());
         }
@@ -1983,19 +2156,33 @@ async fn list_task_spec_revisions(
         let mut views = Vec::with_capacity(revisions.len());
         for revision in revisions {
             if revision.task_id != task_id
-                || revision.workspace_id.as_deref().is_some_and(|revision_workspace| revision_workspace != workspace_id)
+                || revision
+                    .workspace_id
+                    .as_deref()
+                    .is_some_and(|revision_workspace| revision_workspace != workspace_id)
                 || revision.revision <= previous_revision
                 || revision.revision == 0
-                || revision.parent_revisions.iter().any(|parent| *parent >= revision.revision)
+                || revision
+                    .parent_revisions
+                    .iter()
+                    .any(|parent| *parent >= revision.revision)
                 || revision.objective.trim().is_empty()
                 || revision.created_at.trim().is_empty()
                 || revision.authored_by.principal_id.trim().is_empty()
-                || !matches!(revision.authored_by.kind.as_str(), "USER" | "SERVICE" | "RUNTIME" | "AGENT" | "CHANNEL_IDENTITY")
+                || !matches!(
+                    revision.authored_by.kind.as_str(),
+                    "USER" | "SERVICE" | "RUNTIME" | "AGENT" | "CHANNEL_IDENTITY"
+                )
             {
-                return Err("Local Runtime returned inconsistent Task specification history".to_owned());
+                return Err(
+                    "Local Runtime returned inconsistent Task specification history".to_owned(),
+                );
             }
             previous_revision = revision.revision;
-            views.push(TaskSpecHistoryRevisionView::from_wire(revision, workspace_id.clone()));
+            views.push(TaskSpecHistoryRevisionView::from_wire(
+                revision,
+                workspace_id.clone(),
+            ));
         }
         Ok(views)
     })
@@ -2015,10 +2202,14 @@ async fn get_task_planning_readiness(
     tauri::async_runtime::spawn_blocking(move || {
         if workspace_id.trim().is_empty()
             || workspace_id.len() > 200
-            || !workspace_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || !workspace_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
             || task_id.trim().is_empty()
             || task_id.len() > 200
-            || !task_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || !task_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
             || expected_task_version == 0
         {
             return Err("Planning readiness request is invalid".to_owned());
@@ -2032,8 +2223,9 @@ async fn get_task_planning_readiness(
             .send()
             .map_err(|_| "Local planning readiness is unavailable".to_owned())?;
         let body = read_bounded_response(response)?;
-        let wire: TaskPlanningReadinessWire = serde_json::from_slice(&body)
-            .map_err(|_| "Local Runtime returned an unsupported planning readiness response".to_owned())?;
+        let wire: TaskPlanningReadinessWire = serde_json::from_slice(&body).map_err(|_| {
+            "Local Runtime returned an unsupported planning readiness response".to_owned()
+        })?;
         let view = TaskPlanningReadinessView::try_from(wire)?;
         validate_task_planning_readiness_identity(view, &task_id, expected_task_version)
     })
@@ -2058,10 +2250,14 @@ async fn revise_task_spec(
         let objective = objective.trim();
         if workspace_id.trim().is_empty()
             || workspace_id.len() > 200
-            || !workspace_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || !workspace_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
             || task_id.trim().is_empty()
             || task_id.len() > 200
-            || !task_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || !task_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
             || expected_task_version == 0
             || parent_revision == 0
             || objective.is_empty()
@@ -2084,16 +2280,24 @@ async fn revise_task_spec(
                 "objective": objective,
             }))
             .send()
-            .map_err(|_| "Task edit response is unknown; retry the unchanged edit to reconcile it".to_owned())?;
+            .map_err(|_| {
+                "Task edit response is unknown; retry the unchanged edit to reconcile it".to_owned()
+            })?;
         let body = read_bounded_response(response)?;
-        let revision: TaskSpecDetailWire = serde_json::from_slice(&body)
-            .map_err(|_| "Local Runtime returned an unsupported Task specification revision".to_owned())?;
+        let revision: TaskSpecDetailWire = serde_json::from_slice(&body).map_err(|_| {
+            "Local Runtime returned an unsupported Task specification revision".to_owned()
+        })?;
         if revision.task_id != task_id
             || revision.revision != parent_revision.saturating_add(1)
             || revision.objective != objective
-            || revision.input_refs.iter().any(|input| input.workspace_id != workspace_id)
+            || revision
+                .input_refs
+                .iter()
+                .any(|input| input.workspace_id != workspace_id)
         {
-            return Err("Local Runtime returned a Task revision that does not match this edit".to_owned());
+            return Err(
+                "Local Runtime returned a Task revision that does not match this edit".to_owned(),
+            );
         }
         Ok(TaskSpecRevisionReceiptView {
             task_id: revision.task_id,
@@ -2123,22 +2327,38 @@ fn fetch_agent_installations(app: &AppHandle) -> Result<Vec<AgentInstallationVie
         .map_err(|_| "Local Operator returned an invalid agent inventory".to_owned())?;
     let wire: AgentInstallationListWire = serde_json::from_slice(&body)
         .map_err(|_| "Local Operator returned an unsupported agent inventory".to_owned())?;
-    Ok(wire.items.into_iter().map(AgentInstallationView::from).collect())
+    Ok(wire
+        .items
+        .into_iter()
+        .map(AgentInstallationView::from)
+        .collect())
 }
 
 #[tauri::command]
-async fn list_agent_profiles(app: AppHandle, workspace_id: String) -> Result<AgentProfilePageView, String> {
+async fn list_agent_profiles(
+    app: AppHandle,
+    workspace_id: String,
+) -> Result<AgentProfilePageView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.trim().is_empty() { return Err("Workspace selection is required".to_owned()); }
+        if workspace_id.trim().is_empty() {
+            return Err("Workspace selection is required".to_owned());
+        }
         let (client, workspace_url) = operator_client(&app)?;
-        let response = client.get(workspace_url.replace("/v1/workspaces", "/v1/agent-profiles"))
+        let response = client
+            .get(workspace_url.replace("/v1/workspaces", "/v1/agent-profiles"))
             .header("X-Workspace-ID", &workspace_id)
-            .send().map_err(|_| "Local agent profiles are unavailable".to_owned())?;
+            .send()
+            .map_err(|_| "Local agent profiles are unavailable".to_owned())?;
         let body = read_bounded_response(response)?;
         let page: AgentProfilePageWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned unsupported agent profiles".to_owned())?;
-        Ok(AgentProfilePageView { items: page.items.into_iter().map(AgentProfileView::from).collect(), next_cursor: page.next_cursor })
-    }).await.map_err(|_| "Agent profile request did not complete".to_owned())?
+        Ok(AgentProfilePageView {
+            items: page.items.into_iter().map(AgentProfileView::from).collect(),
+            next_cursor: page.next_cursor,
+        })
+    })
+    .await
+    .map_err(|_| "Agent profile request did not complete".to_owned())?
 }
 
 #[tauri::command]
@@ -2150,42 +2370,67 @@ async fn probe_agent_profile(
     tauri::async_runtime::spawn_blocking(move || {
         if workspace_id.trim().is_empty()
             || workspace_id.len() > 200
-            || !workspace_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || !workspace_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
         {
             return Err("Workspace selection is invalid".to_owned());
         }
         if !matches!(provider_key.as_str(), "CODEX" | "OPENCODE") {
             return Err("This agent profile probe is not available".to_owned());
         }
-        let provider_name = if provider_key == "CODEX" { "Codex" } else { "OpenCode" };
+        let provider_name = if provider_key == "CODEX" {
+            "Codex"
+        } else {
+            "OpenCode"
+        };
         let (client, workspace_url) = operator_client(&app)?;
-        let response = client.post(workspace_url.replace("/v1/workspaces", "/v1/agent-profiles/probe"))
+        let response = client
+            .post(workspace_url.replace("/v1/workspaces", "/v1/agent-profiles/probe"))
             .header("X-Workspace-ID", &workspace_id)
             .json(&serde_json::json!({"provider_key": provider_key}))
-            .send().map_err(|_| format!("{provider_name} profile probe is unavailable"))?;
+            .send()
+            .map_err(|_| format!("{provider_name} profile probe is unavailable"))?;
         let body = read_bounded_response(response)?;
-        let profile: AgentProfileWire = serde_json::from_slice(&body)
-            .map_err(|_| format!("Local Runtime returned an unsupported {provider_name} profile"))?;
+        let profile: AgentProfileWire = serde_json::from_slice(&body).map_err(|_| {
+            format!("Local Runtime returned an unsupported {provider_name} profile")
+        })?;
         if profile.provider_key != provider_key {
-            return Err("Local Runtime returned a different agent profile than requested".to_owned());
+            return Err(
+                "Local Runtime returned a different agent profile than requested".to_owned(),
+            );
         }
         Ok(AgentProfileView::from(profile))
-    }).await.map_err(|_| "Agent profile probe did not complete".to_owned())?
+    })
+    .await
+    .map_err(|_| "Agent profile probe did not complete".to_owned())?
 }
 
 #[tauri::command]
-async fn list_agent_bindings(app: AppHandle, workspace_id: String) -> Result<AgentBindingPageView, String> {
+async fn list_agent_bindings(
+    app: AppHandle,
+    workspace_id: String,
+) -> Result<AgentBindingPageView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.trim().is_empty() { return Err("Workspace selection is required".to_owned()); }
+        if workspace_id.trim().is_empty() {
+            return Err("Workspace selection is required".to_owned());
+        }
         let (client, workspace_url) = operator_client(&app)?;
-        let response = client.get(workspace_url.replace("/v1/workspaces", "/v1/agent-bindings"))
+        let response = client
+            .get(workspace_url.replace("/v1/workspaces", "/v1/agent-bindings"))
             .header("X-Workspace-ID", &workspace_id)
-            .send().map_err(|_| "Workspace agent bindings are unavailable".to_owned())?;
+            .send()
+            .map_err(|_| "Workspace agent bindings are unavailable".to_owned())?;
         let body = read_bounded_response(response)?;
         let page: AgentBindingPageWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned unsupported agent bindings".to_owned())?;
-        Ok(AgentBindingPageView { items: page.items.into_iter().map(AgentBindingView::from).collect(), next_cursor: page.next_cursor })
-    }).await.map_err(|_| "Agent binding request did not complete".to_owned())?
+        Ok(AgentBindingPageView {
+            items: page.items.into_iter().map(AgentBindingView::from).collect(),
+            next_cursor: page.next_cursor,
+        })
+    })
+    .await
+    .map_err(|_| "Agent binding request did not complete".to_owned())?
 }
 
 #[tauri::command]
@@ -2231,36 +2476,60 @@ async fn enable_agent_binding(
     request_id: String,
 ) -> Result<AgentBindingView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.trim().is_empty() || agent_binding_id.trim().is_empty() || request_id.trim().is_empty() || request_id.len() > 128 {
+        if workspace_id.trim().is_empty()
+            || agent_binding_id.trim().is_empty()
+            || request_id.trim().is_empty()
+            || request_id.len() > 128
+        {
             return Err("Agent binding enable request is invalid".to_owned());
         }
         let (client, workspace_url) = operator_client(&app)?;
         let base = workspace_url.replace("/v1/workspaces", "/v1/agent-bindings");
-        let response = client.post(format!("{base}/{agent_binding_id}/enable"))
+        let response = client
+            .post(format!("{base}/{agent_binding_id}/enable"))
             .header("X-Workspace-ID", &workspace_id)
             .header("If-Match", expected_version.to_string())
             .header("Idempotency-Key", request_id)
-            .send().map_err(|_| "Workspace agent binding could not be enabled".to_owned())?;
+            .send()
+            .map_err(|_| "Workspace agent binding could not be enabled".to_owned())?;
         let body = read_bounded_response(response)?;
         let binding: AgentBindingWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned an unsupported agent binding".to_owned())?;
         Ok(AgentBindingView::from(binding))
-    }).await.map_err(|_| "Agent binding enable request did not complete".to_owned())?
+    })
+    .await
+    .map_err(|_| "Agent binding enable request did not complete".to_owned())?
 }
 
 #[tauri::command]
-async fn list_workspace_runtime_bindings(app: AppHandle, workspace_id: String) -> Result<Vec<RuntimeWorkspaceBindingView>, String> {
+async fn list_workspace_runtime_bindings(
+    app: AppHandle,
+    workspace_id: String,
+) -> Result<Vec<RuntimeWorkspaceBindingView>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.trim().is_empty() { return Err("Workspace selection is required".to_owned()); }
+        if workspace_id.trim().is_empty() {
+            return Err("Workspace selection is required".to_owned());
+        }
         let (client, workspace_url) = operator_client(&app)?;
-        let response = client.get(format!("{}/{workspace_id}/runtime-bindings/current-local", workspace_url.trim_end_matches("/workspaces")))
+        let response = client
+            .get(format!(
+                "{}/{workspace_id}/runtime-bindings/current-local",
+                workspace_url.trim_end_matches("/workspaces")
+            ))
             .header("X-Workspace-ID", &workspace_id)
-            .send().map_err(|_| "Workspace Runtime enrollment is unavailable".to_owned())?;
+            .send()
+            .map_err(|_| "Workspace Runtime enrollment is unavailable".to_owned())?;
         let body = read_bounded_response(response)?;
         let page: RuntimeWorkspaceBindingPageWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned unsupported Workspace enrollment".to_owned())?;
-        Ok(page.items.into_iter().map(RuntimeWorkspaceBindingView::from).collect())
-    }).await.map_err(|_| "Workspace Runtime enrollment request did not complete".to_owned())?
+        Ok(page
+            .items
+            .into_iter()
+            .map(RuntimeWorkspaceBindingView::from)
+            .collect())
+    })
+    .await
+    .map_err(|_| "Workspace Runtime enrollment request did not complete".to_owned())?
 }
 
 #[tauri::command]
@@ -2271,20 +2540,28 @@ async fn enroll_local_runtime(
     request_id: String,
 ) -> Result<RuntimeWorkspaceBindingView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.trim().is_empty() || request_id.trim().is_empty() || request_id.len() > 128 {
+        if workspace_id.trim().is_empty() || request_id.trim().is_empty() || request_id.len() > 128
+        {
             return Err("Local Runtime enrollment request is invalid".to_owned());
         }
         let (client, workspace_url) = operator_client(&app)?;
-        let response = client.post(format!("{}/{workspace_id}/runtime-bindings/local-enrollment", workspace_url.trim_end_matches("/workspaces")))
+        let response = client
+            .post(format!(
+                "{}/{workspace_id}/runtime-bindings/local-enrollment",
+                workspace_url.trim_end_matches("/workspaces")
+            ))
             .header("X-Workspace-ID", &workspace_id)
             .header("If-Match", expected_workspace_version.to_string())
             .header("Idempotency-Key", request_id)
-            .send().map_err(|_| "Local Runtime could not be enrolled in this Workspace".to_owned())?;
+            .send()
+            .map_err(|_| "Local Runtime could not be enrolled in this Workspace".to_owned())?;
         let body = read_bounded_response(response)?;
         let binding: RuntimeWorkspaceBindingWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned unsupported enrollment state".to_owned())?;
         Ok(RuntimeWorkspaceBindingView::from(binding))
-    }).await.map_err(|_| "Local Runtime enrollment request did not complete".to_owned())?
+    })
+    .await
+    .map_err(|_| "Local Runtime enrollment request did not complete".to_owned())?
 }
 
 #[tauri::command]
@@ -2298,6 +2575,23 @@ async fn create_workspace(
         .map_err(|_| "Workspace creation did not complete".to_owned())?
 }
 
+fn validate_workspace_policy_request(
+    workspace_id: &str,
+    replication_policy: &str,
+    request_id: &str,
+) -> Result<(), String> {
+    if workspace_id.is_empty()
+        || !matches!(
+            replication_policy,
+            "LOCAL_ONLY" | "METADATA_ONLY" | "ACTIVE_TASK_INPUTS" | "FULL_WORKSPACE"
+        )
+        || request_id.is_empty()
+    {
+        return Err("Workspace policy request is invalid".to_owned());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn update_workspace_policy(
     app: AppHandle,
@@ -2307,15 +2601,7 @@ async fn update_workspace_policy(
     request_id: String,
 ) -> Result<WorkspaceView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.is_empty()
-            || !matches!(
-                replication_policy.as_str(),
-                "LOCAL_ONLY" | "METADATA_ONLY" | "ACTIVE_TASKS" | "FULL_WORKSPACE"
-            )
-            || request_id.is_empty()
-        {
-            return Err("Workspace policy request is invalid".to_owned());
-        }
+        validate_workspace_policy_request(&workspace_id, &replication_policy, &request_id)?;
         let (client, url) = operator_client(&app)?;
         let response = client
             .patch(format!("{}/{}", url, workspace_id))
@@ -2338,6 +2624,50 @@ async fn update_workspace_policy(
     .map_err(|_| "Workspace policy update did not complete".to_owned())?
 }
 
+fn validate_workspace_archive_request(workspace_id: &str, request_id: &str) -> Result<(), String> {
+    if workspace_id.is_empty()
+        || workspace_id.len() > 256
+        || !workspace_id
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b'/' | b'?' | b'#'))
+        || request_id.is_empty()
+        || request_id.len() > 128
+        || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        return Err("Workspace archive request is invalid".to_owned());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn archive_workspace(
+    app: AppHandle,
+    workspace_id: String,
+    expected_version: u64,
+    request_id: String,
+) -> Result<WorkspaceView, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_workspace_archive_request(&workspace_id, &request_id)?;
+        let (client, workspace_url) = operator_client(&app)?;
+        let response = client
+            .post(format!(
+                "{}/{workspace_id}/archive",
+                workspace_url.trim_end_matches("/workspaces")
+            ))
+            .header("X-Workspace-ID", &workspace_id)
+            .header("If-Match", expected_version.to_string())
+            .header("Idempotency-Key", request_id)
+            .send()
+            .map_err(|_| "Workspace archive request did not complete".to_owned())?;
+        let body = read_bounded_response(response)?;
+        let response: WorkspaceWire = serde_json::from_slice(&body)
+            .map_err(|_| "Local Operator API returned an unsupported Workspace response".to_owned())?;
+        Ok(WorkspaceView::from(response))
+    })
+    .await
+    .map_err(|_| "Workspace archive request did not complete".to_owned())?
+}
+
 #[tauri::command]
 async fn set_workspace_default_agent_binding(
     app: AppHandle,
@@ -2349,7 +2679,9 @@ async fn set_workspace_default_agent_binding(
     tauri::async_runtime::spawn_blocking(move || {
         if workspace_id.trim().is_empty()
             || request_id.trim().is_empty()
-            || agent_binding_id.as_ref().is_some_and(|id| id.trim().is_empty())
+            || agent_binding_id
+                .as_ref()
+                .is_some_and(|id| id.trim().is_empty())
         {
             return Err("Workspace default agent request is invalid".to_owned());
         }
@@ -2368,11 +2700,14 @@ async fn set_workspace_default_agent_binding(
             .send()
             .map_err(|_| "Workspace default agent update did not complete".to_owned())?;
         if !response.is_success() {
-            return Err("Workspace default agent could not be updated; refresh and retry".to_owned());
+            return Err(
+                "Workspace default agent could not be updated; refresh and retry".to_owned(),
+            );
         }
         let body = read_bounded_response(response)?;
-        let workspace: WorkspaceWire = serde_json::from_slice(&body)
-            .map_err(|_| "Local Operator API returned an unsupported Workspace response".to_owned())?;
+        let workspace: WorkspaceWire = serde_json::from_slice(&body).map_err(|_| {
+            "Local Operator API returned an unsupported Workspace response".to_owned()
+        })?;
         Ok(WorkspaceView::from(workspace))
     })
     .await
@@ -2388,9 +2723,15 @@ async fn get_resource_detail(
     tauri::async_runtime::spawn_blocking(move || {
         validate_resource_selection(&workspace_id, &resource_id)?;
         let (client, workspace_url) = operator_client(&app)?;
-        let response = client.get(format!("{}/resources/{}", workspace_url.trim_end_matches("/workspaces"), resource_id))
+        let response = client
+            .get(format!(
+                "{}/resources/{}",
+                workspace_url.trim_end_matches("/workspaces"),
+                resource_id
+            ))
             .header("X-Workspace-ID", &workspace_id)
-            .send().map_err(|_| "Resource metadata is unavailable".to_owned())?;
+            .send()
+            .map_err(|_| "Resource metadata is unavailable".to_owned())?;
         if response.status() == 404 {
             return Err("Resource is unavailable in this Workspace".to_owned());
         }
@@ -2412,7 +2753,9 @@ async fn get_resource_detail(
             version: wire.version,
             context_document: wire.context_document,
         })
-    }).await.map_err(|_| "Resource metadata request did not complete".to_owned())?
+    })
+    .await
+    .map_err(|_| "Resource metadata request did not complete".to_owned())?
 }
 
 #[tauri::command]
@@ -2485,36 +2828,63 @@ async fn list_resource_revisions(
 ) -> Result<ResourceRevisionPageView, String> {
     tauri::async_runtime::spawn_blocking(move || {
         validate_resource_selection(&workspace_id, &resource_id)?;
-        if cursor.as_deref().is_some_and(|value| value.is_empty() || value.len() > 4096) {
+        if cursor
+            .as_deref()
+            .is_some_and(|value| value.is_empty() || value.len() > 4096)
+        {
             return Err("Resource revision cursor is invalid".to_owned());
         }
         let (client, workspace_url) = operator_client(&app)?;
-        let mut request = client.get(format!("{}/resources/{}/revisions", workspace_url.trim_end_matches("/workspaces"), resource_id))
+        let mut request = client
+            .get(format!(
+                "{}/resources/{}/revisions",
+                workspace_url.trim_end_matches("/workspaces"),
+                resource_id
+            ))
             .header("X-Workspace-ID", &workspace_id)
             .query(&[("limit", "100")]);
-        if let Some(cursor) = cursor { request = request.query(&[("cursor", cursor)]); }
-        let response = request.send().map_err(|_| "Resource revision history is unavailable".to_owned())?;
-        if !response.is_success() { return Err("Resource revision history is unavailable".to_owned()); }
+        if let Some(cursor) = cursor {
+            request = request.query(&[("cursor", cursor)]);
+        }
+        let response = request
+            .send()
+            .map_err(|_| "Resource revision history is unavailable".to_owned())?;
+        if !response.is_success() {
+            return Err("Resource revision history is unavailable".to_owned());
+        }
         let body = read_bounded_response(response)?;
         let wire: ResourceRevisionPageWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned unsupported Resource history".to_owned())?;
-        let items = wire.items.into_iter().map(|item| {
-            if item.revision.resource_id != resource_id || item.revision.resource_revision_id.is_empty() {
-                return Err("Local Runtime returned history for a different Resource".to_owned());
-            }
-            Ok(ResourceRevisionView {
-                resource_revision_id: item.revision.resource_revision_id,
-                resource_id: item.revision.resource_id,
-                parent_revision_ids: item.revision.parent_revision_ids,
-                content_digest: item.revision.content_digest,
-                size_bytes: item.revision.size_bytes,
-                media_type: item.revision.media_type,
-                observed_at: item.revision.observed_at,
-                is_head: item.is_head,
+        let items = wire
+            .items
+            .into_iter()
+            .map(|item| {
+                if item.revision.resource_id != resource_id
+                    || item.revision.resource_revision_id.is_empty()
+                {
+                    return Err(
+                        "Local Runtime returned history for a different Resource".to_owned()
+                    );
+                }
+                Ok(ResourceRevisionView {
+                    resource_revision_id: item.revision.resource_revision_id,
+                    resource_id: item.revision.resource_id,
+                    parent_revision_ids: item.revision.parent_revision_ids,
+                    content_digest: item.revision.content_digest,
+                    size_bytes: item.revision.size_bytes,
+                    media_type: item.revision.media_type,
+                    observed_at: item.revision.observed_at,
+                    is_head: item.is_head,
+                })
             })
-        }).collect::<Result<Vec<_>, String>>()?;
-        Ok(ResourceRevisionPageView { items, next_cursor: wire.next_cursor })
-    }).await.map_err(|_| "Resource revision history request did not complete".to_owned())?
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(ResourceRevisionPageView {
+            items,
+            next_cursor: wire.next_cursor,
+        })
+    })
+    .await
+    .map_err(|_| "Resource revision history request did not complete".to_owned())?
 }
 
 #[tauri::command]
@@ -2607,9 +2977,15 @@ async fn commit_resource_revision_upload(
 }
 
 fn validate_resource_selection(workspace_id: &str, resource_id: &str) -> Result<(), String> {
-    if workspace_id.is_empty() || resource_id.is_empty() || resource_id.len() > 160
-        || !resource_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
-    { return Err("Resource selection is invalid".to_owned()); }
+    if workspace_id.is_empty()
+        || resource_id.is_empty()
+        || resource_id.len() > 160
+        || !resource_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return Err("Resource selection is invalid".to_owned());
+    }
     Ok(())
 }
 
@@ -2745,13 +3121,11 @@ fn resource_upload_context_metadata_matches(
     match (actual, expected) {
         (None, None) => true,
         (Some(actual), Some(expected)) => {
-            actual.as_object().is_some_and(|object| object.len() == 2
-                && object.contains_key("kind")
-                && object.contains_key("owner_ref"))
-                && expected.as_object().is_some_and(|object| object.len() == 2
-                    && object.contains_key("kind")
-                    && object.contains_key("owner_ref"))
-                && actual.get("kind") == expected.get("kind")
+            actual.as_object().is_some_and(|object| {
+                object.len() == 2 && object.contains_key("kind") && object.contains_key("owner_ref")
+            }) && expected.as_object().is_some_and(|object| {
+                object.len() == 2 && object.contains_key("kind") && object.contains_key("owner_ref")
+            }) && actual.get("kind") == expected.get("kind")
                 && actual.get("owner_ref") == expected.get("owner_ref")
         }
         _ => false,
@@ -2780,7 +3154,9 @@ async fn get_resource_upload(
         let wire: ResourceUploadWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned unsupported upload progress".to_owned())?;
         if wire.workspace_id != workspace_id || wire.upload_id != upload_id {
-            return Err("Local Runtime returned upload progress for a different request".to_owned());
+            return Err(
+                "Local Runtime returned upload progress for a different request".to_owned(),
+            );
         }
         Ok(ResourceUploadView::from(wire))
     })
@@ -2838,7 +3214,9 @@ async fn upload_resource_chunk(
             .send()
             .map_err(|_| "Resource chunk transfer did not complete".to_owned())?;
         if !response.is_success() {
-            return Err("Local Runtime rejected this Resource chunk; progress is safe to resume".to_owned());
+            return Err(
+                "Local Runtime rejected this Resource chunk; progress is safe to resume".to_owned(),
+            );
         }
         Ok(())
     })
@@ -2880,7 +3258,10 @@ async fn commit_resource_upload(
             workspace_id: committed.resource.workspace_id,
             resource_revision_id: committed.revision.resource_revision_id,
             display_name: committed.resource.display_name,
-            media_type: committed.revision.media_type.unwrap_or_else(|| "application/octet-stream".to_owned()),
+            media_type: committed
+                .revision
+                .media_type
+                .unwrap_or_else(|| "application/octet-stream".to_owned()),
             content_digest: committed.revision.content_digest.unwrap_or_default(),
             size_bytes: committed.revision.size_bytes.unwrap_or_default(),
         })
@@ -2915,10 +3296,20 @@ fn validate_content_range(value: &str, body_size: usize) -> Result<(), String> {
     let Some((start, end)) = offsets.split_once('-') else {
         return Err("Resource chunk range is invalid".to_owned());
     };
-    let start = start.parse::<u64>().map_err(|_| "Resource chunk range is invalid".to_owned())?;
-    let end = end.parse::<u64>().map_err(|_| "Resource chunk range is invalid".to_owned())?;
-    let total = total.parse::<u64>().map_err(|_| "Resource chunk range is invalid".to_owned())?;
-    if end < start || end.saturating_sub(start).saturating_add(1) != body_size as u64 || end >= total || total > 100 * 1024 * 1024 {
+    let start = start
+        .parse::<u64>()
+        .map_err(|_| "Resource chunk range is invalid".to_owned())?;
+    let end = end
+        .parse::<u64>()
+        .map_err(|_| "Resource chunk range is invalid".to_owned())?;
+    let total = total
+        .parse::<u64>()
+        .map_err(|_| "Resource chunk range is invalid".to_owned())?;
+    if end < start
+        || end.saturating_sub(start).saturating_add(1) != body_size as u64
+        || end >= total
+        || total > 100 * 1024 * 1024
+    {
         return Err("Resource chunk range does not match its bounded body".to_owned());
     }
     Ok(())
@@ -3106,10 +3497,23 @@ async fn search_resources(
     cursor: Option<String>,
 ) -> Result<ResourceSearchPageView, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if workspace_id.is_empty() || query.len() > 256 || query.contains('\0')
-            || !matches!(mode.as_str(), "METADATA" | "ON_DEMAND_CONTENT" | "INDEXED_CONTENT")
-            || kind.as_deref().is_some_and(|value| !matches!(value, "FILE" | "FOLDER" | "ARTIFACT" | "CONNECTOR_OBJECT" | "WEB_RESOURCE" | "OTHER"))
-            || freshness.as_deref().is_some_and(|value| !matches!(value, "CURRENT" | "STALE" | "UNKNOWN" | "UNAVAILABLE")) {
+        if workspace_id.is_empty()
+            || query.len() > 256
+            || query.contains('\0')
+            || !matches!(
+                mode.as_str(),
+                "METADATA" | "ON_DEMAND_CONTENT" | "INDEXED_CONTENT"
+            )
+            || kind.as_deref().is_some_and(|value| {
+                !matches!(
+                    value,
+                    "FILE" | "FOLDER" | "ARTIFACT" | "CONNECTOR_OBJECT" | "WEB_RESOURCE" | "OTHER"
+                )
+            })
+            || freshness.as_deref().is_some_and(|value| {
+                !matches!(value, "CURRENT" | "STALE" | "UNKNOWN" | "UNAVAILABLE")
+            })
+        {
             return Err("Resource search query is invalid".to_owned());
         }
         let (client, workspace_url) = operator_client(&app)?;
@@ -3117,7 +3521,11 @@ async fn search_resources(
         let mut request = client
             .get(&url)
             .header("X-Workspace-ID", &workspace_id)
-            .query(&[("q", query.as_str()), ("mode", mode.as_str()), ("limit", "100")]);
+            .query(&[
+                ("q", query.as_str()),
+                ("mode", mode.as_str()),
+                ("limit", "100"),
+            ]);
         if let Some(kind) = kind.as_deref() {
             request = request.query(&[("kind", kind)]);
         }
@@ -3130,7 +3538,9 @@ async fn search_resources(
             }
             request = request.query(&[("cursor", cursor)]);
         }
-        let response = request.send().map_err(|_| "Local Resource search is unavailable".to_owned())?;
+        let response = request
+            .send()
+            .map_err(|_| "Local Resource search is unavailable".to_owned())?;
         let body = read_bounded_response(response)?;
         let page: ResourceSearchPageWire = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned an unsupported Resource search page".to_owned())?;
@@ -3256,19 +3666,38 @@ async fn preview_resource_text(
                 resource_id
             ))
             .header("X-Workspace-ID", workspace_id)
-            .query(&[("revision_id", revision_id.as_str()), ("max_bytes", "1048576")])
+            .query(&[
+                ("revision_id", revision_id.as_str()),
+                ("max_bytes", "1048576"),
+            ])
             .send()
             .map_err(|_| "Local Resource content is unavailable".to_owned())?;
         if !response.is_success() {
-            return Err(read_bounded_response(response).err().unwrap_or_else(|| "Local Runtime could not read this Resource revision".to_owned()));
+            return Err(read_bounded_response(response).err().unwrap_or_else(|| {
+                "Local Runtime could not read this Resource revision".to_owned()
+            }));
         }
         if response.header("x-resource-revision-id") != Some(revision_id.as_str()) {
-            return Err("Local Runtime returned content for a different Resource revision".to_owned());
+            return Err(
+                "Local Runtime returned content for a different Resource revision".to_owned(),
+            );
         }
         let media_type = response.header("x-resource-media-type").unwrap_or("");
-        let normalized_media_type = media_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        let normalized_media_type = media_type
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
         let is_text = normalized_media_type.starts_with("text/")
-            || matches!(normalized_media_type.as_str(), "application/json" | "application/xml" | "application/yaml" | "application/x-yaml" | "application/javascript");
+            || matches!(
+                normalized_media_type.as_str(),
+                "application/json"
+                    | "application/xml"
+                    | "application/yaml"
+                    | "application/x-yaml"
+                    | "application/javascript"
+            );
         if !is_text {
             return Err("Preview is available for text files only".to_owned());
         }
@@ -3309,8 +3738,8 @@ fn verify_resource_preview_bytes(
     if actual_digest != expected_content_digest {
         return Err("Resource content no longer matches the indexed search result".to_owned());
     }
-    let text = String::from_utf8(bytes)
-        .map_err(|_| "This text file is not valid UTF-8".to_owned())?;
+    let text =
+        String::from_utf8(bytes).map_err(|_| "This text file is not valid UTF-8".to_owned())?;
     Ok(ResourceTextPreviewWithProvenanceView {
         text,
         resource_revision_id: expected_revision_id.to_owned(),
@@ -3332,10 +3761,14 @@ async fn preview_resource_text_with_provenance(
         if workspace_id.is_empty()
             || resource_id.is_empty()
             || resource_id.len() > 160
-            || !resource_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || !resource_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
             || revision_id.is_empty()
             || revision_id.len() > 160
-            || !revision_id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+            || !revision_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
             || !valid_resource_sha256(&expected_content_digest)
         {
             return Err("Resource search preview selection is invalid".to_owned());
@@ -3348,24 +3781,46 @@ async fn preview_resource_text_with_provenance(
                 resource_id
             ))
             .header("X-Workspace-ID", &workspace_id)
-            .query(&[("revision_id", revision_id.as_str()), ("max_bytes", "1048576")])
+            .query(&[
+                ("revision_id", revision_id.as_str()),
+                ("max_bytes", "1048576"),
+            ])
             .send()
             .map_err(|_| "Local Resource content is unavailable".to_owned())?;
         if !response.is_success() {
-            return Err(read_bounded_response(response).err().unwrap_or_else(|| "Local Runtime could not read this Resource revision".to_owned()));
+            return Err(read_bounded_response(response).err().unwrap_or_else(|| {
+                "Local Runtime could not read this Resource revision".to_owned()
+            }));
         }
         let response_revision_id = response.header("x-resource-revision-id").map(str::to_owned);
         if response_revision_id.as_deref() != Some(revision_id.as_str()) {
-            return Err("Local Runtime returned content for a different Resource revision".to_owned());
+            return Err(
+                "Local Runtime returned content for a different Resource revision".to_owned(),
+            );
         }
         let media_type = response.header("x-resource-media-type").unwrap_or("");
-        let normalized_media_type = media_type.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+        let normalized_media_type = media_type
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
         let is_text = normalized_media_type.starts_with("text/")
-            || matches!(normalized_media_type.as_str(), "application/json" | "application/xml" | "application/yaml" | "application/x-yaml" | "application/javascript");
+            || matches!(
+                normalized_media_type.as_str(),
+                "application/json"
+                    | "application/xml"
+                    | "application/yaml"
+                    | "application/x-yaml"
+                    | "application/javascript"
+            );
         if !is_text {
             return Err("Preview is available for text files only".to_owned());
         }
-        if response.content_length().is_some_and(|length| length > 1024 * 1024) {
+        if response
+            .content_length()
+            .is_some_and(|length| length > 1024 * 1024)
+        {
             return Err("Text preview is limited to 1 MiB".to_owned());
         }
         let mut bytes = Vec::new();
@@ -3486,13 +3941,15 @@ fn validate_operator_client_until(
     if expected_runtime_id.is_some_and(|id| id != readiness.runtime_id)
         || expected_incarnation_id.is_some_and(|id| id != readiness.local_incarnation_id)
     {
-        return Err("Local Operator connection does not match the current daemon status".to_owned());
+        return Err(
+            "Local Operator connection does not match the current daemon status".to_owned(),
+        );
     }
     Ok((client, readiness))
 }
 
 /// Native-only Operator client. It derives the endpoint from Tauri's trusted data
-/// directory, authenticates the daemon's Unix peer UID before writing any frame,
+/// directory, authenticates the daemon through the platform's OS IPC boundary,
 /// and performs one framed request per connection. No endpoint or handle crosses
 /// into the WebView.
 struct LocalOperatorClient {
@@ -3500,12 +3957,15 @@ struct LocalOperatorClient {
     endpoint: UnixEndpoint,
     #[cfg(unix)]
     expected_peer_uid: u32,
+    #[cfg(windows)]
+    endpoint: WindowsEndpoint,
 }
 
 impl LocalOperatorClient {
     fn new(app: &AppHandle) -> Result<Self, String> {
-        operator_ipc::require_os_local_ipc()
-            .map_err(|_| "Authenticated local Operator IPC is unsupported on this platform".to_owned())?;
+        operator_ipc::require_os_local_ipc().map_err(|_| {
+            "Authenticated local Operator IPC is unsupported on this platform".to_owned()
+        })?;
         #[cfg(unix)]
         {
             let data_dir = app
@@ -3514,7 +3974,18 @@ impl LocalOperatorClient {
                 .map_err(|_| "LiteCowork application data directory is unavailable".to_owned())?;
             Self::from_data_dir(&data_dir)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|_| "LiteCowork application data directory is unavailable".to_owned())?;
+            let endpoint = WindowsEndpoint::derive(&data_dir).map_err(|_| {
+                "Local Operator IPC data directory is unavailable or unsafe".to_owned()
+            })?;
+            Ok(Self { endpoint })
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = app;
             Err("Authenticated local Operator IPC is unsupported on this platform".to_owned())
@@ -3552,7 +4023,7 @@ impl LocalOperatorClient {
         LocalOperatorRequest::new(self, "PATCH", path.into())
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn exchange(
         &self,
         method: String,
@@ -3563,7 +4034,7 @@ impl LocalOperatorClient {
         self.exchange_with_deadline(method, path_and_query, headers, body, None)
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn exchange_with_deadline(
         &self,
         method: String,
@@ -3595,13 +4066,21 @@ impl LocalOperatorClient {
         .map_err(|_| "Local Operator request is invalid or exceeds its size limit".to_owned())?;
 
         let endpoint = self.endpoint.clone();
+        #[cfg(unix)]
         let expected_peer_uid = self.expected_peer_uid;
         let budget = Arc::clone(&body_budget);
         let runtime = operator_ipc_runtime()?;
         let exchange = async move {
-            // The callback runs after SO_PEERCRED capture and before frame IO.
+            // Unix checks SO_PEERCRED before frame IO; Windows admission uses
+            // the named pipe's protected logon-SID DACL.
+            #[cfg(unix)]
             let mut connection = endpoint
                 .connect(|peer: PeerCredentials| peer.uid == expected_peer_uid)
+                .await
+                .map_err(|_| "Local Operator API is not responding".to_owned())?;
+            #[cfg(windows)]
+            let mut connection = endpoint
+                .connect()
                 .await
                 .map_err(|_| "Local Operator API is not responding".to_owned())?;
             connection
@@ -3614,16 +4093,15 @@ impl LocalOperatorClient {
                 .map_err(|_| "Local Operator response could not be read".to_owned())
         };
         let response = match deadline {
-            Some(deadline) => runtime
-                .block_on(async move {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return Err("Local Operator readiness deadline elapsed".to_owned());
-                    }
-                    tokio::time::timeout(remaining, exchange)
-                        .await
-                        .map_err(|_| "Local Operator readiness deadline elapsed".to_owned())?
-                })?,
+            Some(deadline) => runtime.block_on(async move {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err("Local Operator readiness deadline elapsed".to_owned());
+                }
+                tokio::time::timeout(remaining, exchange)
+                    .await
+                    .map_err(|_| "Local Operator readiness deadline elapsed".to_owned())?
+            })?,
             None => runtime.block_on(exchange)?,
         };
         let (header, body) = response.into_parts();
@@ -3635,7 +4113,7 @@ impl LocalOperatorClient {
         })
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn exchange(
         &self,
         _method: String,
@@ -3646,7 +4124,7 @@ impl LocalOperatorClient {
         Err("Authenticated local Operator IPC is unsupported on this platform".to_owned())
     }
 
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     fn exchange_with_deadline(
         &self,
         method: String,
@@ -3659,7 +4137,7 @@ impl LocalOperatorClient {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn operator_ipc_runtime() -> Result<&'static tokio::runtime::Runtime, String> {
     match OPERATOR_IPC_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
@@ -3673,12 +4151,249 @@ fn operator_ipc_runtime() -> Result<&'static tokio::runtime::Runtime, String> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn operator_ipc_body_budget() -> Arc<InFlightBodyBudget> {
     Arc::clone(OPERATOR_IPC_BODY_BUDGET.get_or_init(|| {
         InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES)
             .expect("the fixed Operator IPC body budget is within protocol limits")
     }))
+}
+
+#[cfg(any(unix, windows))]
+enum LocalOperatorStreamConnection {
+    #[cfg(unix)]
+    Unix(AuthenticatedUnixConnection),
+    #[cfg(windows)]
+    Windows(AuthenticatedWindowsConnection),
+}
+
+#[cfg(any(unix, windows))]
+enum LocalPresentationStreamTarget {
+    Conversation(String),
+    Task(String),
+    RuntimeInventory(String),
+}
+
+#[cfg(any(unix, windows))]
+fn local_presentation_stream_subscription(
+    workspace_id: &str,
+    target: &LocalPresentationStreamTarget,
+    resume_cursor: Option<&str>,
+) -> serde_json::Value {
+    let mut subscription = match target {
+        LocalPresentationStreamTarget::Conversation(conversation_id) => serde_json::json!({
+            "workspace_id": workspace_id,
+            "conversation_ids": [conversation_id],
+            "projection_types": ["conversation_presentation"]
+        }),
+        LocalPresentationStreamTarget::Task(task_id) => serde_json::json!({
+            "workspace_id": workspace_id,
+            "task_ids": [task_id],
+            "projection_types": ["task_presentation"]
+        }),
+        LocalPresentationStreamTarget::RuntimeInventory(runtime_id) => serde_json::json!({
+            "workspace_id": workspace_id,
+            "runtime_ids": [runtime_id],
+            "projection_types": ["runtime_inventory"]
+        }),
+    };
+    if let Some(cursor) = resume_cursor {
+        subscription
+            .as_object_mut()
+            .expect("stream subscription is a JSON object")
+            .insert("resume_cursor".to_owned(), serde_json::json!(cursor));
+    }
+    subscription
+}
+
+#[cfg(any(unix, windows))]
+impl LocalOperatorStreamConnection {
+    async fn connect(client: LocalOperatorClient) -> Result<Self, String> {
+        #[cfg(unix)]
+        {
+            let expected_peer_uid = client.expected_peer_uid;
+            return client
+                .endpoint
+                .connect(|peer: PeerCredentials| peer.uid == expected_peer_uid)
+                .await
+                .map(Self::Unix)
+                .map_err(|_| "Local Conversation stream is unavailable".to_owned());
+        }
+        #[cfg(windows)]
+        {
+            return client
+                .endpoint
+                .connect()
+                .await
+                .map(Self::Windows)
+                .map_err(|_| "Local Conversation stream is unavailable".to_owned());
+        }
+    }
+
+    async fn write_request(&mut self, frame: &RequestFrame) -> Result<(), String> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(connection) => connection.write_request(frame).await,
+            #[cfg(windows)]
+            Self::Windows(connection) => connection.write_request(frame).await,
+        }
+        .map_err(|_| "Local Conversation stream request could not be sent".to_owned())
+    }
+
+    async fn read_stream_response(
+        &mut self,
+        budget: &Arc<InFlightBodyBudget>,
+    ) -> Result<ResponseFrame, String> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(connection) => connection.read_stream_response(budget).await,
+            #[cfg(windows)]
+            Self::Windows(connection) => connection.read_stream_response(budget).await,
+        }
+        .map_err(|_| "Local Conversation stream handshake could not be read".to_owned())
+    }
+
+    async fn read_stream_message_for_session(
+        &mut self,
+        budget: &Arc<InFlightBodyBudget>,
+    ) -> Result<Option<StreamMessage>, String> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(connection) => connection.read_stream_message_for_session(budget).await,
+            #[cfg(windows)]
+            Self::Windows(connection) => connection.read_stream_message_for_session(budget).await,
+        }
+        .map_err(|_| "Local Conversation stream ended unexpectedly".to_owned())
+    }
+}
+
+/// Opens one authenticated duplex subscription. The cancellation receiver is raced
+/// against each bounded frame read; dropping the connection releases daemon admission.
+#[cfg(any(unix, windows))]
+enum CancelledOperation<T> {
+    Cancelled,
+    Completed(T),
+}
+
+#[cfg(any(unix, windows))]
+async fn run_until_cancelled<T, F>(
+    cancel: &mut tokio::sync::oneshot::Receiver<()>,
+    operation: F,
+) -> CancelledOperation<T>
+where
+    F: std::future::Future<Output = T>,
+{
+    tokio::select! {
+        biased;
+        _ = cancel => CancelledOperation::Cancelled,
+        output = operation => CancelledOperation::Completed(output),
+    }
+}
+
+#[cfg(any(unix, windows))]
+async fn read_local_presentation_stream<F, Fut>(
+    app: AppHandle,
+    workspace_id: String,
+    target: LocalPresentationStreamTarget,
+    resume_cursor: Option<String>,
+    mut cancel: tokio::sync::oneshot::Receiver<()>,
+    mut on_frame: F,
+) -> Result<(), String>
+where
+    F: FnMut(serde_json::Value) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<(), String>> + Send,
+{
+    const MAX_SUBSCRIPTION_BYTES: usize = 16 * 1024;
+    let client = match run_until_cancelled(&mut cancel, async move {
+        tauri::async_runtime::spawn_blocking(move || {
+            validated_operator_connection(&app, None, None).map(|(client, _)| client)
+        })
+        .await
+        .map_err(|_| "Local presentation stream readiness check did not complete".to_owned())?
+    })
+    .await
+    {
+        CancelledOperation::Cancelled => return Ok(()),
+        CancelledOperation::Completed(result) => result?,
+    };
+
+    let subscription = local_presentation_stream_subscription(
+        &workspace_id,
+        &target,
+        resume_cursor.as_deref(),
+    );
+    let body = serde_json::to_vec(&subscription)
+        .map_err(|_| "Presentation stream subscription is invalid".to_owned())?;
+    if body.len() > MAX_SUBSCRIPTION_BYTES {
+        return Err("Presentation stream subscription exceeds its size limit".to_owned());
+    }
+    let request_id = format!(
+        "tauri-stream-{}-{}",
+        std::process::id(),
+        OPERATOR_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    let body_budget = operator_ipc_body_budget();
+    let request = RequestFrame::new(
+        RequestHeader {
+            protocol_version: PROTOCOL_VERSION,
+            request_id,
+            method: "POST".to_owned(),
+            path_and_query: "/v1/stream".to_owned(),
+            headers: vec![LogicalHeader {
+                name: "X-Workspace-ID".to_owned(),
+                value: workspace_id,
+            }],
+            body_length: body.len() as u64,
+        },
+        body,
+        &body_budget,
+    )
+    .map_err(|_| "Presentation stream subscription is invalid".to_owned())?;
+
+    let mut connection = match run_until_cancelled(
+        &mut cancel,
+        LocalOperatorStreamConnection::connect(client),
+    )
+    .await
+    {
+        CancelledOperation::Cancelled => return Ok(()),
+        CancelledOperation::Completed(result) => result?,
+    };
+    match run_until_cancelled(&mut cancel, connection.write_request(&request)).await {
+        CancelledOperation::Cancelled => return Ok(()),
+        CancelledOperation::Completed(result) => result?,
+    }
+    let handshake =
+        match run_until_cancelled(&mut cancel, connection.read_stream_response(&body_budget)).await
+        {
+            CancelledOperation::Cancelled => return Ok(()),
+            CancelledOperation::Completed(result) => result?,
+        };
+    if handshake.header.status != 200 || !handshake.body().is_empty() {
+        return Err("Local Conversation stream subscription was rejected".to_owned());
+    }
+
+    loop {
+        let next = match run_until_cancelled(
+            &mut cancel,
+            connection.read_stream_message_for_session(&body_budget),
+        )
+        .await
+        {
+            CancelledOperation::Cancelled => return Ok(()),
+            CancelledOperation::Completed(result) => result?,
+        };
+        let Some(message) = next else {
+            return Ok(());
+        };
+        let frame = serde_json::from_slice(message.body()).map_err(|_| {
+            "Local Runtime returned an invalid presentation stream frame".to_owned()
+        })?;
+        match run_until_cancelled(&mut cancel, on_frame(frame)).await {
+            CancelledOperation::Cancelled => return Ok(()),
+            CancelledOperation::Completed(result) => result?,
+        }
+    }
 }
 
 struct LocalOperatorRequest<'a> {
@@ -3728,11 +4443,18 @@ impl<'a> LocalOperatorRequest<'a> {
     fn json<T: serde::Serialize + ?Sized>(mut self, value: &T) -> Self {
         match bounded_json_bytes(value, MAX_BODY_BYTES) {
             Ok(body) => self.body = body,
-            Err(_) => self.serialization_error = Some(
-                "Local Operator request could not be encoded or exceeds its size limit".to_owned(),
-            ),
+            Err(_) => {
+                self.serialization_error = Some(
+                    "Local Operator request could not be encoded or exceeds its size limit"
+                        .to_owned(),
+                )
+            }
         }
-        if !self.headers.iter().any(|header| header.name.eq_ignore_ascii_case("content-type")) {
+        if !self
+            .headers
+            .iter()
+            .any(|header| header.name.eq_ignore_ascii_case("content-type"))
+        {
             self.headers.push(LogicalHeader {
                 name: "Content-Type".to_owned(),
                 value: "application/json".to_owned(),
@@ -3750,10 +4472,7 @@ impl<'a> LocalOperatorRequest<'a> {
         self.send_with_deadline_option(None)
     }
 
-    fn send_with_deadline(
-        self,
-        deadline: Instant,
-    ) -> Result<LocalOperatorResponse, String> {
+    fn send_with_deadline(self, deadline: Instant) -> Result<LocalOperatorResponse, String> {
         self.send_with_deadline_option(Some(deadline))
     }
 
@@ -3921,6 +4640,19 @@ fn read_bounded_response(response: LocalOperatorResponse) -> Result<Vec<u8>, Str
                         .bytes()
                         .all(|byte| byte.is_ascii_graphic());
                 if code_is_safe && correlation_is_safe {
+                    if error.code == "WORKSPACE_NOT_QUIESCENT" {
+                        let blockers = workspace_archive_blocker_summaries(error.details.as_ref());
+                        if !blockers.is_empty() {
+                            return Err(format!(
+                                "{}: {} [{}; retryable={}; reference={}]",
+                                error.message.trim(),
+                                blockers.join(", "),
+                                error.code,
+                                error.retryable,
+                                error.correlation_id
+                            ));
+                        }
+                    }
                     return Err(format!(
                         "{} [{}; retryable={}; reference={}]",
                         error.message.trim(),
@@ -3936,6 +4668,43 @@ fn read_bounded_response(response: LocalOperatorResponse) -> Result<Vec<u8>, Str
         return Err(format!("Local Operator API returned HTTP {status}"));
     }
     Ok(body)
+}
+
+fn workspace_archive_blocker_summaries(details: Option<&serde_json::Value>) -> Vec<String> {
+    details
+        .and_then(|details| details.get("blockers"))
+        .and_then(serde_json::Value::as_array)
+        .map(|blockers| {
+            blockers
+                .iter()
+                .filter_map(|blocker| {
+                    let kind = blocker.get("kind")?.as_str()?;
+                    let count = blocker.get("count")?.as_u64()?;
+                    let label = match kind {
+                        "NONTERMINAL_TASKS" => "active Tasks",
+                        "ENABLED_AUTOMATIONS" => "enabled Automations",
+                        "ACTIVE_AUTOMATION_TRIGGERS" => "active Automation triggers",
+                        "UNSETTLED_AUTOMATION_OCCURRENCES" => "unsettled Automation runs",
+                        "UNSETTLED_CONVERSATION_TURNS" => "unsettled Conversation turns",
+                        "UNSETTLED_AGENT_SESSIONS" => "active agent sessions",
+                        "UNSETTLED_INVOCATIONS" => "unsettled capability invocations",
+                        "ACTIVE_CAPABILITY_GRANTS" => "active capability grants",
+                        "ACTIVE_CAPABILITY_ACTIVATIONS" => "active capability activations",
+                        "ACTIVE_SECRET_LEASES" => "active SecretLeases",
+                        "ACTIVE_EXECUTION_LEASES" => "active execution leases",
+                        "ACTIVE_CONTROL_LEASES" => "active Environment control leases",
+                        "LIVE_PERSISTENT_ENVIRONMENTS" => "persistent Environments requiring shutdown",
+                        "ACTIVE_WORKSPACE_ROOTS" => "active Workspace roots",
+                        "ACTIVE_CHANNEL_HOSTS" => "active channel hosts",
+                        "UNRESOLVED_EFFECTS" => "unresolved Effects",
+                        "PENDING_APPROVALS" => "pending approvals",
+                        _ => return None,
+                    };
+                    Some(format!("{label}: {count}"))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -3964,7 +4733,9 @@ fn start_runtime(app: &AppHandle) -> Result<RuntimeStatus, String> {
     if initial.process_running && initial.operator_ready {
         #[cfg(target_os = "linux")]
         systemd_user_service::verify_active(
-            &app.path().config_dir().map_err(|_| "LiteCowork user configuration directory is unavailable".to_owned())?,
+            &app.path()
+                .config_dir()
+                .map_err(|_| "LiteCowork user configuration directory is unavailable".to_owned())?,
             &daemon,
             &state_dir,
             deadline,
@@ -3982,15 +4753,17 @@ fn start_runtime(app: &AppHandle) -> Result<RuntimeStatus, String> {
         }
         #[cfg(not(target_os = "linux"))]
         {
-        Some(Command::new(daemon)
-            .arg("run")
-            .arg("--data-dir")
-            .arg(&state_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| "LiteCowork Runtime could not be started".to_owned())?)
+            Some(
+                Command::new(daemon)
+                    .arg("run")
+                    .arg("--data-dir")
+                    .arg(&state_dir)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .map_err(|_| "LiteCowork Runtime could not be started".to_owned())?,
+            )
         }
     } else {
         None
@@ -4006,7 +4779,9 @@ fn start_runtime(app: &AppHandle) -> Result<RuntimeStatus, String> {
                 Ok(Some(_)) => true,
                 Ok(None) => false,
                 Err(_) => {
-                    return Err("LiteCowork Runtime startup process could not be observed".to_owned());
+                    return Err(
+                        "LiteCowork Runtime startup process could not be observed".to_owned()
+                    );
                 }
             },
             None => false,
@@ -4018,7 +4793,10 @@ fn start_runtime(app: &AppHandle) -> Result<RuntimeStatus, String> {
                 return Ok(status);
             }
             if !status.process_running {
-                return Err("LiteCowork Runtime exited before its authenticated Operator API became ready".to_owned());
+                return Err(
+                    "LiteCowork Runtime exited before its authenticated Operator API became ready"
+                        .to_owned(),
+                );
             }
             // Another process may have won the single-instance race after the
             // initial status probe. Continue observing that lock owner rather than
@@ -4028,7 +4806,9 @@ fn start_runtime(app: &AppHandle) -> Result<RuntimeStatus, String> {
         if status.process_running && status.operator_ready {
             #[cfg(target_os = "linux")]
             systemd_user_service::verify_active(
-                &app.path().config_dir().map_err(|_| "LiteCowork user configuration directory is unavailable".to_owned())?,
+                &app.path().config_dir().map_err(|_| {
+                    "LiteCowork user configuration directory is unavailable".to_owned()
+                })?,
                 &daemon,
                 &state_dir,
                 deadline,
@@ -4113,7 +4893,9 @@ fn runtime_status_until(app: &AppHandle, deadline: Instant) -> RuntimeStatus {
                 }),
             }
         }
-        Err(_) => unavailable_runtime_status("Runtime returned an unsupported status document", true),
+        Err(_) => {
+            unavailable_runtime_status("Runtime returned an unsupported status document", true)
+        }
     }
 }
 
@@ -4271,6 +5053,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             get_runtime_status,
+            runtime_lifecycle_bridge::get_runtime_lifecycle,
             list_agent_installations,
             list_agent_profiles,
             probe_agent_profile,
@@ -4293,12 +5076,14 @@ pub fn run() {
             revise_task_spec,
             create_workspace,
             update_workspace_policy,
+            archive_workspace,
             set_workspace_default_agent_binding,
             list_workspace_instructions,
             create_workspace_instruction_revision,
             get_resource_detail,
             set_context_document_status,
             list_resource_revisions,
+            resource_location_bridge::list_resource_locations,
             create_resource_revision_upload,
             commit_resource_revision_upload,
             import_resource,
@@ -4317,6 +5102,11 @@ pub fn run() {
             conversation_bridge::create_conversation,
             conversation_bridge::get_conversation_presentation,
             conversation_bridge::get_rich_presentation,
+            conversation_stream_bridge::subscribe_conversation_stream,
+            conversation_stream_bridge::subscribe_task_stream,
+            conversation_stream_bridge::subscribe_runtime_inventory_stream,
+            conversation_stream_bridge::acknowledge_conversation_stream_frame,
+            conversation_stream_bridge::unsubscribe_conversation_stream,
             artifact_bridge::artifact_save_as,
             resource_save_bridge::resource_save_as,
             artifact_bridge::artifact_edit_head,
@@ -4383,6 +5173,168 @@ mod runtime_status_bridge_tests {
 }
 
 #[cfg(test)]
+mod workspace_root_add_idempotency_tests {
+    use super::derive_workspace_root_add_idempotency_key;
+
+    #[test]
+    fn selected_folder_scopes_the_native_idempotency_key_without_exposing_path_bytes() {
+        let request_key = [7; 32];
+        let same_retry = derive_workspace_root_add_idempotency_key(
+            &request_key,
+            "ui-request-seed",
+            "workspace-1",
+            7,
+            "METADATA",
+            "NONE",
+            b"/private/projects/litecowork",
+        );
+        let exact_retry = derive_workspace_root_add_idempotency_key(
+            &request_key,
+            "ui-request-seed",
+            "workspace-1",
+            7,
+            "METADATA",
+            "NONE",
+            b"/private/projects/litecowork",
+        );
+        let different_folder = derive_workspace_root_add_idempotency_key(
+            &request_key,
+            "ui-request-seed",
+            "workspace-1",
+            7,
+            "METADATA",
+            "NONE",
+            b"/private/projects/other",
+        );
+
+        assert_eq!(same_retry, exact_retry);
+        assert_ne!(same_retry, different_folder);
+        assert_eq!(same_retry.len(), 64);
+        assert!(!same_retry.contains("projects"));
+        assert_ne!(
+            same_retry,
+            derive_workspace_root_add_idempotency_key(
+                &[8; 32],
+                "ui-request-seed",
+                "workspace-1",
+                7,
+                "METADATA",
+                "NONE",
+                b"/private/projects/litecowork",
+            )
+        );
+    }
+}
+
+#[cfg(test)]
+mod workspace_instruction_request_tests {
+    use super::validate_workspace_instruction_request;
+
+    #[test]
+    fn initial_instruction_revision_accepts_an_empty_parent_list() {
+        assert!(
+            validate_workspace_instruction_request(
+                "workspace-1",
+                &[],
+                "resource-1",
+                "revision-1",
+                &format!("sha256:{}", "a".repeat(64)),
+                "request-1",
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn instruction_request_rejects_zero_or_too_many_parent_revisions() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let too_many_parents = (1..=257).collect::<Vec<_>>();
+        assert!(
+            validate_workspace_instruction_request(
+                "workspace-1",
+                &[0],
+                "resource-1",
+                "revision-1",
+                &digest,
+                "request-1",
+            )
+            .is_err()
+        );
+        assert!(
+            validate_workspace_instruction_request(
+                "workspace-1",
+                &too_many_parents,
+                "resource-1",
+                "revision-1",
+                &digest,
+                "request-1",
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod workspace_archive_request_tests {
+    use super::{workspace_archive_blocker_summaries, validate_workspace_archive_request};
+    use serde_json::json;
+
+    #[test]
+    fn archive_request_accepts_local_workspace_identifiers_and_keys() {
+        assert!(validate_workspace_archive_request("workspace-1", "request-1").is_ok());
+    }
+
+    #[test]
+    fn archive_request_rejects_empty_or_path_injected_values() {
+        for workspace_id in ["", "workspace/other", "workspace?query", "workspace#fragment"] {
+            assert!(validate_workspace_archive_request(workspace_id, "request-1").is_err());
+        }
+        assert!(validate_workspace_archive_request("workspace-1", "").is_err());
+        assert!(validate_workspace_archive_request("workspace-1", "key\nvalue").is_err());
+    }
+
+    #[test]
+    fn archive_blockers_show_only_known_kinds_and_safe_counts() {
+        let details = json!({
+            "blockers": [
+                {"kind": "ACTIVE_AUTOMATION_TRIGGERS", "count": 2},
+                {"kind": "PRIVATE_PROVIDER_STATE", "count": 1, "path": "/private/input"},
+                {"kind": "ACTIVE_CHANNEL_HOSTS", "count": "unknown"}
+            ]
+        });
+        assert_eq!(
+            workspace_archive_blocker_summaries(Some(&details)),
+            vec!["active Automation triggers: 2".to_owned()]
+        );
+        assert!(workspace_archive_blocker_summaries(None).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod workspace_policy_request_tests {
+    use super::validate_workspace_policy_request;
+
+    #[test]
+    fn policy_request_accepts_contract_values_supported_by_the_desktop() {
+        for policy in [
+            "LOCAL_ONLY",
+            "METADATA_ONLY",
+            "ACTIVE_TASK_INPUTS",
+            "FULL_WORKSPACE",
+        ] {
+            assert!(validate_workspace_policy_request("workspace-1", policy, "request-1").is_ok());
+        }
+    }
+
+    #[test]
+    fn policy_request_rejects_misspelled_and_unavailable_values() {
+        for policy in ["ACTIVE_TASKS", "SELECTED_FOLDERS"] {
+            assert!(validate_workspace_policy_request("workspace-1", policy, "request-1").is_err());
+        }
+    }
+}
+
+#[cfg(test)]
 mod bounded_json_tests {
     use super::bounded_json_bytes;
 
@@ -4393,11 +5345,150 @@ mod bounded_json_tests {
     }
 }
 
+#[cfg(all(test, any(unix, windows)))]
+mod presentation_stream_subscription_tests {
+    use super::{
+        LocalPresentationStreamTarget, local_presentation_stream_subscription,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn conversation_subscription_preserves_its_closed_filter_and_omits_empty_cursor() {
+        assert_eq!(
+            local_presentation_stream_subscription(
+                "workspace-1",
+                &LocalPresentationStreamTarget::Conversation("conversation-1".to_owned()),
+                None,
+            ),
+            json!({
+                "workspace_id": "workspace-1",
+                "conversation_ids": ["conversation-1"],
+                "projection_types": ["conversation_presentation"]
+            })
+        );
+    }
+
+    #[test]
+    fn task_subscription_uses_task_filter_and_resumes_only_with_opaque_cursor() {
+        assert_eq!(
+            local_presentation_stream_subscription(
+                "workspace-1",
+                &LocalPresentationStreamTarget::Task("task-1".to_owned()),
+                Some("opaque-cursor"),
+            ),
+            json!({
+                "workspace_id": "workspace-1",
+                "task_ids": ["task-1"],
+                "projection_types": ["task_presentation"],
+                "resume_cursor": "opaque-cursor"
+            })
+        );
+    }
+
+    #[test]
+    fn runtime_inventory_subscription_uses_one_runtime_filter() {
+        assert_eq!(
+            local_presentation_stream_subscription(
+                "workspace-1",
+                &LocalPresentationStreamTarget::RuntimeInventory("runtime-1".to_owned()),
+                None,
+            ),
+            json!({
+                "workspace_id": "workspace-1",
+                "runtime_ids": ["runtime-1"],
+                "projection_types": ["runtime_inventory"]
+            })
+        );
+    }
+}
+
+#[cfg(all(test, any(unix, windows)))]
+mod stream_setup_cancellation_tests {
+    use super::{run_until_cancelled, CancelledOperation};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use tokio::sync::oneshot;
+
+    struct DropFlag(Arc<AtomicBool>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_setup_does_not_start_a_later_stage() {
+        let (sender, mut cancel) = oneshot::channel();
+        sender.send(()).unwrap();
+        let started = Arc::new(AtomicBool::new(false));
+        let operation_started = Arc::clone(&started);
+        let result = run_until_cancelled(&mut cancel, async move {
+            operation_started.store(true, Ordering::SeqCst);
+            Ok::<_, ()>(())
+        })
+        .await;
+        assert!(matches!(result, CancelledOperation::Cancelled));
+        assert!(!started.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn cancellation_drops_an_in_flight_setup_future_and_its_connection() {
+        let (sender, mut cancel) = oneshot::channel();
+        let dropped = Arc::new(AtomicBool::new(false));
+        let operation_dropped = Arc::clone(&dropped);
+        let (started_sender, started_receiver) = oneshot::channel();
+        let operation = async move {
+            let _connection = DropFlag(operation_dropped);
+            let _ = started_sender.send(());
+            std::future::pending::<()>().await;
+            Ok::<_, ()>(())
+        };
+        let task = tokio::spawn(async move { run_until_cancelled(&mut cancel, operation).await });
+        started_receiver.await.unwrap();
+        sender.send(()).unwrap();
+        assert!(matches!(task.await.unwrap(), CancelledOperation::Cancelled));
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_waiting_for_frame_ack_stops_before_the_next_read() {
+        let (cancel_sender, mut cancel) = oneshot::channel();
+        let (ack_sender, ack_receiver) = oneshot::channel::<()>();
+        let (waiting_sender, waiting_receiver) = oneshot::channel();
+        let next_read_started = Arc::new(AtomicBool::new(false));
+        let next_read_flag = Arc::clone(&next_read_started);
+        let task = tokio::spawn(async move {
+            let ack_wait = async move {
+                let _ = waiting_sender.send(());
+                ack_receiver.await
+            };
+            match run_until_cancelled(&mut cancel, ack_wait).await {
+                CancelledOperation::Cancelled => return,
+                CancelledOperation::Completed(_) => {}
+            }
+            let _ = run_until_cancelled(&mut cancel, async move {
+                next_read_flag.store(true, Ordering::SeqCst);
+            })
+            .await;
+        });
+
+        waiting_receiver.await.expect("frame ack wait has started");
+        cancel_sender
+            .send(())
+            .expect("stream is waiting for frame credit");
+        task.await.expect("cancelled stream completes promptly");
+        drop(ack_sender);
+        assert!(!next_read_started.load(Ordering::SeqCst));
+    }
+}
+
 #[cfg(test)]
 mod resource_search_provenance_tests {
     use super::{
-        MAX_INDEXED_RESOURCE_BYTES, ResourceSearchPageWire, ResourceSearchRefWire,
-        ResourceSearchResultWire, ResourceTextMatchWire, map_resource_search_page,
+        map_resource_search_page, ResourceSearchPageWire, ResourceSearchRefWire,
+        ResourceSearchResultWire, ResourceTextMatchWire, MAX_INDEXED_RESOURCE_BYTES,
     };
 
     fn span(term: &str, start: u64, end: u64) -> ResourceTextMatchWire {
@@ -4440,7 +5531,10 @@ mod resource_search_provenance_tests {
             "workspace-1",
             "INDEXED_CONTENT",
             "mutex THREADS",
-            page("INDEXED_CONTENT", result(vec![span("mutex", 8, 13), span("threads", 18, 25)])),
+            page(
+                "INDEXED_CONTENT",
+                result(vec![span("mutex", 8, 13), span("threads", 18, 25)]),
+            ),
         )
         .expect("valid indexed result");
 
@@ -4449,8 +5543,14 @@ mod resource_search_provenance_tests {
         assert_eq!(view.items[0].source_matches.len(), 2);
         assert_eq!(view.items[0].source_matches[1].end_utf8_byte_exclusive, 25);
         let serialized = serde_json::to_value(&view).expect("serialize Tauri view");
-        assert_eq!(serialized["items"][0]["sourceContentDigest"], view.items[0].source_content_digest);
-        assert_eq!(serialized["items"][0]["sourceMatches"][0]["startUtf8Byte"], 8);
+        assert_eq!(
+            serialized["items"][0]["sourceContentDigest"],
+            view.items[0].source_content_digest
+        );
+        assert_eq!(
+            serialized["items"][0]["sourceMatches"][0]["startUtf8Byte"],
+            8
+        );
     }
 
     #[test]
@@ -4458,13 +5558,8 @@ mod resource_search_provenance_tests {
         for mode in ["METADATA", "ON_DEMAND_CONTENT"] {
             let mut item = result(Vec::new());
             item.match_reasons = vec!["NAME".to_owned()];
-            let view = map_resource_search_page(
-                "workspace-1",
-                mode,
-                "notes",
-                page(mode, item),
-            )
-            .expect("non-indexed search remains usable");
+            let view = map_resource_search_page("workspace-1", mode, "notes", page(mode, item))
+                .expect("non-indexed search remains usable");
             assert!(view.items[0].source_matches.is_empty());
         }
     }
@@ -4473,15 +5568,24 @@ mod resource_search_provenance_tests {
     fn malformed_digest_unpinned_or_cross_workspace_result_is_rejected() {
         let mut item = result(Vec::new());
         item.source_content_digest = "sha256:ABC".to_owned();
-        assert!(map_resource_search_page("workspace-1", "METADATA", "", page("METADATA", item)).is_err());
+        assert!(
+            map_resource_search_page("workspace-1", "METADATA", "", page("METADATA", item))
+                .is_err()
+        );
 
         let mut item = result(Vec::new());
         item.resource_ref.revision_id = None;
-        assert!(map_resource_search_page("workspace-1", "METADATA", "", page("METADATA", item)).is_err());
+        assert!(
+            map_resource_search_page("workspace-1", "METADATA", "", page("METADATA", item))
+                .is_err()
+        );
 
         let mut item = result(Vec::new());
         item.resource_ref.workspace_id = "workspace-other".to_owned();
-        assert!(map_resource_search_page("workspace-1", "METADATA", "", page("METADATA", item)).is_err());
+        assert!(
+            map_resource_search_page("workspace-1", "METADATA", "", page("METADATA", item))
+                .is_err()
+        );
     }
 
     #[test]
@@ -4491,7 +5595,10 @@ mod resource_search_provenance_tests {
             vec![span("Mutex", 1, 6), span("threads", 8, 15)],
             vec![span("mutex", 1, 1), span("threads", 8, 15)],
             vec![span("mutex", 1, 6), span("threads", 5, 12)],
-            vec![span("mutex", 1, 6), span("threads", 8, MAX_INDEXED_RESOURCE_BYTES + 1)],
+            vec![
+                span("mutex", 1, 6),
+                span("threads", 8, MAX_INDEXED_RESOURCE_BYTES + 1),
+            ],
         ] {
             let mut item = result(spans);
             item.match_reasons = vec!["CONTENT_INDEXED".to_owned()];
@@ -4571,8 +5678,8 @@ mod resource_preview_provenance_tests {
 #[cfg(test)]
 mod task_planning_readiness_tests {
     use super::{
-        TaskPlanningReadinessView, TaskPlanningReadinessWire,
-        validate_task_planning_readiness_identity,
+        validate_task_planning_readiness_identity, TaskPlanningReadinessView,
+        TaskPlanningReadinessWire,
     };
     use serde_json::json;
 
@@ -4592,8 +5699,8 @@ mod task_planning_readiness_tests {
     }
 
     fn parse(value: serde_json::Value) -> Result<TaskPlanningReadinessView, String> {
-        let wire: TaskPlanningReadinessWire = serde_json::from_value(value)
-            .map_err(|_| "wire decode failed".to_owned())?;
+        let wire: TaskPlanningReadinessWire =
+            serde_json::from_value(value).map_err(|_| "wire decode failed".to_owned())?;
         TaskPlanningReadinessView::try_from(wire)
     }
 
@@ -4623,13 +5730,15 @@ mod task_planning_readiness_tests {
     #[test]
     fn rejects_duplicate_blockers_and_any_dispatch_claim() {
         let mut duplicate = valid_wire();
-        duplicate["blockers"] = json!([
-            "TASK_ISOLATION_UNAVAILABLE",
-            "TASK_ISOLATION_UNAVAILABLE"
-        ]);
+        duplicate["blockers"] = json!(["TASK_ISOLATION_UNAVAILABLE", "TASK_ISOLATION_UNAVAILABLE"]);
         assert!(parse(duplicate).is_err());
 
-        for field in ["dispatch_available", "planning_started", "agent_session_started", "plan_created"] {
+        for field in [
+            "dispatch_available",
+            "planning_started",
+            "agent_session_started",
+            "plan_created",
+        ] {
             let mut claims_execution = valid_wire();
             claims_execution[field] = json!(true);
             assert!(parse(claims_execution).is_err(), "accepted {field}=true");

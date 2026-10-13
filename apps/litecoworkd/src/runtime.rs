@@ -1,7 +1,7 @@
 use crate::{
     attempt_process_scope::AttemptProcessScopeJournal,
-    local_filesystem::{LocalDirectoryError, reopen_saved_directory},
-    operator::OperatorServer,
+    local_filesystem::{LocalDirectoryError, RuntimeIdentityKey, reopen_saved_directory},
+    operator::{OperatorServer, RuntimeLifecycleBlocker},
 };
 use domain_task::StepAttemptCoordinator;
 use domain_workspace::{EventContext, ResumeWorkspaceRoot, WorkspaceRootService};
@@ -13,24 +13,32 @@ use std::fs::OpenOptions;
 use std::{
     fs::{self, File},
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::Path,
     sync::mpsc,
 };
 use storage_core::{
-    CommittedWorkspaceRootRevalidation, EventDraft, ExecutionEventContext, ExpireExecutionLease,
-    ExpiredAttemptEvents, LocalFileIdentityBindingRecord, LocalResourceLocationBindingRecord,
-    LocalRuntimeWorkspaceBindingLookup, RuntimeIncarnationLocalObservationRecord,
-    RuntimeIncarnationRecord, RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeRecord,
-    RuntimeWorkspaceBindingStore, StateStore, StepAttemptStore, WorkspaceCreateRequest,
+    CommittedWorkspaceRootRevalidation, DeviceIdentityRecord, EventDraft, ExecutionEventContext,
+    ExpireExecutionLease, ExpiredAttemptEvents, LocalFileIdentityBindingRecord,
+    LocalResourceLocationBindingRecord, LocalRuntimeWorkspaceBindingLookup,
+    RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
+    RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeRecord,
+    RuntimeWorkspaceBindingStore, StepAttemptStore, WorkspaceCreateRequest,
     WorkspaceRootRevalidationBindings, WorkspaceRootRevalidationCandidate,
     WorkspaceRootRevalidationCommit, WorkspaceRootRevalidationFailure, WorkspaceRootStore,
 };
 use storage_sqlite::{
     LocalWorkspaceStorage, OsRuntimeDeviceIdentityProvider, OsRuntimePrincipalBindingProvider,
-    RuntimeOsPrincipalIdentity, SqliteConfig, SqliteStepAttemptStore, SqliteWorkspaceStore,
+    SqliteConfig, SqliteStepAttemptStore, SqliteWorkspaceStore,
 };
 use tempfile::NamedTempFile;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+#[cfg(test)]
+#[path = "runtime_recovery_tests.rs"]
+mod recovery_tests;
+#[cfg(test)]
+#[path = "runtime_revalidation_tests.rs"]
+mod revalidation_tests;
 
 const STATE_FILE: &str = "runtime-state.json";
 const LOCK_FILE: &str = "runtime.lock";
@@ -194,41 +202,8 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
             return Err("Runtime device identity is unavailable; startup failed closed".to_owned());
         }
     };
-    let runtime_record = RuntimeRecord {
-        runtime_id: state.runtime_id.clone(),
-        device_identity: identity,
-        runtime_version: env!("CARGO_PKG_VERSION").to_owned(),
-        platform: std::env::consts::OS.to_owned(),
-        architecture: std::env::consts::ARCH.to_owned(),
-        roles: vec!["OPERATOR_ENDPOINT".to_owned()],
-        trust_zone: "PERSONAL_DEVICE".to_owned(),
-        availability: "RECOVERING".to_owned(),
-        startup_policy: startup_policy_name(state.startup_policy).to_owned(),
-        current_incarnation_id: state.local_incarnation_id.clone(),
-        resource_capacity: json!({"sampled_at": started_at}),
-        last_seen: started_at.clone(),
-    };
-    let incarnation = RuntimeIncarnationRecord {
-        runtime_incarnation_id: state.local_incarnation_id.clone(),
-        runtime_id: state.runtime_id.clone(),
-        process_started_at: started_at.clone(),
-        litecowork_version: env!("CARGO_PKG_VERSION").to_owned(),
-        recovered_from_unclean_shutdown: state.recovered_from_unclean_shutdown,
-        recovery_state: "RECOVERING".to_owned(),
-        ready_at: None,
-        stopped_at: None,
-        version: 1,
-    };
-    let observation = RuntimeIncarnationLocalObservationRecord {
-        runtime_incarnation_id: state.local_incarnation_id.clone(),
-        os_boot_id: None,
-        observed_at: started_at,
-    };
     let mut incarnation_version =
-        match storage
-            .store
-            .register_local_incarnation(runtime_record, incarnation, observation)
-        {
+        match register_runtime_incarnation(&storage.store, &state, identity, &started_at) {
             Ok(incarnation) => incarnation.version,
             Err(_) => {
                 state.transition(
@@ -263,41 +238,56 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
     // expired Attempt and blocks its Task pending Effect reconciliation. It does
     // not resume Tasks or admit new provider work, so the Runtime remains degraded.
     let mut blockers = vec![
-        "TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned(),
-        "TRUST_EFFECT_RECONCILIATION_NOT_INTEGRATED".to_owned(),
+        RuntimeLifecycleBlocker {
+            code: "TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned(),
+            created_at: timestamp_now()?,
+        },
+        RuntimeLifecycleBlocker {
+            code: "TRUST_EFFECT_RECONCILIATION_NOT_INTEGRATED".to_owned(),
+            created_at: timestamp_now()?,
+        },
     ];
-    let process_scope_recovery = AttemptProcessScopeJournal::open(
-        &data_directory.join("attempt-process-scopes"),
-    )
-    .and_then(|journal| journal.incomplete_records());
+    let process_scope_recovery =
+        AttemptProcessScopeJournal::open(&data_directory.join("attempt-process-scopes"))
+            .and_then(|journal| journal.incomplete_records());
     match process_scope_recovery {
         Ok(records) if !records.is_empty() => {
-            blockers.push("ATTEMPT_PROCESS_SCOPE_RECOVERY_REQUIRED".to_owned());
+            blockers.push(RuntimeLifecycleBlocker {
+                code: "ATTEMPT_PROCESS_SCOPE_RECOVERY_REQUIRED".to_owned(),
+                created_at: timestamp_now()?,
+            });
         }
         Ok(_) => {}
-        Err(_) => blockers.push("ATTEMPT_PROCESS_SCOPE_IDENTITY_UNAVAILABLE".to_owned()),
+        Err(_) => blockers.push(RuntimeLifecycleBlocker {
+            code: "ATTEMPT_PROCESS_SCOPE_IDENTITY_UNAVAILABLE".to_owned(),
+            created_at: timestamp_now()?,
+        }),
     }
-    state.transition(RuntimeState::Degraded, blockers.clone());
-    persist_incarnation_transition(
-        &storage.store,
-        &state,
-        &mut incarnation_version,
+    state.transition(
         RuntimeState::Degraded,
-    )?;
-    persist_state(data_directory, &state)?;
-
-    match recover_expired_execution_leases(
+        blockers
+            .iter()
+            .map(|blocker| blocker.code.clone())
+            .collect(),
+    );
+    persist_degraded_catalog_transition(
+        data_directory,
         &storage.store,
-        state
-            .local_principal_id
-            .as_deref()
-            .ok_or_else(|| "local Principal identity is unavailable".to_owned())?,
-        &state.runtime_id,
-        &state.local_incarnation_id,
-    ) {
-        Ok(_) => {}
-        Err(_) => blockers.push("EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED".to_owned()),
-    }
+        &mut state,
+        &mut incarnation_version,
+    )?;
+
+    let owner_principal_id = state
+        .local_principal_id
+        .clone()
+        .ok_or_else(|| "local Principal identity is unavailable".to_owned())?;
+    blockers = recover_and_persist_startup_blockers(
+        data_directory,
+        &storage.store,
+        &owner_principal_id,
+        &mut state,
+        blockers,
+    )?;
 
     // Local Workspace reads use an OS-peer-authenticated IPC endpoint. Start
     // accepting commands only after the bounded startup recovery pass settles.
@@ -310,7 +300,7 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
             .ok_or_else(|| "local Principal identity is unavailable".to_owned())?,
         state.runtime_id.clone(),
         state.local_incarnation_id.clone(),
-        os_principal.principal.uid(),
+        blockers.clone(),
         os_principal,
     );
     let mut operator = match operator {
@@ -332,7 +322,13 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
             );
         }
     };
-    state.transition(RuntimeState::Degraded, blockers);
+    state.transition(
+        RuntimeState::Degraded,
+        blockers
+            .iter()
+            .map(|blocker| blocker.code.clone())
+            .collect(),
+    );
     persist_state(data_directory, &state)?;
     print_state(&state)?;
 
@@ -355,11 +351,14 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
         RuntimeState::Draining,
     )?;
     persist_state(data_directory, &state)?;
-    // Keep the durable state at DRAINING while already-admitted Operator handlers
-    // settle. OperatorServer bounds that drain and closes its listener before this
-    // call returns. Only then may the incarnation report STOPPING.
-    operator.stop();
-    state.transition(RuntimeState::Stopping, shutdown_blockers.clone());
+    // Keep the durable state at DRAINING while admitted Operator handlers settle.
+    // The listener is already closed; if request settlement or endpoint teardown misses
+    // its bound, stop returns an error and this incarnation never reports STOPPING.
+    advance_to_stopping_after_operator_drain(
+        &mut state,
+        shutdown_blockers.clone(),
+        operator.stop(),
+    )?;
     persist_incarnation_transition(
         &storage.store,
         &state,
@@ -389,6 +388,45 @@ fn install_shutdown_handler() -> Result<mpsc::Receiver<()>, String> {
     })
     .map_err(|_| "could not register the daemon shutdown handler".to_owned())?;
     Ok(receiver)
+}
+
+fn register_runtime_incarnation(
+    store: &impl RuntimeLifecycleStore,
+    state: &RuntimeLocalState,
+    device_identity: DeviceIdentityRecord,
+    started_at: &str,
+) -> Result<RuntimeIncarnationRecord, storage_core::StoreError> {
+    let runtime_record = RuntimeRecord {
+        runtime_id: state.runtime_id.clone(),
+        device_identity,
+        runtime_version: env!("CARGO_PKG_VERSION").to_owned(),
+        platform: std::env::consts::OS.to_owned(),
+        architecture: std::env::consts::ARCH.to_owned(),
+        roles: vec!["OPERATOR_ENDPOINT".to_owned()],
+        trust_zone: "PERSONAL_DEVICE".to_owned(),
+        availability: "RECOVERING".to_owned(),
+        startup_policy: startup_policy_name(state.startup_policy).to_owned(),
+        current_incarnation_id: state.local_incarnation_id.clone(),
+        resource_capacity: json!({"sampled_at": started_at}),
+        last_seen: started_at.to_owned(),
+    };
+    let incarnation = RuntimeIncarnationRecord {
+        runtime_incarnation_id: state.local_incarnation_id.clone(),
+        runtime_id: state.runtime_id.clone(),
+        process_started_at: started_at.to_owned(),
+        litecowork_version: env!("CARGO_PKG_VERSION").to_owned(),
+        recovered_from_unclean_shutdown: state.recovered_from_unclean_shutdown,
+        recovery_state: "RECOVERING".to_owned(),
+        ready_at: None,
+        stopped_at: None,
+        version: 1,
+    };
+    let observation = RuntimeIncarnationLocalObservationRecord {
+        runtime_incarnation_id: state.local_incarnation_id.clone(),
+        os_boot_id: None,
+        observed_at: started_at.to_owned(),
+    };
+    store.register_local_incarnation(runtime_record, incarnation, observation)
 }
 
 fn recover_expired_execution_leases(
@@ -485,11 +523,35 @@ fn recover_expired_execution_leases(
     Ok(recovered)
 }
 
-fn revalidate_workspace_roots(
+fn recover_and_persist_startup_blockers(
+    data_directory: &Path,
+    store: &SqliteWorkspaceStore,
+    owner_principal_id: &str,
+    state: &mut RuntimeLocalState,
+    mut blockers: Vec<RuntimeLifecycleBlocker>,
+) -> Result<Vec<RuntimeLifecycleBlocker>, String> {
+    if recover_expired_execution_leases(
+        store,
+        owner_principal_id,
+        &state.runtime_id,
+        &state.local_incarnation_id,
+    )
+    .is_err()
+    {
+        blockers.push(RuntimeLifecycleBlocker {
+            code: "EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED".to_owned(),
+            created_at: timestamp_now()?,
+        });
+    }
+    persist_final_recovery_blockers(data_directory, state, &blockers)?;
+    Ok(blockers)
+}
+
+fn revalidate_workspace_roots<K: RuntimeIdentityKey>(
     store: &impl WorkspaceRootStore,
     runtime_id: &str,
     runtime_incarnation_id: &str,
-    runtime_identity: &RuntimeOsPrincipalIdentity,
+    runtime_identity: &K,
 ) -> Result<(), String> {
     let mut cursor: Option<(String, String)> = None;
     loop {
@@ -522,6 +584,7 @@ fn revalidate_workspace_roots(
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum WorkspaceRootResumeError {
     Stale,
     Unavailable,
@@ -534,11 +597,12 @@ pub(crate) enum WorkspaceRootResumeError {
 /// and user idempotency receipt in one transaction. The verified open handle remains
 /// alive through the commit. Later filesystem consumers must still use a qualified
 /// handle-based provider or perform their own immediate identity check.
-pub(crate) fn resume_workspace_root_live(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resume_workspace_root_live<K: RuntimeIdentityKey>(
     store: &SqliteWorkspaceStore,
     runtime_id: &str,
     runtime_incarnation_id: &str,
-    runtime_identity: &RuntimeOsPrincipalIdentity,
+    runtime_identity: &K,
     workspace_id: &str,
     workspace_root_id: &str,
     principal_id: &str,
@@ -600,6 +664,11 @@ pub(crate) fn resume_workspace_root_live(
             cursor = Some(next_cursor);
         }
     };
+    // A paused root whose last committed location observation is unavailable must first
+    // recover through Runtime revalidation. Resume is not a second recovery path.
+    if candidate.location.availability != "AVAILABLE" {
+        return Err(WorkspaceRootResumeError::Unavailable);
+    }
     let (previous_locator_binding, previous_file_identity_binding) = match &candidate.bindings {
         WorkspaceRootRevalidationBindings::Previous {
             locator,
@@ -657,7 +726,7 @@ pub(crate) fn resume_workspace_root_live(
     };
     let live = opened.identity();
     let (identity_digest, keyed_identity) = live.keyed_projection(runtime_identity);
-    let identity_matches = live.matches_binding(&previous_file_identity_binding)
+    let identity_matches = live.matches_binding(previous_file_identity_binding)
         && candidate.resource.identity_digest.as_deref() == Some(identity_digest.as_str())
         && candidate.resource.provider_identity.get("file_identity") == Some(&keyed_identity)
         && candidate
@@ -742,15 +811,16 @@ pub(crate) fn resume_workspace_root_live(
         });
     // Keep the verified directory handle alive until the atomic owner/status commit has
     // returned. This is a point-in-time proof; no watcher or content read occurs here.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     drop(opened);
     result
 }
 
-fn commit_root_revalidation(
+fn commit_root_revalidation<K: RuntimeIdentityKey>(
     store: &impl WorkspaceRootStore,
     runtime_id: &str,
     runtime_incarnation_id: &str,
-    runtime_identity: &RuntimeOsPrincipalIdentity,
+    runtime_identity: &K,
     candidate: WorkspaceRootRevalidationCandidate,
 ) -> Result<CommittedWorkspaceRootRevalidation, String> {
     if candidate.root.status == "REVOKED" {
@@ -796,9 +866,8 @@ fn commit_root_revalidation(
                                 .get("provider_instance_id")
                                 .and_then(serde_json::Value::as_str)
                                 != Some("litecowork.local_filesystem")
+                            || opened.revalidate().is_err()
                         {
-                            failure = Some(WorkspaceRootRevalidationFailure::IdentityChanged);
-                        } else if opened.revalidate().is_err() {
                             failure = Some(WorkspaceRootRevalidationFailure::IdentityChanged);
                         } else {
                             let observed_at = timestamp_now()?;
@@ -950,8 +1019,10 @@ fn local_directory_failure(error: LocalDirectoryError) -> WorkspaceRootRevalidat
         LocalDirectoryError::UnsupportedPlatform => {
             WorkspaceRootRevalidationFailure::UnsupportedPlatform
         }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         LocalDirectoryError::InvalidSelection => WorkspaceRootRevalidationFailure::InvalidLocator,
         LocalDirectoryError::IdentityChanged => WorkspaceRootRevalidationFailure::IdentityChanged,
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         LocalDirectoryError::NotDirectory | LocalDirectoryError::OpenFailed => {
             WorkspaceRootRevalidationFailure::IdentityUnavailable
         }
@@ -1008,9 +1079,63 @@ fn fail_registered_startup(
     }
 }
 
-/// Owns the Operator thread so every early return joins it before storage and the
-/// single-instance lock are released. Dropping a JoinHandle alone would detach a
-/// request-serving thread into the next Runtime incarnation.
+/// Persist the first startup DEGRADED transition without retrying an ambiguous
+/// catalog CAS. If the catalog rejects the transition, the private local status
+/// remains the best available failure projection and Operator admission stays closed.
+fn persist_degraded_catalog_transition(
+    data_directory: &Path,
+    store: &impl RuntimeLifecycleStore,
+    state: &mut RuntimeLocalState,
+    incarnation_version: &mut u64,
+) -> Result<(), String> {
+    match persist_incarnation_transition(store, state, incarnation_version, RuntimeState::Degraded)
+    {
+        Ok(()) => persist_state(data_directory, state),
+        Err(transition_error) => {
+            let mut blockers = state.blockers.clone();
+            if !blockers
+                .iter()
+                .any(|blocker| blocker == "RUNTIME_LIFECYCLE_TRANSITION_FAILED")
+            {
+                blockers.push("RUNTIME_LIFECYCLE_TRANSITION_FAILED".to_owned());
+            }
+            state.transition(RuntimeState::Degraded, blockers);
+            let local_result =
+                persist_state(data_directory, state).and_then(|()| print_state(state));
+            match local_result {
+                Ok(()) => Err(format!(
+                    "{transition_error}; startup failed closed after recording the local lifecycle blocker"
+                )),
+                Err(local_error) => Err(format!(
+                    "{transition_error}; startup failed closed; {local_error}"
+                )),
+            }
+        }
+    }
+}
+
+/// Keep the private status projection aligned with recovery blockers discovered
+/// after the initial durable DEGRADED transition. The durable catalog owns
+/// availability; detailed local recovery blockers remain installation-local.
+fn persist_final_recovery_blockers(
+    data_directory: &Path,
+    state: &mut RuntimeLocalState,
+    blockers: &[RuntimeLifecycleBlocker],
+) -> Result<(), String> {
+    let blocker_codes = blockers
+        .iter()
+        .map(|blocker| blocker.code.clone())
+        .collect::<Vec<_>>();
+    if state.recovery_state != RuntimeState::Degraded || state.blockers != blocker_codes {
+        state.transition(RuntimeState::Degraded, blocker_codes);
+        persist_state(data_directory, state)?;
+    }
+    Ok(())
+}
+
+/// Owns the Operator thread and attempts bounded shutdown on every early return.
+/// A timeout is reported as unclean before Runtime state can advance to STOPPED; the
+/// process supervisor then exits the old incarnation rather than admitting new work.
 struct OperatorLifecycle {
     server: Option<OperatorServer>,
 }
@@ -1027,16 +1152,18 @@ impl OperatorLifecycle {
         }
     }
 
-    fn stop(&mut self) {
+    fn stop(&mut self) -> Result<(), String> {
         if let Some(server) = self.server.take() {
-            server.stop();
+            server.stop()
+        } else {
+            Ok(())
         }
     }
 }
 
 impl Drop for OperatorLifecycle {
     fn drop(&mut self) {
-        self.stop();
+        let _ = self.stop();
     }
 }
 
@@ -1077,6 +1204,16 @@ fn startup_policy_name(policy: StartupPolicy) -> &'static str {
         StartupPolicy::LoginBackground => "LOGIN_BACKGROUND",
         StartupPolicy::AlwaysOnService => "ALWAYS_ON_SERVICE",
     }
+}
+
+fn advance_to_stopping_after_operator_drain(
+    state: &mut RuntimeLocalState,
+    blockers: Vec<String>,
+    drain_result: Result<(), String>,
+) -> Result<(), String> {
+    drain_result?;
+    state.transition(RuntimeState::Stopping, blockers);
+    Ok(())
 }
 
 fn timestamp_now() -> Result<String, String> {
@@ -1207,7 +1344,7 @@ impl Drop for InstanceLock {
 }
 
 fn read_state(path: &Path) -> Result<Option<RuntimeLocalState>, String> {
-    let mut file = match open_runtime_state_file(path) {
+    let file = match open_runtime_state_file(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err("could not read Runtime lifecycle state".to_owned()),
@@ -1242,6 +1379,7 @@ fn persist_state(data_directory: &Path, state: &RuntimeLocalState) -> Result<(),
 }
 
 fn ensure_private_state_directory(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
     let existed = path.exists();
     fs::create_dir_all(path)
         .map_err(|_| "could not create the Runtime state directory".to_owned())?;
@@ -1314,6 +1452,7 @@ fn open_runtime_lock_file(path: &Path) -> Result<File, std::io::Error> {
             .read(true)
             .write(true)
             .create(true)
+            .truncate(false)
             .open(path)?;
         validate_current_user_regular_file(&file, "Runtime lock").map_err(|_| {
             std::io::Error::new(
@@ -1406,9 +1545,346 @@ fn sync_directory(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        RuntimeLocalState, RuntimeState, StartupPolicy, ensure_private_state_directory,
-        persist_state,
+        RuntimeLocalState, RuntimeState, StartupPolicy, advance_to_stopping_after_operator_drain,
+        ensure_private_state_directory, fail_registered_startup,
+        persist_degraded_catalog_transition, persist_final_recovery_blockers, persist_state,
+        read_state,
     };
+    use std::sync::Mutex;
+    use storage_core::{
+        LocalRuntimeLifecycleSnapshot, RuntimeIncarnationLocalObservationRecord,
+        RuntimeIncarnationRecord, RuntimeIncarnationStateUpdate, RuntimeLifecycleStore,
+        RuntimeRecord, StoreError,
+    };
+
+    struct StartupFailureStore {
+        fail_transition: bool,
+        updates: Mutex<Vec<RuntimeIncarnationStateUpdate>>,
+    }
+
+    impl RuntimeLifecycleStore for StartupFailureStore {
+        fn register_local_incarnation(
+            &self,
+            _runtime: RuntimeRecord,
+            _incarnation: RuntimeIncarnationRecord,
+            _observation: RuntimeIncarnationLocalObservationRecord,
+        ) -> Result<RuntimeIncarnationRecord, StoreError> {
+            Err(StoreError::Io(
+                "registration is outside this test".to_owned(),
+            ))
+        }
+
+        fn transition_local_incarnation(
+            &self,
+            update: RuntimeIncarnationStateUpdate,
+        ) -> Result<RuntimeIncarnationRecord, StoreError> {
+            self.updates
+                .lock()
+                .expect("transition update lock")
+                .push(update.clone());
+            if self.fail_transition {
+                return Err(StoreError::Io("injected transition failure".to_owned()));
+            }
+            Ok(RuntimeIncarnationRecord {
+                runtime_incarnation_id: update.runtime_incarnation_id,
+                runtime_id: update.runtime_id,
+                process_started_at: "2026-10-11T00:00:00Z".to_owned(),
+                litecowork_version: "test".to_owned(),
+                recovered_from_unclean_shutdown: false,
+                recovery_state: update.recovery_state,
+                ready_at: None,
+                stopped_at: update.stopped_at,
+                version: update.expected_version + 1,
+            })
+        }
+
+        fn read_local_lifecycle_snapshot(
+            &self,
+            _runtime_id: &str,
+            _expected_incarnation_id: &str,
+        ) -> Result<Option<LocalRuntimeLifecycleSnapshot>, StoreError> {
+            Ok(None)
+        }
+    }
+
+    fn registered_startup_state() -> RuntimeLocalState {
+        RuntimeLocalState {
+            schema_version: 1,
+            runtime_id: "rt_startup_failure_test".to_owned(),
+            local_principal_id: Some("principal_startup_failure_test".to_owned()),
+            os_principal_binding_established: true,
+            local_incarnation_id: "rli_startup_failure_test".to_owned(),
+            startup_policy: StartupPolicy::Manual,
+            recovery_state: RuntimeState::Recovering,
+            recovered_from_unclean_shutdown: false,
+            last_shutdown_clean: false,
+            blockers: Vec::new(),
+            version: 4,
+        }
+    }
+
+    fn private_test_directory() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().expect("temporary Runtime directory");
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            directory.path(),
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .expect("restrict temporary Runtime directory");
+        directory
+    }
+
+    #[test]
+    fn registered_startup_failure_persists_matching_degraded_catalog_and_local_state() {
+        let directory = private_test_directory();
+        let store = StartupFailureStore {
+            fail_transition: false,
+            updates: Mutex::new(Vec::new()),
+        };
+        let mut state = registered_startup_state();
+        let mut incarnation_version = 7;
+
+        let result = fail_registered_startup(
+            directory.path(),
+            &store,
+            &mut state,
+            &mut incarnation_version,
+            "WORKSPACE_ROOT_REVALIDATION_COMMIT_FAILED",
+            "WorkspaceRoot startup recovery failed",
+        );
+
+        assert_eq!(
+            result,
+            Err("WorkspaceRoot startup recovery failed".to_owned())
+        );
+        assert_eq!(incarnation_version, 8);
+        let updates = store.updates.lock().expect("transition update lock");
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].runtime_id, "rt_startup_failure_test");
+        assert_eq!(
+            updates[0].runtime_incarnation_id,
+            "rli_startup_failure_test"
+        );
+        assert_eq!(updates[0].expected_version, 7);
+        assert_eq!(updates[0].recovery_state, "DEGRADED");
+        assert_eq!(updates[0].availability, "DEGRADED");
+        assert_eq!(updates[0].stopped_at, None);
+        drop(updates);
+
+        let local = read_state(&directory.path().join("runtime-state.json"))
+            .expect("read local state")
+            .expect("persisted local state");
+        assert_eq!(local.recovery_state, RuntimeState::Degraded);
+        assert_eq!(
+            local.blockers,
+            ["WORKSPACE_ROOT_REVALIDATION_COMMIT_FAILED"]
+        );
+        assert!(!local.last_shutdown_clean);
+    }
+
+    #[test]
+    fn registered_startup_failure_keeps_local_degraded_state_when_catalog_transition_fails() {
+        let directory = private_test_directory();
+        let store = StartupFailureStore {
+            fail_transition: true,
+            updates: Mutex::new(Vec::new()),
+        };
+        let mut state = registered_startup_state();
+        let mut incarnation_version = 7;
+
+        let result = fail_registered_startup(
+            directory.path(),
+            &store,
+            &mut state,
+            &mut incarnation_version,
+            "WORKSPACE_ROOT_REVALIDATION_COMMIT_FAILED",
+            "WorkspaceRoot startup recovery failed",
+        );
+
+        let error = result.expect_err("startup failure must be returned");
+        assert!(error.contains("WorkspaceRoot startup recovery failed"));
+        assert!(error.contains("durable Runtime lifecycle transition failed"));
+        assert_eq!(incarnation_version, 7);
+        assert_eq!(store.updates.lock().expect("updates").len(), 1);
+        let local = read_state(&directory.path().join("runtime-state.json"))
+            .expect("read local state")
+            .expect("persisted local state despite catalog failure");
+        assert_eq!(local.recovery_state, RuntimeState::Degraded);
+        assert_eq!(
+            local.blockers,
+            ["WORKSPACE_ROOT_REVALIDATION_COMMIT_FAILED"]
+        );
+        assert!(!local.last_shutdown_clean);
+    }
+
+    #[test]
+    fn initial_degraded_transition_failure_persists_local_blocker_without_retrying_catalog_cas() {
+        let directory = private_test_directory();
+        let store = StartupFailureStore {
+            fail_transition: true,
+            updates: Mutex::new(Vec::new()),
+        };
+        let mut state = registered_startup_state();
+        state.transition(
+            RuntimeState::Degraded,
+            vec![
+                "TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned(),
+                "TRUST_EFFECT_RECONCILIATION_NOT_INTEGRATED".to_owned(),
+            ],
+        );
+        let mut incarnation_version = 7;
+
+        let error = persist_degraded_catalog_transition(
+            directory.path(),
+            &store,
+            &mut state,
+            &mut incarnation_version,
+        )
+        .expect_err("the rejected initial catalog CAS must fail startup");
+
+        assert!(error.contains("durable Runtime lifecycle transition failed"));
+        assert!(error.contains("startup failed closed"));
+        assert_eq!(incarnation_version, 7);
+        let updates = store.updates.lock().expect("transition update lock");
+        assert_eq!(
+            updates.len(),
+            1,
+            "an ambiguous CAS failure must not be retried"
+        );
+        assert_eq!(updates[0].runtime_id, "rt_startup_failure_test");
+        assert_eq!(
+            updates[0].runtime_incarnation_id,
+            "rli_startup_failure_test"
+        );
+        assert_eq!(updates[0].expected_version, 7);
+        assert_eq!(updates[0].recovery_state, "DEGRADED");
+        assert_eq!(updates[0].availability, "DEGRADED");
+        drop(updates);
+
+        let local = read_state(&directory.path().join("runtime-state.json"))
+            .expect("read local state")
+            .expect("persisted local state despite catalog failure");
+        assert_eq!(local.recovery_state, RuntimeState::Degraded);
+        assert_eq!(
+            local.blockers,
+            [
+                "TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED",
+                "TRUST_EFFECT_RECONCILIATION_NOT_INTEGRATED",
+                "RUNTIME_LIFECYCLE_TRANSITION_FAILED"
+            ]
+        );
+        assert!(!local.last_shutdown_clean);
+    }
+
+    #[test]
+    fn initial_degraded_transition_failure_returns_local_status_write_failure() {
+        let directory = private_test_directory();
+        std::fs::create_dir(directory.path().join("runtime-state.json"))
+            .expect("block atomic status-file replacement");
+        let store = StartupFailureStore {
+            fail_transition: true,
+            updates: Mutex::new(Vec::new()),
+        };
+        let mut state = registered_startup_state();
+        state.transition(
+            RuntimeState::Degraded,
+            vec!["TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned()],
+        );
+        let mut incarnation_version = 7;
+
+        let error = persist_degraded_catalog_transition(
+            directory.path(),
+            &store,
+            &mut state,
+            &mut incarnation_version,
+        )
+        .expect_err("startup must fail when the private status cannot be persisted");
+
+        assert!(error.contains("durable Runtime lifecycle transition failed"));
+        assert!(error.contains("could not atomically replace Runtime lifecycle state"));
+        assert_eq!(incarnation_version, 7);
+        assert_eq!(store.updates.lock().expect("updates").len(), 1);
+        assert_eq!(state.recovery_state, RuntimeState::Degraded);
+        assert!(
+            state
+                .blockers
+                .contains(&"RUNTIME_LIFECYCLE_TRANSITION_FAILED".to_owned())
+        );
+        assert!(!state.last_shutdown_clean);
+    }
+
+    #[test]
+    fn registered_startup_failure_reports_local_status_write_failure_without_clean_claim() {
+        let directory = private_test_directory();
+        std::fs::create_dir(directory.path().join("runtime-state.json"))
+            .expect("block atomic status-file replacement");
+        let store = StartupFailureStore {
+            fail_transition: false,
+            updates: Mutex::new(Vec::new()),
+        };
+        let mut state = registered_startup_state();
+        let mut incarnation_version = 7;
+
+        let result = fail_registered_startup(
+            directory.path(),
+            &store,
+            &mut state,
+            &mut incarnation_version,
+            "WORKSPACE_ROOT_REVALIDATION_COMMIT_FAILED",
+            "WorkspaceRoot startup recovery failed",
+        );
+
+        assert_eq!(
+            result,
+            Err("could not atomically replace Runtime lifecycle state".to_owned())
+        );
+        assert_eq!(incarnation_version, 8);
+        assert_eq!(store.updates.lock().expect("updates").len(), 1);
+        assert_eq!(state.recovery_state, RuntimeState::Degraded);
+        assert_eq!(
+            state.blockers,
+            ["WORKSPACE_ROOT_REVALIDATION_COMMIT_FAILED"]
+        );
+        assert!(!state.last_shutdown_clean);
+    }
+
+    #[test]
+    fn final_recovery_blockers_are_persisted_before_operator_admission() {
+        let directory = private_test_directory();
+        let mut state = registered_startup_state();
+        state.transition(
+            RuntimeState::Degraded,
+            vec!["TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned()],
+        );
+        persist_state(directory.path(), &state).expect("persist initial degraded state");
+        let blockers = vec![
+            super::RuntimeLifecycleBlocker {
+                code: "TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned(),
+                created_at: "2026-10-11T00:00:00Z".to_owned(),
+            },
+            super::RuntimeLifecycleBlocker {
+                code: "EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED".to_owned(),
+                created_at: "2026-10-11T00:00:01Z".to_owned(),
+            },
+        ];
+
+        persist_final_recovery_blockers(directory.path(), &mut state, &blockers)
+            .expect("persist completed recovery blocker set");
+
+        let local = read_state(&directory.path().join("runtime-state.json"))
+            .expect("read local state")
+            .expect("persisted local state");
+        assert_eq!(local.recovery_state, RuntimeState::Degraded);
+        assert_eq!(
+            local.blockers,
+            [
+                "TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED",
+                "EXPIRED_EXECUTION_LEASE_RECOVERY_FAILED"
+            ]
+        );
+        assert!(!local.last_shutdown_clean);
+        assert_eq!(state.version, local.version);
+    }
 
     #[test]
     fn existing_state_without_local_principal_fails_closed_instead_of_rotating_identity() {
@@ -1440,6 +1916,33 @@ mod tests {
 
         assert!(error.contains("missing its local Principal identity"));
         assert!(error.contains("explicit local recovery is required"));
+    }
+
+    #[test]
+    fn failed_operator_drain_keeps_runtime_unclean_and_at_draining() {
+        let mut state = RuntimeLocalState {
+            schema_version: 1,
+            runtime_id: "rt_shutdown".to_owned(),
+            local_principal_id: Some("principal_shutdown".to_owned()),
+            os_principal_binding_established: true,
+            local_incarnation_id: "rli_shutdown".to_owned(),
+            startup_policy: StartupPolicy::Manual,
+            recovery_state: RuntimeState::Draining,
+            recovered_from_unclean_shutdown: false,
+            last_shutdown_clean: false,
+            blockers: Vec::new(),
+            version: 2,
+        };
+
+        let result = advance_to_stopping_after_operator_drain(
+            &mut state,
+            vec!["TASK_ATTEMPT_ADMISSION_NOT_INTEGRATED".to_owned()],
+            Err("request worker did not settle".to_owned()),
+        );
+
+        assert_eq!(result, Err("request worker did not settle".to_owned()));
+        assert_eq!(state.recovery_state, RuntimeState::Draining);
+        assert!(!state.last_shutdown_clean);
     }
 }
 
@@ -1479,5 +1982,299 @@ mod lifecycle_file_tests {
         symlink(&target, &link).expect("create state symlink");
 
         assert!(read_state(&link).is_err());
+    }
+}
+
+#[cfg(test)]
+mod bootstrap_state_tests {
+    use super::{
+        InstanceLock, RuntimeLocalState, RuntimeState, StartupPolicy,
+        ensure_private_state_directory, persist_state, read_state,
+    };
+    use std::{fs, path::Path, process::Command};
+
+    fn private_directory() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().expect("temporary Runtime directory");
+        #[cfg(unix)]
+        fs::set_permissions(
+            directory.path(),
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .expect("restrict temporary Runtime directory");
+        directory
+    }
+
+    fn state(last_shutdown_clean: bool, version: u64) -> RuntimeLocalState {
+        RuntimeLocalState {
+            schema_version: 1,
+            runtime_id: "rt_bootstrap_test".to_owned(),
+            local_principal_id: Some("principal_bootstrap_test".to_owned()),
+            os_principal_binding_established: true,
+            local_incarnation_id: "rli_previous".to_owned(),
+            startup_policy: StartupPolicy::LoginBackground,
+            recovery_state: RuntimeState::Stopped,
+            recovered_from_unclean_shutdown: false,
+            last_shutdown_clean,
+            blockers: Vec::new(),
+            version,
+        }
+    }
+
+    #[test]
+    fn instance_lock_rejects_duplicate_owner_and_can_be_reacquired_after_drop() {
+        let directory = private_directory();
+        let first = InstanceLock::acquire(directory.path()).expect("first lock owner");
+
+        assert!(InstanceLock::acquire(directory.path()).is_err());
+
+        drop(first);
+        assert!(InstanceLock::acquire(directory.path()).is_ok());
+    }
+
+    #[test]
+    fn instance_lock_rejects_a_second_process() {
+        const PROBE_DIRECTORY: &str = "LITECOWORK_RUNTIME_LOCK_PROBE_DIRECTORY";
+        if let Some(path) = std::env::var_os(PROBE_DIRECTORY) {
+            let error = InstanceLock::acquire(Path::new(&path))
+                .err()
+                .expect("another process already owns this Runtime directory");
+            assert!(error.contains("already owns this state directory"));
+            return;
+        }
+
+        let directory = private_directory();
+        let _owner = InstanceLock::acquire(directory.path()).expect("parent owns Runtime lock");
+        let output = Command::new(std::env::current_exe().expect("test executable path"))
+            .args([
+                "--exact",
+                "runtime::bootstrap_state_tests::instance_lock_rejects_a_second_process",
+                "--nocapture",
+            ])
+            .env(PROBE_DIRECTORY, directory.path())
+            .output()
+            .expect("spawn child lock probe");
+        assert!(
+            output.status.success(),
+            "child failed to observe the parent lock: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn instance_lock_is_released_after_owner_is_killed() {
+        use std::process::Stdio;
+
+        const PROBE_DIRECTORY: &str = "LITECOWORK_RUNTIME_LOCK_PROBE_DIRECTORY";
+        const PROBE_MARKER: &str = "LITECOWORK_RUNTIME_LOCK_PROBE_MARKER";
+        let directory = private_directory();
+        let marker = directory.path().join("child-lock-held");
+        let mut child = Command::new(std::env::current_exe().expect("test executable path"))
+            .args([
+                "--exact",
+                "runtime::bootstrap_state_tests::instance_lock_kill_probe_process",
+                "--nocapture",
+            ])
+            .env(PROBE_DIRECTORY, directory.path())
+            .env(PROBE_MARKER, &marker)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn lock owner process");
+        let ready = (0..500).any(|_| {
+            if marker.exists() {
+                true
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                false
+            }
+        });
+        let competing_lock = InstanceLock::acquire(directory.path());
+        let kill_result = child.kill();
+        let status_result = child.wait();
+
+        assert!(ready, "child did not acquire the Runtime lock in time");
+        let error = competing_lock
+            .err()
+            .expect("parent cannot acquire the child's lock");
+        assert!(error.contains("already owns this state directory"));
+        kill_result.expect("kill child lock owner");
+        let status = status_result.expect("reap child lock owner");
+        assert!(!status.success(), "killed child must not exit normally");
+        let _restarted_owner = InstanceLock::acquire(directory.path())
+            .expect("OS releases the lock after the owner process exits");
+        let previous = read_state(&directory.path().join("runtime-state.json"))
+            .expect("read persisted child Runtime state")
+            .expect("child persisted a Runtime state before termination");
+        assert_eq!(previous.recovery_state, RuntimeState::Starting);
+        assert!(!previous.last_shutdown_clean);
+
+        let next = RuntimeLocalState::begin(directory.path()).expect("recover a new incarnation");
+        assert_eq!(next.runtime_id, previous.runtime_id);
+        assert_ne!(next.local_incarnation_id, previous.local_incarnation_id);
+        assert!(next.recovered_from_unclean_shutdown);
+        assert!(!next.last_shutdown_clean);
+        assert_eq!(next.version, previous.version + 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn instance_lock_kill_probe_process() {
+        const PROBE_DIRECTORY: &str = "LITECOWORK_RUNTIME_LOCK_PROBE_DIRECTORY";
+        const PROBE_MARKER: &str = "LITECOWORK_RUNTIME_LOCK_PROBE_MARKER";
+        let Some(path) = std::env::var_os(PROBE_DIRECTORY) else {
+            return;
+        };
+        let path = Path::new(&path);
+        ensure_private_state_directory(path).expect("prepare child Runtime state directory");
+        let _lock = InstanceLock::acquire(path).expect("child owns Runtime lock");
+        let state = RuntimeLocalState::begin(path).expect("begin child Runtime incarnation");
+        persist_state(path, &state).expect("persist child Runtime incarnation");
+        fs::write(
+            std::env::var_os(PROBE_MARKER).expect("child marker path"),
+            b"LOCK_HELD",
+        )
+        .expect("write lock-ready marker");
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
+
+    #[test]
+    fn new_incarnation_preserves_installation_identity_and_marks_unclean_restart() {
+        let directory = private_directory();
+        ensure_private_state_directory(directory.path()).expect("private Runtime directory");
+        persist_state(directory.path(), &state(false, 7)).expect("persist prior Runtime state");
+
+        let next = RuntimeLocalState::begin(directory.path()).expect("begin new incarnation");
+
+        assert_eq!(next.runtime_id, "rt_bootstrap_test");
+        assert_eq!(
+            next.local_principal_id.as_deref(),
+            Some("principal_bootstrap_test")
+        );
+        assert!(next.os_principal_binding_established);
+        assert_ne!(next.local_incarnation_id, "rli_previous");
+        assert_eq!(next.startup_policy, StartupPolicy::LoginBackground);
+        assert_eq!(next.recovery_state, RuntimeState::Starting);
+        assert!(next.recovered_from_unclean_shutdown);
+        assert!(!next.last_shutdown_clean);
+        assert_eq!(next.version, 8);
+    }
+
+    #[test]
+    fn clean_restart_does_not_report_recovery_from_unclean_shutdown() {
+        let directory = private_directory();
+        ensure_private_state_directory(directory.path()).expect("private Runtime directory");
+        persist_state(directory.path(), &state(true, 3)).expect("persist prior Runtime state");
+
+        let next = RuntimeLocalState::begin(directory.path()).expect("begin new incarnation");
+
+        assert!(!next.recovered_from_unclean_shutdown);
+        assert_eq!(next.version, 4);
+    }
+
+    #[test]
+    fn malformed_and_unsupported_lifecycle_state_fail_closed() {
+        let directory = private_directory();
+        ensure_private_state_directory(directory.path()).expect("private Runtime directory");
+        let path = directory.path().join("runtime-state.json");
+        fs::write(&path, b"{").expect("write malformed lifecycle state");
+        #[cfg(unix)]
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600))
+            .expect("restrict malformed lifecycle state");
+
+        assert!(read_state(&path).is_err());
+
+        let mut unsupported = state(true, 1);
+        unsupported.schema_version = 2;
+        persist_state(directory.path(), &unsupported).expect("persist unsupported state version");
+        assert!(read_state(&path).is_err());
+
+        let mut zero_version = state(true, 0);
+        zero_version.schema_version = 1;
+        persist_state(directory.path(), &zero_version).expect("persist zero state version");
+        assert!(read_state(&path).is_err());
+
+        fs::write(
+            &path,
+            br#"{"schema_version":1,"runtime_id":"rt","local_principal_id":null,"os_principal_binding_established":false,"local_incarnation_id":"rli","startup_policy":"MANUAL","recovery_state":"STOPPED","recovered_from_unclean_shutdown":false,"last_shutdown_clean":true,"blockers":[],"version":1,"unexpected":true}"#,
+        )
+        .expect("write state with unsupported field");
+        assert!(read_state(&path).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_state_directory_rejects_broad_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temporary Runtime directory");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755))
+            .expect("broaden temporary directory permissions");
+
+        let error = ensure_private_state_directory(directory.path())
+            .expect_err("broad Runtime directory must be rejected");
+        assert!(error.contains("permissions are too broad"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn newly_created_state_directory_is_restricted_to_owner() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let parent = private_directory();
+        let state_directory = parent.path().join("nested/runtime");
+
+        ensure_private_state_directory(&state_directory).expect("create private state directory");
+
+        let mode = fs::metadata(&state_directory)
+            .expect("inspect new state directory")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_state_rejects_broad_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = private_directory();
+        ensure_private_state_directory(directory.path()).expect("private Runtime directory");
+        let path = directory.path().join("runtime-state.json");
+        persist_state(directory.path(), &state(true, 1)).expect("persist lifecycle state");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
+            .expect("broaden lifecycle state permissions");
+
+        let error = read_state(&path).expect_err("broad lifecycle state must be rejected");
+        assert!(error.contains("permissions are too broad"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn instance_lock_rejects_symlink_and_broad_permissions() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let directory = private_directory();
+        let target = directory.path().join("lock-target");
+        fs::write(&target, b"").expect("create lock target");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600))
+            .expect("restrict lock target");
+        symlink(&target, directory.path().join("runtime.lock")).expect("create lock symlink");
+        assert!(InstanceLock::acquire(directory.path()).is_err());
+
+        fs::remove_file(directory.path().join("runtime.lock")).expect("remove lock symlink");
+        let lock_path = directory.path().join("runtime.lock");
+        fs::write(&lock_path, b"").expect("create broad lock file");
+        fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o644))
+            .expect("broaden lock permissions");
+
+        let error = InstanceLock::acquire(directory.path())
+            .err()
+            .expect("broad Runtime lock must be rejected");
+        assert!(error.contains("permissions are too broad"));
     }
 }

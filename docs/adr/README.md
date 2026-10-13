@@ -12,6 +12,17 @@ Superseded decisions remain available with an explicit successor reference.
 
 | ADR | Decision |
 |---|---|
+| [0001](0001-durable-task-core.md) | Durable Task Core Around External Agents |
+| [0002](0002-task-and-attempt-identity.md) | A Task Continues Through New Attempts |
+| [0003](0003-litespm-is-independent.md) | Keep LiteSPM Independent |
+| [0004](0004-runtime-and-environment-are-distinct.md) | Runtime and Environment Are Separate |
+| [0005](0005-replicate-domain-state-not-databases.md) | Replicate Domain State, Not Database Files |
+| [0006](0006-conversation-task-separation.md) | Conversation and Task Are Separate |
+| [0007](0007-reported-observed-verified.md) | Preserve Evidence Levels |
+| [0008](0008-no-generic-provider-layer.md) | Keep Protocol Boundaries Explicit |
+| [0009](0009-attempt-free-lead-planning.md) | Initial Planning Does Not Require an Attempt |
+| [0010](0010-revision-independent-occurrences.md) | Deduplicate Automation Occurrences Across Revisions |
+| [0011](0011-atomic-plan-acceptance.md) | Accept Plans and Materialize Steps Atomically |
 | [0012](0012-native-harness-integrity.md) | Preserve native agent harnesses |
 | [0013](0013-host-delegation-uses-accepted-plan-steps.md) | Host delegation uses accepted Plan Steps and child-scoped authority |
 | [0014](0014-versioned-worker-profiles-and-bounded-selection.md) | Version worker profiles and bound selection |

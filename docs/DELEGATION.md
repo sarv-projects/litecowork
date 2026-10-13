@@ -189,8 +189,9 @@ delegation where the harness supports it; it does not grant LiteCowork worker el
 `DENY_IF_SUPPORTED` is valid only when the adapter reports an enforceable per-session
 control. Otherwise profile validation rejects the option; native files are never rewritten.
 
-`ExistingPolicyClass` is a reference to the current Trust policy vocabulary, not a new
-grant or a new authority source. The profile is a restrictive ceiling: it can remove
+`ExistingPolicyClass` is explanatory prose referring to the existing Trust policy
+vocabulary, not a serialized field, enum, grant, or new authority source in any
+DelegationProfile or DelegateRequest. The profile is a restrictive ceiling: it can remove
 options, capabilities, write access, or effects, but can never grant them. In v1,
 `capability_allowlist` must be a subset of capabilities independently granted to the
 child Attempt. `EXPLICIT_SHARED` requires an Environment contract that serializes writes
@@ -378,8 +379,10 @@ incomparable, expired, or low-confidence observations remain `UNKNOWN`; they are
 converted to zero or optimistic completion estimates.
 
 Each released WorkerSelection policy version defines and records its minimum benefit and
-confidence thresholds for the selected objective. Thresholds are fixed from B83 benchmark
-evidence for that release; they are not silently tuned from one user's sparse runtime
+confidence thresholds for the selected objective. Thresholds require B83 benchmark
+evidence **before enabling automatic benefit-based selection** for that release. A
+release without qualified B83 evidence uses `STAY_WITH_CURRENT_OPTION` rather than
+inventing a threshold. They are not silently tuned from one user's sparse runtime
 history. If there is no qualified baseline, the confidence floor is not met, or estimated
 benefit is below the threshold, the decision is `STAY_WITH_CURRENT_OPTION`. A user-pinned
 worker remains pinned or returns its typed unavailability error; it is never replaced by
@@ -779,3 +782,21 @@ session loss and usage confidence; preserves its native config; does not expose 
 events or output; and returns bounded outputs with resource provenance. The host must
 verify every claimed result and retain a clear limitation when the adapter cannot expose
 native child activity or exact usage.
+
+
+## External workflow versus delegated worker
+
+An existing deterministic workflow selected through WorkflowBackendAdapter is a
+DETERMINISTIC_CAPABILITY option, not a delegated Agent worker. One external workflow run
+does not create a child Attempt for each provider node. The parent Step retains its
+acceptance criteria and the workflow Invocation/Effects must reconcile before the Step can
+settle.
+
+CAMEL/Eigent decomposition is a reference for bounded parallel work, not authority to bypass
+the accepted PlanRevision/Step rules above. See
+[Reference Implementations](REFERENCE-IMPLEMENTATIONS.md) and
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md).
+
+## V1 detailed design integration — 2026-10-12
+
+V1-WORKFLOW-EVENT-LLD.md defines cross-agent bounded portable Task envelope, versioned worker choice, explicit handoff and stop criteria. Native subagent/@ semantics remain owned by the harness and are not automatically LiteCowork host child Tasks. The end-user selected AgentBinding is not permission to migrate another provider's private session state. Verify result against acceptance independent of worker claim.

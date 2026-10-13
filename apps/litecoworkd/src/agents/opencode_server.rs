@@ -9,6 +9,7 @@
 //! API reference: https://dev.opencode.ai/v2/docs/api/ . Server routes and request
 //! shapes are taken from the OpenCode Server/SDK documentation. This adapter
 //! deliberately does not expose arbitrary URLs, headers, methods, or JSON-RPC.
+#![allow(dead_code)] // The bounded transport is staged until Task/Attempt admission and lifecycle settlement are integrated.
 
 use std::{
     ffi::OsString,
@@ -506,17 +507,19 @@ impl OpenCodeServer {
         let stream = connect(self.address, self.request_timeout)?;
         write_request(
             stream,
-            self.address,
-            "GET",
-            "/api/event",
-            &self.authorization(),
-            None,
-            "text/event-stream",
-            true,
-            MAX_RESPONSE_BYTES,
-            deadline,
+            RequestOptions {
+                address: self.address,
+                method: "GET",
+                path: "/api/event",
+                authorization: &self.authorization(),
+                body: None,
+                accept: "text/event-stream",
+                stream_body: true,
+                max_response_bytes: MAX_RESPONSE_BYTES,
+                deadline,
+            },
         )
-        .and_then(|mut response| {
+        .and_then(|response| {
             if response.status == 401 || response.status == 403 {
                 return Err(OpenCodeError::Unauthorized);
             }
@@ -596,17 +599,20 @@ impl OpenCodeServer {
         }
         let deadline = Instant::now() + self.request_timeout;
         let stream = connect(self.address, self.request_timeout)?;
+        let authorization = self.authorization();
         let response = write_request(
             stream,
-            self.address,
-            method,
-            path,
-            &self.authorization(),
-            (!bytes.is_empty()).then_some(bytes.as_slice()),
-            accept,
-            false,
-            max_response_bytes,
-            deadline,
+            RequestOptions {
+                address: self.address,
+                method,
+                path,
+                authorization: &authorization,
+                body: (!bytes.is_empty()).then_some(bytes.as_slice()),
+                accept,
+                stream_body: false,
+                max_response_bytes,
+                deadline,
+            },
         )?;
         if response.status == 401 || response.status == 403 {
             return Err(OpenCodeError::Unauthorized);
@@ -997,18 +1003,33 @@ impl BodyStream {
     }
 }
 
-fn write_request(
-    mut stream: TcpStream,
+struct RequestOptions<'a> {
     address: SocketAddr,
-    method: &str,
-    path: &str,
-    authorization: &str,
-    body: Option<&[u8]>,
-    accept: &str,
+    method: &'a str,
+    path: &'a str,
+    authorization: &'a str,
+    body: Option<&'a [u8]>,
+    accept: &'a str,
     stream_body: bool,
     max_response_bytes: usize,
     deadline: Instant,
+}
+
+fn write_request(
+    mut stream: TcpStream,
+    request: RequestOptions<'_>,
 ) -> Result<HttpResponse, OpenCodeError> {
+    let RequestOptions {
+        address,
+        method,
+        path,
+        authorization,
+        body,
+        accept,
+        stream_body,
+        max_response_bytes,
+        deadline,
+    } = request;
     if !path.starts_with('/')
         || path.chars().any(|c| matches!(c, '\r' | '\n' | ' '))
         || !valid_option(authorization, 256)

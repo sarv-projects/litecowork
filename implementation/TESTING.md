@@ -168,3 +168,11 @@ known unsupported cells
 
 Do not merge support claims across agent versions. Upstream changes that alter auth,
 options, commands, input or stop behavior reopen the affected conformance cells.
+
+## V1 detailed design integration — 2026-10-12
+
+New comprehensive UAT cases UIV1-001–UIV1-158 and precise function coverage are recorded in V1-DESIGN-COVERAGE.md. Implement per-story real CODE+SYSTEM+USER gates with upstream agent/browser conformance, not only mocked visuals. Follow AGENTS.md for narrow tests on each edit and broad milestone regression; report pending owner-only actions rather than blocking independent work.
+
+## 2026-10-13 non-negotiable regression cases from contract reconciliation
+
+Use existing story CODE/SYSTEM/USER IDs, not new overlapping Uxx case identifiers. E03-S03: attempt planner start/activation without current-incarnation isolation proof and assert zero events/sessions/receipts; verify Task CAS, source-authenticated plan submit, same-key replay after planner closure, changed-payload 409 CONFLICT, stale Task 409 STALE_TASK_VERSION and never expose internal isolation diagnostics. E01-S04/E04-S05: verify typed errors and strict schemas on actual IPC/API. E03-S08/S09: credential_slots required/empty/unique, secret storage owner and no secret echo. E10-S02/E09: SKILL_DRIFT_DETECTED blocker exact enum/revision/evidence/repair. E07-S00/E13-S03: real Windows root replacement, junction/reparse/symlink races, volumes, restart, WSL boundary and fail-closed UNAVAILABLE, separately from named-pipe/ConPTY tests. E08-S03: temporary-chat/source privacy, private learning consent/conflict/revoke, stale cache and agent-controlled retrieval. E07/E08/E13: real Chrome browser, takeover epochs and integrated terminal reconnect. B83: delegation stays conservative without qualified selection thresholds. Fail/inconclusive tests remain release blockers; a schema-only pass is not SYSTEM/USER proof. [Matrix and authorities](V1-CONTRACT-RECONCILIATION-2026-10-13.md).

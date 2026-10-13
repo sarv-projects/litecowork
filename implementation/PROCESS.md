@@ -89,3 +89,11 @@ Update architecture and owning documents together for ownership/invariant change
 use an ADR for enduring non-obvious tradeoffs. Preserve coverage IDs when splitting work.
 New finalized requirements acquire stories/tests/source references and a release impact.
 No repeated architecture overhaul without implementation or benchmark evidence.
+
+## V1 detailed design integration — 2026-10-12
+
+AGENTS.md includes parallel work-lane ownership, risk-tiered testing and disk/worktree resource budgets. Freeze typed producer/consumer contracts first, then implement UI/backend/provider fixtures independently. Use focused tests continuously and full regression at meaningful integration gates; no skipped critical Trust/Effect/OS tests. Do not stop when one independently useful story is complete.
+
+## 2026-10-13 contract-reconciliation handoff discipline
+
+When touching a reconciled seam, include the [owner/evidence matrix](V1-CONTRACT-RECONCILIATION-2026-10-13.md) in the story's orient/review packet. Check the current producer/transport identity, typed error code, schema/storage/event promotion, OS security prerequisites and negative fault tests before removing a gate or enabling a control. A newly green machine schema validates documentation shape only. Update the existing backlog/epic/review/CURRENT-RUN for the true CODE, SYSTEM and USER result; do not create a parallel status enum or a redundant planner/memory/circuit-breaker authority.

@@ -108,14 +108,27 @@ index is a rebuildable projection over exact Resource revisions, not an evented 
 or replicated history. The local key provider keeps versioned Workspace/purpose keys in
 the OS credential store; the database and blob tree hold no key material, and no key is
 exposed to an agent or Operator response. Key versions remain stable across daemon
-restarts. Rotation creates a new active key version while retaining older versions so
-indexed queries can search each version (up to eight retained indexed versions per
-Workspace); explicit reindexing from verified authorized Resource bytes moves a revision
+restarts. Rotation stages the next key version before switching the active pointer and
+retains older versions so indexed queries can search each version (up to eight retained
+indexed versions per Workspace); explicit reindexing from verified authorized Resource bytes moves a revision
 to the active version. If an index key version is unavailable or the searchable-version
 bound is exceeded, indexed search fails closed and never tries plaintext or silently
 omits that version. If the active-version pointer is absent while a version-1 credential
 already exists, key initialization and rotation fail with a recovery-required error; they
-must not overwrite the existing version-1 credential. An encrypted snapshot or term projection can be rebuilt from the source Resource
+must not overwrite the existing version-1 credential. If a rotation leaves a staged next
+version while the prior active pointer remains valid, retry validates and activates that
+staged key instead of replacing it. Rotation and first key initialization use an OS file
+lock in addition to the in-process mutex, so separate Runtime data directories share the
+same coordination file. On Unix, that file is under a mode-0700 per-user directory whose
+owner and permissions are checked. Windows uses `LOCALAPPDATA` and rejects reparse-point
+directories/files, but its inherited ACL still requires platform qualification. Other
+non-Unix platforms use the OS temporary directory and remain unqualified. Lock metadata
+contains no key material. On Linux the provider uses the pinned keyring Secret
+Service credential directly; it does not read from the volatile keyutils cache. When an
+active-pointer write reports failure, the provider rereads the pointer and reports success
+only if it names the staged version and the retained key bytes match. Malformed staged
+keys and missing active keys fail closed; they are never overwritten. An encrypted
+snapshot or term projection can be rebuilt from the source Resource
 when its own authorized Resource key and source bytes remain available. ZIP, PDF/Office,
 OCR, embeddings, semantic/local-model retrieval and persistent WorkspaceRoot crawling
 remain outside this provider slice.
@@ -149,10 +162,17 @@ kept outside SQLite and backups, and zeroized when practical. If the key provide
 encryption implementation is unavailable, the store fails closed; plaintext storage is
 not a fallback. Test-only key providers are not valid production providers.
 
+The local `FileBlobStore` checks the configured blob root and each Workspace-hash and
+purpose directory without following symlinks at those levels; on Unix, each must also
+deny group/other access. A symlinked/non-directory scope component fails the operation
+before an object is read, written, or removed. These path checks do not claim protection
+against a concurrent same-user replacement race; platform qualification must retain that
+limitation unless the adapter is changed to directory-handle-based no-follow operations.
+
 `storage-sqlite::OsWorkspaceBlobKeyProvider` is the desktop implementation. It stores
 versioned blob keys and the active-version pointer in the platform credential store
-(macOS Keychain, Windows Credential Manager, and the Linux Secret Service/keyutils
-backend selected by the configured `keyring` features). Credential account labels contain
+(macOS Keychain, Windows Credential Manager, and Linux Secret Service). Credential account
+labels contain
 only a SHA-256 scope pseudonym, not the Workspace ID. Key bytes are created with the OS
 CSPRNG and zeroized in process memory where supported. A missing, locked, or unavailable
 credential store and malformed items fail closed. There is no local-file fallback.
@@ -366,8 +386,14 @@ no live reservation for the same `(WorkspaceId, digest)`. A durable GC fence blo
 reservations while the exact encrypted object is removed; only then are reservation and
 fence rows cleared. A crash after claiming leaves a `DELETING` reservation/fence for the
 next daemon incarnation to retry. The collector is serialized by the single-instance local
-daemon lifecycle and processes at most 100 objects per 30-second sweep. Shared digests with
-any accepted chunk reference are retained. A Resource commit transaction inserts the
+daemon lifecycle and processes at most 100 objects per 30-second sweep. Within that daemon,
+a weakly registered per-`(WorkspaceId, digest)` mutex spans each chunk's reservation, blob
+write/readback, and receipt transaction, and spans each collector's blob removal and fence
+release. If a collector claims an expired reservation while its writer is already in flight,
+the durable fence makes receipt commit fail; the writer releases the mutex before the collector
+removes the object and clears the fence. The lock registry is shared by store clones and drops
+idle digest entries. Shared digests with any accepted chunk reference are retained. A Resource
+commit transaction inserts the
 Resource/revision/location/event and commit receipt while transitioning its upload session
 to `COMMITTED`; it never exposes temporary chunk bytes through catalog or Task APIs. This
 collector only reclaims unreferenced upload-chunk objects; it does not garbage-collect
@@ -397,6 +423,16 @@ Conversation, appends its aggregate-state-backed `conversation.created.v1` event
 stores the idempotency receipt together. Owner-scoped list/get operations read the
 Conversation projection only; message history remains served through the bounded
 Conversation presentation snapshot. This does not imply turn dispatch or agent execution.
+
+`EventStore::read_workspace_event_page` is the bounded local replay primitive. It reads
+one Workspace/origin's allocator head, retained floor, and ordered event metadata page in
+one SQLite read transaction. It uses `origin_sequence`, not HLC, caps requests at 500 rows,
+and reports a future cursor or missing sequence so the Operator can require a fresh
+authorized snapshot. Before returning a page, SQLite verifies that the durable allocator
+head is not behind the maximum persisted sequence for that Workspace/origin; an
+inconsistent head is an integrity failure. It omits event payload and aggregate-state
+bytes. This storage API does not itself implement stream subscription, projection
+authorization, snapshot high-water fencing, or desktop reconnect.
 
 The local-only `schema_migrations` table records the monotonically numbered migration,
 its immutable SQL-source checksum, the fingerprint of the resulting SQLite schema
@@ -979,3 +1015,40 @@ Registry/install/control/lifecycle-operation rows never replicate as Workspace a
 the binding-configuration event. Storage validates JSON bounds/digests and relies on the
 service layer for adapter-schema semantics; SQLite additionally rejects malformed JSON and
 secret-shaped raw values in fields that are contractually non-secret where feasible.
+
+
+## Target connector/workflow/learning storage migration
+
+Accepted target records from [Connectors & Workflows](CONNECTORS-WORKFLOWS.md) and
+[Learning](LEARNING.md) require an explicit future migration; they are not claimed by the
+current SQLite version.
+
+Planned logical storage:
+
+~~~text
+connections                         # extend existing normalized metadata only
+auth_attempts                       # no token/code/verifier bytes
+task_conversation_links             # unique PRIMARY_FOLLOW_UP per Task
+learning_candidates                 # Resource-backed proposed payload refs
+coworker_learning_policy_revisions
+memory_record_metadata
+feedback_records
+
+# Runtime-local encrypted/operational:
+oauth_loopback_attempt_bindings
+workflow_run_bindings
+connector_provider_bindings
+~~~
+
+Required constraints include same-Workspace ownership, SecretRefs-only Connection secret
+fields, no OAuth verifier/code/token SQL fields, unique primary Task follow-up, immutable
+Resource-backed learning payload provenance, versioned learning policies, and
+incarnation-fenced provider handles excluded from Workspace backup/replication.
+
+Migration/race tests must cover token-exchange-then-commit failure, duplicate callback,
+scope downgrade, revoke during Invocation, duplicate follow-up creation, auto-commit
+versus user correction, and daemon restart.
+
+## V1 detailed design integration — 2026-10-12
+
+For newly promoted V1 browser/agent/composer/automation operations, use current transaction/outbox/version guarantees. In-flight UI draft or cached browser frame cannot authorize effects. Store only opaque browser profile refs, not passwords/cookies/raw sensitive CDP data. Persist requestId/receipt and exact source revisions for ambiguity reconciliation. Existing migration order/record semantics remain authoritative.

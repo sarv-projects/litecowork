@@ -163,3 +163,20 @@ LiteSPM package lifecycle is a third separate plane. AgentCapabilityBridge trans
 qualified LiteSPM CapabilityOffer into an agent-specific attachment route; neither ACP
 Registry metadata nor native plugin configuration substitutes for LiteSPM/Core
 authorization.
+
+
+## Connector and workflow adapter protocol rule
+
+ConnectorRuntimeAdapter, AuthBackendAdapter, WorkflowBackendAdapter and EventRelayProvider
+are LiteCowork ports, not a new universal wire protocol. Each provider adapter translates
+its real versioned API/protocol into normalized contracts from
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md).
+
+Do not invent one lowest-common-denominator provider protocol that hides idempotency,
+authentication, cancellation, trigger cursor or effect differences. Capability/Task/Trust
+contracts stay provider-independent; adapter descriptors expose the exact supported
+semantics and unknowns.
+
+## V1 detailed design integration — 2026-10-12
+
+Browser/CDP and harness-native protocols must be handled through versioned adapters with faithful upstream conformance; do not force every feature through ACP if it loses native semantics. V1-DESIGN-INDEX.md catalogs official documentation URLs and qualification owners. Chrome control/session handles remain Runtime-private; App WebView never receives privileged CDP tokens.

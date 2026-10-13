@@ -408,3 +408,7 @@ authoritative; ACP v2 draft behavior must be negotiated and version-gated.
 ## Native subagents
 
 Native subagents remain agent-owned. LiteCowork may record reported lifecycle if surfaced, but must not assign host grants/leases/environments to invisible native children or represent them as host-controlled Attempts.
+
+## V1 detailed design integration — 2026-10-12
+
+Native per-harness session startup, version fencing, auth and native input adaptation are implemented against NATIVE-COMPOSER-LLD.md and the function list in V1-FUNCTION-FILE-CATALOG.md. Switching selected AgentBinding does not migrate private provider session state or silently modify a running Attempt. Separate UI option switching from persisted session/Task transition receipts.

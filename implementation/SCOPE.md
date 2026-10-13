@@ -106,3 +106,27 @@ and appears through an agent when that AgentModule reports compatibility.
 Registry presence or successful version output is not support evidence. The exact
 supported agent/module/harness/OS combination must pass E03-S11 CODE + SYSTEM + USER
 conformance.
+
+
+## Connector, workflow, and learning interpretation within V1
+
+V1 includes the connector/auth framework and representative real providers, not a promise
+to hand-build every SaaS integration. Direct connectors, MCP/LiteSPM packages, a qualified
+compatibility route, and optional external workflow/auth backends are distinct extension
+paths.
+
+The framework must work without Composio/Nango/Arcade/n8n/Activepieces cloud dependencies.
+Remote event relay/cloud hosting is required only for event behavior that cannot operate
+while a local machine is asleep; local schedules/polling remain valid when Runtime is
+available.
+
+Coworker learning is also desktop/local scope. Learns automatically cannot be marketed
+until source filtering, redaction, conflicts, policy, storage and revocation pass gates.
+
+## V1 detailed design integration — 2026-10-12
+
+V1 target detailed design: ../docs/V1-DESIGN-INDEX.md, ../docs/NATIVE-COMPOSER-LLD.md, ../docs/CHROME-BROWSER-LLD.md, ../docs/DESKTOP-SHELL-LLD.md and ../docs/RENDERING-CONFORMANCE-LLD.md. Desktop V1 scope retains agent-native fidelity and browser/computer takeover but does not silently promise cloud continuation. Full support is per-OS/provider/harness qualification, not a binary yes/no from the spec alone.
+
+## 2026-10-13 reconciled V1 qualification boundary
+
+The contract corrections do **not** reduce V1 scope. E03-S03 planning and authenticated producer-scoped plan acceptance, E03-S02 native Send, E07-S00 cross-OS isolation plus Windows WorkspaceRoot startup identity revalidation, E08-S03 private automatic-memory lifecycle, and E13-S03 real platform/provider SYSTEM+USER qualification remain required for any support claim that includes those capabilities. A Windows named pipe or ConPTY does not qualify Windows root handling. Keep unsupported roots/agents/providers unavailable and block unsupported OS release-matrix cells rather than relaxing isolation or silently counting them complete. See [the precise owner/evidence matrix](V1-CONTRACT-RECONCILIATION-2026-10-13.md).

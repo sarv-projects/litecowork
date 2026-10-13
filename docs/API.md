@@ -11,11 +11,13 @@ Operator API methods.
 ## Conventions
 
 - IDs are opaque strings.
-- every mutating HTTP call requires `Idempotency-Key`; local IPC uses the equivalent
-  `request_id` field. The adapter maps both to one normalized RequestId used by deduplication
-  and manual Automation occurrence identity.
-- mutable resources expose `version`; HTTP commands use `If-Match`, local IPC uses the
-  equivalent `expected_version`.
+- every mutating command requires `Idempotency-Key` on both HTTP and local IPC. Local IPC
+  carries it as an allowlisted logical header, unchanged across retries. The IPC frame's
+  `request_id` is a separate per-exchange correlation ID and must never replace the command
+  idempotency key. The Operator maps `Idempotency-Key` to the normalized domain RequestId
+  used by deduplication and manual Automation occurrence identity.
+- mutable resources expose `version`; HTTP and local IPC carry the expected version in
+  `If-Match`.
 - conflict returns `409/CONFLICT` semantics.
 - authorization failures never reveal secret/resource existence beyond policy.
 - every Workspace-scoped HTTP call carries `X-Workspace-ID`; local IPC carries the same
@@ -36,10 +38,11 @@ Operator API methods.
 
 Authentication is deployment-specific, but authorization is not: a trusted local or remote
 identity resolves to a Principal, then TrustService authorizes each command. The desktop
-source now uses OS-peer-authenticated Unix IPC on Linux/macOS and retains inline
-Workspace-owner checks; Windows is fail-closed pending named-pipe identity/ACL support.
-The IPC transport has not yet passed build, system, or OS qualification and is not a
-production release claim. V1 Workspaces have one owner principal and no membership model;
+source now uses OS-peer-authenticated Unix IPC on Linux/macOS and source-integrated Windows
+named pipes with current-logon-SID/SYSTEM DACLs and remote-client rejection; both retain
+inline Workspace-owner checks. Full Windows application cross-compilation and all
+system/OS qualification remain open, so this is not a production release claim. V1
+Workspaces have one owner principal and no membership model;
 every Workspace-scoped call verifies that the authenticated Principal is that owner.
 The desktop local transport is specified in
 [`LOCAL-OPERATOR-IPC.md`](LOCAL-OPERATOR-IPC.md). It maps the same logical operations to a
@@ -76,8 +79,10 @@ the saved policy is currently transferring data.
 
 Instruction revision creation requires the selected Workspace header to match the path,
 the current Workspace `If-Match` version, an idempotency key, and a pinned ResourceRef for
-a same-Workspace UTF-8 text Resource no larger than 64 KiB. The server verifies the
-Resource revision digest before atomically committing the immutable instruction revision,
+the current head of a same-Workspace UTF-8 text Resource no larger than 64 KiB. A
+historical or conflicted/non-current head is rejected. The immutable instruction pin
+remains valid if the Resource later advances. The server verifies the Resource revision
+digest before atomically committing the immutable instruction revision,
 Workspace version/current-revision projection, domain event, and idempotency receipt.
 Instruction history returns immutable revisions in ascending revision order through the
 standard opaque Workspace-bound `cursor`/`limit` page contract (`limit` defaults to 50 and
@@ -205,10 +210,9 @@ The desktop composer also sends the observed Coworker aggregate version when ava
 the current revision is pinned by the service and rechecked in the Task transaction. A
 direct Operator caller may omit that expected version, but a supplied version must be
 positive and current. Omitting `coworker_id` deliberately creates a Task without Coworker
-origin; the client does not submit an origin revision. Conversation turns remain governed
-by Conversation override and Workspace default, independently of Coworker Task defaults.
+origin; the client does not submit an origin revision. **Current ordinary-Conversation route** resolves the explicit Conversation override then Workspace default; it does not yet serve Coworker association. **Accepted Coworker-owned Conversation target:** when immutable owner_coworker_id has a qualified route/handler, resolve explicit Conversation binding override -> that Coworker's current allowed default binding -> Workspace default. The first configured selection is authoritative: unavailable/invalid means AGENT_UNAVAILABLE and an unchanged draft, never a silent lower-priority fallback. A Task sourced from an owned Conversation must inherit that exact Coworker identity unless a separately approved, source-scoped cross-Coworker handoff creates a new destination Task. Server rechecks owner and revision, rather than trusting a caller-supplied different or null coworker_id. These target rules require formal request/schema/route promotion before production.
 
-Create defaults to `LOCAL_ONLY`; `SELECTED_FOLDERS` is unavailable in the create request because roots are Workspace-owned records created afterward. A client may send another supported policy only after the user explicitly selects it; enabling cloud defaults the UI to `ACTIVE_TASK_INPUTS`. The user adds persistent roots, then updates policy with one or more active same-Workspace `replication_scope_root_ids`. Root IDs follow each selected folder's future observed revisions; they do not pin one content snapshot. Root-level replication settings intersect with Workspace policy and cannot broaden it. A replication-policy update applies to future transfers and never silently deletes content already replicated to another Runtime. Archive is accepted only after every Task is terminal and every Automation is disabled. Quiescence also requires Conversation turns and scoped Invocations to be settled, no active grants/SecretLeases/control leases, and persistent Environments with no live workload. Authorized watchers/triggers stop before the read-only transition. Retained Environment state may remain suspended under storage/backup policy; archive never silently destroys it. Unknown provider quiescence blocks archive with `WORKSPACE_NOT_QUIESCENT`. Archived Workspaces remain readable and preserve existing authorized Artifact/Resource downloads, but reject all domain mutations, including Task mutations, capability activation/grants, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel work.
+Create defaults to `LOCAL_ONLY`; `SELECTED_FOLDERS` is unavailable in the create request because roots are Workspace-owned records created afterward. A client may send another supported policy only after the user explicitly selects it; enabling cloud defaults the UI to `ACTIVE_TASK_INPUTS`. The user adds persistent roots, then updates policy with one or more active same-Workspace `replication_scope_root_ids`. Root IDs follow each selected folder's future observed revisions; they do not pin one content snapshot. Root-level replication settings intersect with Workspace policy and cannot broaden it. A replication-policy update applies to future transfers and never silently deletes content already replicated to another Runtime. Archive is accepted only after every Task is terminal and every Automation is disabled. Any persisted AutomationCursor remains active trigger-host ownership and blocks archive until durable host stop removes the cursor; disabling the definition alone is not proof of provider shutdown. Quiescence also requires Conversation turns and scoped Invocations to be settled, no active grants, CapabilityActivations, SecretLeases, execution/control leases, unresolved Effects, or pending Approvals, and persistent Environments with no live workload. Authorized watchers/triggers stop before the read-only transition; while LiteCowork has no durable channel-host drain acknowledgement, any ACTIVE or DRAINING ChannelHostAssignment blocks archive. Retained Environment state may remain suspended under storage/backup policy; archive never silently destroys it. Unknown provider quiescence blocks archive with `WORKSPACE_NOT_QUIESCENT`. Archived Workspaces remain readable and preserve existing authorized Artifact/Resource downloads, but reject all domain mutations, including Task mutations, capability activation/grants, Artifact/Library changes, connection changes, Runtime pairing, Automation occurrences, and inbound channel work.
 
 ## Conversations
 
@@ -346,7 +350,7 @@ an owner credential cannot impersonate a planner by naming its AgentSession or A
 The request includes `task_spec_revision`, a non-empty `steps` array of `PlannedStep`
 values, and optional `reason_for_revision`. Each proposed step has a unique `logical_key`;
 TaskService allocates durable Step IDs and maps dependencies from logical keys in the
-same transaction. Stale Task versions return `409 CONFLICT`/`STALE_TASK_VERSION`; a stale
+same transaction. Stale Task versions return HTTP `409` with typed `STALE_TASK_VERSION`; a stale
 spec returns `409 STALE_SPEC_REVISION`. Invalid DAGs or producer authority create no
 PlanRevision, Steps, or events.
 
@@ -460,7 +464,7 @@ The local Operator mounts both Library commands with empty request bodies, Works
 authorization, If-Match and principal-scoped Idempotency-Key. Responses are the committed
 Artifact representation, use `Cache-Control: no-store`, and preserve `current_version`,
 Resource identity and all immutable metadata. A changed action, Artifact, Workspace or
-expected version under the same key returns `IDEMPOTENCY_CONFLICT`. Fresh writes require
+expected version under the same key returns HTTP `409` with canonical `CONFLICT` error code. Fresh writes require
 an ACTIVE Workspace; identical recorded retries remain readable after later archival.
 Linked Artifacts use these commands for local Library metadata only, without provider I/O.
 
@@ -613,18 +617,26 @@ GET   /v1/runtime-lifecycle/stop-preview
 POST  /v1/runtime-lifecycle/stop
 ```
 
-These are the planned local-Operator operations. In the current source, only
-`GET /v1/operator/readiness` is mounted; the four `/runtime-lifecycle` routes listed
-above are not implemented. In particular, no authenticated Operator stop command is
-exposed. Do not emulate one with a signal, process kill, or direct socket shortcut.
-Implementing it requires a RuntimeLifecycleService that inventories and drains admitted
-Attempts, reconciles Effects, fences/releases leases, and settles local trigger/provider
-references before process exit. Those owners are not integrated, so the current Runtime
-must fail closed rather than claim a safe stop preview or accepted drain.
+`GET /v1/runtime-lifecycle` is implemented as an authenticated, read-only projection of
+the local Runtime's persisted startup policy, exact current incarnation, availability,
+and sanitized startup/recovery blockers. It reads the selected Runtime and expected
+current incarnation together and returns `Cache-Control: no-store`; it does not probe
+providers, mutate lifecycle state, or imply that execution is ready. Dependent Task and
+Automation arrays are omitted until their inventories can be reported truthfully.
+`GET /v1/operator/readiness` remains a separate proof that the Operator API is serving.
+
+`PATCH /v1/runtime-lifecycle/startup-policy`,
+`GET /v1/runtime-lifecycle/stop-preview`, and `POST /v1/runtime-lifecycle/stop` remain
+unimplemented. No authenticated Operator stop command is exposed. Do not emulate one
+with a signal, process kill, or direct socket shortcut. Implementing these operations
+requires a RuntimeLifecycleService that inventories and drains admitted Attempts,
+reconciles Effects, fences/releases leases, and settles local trigger/provider references
+before process exit. Those owners are not integrated, so the current Runtime must fail
+closed rather than claim a safe stop preview or accepted drain.
 
 When implemented, these are local-Operator operations. Desktop Tauri calls use the OS-authenticated local
-IPC contract in [`LOCAL-OPERATOR-IPC.md`](LOCAL-OPERATOR-IPC.md); Windows currently fails
-closed. Source integration is unqualified pending verification and OS testing. They do not
+IPC contract in [`LOCAL-OPERATOR-IPC.md`](LOCAL-OPERATOR-IPC.md); Windows transport source
+is present but unqualified pending full build and OS testing. They do not
 configure or stop a remote Runtime. Startup policy is `MANUAL`, `LOGIN_BACKGROUND`, or
 `ALWAYS_ON_SERVICE`. The read-only stop preview returns dependent Tasks,
 Automations, WorkspaceRoots, and eligible handoffs. The UI confirms `Cancel`, `Move
@@ -672,6 +684,15 @@ The desktop Settings screen uses `current-local`, which returns only the active 
 for the exact current Runtime incarnation (zero or one row). It does not represent the
 full Workspace binding inventory; that remains the responsibility of the unfiltered
 `runtime-bindings` operation.
+The full binding inventory is owner-scoped and includes retained `PENDING`, `ACTIVE`, and
+`REVOKED` control-plane records, ordered by immutable
+`runtime_workspace_binding_id` in ascending binary order. It uses the standard page size
+(default 50, maximum 200) and an opaque keyset cursor bound to the selected Workspace and
+page size. A malformed cursor or one from another Workspace/page size returns
+`400 INVALID_ARGUMENT`. The page contains only persisted binding fields; it does not imply
+that a Runtime is currently present, ready, or authorized for a particular operation.
+Concurrent binding changes may affect later pages, so clients refresh from the first page
+after a binding change.
 The no-target state is a nullable host-assignment projection with ChannelBinding status
 `DEGRADED` or `REVOKED`. The owner assignment command fences both the ChannelBinding
 aggregate version through `If-Match` and the assignment snapshot through
@@ -684,20 +705,43 @@ part of RuntimeWorkspaceBinding revocation; assignment history remains in the ev
 GET  /v1/runtimes?cursor=&limit=
 POST /v1/runtimes/pair-token
 POST /v1/runtimes/{id}/revoke
-GET  /v1/runtimes/{id}/offers
+GET  /v1/runtimes/{id}/offers?cursor=&limit=
 GET  /v1/runtimes/{id}/incarnations?cursor=
 GET  /v1/runtimes/{id}/capability-hosts?cursor=&limit=
 ```
+
+`offers` requires the selected Workspace owner and an ACTIVE
+`RuntimeWorkspaceBinding` with the `EXECUTOR` role. It returns only observations from the
+Runtime's current READY or DEGRADED incarnation whose `observed_at` is not in the future,
+whose `expires_at` is later than the read time, and whose Runtime-local endpoint binding is
+still current. Pages are ordered by `(offer_kind, offer_ref)`, default to 50 items, and cap
+at 200. The opaque cursor binds the Workspace, Runtime, current incarnation, and page size;
+a Runtime restart invalidates it. Offers are live operational inventory, so a concurrent
+upsert may affect later pages; after a `runtime_inventory` notification, clients reread from
+the first page. The current local producer supports `AGENT_ENDPOINT` offers. The projection
+contains stable offer references and bounded normalized constraints, never the local
+endpoint locator, process handle, or credentials. An offer reports compatibility/readiness;
+it does not authorize use or create a Capability Grant.
 
 The pairing-token request names the Workspace and allowed initial Runtime roles. The Hub
 sets expiry under its policy and returns the opaque one-use token only in that response.
 The token can create one Runtime identity and is invalidated after successful pairing.
 
-`capability-hosts` returns normalized provider instance state, health freshness, and the
-count of active LiteCowork Activations using each instance. This count is derived from
-LiteCowork scope references; it is not LiteSPM's process-wide client count. The response
-never exposes a LiteSPM provider handle, process identity, credentials, or package-private
-fields. Expired observations are returned as `UNKNOWN`/stale and cannot satisfy admission.
+`capability-hosts` requires the selected Workspace owner and an ACTIVE
+`RuntimeWorkspaceBinding` with the `EXECUTOR` role. It returns a bounded page of normalized
+host observations for the Runtime's exact current incarnation, ordered by binary
+`host_instance_id`. The page size defaults to 50 and is capped at 200; its opaque keyset
+cursor binds the Workspace, Runtime, current incarnation, and page size. A Runtime restart
+invalidates the cursor. The observation is stale if `expires_at` is at or before the read
+time, or `observed_at` is in the future. Stale observations remain visible with
+`health: UNKNOWN`; their last reported `state` is retained as historical observation and
+must not satisfy admission. The `active_activation_count` is derived from this selected
+Workspace's `CapabilityActivationHostBinding` rows joined to nonterminal Activations
+(`STARTING`, `ACTIVE`, or `STOPPING`), never independently incremented; it is not
+LiteSPM's process-wide client count or a count from other Workspaces. The response never
+exposes a LiteSPM provider handle, process identity, credentials, isolation partition, or
+package-private fields. Concurrent host changes may affect later pages, so clients refresh
+from the first page after a Runtime inventory notification.
 
 ## Agents
 
@@ -1209,8 +1253,7 @@ The upload-session response echoes `ContextDocumentCreateMetadata` (owner and ki
 the committed Resource response exposes full `ContextDocumentMetadata`, initially
 `ACTIVE` without purge fields.
 Omitting the field creates an ordinary Resource.
-The local desktop V1 Library currently creates only `WORKSPACE_NOTES` owned by the selected
-Workspace, through this same resumable upload contract. It does not expose USER, Coworker,
+The local desktop V1 Library currently creates only `WORKSPACE_NOTES` owned by the selected Workspace, through this same resumable upload contract. A future My Memory/Coworker Memory Add action may use the same ResourceService create/upload machinery only after its exact USER/COWORKER ContextDocumentCreateMetadata ownership, learning distinction, Trust checks and UI routes are qualified. Until then show unsupported rather than an Add Memory button that cannot persist that scope. It does not expose USER, Coworker,
 or Goal ownership until their owner-selection and authorization flows are implemented in
 the desktop. The metadata classifies the Workspace-scoped Resource; it does not attach the
 note to an AgentSession or enable semantic RAG.
@@ -1296,6 +1339,19 @@ history in the daemon. The current SQLite schema has no indexed append ordinal, 
 database may still scan matching revision rows internally to satisfy append-rowid ordering;
 an indexed bounded-I/O cursor would require a later additive schema migration.
 
+`GET /v1/resources/{resource_id}/locations` requires the selected Workspace and its owner.
+The Resource must belong to that Workspace; an absent or cross-Workspace Resource returns
+`NOT_FOUND`, while an existing Resource with no locations returns an empty array. The
+response contains all committed `ResourceLocation` observations in ascending `location_id`
+order. Availability and freshness come from the stored observation and current Resource
+revision in one SQLite read; this operation does not probe a Runtime or provider. `CURRENT`
+requires an available location whose observed revision and digest match the Resource's
+current revision. `STALE` means an available location has a different observed revision or
+digest. Missing comparison data, a revisionless Resource, `UNKNOWN`, or `PLACEHOLDER`
+availability yields `UNKNOWN`; `OFFLINE`, `REVOKED`, or `UNAVAILABLE` availability yields
+`UNAVAILABLE`. The public projection omits `provider_ref`, `locator_ref_id`, and every
+Runtime-local private locator binding, and the response uses `Cache-Control: no-store`.
+
 The authenticated, owner-scoped list returns each root with `location_availability`,
 joined from its canonical `ResourceLocation` in the same bounded SQLite read query. Values
 are `AVAILABLE`, `OFFLINE`, `PLACEHOLDER`, `REVOKED`, `UNKNOWN`, or `UNAVAILABLE`. This is
@@ -1316,20 +1372,26 @@ location. A one-time attachment does not create a WorkspaceRoot. `PATCH` is rese
 updating watch/replication policy under expected-version checks. Pause, resume, and revoke
 are separate idempotent versioned actions: pause retains local identity bindings and the
 user's selected replication scope while root status suppresses observation/search/exposure/
-replication; resume is accepted only for a PAUSED root whose location and locator/identity
-bindings are AVAILABLE in this current Runtime incarnation; revoke is terminal and removes
-those bindings and the selected-root relation without deleting already replicated copies.
+replication; resume is accepted only for a PAUSED root whose ResourceLocation is AVAILABLE
+and whose current Runtime incarnation is READY or DEGRADED; a valid
+prior locator/identity binding pair may belong to an earlier incarnation. The fresh resume
+request reopens and checks the directory, then refreshes both bindings for the current
+incarnation in the atomic commit. Revoke is terminal and removes those bindings and the
+selected-root relation without deleting already replicated copies.
 Runtime offline or failed identity revalidation maps to `UNAVAILABLE`, not user pause. An
 UNAVAILABLE root cannot be resumed through the user action; exact Runtime identity
 revalidation is required first. The stable idempotency digest contains the action, Workspace,
 root ID, and expected version; current Runtime identity is a separate resume commit
-precondition. On a fresh resume request, the current handler reopens the saved directory
+precondition. A PAUSED root whose location is UNAVAILABLE must first pass Runtime identity
+revalidation; an UNAVAILABLE root status cannot be resumed through this action. On a fresh
+resume request, the current handler reopens the saved directory
 without following symlinks, compares the live file identity and keyed Resource projection,
 retains the verified directory handle through the atomic resume commit, and refreshes the
 current-incarnation locator/identity bindings. An exact replay returns its committed receipt
 without re-opening the path. This is a point-in-time check only: future filesystem consumers
 must independently validate/use a qualified handle-based provider. No watcher or content
-reader currently consumes the root, and this source remains unbuilt and OS-unqualified.
+reader currently consumes the root, and the native desktop flow remains unbuilt and
+OS-unqualified.
 `mode=METADATA` (the default) searches the authenticated Workspace's current managed
 Resource catalog by literal display-name or media-type ASCII-case-insensitive substring,
 with optional exact Resource-kind and supported freshness filters. `q` may be omitted or
@@ -1484,29 +1546,126 @@ Subscribe {
   workspace_id # must equal X-Workspace-ID
   conversation_ids[]?
   task_ids[]?
+  runtime_ids[]?
   projection_types[]
   resume_cursor?
 }
 ```
 
-`projection_types` may include `runtime_inventory`; those notifications identify the
-Runtime and projection version/change kind, not a raw provider handle. The Operator
-re-reads `/runtimes/{id}/offers` or `/runtimes/{id}/capability-hosts` for current bounded
-state. Server sends projection events, not raw domain events unless Inspector/developer
-mode explicitly requests them.
+`runtime_inventory` currently accepts one `runtime_ids` entry and no Conversation or Task
+filter. Its closed notification payload is `{ runtime_id, change_kind }`, with
+`change_kind: "OFFERS_CHANGED"`; the outer `projection_revision` is the current local
+Runtime incarnation's monotonic inventory-notification revision. The notification carries
+no offer data and grants no authority. The desktop Agent catalog re-reads the authorized
+`/agent-profiles` projection, which includes only current offers visible through active
+Workspace Runtime bindings. A consumer that needs one Runtime's bounded offer page may
+instead reread `/runtimes/{id}/offers`. More than one inventory change may coalesce into
+the latest notification because both routes return current state. Offers expire
+independently of writes; a client that needs current readiness schedules a re-read at the
+earliest displayed `expires_at`.
+
+Unlike Conversation and Task streams, Runtime inventory is operational state rather than
+a Workspace domain event feed. Its revision is held for the lifetime of the serving
+Runtime process and is bound to that process's persisted Runtime incarnation in the opaque
+cursor. A daemon restart changes the incarnation and requires resync; this avoids replaying
+stale offer observations without adding Runtime health changes to the Workspace event
+sequence. Malformed, future, wrong-Workspace, wrong-Runtime, or wrong-incarnation cursors
+produce `stream.resync_required` followed by a current invalidation. A behind cursor gets
+the latest invalidation, not historical Runtime observations. Server sends projection
+frames, not raw domain events unless Inspector/developer mode explicitly requests them.
 The stream supports resume from an opaque cursor and sends a resync-required marker if
 the cursor has expired or the client projection version is incompatible. On reconnect,
 the client replaces stale projection state before applying later events; it does not
 replay UI animations for historical changes.
 
+The desktop maps this logical subscription to the authenticated duplex local IPC session
+defined in [LOCAL-OPERATOR-IPC](LOCAL-OPERATOR-IPC.md). That session preserves the existing
+unary request/response framing for all other commands and uses the same OS peer and
+Workspace-owner authorization boundaries. The stream client sends one subscription request
+and keeps the duplex connection open while reading; closing it cancels the subscription.
+The daemon watches for peer EOF/reset while waiting between projection frames and releases
+the bounded stream slot on disconnect. No application heartbeat frame is added to the
+projection protocol.
+
+The local native-to-WebView bridge also uses one outstanding frame of credit: the native
+reader waits for the UI to acknowledge each session-scoped frame ID after reduction before
+reading the next IPC frame. An unacknowledged frame times out after five seconds and closes
+the duplex connection, preserving bounded memory when the WebView stalls. This flow-control
+acknowledgement is a Tauri bridge detail; it is not an Operator API frame or DomainEvent.
+
+The cursor is bound to the selected Workspace, normalized subscription filters, projection
+version, and source frontier; Conversation cursors also bind the committed message frontier.
+It is bounded in size and is invalid when any binding differs. The message frontier is
+private cursor state, not the message-page `next_cursor`.
+The local Operator accepts one to 20 unique `conversation_ids` in a
+`conversation_presentation` subscription. It sorts the filter set before binding the
+multi-Conversation cursor, and reads all initial projections at one shared SQLite
+`origin_sequence`. The cursor carries one message frontier and projection revision per
+Conversation; catch-up upserts name their Conversation, and resume refreshes any projection
+whose revision changed while disconnected. Empty, duplicate, malformed, and over-limit
+filter sets fail closed. The desktop currently subscribes to its selected Conversation
+only, so this Operator fan-out does not change desktop selection behavior.
+For Conversation and Task on the local single-origin feed, the source frontier is the Workspace/origin
+`origin_sequence` described in [Events](EVENTS.md). A replay read reports the durable head,
+retained floor, and bounded page from one SQLite snapshot; a missing retained sequence,
+unknown cursor, future cursor, or cursor older than retained history requires resync. Do not
+use HLC or wall-clock time as a replay cursor. A consistent projection snapshot and its
+high-water cursor must be established from the same storage snapshot before later updates
+are applied. Conversation presentation snapshots expose this durable source frontier as
+`origin_sequence`; `next_cursor` paginates messages and `stream_cursor` identifies the
+returned projection snapshot. Neither projection cursor is the durable source frontier.
+
 `projection_types` may include `conversation_presentation` and `task_presentation` as
 defined by [`PRESENTATION-RUNTIME.md`](PRESENTATION-RUNTIME.md). A presentation snapshot
 establishes its projection revision/cursor before later updates are applied. Item identity
 and source revision, not network arrival order, determine replacement and ordering.
+Presentation delivery uses the closed `projection` frame. A
+`conversation_presentation` snapshot carries the exact Conversation API projection shape:
+`payload: { conversation_id, stream_cursor, origin_sequence, items, next_cursor,
+active_turn }`. Each `items` entry retains its `{ message, rich_presentation,
+linked_items }` wrapper so streaming preserves semantic roles, content, and authorized
+presentation references. A later generic presentation item replacement may carry
+`payload: { "item": ... }`. Both carry the selected Workspace, projection revision, and
+source cursor. The cursor advances the subscribed source frontier; the projection revision
+orders the rendered projection and is not a substitute cursor. The local stream's initial
+snapshot remains a bounded first page. It captures the latest committed message identity in
+the same SQLite read transaction, then delivers later committed messages as bounded
+`conversation_projection_upsert` frames. Each upsert carries one complete authorized
+`{ message, rich_presentation, linked_items }` wrapper. Pages are limited to 100 messages;
+the opaque resume cursor advances through the message frontier as each upsert is accepted,
+so reconnect can continue partway through a multi-page catch-up. Manual `next_cursor`
+pagination remains independent and continues to walk ascending history without being
+replaced by stream progress.
+
+A `task_presentation` projection carries the existing bounded
+`TaskPresentationSnapshot` shape plus `origin_sequence`, read in the same SQLite transaction
+as its Task, current-plan Steps, and resolvable Artifact versions. Its opaque cursor binds
+the selected Workspace, local origin Runtime, Task ID, projection version, and that source
+frontier. The Task projection revision follows the nonzero origin sequence as a monotonic
+ordering value; clients must resume only with the opaque cursor. A replay page causes a
+fresh owner-authorized Task snapshot, never a raw DomainEvent. The initial local adapter
+accepts exactly one `task_id` and `task_presentation` filter; it emits a fresh snapshot
+after bounded Workspace/origin events, and an invalid, future, or gapped cursor requires
+resync plus a replacement snapshot.
+
 After a valid subscription the server sends `stream.ready` with accepted projection version,
 initial opaque cursor, and finite `max_frame_bytes`; projection updates and transient frames
 are accepted only after this message. A resync-required marker invalidates the cursor and
 requires a fresh snapshot.
+
+The current local implementation accepts one projection subscription at a time:
+`conversation_presentation` with one to 20 unique Conversation IDs,
+`task_presentation` with exactly one Task ID, or `runtime_inventory` with exactly one
+Runtime ID. The local route rejects mixed filters and projection types. Conversation and
+Task projections poll bounded Workspace/origin event pages and re-read authorized state;
+domain event payloads are not exposed. Task updates are full bounded snapshots with an
+origin frontier from the same SQLite read transaction as their projected records. Runtime
+inventory sends closed invalidation notifications, and consumers reread the authorized
+offers route for current state. The shared subscription schema retains the broader planned
+envelope and can validate combinations the local route does not serve. The schema-defined
+transient `turn.delta`, `turn.settled`, and `rich.draft` frame types are not emitted by the
+local Operator yet. This implementation status does not narrow the planned stream contract
+above.
 
 While a Conversation turn is active, the stream may also deliver bounded transient
 `turn.delta` frames containing `conversation_id`, `turn_id`, `retry_ordinal`, a monotonic
@@ -1520,6 +1679,10 @@ authorization material, or arbitrary executable UI payloads; standard output saf
 redaction policy still applies.
 If the adapter cannot replay a sequence gap, the Operator discards the partial text and
 waits for the committed message rather than concatenating across missing content.
+`turn.settled` may clear a transient turn only when it identifies the selected Workspace,
+Conversation, turn, and retry ordinal; a committed message ID means the durable message is
+available in the committed Conversation projection. It is a presentation control frame,
+not a DomainEvent.
 Optional `rich.draft` frames use a separate bounded ephemeral frame schema and bind the
 current `(turn_id, retry_ordinal, agent_session_id, draft_id)`. They are never
 `projection_types`, DomainEvents, or persisted messages. If the Operator cannot replay a
@@ -1528,7 +1691,7 @@ handling. Rich compilation/publication runs after semantic-message commit and ca
 turn settlement or Task completion. Frame shapes are defined in
 [`schemas/operator-stream.schema.json`](schemas/operator-stream.schema.json).
 
-Workspace errors include WORKSPACE_ARCHIVED for writes to an archived Workspace and WORKSPACE_NOT_QUIESCENT when archive is requested while a Task is nonterminal or an Automation is enabled. A stale policy update returns STALE_WORKSPACE_VERSION. SELECTED_FOLDERS without one or more active same-Workspace root IDs returns INVALID_ARGUMENT; a missing, revoked, or unavailable selected root returns the corresponding typed resource error.
+Workspace errors include WORKSPACE_ARCHIVED for writes to an archived Workspace and WORKSPACE_NOT_QUIESCENT when archive is requested while durable work, authority, or provider state remains unsettled. Its safe `details.blockers` list identifies blocker kinds and counts. A stale policy update returns STALE_WORKSPACE_VERSION. SELECTED_FOLDERS without one or more active same-Workspace root IDs returns INVALID_ARGUMENT; a missing, revoked, or unavailable selected root returns the corresponding typed resource error.
 
 ## Error envelope
 
@@ -1559,3 +1722,35 @@ only safe field errors, blockers, or version metadata.
 ## Coworker target API additions — NOT implemented routes
 
 Proposed Workspace-authorized routes: list/create Coworker-owned Conversations with same-Workspace ownership; read last-active; list/assign/revoke Coworker capability assignments; get/update memory-learning policy and view filtered Resource-backed memory; create/review/enable/pause/resume StandingResponsibilities; read run history/health and actual activity projections. Every route must use the existing authenticated Operator boundary, exact request identity/idempotency semantics and cursor/version policy, not invent a second server. The concrete OpenAPI paths and components remain canonical; these route families are requirements pending specification, implementation and tests. No UI button may call a nonexistent route or claim success from a local mock.
+
+
+## Accepted connector, learning, workflow, and Task-follow-up API target
+
+The exact service functions and proposed request/state contracts are finalized in
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md) and [Learning](LEARNING.md).
+They are not added to the canonical Operator route list or OpenAPI until their owning
+implementation story lands, because prose must not advertise routes the daemon does not
+serve.
+
+The target Operator surface must eventually cover:
+
+- connector catalog/detail and trusted connection-auth attempt begin/cancel/status;
+- Connection refresh, health test, revoke/disconnect and redacted account/scope metadata;
+- workflow-backend discovery/description while production execution remains an admitted
+  CapabilityInvocation inside a Task/Automation rather than a bypass route;
+- Coworker learning-candidate/policy/memory/feedback review operations;
+- idempotent Continue from Task/run that creates or returns one canonical follow-up
+  Conversation.
+
+A public-desktop OAuth loopback callback is not a general remote Operator endpoint. It is
+an ephemeral local loopback listener owned by the OAuth adapter and calls
+ConnectionService internally after state/PKCE/origin checks.
+
+When these command families are promoted, the same release change MUST update
+schemas/operator-api.openapi.yaml, SQL/migrations, shared schemas/errors, events, coverage
+inventory and executable contract tests. Until then the existing Connections routes above
+remain the truthful shipped logical API subset.
+
+## V1 detailed design integration — 2026-10-12
+
+The V1 design describes candidate functions and event families in V1-FUNCTION-FILE-CATALOG.md, NATIVE-COMPOSER-LLD.md, CHROME-BROWSER-LLD.md and V1-WORKFLOW-EVENT-LLD.md. They are NOT automatically Operator routes. Promotion requires exact OpenAPI schema, auth/Workspace scope, expected version, requestId, error taxonomy, real handler, durable outbox/receipt and compatibility fixtures. In particular, a browser Take control click cannot assume a served browser-control endpoint until implemented.

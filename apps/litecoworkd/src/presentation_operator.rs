@@ -7,12 +7,19 @@
 //! `#[path = "presentation_operator.rs"] mod presentation_operator;` alongside the
 //! other Operator submodules.
 
+#![allow(clippy::result_large_err)] // Handlers return full Axum Responses to preserve status, body, and headers.
+
 use super::*;
+use axum::body::Bytes;
+use futures_util::stream;
 use serde::Serialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
 use storage_core::{
     TaskPresentationActivityEvent, TaskPresentationReadModel, TaskPresentationReadStore,
     rich_presentation::{
+        ConversationPresentationRead, MAX_CONVERSATION_PRESENTATION_BATCH,
         MAX_CONVERSATION_PRESENTATION_MESSAGES, MAX_RICH_PRESENTATION_BYTES,
         RichPresentationRecord, RichPresentationStore,
     },
@@ -21,6 +28,12 @@ use storage_sqlite::SqliteRichPresentationStore;
 
 pub(super) fn routes() -> Router<ApiState> {
     Router::new()
+        .route(
+            "/v1/stream",
+            post(subscribe_stream).layer(DefaultBodyLimit::max(
+                operator_ipc::MAX_STREAM_SUBSCRIBE_BYTES,
+            )),
+        )
         .route(
             "/v1/conversations/{conversation_id}/presentation",
             get(get_conversation_presentation),
@@ -34,6 +47,2540 @@ pub(super) fn routes() -> Router<ApiState> {
             "/v1/rich-presentations/{presentation_id}",
             get(get_rich_presentation),
         )
+}
+
+#[derive(Clone)]
+pub(super) struct StreamApiState {
+    pub(super) store: SqliteWorkspaceStore,
+    pub(super) principal_id: String,
+    pub(super) runtime_id: String,
+    pub(super) local_incarnation_id: String,
+    pub(super) runtime_inventory_revision: Arc<AtomicU64>,
+    pub(super) stream_admission: Arc<tokio::sync::Semaphore>,
+    pub(super) stream_shutdown: tokio::sync::watch::Receiver<bool>,
+    #[cfg(test)]
+    pub(super) task_stream_test_gate: Option<Arc<TaskStreamTestGate>>,
+    #[cfg(test)]
+    pub(super) task_stream_snapshot_test_gate: Option<Arc<TaskStreamTestGate>>,
+}
+
+#[cfg(test)]
+pub(super) struct TaskStreamTestGate {
+    pub(super) reached: tokio::sync::mpsc::UnboundedSender<()>,
+    pub(super) release: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+
+#[cfg(test)]
+impl TaskStreamTestGate {
+    async fn pause(&self) {
+        let _ = self.reached.send(());
+        if let Some(release) = self.release.lock().await.take() {
+            let _ = release.await;
+        }
+    }
+}
+
+impl axum::extract::FromRef<ApiState> for StreamApiState {
+    fn from_ref(state: &ApiState) -> Self {
+        Self {
+            store: state.store.clone(),
+            principal_id: state.principal_id.clone(),
+            runtime_id: state.runtime_id.clone(),
+            local_incarnation_id: state.local_incarnation_id.clone(),
+            runtime_inventory_revision: Arc::clone(&state.runtime_inventory_revision),
+            stream_admission: Arc::clone(&state.stream_admission),
+            stream_shutdown: state.stream_shutdown.clone(),
+            #[cfg(test)]
+            task_stream_test_gate: None,
+            #[cfg(test)]
+            task_stream_snapshot_test_gate: None,
+        }
+    }
+}
+
+const STREAM_PROJECTION_VERSION: u32 = 1;
+const STREAM_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StreamCursor {
+    version: u32,
+    workspace_id: String,
+    origin_runtime_id: String,
+    conversation_id: String,
+    projection_version: u32,
+    origin_sequence: u64,
+    #[serde(default)]
+    message_frontier: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ConversationBatchStreamCursor {
+    version: u32,
+    workspace_id: String,
+    origin_runtime_id: String,
+    filter_digest: String,
+    projection_version: u32,
+    origin_sequence: u64,
+    message_frontiers: Vec<Option<String>>,
+    projection_revisions: Vec<u64>,
+    snapshot_complete: bool,
+}
+
+const MAX_BATCH_STREAM_CURSOR_BYTES: usize = 14 * 1024;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct TaskStreamCursor {
+    version: u32,
+    workspace_id: String,
+    origin_runtime_id: String,
+    task_id: String,
+    projection_version: u32,
+    origin_sequence: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeInventoryStreamCursor {
+    version: u32,
+    workspace_id: String,
+    runtime_id: String,
+    runtime_incarnation_id: String,
+    projection_version: u32,
+    revision: u64,
+}
+
+#[derive(Serialize)]
+struct RuntimeInventoryNotification<'a> {
+    runtime_id: &'a str,
+    change_kind: &'static str,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StreamSubscribe {
+    workspace_id: String,
+    #[serde(default)]
+    conversation_ids: Vec<String>,
+    #[serde(default)]
+    task_ids: Vec<String>,
+    #[serde(default)]
+    runtime_ids: Vec<String>,
+    projection_types: Vec<String>,
+    resume_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+struct StreamReady<'a> {
+    #[serde(rename = "type")]
+    frame_type: &'static str,
+    workspace_id: &'a str,
+    projection_version: u32,
+    cursor: String,
+    max_frame_bytes: usize,
+}
+
+#[derive(Serialize)]
+struct StreamResyncRequired<'a> {
+    #[serde(rename = "type")]
+    frame_type: &'static str,
+    workspace_id: &'a str,
+    reason: &'static str,
+}
+
+#[derive(Serialize)]
+struct StreamProjection<'a, T: Serialize> {
+    #[serde(rename = "type")]
+    frame_type: &'static str,
+    workspace_id: &'a str,
+    projection_type: &'static str,
+    projection_revision: u64,
+    cursor: String,
+    payload: &'a T,
+}
+
+#[derive(Serialize)]
+struct TaskStreamPayload {
+    #[serde(flatten)]
+    snapshot: TaskPresentationSnapshot,
+    origin_sequence: String,
+}
+
+#[derive(Serialize)]
+struct ConversationProjectionUpsert<'a> {
+    #[serde(rename = "type")]
+    frame_type: &'static str,
+    workspace_id: &'a str,
+    projection_type: &'static str,
+    projection_revision: u64,
+    cursor: String,
+    payload: ConversationProjectionUpsertPayload<'a>,
+}
+
+#[derive(Serialize)]
+struct ConversationProjectionUpsertPayload<'a> {
+    conversation_id: &'a str,
+    stream_cursor: &'a str,
+    origin_sequence: &'a str,
+    item: &'a serde_json::Value,
+}
+
+pub(super) async fn subscribe_stream(
+    State(state): State<StreamApiState>,
+    headers: HeaderMap,
+    Json(subscribe): Json<StreamSubscribe>,
+) -> Result<Response, Response> {
+    let selected = selected_workspace(&headers)?;
+    if selected != subscribe.workspace_id {
+        return Err(presentation_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Stream Workspace does not match the selected Workspace",
+        ));
+    }
+    if valid_task_query_id(&selected)
+        && subscribe.conversation_ids.is_empty()
+        && subscribe.task_ids.is_empty()
+        && subscribe.runtime_ids.len() == 1
+        && subscribe.projection_types == ["runtime_inventory"]
+        && valid_task_query_id(&subscribe.runtime_ids[0])
+    {
+        let runtime_id = subscribe.runtime_ids[0].clone();
+        let resume_cursor = subscribe.resume_cursor.clone();
+        return subscribe_runtime_inventory_stream(state, selected, runtime_id, resume_cursor)
+            .await;
+    }
+    if valid_task_query_id(&selected)
+        && subscribe.conversation_ids.is_empty()
+        && subscribe.runtime_ids.is_empty()
+        && subscribe.task_ids.len() == 1
+        && subscribe.projection_types == ["task_presentation"]
+        && valid_task_query_id(&subscribe.task_ids[0])
+    {
+        let task_id = subscribe.task_ids[0].clone();
+        let resume_cursor = subscribe.resume_cursor.clone();
+        return subscribe_task_stream(state, selected, task_id, resume_cursor).await;
+    }
+    if !valid_task_query_id(&selected)
+        || subscribe.conversation_ids.is_empty()
+        || subscribe.conversation_ids.len() > MAX_CONVERSATION_PRESENTATION_BATCH
+        || !subscribe.task_ids.is_empty()
+        || !subscribe.runtime_ids.is_empty()
+        || subscribe.projection_types != ["conversation_presentation"]
+    {
+        return Err(presentation_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "UNSUPPORTED_PROJECTION",
+            "This local stream supports only Conversation, Task, or Runtime inventory projections",
+        ));
+    }
+    let mut conversation_ids = subscribe.conversation_ids;
+    if conversation_ids.iter().any(|id| !valid_task_query_id(id)) {
+        return Err(presentation_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation stream filters are invalid",
+        ));
+    }
+    conversation_ids.sort();
+    if conversation_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(presentation_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation stream filters are invalid",
+        ));
+    }
+    if conversation_ids.len() > 1 {
+        return subscribe_conversation_batch_stream(
+            state,
+            selected,
+            conversation_ids,
+            subscribe.resume_cursor,
+        )
+        .await;
+    }
+    let conversation_id = conversation_ids[0].clone();
+    let stream_permit = Arc::clone(&state.stream_admission)
+        .try_acquire_owned()
+        .map_err(|_| {
+            presentation_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "CAPACITY_EXCEEDED",
+                "The local stream session limit has been reached",
+            )
+        })?;
+
+    let snapshot = tokio::task::spawn_blocking({
+        let store = state.store.clone();
+        let principal_id = state.principal_id.clone();
+        let runtime_id = state.runtime_id.clone();
+        let workspace_id = selected.clone();
+        let conversation_id = conversation_id.clone();
+        move || {
+            read_stream_conversation_snapshot(
+                &store,
+                &principal_id,
+                &runtime_id,
+                &workspace_id,
+                &conversation_id,
+            )
+        }
+    })
+    .await
+    .map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Conversation stream snapshot is unavailable",
+        )
+    })??;
+    let snapshot_sequence = snapshot.origin_sequence.parse::<u64>().map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Conversation stream snapshot is unavailable",
+        )
+    })?;
+    let cursor = StreamCursor {
+        version: 1,
+        workspace_id: selected.clone(),
+        origin_runtime_id: state.runtime_id.clone(),
+        conversation_id: conversation_id.clone(),
+        projection_version: STREAM_PROJECTION_VERSION,
+        origin_sequence: snapshot_sequence,
+        message_frontier: snapshot.stream_message_frontier.clone(),
+    };
+    let (resume_cursor, should_resync) = validate_resume_cursor(
+        subscribe.resume_cursor.as_deref(),
+        &selected,
+        &state.runtime_id,
+        &conversation_id,
+        &state.store,
+    )
+    .await;
+    let first_message_cursor = resume_cursor
+        .as_ref()
+        .and_then(|cursor| cursor.message_frontier.clone())
+        .or_else(|| {
+            should_resync
+                .then(|| {
+                    snapshot.items.last().and_then(|item| {
+                        item.get("message")?
+                            .get("message_id")?
+                            .as_str()
+                            .map(str::to_owned)
+                    })
+                })
+                .flatten()
+        })
+        .or_else(|| snapshot.stream_message_frontier.clone());
+    let mut emitted_cursor = if !should_resync {
+        resume_cursor.clone().unwrap_or(cursor)
+    } else {
+        cursor
+    };
+    if should_resync {
+        emitted_cursor.message_frontier = first_message_cursor.clone();
+    }
+    let current_cursor = encode_stream_cursor(&emitted_cursor)?;
+
+    let mut initial = Vec::with_capacity(3);
+    initial.push(serialize_stream_frame(&StreamReady {
+        frame_type: "stream.ready",
+        workspace_id: &selected,
+        projection_version: STREAM_PROJECTION_VERSION,
+        cursor: current_cursor.clone(),
+        max_frame_bytes: operator_ipc::MAX_STREAM_FRAME_BYTES,
+    })?);
+    if should_resync {
+        initial.push(serialize_stream_frame(&StreamResyncRequired {
+            frame_type: "stream.resync_required",
+            workspace_id: &selected,
+            reason: "resume_cursor_invalid_or_expired",
+        })?);
+    }
+    initial.push(serialize_stream_frame(&StreamProjection {
+        frame_type: "projection",
+        workspace_id: &selected,
+        projection_type: "conversation_presentation",
+        projection_revision: snapshot.projection_revision,
+        cursor: current_cursor,
+        payload: &snapshot,
+    })?);
+
+    let shutdown = state.stream_shutdown.clone();
+    let store = state.store;
+    let principal_id = state.principal_id;
+    let runtime_id = state.runtime_id;
+    let workspace_id = selected;
+    // Start polling from the frontier captured in the exact snapshot transaction.
+    // In particular, never advance to a resume cursor newer than that snapshot: a
+    // concurrent writer could otherwise be skipped between the two reads.
+    let first_sequence = if !should_resync {
+        resume_cursor
+            .as_ref()
+            .map_or(snapshot_sequence, |cursor| cursor.origin_sequence)
+    } else {
+        snapshot_sequence
+    };
+    let first_catch_up = resume_cursor.is_some() || should_resync;
+    let initial = initial.into_iter();
+    let output = stream::unfold(
+        (
+            stream_permit,
+            shutdown,
+            store,
+            principal_id,
+            runtime_id,
+            workspace_id,
+            conversation_id,
+            first_sequence,
+            first_message_cursor,
+            first_catch_up,
+            initial,
+        ),
+        move |(
+            permit,
+            mut shutdown,
+            store,
+            principal_id,
+            runtime_id,
+            workspace_id,
+            conversation_id,
+            mut sequence,
+            mut message_cursor,
+            mut catch_up,
+            mut initial,
+        )| async move {
+            if let Some(frame) = initial.next() {
+                return Some((
+                    Ok::<Bytes, std::convert::Infallible>(Bytes::from(frame)),
+                    (
+                        permit,
+                        shutdown,
+                        store,
+                        principal_id,
+                        runtime_id,
+                        workspace_id,
+                        conversation_id,
+                        sequence,
+                        message_cursor,
+                        catch_up,
+                        initial,
+                    ),
+                ));
+            }
+            if catch_up {
+                // Cursor validation precedes the lazy body stream. Recheck its
+                // retained event range here so history archived in that window
+                // produces an explicit resync instead of a silent cursor advance.
+                let store_for_page = store.clone();
+                let workspace_for_page = workspace_id.clone();
+                let runtime_for_page = runtime_id.clone();
+                let page = tokio::task::spawn_blocking(move || {
+                    use storage_core::EventStore;
+                    store_for_page.read_workspace_event_page(
+                        &workspace_for_page,
+                        &runtime_for_page,
+                        sequence,
+                        500,
+                    )
+                })
+                .await;
+                let page = match page {
+                    Ok(Ok(page)) => page,
+                    _ => return None,
+                };
+                if page.cursor_is_ahead || page.has_gap {
+                    let snapshot_for_read = store.clone();
+                    let workspace_for_read = workspace_id.clone();
+                    let conversation_for_read = conversation_id.clone();
+                    let principal_for_read = principal_id.clone();
+                    let runtime_for_read = runtime_id.clone();
+                    let latest = tokio::task::spawn_blocking(move || {
+                        read_stream_conversation_snapshot(
+                            &snapshot_for_read,
+                            &principal_for_read,
+                            &runtime_for_read,
+                            &workspace_for_read,
+                            &conversation_for_read,
+                        )
+                    })
+                    .await;
+                    let Ok(Ok(latest)) = latest else {
+                        return None;
+                    };
+                    let Ok(next_sequence) = latest.origin_sequence.parse::<u64>() else {
+                        return None;
+                    };
+                    let cursor = StreamCursor {
+                        version: 1,
+                        workspace_id: workspace_id.clone(),
+                        origin_runtime_id: runtime_id.clone(),
+                        conversation_id: conversation_id.clone(),
+                        projection_version: STREAM_PROJECTION_VERSION,
+                        origin_sequence: next_sequence,
+                        message_frontier: message_cursor.clone(),
+                    };
+                    let Ok(cursor) = encode_stream_cursor(&cursor) else {
+                        return None;
+                    };
+                    let Ok(resync) = serialize_stream_frame(&StreamResyncRequired {
+                        frame_type: "stream.resync_required",
+                        workspace_id: &workspace_id,
+                        reason: "replay_history_gap",
+                    }) else {
+                        return None;
+                    };
+                    let Ok(projection) = serialize_stream_frame(&StreamProjection {
+                        frame_type: "projection",
+                        workspace_id: &workspace_id,
+                        projection_type: "conversation_presentation",
+                        projection_revision: latest.projection_revision,
+                        cursor,
+                        payload: &latest,
+                    }) else {
+                        return None;
+                    };
+                    sequence = next_sequence;
+                    catch_up = latest.stream_message_frontier != message_cursor;
+                    initial = vec![resync, projection].into_iter();
+                    let frame = initial.next()?;
+                    return Some((
+                        Ok(Bytes::from(frame)),
+                        (
+                            permit,
+                            shutdown,
+                            store,
+                            principal_id,
+                            runtime_id,
+                            workspace_id,
+                            conversation_id,
+                            sequence,
+                            message_cursor,
+                            catch_up,
+                            initial,
+                        ),
+                    ));
+                }
+                let store_for_read = store.clone();
+                let principal_for_read = principal_id.clone();
+                let runtime_for_read = runtime_id.clone();
+                let workspace_for_read = workspace_id.clone();
+                let conversation_for_read = conversation_id.clone();
+                let cursor_for_read = message_cursor.clone();
+                let page = tokio::task::spawn_blocking(move || {
+                    read_stream_conversation_page(
+                        &store_for_read,
+                        &principal_for_read,
+                        &runtime_for_read,
+                        &workspace_for_read,
+                        &conversation_for_read,
+                        cursor_for_read.as_deref(),
+                    )
+                })
+                .await;
+                let Ok(Ok(page)) = page else {
+                    return None;
+                };
+                let page_frames = match serialize_conversation_stream_page(
+                    &page,
+                    &workspace_id,
+                    &runtime_id,
+                    &conversation_id,
+                ) {
+                    Ok(result) => result,
+                    Err(_) => return None,
+                };
+                let Ok(next_sequence) = page.origin_sequence.parse::<u64>() else {
+                    return None;
+                };
+                sequence = next_sequence;
+                message_cursor = page_frames.message_frontier;
+                catch_up = page_frames.has_more;
+                initial = page_frames.frames.into_iter();
+                let frame = initial.next()?;
+                return Some((
+                    Ok(Bytes::from(frame)),
+                    (
+                        permit,
+                        shutdown,
+                        store,
+                        principal_id,
+                        runtime_id,
+                        workspace_id,
+                        conversation_id,
+                        sequence,
+                        message_cursor,
+                        catch_up,
+                        initial,
+                    ),
+                ));
+            }
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => return None,
+                    _ = tokio::time::sleep(STREAM_POLL_INTERVAL) => {}
+                }
+                let store_for_page = store.clone();
+                let workspace_for_page = workspace_id.clone();
+                let runtime_for_page = runtime_id.clone();
+                let page = tokio::task::spawn_blocking(move || {
+                    use storage_core::EventStore;
+                    store_for_page.read_workspace_event_page(
+                        &workspace_for_page,
+                        &runtime_for_page,
+                        sequence,
+                        500,
+                    )
+                })
+                .await;
+                let page = match page {
+                    Ok(Ok(page)) => page,
+                    _ => return None,
+                };
+                if page.cursor_is_ahead || page.has_gap {
+                    let snapshot_for_read = store.clone();
+                    let workspace_for_read = workspace_id.clone();
+                    let conversation_for_read = conversation_id.clone();
+                    let principal_for_read = principal_id.clone();
+                    let runtime_for_read = runtime_id.clone();
+                    let latest = tokio::task::spawn_blocking(move || {
+                        read_stream_conversation_snapshot(
+                            &snapshot_for_read,
+                            &principal_for_read,
+                            &runtime_for_read,
+                            &workspace_for_read,
+                            &conversation_for_read,
+                        )
+                    })
+                    .await;
+                    let Ok(Ok(latest)) = latest else {
+                        return None;
+                    };
+                    let Ok(next_sequence) = latest.origin_sequence.parse::<u64>() else {
+                        return None;
+                    };
+                    let cursor = StreamCursor {
+                        version: 1,
+                        workspace_id: workspace_id.clone(),
+                        origin_runtime_id: runtime_id.clone(),
+                        conversation_id: conversation_id.clone(),
+                        projection_version: STREAM_PROJECTION_VERSION,
+                        origin_sequence: next_sequence,
+                        message_frontier: message_cursor.clone(),
+                    };
+                    let Ok(cursor) = encode_stream_cursor(&cursor) else {
+                        return None;
+                    };
+                    let resync = StreamResyncRequired {
+                        frame_type: "stream.resync_required",
+                        workspace_id: &workspace_id,
+                        reason: "replay_history_gap",
+                    };
+                    let projection = StreamProjection {
+                        frame_type: "projection",
+                        workspace_id: &workspace_id,
+                        projection_type: "conversation_presentation",
+                        projection_revision: latest.projection_revision,
+                        cursor: cursor.clone(),
+                        payload: &latest,
+                    };
+                    let Ok(resync) = serialize_stream_frame(&resync) else {
+                        return None;
+                    };
+                    let Ok(projection) = serialize_stream_frame(&projection) else {
+                        return None;
+                    };
+                    sequence = next_sequence;
+                    catch_up = latest.stream_message_frontier != message_cursor;
+                    initial = vec![resync, projection].into_iter();
+                    if let Some(frame) = initial.next() {
+                        return Some((
+                            Ok(Bytes::from(frame)),
+                            (
+                                permit,
+                                shutdown,
+                                store,
+                                principal_id,
+                                runtime_id,
+                                workspace_id,
+                                conversation_id,
+                                sequence,
+                                message_cursor,
+                                catch_up,
+                                initial,
+                            ),
+                        ));
+                    }
+                    continue;
+                }
+                if page.head_sequence > sequence {
+                    let snapshot_for_read = store.clone();
+                    let workspace_for_read = workspace_id.clone();
+                    let conversation_for_read = conversation_id.clone();
+                    let principal_for_read = principal_id.clone();
+                    let runtime_for_read = runtime_id.clone();
+                    let cursor_for_read = message_cursor.clone();
+                    let latest = tokio::task::spawn_blocking(move || {
+                        read_stream_conversation_page(
+                            &snapshot_for_read,
+                            &principal_for_read,
+                            &runtime_for_read,
+                            &workspace_for_read,
+                            &conversation_for_read,
+                            cursor_for_read.as_deref(),
+                        )
+                    })
+                    .await;
+                    let Ok(Ok(latest)) = latest else {
+                        return None;
+                    };
+                    let Ok(next_sequence) = latest.origin_sequence.parse::<u64>() else {
+                        return None;
+                    };
+                    let page_frames = match serialize_conversation_stream_page(
+                        &latest,
+                        &workspace_id,
+                        &runtime_id,
+                        &conversation_id,
+                    ) {
+                        Ok(result) => result,
+                        Err(_) => return None,
+                    };
+                    sequence = next_sequence;
+                    message_cursor = page_frames.message_frontier;
+                    catch_up = page_frames.has_more;
+                    initial = page_frames.frames.into_iter();
+                    let frame = initial.next()?;
+                    return Some((
+                        Ok(Bytes::from(frame)),
+                        (
+                            permit,
+                            shutdown,
+                            store,
+                            principal_id,
+                            runtime_id,
+                            workspace_id,
+                            conversation_id,
+                            sequence,
+                            message_cursor,
+                            catch_up,
+                            initial,
+                        ),
+                    ));
+                }
+            }
+        },
+    );
+    let mut response = Response::new(Body::from_stream(output));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/vnd.litecowork.operator-stream+json"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+async fn subscribe_conversation_batch_stream(
+    state: StreamApiState,
+    workspace_id: String,
+    conversation_ids: Vec<String>,
+    resume_cursor: Option<String>,
+) -> Result<Response, Response> {
+    let stream_permit = Arc::clone(&state.stream_admission)
+        .try_acquire_owned()
+        .map_err(|_| {
+            presentation_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "CAPACITY_EXCEEDED",
+                "The local stream session limit has been reached",
+            )
+        })?;
+    let snapshots = tokio::task::spawn_blocking({
+        let store = state.store.clone();
+        let principal = state.principal_id.clone();
+        let runtime = state.runtime_id.clone();
+        let workspace = workspace_id.clone();
+        let ids = conversation_ids.clone();
+        move || {
+            let cursors = vec![None; ids.len()];
+            read_stream_conversation_batch(
+                &store, &principal, &runtime, &workspace, &ids, &cursors, 1,
+            )
+        }
+    })
+    .await
+    .map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Conversation stream snapshot is unavailable",
+        )
+    })??;
+    let snapshot_sequence = snapshots
+        .first()
+        .and_then(|snapshot| snapshot.origin_sequence.parse::<u64>().ok())
+        .ok_or_else(|| {
+            presentation_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTEGRITY_FAILURE",
+                "Conversation stream snapshot is unavailable",
+            )
+        })?;
+    if snapshots
+        .iter()
+        .any(|snapshot| snapshot.origin_sequence != snapshot_sequence.to_string())
+    {
+        return Err(presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Conversation stream snapshots do not share a source frontier",
+        ));
+    }
+    let filter_digest = conversation_filter_digest(&conversation_ids)?;
+    let (resume, should_resync) = validate_batch_resume_cursor(
+        resume_cursor.as_deref(),
+        &workspace_id,
+        &state.principal_id,
+        &state.runtime_id,
+        &conversation_ids,
+        &state.store,
+    )
+    .await;
+    let fresh_frontiers = snapshots
+        .iter()
+        .map(|snapshot| snapshot.stream_message_frontier.clone())
+        .collect::<Vec<_>>();
+    let fresh_projection_revisions = snapshots
+        .iter()
+        .map(|snapshot| snapshot.projection_revision)
+        .collect::<Vec<_>>();
+    let mut initial_cursor = if let Some(cursor) = resume.as_ref().filter(|_| !should_resync) {
+        cursor.clone()
+    } else {
+        ConversationBatchStreamCursor {
+            version: 1,
+            workspace_id: workspace_id.clone(),
+            origin_runtime_id: state.runtime_id.clone(),
+            filter_digest: filter_digest.clone(),
+            projection_version: STREAM_PROJECTION_VERSION,
+            origin_sequence: 0,
+            message_frontiers: vec![None; conversation_ids.len()],
+            projection_revisions: vec![0; conversation_ids.len()],
+            snapshot_complete: false,
+        }
+    };
+    let mut initial = Vec::with_capacity(conversation_ids.len() + 2);
+    initial.push(serialize_stream_frame(&StreamReady {
+        frame_type: "stream.ready",
+        workspace_id: &workspace_id,
+        projection_version: STREAM_PROJECTION_VERSION,
+        cursor: encode_batch_stream_cursor(&initial_cursor)?,
+        max_frame_bytes: operator_ipc::MAX_STREAM_FRAME_BYTES,
+    })?);
+    if should_resync {
+        initial.push(serialize_stream_frame(&StreamResyncRequired {
+            frame_type: "stream.resync_required",
+            workspace_id: &workspace_id,
+            reason: "resume_cursor_invalid_or_expired",
+        })?);
+    }
+    for (index, snapshot) in snapshots.iter().enumerate() {
+        let cursor = if let Some(cursor) = resume.as_ref().filter(|_| !should_resync) {
+            encode_batch_stream_cursor(cursor)?
+        } else {
+            initial_cursor.message_frontiers[index] = snapshot.stream_message_frontier.clone();
+            initial_cursor.projection_revisions[index] = snapshot.projection_revision;
+            if index + 1 == snapshots.len() {
+                initial_cursor.origin_sequence = snapshot_sequence;
+                initial_cursor
+                    .message_frontiers
+                    .clone_from(&fresh_frontiers);
+                initial_cursor
+                    .projection_revisions
+                    .clone_from(&fresh_projection_revisions);
+                initial_cursor.snapshot_complete = true;
+            }
+            encode_batch_stream_cursor(&initial_cursor)?
+        };
+        initial.push(serialize_stream_frame(&StreamProjection {
+            frame_type: "projection",
+            workspace_id: &workspace_id,
+            projection_type: "conversation_presentation",
+            projection_revision: snapshot.projection_revision,
+            cursor,
+            payload: snapshot,
+        })?);
+    }
+    let (sequence, message_frontiers, projection_revisions, catch_up) =
+        if let Some(cursor) = resume.filter(|_| !should_resync) {
+            (
+                cursor.origin_sequence,
+                cursor.message_frontiers,
+                cursor.projection_revisions,
+                true,
+            )
+        } else {
+            (
+                snapshot_sequence,
+                fresh_frontiers,
+                fresh_projection_revisions,
+                false,
+            )
+        };
+    let initial = initial.into_iter();
+    let mut response = Response::new(Body::from_stream(stream::unfold(
+        (
+            stream_permit,
+            state.stream_shutdown,
+            state.store,
+            state.principal_id,
+            state.runtime_id,
+            workspace_id,
+            conversation_ids,
+            filter_digest,
+            sequence,
+            message_frontiers,
+            projection_revisions,
+            catch_up,
+            initial,
+        ),
+        move |(
+            permit,
+            mut shutdown,
+            store,
+            principal,
+            runtime,
+            workspace,
+            ids,
+            filter_digest,
+            mut sequence,
+            mut frontiers,
+            mut projection_revisions,
+            mut catch_up,
+            mut initial,
+        )| async move {
+            if let Some(frame) = initial.next() {
+                return Some((
+                    Ok::<Bytes, std::convert::Infallible>(Bytes::from(frame)),
+                    (
+                        permit,
+                        shutdown,
+                        store,
+                        principal,
+                        runtime,
+                        workspace,
+                        ids,
+                        filter_digest,
+                        sequence,
+                        frontiers,
+                        projection_revisions,
+                        catch_up,
+                        initial,
+                    ),
+                ));
+            }
+            if catch_up {
+                // Cursor validation happens before the lazy stream body is polled.
+                // Recheck retained history at the catch-up boundary so archival
+                // between admission and replay cannot silently advance the cursor.
+                let store_for_page = store.clone();
+                let workspace_for_page = workspace.clone();
+                let runtime_for_page = runtime.clone();
+                let page = tokio::task::spawn_blocking(move || {
+                    use storage_core::EventStore;
+                    store_for_page.read_workspace_event_page(
+                        &workspace_for_page,
+                        &runtime_for_page,
+                        sequence,
+                        500,
+                    )
+                })
+                .await;
+                let page = match page {
+                    Ok(Ok(page)) => page,
+                    _ => return None,
+                };
+                if page.cursor_is_ahead || page.has_gap {
+                    let store_read = store.clone();
+                    let principal_read = principal.clone();
+                    let runtime_read = runtime.clone();
+                    let workspace_read = workspace.clone();
+                    let ids_read = ids.clone();
+                    let cursors_read = vec![None; ids.len()];
+                    let snapshots = tokio::task::spawn_blocking(move || {
+                        read_stream_conversation_batch(
+                            &store_read,
+                            &principal_read,
+                            &runtime_read,
+                            &workspace_read,
+                            &ids_read,
+                            &cursors_read,
+                            1,
+                        )
+                    })
+                    .await;
+                    let Ok(Ok(snapshots)) = snapshots else {
+                        return None;
+                    };
+                    let serialized = match serialize_conversation_resync_frames(
+                        &snapshots,
+                        &workspace,
+                        &runtime,
+                        &filter_digest,
+                    ) {
+                        Ok(serialized) => serialized,
+                        Err(_) => return None,
+                    };
+                    sequence = serialized.origin_sequence;
+                    frontiers = serialized.message_frontiers;
+                    projection_revisions = serialized.projection_revisions;
+                    catch_up = serialized.has_more;
+                    initial = serialized.frames.into_iter();
+                    let frame = initial.next()?;
+                    return Some((
+                        Ok(Bytes::from(frame)),
+                        (
+                            permit,
+                            shutdown,
+                            store,
+                            principal,
+                            runtime,
+                            workspace,
+                            ids,
+                            filter_digest,
+                            sequence,
+                            frontiers,
+                            projection_revisions,
+                            catch_up,
+                            initial,
+                        ),
+                    ));
+                }
+                let store_read = store.clone();
+                let principal_read = principal.clone();
+                let runtime_read = runtime.clone();
+                let workspace_read = workspace.clone();
+                let ids_read = ids.clone();
+                let cursors_read = frontiers.clone();
+                let revisions_read = projection_revisions.clone();
+                let snapshots = tokio::task::spawn_blocking(move || {
+                    read_stream_conversation_batch(
+                        &store_read,
+                        &principal_read,
+                        &runtime_read,
+                        &workspace_read,
+                        &ids_read,
+                        &cursors_read,
+                        1,
+                    )
+                })
+                .await;
+                let Ok(Ok(snapshots)) = snapshots else {
+                    return None;
+                };
+                let serialized = match serialize_conversation_batch_pages(
+                    &snapshots,
+                    &workspace,
+                    &runtime,
+                    &filter_digest,
+                    sequence,
+                    &frontiers,
+                    &revisions_read,
+                ) {
+                    Ok(serialized) => serialized,
+                    Err(_) => return None,
+                };
+                sequence = serialized.origin_sequence;
+                frontiers = serialized.message_frontiers;
+                projection_revisions = serialized.projection_revisions;
+                catch_up = serialized.has_more;
+                initial = serialized.frames.into_iter();
+                let frame = initial.next()?;
+                return Some((
+                    Ok(Bytes::from(frame)),
+                    (
+                        permit,
+                        shutdown,
+                        store,
+                        principal,
+                        runtime,
+                        workspace,
+                        ids,
+                        filter_digest,
+                        sequence,
+                        frontiers,
+                        projection_revisions,
+                        catch_up,
+                        initial,
+                    ),
+                ));
+            }
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => return None,
+                    _ = tokio::time::sleep(STREAM_POLL_INTERVAL) => {}
+                }
+                let store_for_auth = store.clone();
+                let principal_for_auth = principal.clone();
+                let workspace_for_auth = workspace.clone();
+                let authorized = tokio::task::spawn_blocking(move || {
+                    ensure_workspace_owner_for(
+                        &store_for_auth,
+                        &principal_for_auth,
+                        &workspace_for_auth,
+                    )
+                })
+                .await;
+                if !matches!(authorized, Ok(Ok(_))) {
+                    return None;
+                }
+                let store_for_page = store.clone();
+                let workspace_for_page = workspace.clone();
+                let runtime_for_page = runtime.clone();
+                let page = tokio::task::spawn_blocking(move || {
+                    use storage_core::EventStore;
+                    store_for_page.read_workspace_event_page(
+                        &workspace_for_page,
+                        &runtime_for_page,
+                        sequence,
+                        500,
+                    )
+                })
+                .await;
+                let page = match page {
+                    Ok(Ok(page)) => page,
+                    _ => return None,
+                };
+                if page.cursor_is_ahead || page.has_gap {
+                    let store_read = store.clone();
+                    let principal_read = principal.clone();
+                    let runtime_read = runtime.clone();
+                    let workspace_read = workspace.clone();
+                    let ids_read = ids.clone();
+                    let cursors_read = vec![None; ids.len()];
+                    let snapshots = tokio::task::spawn_blocking(move || {
+                        read_stream_conversation_batch(
+                            &store_read,
+                            &principal_read,
+                            &runtime_read,
+                            &workspace_read,
+                            &ids_read,
+                            &cursors_read,
+                            1,
+                        )
+                    })
+                    .await;
+                    let Ok(Ok(snapshots)) = snapshots else {
+                        return None;
+                    };
+                    let serialized = match serialize_conversation_resync_frames(
+                        &snapshots,
+                        &workspace,
+                        &runtime,
+                        &filter_digest,
+                    ) {
+                        Ok(serialized) => serialized,
+                        Err(_) => return None,
+                    };
+                    sequence = serialized.origin_sequence;
+                    frontiers = serialized.message_frontiers;
+                    projection_revisions = serialized.projection_revisions;
+                    catch_up = serialized.has_more;
+                    initial = serialized.frames.into_iter();
+                    let frame = initial.next()?;
+                    return Some((
+                        Ok(Bytes::from(frame)),
+                        (
+                            permit,
+                            shutdown,
+                            store,
+                            principal,
+                            runtime,
+                            workspace,
+                            ids,
+                            filter_digest,
+                            sequence,
+                            frontiers,
+                            projection_revisions,
+                            catch_up,
+                            initial,
+                        ),
+                    ));
+                }
+                if page.head_sequence > sequence {
+                    let store_read = store.clone();
+                    let principal_read = principal.clone();
+                    let runtime_read = runtime.clone();
+                    let workspace_read = workspace.clone();
+                    let ids_read = ids.clone();
+                    let cursors_read = frontiers.clone();
+                    let revisions_read = projection_revisions.clone();
+                    let snapshots = tokio::task::spawn_blocking(move || {
+                        read_stream_conversation_batch(
+                            &store_read,
+                            &principal_read,
+                            &runtime_read,
+                            &workspace_read,
+                            &ids_read,
+                            &cursors_read,
+                            1,
+                        )
+                    })
+                    .await;
+                    let Ok(Ok(snapshots)) = snapshots else {
+                        return None;
+                    };
+                    let serialized = match serialize_conversation_batch_pages(
+                        &snapshots,
+                        &workspace,
+                        &runtime,
+                        &filter_digest,
+                        sequence,
+                        &frontiers,
+                        &revisions_read,
+                    ) {
+                        Ok(serialized) => serialized,
+                        Err(_) => return None,
+                    };
+                    sequence = serialized.origin_sequence;
+                    frontiers = serialized.message_frontiers;
+                    projection_revisions = serialized.projection_revisions;
+                    catch_up = serialized.has_more;
+                    initial = serialized.frames.into_iter();
+                    let frame = initial.next()?;
+                    return Some((
+                        Ok(Bytes::from(frame)),
+                        (
+                            permit,
+                            shutdown,
+                            store,
+                            principal,
+                            runtime,
+                            workspace,
+                            ids,
+                            filter_digest,
+                            sequence,
+                            frontiers,
+                            projection_revisions,
+                            catch_up,
+                            initial,
+                        ),
+                    ));
+                }
+            }
+        },
+    )));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/vnd.litecowork.operator-stream+json"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+fn read_stream_conversation_batch(
+    store: &SqliteWorkspaceStore,
+    principal_id: &str,
+    runtime_id: &str,
+    workspace_id: &str,
+    conversation_ids: &[String],
+    after_message_ids: &[Option<String>],
+    limit: usize,
+) -> Result<Vec<storage_core::rich_presentation::ConversationPresentationSnapshot>, Response> {
+    if conversation_ids.is_empty()
+        || conversation_ids.len() != after_message_ids.len()
+        || conversation_ids.len() > MAX_CONVERSATION_PRESENTATION_BATCH
+    {
+        return Err(presentation_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation stream filters are invalid",
+        ));
+    }
+    let reads = conversation_ids
+        .iter()
+        .zip(after_message_ids)
+        .map(
+            |(conversation_id, after_message_id)| ConversationPresentationRead {
+                conversation_id: conversation_id.clone(),
+                after_message_id: after_message_id.clone(),
+            },
+        )
+        .collect::<Vec<_>>();
+    SqliteRichPresentationStore::new(store.clone())
+        .read_conversation_presentation_batch(principal_id, workspace_id, &reads, runtime_id, limit)
+        .map_err(|error| match error {
+            StoreError::NotFound => presentation_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Conversation is unavailable",
+            ),
+            StoreError::Invalid(_) => presentation_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Conversation stream subscription is invalid",
+            ),
+            _ => presentation_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTEGRITY_FAILURE",
+                "Conversation stream snapshot is unavailable",
+            ),
+        })
+}
+
+fn conversation_filter_digest(conversation_ids: &[String]) -> Result<String, Response> {
+    let canonical = serde_json::to_vec(conversation_ids).map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Conversation stream cursor is unavailable",
+        )
+    })?;
+    Ok(hex::encode(Sha256::digest(canonical)))
+}
+
+fn encode_batch_stream_cursor(cursor: &ConversationBatchStreamCursor) -> Result<String, Response> {
+    let bytes = serde_json::to_vec(cursor).map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Conversation stream cursor is unavailable",
+        )
+    })?;
+    let encoded = URL_SAFE_NO_PAD.encode(bytes);
+    if encoded.len() > MAX_BATCH_STREAM_CURSOR_BYTES {
+        return Err(presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Conversation stream cursor exceeds its limit",
+        ));
+    }
+    Ok(encoded)
+}
+
+fn decode_batch_stream_cursor(encoded: &str) -> Result<ConversationBatchStreamCursor, ()> {
+    if encoded.is_empty() || encoded.len() > MAX_BATCH_STREAM_CURSOR_BYTES {
+        return Err(());
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| ())?;
+    serde_json::from_slice(&bytes).map_err(|_| ())
+}
+
+async fn validate_batch_resume_cursor(
+    encoded: Option<&str>,
+    workspace_id: &str,
+    principal_id: &str,
+    runtime_id: &str,
+    conversation_ids: &[String],
+    store: &SqliteWorkspaceStore,
+) -> (Option<ConversationBatchStreamCursor>, bool) {
+    let Some(encoded) = encoded else {
+        return (None, false);
+    };
+    let Ok(cursor) = decode_batch_stream_cursor(encoded) else {
+        return (None, true);
+    };
+    let Ok(filter_digest) = conversation_filter_digest(conversation_ids) else {
+        return (None, true);
+    };
+    if cursor.version != 1
+        || cursor.workspace_id != workspace_id
+        || cursor.origin_runtime_id != runtime_id
+        || cursor.filter_digest != filter_digest
+        || cursor.projection_version != STREAM_PROJECTION_VERSION
+        || !cursor.snapshot_complete
+        || cursor.message_frontiers.len() != conversation_ids.len()
+        || cursor.projection_revisions.len() != conversation_ids.len()
+        || cursor.projection_revisions.contains(&0)
+        || cursor
+            .message_frontiers
+            .iter()
+            .flatten()
+            .any(|id| !valid_task_query_id(id))
+    {
+        return (None, true);
+    }
+    let validation_store = store.clone();
+    let principal = principal_id.to_owned();
+    let workspace = workspace_id.to_owned();
+    let runtime = runtime_id.to_owned();
+    let ids = conversation_ids.to_vec();
+    let frontiers = cursor.message_frontiers.clone();
+    let snapshot = tokio::task::spawn_blocking(move || {
+        read_stream_conversation_batch(
+            &validation_store,
+            &principal,
+            &runtime,
+            &workspace,
+            &ids,
+            &frontiers,
+            1,
+        )
+    })
+    .await;
+    if !matches!(snapshot, Ok(Ok(_))) {
+        return (None, true);
+    }
+    let store = store.clone();
+    let workspace = workspace_id.to_owned();
+    let runtime = runtime_id.to_owned();
+    let sequence = cursor.origin_sequence;
+    match tokio::task::spawn_blocking(move || {
+        use storage_core::EventStore;
+        store.read_workspace_event_page(&workspace, &runtime, sequence, 1)
+    })
+    .await
+    {
+        Ok(Ok(page)) if !page.cursor_is_ahead && !page.has_gap => (Some(cursor), false),
+        _ => (Some(cursor), true),
+    }
+}
+
+struct SerializedConversationResync {
+    frames: Vec<Vec<u8>>,
+    message_frontiers: Vec<Option<String>>,
+    projection_revisions: Vec<u64>,
+    origin_sequence: u64,
+    has_more: bool,
+}
+
+fn serialize_conversation_resync_frames(
+    snapshots: &[storage_core::rich_presentation::ConversationPresentationSnapshot],
+    workspace_id: &str,
+    runtime_id: &str,
+    filter_digest: &str,
+) -> Result<SerializedConversationResync, Response> {
+    let sequence = snapshots
+        .first()
+        .and_then(|snapshot| snapshot.origin_sequence.parse::<u64>().ok())
+        .ok_or_else(|| {
+            presentation_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTEGRITY_FAILURE",
+                "Conversation resync snapshot is unavailable",
+            )
+        })?;
+    if snapshots
+        .iter()
+        .any(|snapshot| snapshot.origin_sequence != sequence.to_string())
+    {
+        return Err(presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Conversation resync snapshots do not share a source frontier",
+        ));
+    }
+    let has_more = snapshots
+        .iter()
+        .any(|snapshot| snapshot.next_cursor.is_some());
+    let projection_revisions = snapshots
+        .iter()
+        .map(|snapshot| snapshot.projection_revision)
+        .collect::<Vec<_>>();
+    let mut message_frontiers = vec![None; snapshots.len()];
+    let mut frames = vec![serialize_stream_frame(&StreamResyncRequired {
+        frame_type: "stream.resync_required",
+        workspace_id,
+        reason: "replay_history_gap",
+    })?];
+    let mut replacement = ConversationBatchStreamCursor {
+        version: 1,
+        workspace_id: workspace_id.to_owned(),
+        origin_runtime_id: runtime_id.to_owned(),
+        filter_digest: filter_digest.to_owned(),
+        projection_version: STREAM_PROJECTION_VERSION,
+        origin_sequence: 0,
+        message_frontiers: vec![None; snapshots.len()],
+        projection_revisions: vec![0; snapshots.len()],
+        snapshot_complete: false,
+    };
+    for (index, snapshot) in snapshots.iter().enumerate() {
+        let message_frontier = if snapshot.next_cursor.is_some() {
+            Some(
+                snapshot
+                    .items
+                    .last()
+                    .and_then(|item| item.get("message"))
+                    .and_then(|message| message.get("message_id"))
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|id| valid_task_query_id(id))
+                    .map(str::to_owned)
+                    .ok_or_else(|| {
+                        presentation_error(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "INTEGRITY_FAILURE",
+                            "Conversation resync snapshot is unavailable",
+                        )
+                    })?,
+            )
+        } else {
+            snapshot.stream_message_frontier.clone()
+        };
+        message_frontiers[index] = message_frontier;
+        replacement.message_frontiers[index] = message_frontiers[index].clone();
+        replacement.projection_revisions[index] = snapshot.projection_revision;
+        if index + 1 == snapshots.len() {
+            replacement.origin_sequence = sequence;
+            replacement
+                .projection_revisions
+                .clone_from(&projection_revisions);
+            replacement.snapshot_complete = true;
+        }
+        frames.push(serialize_stream_frame(&StreamProjection {
+            frame_type: "projection",
+            workspace_id,
+            projection_type: "conversation_presentation",
+            projection_revision: snapshot.projection_revision,
+            cursor: encode_batch_stream_cursor(&replacement)?,
+            payload: snapshot,
+        })?);
+    }
+    Ok(SerializedConversationResync {
+        frames,
+        message_frontiers,
+        projection_revisions,
+        origin_sequence: sequence,
+        has_more,
+    })
+}
+
+struct SerializedConversationBatchPage {
+    frames: Vec<Vec<u8>>,
+    message_frontiers: Vec<Option<String>>,
+    projection_revisions: Vec<u64>,
+    origin_sequence: u64,
+    has_more: bool,
+}
+
+fn serialize_conversation_batch_pages(
+    snapshots: &[storage_core::rich_presentation::ConversationPresentationSnapshot],
+    workspace_id: &str,
+    runtime_id: &str,
+    filter_digest: &str,
+    previous_sequence: u64,
+    previous_frontiers: &[Option<String>],
+    previous_projection_revisions: &[u64],
+) -> Result<SerializedConversationBatchPage, Response> {
+    if snapshots.len() != previous_frontiers.len()
+        || snapshots.len() != previous_projection_revisions.len()
+    {
+        return Err(presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Conversation stream batch is unavailable",
+        ));
+    }
+    let sequence = snapshots
+        .first()
+        .and_then(|snapshot| snapshot.origin_sequence.parse::<u64>().ok())
+        .ok_or_else(|| {
+            presentation_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTEGRITY_FAILURE",
+                "Conversation stream batch is unavailable",
+            )
+        })?;
+    if snapshots
+        .iter()
+        .any(|snapshot| snapshot.origin_sequence != sequence.to_string())
+    {
+        return Err(presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Conversation stream batch has inconsistent frontiers",
+        ));
+    }
+    let has_more = snapshots
+        .iter()
+        .any(|snapshot| snapshot.next_cursor.is_some());
+    let mut message_frontiers = previous_frontiers.to_vec();
+    let mut projection_revisions = previous_projection_revisions.to_vec();
+    let mut frames = Vec::new();
+    for (index, snapshot) in snapshots.iter().enumerate() {
+        let conversation_id = &snapshot.conversation_id;
+        for item in &snapshot.items {
+            let message_id = item
+                .get("message")
+                .and_then(|message| message.get("message_id"))
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| valid_task_query_id(id))
+                .ok_or_else(|| {
+                    presentation_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "INTEGRITY_FAILURE",
+                        "Conversation stream batch is unavailable",
+                    )
+                })?;
+            let mut cursor = ConversationBatchStreamCursor {
+                version: 1,
+                workspace_id: workspace_id.to_owned(),
+                origin_runtime_id: runtime_id.to_owned(),
+                filter_digest: filter_digest.to_owned(),
+                projection_version: STREAM_PROJECTION_VERSION,
+                origin_sequence: previous_sequence,
+                message_frontiers: message_frontiers.clone(),
+                projection_revisions: projection_revisions.clone(),
+                // This serializer runs only after a complete baseline was delivered.
+                // Per-message cursors are resumable; stale projection revisions cause
+                // an authorized snapshot refresh if disconnect interrupts catch-up.
+                snapshot_complete: true,
+            };
+            cursor.message_frontiers[index] = Some(message_id.to_owned());
+            cursor.origin_sequence = sequence;
+            let encoded_cursor = encode_batch_stream_cursor(&cursor)?;
+            frames.push(serialize_stream_frame(&ConversationProjectionUpsert {
+                frame_type: "projection",
+                workspace_id,
+                projection_type: "conversation_presentation",
+                projection_revision: snapshot.projection_revision,
+                cursor: encoded_cursor,
+                payload: ConversationProjectionUpsertPayload {
+                    conversation_id,
+                    stream_cursor: &snapshot.stream_cursor,
+                    origin_sequence: &snapshot.origin_sequence,
+                    item,
+                },
+            })?);
+            message_frontiers[index] = Some(message_id.to_owned());
+        }
+        let projection_changed = snapshot.projection_revision != projection_revisions[index];
+        if snapshot.next_cursor.is_none() && (projection_changed || index + 1 == snapshots.len()) {
+            message_frontiers[index] = snapshot.stream_message_frontier.clone();
+            projection_revisions[index] = snapshot.projection_revision;
+            let cursor = ConversationBatchStreamCursor {
+                version: 1,
+                workspace_id: workspace_id.to_owned(),
+                origin_runtime_id: runtime_id.to_owned(),
+                filter_digest: filter_digest.to_owned(),
+                projection_version: STREAM_PROJECTION_VERSION,
+                origin_sequence: sequence,
+                message_frontiers: message_frontiers.clone(),
+                projection_revisions: projection_revisions.clone(),
+                // Every cursor in a live catch-up stream can resume because the initial
+                // all-filter baseline is complete and the cursor retains each filter's
+                // own message frontier and projection revision.
+                snapshot_complete: true,
+            };
+            frames.push(serialize_stream_frame(&StreamProjection {
+                frame_type: "projection",
+                workspace_id,
+                projection_type: "conversation_presentation",
+                projection_revision: snapshot.projection_revision,
+                cursor: encode_batch_stream_cursor(&cursor)?,
+                payload: snapshot,
+            })?);
+        }
+    }
+    Ok(SerializedConversationBatchPage {
+        frames,
+        message_frontiers,
+        projection_revisions,
+        origin_sequence: sequence,
+        has_more,
+    })
+}
+
+fn read_stream_conversation_snapshot(
+    store: &SqliteWorkspaceStore,
+    principal_id: &str,
+    runtime_id: &str,
+    workspace_id: &str,
+    conversation_id: &str,
+) -> Result<storage_core::rich_presentation::ConversationPresentationSnapshot, Response> {
+    read_stream_conversation_page(
+        store,
+        principal_id,
+        runtime_id,
+        workspace_id,
+        conversation_id,
+        None,
+    )
+}
+
+fn read_stream_conversation_page(
+    store: &SqliteWorkspaceStore,
+    principal_id: &str,
+    runtime_id: &str,
+    workspace_id: &str,
+    conversation_id: &str,
+    after_message_id: Option<&str>,
+) -> Result<storage_core::rich_presentation::ConversationPresentationSnapshot, Response> {
+    SqliteRichPresentationStore::new(store.clone())
+        .read_conversation_presentation(
+            principal_id,
+            workspace_id,
+            conversation_id,
+            runtime_id,
+            after_message_id,
+            MAX_CONVERSATION_PRESENTATION_MESSAGES,
+        )
+        .map_err(|error| match error {
+            StoreError::NotFound => presentation_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Conversation is unavailable",
+            ),
+            StoreError::Invalid(_) => presentation_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "Conversation stream subscription is invalid",
+            ),
+            _ => presentation_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTEGRITY_FAILURE",
+                "Conversation stream snapshot is unavailable",
+            ),
+        })
+}
+
+struct SerializedConversationPage {
+    frames: Vec<Vec<u8>>,
+    message_frontier: Option<String>,
+    has_more: bool,
+}
+
+fn serialize_conversation_stream_page(
+    snapshot: &storage_core::rich_presentation::ConversationPresentationSnapshot,
+    workspace_id: &str,
+    runtime_id: &str,
+    conversation_id: &str,
+) -> Result<SerializedConversationPage, Response> {
+    let sequence = snapshot.origin_sequence.parse::<u64>().map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Conversation stream snapshot is unavailable",
+        )
+    })?;
+    let mut frames =
+        Vec::with_capacity(snapshot.items.len() + usize::from(snapshot.next_cursor.is_none()));
+    let mut message_frontier = None;
+    for item in &snapshot.items {
+        let message_id = item
+            .get("message")
+            .and_then(|message| message.get("message_id"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|id| valid_task_query_id(id))
+            .ok_or_else(|| {
+                presentation_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTEGRITY_FAILURE",
+                    "Conversation stream snapshot is unavailable",
+                )
+            })?;
+        let cursor = encode_stream_cursor(&StreamCursor {
+            version: 1,
+            workspace_id: workspace_id.to_owned(),
+            origin_runtime_id: runtime_id.to_owned(),
+            conversation_id: conversation_id.to_owned(),
+            projection_version: STREAM_PROJECTION_VERSION,
+            origin_sequence: sequence,
+            message_frontier: Some(message_id.to_owned()),
+        })?;
+        frames.push(serialize_stream_frame(&ConversationProjectionUpsert {
+            frame_type: "projection",
+            workspace_id,
+            projection_type: "conversation_presentation",
+            projection_revision: snapshot.projection_revision,
+            cursor,
+            payload: ConversationProjectionUpsertPayload {
+                conversation_id: &snapshot.conversation_id,
+                stream_cursor: &snapshot.stream_cursor,
+                origin_sequence: &snapshot.origin_sequence,
+                item,
+            },
+        })?);
+        message_frontier = Some(message_id.to_owned());
+    }
+    if snapshot.next_cursor.is_none() {
+        let cursor = encode_stream_cursor(&StreamCursor {
+            version: 1,
+            workspace_id: workspace_id.to_owned(),
+            origin_runtime_id: runtime_id.to_owned(),
+            conversation_id: conversation_id.to_owned(),
+            projection_version: STREAM_PROJECTION_VERSION,
+            origin_sequence: sequence,
+            message_frontier: snapshot.stream_message_frontier.clone(),
+        })?;
+        frames.push(serialize_stream_frame(&StreamProjection {
+            frame_type: "projection",
+            workspace_id,
+            projection_type: "conversation_presentation",
+            projection_revision: snapshot.projection_revision,
+            cursor,
+            payload: snapshot,
+        })?);
+        message_frontier = snapshot.stream_message_frontier.clone();
+    }
+    Ok(SerializedConversationPage {
+        frames,
+        message_frontier,
+        has_more: snapshot.next_cursor.is_some(),
+    })
+}
+
+async fn validate_resume_cursor(
+    encoded: Option<&str>,
+    workspace_id: &str,
+    runtime_id: &str,
+    conversation_id: &str,
+    store: &SqliteWorkspaceStore,
+) -> (Option<StreamCursor>, bool) {
+    let Some(encoded) = encoded else {
+        return (None, false);
+    };
+    let Ok(cursor) = decode_stream_cursor(encoded) else {
+        return (None, true);
+    };
+    if cursor.version != 1
+        || cursor.workspace_id != workspace_id
+        || cursor.origin_runtime_id != runtime_id
+        || cursor.conversation_id != conversation_id
+        || cursor.projection_version != STREAM_PROJECTION_VERSION
+        || cursor
+            .message_frontier
+            .as_deref()
+            .is_some_and(|id| !valid_task_query_id(id))
+    {
+        return (None, true);
+    }
+    let store = store.clone();
+    let workspace_id = workspace_id.to_owned();
+    let runtime_id = runtime_id.to_owned();
+    let sequence = cursor.origin_sequence;
+    match tokio::task::spawn_blocking(move || {
+        use storage_core::EventStore;
+        store.read_workspace_event_page(&workspace_id, &runtime_id, sequence, 1)
+    })
+    .await
+    {
+        Ok(Ok(page)) if !page.cursor_is_ahead && !page.has_gap => (Some(cursor), false),
+        _ => (Some(cursor), true),
+    }
+}
+
+fn encode_task_stream_cursor(cursor: &TaskStreamCursor) -> Result<String, Response> {
+    let bytes = serde_json::to_vec(cursor).map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task stream cursor is unavailable",
+        )
+    })?;
+    let encoded = URL_SAFE_NO_PAD.encode(bytes);
+    if encoded.len() > 2048 {
+        return Err(presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Task stream cursor is unavailable",
+        ));
+    }
+    Ok(encoded)
+}
+
+fn decode_task_stream_cursor(encoded: &str) -> Result<TaskStreamCursor, ()> {
+    if encoded.is_empty() || encoded.len() > 2048 {
+        return Err(());
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| ())?;
+    serde_json::from_slice(&bytes).map_err(|_| ())
+}
+
+async fn task_resume_requires_resync(
+    encoded: Option<&str>,
+    workspace_id: &str,
+    runtime_id: &str,
+    task_id: &str,
+    store: &SqliteWorkspaceStore,
+) -> bool {
+    let Some(encoded) = encoded else {
+        return false;
+    };
+    let Ok(cursor) = decode_task_stream_cursor(encoded) else {
+        return true;
+    };
+    if cursor.version != 1
+        || cursor.workspace_id != workspace_id
+        || cursor.origin_runtime_id != runtime_id
+        || cursor.task_id != task_id
+        || cursor.projection_version != STREAM_PROJECTION_VERSION
+    {
+        return true;
+    }
+    let store = store.clone();
+    let workspace_id = workspace_id.to_owned();
+    let runtime_id = runtime_id.to_owned();
+    let sequence = cursor.origin_sequence;
+    !matches!(
+        tokio::task::spawn_blocking(move || {
+            use storage_core::EventStore;
+            store.read_workspace_event_page(&workspace_id, &runtime_id, sequence, 1)
+        })
+        .await,
+        Ok(Ok(page)) if !page.cursor_is_ahead && !page.has_gap
+    )
+}
+
+fn read_task_stream_snapshot(
+    store: &SqliteWorkspaceStore,
+    principal_id: &str,
+    runtime_id: &str,
+    workspace_id: &str,
+    task_id: &str,
+) -> Result<(TaskPresentationSnapshot, u64), Response> {
+    ensure_workspace_owner_for(store, principal_id, workspace_id)?;
+    let snapshot = store
+        .get_task_presentation(workspace_id, task_id, runtime_id)
+        .map_err(|_| {
+            presentation_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Task presentation is unavailable",
+            )
+        })?
+        .ok_or_else(|| {
+            presentation_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Task presentation is unavailable",
+            )
+        })?;
+    task_presentation_view(snapshot, workspace_id.to_owned())
+}
+
+fn task_projection_revision(origin_sequence: u64) -> Result<u64, Response> {
+    let revision = origin_sequence.max(1);
+    if revision > 9_007_199_254_740_991 {
+        return Err(presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Task presentation revision is unavailable",
+        ));
+    }
+    Ok(revision)
+}
+
+async fn subscribe_runtime_inventory_stream(
+    state: StreamApiState,
+    workspace_id: String,
+    runtime_id: String,
+    resume_cursor: Option<String>,
+) -> Result<Response, Response> {
+    if runtime_id != state.runtime_id {
+        return Err(presentation_error(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "Runtime inventory is unavailable",
+        ));
+    }
+    let stream_permit = Arc::clone(&state.stream_admission)
+        .try_acquire_owned()
+        .map_err(|_| {
+            presentation_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "CAPACITY_EXCEEDED",
+                "The local stream session limit has been reached",
+            )
+        })?;
+
+    let now = operator_now()?;
+    let authorization_store = state.store.clone();
+    let owner = state.principal_id.clone();
+    let authorized_workspace = workspace_id.clone();
+    let authorized_runtime = runtime_id.clone();
+    let expected_incarnation = state.local_incarnation_id.clone();
+    tokio::task::spawn_blocking(move || {
+        use storage_core::AgentCatalogStore;
+        authorization_store.list_runtime_offers(storage_core::RuntimeOfferPageRequest {
+            owner_principal_id: owner,
+            workspace_id: authorized_workspace,
+            runtime_id: authorized_runtime,
+            expected_incarnation_id: Some(expected_incarnation),
+            now,
+            after: None,
+            limit: 1,
+        })
+    })
+    .await
+    .map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Runtime inventory authorization is unavailable",
+        )
+    })?
+    .map_err(|error| map_agent_store_error(error, "Runtime inventory is unavailable"))?;
+
+    let current_revision = state.runtime_inventory_revision.load(Ordering::Acquire);
+    let cursor = resume_cursor
+        .as_deref()
+        .and_then(|value| decode_runtime_inventory_cursor(value).ok());
+    let should_resync = resume_cursor.is_some()
+        && !cursor.as_ref().is_some_and(|cursor| {
+            cursor.version == 1
+                && cursor.workspace_id == workspace_id
+                && cursor.runtime_id == runtime_id
+                && cursor.runtime_incarnation_id == state.local_incarnation_id
+                && cursor.projection_version == STREAM_PROJECTION_VERSION
+                && cursor.revision <= current_revision
+        });
+    let ready_cursor = encode_runtime_inventory_cursor(&RuntimeInventoryStreamCursor {
+        version: 1,
+        workspace_id: workspace_id.clone(),
+        runtime_id: runtime_id.clone(),
+        runtime_incarnation_id: state.local_incarnation_id.clone(),
+        projection_version: STREAM_PROJECTION_VERSION,
+        revision: current_revision,
+    })?;
+    let mut initial = vec![serialize_stream_frame(&StreamReady {
+        frame_type: "stream.ready",
+        workspace_id: &workspace_id,
+        projection_version: STREAM_PROJECTION_VERSION,
+        cursor: ready_cursor,
+        max_frame_bytes: operator_ipc::MAX_STREAM_FRAME_BYTES,
+    })?];
+    if should_resync {
+        initial.push(serialize_stream_frame(&StreamResyncRequired {
+            frame_type: "stream.resync_required",
+            workspace_id: &workspace_id,
+            reason: "resume_cursor_invalid_or_expired",
+        })?);
+    }
+    // Always send one initial invalidation. The consumer obtains current data only
+    // through the separately authorized offers route.
+    initial.push(serialize_runtime_inventory_notification(
+        &workspace_id,
+        &runtime_id,
+        &state.local_incarnation_id,
+        current_revision,
+    )?);
+
+    let shutdown = state.stream_shutdown.clone();
+    let store = state.store;
+    let owner = state.principal_id;
+    let incarnation_for_poll = state.local_incarnation_id.clone();
+    let revision = Arc::clone(&state.runtime_inventory_revision);
+    let initial = initial.into_iter();
+    let output = stream::unfold(
+        (
+            stream_permit,
+            shutdown,
+            store,
+            owner,
+            runtime_id,
+            incarnation_for_poll,
+            workspace_id,
+            revision,
+            current_revision,
+            initial,
+        ),
+        |(
+            permit,
+            mut shutdown,
+            store,
+            owner,
+            runtime_id,
+            incarnation_id,
+            workspace_id,
+            revision,
+            mut seen_revision,
+            mut initial,
+        )| async move {
+            if let Some(frame) = initial.next() {
+                return Some((
+                    Ok::<Bytes, std::convert::Infallible>(Bytes::from(frame)),
+                    (
+                        permit,
+                        shutdown,
+                        store,
+                        owner,
+                        runtime_id,
+                        incarnation_id,
+                        workspace_id,
+                        revision,
+                        seen_revision,
+                        initial,
+                    ),
+                ));
+            }
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => return None,
+                    _ = tokio::time::sleep(STREAM_POLL_INTERVAL) => {}
+                }
+                let page_store = store.clone();
+                let page_owner = owner.clone();
+                let page_workspace = workspace_id.clone();
+                let page_runtime = runtime_id.clone();
+                let page_incarnation = incarnation_id.clone();
+                let now = match operator_now_value() {
+                    Ok(now) => now,
+                    Err(_) => return None,
+                };
+                let authorized = tokio::task::spawn_blocking(move || {
+                    use storage_core::AgentCatalogStore;
+                    page_store.list_runtime_offers(storage_core::RuntimeOfferPageRequest {
+                        owner_principal_id: page_owner,
+                        workspace_id: page_workspace,
+                        runtime_id: page_runtime,
+                        expected_incarnation_id: Some(page_incarnation),
+                        now,
+                        after: None,
+                        limit: 1,
+                    })
+                })
+                .await;
+                if !matches!(authorized, Ok(Ok(_))) {
+                    return None;
+                }
+                let latest_revision = revision.load(Ordering::Acquire);
+                if latest_revision <= seen_revision {
+                    continue;
+                }
+                let frame = match serialize_runtime_inventory_notification(
+                    &workspace_id,
+                    &runtime_id,
+                    &incarnation_id,
+                    latest_revision,
+                ) {
+                    Ok(frame) => frame,
+                    Err(_) => return None,
+                };
+                seen_revision = latest_revision;
+                return Some((
+                    Ok(Bytes::from(frame)),
+                    (
+                        permit,
+                        shutdown,
+                        store,
+                        owner,
+                        runtime_id,
+                        incarnation_id,
+                        workspace_id,
+                        revision,
+                        seen_revision,
+                        initial,
+                    ),
+                ));
+            }
+        },
+    );
+    let mut response = Response::new(Body::from_stream(output));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/vnd.litecowork.operator-stream+json"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+fn serialize_runtime_inventory_notification(
+    workspace_id: &str,
+    runtime_id: &str,
+    incarnation_id: &str,
+    revision: u64,
+) -> Result<Vec<u8>, Response> {
+    let cursor = encode_runtime_inventory_cursor(&RuntimeInventoryStreamCursor {
+        version: 1,
+        workspace_id: workspace_id.to_owned(),
+        runtime_id: runtime_id.to_owned(),
+        runtime_incarnation_id: incarnation_id.to_owned(),
+        projection_version: STREAM_PROJECTION_VERSION,
+        revision,
+    })?;
+    let payload = RuntimeInventoryNotification {
+        runtime_id,
+        change_kind: "OFFERS_CHANGED",
+    };
+    serialize_stream_frame(&StreamProjection {
+        frame_type: "projection",
+        workspace_id,
+        projection_type: "runtime_inventory",
+        projection_revision: revision,
+        cursor,
+        payload: &payload,
+    })
+}
+
+fn encode_runtime_inventory_cursor(
+    cursor: &RuntimeInventoryStreamCursor,
+) -> Result<String, Response> {
+    let bytes = serde_json::to_vec(cursor).map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Runtime inventory cursor is unavailable",
+        )
+    })?;
+    let encoded = URL_SAFE_NO_PAD.encode(bytes);
+    if encoded.len() > 2048 {
+        return Err(presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Runtime inventory cursor is unavailable",
+        ));
+    }
+    Ok(encoded)
+}
+
+fn decode_runtime_inventory_cursor(encoded: &str) -> Result<RuntimeInventoryStreamCursor, ()> {
+    if encoded.is_empty() || encoded.len() > 2048 {
+        return Err(());
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| ())?;
+    serde_json::from_slice(&bytes).map_err(|_| ())
+}
+
+fn serialize_task_projection(
+    snapshot: TaskPresentationSnapshot,
+    workspace_id: &str,
+    runtime_id: &str,
+    task_id: &str,
+    origin_sequence: u64,
+    reason: Option<&'static str>,
+) -> Result<Vec<Vec<u8>>, Response> {
+    let cursor = encode_task_stream_cursor(&TaskStreamCursor {
+        version: 1,
+        workspace_id: workspace_id.to_owned(),
+        origin_runtime_id: runtime_id.to_owned(),
+        task_id: task_id.to_owned(),
+        projection_version: STREAM_PROJECTION_VERSION,
+        origin_sequence,
+    })?;
+    let mut frames = Vec::with_capacity(if reason.is_some() { 2 } else { 1 });
+    if let Some(reason) = reason {
+        frames.push(serialize_stream_frame(&StreamResyncRequired {
+            frame_type: "stream.resync_required",
+            workspace_id,
+            reason,
+        })?);
+    }
+    let payload = TaskStreamPayload {
+        snapshot,
+        origin_sequence: origin_sequence.to_string(),
+    };
+    frames.push(serialize_stream_frame(&StreamProjection {
+        frame_type: "projection",
+        workspace_id,
+        projection_type: "task_presentation",
+        projection_revision: task_projection_revision(origin_sequence)?,
+        cursor,
+        payload: &payload,
+    })?);
+    Ok(frames)
+}
+
+async fn subscribe_task_stream(
+    state: StreamApiState,
+    workspace_id: String,
+    task_id: String,
+    resume_cursor: Option<String>,
+) -> Result<Response, Response> {
+    #[cfg(test)]
+    let task_stream_test_gate = Arc::new(tokio::sync::Mutex::new(state.task_stream_test_gate));
+    #[cfg(test)]
+    let task_stream_snapshot_test_gate = Arc::new(tokio::sync::Mutex::new(
+        state.task_stream_snapshot_test_gate,
+    ));
+    let stream_permit = Arc::clone(&state.stream_admission)
+        .try_acquire_owned()
+        .map_err(|_| {
+            presentation_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "CAPACITY_EXCEEDED",
+                "The local stream session limit has been reached",
+            )
+        })?;
+    let snapshot_store = state.store.clone();
+    let snapshot_principal = state.principal_id.clone();
+    let snapshot_runtime = state.runtime_id.clone();
+    let snapshot_workspace = workspace_id.clone();
+    let snapshot_task = task_id.clone();
+    let (snapshot, origin_sequence) = tokio::task::spawn_blocking(move || {
+        read_task_stream_snapshot(
+            &snapshot_store,
+            &snapshot_principal,
+            &snapshot_runtime,
+            &snapshot_workspace,
+            &snapshot_task,
+        )
+    })
+    .await
+    .map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Task stream snapshot is unavailable",
+        )
+    })??;
+    let should_resync = task_resume_requires_resync(
+        resume_cursor.as_deref(),
+        &workspace_id,
+        &state.runtime_id,
+        &task_id,
+        &state.store,
+    )
+    .await;
+    let initial_cursor = encode_task_stream_cursor(&TaskStreamCursor {
+        version: 1,
+        workspace_id: workspace_id.clone(),
+        origin_runtime_id: state.runtime_id.clone(),
+        task_id: task_id.clone(),
+        projection_version: STREAM_PROJECTION_VERSION,
+        origin_sequence,
+    })?;
+    let mut initial = vec![serialize_stream_frame(&StreamReady {
+        frame_type: "stream.ready",
+        workspace_id: &workspace_id,
+        projection_version: STREAM_PROJECTION_VERSION,
+        cursor: initial_cursor,
+        max_frame_bytes: operator_ipc::MAX_STREAM_FRAME_BYTES,
+    })?];
+    initial.extend(serialize_task_projection(
+        snapshot,
+        &workspace_id,
+        &state.runtime_id,
+        &task_id,
+        origin_sequence,
+        should_resync.then_some("resume_cursor_invalid_or_expired"),
+    )?);
+
+    let shutdown = state.stream_shutdown;
+    let store = state.store;
+    let principal_id = state.principal_id;
+    let runtime_id = state.runtime_id;
+    let initial = initial.into_iter();
+    let output = stream::unfold(
+        (
+            stream_permit,
+            shutdown,
+            store,
+            principal_id,
+            runtime_id,
+            workspace_id,
+            task_id,
+            origin_sequence,
+            initial,
+        ),
+        move |(
+            permit,
+            mut shutdown,
+            store,
+            principal_id,
+            runtime_id,
+            workspace_id,
+            task_id,
+            mut sequence,
+            mut initial,
+        )| {
+            #[cfg(test)]
+            let task_stream_test_gate = Arc::clone(&task_stream_test_gate);
+            #[cfg(test)]
+            let task_stream_snapshot_test_gate = Arc::clone(&task_stream_snapshot_test_gate);
+            async move {
+                if let Some(frame) = initial.next() {
+                    return Some((
+                        Ok::<Bytes, std::convert::Infallible>(Bytes::from(frame)),
+                        (
+                            permit,
+                            shutdown,
+                            store,
+                            principal_id,
+                            runtime_id,
+                            workspace_id,
+                            task_id,
+                            sequence,
+                            initial,
+                        ),
+                    ));
+                }
+                loop {
+                    tokio::select! {
+                        _ = shutdown.changed() => return None,
+                        _ = tokio::time::sleep(STREAM_POLL_INTERVAL) => {}
+                    }
+                    let page_store = store.clone();
+                    let page_workspace = workspace_id.clone();
+                    let page_runtime = runtime_id.clone();
+                    let page = tokio::task::spawn_blocking(move || {
+                        use storage_core::EventStore;
+                        page_store.read_workspace_event_page(
+                            &page_workspace,
+                            &page_runtime,
+                            sequence,
+                            500,
+                        )
+                    })
+                    .await;
+                    let Ok(Ok(page)) = page else {
+                        return None;
+                    };
+                    if page.head_sequence <= sequence && !page.cursor_is_ahead && !page.has_gap {
+                        continue;
+                    }
+
+                    #[cfg(test)]
+                    {
+                        let gate = task_stream_test_gate.lock().await.take();
+                        if let Some(gate) = gate {
+                            gate.pause().await;
+                        }
+                    }
+
+                    let snapshot_store = store.clone();
+                    let snapshot_principal = principal_id.clone();
+                    let snapshot_runtime = runtime_id.clone();
+                    let snapshot_workspace = workspace_id.clone();
+                    let snapshot_task = task_id.clone();
+                    let refreshed = tokio::task::spawn_blocking(move || {
+                        read_task_stream_snapshot(
+                            &snapshot_store,
+                            &snapshot_principal,
+                            &snapshot_runtime,
+                            &snapshot_workspace,
+                            &snapshot_task,
+                        )
+                    })
+                    .await;
+                    let Ok(Ok((snapshot, next_sequence))) = refreshed else {
+                        return None;
+                    };
+                    #[cfg(test)]
+                    {
+                        let gate = task_stream_snapshot_test_gate.lock().await.take();
+                        if let Some(gate) = gate {
+                            gate.pause().await;
+                        }
+                    }
+                    // Retention may change after the first replay read and before the
+                    // authorized projection snapshot is read. Confirm the range again
+                    // before advancing the response cursor so a newly missing event
+                    // forces a replacement snapshot instead of a silent skip.
+                    let confirmation_store = store.clone();
+                    let confirmation_workspace = workspace_id.clone();
+                    let confirmation_runtime = runtime_id.clone();
+                    let confirmed = tokio::task::spawn_blocking(move || {
+                        use storage_core::EventStore;
+                        confirmation_store.read_workspace_event_page(
+                            &confirmation_workspace,
+                            &confirmation_runtime,
+                            sequence,
+                            500,
+                        )
+                    })
+                    .await;
+                    let Ok(Ok(confirmed_page)) = confirmed else {
+                        return None;
+                    };
+                    if next_sequence < page.head_sequence
+                        || next_sequence < confirmed_page.head_sequence
+                    {
+                        // Never advance the cursor past the source frontier represented by
+                        // this snapshot. Leave the old cursor in place and retry after the
+                        // next poll interval.
+                        continue;
+                    }
+                    let resync_reason = (page.cursor_is_ahead
+                        || page.has_gap
+                        || confirmed_page.cursor_is_ahead
+                        || confirmed_page.has_gap)
+                        .then_some("replay_history_gap");
+                    let frames = match serialize_task_projection(
+                        snapshot,
+                        &workspace_id,
+                        &runtime_id,
+                        &task_id,
+                        next_sequence,
+                        resync_reason,
+                    ) {
+                        Ok(frames) => frames,
+                        Err(_) => return None,
+                    };
+                    sequence = next_sequence;
+                    initial = frames.into_iter();
+                    let frame = initial.next()?;
+                    return Some((
+                        Ok(Bytes::from(frame)),
+                        (
+                            permit,
+                            shutdown,
+                            store,
+                            principal_id,
+                            runtime_id,
+                            workspace_id,
+                            task_id,
+                            sequence,
+                            initial,
+                        ),
+                    ));
+                }
+            }
+        },
+    );
+    let mut response = Response::new(Body::from_stream(output));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/vnd.litecowork.operator-stream+json"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+fn encode_stream_cursor(cursor: &StreamCursor) -> Result<String, Response> {
+    let bytes = serde_json::to_vec(cursor).map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Stream cursor is unavailable",
+        )
+    })?;
+    let encoded = URL_SAFE_NO_PAD.encode(bytes);
+    if encoded.len() > 2048 {
+        return Err(presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "Stream cursor is unavailable",
+        ));
+    }
+    Ok(encoded)
+}
+
+fn decode_stream_cursor(encoded: &str) -> Result<StreamCursor, ()> {
+    if encoded.is_empty() || encoded.len() > 2048 {
+        return Err(());
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| ())?;
+    serde_json::from_slice(&bytes).map_err(|_| ())
+}
+
+fn serialize_stream_frame(frame: &impl Serialize) -> Result<Vec<u8>, Response> {
+    let bytes = serde_json::to_vec(frame).map_err(|_| {
+        presentation_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Stream frame could not be created",
+        )
+    })?;
+    if bytes.is_empty() || bytes.len() > operator_ipc::MAX_STREAM_FRAME_BYTES {
+        return Err(presentation_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "LIMIT_EXCEEDED",
+            "Stream projection exceeds the frame limit",
+        ));
+    }
+    Ok(bytes)
 }
 
 #[derive(Deserialize)]
@@ -70,6 +2617,7 @@ async fn get_conversation_presentation(
         conversation_presentation_response(
             &state.store,
             &state.principal_id,
+            &state.runtime_id,
             &workspace_id,
             &conversation_id,
             query.cursor.as_deref(),
@@ -89,13 +2637,21 @@ async fn get_conversation_presentation(
 fn conversation_presentation_response(
     store: &storage_sqlite::SqliteWorkspaceStore,
     principal_id: &str,
+    origin_runtime_id: &str,
     workspace_id: &str,
     conversation_id: &str,
     cursor: Option<&str>,
     limit: usize,
 ) -> Result<Response, Response> {
     let snapshot = SqliteRichPresentationStore::new(store.clone())
-        .read_conversation_presentation(principal_id, workspace_id, conversation_id, cursor, limit)
+        .read_conversation_presentation(
+            principal_id,
+            workspace_id,
+            conversation_id,
+            origin_runtime_id,
+            cursor,
+            limit,
+        )
         .map_err(|error| match error {
             StoreError::NotFound => presentation_error(
                 StatusCode::NOT_FOUND,
@@ -344,6 +2900,136 @@ struct PresentationSourceRef {
     revision: Option<String>,
 }
 
+fn task_presentation_view(
+    snapshot: TaskPresentationReadModel,
+    workspace_id: String,
+) -> Result<(TaskPresentationSnapshot, u64), Response> {
+    if snapshot.steps_overflow {
+        return Err(presentation_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "INVALID_ARGUMENT",
+            "Task has too many current Steps for one presentation snapshot",
+        ));
+    }
+    if snapshot.artifacts_overflow {
+        return Err(presentation_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "INVALID_ARGUMENT",
+            "Task has too many Artifacts for one presentation snapshot",
+        ));
+    }
+    let origin_sequence = snapshot.origin_sequence;
+    let task = snapshot.task;
+    let task_id = task.task.task_id.clone();
+    let mut items = Vec::with_capacity(1 + snapshot.steps.len() + snapshot.artifacts.len());
+    items.push(PresentationItem {
+        item_key: format!("task:{task_id}"),
+        kind: "TASK_CARD",
+        payload_version: 1,
+        source_refs: vec![PresentationSourceRef {
+            kind: "TASK",
+            id: task_id.clone(),
+            revision: Some(task.task.version.to_string()),
+        }],
+        occurred_at: Some(task.task.updated_at.clone()),
+        order_key: format!("0:{task_id}"),
+        status: task_presentation_status(&task.task.status),
+        label: Some(presentation_label(
+            &task.current_spec_revision.objective,
+            512,
+        )),
+        payload: json!({
+            "task_id": task_id,
+            "objective": task.current_spec_revision.objective,
+            "status": task.task.status,
+        }),
+        freshness: "CURRENT",
+    });
+
+    for step in snapshot.steps {
+        items.push(PresentationItem {
+            item_key: format!("step:{}", step.step_id),
+            kind: "ACTIVITY",
+            payload_version: 1,
+            source_refs: vec![PresentationSourceRef {
+                kind: "STEP",
+                id: step.step_id.clone(),
+                revision: Some(step.version.to_string()),
+            }],
+            occurred_at: Some(step.updated_at.clone()),
+            order_key: format!("1:{}:{}", step.plan_revision, step.step_id),
+            status: step_presentation_status(&step.status),
+            label: Some(presentation_label(&step.title, 512)),
+            payload: json!({
+                "summary": step.title,
+                "detail": format!("Step status: {}", step.status),
+            }),
+            freshness: "CURRENT",
+        });
+    }
+
+    for source in snapshot.artifacts {
+        let artifact = source.artifact;
+        let version = source.version;
+        if version.version > 9_007_199_254_740_991 {
+            return Err(presentation_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INTEGRITY_FAILURE",
+                "Task presentation contains an unsupported Artifact version",
+            ));
+        }
+        let source_refs = vec![
+            PresentationSourceRef {
+                kind: "ARTIFACT_VERSION",
+                id: artifact.artifact_id.clone(),
+                revision: Some(version.version.to_string()),
+            },
+            PresentationSourceRef {
+                kind: "RESOURCE_REVISION",
+                id: version.resource_revision_id.clone(),
+                revision: None,
+            },
+        ];
+        items.push(PresentationItem {
+            item_key: format!("artifact:{}:{}", artifact.artifact_id, version.version),
+            kind: "ARTIFACT",
+            payload_version: 1,
+            source_refs,
+            occurred_at: Some(version.created_at.clone()),
+            order_key: format!("2:{}:{}", version.created_at, artifact.artifact_id),
+            status: "UNKNOWN",
+            label: Some(presentation_label(&artifact.display_name, 512)),
+            payload: json!({
+                "artifact_id": artifact.artifact_id,
+                "version": version.version,
+                "display_name": artifact.display_name,
+                "artifact_kind": artifact.kind,
+            }),
+            freshness: "CURRENT",
+        });
+    }
+
+    let computed_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|_| {
+            presentation_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Task presentation is unavailable",
+            )
+        })?;
+    Ok((
+        TaskPresentationSnapshot {
+            workspace_id,
+            task_id,
+            computed_at,
+            freshness: "CURRENT",
+            items,
+        },
+        origin_sequence,
+    ))
+}
+
 async fn get_task_presentation(
     State(state): State<ApiState>,
     Path(task_id): Path<String>,
@@ -362,7 +3048,7 @@ async fn get_task_presentation(
         ensure_workspace_owner(&state, &workspace_id)?;
         let Some(snapshot) = state
             .store
-            .get_task_presentation(&workspace_id, &task_id)
+            .get_task_presentation(&workspace_id, &task_id, &state.runtime_id)
             .map_err(|_| {
                 presentation_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -377,128 +3063,7 @@ async fn get_task_presentation(
                 "Task presentation is unavailable",
             ));
         };
-        if snapshot.steps_overflow {
-            return Err(presentation_error(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "INVALID_ARGUMENT",
-                "Task has too many current Steps for one presentation snapshot",
-            ));
-        }
-        if snapshot.artifacts_overflow {
-            return Err(presentation_error(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "INVALID_ARGUMENT",
-                "Task has too many Artifacts for one presentation snapshot",
-            ));
-        }
-
-        let task = snapshot.task;
-        let mut items = Vec::with_capacity(1 + snapshot.steps.len() + snapshot.artifacts.len());
-        let task_status = task_presentation_status(&task.task.status);
-        items.push(PresentationItem {
-            item_key: format!("task:{}", task.task.task_id),
-            kind: "TASK_CARD",
-            payload_version: 1,
-            source_refs: vec![PresentationSourceRef {
-                kind: "TASK",
-                id: task.task.task_id.clone(),
-                revision: Some(task.task.version.to_string()),
-            }],
-            occurred_at: Some(task.task.updated_at.clone()),
-            order_key: format!("0:{}", task.task.task_id),
-            status: task_status,
-            label: Some(presentation_label(
-                &task.current_spec_revision.objective,
-                512,
-            )),
-            payload: json!({
-                "task_id": task.task.task_id,
-                "objective": task.current_spec_revision.objective,
-                "status": task.task.status,
-            }),
-            freshness: "CURRENT",
-        });
-
-        for step in snapshot.steps {
-            let status = step_presentation_status(&step.status);
-            items.push(PresentationItem {
-                item_key: format!("step:{}", step.step_id),
-                kind: "ACTIVITY",
-                payload_version: 1,
-                source_refs: vec![PresentationSourceRef {
-                    kind: "STEP",
-                    id: step.step_id.clone(),
-                    revision: Some(step.version.to_string()),
-                }],
-                occurred_at: Some(step.updated_at.clone()),
-                order_key: format!("1:{}:{}", step.plan_revision, step.step_id),
-                status,
-                label: Some(presentation_label(&step.title, 512)),
-                payload: json!({
-                    "summary": step.title,
-                    "detail": format!("Step status: {}", step.status),
-                }),
-                freshness: "CURRENT",
-            });
-        }
-
-        for source in snapshot.artifacts {
-            let artifact = source.artifact;
-            let version = source.version;
-            if version.version > 9_007_199_254_740_991 {
-                return Err(presentation_error(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "INTEGRITY_FAILURE",
-                    "Task presentation contains an unsupported Artifact version",
-                ));
-            }
-            let mut source_refs = vec![PresentationSourceRef {
-                kind: "ARTIFACT_VERSION",
-                id: artifact.artifact_id.clone(),
-                revision: Some(version.version.to_string()),
-            }];
-            source_refs.push(PresentationSourceRef {
-                kind: "RESOURCE_REVISION",
-                id: version.resource_revision_id.clone(),
-                revision: None,
-            });
-            items.push(PresentationItem {
-                item_key: format!("artifact:{}:{}", artifact.artifact_id, version.version),
-                kind: "ARTIFACT",
-                payload_version: 1,
-                source_refs,
-                occurred_at: Some(version.created_at.clone()),
-                order_key: format!("2:{}:{}", version.created_at, artifact.artifact_id),
-                status: "UNKNOWN",
-                label: Some(presentation_label(&artifact.display_name, 512)),
-                payload: json!({
-                    "artifact_id": artifact.artifact_id,
-                    "version": version.version,
-                    "display_name": artifact.display_name,
-                    "artifact_kind": artifact.kind,
-                }),
-                freshness: "CURRENT",
-            });
-        }
-
-        let computed_at = time::OffsetDateTime::now_utc()
-            .format(&time::format_description::well_known::Rfc3339)
-            .map_err(|_| {
-                presentation_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "INTERNAL",
-                    "Task presentation is unavailable",
-                )
-            })?;
-        Ok::<_, Response>(TaskPresentationSnapshot {
-            workspace_id,
-            task_id,
-            computed_at,
-            // CURRENT means these persisted source heads were read from one SQLite
-            // snapshot. It says nothing about worker liveness, execution or verification.
-            freshness: "CURRENT",
-            items,
-        })
+        task_presentation_view(snapshot, workspace_id).map(|(projection, _)| projection)
     })
     .await
     .map_err(|_| {
@@ -538,7 +3103,7 @@ async fn get_task_progress(
         ensure_workspace_owner(&state, &workspace_id)?;
         let Some(snapshot) = state
             .store
-            .get_task_presentation(&workspace_id, &task_id)
+            .get_task_presentation(&workspace_id, &task_id, &state.runtime_id)
             .map_err(|_| {
                 presentation_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -560,7 +3125,7 @@ async fn get_task_progress(
                 "Task progress source set exceeds the bounded projection limit",
             ));
         }
-        Ok::<_, Response>(project_task_progress(snapshot)?)
+        project_task_progress(snapshot)
     })
     .await
     .map_err(|_| {
@@ -633,19 +3198,18 @@ fn project_task_progress(
         let mut last_activity_at: Option<&str> = None;
         for attempt in active {
             attempt_ids.push(attempt.attempt_id.clone());
-            if let Some(label) = attempt.worker_label.as_deref() {
-                if !worker_labels.contains(&label.to_owned()) {
-                    worker_labels.push(label.to_owned());
-                }
+            if let Some(label) = attempt.worker_label.as_deref()
+                && !worker_labels.contains(&label.to_owned())
+            {
+                worker_labels.push(label.to_owned());
             }
             if let Some(event_at) = attempt
                 .last_event
                 .as_ref()
                 .map(|event| event.recorded_at.as_str())
+                && last_activity_at.is_none_or(|current| event_at > current)
             {
-                if last_activity_at.map_or(true, |current| event_at > current) {
-                    last_activity_at = Some(event_at);
-                }
+                last_activity_at = Some(event_at);
             }
         }
         active_workstreams.push(TaskWorkstreamProjection {
@@ -757,8 +3321,12 @@ fn presentation_error(status: StatusCode, code: &'static str, message: &'static 
 #[cfg(test)]
 mod tests {
     use super::{
-        is_nonterminal_attempt_status, step_presentation_status, task_presentation_status,
+        ConversationBatchStreamCursor, decode_batch_stream_cursor, encode_batch_stream_cursor,
+        is_nonterminal_attempt_status, serialize_conversation_batch_pages,
+        serialize_conversation_resync_frames, step_presentation_status, task_presentation_status,
     };
+    use serde_json::json;
+    use storage_core::rich_presentation::ConversationPresentationSnapshot;
 
     #[test]
     fn task_status_projection_is_total_and_truthful() {
@@ -788,6 +3356,151 @@ mod tests {
         assert!(!is_nonterminal_attempt_status("CANCELLED"));
         assert!(!is_nonterminal_attempt_status("FUTURE_STATUS"));
     }
+
+    #[test]
+    fn twenty_maximum_escaped_message_frontiers_fit_the_stream_cursor_bound() {
+        let cursor = ConversationBatchStreamCursor {
+            version: 1,
+            workspace_id: "\"".repeat(200),
+            origin_runtime_id: "\"".repeat(200),
+            filter_digest: "a".repeat(64),
+            projection_version: 1,
+            origin_sequence: u64::MAX,
+            message_frontiers: vec![Some("\"".repeat(200)); 20],
+            projection_revisions: vec![u64::MAX; 20],
+            snapshot_complete: true,
+        };
+        let encoded = encode_batch_stream_cursor(&cursor)
+            .expect("maximum valid multi-Conversation cursor remains bounded");
+        assert!(encoded.len() <= super::MAX_BATCH_STREAM_CURSOR_BYTES);
+        assert_eq!(decode_batch_stream_cursor(&encoded), Ok(cursor));
+    }
+
+    #[test]
+    fn batch_replay_sends_changed_turn_state_and_skips_unchanged_conversations() {
+        let snapshots = vec![
+            ConversationPresentationSnapshot {
+                workspace_id: "workspace-1".to_owned(),
+                conversation_id: "conversation-1".to_owned(),
+                projection_revision: 2,
+                stream_cursor: "conversation:1:2".to_owned(),
+                origin_sequence: "7".to_owned(),
+                stream_message_frontier: None,
+                items: Vec::new(),
+                next_cursor: None,
+                active_turn: Some(json!({"turn_id": "turn-1", "status": "RUNNING"})),
+            },
+            ConversationPresentationSnapshot {
+                workspace_id: "workspace-1".to_owned(),
+                conversation_id: "conversation-2".to_owned(),
+                projection_revision: 1,
+                stream_cursor: "conversation:2:1".to_owned(),
+                origin_sequence: "7".to_owned(),
+                stream_message_frontier: None,
+                items: Vec::new(),
+                next_cursor: None,
+                active_turn: None,
+            },
+        ];
+        let filter_digest = "a".repeat(64);
+        let result = serialize_conversation_batch_pages(
+            &snapshots,
+            "workspace-1",
+            "runtime-1",
+            &filter_digest,
+            6,
+            &[None, None],
+            &[1, 1],
+        )
+        .expect("batch replay serializes bounded snapshots");
+        assert_eq!(result.frames.len(), 2);
+        let first: serde_json::Value =
+            serde_json::from_slice(&result.frames[0]).expect("changed turn snapshot JSON");
+        assert_eq!(first["payload"]["conversation_id"], "conversation-1");
+        assert_eq!(first["payload"]["active_turn"]["turn_id"], "turn-1");
+        let first_cursor =
+            decode_batch_stream_cursor(first["cursor"].as_str().expect("snapshot frame cursor"))
+                .expect("live batch snapshot cursor is resumable");
+        assert!(first_cursor.snapshot_complete);
+        let checkpoint: serde_json::Value =
+            serde_json::from_slice(&result.frames[1]).expect("final checkpoint JSON");
+        assert_eq!(checkpoint["payload"]["conversation_id"], "conversation-2");
+
+        let unchanged = serialize_conversation_batch_pages(
+            &snapshots,
+            "workspace-1",
+            "runtime-1",
+            &filter_digest,
+            6,
+            &[None, None],
+            &[2, 1],
+        )
+        .expect("unchanged replay serializes its final checkpoint");
+        assert_eq!(unchanged.frames.len(), 1);
+        let checkpoint: serde_json::Value =
+            serde_json::from_slice(&unchanged.frames[0]).expect("checkpoint JSON");
+        assert_eq!(checkpoint["payload"]["conversation_id"], "conversation-2");
+    }
+
+    #[test]
+    fn batch_resync_cursor_stays_at_delivered_message_pages_and_requests_catch_up() {
+        let snapshots = vec![
+            ConversationPresentationSnapshot {
+                workspace_id: "workspace-1".to_owned(),
+                conversation_id: "conversation-1".to_owned(),
+                projection_revision: 2,
+                stream_cursor: "conversation:1:2".to_owned(),
+                origin_sequence: "7".to_owned(),
+                stream_message_frontier: Some("message-2".to_owned()),
+                items: vec![json!({"message":{"message_id":"message-1"}})],
+                next_cursor: Some("message-1".to_owned()),
+                active_turn: None,
+            },
+            ConversationPresentationSnapshot {
+                workspace_id: "workspace-1".to_owned(),
+                conversation_id: "conversation-2".to_owned(),
+                projection_revision: 1,
+                stream_cursor: "conversation:2:1".to_owned(),
+                origin_sequence: "7".to_owned(),
+                stream_message_frontier: Some("message-b".to_owned()),
+                items: vec![json!({"message":{"message_id":"message-b"}})],
+                next_cursor: None,
+                active_turn: None,
+            },
+        ];
+
+        let result = serialize_conversation_resync_frames(
+            &snapshots,
+            "workspace-1",
+            "runtime-1",
+            &"a".repeat(64),
+        )
+        .expect("bounded replacement snapshots serialize");
+
+        assert!(result.has_more);
+        assert_eq!(
+            result.message_frontiers,
+            vec![Some("message-1".to_owned()), Some("message-b".to_owned())]
+        );
+        let first: serde_json::Value =
+            serde_json::from_slice(&result.frames[1]).expect("first snapshot frame is JSON");
+        let first_cursor =
+            decode_batch_stream_cursor(first["cursor"].as_str().expect("first cursor is present"))
+                .expect("first replacement cursor decodes");
+        assert!(!first_cursor.snapshot_complete);
+        assert_eq!(
+            first_cursor.message_frontiers[0].as_deref(),
+            Some("message-1")
+        );
+
+        let last: serde_json::Value =
+            serde_json::from_slice(&result.frames[2]).expect("last snapshot frame is JSON");
+        let last_cursor =
+            decode_batch_stream_cursor(last["cursor"].as_str().expect("last cursor is present"))
+                .expect("last replacement cursor decodes");
+        assert!(last_cursor.snapshot_complete);
+        assert_eq!(last_cursor.message_frontiers, result.message_frontiers);
+    }
 }
 
 #[cfg(test)]
@@ -801,7 +3514,7 @@ mod rich_presentation_read_tests {
     use rusqlite::Connection;
     use serde_json::{Value, json};
     use std::{fs, sync::Arc, time::Duration};
-    use storage_core::{BlobPurpose, EventDraft, StoreError, rich_presentation::*};
+    use storage_core::{BlobPurpose, EventDraft, EventStore, StoreError, rich_presentation::*};
     use storage_sqlite::{
         FileBlobStore, SqliteConfig, SqliteRichPresentationStore, SqliteWorkspaceStore,
         WorkspaceBlobKey, WorkspaceBlobKeyProvider,
@@ -811,6 +3524,7 @@ mod rich_presentation_read_tests {
     const OWNER: &str = "rich-read-owner";
     const WORKSPACE: &str = "rich-read-workspace";
     const OTHER_WORKSPACE: &str = "rich-read-other-workspace";
+    const RUNTIME: &str = "runtime-rich-read";
     const PRESENTATION: &str = "rich-read-presentation";
     const NOW: &str = "2026-10-09T12:00:00.000000000Z";
 
@@ -1059,6 +3773,7 @@ mod rich_presentation_read_tests {
         let response = conversation_presentation_response(
             &fixture.store,
             OWNER,
+            RUNTIME,
             WORKSPACE,
             "rich-read-conversation",
             None,
@@ -1077,6 +3792,17 @@ mod rich_presentation_read_tests {
         let body = body_json(response).await;
         assert_eq!(body["workspace_id"], WORKSPACE);
         assert_eq!(body["conversation_id"], "rich-read-conversation");
+        assert_eq!(
+            body["origin_sequence"],
+            fixture
+                .store
+                .read_workspace_events(WORKSPACE)
+                .unwrap()
+                .last()
+                .unwrap()
+                .origin_sequence
+                .to_string()
+        );
         assert_eq!(
             body["items"][0]["message"]["message_id"],
             "rich-read-message"
@@ -1099,6 +3825,7 @@ mod rich_presentation_read_tests {
         let denied = conversation_presentation_response(
             &fixture.store,
             "foreign-principal",
+            RUNTIME,
             WORKSPACE,
             "rich-read-conversation",
             None,
@@ -1110,6 +3837,7 @@ mod rich_presentation_read_tests {
         let invalid_cursor = conversation_presentation_response(
             &fixture.store,
             OWNER,
+            RUNTIME,
             WORKSPACE,
             "rich-read-conversation",
             Some("unknown-message"),

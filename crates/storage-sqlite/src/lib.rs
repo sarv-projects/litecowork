@@ -4,6 +4,7 @@ mod blob;
 mod conversations;
 mod coworkers;
 mod delegation_profiles;
+mod dependencies;
 mod effect_evidence;
 mod environments;
 mod invocations;
@@ -17,6 +18,7 @@ mod resource_index;
 mod routines;
 mod runtime_identity;
 mod suggestions;
+mod workspace_archive;
 
 pub use blob::{FileBlobStore, WorkspaceBlobKey, WorkspaceBlobKeyProvider};
 pub use conversations::SqliteConversationStore;
@@ -33,23 +35,25 @@ pub use goals::{GoalEventContext, GoalPage, SqliteGoalStore};
 pub use invocations::SqliteCapabilityInvocationStore;
 pub use os_key_provider::OsWorkspaceBlobKeyProvider;
 pub use os_principal_binding::{
-    OsRuntimePrincipalBindingProvider, RuntimeOsPlatform, RuntimeOsPrincipalBinding,
-    RuntimeOsPrincipalIdentity, UnixPrincipalId,
+    OsRuntimePrincipalBindingProvider, RuntimeOsPlatform, RuntimeOsPrincipal,
+    RuntimeOsPrincipalBinding, RuntimeOsPrincipalIdentity, UnixPrincipalId,
 };
 pub use routines::{RoutineEventContext, RoutinePage, RoutineRevisionPage, SqliteRoutineStore};
 pub use runtime_identity::OsRuntimeDeviceIdentityProvider;
 pub use suggestions::{SqliteSuggestionStore, SuggestionEventContext, SuggestionReadError};
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
 };
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
@@ -60,33 +64,40 @@ use storage_core::{
     ActivateTaskPlanningSession, AgentBindingCreateRequest, AgentBindingEnableRequest,
     AgentBindingRecord, AgentCatalogStore, AgentEndpointRecord, AgentEndpointViewRecord,
     AgentHostInstanceRecord, AgentHostStore, AgentProfileRecord, AgentProfileViewRecord,
-    AgentSessionRecord, AgentSessionStore, AggregateStateRef, AutomationOccurrenceReadStore,
-    AutomationOccurrenceRecord, AutomationTaskAdmission, BlobPurpose, BlobRef, BlobStore,
-    CommittedAgentBinding, CommittedAgentSession, CommittedContextDocumentStatus,
-    CommittedPlanningActivation, CommittedResource, CommittedResourceUpload,
-    CommittedTaskSpecRevision, CommittedWorkspace, CommittedWorkspaceInstructionRevision,
-    CommittedWorkspaceRoot, CommittedWorkspaceRootRevalidation, CommittedWorkspaceRootStatus,
-    ContextDocumentOwnerStatus, ContextDocumentStatusCommand, ContextDocumentStatusStore,
-    DeviceIdentityRecord, DomainEvent, EventDraft, EventStore, IdempotentWorkspaceStore,
-    LocalAgentEndpointBindingRecord, LocalRuntimeWorkspaceBindingLookup,
-    LocalRuntimeWorkspaceEnrollmentRequest, MarkStartingAgentSessionLost, PinnedResourceRef,
-    PlanAcceptance, PlanAcceptanceCommit, PlanRevisionRecord, PreparedResourceTextIndex,
-    ReplicationPolicy, ResourceLocationRecord, ResourceRecord, ResourceRevisionRecord,
-    ResourceSearchRecord, ResourceStore, ResourceSummary, ResourceTextIndexRebuildOutcome,
+    AgentSessionRecord, AgentSessionStore, AggregateStateRef, AutomationTaskAdmission, BlobPurpose,
+    BlobRef, BlobStore, CommittedAgentBinding, CommittedAgentSession,
+    CommittedContextDocumentStatus, CommittedPlanningActivation, CommittedResource,
+    CommittedResourceUpload, CommittedTaskSpecRevision, CommittedWorkspace,
+    CommittedWorkspaceInstructionRevision, CommittedWorkspaceRoot,
+    CommittedWorkspaceRootRevalidation, CommittedWorkspaceRootStatus, ContextDocumentOwnerStatus,
+    ContextDocumentStatusCommand, ContextDocumentStatusStore, DeviceIdentityRecord, DomainEvent,
+    EventDraft, EventStore, IdempotentWorkspaceStore, LocalAgentEndpointBindingRecord,
+    LocalRuntimeLifecycleSnapshot, LocalRuntimeWorkspaceBindingLookup,
+    LocalRuntimeWorkspaceEnrollmentRequest, MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE,
+    MarkStartingAgentSessionLost, PinnedResourceRef, PlanAcceptance, PlanAcceptanceCommit,
+    PlanRevisionRecord, PreparedResourceTextIndex, ReplicationPolicy,
+    ResourceDependencyPageRequest, ResourceDependencyViewRecord, ResourceLocationRecord,
+    ResourceLocationViewRecord, ResourceRecord, ResourceRevisionRecord, ResourceSearchRecord,
+    ResourceStore, ResourceSummary, ResourceTextIndexRebuildOutcome,
     ResourceTextIndexRebuildRequest, ResourceTextIndexRebuildResult, ResourceTextIndexSkipReason,
     ResourceTextSearchRecord, ResourceUploadChunkInput, ResourceUploadSessionRecord,
-    ResourceUploadState, ResourceUploadStore, RuntimeIncarnationLocalObservationRecord,
+    ResourceUploadState, ResourceUploadStore, RuntimeCapabilityHostPageRequest,
+    RuntimeCapabilityHostRecord, RuntimeCapabilityRef, RuntimeIncarnationLocalObservationRecord,
     RuntimeIncarnationRecord, RuntimeIncarnationStateUpdate, RuntimeLifecycleStore,
-    RuntimeOfferRecord, RuntimeRecord, RuntimeWorkspaceBindingRecord, RuntimeWorkspaceBindingStore,
-    StateStore, StepRecord, StoreError, StoredResourceContent, TaskAggregateSnapshot,
-    TaskCreateCommit, TaskPlanningSessionStart, TaskRecord, TaskSpecRevisionCommit,
-    TaskSpecRevisionRecord, TaskStore, TaskSummaryRecord, TaskView, Workspace,
-    WorkspaceCreateRequest, WorkspaceInstructionRevisionRecord, WorkspaceRootCreateCommit,
-    WorkspaceRootRecord, WorkspaceRootResumeCommit, WorkspaceRootRevalidationBindings,
+    RuntimeOfferPageRequest, RuntimeOfferRecord, RuntimeRecord, RuntimeWorkspaceBindingRecord,
+    RuntimeWorkspaceBindingStore, StateStore, StepRecord, StoreError, StoredResourceContent,
+    TaskAggregateSnapshot, TaskCreateCommit, TaskPlanningSessionStart, TaskRecord,
+    TaskSpecRevisionCommit, TaskSpecRevisionRecord, TaskStore, TaskSummaryRecord, TaskView,
+    Workspace, WorkspaceCreateRequest, WorkspaceEventReplayEntry, WorkspaceEventReplayPage,
+    WorkspaceInstructionRevisionRecord, WorkspaceRootCreateCommit, WorkspaceRootRecord,
+    WorkspaceRootResumeCommit, WorkspaceRootRevalidationBindings,
     WorkspaceRootRevalidationCandidate, WorkspaceRootRevalidationCommit,
     WorkspaceRootRevalidationFailure, WorkspaceRootStatusAction, WorkspaceRootStatusCommit,
     WorkspaceRootStore,
 };
+
+const MAX_WORKSPACE_ROOT_PATH_BYTES: usize = 32 * 1024;
+const MAX_WORKSPACE_ROOT_ENCODED_LOCATOR_BYTES: usize = 44 * 1024;
 use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 
 const SQLITE_V1_DDL: &str = include_str!("../../../docs/schemas/sqlite-v1.sql");
@@ -141,9 +152,99 @@ const V12_MIGRATION_NAME: &str = "rich_presentation_optional_v12";
 const V13_MIGRATION_NAME: &str = "environment_identity_immutable_v13";
 const V14_MIGRATION_NAME: &str = "trust_policy_decision_audit_v14";
 const V15_MIGRATION_NAME: &str = "invocation_transition_guards_v15";
+#[cfg(test)]
 const MIGRATION_NAME: &str = V1_MIGRATION_NAME; // version-one compatibility for schema baseline assertions
 const STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.aggregate-state+json";
 const TASK_STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.task+json";
+
+type ResourceUploadChunkRow = (u64, BlobRef, String, u64);
+type ResourceUploadSessionRow = (
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+);
+type FileIdentityBindingRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    String,
+);
+type RevalidationFileIdentityBindingRow = (
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+);
+type WorkspaceRootRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+);
+type ResourceLocationRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    Option<String>,
+    String,
+);
+type ResourceRecordRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+    i64,
+);
+type RuntimeWorkspaceBindingRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    i64,
+);
+type RuntimeRegistrationRow = (Option<String>, String, String, String, Option<String>);
 
 #[derive(Clone, Debug)]
 pub struct SqliteConfig {
@@ -214,8 +315,11 @@ struct Inner {
     sender: SyncSender<Command>,
     join: Mutex<Option<JoinHandle<()>>>,
     blobs: Arc<dyn BlobStore>,
+    blob_operation_locks: Mutex<BlobOperationLockRegistry>,
     writer_metrics: SqliteWriterMetrics,
 }
+
+type BlobOperationLockRegistry = HashMap<(String, String), Weak<Mutex<()>>>;
 
 enum Command {
     ListResourceIndexKeyVersions {
@@ -239,6 +343,8 @@ enum Command {
         source_digest: String,
         reply: mpsc::Sender<Result<bool, StoreError>>,
     },
+    #[allow(dead_code)]
+    // Reserved writer command; there is no producer in the local V1 surface yet.
     ReplaceResourceTextIndex {
         workspace_id: String,
         resource_id: String,
@@ -336,6 +442,14 @@ enum Command {
         limit: usize,
         reply: mpsc::Sender<Result<Vec<storage_core::ArtifactRecord>, StoreError>>,
     },
+    ListDependencyInvalidations {
+        request: storage_core::DependencyInvalidationPageRequest,
+        reply: mpsc::Sender<Result<Option<Vec<storage_core::InvalidationRecord>>, StoreError>>,
+    },
+    ListResourceDependents {
+        request: ResourceDependencyPageRequest,
+        reply: mpsc::Sender<Result<Option<Vec<ResourceDependencyViewRecord>>, StoreError>>,
+    },
     GetArtifactVersion {
         workspace_id: String,
         artifact_id: String,
@@ -345,6 +459,7 @@ enum Command {
     GetTaskPresentation {
         workspace_id: String,
         task_id: String,
+        origin_runtime_id: String,
         reply: mpsc::Sender<Result<Option<storage_core::TaskPresentationReadModel>, StoreError>>,
     },
     EnrollLocalRuntimeInWorkspace {
@@ -356,6 +471,10 @@ enum Command {
     GetCurrentLocalRuntimeWorkspaceBinding {
         lookup: LocalRuntimeWorkspaceBindingLookup,
         reply: mpsc::Sender<Result<Option<RuntimeWorkspaceBindingRecord>, StoreError>>,
+    },
+    ListWorkspaceRuntimeBindings {
+        request: storage_core::RuntimeWorkspaceBindingPageRequest,
+        reply: mpsc::Sender<Result<Vec<RuntimeWorkspaceBindingRecord>, StoreError>>,
     },
     PutAgentProfile {
         profile: AgentProfileRecord,
@@ -376,6 +495,14 @@ enum Command {
     PublishRuntimeOffer {
         offer: RuntimeOfferRecord,
         reply: mpsc::Sender<Result<(), StoreError>>,
+    },
+    ListRuntimeOffers {
+        request: RuntimeOfferPageRequest,
+        reply: mpsc::Sender<Result<Vec<RuntimeOfferRecord>, StoreError>>,
+    },
+    ListRuntimeCapabilityHosts {
+        request: RuntimeCapabilityHostPageRequest,
+        reply: mpsc::Sender<Result<Vec<RuntimeCapabilityHostRecord>, StoreError>>,
     },
     ListAgentProfiles {
         owner_principal_id: String,
@@ -420,6 +547,11 @@ enum Command {
         update: RuntimeIncarnationStateUpdate,
         reply: mpsc::Sender<Result<RuntimeIncarnationRecord, StoreError>>,
     },
+    ReadLocalRuntimeLifecycleSnapshot {
+        runtime_id: String,
+        expected_incarnation_id: String,
+        reply: mpsc::Sender<Result<Option<LocalRuntimeLifecycleSnapshot>, StoreError>>,
+    },
     ListWorkspaces {
         reply: mpsc::Sender<Result<Vec<Workspace>, StoreError>>,
     },
@@ -443,6 +575,11 @@ enum Command {
         workspace_id: String,
         resource_id: String,
         reply: mpsc::Sender<Result<Option<storage_core::ResourceDetailRecord>, StoreError>>,
+    },
+    ListResourceLocations {
+        workspace_id: String,
+        resource_id: String,
+        reply: mpsc::Sender<Result<Option<Vec<ResourceLocationViewRecord>>, StoreError>>,
     },
     ListResourceRevisionsPage {
         workspace_id: String,
@@ -605,6 +742,13 @@ enum Command {
         workspace_id: String,
         reply: mpsc::Sender<Result<Vec<DomainEvent>, StoreError>>,
     },
+    ReadWorkspaceEventPage {
+        workspace_id: String,
+        origin_runtime_id: String,
+        after_sequence: u64,
+        limit: usize,
+        reply: mpsc::Sender<Result<WorkspaceEventReplayPage, StoreError>>,
+    },
     SqliteVersion {
         reply: mpsc::Sender<Result<String, StoreError>>,
     },
@@ -728,7 +872,7 @@ enum Command {
     GetResourceUploadChunks {
         workspace_id: String,
         upload_id: String,
-        reply: mpsc::Sender<Result<Vec<(u64, BlobRef, String, u64)>, StoreError>>,
+        reply: mpsc::Sender<Result<Vec<ResourceUploadChunkRow>, StoreError>>,
     },
     PutResourceUploadChunk {
         chunk: ResourceUploadChunkInput,
@@ -783,6 +927,7 @@ struct RequestDeduplication {
     principal_id: String,
     request_id: String,
     request_digest: String,
+    archive_request_payload: Option<Value>,
     created_at: String,
 }
 
@@ -823,6 +968,7 @@ impl SqliteWorkspaceStore {
                     sender,
                     join: Mutex::new(Some(join)),
                     blobs,
+                    blob_operation_locks: Mutex::new(HashMap::new()),
                     writer_metrics: SqliteWriterMetrics::default(),
                 }),
             }),
@@ -969,6 +1115,23 @@ impl SqliteWorkspaceStore {
         )
     }
 
+    pub fn list_resource_locations(
+        &self,
+        workspace_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<Vec<ResourceLocationViewRecord>>, StoreError> {
+        validate_nonempty(&[workspace_id, resource_id])?;
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::ListResourceLocations {
+                workspace_id: workspace_id.to_owned(),
+                resource_id: resource_id.to_owned(),
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
     pub fn list_resource_revisions_page(
         &self,
         workspace_id: &str,
@@ -997,6 +1160,7 @@ impl SqliteWorkspaceStore {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn search_resources_page(
         &self,
         workspace_id: &str,
@@ -1094,6 +1258,8 @@ impl SqliteWorkspaceStore {
                     principal_id: request.principal_id,
                     request_id: request.request_id,
                     request_digest: digest(&payload),
+                    archive_request_payload: (workspace.status == "ARCHIVED")
+                        .then_some(request.request_payload),
                     created_at: event.recorded_at.clone(),
                 })
             })
@@ -1342,7 +1508,6 @@ impl IdempotentWorkspaceStore for SqliteWorkspaceStore {
             || workspace.workspace_id != event.workspace_id
             || workspace.workspace_id != event.entity_id
             || event.entity_type != "Workspace"
-            || workspace.version != expected_version.saturating_add(1)
             || event.entity_revision != workspace.version
             || workspace.current_instruction_revision != Some(instruction_revision.revision)
         {
@@ -1400,6 +1565,34 @@ impl EventStore for SqliteWorkspaceStore {
             reply_receiver,
         )
     }
+
+    fn read_workspace_event_page(
+        &self,
+        workspace_id: &str,
+        origin_runtime_id: &str,
+        after_sequence: u64,
+        limit: usize,
+    ) -> Result<WorkspaceEventReplayPage, StoreError> {
+        if workspace_id.trim().is_empty()
+            || origin_runtime_id.trim().is_empty()
+            || !(1..=MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE).contains(&limit)
+        {
+            return Err(StoreError::Invalid(
+                "workspace event replay page request is invalid".to_owned(),
+            ));
+        }
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::ReadWorkspaceEventPage {
+                workspace_id: workspace_id.to_owned(),
+                origin_runtime_id: origin_runtime_id.to_owned(),
+                after_sequence,
+                limit,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
 }
 
 impl RuntimeLifecycleStore for SqliteWorkspaceStore {
@@ -1431,6 +1624,28 @@ impl RuntimeLifecycleStore for SqliteWorkspaceStore {
         self.execute_command(
             Command::TransitionLocalRuntimeIncarnation {
                 update,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn read_local_lifecycle_snapshot(
+        &self,
+        runtime_id: &str,
+        expected_incarnation_id: &str,
+    ) -> Result<Option<LocalRuntimeLifecycleSnapshot>, StoreError> {
+        validate_nonempty(&[runtime_id, expected_incarnation_id])?;
+        if runtime_id.len() > 256 || expected_incarnation_id.len() > 256 {
+            return Err(StoreError::Invalid(
+                "Runtime lifecycle lookup identifier is too long".to_owned(),
+            ));
+        }
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::ReadLocalRuntimeLifecycleSnapshot {
+                runtime_id: runtime_id.to_owned(),
+                expected_incarnation_id: expected_incarnation_id.to_owned(),
                 reply: reply_sender,
             },
             reply_receiver,
@@ -1488,6 +1703,21 @@ impl RuntimeWorkspaceBindingStore for SqliteWorkspaceStore {
         self.execute_command(
             Command::GetCurrentLocalRuntimeWorkspaceBinding {
                 lookup,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn list_workspace_runtime_bindings(
+        &self,
+        request: storage_core::RuntimeWorkspaceBindingPageRequest,
+    ) -> Result<Vec<RuntimeWorkspaceBindingRecord>, StoreError> {
+        validate_runtime_workspace_binding_page_request(&request)?;
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::ListWorkspaceRuntimeBindings {
+                request,
                 reply: reply_sender,
             },
             reply_receiver,
@@ -1556,6 +1786,86 @@ impl AgentCatalogStore for SqliteWorkspaceStore {
         self.execute_command(
             Command::PublishRuntimeOffer {
                 offer,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn list_runtime_offers(
+        &self,
+        request: RuntimeOfferPageRequest,
+    ) -> Result<Vec<RuntimeOfferRecord>, StoreError> {
+        validate_nonempty(&[
+            &request.owner_principal_id,
+            &request.workspace_id,
+            &request.runtime_id,
+        ])?;
+        validate_timestamp(&request.now)?;
+        if !(1..=201).contains(&request.limit) {
+            return Err(StoreError::Invalid(
+                "runtime offer page limit is outside 1..=201".to_owned(),
+            ));
+        }
+        if let Some(incarnation_id) = request.expected_incarnation_id.as_deref() {
+            validate_nonempty(&[incarnation_id])?;
+        }
+        if let Some(position) = &request.after {
+            validate_nonempty(&[
+                &position.runtime_incarnation_id,
+                &position.offer_kind,
+                &position.offer_ref,
+            ])?;
+            if request.expected_incarnation_id.as_deref()
+                != Some(position.runtime_incarnation_id.as_str())
+            {
+                return Err(StoreError::Invalid(
+                    "runtime offer cursor incarnation is inconsistent".to_owned(),
+                ));
+            }
+        }
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::ListRuntimeOffers {
+                request,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn list_runtime_capability_hosts(
+        &self,
+        request: RuntimeCapabilityHostPageRequest,
+    ) -> Result<Vec<RuntimeCapabilityHostRecord>, StoreError> {
+        validate_nonempty(&[
+            &request.owner_principal_id,
+            &request.workspace_id,
+            &request.runtime_id,
+        ])?;
+        validate_timestamp(&request.now)?;
+        if !(1..=201).contains(&request.limit) {
+            return Err(StoreError::Invalid(
+                "Runtime capability host page limit is outside 1..=201".to_owned(),
+            ));
+        }
+        if let Some(incarnation_id) = request.expected_incarnation_id.as_deref() {
+            validate_nonempty(&[incarnation_id])?;
+        }
+        if let Some(position) = &request.after {
+            validate_nonempty(&[&position.runtime_incarnation_id, &position.host_instance_id])?;
+            if request.expected_incarnation_id.as_deref()
+                != Some(position.runtime_incarnation_id.as_str())
+            {
+                return Err(StoreError::Invalid(
+                    "Runtime capability host cursor incarnation is inconsistent".to_owned(),
+                ));
+            }
+        }
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::ListRuntimeCapabilityHosts {
+                request,
                 reply: reply_sender,
             },
             reply_receiver,
@@ -2760,6 +3070,14 @@ impl ResourceStore for SqliteWorkspaceStore {
         SqliteWorkspaceStore::get_resource_detail(self, workspace_id, resource_id)
     }
 
+    fn list_resource_locations(
+        &self,
+        workspace_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<Vec<ResourceLocationViewRecord>>, StoreError> {
+        SqliteWorkspaceStore::list_resource_locations(self, workspace_id, resource_id)
+    }
+
     fn list_resource_revisions_page(
         &self,
         workspace_id: &str,
@@ -3403,7 +3721,7 @@ impl WorkspaceRootStore for SqliteWorkspaceStore {
                 &commit.resource.workspace_id,
                 BlobPurpose::AggregateState,
                 &bytes,
-                "application/vnd.litecow.resource+json",
+                "application/vnd.litecowork.resource+json",
             )?;
             if self.inner.blobs.get(
                 &commit.resource.workspace_id,
@@ -3689,6 +4007,10 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
         )?;
         let mut removed = 0;
         for (workspace_id, blob) in candidates {
+            let operation_lock = self.blob_operation_lock(&workspace_id, &blob.digest);
+            let _operation_guard = operation_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.inner
                 .blobs
                 .remove(&workspace_id, BlobPurpose::ResourceUploadChunk, &blob)?;
@@ -3764,6 +4086,10 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
             ));
         }
         validate_upload_chunk(&session, &chunk)?;
+        let operation_lock = self.blob_operation_lock(&session.workspace_id, &chunk.sha256);
+        let _operation_guard = operation_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (reply_sender, reply_receiver) = mpsc::channel();
         self.execute_command(
             Command::ReserveResourceUploadBlob {
@@ -4109,7 +4435,7 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
             },
             reply_receiver,
         )?;
-        let mut committed_session = self
+        let committed_session = self
             .get(&committed.resource.workspace_id, upload_id)?
             .ok_or(StoreError::NotFound)?;
         self.finish_upload_result(committed_session, committed)
@@ -4117,6 +4443,22 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
 }
 
 impl SqliteWorkspaceStore {
+    fn blob_operation_lock(&self, workspace_id: &str, digest: &str) -> Arc<Mutex<()>> {
+        let key = (workspace_id.to_owned(), digest.to_owned());
+        let mut locks = self
+            .inner
+            .blob_operation_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+
     fn get_for_chunk(
         &self,
         upload_id: &str,
@@ -4378,8 +4720,8 @@ fn create_resource_upload_transaction(
     {
         return Err(StoreError::Invalid("upload identity is invalid".to_owned()));
     }
-    if let Some(resource_id) = session.resource_id.as_deref() {
-        if request
+    if let Some(resource_id) = session.resource_id.as_deref()
+        && (request
             .request_payload
             .get("operation")
             .and_then(Value::as_str)
@@ -4415,12 +4757,11 @@ fn create_resource_upload_transaction(
                 .request_payload
                 .get("expected_digest")
                 .and_then(Value::as_str)
-                != session.expected_digest.as_deref()
-        {
-            return Err(StoreError::Invalid(
-                "revision upload idempotency payload does not match its pinned session".to_owned(),
-            ));
-        }
+                != session.expected_digest.as_deref())
+    {
+        return Err(StoreError::Invalid(
+            "revision upload idempotency payload does not match its pinned session".to_owned(),
+        ));
     }
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -4614,7 +4955,7 @@ fn load_resource_upload(
     workspace_id: &str,
     upload_id: &str,
 ) -> Result<Option<ResourceUploadSessionRecord>, StoreError> {
-    let row: Option<(String, String, String, i64, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<i64>, String, String, String, String, i64, i64, i64)> = connection.query_row(
+    let row: Option<ResourceUploadSessionRow> = connection.query_row(
         "SELECT workspace_id, display_name, media_type, expected_size_bytes, expected_digest, context_document_json, folder_import_json, resource_id, committed_resource_id, expected_resource_version, parent_revision_ids_json, state, expires_at, created_at, version, progress_version, chunk_size_bytes FROM resource_upload_sessions WHERE upload_id = ?1 AND (?2 = '' OR workspace_id = ?2)",
         params![upload_id, workspace_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?, row.get(16)?)),
@@ -4947,6 +5288,7 @@ fn fail_resource_upload_transaction(
     Ok(failed)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reserve_resource_upload_blob_transaction(
     connection: &mut Connection,
     workspace_id: &str,
@@ -5563,7 +5905,8 @@ fn validate_workspace_root_commit(commit: &WorkspaceRootCreateCommit) -> Result<
         || location.observed_revision_id.is_some()
         || location.observed_digest.is_some()
         || binding.private_locator.trim().is_empty()
-        || binding.private_locator.len() > 32_768
+        || binding.private_locator.len()
+            > MAX_WORKSPACE_ROOT_ENCODED_LOCATOR_BYTES + "unix-path-b64:".len()
         || binding.private_locator.contains('\0')
         || binding.location_id != location.location_id
         || binding.locator_ref_id != location.locator_ref_id
@@ -5925,6 +6268,73 @@ fn create_workspace_root_transaction(
         return Err(StoreError::NotFound);
     }
 
+    // The keyed directory identity is stable across aliases and survives a new request
+    // ID. Check it while holding this transaction so concurrent folder selections cannot
+    // create duplicate live roots for the same Workspace directory. The receipt lookup
+    // above intentionally remains first so a lost-response retry still returns its exact
+    // original committed response.
+    let duplicate_live_root: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1
+               FROM workspace_roots existing_root
+               JOIN resources existing_resource
+                 ON existing_resource.workspace_id = existing_root.workspace_id
+                AND existing_resource.resource_id = existing_root.resource_id
+               WHERE existing_root.workspace_id = ?1
+                 AND existing_root.status <> 'REVOKED'
+                 AND existing_resource.kind = 'FOLDER'
+                 AND existing_resource.identity_digest = ?2
+             )",
+            params![commit.root.workspace_id, commit.resource.identity_digest],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if duplicate_live_root {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+
+    let proposed_path = workspace_root_private_path(&commit.private_binding.private_locator)?;
+    let existing_locators = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT existing_binding.private_locator
+                 FROM workspace_roots existing_root
+                 JOIN resources existing_resource
+                   ON existing_resource.workspace_id = existing_root.workspace_id
+                  AND existing_resource.resource_id = existing_root.resource_id
+                 LEFT JOIN resource_location_bindings existing_binding
+                   ON existing_binding.location_id = existing_root.location_id
+                 WHERE existing_root.workspace_id = ?1
+                   AND existing_root.status <> 'REVOKED'
+                   AND existing_resource.kind = 'FOLDER'
+                 ORDER BY existing_root.workspace_root_id",
+            )
+            .map_err(map_database_error)?;
+        let rows = statement
+            .query_map([&commit.root.workspace_id], |row| {
+                row.get::<_, Option<String>>(0)
+            })
+            .map_err(map_database_error)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(map_database_error)?
+    };
+    for locator in existing_locators {
+        let locator = locator.ok_or_else(|| {
+            StoreError::Integrity("WorkspaceRoot private locator is unavailable".to_owned())
+        })?;
+        let existing_path = workspace_root_private_path(&locator)?;
+        if proposed_path.starts_with(&existing_path) || existing_path.starts_with(&proposed_path) {
+            return Err(StoreError::Conflict {
+                expected: None,
+                actual: None,
+            });
+        }
+    }
+
     let resource = &commit.resource;
     let location = &commit.location;
     let binding = &commit.private_binding;
@@ -5993,6 +6403,71 @@ fn create_workspace_root_transaction(
     Ok(result)
 }
 
+fn workspace_root_private_path(locator: &str) -> Result<PathBuf, StoreError> {
+    let encoded = locator.strip_prefix("unix-path-b64:").ok_or_else(|| {
+        StoreError::Integrity("WorkspaceRoot private locator is unsupported".to_owned())
+    })?;
+    if encoded.is_empty() || encoded.len() > MAX_WORKSPACE_ROOT_ENCODED_LOCATOR_BYTES {
+        return Err(StoreError::Integrity(
+            "WorkspaceRoot private locator exceeds its size limit".to_owned(),
+        ));
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| {
+        StoreError::Integrity("WorkspaceRoot private locator is malformed".to_owned())
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+
+        if bytes.contains(&0) {
+            return Err(StoreError::Integrity(
+                "WorkspaceRoot private locator is malformed".to_owned(),
+            ));
+        }
+        if bytes.len() > MAX_WORKSPACE_ROOT_PATH_BYTES {
+            return Err(StoreError::Integrity(
+                "WorkspaceRoot private locator exceeds its size limit".to_owned(),
+            ));
+        }
+        let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+        if !path.is_absolute()
+            || !path
+                .components()
+                .any(|component| matches!(component, std::path::Component::Normal(_)))
+            || path.components().any(|component| {
+                !matches!(
+                    component,
+                    std::path::Component::RootDir | std::path::Component::Normal(_)
+                )
+            })
+        {
+            return Err(StoreError::Integrity(
+                "WorkspaceRoot private locator is malformed".to_owned(),
+            ));
+        }
+        let mut normalized_path = PathBuf::from("/");
+        for component in path.components() {
+            if let std::path::Component::Normal(name) = component {
+                normalized_path.push(name);
+            }
+        }
+        use std::os::unix::ffi::OsStrExt;
+        if normalized_path.as_os_str().as_bytes() != path.as_os_str().as_bytes() {
+            return Err(StoreError::Integrity(
+                "WorkspaceRoot private locator is not canonical".to_owned(),
+            ));
+        }
+        Ok(path)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = bytes;
+        Err(StoreError::Integrity(
+            "WorkspaceRoot private locator is unsupported".to_owned(),
+        ))
+    }
+}
+
 fn validate_workspace_root_status_commit(
     commit: &WorkspaceRootStatusCommit,
 ) -> Result<(), StoreError> {
@@ -6016,23 +6491,19 @@ fn validate_workspace_root_status_commit(
             Some("ACTIVE" | "PAUSED" | "UNAVAILABLE")
         ),
     };
-    let runtime_fields_valid = match commit.action {
-        _ => {
-            commit
-                .request
-                .request_payload
-                .as_object()
-                .is_some_and(|payload| payload.len() == 4)
-                && commit.runtime_id.is_none()
-                && commit.runtime_incarnation_id.is_none()
-                && commit.request.request_payload.get("runtime_id").is_none()
-                && commit
-                    .request
-                    .request_payload
-                    .get("runtime_incarnation_id")
-                    .is_none()
-        }
-    };
+    let runtime_fields_valid = commit
+        .request
+        .request_payload
+        .as_object()
+        .is_some_and(|payload| payload.len() == 4)
+        && commit.runtime_id.is_none()
+        && commit.runtime_incarnation_id.is_none()
+        && commit.request.request_payload.get("runtime_id").is_none()
+        && commit
+            .request
+            .request_payload
+            .get("runtime_incarnation_id")
+            .is_none();
     let expected_reason = commit.action.reason_code();
     let expected_operation = commit.action.operation();
     if commit.request.principal_id.trim().is_empty()
@@ -6402,7 +6873,7 @@ fn resume_workspace_root_transaction(
     if current_location.runtime_id != commit.runtime_id
         || current_location.locator_ref_id != commit.location.locator_ref_id
         || current_location.provider_ref != commit.location.provider_ref
-        || current_location.availability == "REVOKED"
+        || current_location.availability != "AVAILABLE"
         || current_location.writable
         || current_location.observed_revision_id.is_some()
         || current_location.observed_digest.is_some()
@@ -6447,7 +6918,7 @@ fn resume_workspace_root_transaction(
         params![commit.location.location_id, commit.runtime_id, commit.runtime_incarnation_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
     ).optional().map_err(map_database_error)?;
-    let current_identity: Option<(String, String, Option<String>, String, Option<String>, String, String)> = tx.query_row(
+    let current_identity: Option<FileIdentityBindingRow> = tx.query_row(
         "SELECT runtime_id, raw_filesystem_instance_id, raw_volume_id, raw_file_id, raw_generation, platform_kind, observed_at
          FROM file_identity_bindings WHERE location_id = ?1 AND runtime_id = ?2 AND runtime_incarnation_id = ?3",
         params![commit.location.location_id, commit.runtime_id, commit.runtime_incarnation_id],
@@ -6871,8 +7342,8 @@ fn validate_workspace_root_revalidation_commit(
         ));
     }
     let root_status_changed = commit.root_event.is_some();
-    if let Some(event) = &commit.root_event {
-        if event.workspace_id != commit.root.workspace_id
+    if let Some(event) = &commit.root_event
+        && (event.workspace_id != commit.root.workspace_id
             || event.entity_type != "WorkspaceRoot"
             || event.entity_id != commit.root.workspace_root_id
             || event.entity_revision != commit.root.version
@@ -6895,12 +7366,11 @@ fn validate_workspace_root_revalidation_commit(
                 .get("aggregate_version")
                 .and_then(Value::as_u64)
                 != Some(commit.root.version)
-            || contains_private_path_field(&event.payload)
-        {
-            return Err(StoreError::Invalid(
-                "WorkspaceRoot revalidation event is inconsistent".to_owned(),
-            ));
-        }
+            || contains_private_path_field(&event.payload))
+    {
+        return Err(StoreError::Invalid(
+            "WorkspaceRoot revalidation event is inconsistent".to_owned(),
+        ));
     }
     let location_event = commit.location_event.as_ref().ok_or_else(|| {
         StoreError::Invalid("WorkspaceRoot revalidation location event is missing".to_owned())
@@ -7130,13 +7600,13 @@ fn commit_workspace_root_revalidation_transaction(
             actual: Some(current_root.version),
         });
     }
-    if let Some(event) = &commit.root_event {
-        if event.payload.get("from").and_then(Value::as_str) != Some(current_root.status.as_str()) {
-            return Err(StoreError::Conflict {
-                expected: Some(commit.expected_root_version),
-                actual: Some(current_root.version),
-            });
-        }
+    if let Some(event) = &commit.root_event
+        && event.payload.get("from").and_then(Value::as_str) != Some(current_root.status.as_str())
+    {
+        return Err(StoreError::Conflict {
+            expected: Some(commit.expected_root_version),
+            actual: Some(current_root.version),
+        });
     }
     if let Some(locator) = &commit.locator_binding {
         let current_locator: Option<(String, String, String, String, String)> = tx.query_row(
@@ -7145,7 +7615,7 @@ fn commit_workspace_root_revalidation_transaction(
             params![commit.location.location_id, commit.runtime_incarnation_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         ).optional().map_err(map_database_error)?;
-        let current_identity: Option<(String, String, Option<String>, String, Option<String>, String, String)> = tx.query_row(
+        let current_identity: Option<FileIdentityBindingRow> = tx.query_row(
             "SELECT runtime_id, raw_filesystem_instance_id, raw_volume_id, raw_file_id, raw_generation, platform_kind, observed_at
              FROM file_identity_bindings WHERE location_id = ?1 AND runtime_incarnation_id = ?2",
             params![commit.location.location_id, commit.runtime_incarnation_id],
@@ -7269,20 +7739,7 @@ fn load_workspace_root(
     workspace_id: &str,
     workspace_root_id: &str,
 ) -> Result<Option<WorkspaceRootRecord>, StoreError> {
-    let row: Option<(
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        String,
-        i64,
-    )> = connection
+    let row: Option<WorkspaceRootRow> = connection
         .query_row(
             "SELECT workspace_root_id, workspace_id, resource_id, location_id, display_name,
                 watch_policy, replication_policy, status, added_by_json, created_at,
@@ -7559,7 +8016,7 @@ fn load_resource_record(
     workspace_id: &str,
     resource_id: &str,
 ) -> Result<Option<ResourceRecord>, StoreError> {
-    let row: Option<(String, String, Option<String>, String, Option<String>, String, String, String, String, i64)> = connection.query_row(
+    let row: Option<ResourceRecordRow> = connection.query_row(
         "SELECT kind, provider_identity_json, identity_digest, display_name, current_revision_id,
                 sensitivity, provenance_json, created_at, updated_at, version
          FROM resources WHERE workspace_id = ?1 AND resource_id = ?2",
@@ -7628,6 +8085,85 @@ fn load_resource_detail_record(
         resource,
         context_document,
     }))
+}
+
+fn list_resource_location_views(
+    connection: &Connection,
+    workspace_id: &str,
+    resource_id: &str,
+) -> Result<Option<Vec<ResourceLocationViewRecord>>, StoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT resource.current_revision_id, revision.content_digest,
+                    location.location_id, location.resource_id, location.runtime_id,
+                    location.environment_id, location.connection_id, location.availability,
+                    location.writable, location.observed_revision_id, location.observed_digest,
+                    location.observed_at, location.last_checked_at
+             FROM resources resource
+             LEFT JOIN resource_revisions revision
+               ON revision.resource_id = resource.resource_id
+              AND revision.resource_revision_id = resource.current_revision_id
+             LEFT JOIN resource_locations location
+               ON location.resource_id = resource.resource_id
+             WHERE resource.workspace_id = ?1 AND resource.resource_id = ?2
+             ORDER BY location.location_id ASC",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map(params![workspace_id, resource_id], |row| {
+            let current_revision_id: Option<String> = row.get(0)?;
+            let current_digest: Option<String> = row.get(1)?;
+            let Some(location_id) = row.get::<_, Option<String>>(2)? else {
+                return Ok(None);
+            };
+            let availability: String = row.get(7)?;
+            let observed_revision_id: Option<String> = row.get(9)?;
+            let observed_digest: Option<String> = row.get(10)?;
+            let freshness = match availability.as_str() {
+                "OFFLINE" | "REVOKED" | "UNAVAILABLE" => "UNAVAILABLE",
+                "PLACEHOLDER" | "UNKNOWN" => "UNKNOWN",
+                "AVAILABLE"
+                    if current_revision_id.is_some()
+                        && observed_revision_id == current_revision_id
+                        && observed_digest.is_some()
+                        && observed_digest == current_digest =>
+                {
+                    "CURRENT"
+                }
+                "AVAILABLE"
+                    if current_revision_id.is_none()
+                        || current_digest.is_none()
+                        || observed_revision_id.is_none()
+                        || observed_digest.is_none() =>
+                {
+                    "UNKNOWN"
+                }
+                "AVAILABLE" => "STALE",
+                _ => "UNKNOWN",
+            }
+            .to_owned();
+            Ok(Some(ResourceLocationViewRecord {
+                location_id,
+                resource_id: row.get(3)?,
+                runtime_id: row.get(4)?,
+                environment_id: row.get(5)?,
+                connection_id: row.get(6)?,
+                availability,
+                writable: row.get::<_, i64>(8)? != 0,
+                observed_revision_id,
+                observed_digest,
+                observed_at: row.get(11)?,
+                last_checked_at: row.get(12)?,
+                freshness,
+            }))
+        })
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(rows.into_iter().flatten().collect()))
 }
 
 fn list_resource_revision_records_page(
@@ -7746,17 +8282,7 @@ fn load_resource_location_record(
     resource_id: &str,
     location_id: &str,
 ) -> Result<Option<ResourceLocationRecord>, StoreError> {
-    let row: Option<(
-        String,
-        String,
-        String,
-        String,
-        String,
-        i64,
-        Option<String>,
-        Option<String>,
-        String,
-    )> = connection
+    let row: Option<ResourceLocationRow> = connection
         .query_row(
             "SELECT resource_id, runtime_id, locator_ref_id, provider_ref, availability, writable,
                 observed_revision_id, observed_digest, observed_at
@@ -7847,7 +8373,7 @@ fn load_workspace_root_revalidation_bindings(
         params![location.location_id, runtime_id, source_incarnation],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
     ).optional().map_err(map_database_error)?;
-    let identity: Option<(String, Option<String>, String, Option<String>, String, String, String, String)> = connection.query_row(
+    let identity: Option<RevalidationFileIdentityBindingRow> = connection.query_row(
         "SELECT runtime_id, raw_volume_id, raw_filesystem_instance_id, raw_generation,
                 raw_file_id, platform_kind, runtime_incarnation_id, observed_at
          FROM file_identity_bindings WHERE location_id = ?1 AND runtime_id = ?2 AND runtime_incarnation_id = ?3",
@@ -7929,6 +8455,7 @@ fn load_workspace_root_revalidation_bindings(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_resource_transaction(
     connection: &mut Connection,
     request: WorkspaceCreateRequest,
@@ -7984,12 +8511,12 @@ fn create_resource_transaction(
         )
         .optional()
         .map_err(map_database_error)?;
-    if let Some((state, committed_resource_id)) = upload_state {
-        if state == "COMMITTED" {
-            return Err(StoreError::LegacyUploadCommitNeedsReview {
-                committed_resource_id,
-            });
-        }
+    if let Some((state, committed_resource_id)) = upload_state
+        && state == "COMMITTED"
+    {
+        return Err(StoreError::LegacyUploadCommitNeedsReview {
+            committed_resource_id,
+        });
     }
     let workspace_status: Option<String> = tx
         .query_row(
@@ -8420,7 +8947,7 @@ fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreErr
         || task.routine_id.is_some() != task.routine_revision.is_some()
         || task.automation_id.is_some() != task.automation_occurrence_id.is_some()
         || task.version != 1
-        || task.blocking_conditions.len() != 0
+        || !task.blocking_conditions.is_empty()
         || task.priority != "NORMAL"
         || task.created_at != task.updated_at
         || event.recorded_at != task.created_at
@@ -8482,12 +9009,12 @@ fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreErr
             "Task create payload is inconsistent with the initial Task contract".to_owned(),
         ));
     }
-    if let Some(expected_version) = commit.expected_coworker_version {
-        if task.origin_coworker_id.is_none() || expected_version == 0 {
-            return Err(StoreError::Invalid(
-                "expected Coworker version requires a selected Coworker".to_owned(),
-            ));
-        }
+    if let Some(expected_version) = commit.expected_coworker_version
+        && (task.origin_coworker_id.is_none() || expected_version == 0)
+    {
+        return Err(StoreError::Invalid(
+            "expected Coworker version requires a selected Coworker".to_owned(),
+        ));
     }
     if task.origin_coworker_id.is_some() != task.origin_coworker_revision.is_some() {
         return Err(StoreError::Invalid(
@@ -9309,6 +9836,7 @@ fn create_agent_host_instance_transaction(
     transaction.commit().map_err(map_database_error)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn transition_agent_host_instance_transaction(
     connection: &mut Connection,
     runtime_id: &str,
@@ -9636,11 +10164,10 @@ pub(crate) fn create_task_in_transaction(
                 .to_owned(),
         ));
     }
-    routines::validate_task_admission(&tx, &commit)?;
-    automation_admission::validate_task_admission(&tx, &commit)?;
-    begin_automation_occurrence_claim(&tx, &commit, occurrence_state_refs.as_ref())?;
-    validate_task_resource_inputs(&tx, &task.workspace_id, &spec.input_refs)?;
-    let state_ref = state_ref;
+    routines::validate_task_admission(tx, &commit)?;
+    automation_admission::validate_task_admission(tx, &commit)?;
+    begin_automation_occurrence_claim(tx, &commit, occurrence_state_refs.as_ref())?;
+    validate_task_resource_inputs(tx, &task.workspace_id, &spec.input_refs)?;
     if state_ref.entity_revision != task.version || state_ref.record_schema_version != 1 {
         return Err(StoreError::Integrity(
             "Task aggregate-state reference is inconsistent".to_owned(),
@@ -9757,7 +10284,7 @@ pub(crate) fn create_task_in_transaction(
             event.recorded_at, event.payload_digest,
         ],
     ).map_err(map_database_error)?;
-    settle_automation_occurrence_materialization(&tx, &commit, occurrence_state_refs.as_ref())?;
+    settle_automation_occurrence_materialization(tx, &commit, occurrence_state_refs.as_ref())?;
     let view = TaskView {
         task: commit.task,
         current_spec_revision: commit.initial_spec_revision,
@@ -9977,6 +10504,7 @@ fn build_occurrence_state(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn insert_automation_occurrence_event(
     tx: &Transaction<'_>,
     commit: &TaskCreateCommit,
@@ -11472,7 +12000,6 @@ fn create_workspace_instruction_revision_transaction(
         || state_ref.entity_revision != workspace.version
         || state_ref.record_schema_version != 1
         || workspace.current_instruction_revision != Some(instruction.revision)
-        || expected_version.checked_add(1) != Some(workspace.version)
     {
         return Err(StoreError::Invalid(
             "Workspace instruction event and aggregate are inconsistent".to_owned(),
@@ -11494,6 +12021,11 @@ fn create_workspace_instruction_revision_transaction(
             expected: Some(expected_version),
             actual: Some(actual_version),
         });
+    }
+    if expected_version.checked_add(1) != Some(workspace.version) {
+        return Err(StoreError::Invalid(
+            "Workspace instruction version transition is inconsistent".to_owned(),
+        ));
     }
     if status != "ACTIVE" {
         return Err(StoreError::Invalid(
@@ -11517,7 +12049,7 @@ fn create_workspace_instruction_revision_transaction(
     parents.sort_unstable();
     parents.dedup();
     if parents.len() != instruction.parent_revisions.len()
-        || parents.first().copied().unwrap_or_default() == 0
+        || parents.contains(&0)
         || current_revision.is_some_and(|current| !parents.contains(&current))
         || (current_revision.is_none() && !parents.is_empty())
     {
@@ -11557,11 +12089,11 @@ fn create_workspace_instruction_revision_transaction(
             "instruction ResourceRef must be pinned to this Workspace".to_owned(),
         ));
     }
-    let (stored_digest, size_bytes, media_type, context_document): (String, i64, String, Option<String>) = tx
+    let (stored_digest, size_bytes, media_type, context_document, current_revision_id): (String, i64, String, Option<String>, Option<String>) = tx
         .query_row(
-            "SELECT revision.content_digest, revision.size_bytes, revision.media_type, resource.context_document_json FROM resources resource JOIN resource_revisions revision ON revision.resource_id = resource.resource_id WHERE resource.workspace_id = ?1 AND resource.resource_id = ?2 AND revision.resource_revision_id = ?3",
+            "SELECT revision.content_digest, revision.size_bytes, revision.media_type, resource.context_document_json, resource.current_revision_id FROM resources resource JOIN resource_revisions revision ON revision.resource_id = resource.resource_id WHERE resource.workspace_id = ?1 AND resource.resource_id = ?2 AND revision.resource_revision_id = ?3",
             params![workspace.workspace_id, resource_id, revision_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .optional()
         .map_err(map_database_error)?
@@ -11578,9 +12110,9 @@ fn create_workspace_instruction_revision_transaction(
             })
             .is_some_and(|status| status == "ACTIVE"),
     };
-    if stored_digest != instruction.content_digest
-        || size_bytes < 0
-        || size_bytes > 64 * 1024
+    if current_revision_id.as_deref() != revision_id
+        || stored_digest != instruction.content_digest
+        || !(0..=64 * 1024).contains(&size_bytes)
         || !media_type.starts_with("text/")
         || !active_context_document
     {
@@ -11676,10 +12208,10 @@ fn atomic_saturating_add(counter: &AtomicU64, value: u64) {
 impl Drop for Inner {
     fn drop(&mut self) {
         let _ = self.sender.send(Command::Shutdown);
-        if let Ok(mut join) = self.join.lock() {
-            if let Some(handle) = join.take() {
-                let _ = handle.join();
-            }
+        if let Ok(mut join) = self.join.lock()
+            && let Some(handle) = join.take()
+        {
+            let _ = handle.join();
         }
     }
 }
@@ -11826,7 +12358,7 @@ fn get_current_local_runtime_workspace_binding(
     connection: &Connection,
     lookup: &LocalRuntimeWorkspaceBindingLookup,
 ) -> Result<Option<RuntimeWorkspaceBindingRecord>, StoreError> {
-    let row: Option<(String, String, String, String, String, String, String, Option<String>, i64)> = connection.query_row(
+    let row: Option<RuntimeWorkspaceBindingRow> = connection.query_row(
         "SELECT b.runtime_workspace_binding_id, b.runtime_id, b.workspace_id, b.enrollment_mode, b.status, b.roles_json, b.created_at, b.activated_at, b.version FROM runtime_workspace_bindings b JOIN workspaces w ON w.workspace_id = b.workspace_id JOIN runtimes r ON r.runtime_id = b.runtime_id JOIN runtime_incarnations i ON i.runtime_id = r.runtime_id AND i.runtime_incarnation_id = r.current_incarnation_id WHERE w.owner_principal_id = ?1 AND w.workspace_id = ?2 AND w.status = 'ACTIVE' AND b.workspace_id = ?2 AND b.runtime_id = ?3 AND b.status = 'ACTIVE' AND b.revoked_at IS NULL AND r.current_incarnation_id = ?4 AND i.runtime_incarnation_id = ?4 AND ((r.availability = 'ONLINE' AND i.recovery_state = 'READY') OR (r.availability = 'DEGRADED' AND i.recovery_state = 'DEGRADED')) AND r.trust_zone = 'PERSONAL_DEVICE' AND EXISTS (SELECT 1 FROM json_each(r.roles_json) rr WHERE rr.value = 'OPERATOR_ENDPOINT') AND EXISTS (SELECT 1 FROM json_each(b.roles_json) br WHERE br.value = 'EXECUTOR') AND EXISTS (SELECT 1 FROM json_each(b.roles_json) br WHERE br.value = 'OPERATOR_ENDPOINT')",
         params![lookup.owner_principal_id, lookup.workspace_id, lookup.runtime_id, lookup.runtime_incarnation_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
@@ -11862,6 +12394,108 @@ fn get_current_local_runtime_workspace_binding(
         revoked_at: None,
         version: from_sql_i64(version, "Runtime Workspace binding version")?,
     }))
+}
+
+fn validate_runtime_workspace_binding_page_request(
+    request: &storage_core::RuntimeWorkspaceBindingPageRequest,
+) -> Result<(), StoreError> {
+    validate_nonempty(&[&request.owner_principal_id, &request.workspace_id])?;
+    if request.owner_principal_id.len() > 256
+        || request.workspace_id.len() > 256
+        || request
+            .after_binding_id
+            .as_ref()
+            .is_some_and(|id| id.trim().is_empty() || id.len() > 256)
+        || !(1..=201).contains(&request.limit)
+    {
+        return Err(StoreError::Invalid(
+            "Runtime Workspace binding page query is invalid".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn list_workspace_runtime_bindings_page(
+    connection: &Connection,
+    request: &storage_core::RuntimeWorkspaceBindingPageRequest,
+) -> Result<Vec<RuntimeWorkspaceBindingRecord>, StoreError> {
+    validate_runtime_workspace_binding_page_request(request)?;
+    let limit = i64::try_from(request.limit).map_err(|_| {
+        StoreError::Invalid("Runtime Workspace binding page limit is invalid".to_owned())
+    })?;
+    let mut statement = connection
+        .prepare(
+            "SELECT b.runtime_workspace_binding_id, b.runtime_id, b.workspace_id,
+                    b.enrollment_mode, b.status, b.roles_json, b.created_at,
+                    b.activated_at, b.revoked_at, b.version
+             FROM runtime_workspace_bindings b
+             WHERE b.workspace_id = ?1
+               AND EXISTS (
+                 SELECT 1 FROM workspaces w
+                 WHERE w.workspace_id = b.workspace_id
+                   AND w.owner_principal_id = ?2
+               )
+               AND (?3 IS NULL OR b.runtime_workspace_binding_id COLLATE BINARY > ?3)
+             ORDER BY b.runtime_workspace_binding_id COLLATE BINARY ASC
+             LIMIT ?4",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map(
+            params![
+                request.workspace_id,
+                request.owner_principal_id,
+                request.after_binding_id,
+                limit,
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, i64>(9)?,
+                ))
+            },
+        )
+        .map_err(map_database_error)?;
+    rows.map(|row| {
+        let (
+            runtime_workspace_binding_id,
+            runtime_id,
+            workspace_id,
+            enrollment_mode,
+            status,
+            roles_json,
+            created_at,
+            activated_at,
+            revoked_at,
+            version,
+        ) = row.map_err(map_database_error)?;
+        let roles = serde_json::from_str(&roles_json).map_err(|error| {
+            StoreError::Integrity(format!(
+                "stored Runtime Workspace roles are malformed: {error}"
+            ))
+        })?;
+        Ok(RuntimeWorkspaceBindingRecord {
+            runtime_workspace_binding_id,
+            runtime_id,
+            workspace_id,
+            enrollment_mode,
+            status,
+            roles,
+            created_at,
+            activated_at,
+            revoked_at,
+            version: from_sql_i64(version, "Runtime Workspace binding version")?,
+        })
+    })
+    .collect()
 }
 
 fn enroll_local_runtime_transaction(
@@ -11904,7 +12538,7 @@ fn enroll_local_runtime_transaction(
         });
     }
 
-    let runtime: Option<(Option<String>, String, String, String, Option<String>)> = tx.query_row(
+    let runtime: Option<RuntimeRegistrationRow> = tx.query_row(
         "SELECT r.current_incarnation_id, r.availability, r.trust_zone, r.roles_json, i.recovery_state FROM runtimes r LEFT JOIN runtime_incarnations i ON i.runtime_id = r.runtime_id AND i.runtime_incarnation_id = r.current_incarnation_id WHERE r.runtime_id = ?1",
         [&request.runtime_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
@@ -12528,6 +13162,208 @@ fn publish_runtime_offer_transaction(
         params![offer.runtime_id, offer.runtime_incarnation_id, offer.offer_kind, offer.offer_ref, if offer.compatible { 1_i64 } else { 0_i64 }, offer.readiness, constraints, offer.observed_at, offer.expires_at],
     ).map_err(map_database_error)?;
     transaction.commit().map_err(map_database_error)
+}
+
+fn list_runtime_offers_transaction(
+    connection: &mut Connection,
+    request: RuntimeOfferPageRequest,
+) -> Result<Vec<RuntimeOfferRecord>, StoreError> {
+    let RuntimeOfferPageRequest {
+        owner_principal_id,
+        workspace_id,
+        runtime_id,
+        expected_incarnation_id,
+        now,
+        after,
+        limit,
+    } = request;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .map_err(map_database_error)?;
+    workspace_owner_active(&transaction, &owner_principal_id, &workspace_id)?;
+
+    let authorized_binding: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM runtime_workspace_bindings rwb WHERE rwb.runtime_id = ?1 AND rwb.workspace_id = ?2 AND rwb.status = 'ACTIVE' AND rwb.revoked_at IS NULL AND EXISTS (SELECT 1 FROM json_each(rwb.roles_json) role WHERE role.value = 'EXECUTOR'))",
+            params![runtime_id, workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if !authorized_binding {
+        return Err(StoreError::NotFound);
+    }
+
+    let runtime: Option<(Option<String>, String)> = transaction
+        .query_row(
+            "SELECT current_incarnation_id, availability FROM runtimes WHERE runtime_id = ?1",
+            [&runtime_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((Some(current_incarnation_id), availability)) = runtime else {
+        return Ok(Vec::new());
+    };
+    if expected_incarnation_id
+        .as_deref()
+        .is_some_and(|expected| expected != current_incarnation_id)
+    {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    if !matches!(availability.as_str(), "ONLINE" | "DEGRADED") {
+        return Ok(Vec::new());
+    }
+    let recovery_ready: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM runtime_incarnations WHERE runtime_id = ?1 AND runtime_incarnation_id = ?2 AND recovery_state IN ('READY', 'DEGRADED'))",
+            params![runtime_id, current_incarnation_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if !recovery_ready {
+        return Ok(Vec::new());
+    }
+
+    let (after_kind, after_ref) = after
+        .map(|position| (Some(position.offer_kind), Some(position.offer_ref)))
+        .unwrap_or((None, None));
+    let mut statement = transaction
+        .prepare(
+            "SELECT o.runtime_id, o.runtime_incarnation_id, o.offer_kind, o.offer_ref, o.compatible, o.readiness, o.constraints_json, o.observed_at, o.expires_at FROM runtime_offers o JOIN agent_endpoint_bindings eb ON eb.runtime_id = o.runtime_id AND eb.runtime_incarnation_id = o.runtime_incarnation_id AND eb.endpoint_id = o.offer_ref WHERE o.runtime_id = ?1 AND o.runtime_incarnation_id = ?2 AND o.offer_kind = 'AGENT_ENDPOINT' AND julianday(o.observed_at) <= julianday(?3) AND julianday(o.expires_at) > julianday(?3) AND (eb.expires_at IS NULL OR julianday(eb.expires_at) > julianday(?3)) AND (?4 IS NULL OR o.offer_kind > ?4 OR (o.offer_kind = ?4 AND o.offer_ref > ?5)) ORDER BY o.offer_kind, o.offer_ref LIMIT ?6",
+        )
+        .map_err(map_database_error)?;
+    let offers = statement
+        .query_map(
+            params![
+                runtime_id,
+                current_incarnation_id,
+                now,
+                after_kind,
+                after_ref,
+                limit as i64
+            ],
+            |row| {
+                let constraints_json: String = row.get(6)?;
+                Ok(RuntimeOfferRecord {
+                    runtime_id: row.get(0)?,
+                    runtime_incarnation_id: row.get(1)?,
+                    offer_kind: row.get(2)?,
+                    offer_ref: row.get(3)?,
+                    compatible: row.get::<_, i64>(4)? != 0,
+                    readiness: row.get(5)?,
+                    constraints: serde_json::from_str(&constraints_json)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    observed_at: row.get(7)?,
+                    expires_at: row.get(8)?,
+                })
+            },
+        )
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    drop(statement);
+    transaction.commit().map_err(map_database_error)?;
+    Ok(offers)
+}
+
+fn list_runtime_capability_hosts_transaction(
+    connection: &mut Connection,
+    request: RuntimeCapabilityHostPageRequest,
+) -> Result<Vec<RuntimeCapabilityHostRecord>, StoreError> {
+    let RuntimeCapabilityHostPageRequest {
+        owner_principal_id,
+        workspace_id,
+        runtime_id,
+        expected_incarnation_id,
+        now,
+        after,
+        limit,
+    } = request;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .map_err(map_database_error)?;
+    workspace_owner_active(&transaction, &owner_principal_id, &workspace_id)?;
+
+    let authorized_binding: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM runtime_workspace_bindings rwb WHERE rwb.runtime_id = ?1 AND rwb.workspace_id = ?2 AND rwb.status = 'ACTIVE' AND rwb.revoked_at IS NULL AND EXISTS (SELECT 1 FROM json_each(rwb.roles_json) role WHERE role.value = 'EXECUTOR'))",
+            params![runtime_id, workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if !authorized_binding {
+        return Err(StoreError::NotFound);
+    }
+
+    let runtime: Option<Option<String>> = transaction
+        .query_row(
+            "SELECT current_incarnation_id FROM runtimes WHERE runtime_id = ?1",
+            [&runtime_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some(Some(current_incarnation_id)) = runtime else {
+        return Ok(Vec::new());
+    };
+    if expected_incarnation_id
+        .as_deref()
+        .is_some_and(|expected| expected != current_incarnation_id)
+    {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+
+    let after_host_id = after.map(|position| position.host_instance_id);
+    let mut statement = transaction
+        .prepare(
+            "SELECT h.host_instance_id, h.runtime_id, h.runtime_incarnation_id, h.capability_ref_json, h.hosting_mode, h.sharing_policy, h.state, CASE WHEN julianday(h.observed_at) <= julianday(?4) AND julianday(h.expires_at) > julianday(?4) THEN h.health ELSE 'UNKNOWN' END, (SELECT COUNT(*) FROM capability_activation_host_bindings b JOIN capability_activations a ON a.activation_id = b.activation_id WHERE b.host_instance_id = h.host_instance_id AND a.workspace_id = ?2 AND a.status IN ('STARTING','ACTIVE','STOPPING')), h.observed_at, h.expires_at FROM capability_host_instances h WHERE h.runtime_id = ?1 AND h.runtime_incarnation_id = ?3 AND (?5 IS NULL OR h.host_instance_id COLLATE BINARY > ?5 COLLATE BINARY) ORDER BY h.host_instance_id COLLATE BINARY LIMIT ?6",
+        )
+        .map_err(map_database_error)?;
+    let hosts = statement
+        .query_map(
+            params![
+                runtime_id,
+                workspace_id,
+                current_incarnation_id,
+                now,
+                after_host_id,
+                limit as i64,
+            ],
+            |row| {
+                let capability_ref_json: String = row.get(3)?;
+                let capability_ref: RuntimeCapabilityRef =
+                    serde_json::from_str(&capability_ref_json)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                let active_activation_count: i64 = row.get(8)?;
+                let active_activation_count = u64::try_from(active_activation_count)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok(RuntimeCapabilityHostRecord {
+                    host_instance_id: row.get(0)?,
+                    runtime_id: row.get(1)?,
+                    runtime_incarnation_id: row.get(2)?,
+                    capability_ref,
+                    hosting_mode: row.get(4)?,
+                    sharing_policy: row.get(5)?,
+                    state: row.get(6)?,
+                    health: row.get(7)?,
+                    active_activation_count,
+                    observed_at: row.get(9)?,
+                    expires_at: row.get(10)?,
+                })
+            },
+        )
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    drop(statement);
+    transaction.commit().map_err(map_database_error)?;
+    Ok(hosts)
 }
 
 fn workspace_owner_active(
@@ -13493,6 +14329,118 @@ fn transition_local_runtime_incarnation_transaction(
     })
 }
 
+fn read_local_runtime_lifecycle_snapshot(
+    connection: &Connection,
+    runtime_id: &str,
+    expected_incarnation_id: &str,
+) -> Result<Option<LocalRuntimeLifecycleSnapshot>, StoreError> {
+    let row = connection
+        .query_row(
+            "SELECT r.startup_policy, r.availability, i.runtime_incarnation_id, i.runtime_id, i.process_started_at, i.litecowork_version, i.recovered_from_unclean_shutdown, i.recovery_state, i.ready_at, i.stopped_at, i.version FROM runtimes r JOIN runtime_incarnations i ON i.runtime_id = r.runtime_id AND i.runtime_incarnation_id = r.current_incarnation_id WHERE r.runtime_id = ?1 AND r.current_incarnation_id = ?2 AND i.runtime_incarnation_id = ?2",
+            params![runtime_id, expected_incarnation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, i64>(10)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_database_error)?;
+
+    let Some((
+        startup_policy,
+        availability,
+        runtime_incarnation_id,
+        stored_runtime_id,
+        process_started_at,
+        litecowork_version,
+        recovered_from_unclean_shutdown,
+        recovery_state,
+        ready_at,
+        stopped_at,
+        version,
+    )) = row
+    else {
+        return Ok(None);
+    };
+
+    if stored_runtime_id != runtime_id
+        || runtime_incarnation_id != expected_incarnation_id
+        || !matches!(
+            startup_policy.as_str(),
+            "MANUAL" | "LOGIN_BACKGROUND" | "ALWAYS_ON_SERVICE"
+        )
+        || !matches!(
+            (availability.as_str(), recovery_state.as_str()),
+            ("STARTING", "STARTING")
+                | ("RECOVERING", "RECOVERING")
+                | ("ONLINE", "READY")
+                | ("DEGRADED", "DEGRADED")
+                | ("DRAINING", "DRAINING")
+                | ("DRAINING", "STOPPING")
+                | ("OFFLINE", "STOPPED")
+        )
+        || litecowork_version.trim().is_empty()
+        || !matches!(recovered_from_unclean_shutdown, 0 | 1)
+    {
+        return Err(StoreError::Integrity(
+            "stored Runtime lifecycle state is malformed".to_owned(),
+        ));
+    }
+    validate_timestamp(&process_started_at).map_err(|_| {
+        StoreError::Integrity("stored Runtime process start time is invalid".to_owned())
+    })?;
+    if let Some(ready_at) = ready_at.as_deref() {
+        validate_timestamp(ready_at).map_err(|_| {
+            StoreError::Integrity("stored Runtime ready time is invalid".to_owned())
+        })?;
+    }
+    if let Some(stopped_at) = stopped_at.as_deref() {
+        validate_timestamp(stopped_at)
+            .map_err(|_| StoreError::Integrity("stored Runtime stop time is invalid".to_owned()))?;
+    }
+    if (recovery_state == "STOPPED") != stopped_at.is_some()
+        || (recovery_state == "READY") != ready_at.is_some()
+    {
+        return Err(StoreError::Integrity(
+            "stored Runtime lifecycle timestamps are inconsistent".to_owned(),
+        ));
+    }
+    let version = from_sql_i64(version, "Runtime incarnation version")?;
+    if version == 0 {
+        return Err(StoreError::Integrity(
+            "stored Runtime incarnation version is invalid".to_owned(),
+        ));
+    }
+
+    Ok(Some(LocalRuntimeLifecycleSnapshot {
+        runtime_id: stored_runtime_id,
+        startup_policy,
+        availability,
+        incarnation: RuntimeIncarnationRecord {
+            runtime_incarnation_id,
+            runtime_id: runtime_id.to_owned(),
+            process_started_at,
+            litecowork_version,
+            recovered_from_unclean_shutdown: recovered_from_unclean_shutdown != 0,
+            recovery_state,
+            ready_at,
+            stopped_at,
+            version,
+        },
+    }))
+}
+
 fn writer_loop(
     path: PathBuf,
     config: SqliteConfig,
@@ -13592,6 +14540,18 @@ fn writer_loop(
                             limit,
                         ));
                     }
+                    Command::ListDependencyInvalidations { request, reply } => {
+                        let _ = reply.send(artifacts::list_dependency_invalidations(
+                            &connection,
+                            &request,
+                        ));
+                    }
+                    Command::ListResourceDependents { request, reply } => {
+                        let _ = reply.send(dependencies::list_resource_dependents(
+                            &connection,
+                            &request,
+                        ));
+                    }
                     Command::GetArtifactVersion {
                         workspace_id,
                         artifact_id,
@@ -13608,12 +14568,14 @@ fn writer_loop(
                     Command::GetTaskPresentation {
                         workspace_id,
                         task_id,
+                        origin_runtime_id,
                         reply,
                     } => {
                         let _ = reply.send(artifacts::read_task_presentation(
                             &mut connection,
                             &workspace_id,
                             &task_id,
+                            &origin_runtime_id,
                         ));
                     }
                     Command::EnrollLocalRuntimeInWorkspace {
@@ -13634,6 +14596,10 @@ fn writer_loop(
                             &connection,
                             &lookup,
                         ));
+                    }
+                    Command::ListWorkspaceRuntimeBindings { request, reply } => {
+                        let _ =
+                            reply.send(list_workspace_runtime_bindings_page(&connection, &request));
                     }
                     Command::PutAgentProfile {
                         profile,
@@ -13670,6 +14636,16 @@ fn writer_loop(
                     Command::PublishRuntimeOffer { offer, reply } => {
                         let _ =
                             reply.send(publish_runtime_offer_transaction(&mut connection, offer));
+                    }
+                    Command::ListRuntimeOffers { request, reply } => {
+                        let _ =
+                            reply.send(list_runtime_offers_transaction(&mut connection, request));
+                    }
+                    Command::ListRuntimeCapabilityHosts { request, reply } => {
+                        let _ = reply.send(list_runtime_capability_hosts_transaction(
+                            &mut connection,
+                            request,
+                        ));
                     }
                     Command::ListAgentProfiles {
                         owner_principal_id,
@@ -13762,6 +14738,17 @@ fn writer_loop(
                             update,
                         ));
                     }
+                    Command::ReadLocalRuntimeLifecycleSnapshot {
+                        runtime_id,
+                        expected_incarnation_id,
+                        reply,
+                    } => {
+                        let _ = reply.send(read_local_runtime_lifecycle_snapshot(
+                            &connection,
+                            &runtime_id,
+                            &expected_incarnation_id,
+                        ));
+                    }
                     Command::ListWorkspaces { reply } => {
                         let _ = reply.send(list_workspaces(&connection));
                     }
@@ -13803,6 +14790,17 @@ fn writer_loop(
                         reply,
                     } => {
                         let _ = reply.send(load_resource_detail_record(
+                            &connection,
+                            &workspace_id,
+                            &resource_id,
+                        ));
+                    }
+                    Command::ListResourceLocations {
+                        workspace_id,
+                        resource_id,
+                        reply,
+                    } => {
+                        let _ = reply.send(list_resource_location_views(
                             &connection,
                             &workspace_id,
                             &resource_id,
@@ -14254,6 +15252,21 @@ fn writer_loop(
                         reply,
                     } => {
                         let _ = reply.send(read_workspace_events(&connection, &workspace_id));
+                    }
+                    Command::ReadWorkspaceEventPage {
+                        workspace_id,
+                        origin_runtime_id,
+                        after_sequence,
+                        limit,
+                        reply,
+                    } => {
+                        let _ = reply.send(read_workspace_event_page(
+                            &mut connection,
+                            &workspace_id,
+                            &origin_runtime_id,
+                            after_sequence,
+                            limit,
+                        ));
                     }
                     Command::SqliteVersion { reply } => {
                         let version = connection
@@ -15705,6 +16718,7 @@ enum Failpoint {
     BeforeCommit,
 }
 
+#[cfg(test)]
 fn commit_workspace_transaction(
     connection: &mut Connection,
     expected_version: Option<u64>,
@@ -15784,6 +16798,80 @@ fn commit_workspace_transaction_with_dedup(
             expected: expected_version,
             actual: actual_version,
         });
+    }
+    if workspace.status == "ARCHIVED" {
+        let Some(request) = request.as_ref() else {
+            return Err(StoreError::Invalid(
+                "Workspace archive requires an idempotency receipt".to_owned(),
+            ));
+        };
+        if draft.event_type != "workspace.archived.v1"
+            || request
+                .archive_request_payload
+                .as_ref()
+                .and_then(Value::as_object)
+                .is_none_or(|payload| {
+                    payload.len() != 3
+                        || payload.get("operation").and_then(Value::as_str)
+                            != Some("workspace.archive.v1")
+                        || payload.get("workspace_id").and_then(Value::as_str)
+                            != Some(workspace.workspace_id.as_str())
+                        || payload.get("expected_version").and_then(Value::as_u64)
+                            != expected_version
+                })
+            || draft.payload.as_object().is_none_or(|payload| {
+                payload.len() != 3
+                    || !payload.contains_key("workspace_id")
+                    || !payload.contains_key("archived_by")
+                    || !payload.contains_key("aggregate_version")
+            })
+            || draft.payload.get("workspace_id").and_then(Value::as_str)
+                != Some(workspace.workspace_id.as_str())
+            || draft
+                .payload
+                .get("aggregate_version")
+                .and_then(Value::as_u64)
+                != Some(workspace.version)
+            || draft
+                .payload
+                .get("archived_by")
+                .and_then(Value::as_object)
+                .is_none_or(|actor| {
+                    actor.len() != 2
+                        || actor.get("kind").and_then(Value::as_str) != Some("USER")
+                        || actor.get("principal_id").and_then(Value::as_str)
+                            != Some(request.principal_id.as_str())
+                })
+        {
+            return Err(StoreError::Invalid(
+                "Workspace archive event or request is inconsistent".to_owned(),
+            ));
+        }
+        let current: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT owner_principal_id, status FROM workspaces WHERE workspace_id = ?1",
+                [&workspace.workspace_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(map_database_error)?;
+        match current {
+            Some((owner, status))
+                if owner == request.principal_id
+                    && owner == workspace.owner_principal_id
+                    && status == "ACTIVE" => {}
+            Some((owner, _)) if owner != request.principal_id => return Err(StoreError::NotFound),
+            Some(_) => {
+                return Err(StoreError::Invalid(
+                    "Workspace archive transition is not ACTIVE -> ARCHIVED".to_owned(),
+                ));
+            }
+            None => return Err(StoreError::NotFound),
+        }
+        let blockers = workspace_archive::blockers(&transaction, &workspace.workspace_id)?;
+        if !blockers.is_empty() {
+            return Err(StoreError::WorkspaceNotQuiescent { blockers });
+        }
     }
     validate_commit(&workspace, &draft, expected_version)?;
 
@@ -16120,6 +17208,7 @@ fn list_resources_page(
         .map_err(map_database_error)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn search_resources_page(
     connection: &Connection,
     workspace_id: &str,
@@ -16514,6 +17603,159 @@ fn read_workspace_events(
         });
     }
     Ok(events)
+}
+
+fn read_workspace_origin_frontier(
+    connection: &Connection,
+    workspace_id: &str,
+    origin_runtime_id: &str,
+) -> Result<u64, StoreError> {
+    let head: Option<i64> = connection
+        .query_row(
+            "SELECT last_sequence FROM workspace_origin_sequences WHERE workspace_id = ?1 AND origin_runtime_id = ?2",
+            params![workspace_id, origin_runtime_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let head_sequence = head
+        .map(|value| from_sql_i64(value, "workspace origin head"))
+        .transpose()?
+        .unwrap_or(0);
+    let persisted_through: Option<i64> = connection
+        .query_row(
+            "SELECT MAX(origin_sequence) FROM domain_events WHERE workspace_id = ?1 AND origin_runtime_id = ?2",
+            params![workspace_id, origin_runtime_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if persisted_through
+        .map(|sequence| from_sql_i64(sequence, "persisted workspace origin sequence"))
+        .transpose()?
+        .is_some_and(|sequence| sequence > head_sequence)
+    {
+        return Err(StoreError::Integrity(
+            "workspace origin sequence head is behind a persisted event".to_owned(),
+        ));
+    }
+    Ok(head_sequence)
+}
+
+fn read_workspace_event_page(
+    connection: &mut Connection,
+    workspace_id: &str,
+    origin_runtime_id: &str,
+    after_sequence: u64,
+    limit: usize,
+) -> Result<WorkspaceEventReplayPage, StoreError> {
+    if workspace_id.trim().is_empty()
+        || origin_runtime_id.trim().is_empty()
+        || !(1..=MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE).contains(&limit)
+    {
+        return Err(StoreError::Invalid(
+            "workspace event replay page request is invalid".to_owned(),
+        ));
+    }
+
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .map_err(map_database_error)?;
+    let head_sequence =
+        read_workspace_origin_frontier(&transaction, workspace_id, origin_runtime_id)?;
+    let retained_from: Option<i64> = transaction
+        .query_row(
+            "SELECT MIN(origin_sequence) FROM domain_events WHERE workspace_id = ?1 AND origin_runtime_id = ?2",
+            params![workspace_id, origin_runtime_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let retained_from_sequence = retained_from
+        .map(|value| from_sql_i64(value, "retained workspace origin sequence"))
+        .transpose()?;
+    let cursor_is_ahead = after_sequence > head_sequence;
+
+    let mut events = Vec::new();
+    let mut has_more = false;
+    if !cursor_is_ahead {
+        let after = to_sql_i64(after_sequence, "workspace event replay cursor")?;
+        let query_limit = i64::try_from(limit + 1).map_err(|_| {
+            StoreError::Invalid("workspace event replay limit is invalid".to_owned())
+        })?;
+        let mut statement = transaction
+            .prepare(
+                "SELECT origin_sequence, event_id, entity_type, entity_id, entity_revision, type FROM domain_events WHERE workspace_id = ?1 AND origin_runtime_id = ?2 AND origin_sequence > ?3 ORDER BY origin_sequence LIMIT ?4",
+            )
+            .map_err(map_database_error)?;
+        let rows = statement
+            .query_map(
+                params![workspace_id, origin_runtime_id, after, query_limit],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .map_err(map_database_error)?;
+        for row in rows {
+            let (sequence, event_id, entity_type, entity_id, revision, event_type) =
+                row.map_err(map_database_error)?;
+            if events.len() == limit {
+                has_more = true;
+                break;
+            }
+            events.push(WorkspaceEventReplayEntry {
+                origin_sequence: from_sql_i64(sequence, "workspace event origin sequence")?,
+                event_id,
+                entity_type,
+                entity_id,
+                entity_revision: from_sql_i64(revision, "workspace event entity revision")?,
+                event_type,
+            });
+        }
+    }
+
+    let mut expected = after_sequence.saturating_add(1);
+    let mut has_gap = false;
+    for event in &events {
+        if event.origin_sequence != expected {
+            has_gap = true;
+        }
+        expected = event.origin_sequence.saturating_add(1);
+    }
+    if !cursor_is_ahead && after_sequence < head_sequence {
+        // Checking only the returned page misses corruption after its truncation point.
+        // The replay cursor is valid only when every allocated sequence through this
+        // SQLite snapshot's durable head still has a retained event.
+        let retained_count: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM domain_events WHERE workspace_id = ?1 AND origin_runtime_id = ?2 AND origin_sequence > ?3 AND origin_sequence <= ?4",
+                params![
+                    workspace_id,
+                    origin_runtime_id,
+                    to_sql_i64(after_sequence, "workspace event replay cursor")?,
+                    to_sql_i64(head_sequence, "workspace event replay head")?,
+                ],
+                |row| row.get(0),
+            )
+            .map_err(map_database_error)?;
+        let retained_count = from_sql_i64(retained_count, "retained workspace event count")?;
+        has_gap |= retained_count != head_sequence - after_sequence;
+    }
+
+    transaction.commit().map_err(map_database_error)?;
+    Ok(WorkspaceEventReplayPage {
+        head_sequence,
+        retained_from_sequence,
+        events,
+        has_more,
+        has_gap,
+        cursor_is_ahead,
+    })
 }
 
 fn canonical_json<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, StoreError> {

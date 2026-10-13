@@ -111,10 +111,18 @@ fn conversation_presentation_snapshot_is_bounded_paged_and_keeps_semantic_truth(
             "owner-local",
             "workspace-rich",
             "conversation-rich",
+            "runtime-local",
             None,
             1,
         )
         .unwrap();
+    let durable_head = store
+        .read_workspace_events("workspace-rich")
+        .unwrap()
+        .last()
+        .unwrap()
+        .origin_sequence;
+    assert_eq!(first.origin_sequence, durable_head.to_string());
     assert_eq!(first.items.len(), 1);
     assert_eq!(first.items[0]["message"]["message_id"], "message-rich");
     assert_eq!(
@@ -139,6 +147,7 @@ fn conversation_presentation_snapshot_is_bounded_paged_and_keeps_semantic_truth(
             "owner-local",
             "workspace-rich",
             "conversation-rich",
+            "runtime-local",
             first.next_cursor.as_deref(),
             1,
         )
@@ -152,6 +161,7 @@ fn conversation_presentation_snapshot_is_bounded_paged_and_keeps_semantic_truth(
             "someone-else",
             "workspace-rich",
             "conversation-rich",
+            "runtime-local",
             None,
             1,
         ),
@@ -162,6 +172,7 @@ fn conversation_presentation_snapshot_is_bounded_paged_and_keeps_semantic_truth(
             "owner-local",
             "workspace-rich",
             "conversation-rich",
+            "runtime-local",
             Some("foreign-message"),
             1,
         ),
@@ -172,8 +183,412 @@ fn conversation_presentation_snapshot_is_bounded_paged_and_keeps_semantic_truth(
             "owner-local",
             "workspace-rich",
             "conversation-rich",
+            "runtime-local",
             None,
             MAX_CONVERSATION_PRESENTATION_MESSAGES + 1,
+        ),
+        Err(StoreError::Invalid(_))
+    ));
+}
+
+#[test]
+fn conversation_stream_frontier_tracks_latest_message_outside_the_first_page() {
+    let (dir, store, _) = fixture();
+    let connection = Connection::open(state_database(&dir)).unwrap();
+    for index in 0..100 {
+        connection.execute(
+            "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,content_json,resource_refs_json,created_at) VALUES(?1,'conversation-rich','{}','USER','[]','[]',?2)",
+            params![format!("message-{index:03}"), format!("2026-10-09T12:{:02}:{:02}.000000000Z", (index + 1) / 60, (index + 1) % 60)],
+        ).unwrap();
+    }
+    drop(connection);
+
+    let snapshot = adapter(&store)
+        .read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            "runtime-local",
+            None,
+            100,
+        )
+        .unwrap();
+    assert_eq!(snapshot.items.len(), 100);
+    assert_eq!(snapshot.next_cursor.as_deref(), Some("message-098"));
+    assert_eq!(
+        snapshot.stream_message_frontier.as_deref(),
+        Some("message-099")
+    );
+    assert!(
+        serde_json::to_value(&snapshot)
+            .unwrap()
+            .get("stream_message_frontier")
+            .is_none()
+    );
+}
+
+#[test]
+fn conversation_snapshot_frontier_replays_writer_committed_after_snapshot_capture() {
+    use std::sync::mpsc;
+    use storage_core::{AggregateStateRef, BlobRef, EventDraft, EventStore};
+
+    let (dir, store, _) = fixture();
+    let (captured_sender, captured_receiver) = mpsc::channel();
+    let (release_sender, release_receiver) = mpsc::channel();
+    let release_receiver = std::sync::Mutex::new(release_receiver);
+    let hooked_adapter = adapter(&store).with_frontier_hook(move || {
+        captured_sender
+            .send(())
+            .expect("test is waiting for the captured frontier");
+        let _ = release_receiver
+            .lock()
+            .expect("snapshot release mutex is not poisoned")
+            .recv();
+    });
+    let reader = std::thread::spawn(move || {
+        hooked_adapter.read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            "runtime-local",
+            None,
+            100,
+        )
+    });
+
+    captured_receiver
+        .recv_timeout(Duration::from_secs(30))
+        .expect("reader has captured its event frontier inside the transaction");
+
+    let mut writer = Connection::open(state_database(&dir)).expect("concurrent writer opens");
+    writer
+        .execute_batch("PRAGMA foreign_keys=ON")
+        .expect("writer enforces foreign keys");
+    let transaction = writer
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .expect("writer can commit alongside the WAL read snapshot");
+    transaction
+        .execute(
+            "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,turn_id,content_json,resource_refs_json,created_at) VALUES('message-race','conversation-rich','{}','AGENT','turn-race','[{\"kind\":\"TEXT\",\"text\":\"committed during snapshot\"}]','[]','2026-10-09T12:00:02.000000000Z')",
+            [],
+        )
+        .expect("writer commits a message while snapshot read is paused");
+    let state_ref = AggregateStateRef {
+        blob: BlobRef {
+            digest: digest(b"test snapshot race state"),
+            size_bytes: b"test snapshot race state".len() as u64,
+            media_type: "application/vnd.litecowork.aggregate-state+json".to_owned(),
+        },
+        entity_revision: 2,
+        record_schema_version: 1,
+    };
+    let event = insert_domain_event(
+        &transaction,
+        EventDraft {
+            event_id: "event-snapshot-race".to_owned(),
+            workspace_id: "workspace-rich".to_owned(),
+            entity_type: "Conversation".to_owned(),
+            entity_id: "conversation-rich".to_owned(),
+            origin_runtime_id: "runtime-local".to_owned(),
+            entity_revision: 2,
+            hlc_timestamp: "2026-10-09T12:00:02.000000000Z".to_owned(),
+            correlation_id: "correlation-snapshot-race".to_owned(),
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.message.added.v1".to_owned(),
+            payload: json!({
+                "message_id": "message-race",
+                "conversation_id": "conversation-rich"
+            }),
+            recorded_at: "2026-10-09T12:00:02.000000000Z".to_owned(),
+        },
+        state_ref,
+    )
+    .expect("message event commits in the same transaction");
+    transaction
+        .commit()
+        .expect("new message and event commit atomically");
+    release_sender
+        .send(())
+        .expect("release the still-open snapshot transaction");
+
+    let snapshot = reader
+        .join()
+        .expect("snapshot reader thread completes")
+        .expect("real storage snapshot succeeds");
+    assert_eq!(snapshot.items.len(), 1);
+    assert_eq!(snapshot.items[0]["message"]["message_id"], "message-rich");
+    assert_eq!(
+        snapshot.stream_message_frontier.as_deref(),
+        Some("message-rich")
+    );
+    let snapshot_sequence = snapshot
+        .origin_sequence
+        .parse::<u64>()
+        .expect("snapshot carries the captured durable frontier");
+    assert!(event.origin_sequence > snapshot_sequence);
+
+    let replay = store
+        .read_workspace_event_page("workspace-rich", "runtime-local", snapshot_sequence, 10)
+        .expect("bounded event catch-up reads");
+    assert_eq!(replay.events.len(), 1);
+    assert_eq!(replay.events[0].event_id, "event-snapshot-race");
+    assert_eq!(replay.events[0].origin_sequence, event.origin_sequence);
+    assert!(!replay.has_gap);
+
+    let projection = adapter(&store)
+        .read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-rich",
+            "runtime-local",
+            snapshot.stream_message_frontier.as_deref(),
+            100,
+        )
+        .expect("catch-up projection reads after the last message represented by snapshot");
+    assert_eq!(projection.items.len(), 1);
+    assert_eq!(projection.items[0]["message"]["message_id"], "message-race");
+    assert_eq!(
+        projection.origin_sequence,
+        event.origin_sequence.to_string()
+    );
+    assert_eq!(projection.next_cursor, None);
+}
+
+#[test]
+fn conversation_batch_snapshot_shares_origin_frontier_and_read_snapshot() {
+    use std::sync::mpsc;
+    use storage_core::{AggregateStateRef, BlobRef, EventDraft, EventStore};
+
+    let (dir, store, _) = fixture();
+    let connection = Connection::open(state_database(&dir)).unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversations(conversation_id,workspace_id,created_at) VALUES('conversation-second','workspace-rich',?1)",
+            [AT],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,content_json,resource_refs_json,created_at) VALUES('message-second','conversation-second','{}','USER','[]','[]','2026-10-09T12:00:01.000000000Z')",
+            [],
+        )
+        .unwrap();
+    drop(connection);
+
+    let (captured_sender, captured_receiver) = mpsc::channel();
+    let (release_sender, release_receiver) = mpsc::channel();
+    let release_receiver = std::sync::Mutex::new(release_receiver);
+    let hooked_adapter = adapter(&store).with_frontier_hook(move || {
+        captured_sender
+            .send(())
+            .expect("test is waiting for the batch frontier");
+        let _ = release_receiver
+            .lock()
+            .expect("batch snapshot release mutex is not poisoned")
+            .recv();
+    });
+    let reader = std::thread::spawn(move || {
+        hooked_adapter.read_conversation_presentation_batch(
+            "owner-local",
+            "workspace-rich",
+            &[
+                ConversationPresentationRead {
+                    conversation_id: "conversation-rich".to_owned(),
+                    after_message_id: None,
+                },
+                ConversationPresentationRead {
+                    conversation_id: "conversation-second".to_owned(),
+                    after_message_id: None,
+                },
+            ],
+            "runtime-local",
+            100,
+        )
+    });
+
+    captured_receiver
+        .recv_timeout(Duration::from_secs(30))
+        .expect("batch read has captured the shared frontier inside its transaction");
+
+    let mut writer = Connection::open(state_database(&dir)).expect("concurrent writer opens");
+    writer
+        .execute_batch("PRAGMA foreign_keys=ON")
+        .expect("writer enforces foreign keys");
+    let transaction = writer
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .expect("writer can commit alongside the WAL read snapshot");
+    transaction
+        .execute(
+            "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,turn_id,content_json,resource_refs_json,created_at) VALUES('message-second-race','conversation-second','{}','AGENT','turn-second-race','[{\"kind\":\"TEXT\",\"text\":\"committed during batch snapshot\"}]','[]','2026-10-09T12:00:02.000000000Z')",
+            [],
+        )
+        .expect("writer adds a message while batch read is paused");
+    let state_ref = AggregateStateRef {
+        blob: BlobRef {
+            digest: digest(b"test batch snapshot race state"),
+            size_bytes: b"test batch snapshot race state".len() as u64,
+            media_type: "application/vnd.litecowork.aggregate-state+json".to_owned(),
+        },
+        entity_revision: 2,
+        record_schema_version: 1,
+    };
+    let event = insert_domain_event(
+        &transaction,
+        EventDraft {
+            event_id: "event-batch-snapshot-race".to_owned(),
+            workspace_id: "workspace-rich".to_owned(),
+            entity_type: "Conversation".to_owned(),
+            entity_id: "conversation-second".to_owned(),
+            origin_runtime_id: "runtime-local".to_owned(),
+            entity_revision: 2,
+            hlc_timestamp: "2026-10-09T12:00:02.000000000Z".to_owned(),
+            correlation_id: "correlation-batch-snapshot-race".to_owned(),
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.message.added.v1".to_owned(),
+            payload: json!({
+                "message_id": "message-second-race",
+                "conversation_id": "conversation-second"
+            }),
+            recorded_at: "2026-10-09T12:00:02.000000000Z".to_owned(),
+        },
+        state_ref,
+    )
+    .expect("message event commits with the second Conversation update");
+    transaction
+        .commit()
+        .expect("message and event commit atomically");
+    release_sender
+        .send(())
+        .expect("release the shared batch snapshot transaction");
+
+    let snapshots = reader
+        .join()
+        .expect("batch snapshot reader thread completes")
+        .expect("authorized batch read succeeds");
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].conversation_id, "conversation-rich");
+    assert_eq!(snapshots[1].conversation_id, "conversation-second");
+    assert_eq!(
+        snapshots[0].items[0]["message"]["message_id"],
+        "message-rich"
+    );
+    assert_eq!(
+        snapshots[1].items[0]["message"]["message_id"],
+        "message-second"
+    );
+    assert_eq!(snapshots[0].origin_sequence, snapshots[1].origin_sequence);
+    assert_eq!(
+        snapshots[1].stream_message_frontier.as_deref(),
+        Some("message-second")
+    );
+    assert_eq!(snapshots[1].items.len(), 1);
+
+    let common_frontier = snapshots[0]
+        .origin_sequence
+        .parse::<u64>()
+        .expect("both snapshots carry the shared durable frontier");
+    assert!(event.origin_sequence > common_frontier);
+    let replay = store
+        .read_workspace_event_page("workspace-rich", "runtime-local", common_frontier, 10)
+        .expect("bounded event catch-up reads after the common frontier");
+    assert_eq!(replay.events.len(), 1);
+    assert_eq!(replay.events[0].event_id, "event-batch-snapshot-race");
+    assert!(!replay.has_gap);
+
+    let catch_up = adapter(&store)
+        .read_conversation_presentation(
+            "owner-local",
+            "workspace-rich",
+            "conversation-second",
+            "runtime-local",
+            snapshots[1].stream_message_frontier.as_deref(),
+            100,
+        )
+        .expect("catch-up projection can read after the accepted batch snapshot");
+    assert_eq!(catch_up.items.len(), 1);
+    assert_eq!(
+        catch_up.items[0]["message"]["message_id"],
+        "message-second-race"
+    );
+    assert_eq!(catch_up.origin_sequence, event.origin_sequence.to_string());
+}
+
+#[test]
+fn conversation_batch_read_fails_closed_for_invalid_or_foreign_filters() {
+    let (_dir, store, _) = fixture();
+    let adapter = adapter(&store);
+
+    assert!(matches!(
+        adapter.read_conversation_presentation_batch(
+            "owner-local",
+            "workspace-rich",
+            &[],
+            "runtime-local",
+            10,
+        ),
+        Err(StoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        adapter.read_conversation_presentation_batch(
+            "owner-local",
+            "workspace-rich",
+            &[
+                ConversationPresentationRead {
+                    conversation_id: "conversation-rich".to_owned(),
+                    after_message_id: None,
+                },
+                ConversationPresentationRead {
+                    conversation_id: "conversation-rich".to_owned(),
+                    after_message_id: None,
+                },
+            ],
+            "runtime-local",
+            10,
+        ),
+        Err(StoreError::Invalid(_))
+    ));
+    assert_eq!(
+        adapter
+            .read_conversation_presentation_batch(
+                "owner-local",
+                "workspace-rich",
+                &[ConversationPresentationRead {
+                    conversation_id: "conversation-missing".to_owned(),
+                    after_message_id: None,
+                }],
+                "runtime-local",
+                10,
+            )
+            .unwrap_err(),
+        StoreError::NotFound
+    );
+    assert_eq!(
+        adapter
+            .read_conversation_presentation_batch(
+                "someone-else",
+                "workspace-rich",
+                &[ConversationPresentationRead {
+                    conversation_id: "conversation-rich".to_owned(),
+                    after_message_id: None,
+                }],
+                "runtime-local",
+                10,
+            )
+            .unwrap_err(),
+        StoreError::NotFound
+    );
+    assert!(matches!(
+        adapter.read_conversation_presentation_batch(
+            "owner-local",
+            "workspace-rich",
+            &[ConversationPresentationRead {
+                conversation_id: "conversation-rich".to_owned(),
+                after_message_id: None,
+            }],
+            "runtime-local",
+            0,
         ),
         Err(StoreError::Invalid(_))
     ));

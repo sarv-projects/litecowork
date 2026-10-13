@@ -114,6 +114,7 @@ impl std::error::Error for TaskInputPreparationError {}
 /// selected TaskSpec. The caller must authenticate the Workspace owner and load the
 /// current Task view before calling. This returns `PreparedOnly`; it is not an
 /// Environment, does not create domain state, and must not admit a process or Attempt.
+#[allow(clippy::too_many_arguments)]
 pub fn stage_task_spec_inputs<R: ExactResourceReader>(
     reader: &R,
     task: &TaskView,
@@ -539,9 +540,7 @@ fn remove_private_tree(root: &Path) -> Result<(), StagingError> {
     collect_directories(root, &mut directories)?;
     clear_readonly_files(root)?;
     for directory in directories {
-        let mut permissions = fs::metadata(&directory).map_err(io_error)?.permissions();
-        permissions.set_readonly(false);
-        fs::set_permissions(&directory, permissions).map_err(io_error)?;
+        make_owner_writable(&directory)?;
     }
     fs::remove_dir_all(root).map_err(io_error)
 }
@@ -556,12 +555,39 @@ fn clear_readonly_files(root: &Path) -> Result<(), StagingError> {
         if metadata.is_dir() {
             clear_readonly_files(&path)?;
         } else if metadata.is_file() && metadata.permissions().readonly() {
-            let mut permissions = metadata.permissions();
-            permissions.set_readonly(false);
-            fs::set_permissions(&path, permissions).map_err(io_error)?;
+            make_owner_writable(&path)?;
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn make_owner_writable(path: &Path) -> Result<(), StagingError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::symlink_metadata(path).map_err(io_error)?;
+    if metadata.file_type().is_symlink() {
+        return Err(StagingError::InvalidParent);
+    }
+    let mut permissions = metadata.permissions();
+    permissions.set_mode(permissions.mode() | 0o200);
+    fs::set_permissions(path, permissions).map_err(io_error)
+}
+
+#[cfg(windows)]
+fn make_owner_writable(path: &Path) -> Result<(), StagingError> {
+    let metadata = fs::symlink_metadata(path).map_err(io_error)?;
+    if metadata.file_type().is_symlink() {
+        return Err(StagingError::InvalidParent);
+    }
+    let mut permissions = metadata.permissions();
+    permissions.set_readonly(false);
+    fs::set_permissions(path, permissions).map_err(io_error)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn make_owner_writable(_path: &Path) -> Result<(), StagingError> {
+    Err(StagingError::UnsupportedPlatform)
 }
 
 fn io_error(error: std::io::Error) -> StagingError {
@@ -1124,6 +1150,23 @@ mod tests {
         assert!(fs::metadata(&file_path).unwrap().permissions().readonly());
         clear_readonly_files(temp.path()).unwrap();
         assert!(!fs::metadata(&file_path).unwrap().permissions().readonly());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cleanup_restores_only_owner_write_permission_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempdir().unwrap();
+        let file_path = temp.path().join("readonly.txt");
+        fs::write(&file_path, b"test").unwrap();
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o444)).unwrap();
+
+        clear_readonly_files(temp.path()).unwrap();
+
+        let mode = fs::metadata(&file_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644);
+        assert_eq!(mode & 0o022, 0, "cleanup must not grant group/world write");
     }
 
     #[cfg(not(unix))]

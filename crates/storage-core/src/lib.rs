@@ -18,7 +18,12 @@ pub use artifact::{
     ArtifactAppendHeads, ArtifactContentRecord, ArtifactLibraryAction, ArtifactLibraryCommand,
     ArtifactLibraryWriteStore, ArtifactReadStore, ArtifactRecord, ArtifactVersionAppendCommit,
     ArtifactVersionRecord, ArtifactVersionWriteStore, CommittedArtifactLibraryCommand,
-    CommittedArtifactVersionAppend,
+    CommittedArtifactVersionAppend, DependencyInvalidationPageRequest, InvalidationRecord,
+};
+mod dependency;
+pub use dependency::{
+    DependencyEdgeRecord, DependencyFreshness, ResourceDependencyPageRequest,
+    ResourceDependencyReadStore, ResourceDependencyViewRecord,
 };
 pub mod conversation;
 pub use conversation::{
@@ -281,6 +286,35 @@ pub struct CommittedWorkspace {
     pub event: DomainEvent,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WorkspaceArchiveBlockerKind {
+    NonterminalTasks,
+    EnabledAutomations,
+    ActiveAutomationTriggers,
+    UnsettledAutomationOccurrences,
+    UnsettledConversationTurns,
+    UnsettledAgentSessions,
+    UnsettledInvocations,
+    ActiveCapabilityGrants,
+    ActiveCapabilityActivations,
+    ActiveSecretLeases,
+    ActiveExecutionLeases,
+    ActiveControlLeases,
+    LivePersistentEnvironments,
+    ActiveWorkspaceRoots,
+    ActiveChannelHosts,
+    UnresolvedEffects,
+    PendingApprovals,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceArchiveBlocker {
+    pub kind: WorkspaceArchiveBlockerKind,
+    pub count: u64,
+}
+
 pub trait StateStore: Send + Sync {
     fn get_workspace(&self, workspace_id: &str) -> Result<Option<Workspace>, StoreError>;
 
@@ -298,6 +332,50 @@ pub trait StateStore: Send + Sync {
 
 pub trait EventStore: Send + Sync {
     fn read_workspace_events(&self, workspace_id: &str) -> Result<Vec<DomainEvent>, StoreError>;
+
+    /// Reads a bounded projection-replay frontier for one event origin. The returned
+    /// entries deliberately omit event payloads and aggregate state references; callers
+    /// must map committed records to authorized projections before sending anything to
+    /// an Operator client.
+    fn read_workspace_event_page(
+        &self,
+        workspace_id: &str,
+        origin_runtime_id: &str,
+        after_sequence: u64,
+        limit: usize,
+    ) -> Result<WorkspaceEventReplayPage, StoreError> {
+        let _ = (workspace_id, origin_runtime_id, after_sequence, limit);
+        Err(StoreError::Invalid(
+            "bounded workspace event replay is unsupported by this provider".to_owned(),
+        ))
+    }
+}
+
+pub const MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE: usize = 500;
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceEventReplayEntry {
+    pub origin_sequence: u64,
+    pub event_id: String,
+    pub entity_type: String,
+    pub entity_id: String,
+    pub entity_revision: u64,
+    pub event_type: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceEventReplayPage {
+    pub head_sequence: u64,
+    pub retained_from_sequence: Option<u64>,
+    pub events: Vec<WorkspaceEventReplayEntry>,
+    pub has_more: bool,
+    /// True when the requested cursor cannot be advanced contiguously through the
+    /// retained event journal. The caller must require an authorized fresh snapshot.
+    pub has_gap: bool,
+    /// True when the cursor is ahead of the durable origin head and cannot be resumed.
+    pub cursor_is_ahead: bool,
 }
 
 pub trait WorkspaceStore: StateStore + EventStore {}
@@ -368,6 +446,17 @@ pub struct RuntimeIncarnationStateUpdate {
     pub stopped_at: Option<String>,
 }
 
+/// Public-safe local lifecycle projection for one exact current daemon incarnation.
+/// Device identity, OS observations, and private bootstrap state are excluded.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalRuntimeLifecycleSnapshot {
+    pub runtime_id: String,
+    pub startup_policy: String,
+    pub availability: String,
+    pub incarnation: RuntimeIncarnationRecord,
+}
+
 /// Local Runtime lifecycle persistence. Registration commits the Runtime descriptor,
 /// one fresh incarnation, and its local observation atomically. It does not enroll a
 /// Workspace or publish Mesh presence.
@@ -383,6 +472,14 @@ pub trait RuntimeLifecycleStore: Send + Sync {
         &self,
         update: RuntimeIncarnationStateUpdate,
     ) -> Result<RuntimeIncarnationRecord, StoreError>;
+
+    /// Reads lifecycle state only when `expected_incarnation_id` is still current.
+    /// Missing, mismatched, and superseded identities are deliberately indistinguishable.
+    fn read_local_lifecycle_snapshot(
+        &self,
+        runtime_id: &str,
+        expected_incarnation_id: &str,
+    ) -> Result<Option<LocalRuntimeLifecycleSnapshot>, StoreError>;
 }
 
 /// Explicit authorization for one Runtime installation to act within one Workspace.
@@ -427,6 +524,18 @@ pub struct LocalRuntimeWorkspaceBindingLookup {
     pub runtime_incarnation_id: String,
 }
 
+/// Owner-scoped keyset page request for the retained Runtime binding inventory.
+/// `limit` is the bounded row count requested by the caller (the Operator may ask
+/// for one sentinel row to determine whether another page exists).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeWorkspaceBindingPageRequest {
+    pub owner_principal_id: String,
+    pub workspace_id: String,
+    pub after_binding_id: Option<String>,
+    pub limit: usize,
+}
+
 /// Creates an audited LOCAL_ENROLLMENT control-plane record for the exact current
 /// local Runtime incarnation. An active local Runtime may be ONLINE/READY or
 /// DEGRADED/DEGRADED; this binding is not proof that Task/AgentSession admission is
@@ -445,6 +554,14 @@ pub trait RuntimeWorkspaceBindingStore: Send + Sync {
         &self,
         lookup: LocalRuntimeWorkspaceBindingLookup,
     ) -> Result<Option<RuntimeWorkspaceBindingRecord>, StoreError>;
+
+    /// Lists retained PENDING, ACTIVE, and REVOKED bindings for an owned Workspace
+    /// in ascending binding-ID order. The query is Workspace/owner scoped and does
+    /// not imply current Runtime presence or readiness.
+    fn list_workspace_runtime_bindings(
+        &self,
+        request: RuntimeWorkspaceBindingPageRequest,
+    ) -> Result<Vec<RuntimeWorkspaceBindingRecord>, StoreError>;
 }
 
 /// Stable agent software identity. This is a catalog record, not proof that any
@@ -509,6 +626,87 @@ pub struct RuntimeOfferRecord {
     pub constraints: Value,
     pub observed_at: String,
     pub expires_at: String,
+}
+
+/// Keyset position for reading one Runtime incarnation's ordered offer projection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeOfferPosition {
+    pub runtime_incarnation_id: String,
+    pub offer_kind: String,
+    pub offer_ref: String,
+}
+
+/// Validated scope, freshness point, and keyset position for a bounded Runtime offer
+/// projection read. The owner identity is supplied by authenticated local IPC.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeOfferPageRequest {
+    pub owner_principal_id: String,
+    pub workspace_id: String,
+    pub runtime_id: String,
+    pub expected_incarnation_id: Option<String>,
+    pub now: String,
+    pub after: Option<RuntimeOfferPosition>,
+    pub limit: usize,
+}
+
+/// Closed public capability identity stored on a Runtime-local provider host.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "identity_kind", deny_unknown_fields)]
+pub enum RuntimeCapabilityRef {
+    #[serde(rename = "PACKAGE_COMPONENT")]
+    PackageComponent {
+        capability_id: String,
+        source: String,
+        package_version: String,
+        digest: String,
+        component: String,
+    },
+    #[serde(rename = "MCP_SKILL")]
+    McpSkill {
+        capability_id: String,
+        source: String,
+        digest: String,
+        component: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeCapabilityHostRecord {
+    pub host_instance_id: String,
+    pub runtime_id: String,
+    pub runtime_incarnation_id: String,
+    pub capability_ref: RuntimeCapabilityRef,
+    pub hosting_mode: String,
+    pub sharing_policy: String,
+    pub state: String,
+    pub health: String,
+    pub active_activation_count: u64,
+    pub observed_at: String,
+    pub expires_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeCapabilityHostPosition {
+    pub runtime_incarnation_id: String,
+    pub host_instance_id: String,
+}
+
+/// Workspace-authorized bounded page of the Runtime's current-incarnation host
+/// observations. Activation counts and visibility are scoped to `workspace_id`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeCapabilityHostPageRequest {
+    pub owner_principal_id: String,
+    pub workspace_id: String,
+    pub runtime_id: String,
+    pub expected_incarnation_id: Option<String>,
+    pub now: String,
+    pub after: Option<RuntimeCapabilityHostPosition>,
+    pub limit: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -597,6 +795,23 @@ pub trait AgentCatalogStore: Send + Sync {
     ) -> Result<Option<LocalAgentEndpointBindingRecord>, StoreError>;
 
     fn publish_runtime_offer(&self, offer: RuntimeOfferRecord) -> Result<(), StoreError>;
+
+    /// Reads a bounded Workspace-authorized page of fresh offers for a Runtime's
+    /// current incarnation. `expected_incarnation_id` fences continuation cursors.
+    /// The storage adapter checks Workspace ownership, active EXECUTOR binding,
+    /// current Runtime state, observation expiry, and endpoint binding in one read.
+    fn list_runtime_offers(
+        &self,
+        request: RuntimeOfferPageRequest,
+    ) -> Result<Vec<RuntimeOfferRecord>, StoreError>;
+
+    /// Lists normalized provider host observations from the exact current Runtime
+    /// incarnation. Workspace ownership and EXECUTOR binding are checked in the same
+    /// read transaction; derived Activation counts are restricted to that Workspace.
+    fn list_runtime_capability_hosts(
+        &self,
+        request: RuntimeCapabilityHostPageRequest,
+    ) -> Result<Vec<RuntimeCapabilityHostRecord>, StoreError>;
 
     fn list_agent_profiles(
         &self,
@@ -1093,6 +1308,7 @@ pub struct AgentHostInstanceRecord {
 pub trait AgentHostStore: Send + Sync {
     fn create_agent_host_instance(&self, host: AgentHostInstanceRecord) -> Result<(), StoreError>;
 
+    #[allow(clippy::too_many_arguments)]
     fn transition_agent_host_instance(
         &self,
         runtime_id: &str,
@@ -1328,6 +1544,26 @@ pub struct ResourceLocationRecord {
     pub observed_revision_id: Option<String>,
     pub observed_digest: Option<String>,
     pub observed_at: String,
+}
+
+/// Safe Operator projection for one observed ResourceLocation. Provider identity and
+/// locator references are intentionally omitted; freshness reflects only the last
+/// committed observation compared with the Resource's current revision.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceLocationViewRecord {
+    pub location_id: String,
+    pub resource_id: String,
+    pub runtime_id: Option<String>,
+    pub environment_id: Option<String>,
+    pub connection_id: Option<String>,
+    pub availability: String,
+    pub writable: bool,
+    pub observed_revision_id: Option<String>,
+    pub observed_digest: Option<String>,
+    pub observed_at: String,
+    pub last_checked_at: Option<String>,
+    pub freshness: String,
 }
 
 /// Runtime-local provider handle. This type intentionally has no Serde implementation;
@@ -2016,6 +2252,15 @@ pub trait ResourceStore: Send + Sync {
         resource_id: &str,
     ) -> Result<Option<ResourceDetailRecord>, StoreError>;
 
+    /// Returns every committed public location observation for a Resource in the selected
+    /// Workspace. `None` means the Resource is outside that Workspace or absent; an
+    /// existing Resource with no locations returns `Some(Vec::new())`.
+    fn list_resource_locations(
+        &self,
+        workspace_id: &str,
+        resource_id: &str,
+    ) -> Result<Option<Vec<ResourceLocationViewRecord>>, StoreError>;
+
     /// Returns one bounded Resource revision page with derived head markers. Revisions
     /// are ordered by immutable append order, which is ancestry-safe because parent rows
     /// must already exist before a child can be inserted. The cursor is the last revision
@@ -2044,6 +2289,7 @@ pub trait ResourceStore: Send + Sync {
     /// `kind` is an optional exact Resource kind and `freshness` an optional exact
     /// freshness value. Results are workspace-scoped and keyset-paginated in the same
     /// stable order as catalog listing.
+    #[allow(clippy::too_many_arguments)]
     fn search_resources_page(
         &self,
         workspace_id: &str,
@@ -2073,6 +2319,7 @@ pub trait ResourceStore: Send + Sync {
     /// Workspace/current-revision/ContextDocument scope, derive terms using the current
     /// or retained ResourceIndex key version, verify/decrypt the exact indexed snapshot,
     /// and return pinned ResourceRefs. No plaintext fallback is permitted.
+    #[allow(clippy::too_many_arguments)]
     fn search_indexed_resource_text(
         &self,
         _workspace_id: &str,
@@ -2152,6 +2399,7 @@ pub trait ResourceUploadStore: ResourceStore {
         chunk: ResourceUploadChunkInput,
     ) -> Result<ResourceUploadSessionRecord, StoreError>;
 
+    #[allow(clippy::too_many_arguments)]
     fn commit(
         &self,
         request: WorkspaceCreateRequest,
@@ -2210,6 +2458,9 @@ pub enum StoreError {
     DispatchAdmissionUnavailable {
         blockers: Vec<DispatchAdmissionBlocker>,
     },
+    WorkspaceNotQuiescent {
+        blockers: Vec<WorkspaceArchiveBlocker>,
+    },
     LegacyUploadCommitNeedsReview {
         committed_resource_id: Option<String>,
     },
@@ -2238,6 +2489,9 @@ impl fmt::Display for StoreError {
             Self::Integrity(message) => write!(f, "stored data failed integrity checks: {message}"),
             Self::DispatchAdmissionUnavailable { blockers } => {
                 write!(f, "Effect dispatch admission is unavailable: {blockers:?}")
+            }
+            Self::WorkspaceNotQuiescent { blockers } => {
+                write!(f, "Workspace archive is blocked: {blockers:?}")
             }
             Self::LegacyUploadCommitNeedsReview {
                 committed_resource_id,

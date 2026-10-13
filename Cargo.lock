@@ -1092,6 +1092,7 @@ dependencies = [
  "domain-task",
  "domain-workspace",
  "fs2",
+ "futures-util",
  "getrandom 0.3.4",
  "hex",
  "http-body",
@@ -1311,6 +1312,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "windows-local-security",
 ]
 
 [[package]]
@@ -1804,6 +1806,7 @@ dependencies = [
 name = "storage-sqlite"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chacha20poly1305",
  "domain-conversation",
  "domain-effects",
@@ -1812,6 +1815,7 @@ dependencies = [
  "domain-responsibility",
  "domain-workspace",
  "ed25519-dalek",
+ "fs2",
  "getrandom 0.3.4",
  "hex",
  "hkdf",
@@ -1827,6 +1831,7 @@ dependencies = [
  "storage-core",
  "tempfile",
  "time",
+ "windows-local-security",
  "zeroize",
 ]
 
@@ -2196,6 +2201,14 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
+
+[[package]]
+name = "windows-local-security"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "windows-sys"

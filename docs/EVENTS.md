@@ -44,6 +44,21 @@ The local StateStore keeps a durable per-Workspace/per-origin allocator row. It 
 in the same transaction as the event and aggregate projection, survives event archival,
 and is not itself replicated. Replicas preserve the authenticated source sequence and do
 not allocate it locally.
+
+The local Operator replay source is one exact `(workspace_id, origin_runtime_id)` stream.
+Its cursor advances by that origin's `origin_sequence`, never by HLC or `recorded_at`.
+Storage reads the durable head, retained floor, and a bounded ordered page from one SQLite
+read transaction. Pages contain only event identity/type/revision metadata for internal
+projection selection; event payloads and aggregate-state references are not part of the
+replay-page contract. A page reports a cursor ahead of the head or a missing sequence so
+the Operator can require a fresh authorized projection snapshot instead of silently
+skipping history. The current local feed is single-origin; future multi-origin replication
+requires a vector of contiguous applied frontiers and must not reuse this scalar cursor.
+The storage page limit is finite and callers may request at most 500 entries. Replay also
+checks that the durable allocator head is at least the maximum persisted sequence for the
+same Workspace/origin; a persisted event beyond that head is an integrity failure rather
+than a valid cursor range.
+
 Events are append-only; corrections are new events. `payload_digest` is computed over the
 RFC 8785 JSON Canonicalization Scheme (JCS) serialization of `payload` and checked on
 replication. Canonical aggregate-state blob bytes use the same JCS encoding before their
@@ -68,6 +83,12 @@ event payload alone is not a substitute for them.
 RuntimeOffer and CapabilityHostInstance readiness/health observations are expiring
 Runtime-operational inventory, not replicated Task aggregates or durable domain events.
 They update the Runtime read projection and its Operator inventory subscription.
+The local offer subscription uses a process-local monotonic invalidation revision bound to
+the persisted Runtime incarnation. The revision resets only when a new Runtime incarnation
+starts; that transition forces subscribers to resync. Notifications carry no observation
+payload, and clients reread the authorized inventory projection. They do not consume
+Workspace `origin_sequence` values or add operational health changes to the domain event
+feed.
 CapabilityActivation lifecycle and Invocation outcomes remain durable domain events; a host
 health observation cannot rewrite those histories.
 `RuntimeIncarnation` is registered and versioned through the authenticated Runtime Mesh
@@ -809,3 +830,26 @@ an explicit consumer migration.
 ## Proposed Coworker event family (not in current allowed event types)
 
 When owning aggregate/schema implementation is ready, introduce typed, redacted events for immutable Coworker-owned Conversation association, Coworker capability assignment creation/change/revocation, memory policy revision, candidate evaluation and Resource-backed memory commit/supersession, StandingResponsibility create/revise/status. Persisted health changes are optional; prefer derived health from real Task/trigger state. Every event requires authenticated actor, Workspace, entity, committed revision, source digest, request/causation and correlation IDs. Never include memory plaintext, credentials, OAuth URLs, native hidden reasoning or provider task handles. Until added to domain-event.schema.json and tests, these names are proposals only, not valid emitted events. Full draft names are in [Coworker target](COWORKERS-TARGET.md).
+
+
+## Target connector and learning event promotion rule
+
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md) and [Learning](LEARNING.md) define
+accepted future lifecycle transitions for AuthAttempt/Connection and
+LearningCandidate/memory/feedback. Their proposed event names are intentionally not
+inserted into the canonical durable event registry until persistence and machine schemas
+ship.
+
+The implementation change that promotes them must atomically add event type, payload
+schema, aggregate-state record schema, SQL transition, replication/backup rules,
+redaction tests and coverage inventory.
+
+No OAuth code, token, PKCE verifier, client secret or external workflow handle may enter a
+replicated event. Learning candidate text/value remains Resource-backed. Provider workflow
+progress is normally an Invocation observation, not a new LiteCowork aggregate. Creating a
+Task follow-up Conversation uses ordinary Conversation events plus the Task/Conversation
+link; it does not rewrite the source Task or occurrence.
+
+## V1 detailed design integration — 2026-10-12
+
+New proposed browser.session/control/action, agent descriptor, Conversation stream and UI activity event families in V1-WORKFLOW-EVENT-LLD.md are design candidates, not registry entries. When implemented, define precise stable event name, producer, immutable envelope, versioned schema, authorized consumer, secret redaction, replay behavior and migration. UI focus/animation/reducer actions must not be misrepresented as domain Events.

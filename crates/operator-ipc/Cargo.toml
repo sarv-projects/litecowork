@@ -10,12 +10,17 @@ bytes = "1.10"
 http-body = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tokio = { version = "1.44", features = ["io-util", "net", "sync", "time"] }
+tokio = { version = "1.44", features = ["io-util", "net", "rt", "sync", "time"] }
 
 [target.'cfg(unix)'.dependencies]
 hex = "0.4"
 rustix = { version = "1.1", features = ["process"] }
 sha2 = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+hex = "0.4"
+sha2 = "0.10"
+windows-local-security = { path = "../windows-local-security" }
 
 [lints]
 workspace = true

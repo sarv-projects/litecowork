@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { RichResponseView } from "../presentation/RichResponseView";
 import { parseRichPresentationResponse, type ValidatedRichPresentation } from "../presentation/rich-presentation";
-import { appendConversationPage, ConversationRequestEpochs, parseConversationList, parseConversationSnapshot, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary } from "./conversation-view";
+import { appendConversationPage, ConversationRequestEpochs, mergeConversationStreamSnapshot, parseConversationList, parseConversationSnapshot, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary } from "./conversation-view";
+import { ConversationStreamController, type ConversationStreamDriver, type StreamEnvelope } from "./conversation-stream";
 import "./conversations-page.css";
 
 function messageText(message: ConversationMessageView): string {
@@ -95,12 +97,16 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
   const [busy, setBusy] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [snapshotLoadedKey, setSnapshotLoadedKey] = useState<string | null>(null);
+  const [streamStatus, setStreamStatus] = useState<"CONNECTING" | "LIVE" | "RECONNECTING" | null>(null);
   const requests = useRef(new ConversationRequestEpochs());
   const activeSnapshotEpoch = useRef<number | null>(null);
+  const selectionKey = workspaceId && selectedId ? `${workspaceId}\u0000${selectedId}` : null;
 
   const refresh = useCallback(async () => {
     const current = requests.current.beginList();
     setSnapshot(null);
+    setSnapshotLoadedKey(null);
     setSelectedId(null);
     if (!operatorReady || !workspaceId) { setItems([]); return; }
     setBusy(true); setError(null);
@@ -121,11 +127,16 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
     const current = requests.current.beginSnapshot();
     activeSnapshotEpoch.current = current;
     setSnapshot(null);
+    setSnapshotLoadedKey(null);
     setLoadingMore(false);
     if (!operatorReady || !workspaceId || !selectedId) return () => { requests.current.invalidateSnapshot(); };
     setBusy(true); setError(null);
     void invoke<unknown>("get_conversation_presentation", { workspaceId, conversationId: selectedId })
-      .then(value => { if (requests.current.isCurrentSnapshot(current)) setSnapshot(parseConversationSnapshot(value, workspaceId, selectedId)); })
+      .then(value => {
+        if (!requests.current.isCurrentSnapshot(current)) return;
+        setSnapshot(parseConversationSnapshot(value, workspaceId, selectedId));
+        setSnapshotLoadedKey(`${workspaceId}\u0000${selectedId}`);
+      })
       .catch(cause => { if (requests.current.isCurrentSnapshot(current)) setError(cause instanceof Error ? cause.message : String(cause)); })
       .finally(() => { if (requests.current.isCurrentSnapshot(current)) setBusy(false); });
     return () => {
@@ -133,6 +144,29 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
       if (activeSnapshotEpoch.current === current) activeSnapshotEpoch.current = null;
     };
   }, [operatorReady, selectedId, workspaceId]);
+
+  useEffect(() => {
+    if (!operatorReady || !selectionKey || snapshotLoadedKey !== selectionKey) {
+      setStreamStatus(null);
+      return;
+    }
+    const driver: ConversationStreamDriver = {
+      listen: async callback => listen<unknown>("conversation-presentation-stream", event => callback(event.payload as StreamEnvelope)),
+      start: input => invoke<void>("subscribe_conversation_stream", input),
+      acknowledge: (sessionId, frameId) => invoke<void>("acknowledge_conversation_stream_frame", { sessionId, frameId }),
+      stop: sessionId => invoke<void>("unsubscribe_conversation_stream", { sessionId }),
+      newSessionId: () => crypto.randomUUID(),
+    };
+    const controller = new ConversationStreamController(workspaceId, selectedId!, driver, state => {
+      const live = state.conversationSnapshot;
+      if (live) {
+        setSnapshot(current => mergeConversationStreamSnapshot(current, live, workspaceId, selectedId!));
+      }
+    }, setStreamStatus);
+    controller.start();
+    setStreamStatus(controller.status);
+    return () => { void controller.dispose(); };
+  }, [operatorReady, selectionKey, selectedId, snapshotLoadedKey, workspaceId]);
 
   const loadMoreMessages = async () => {
     if (!snapshot?.next_cursor || !selectedId || loadingMore) return;
@@ -165,6 +199,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
       setItems(current => [created, ...current.filter(item => item.conversation_id !== created.conversation_id)].slice(0, 100));
       setSelectedId(created.conversation_id);
       setSnapshot({ workspace_id: workspaceId, conversation_id: created.conversation_id, messages: [], next_cursor: null, active_turn: null });
+      setSnapshotLoadedKey(`${workspaceId}\u0000${created.conversation_id}`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   };
@@ -178,6 +213,10 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
         : activeStatus === "CANCEL_REQUESTED" ? "Stopping"
           : activeStatus === "OPEN" ? "Preparing"
             : null;
+  const streamStatusLabel = streamStatus === "LIVE" ? "Saved history updates live"
+    : streamStatus === "RECONNECTING" ? "Reconnecting saved-history updates…"
+      : streamStatus === "CONNECTING" ? "Connecting saved-history updates…"
+        : null;
 
   return <div className="page-content conversations-page">
     <div className="eyebrow">SAVED WORKSPACE CONVERSATIONS</div>
@@ -200,7 +239,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
       </aside>
       <section className="conversation-reader" aria-label="Conversation history">
         {error && <div className="conversation-error" role="alert">{error}</div>}
-        {selected && <div className="conversation-reader-heading"><div><div className="eyebrow">SAVED CONVERSATION</div><h2>{selected.title ?? "New conversation"}</h2></div>{statusLabel && <span className="conversation-status">{statusLabel}</span>}</div>}
+        {selected && <div className="conversation-reader-heading"><div><div className="eyebrow">SAVED CONVERSATION</div><h2>{selected.title ?? "New conversation"}</h2></div><div className="conversation-statuses">{statusLabel && <span className="conversation-status">{statusLabel}</span>}{streamStatusLabel && <span className="conversation-status" role="status" aria-live="polite">{streamStatusLabel}</span>}</div></div>}
         {!selected ? <div className="conversation-empty"><h2>Choose a conversation</h2><p>Create one or select a saved conversation to read its messages.</p></div>
           : busy && !snapshot ? <div className="conversation-empty" role="status">Loading saved messages…</div>
             : snapshot?.messages.length ? <div className="conversation-messages">

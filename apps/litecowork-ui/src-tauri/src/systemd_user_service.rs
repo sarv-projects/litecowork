@@ -18,11 +18,10 @@ const SYSTEMCTL: &str = "/usr/bin/systemctl";
 const UNIT_NAME: &str = "litecoworkd.service";
 const UNIT_MARKER: &str = "# Managed by LiteCowork; schema=1";
 const MAX_COMMAND_OUTPUT: usize = 16 * 1024;
-// OperatorServer gives already-admitted requests up to 60 seconds to settle after
-// admission stops. Keep the service-manager deadline longer so systemd does not send
-// SIGKILL while the daemon is still performing its bounded drain and final lifecycle
-// persistence. The remaining 30 seconds is a bounded settle margin, not a guarantee
-// against a stalled filesystem or database.
+// OperatorServer allows 60 seconds for request settlement, then up to five seconds each
+// for cancellation settlement and Tokio runtime teardown. Keep the service-manager
+// deadline longer for admission coordination and final lifecycle persistence. The
+// remaining time is a best-effort margin, not a guarantee against stalled storage.
 const SYSTEMD_STOP_TIMEOUT_SECONDS: u8 = 90;
 
 /// Refreshes the user unit to the currently installed daemon path and starts it.
@@ -95,7 +94,9 @@ fn absolute_path_without_controls(path: &Path) -> Result<PathBuf, String> {
         .to_str()
         .ok_or_else(|| "LiteCowork paths must be valid UTF-8 for systemd".to_owned())?;
     if text.chars().any(char::is_control) {
-        return Err("LiteCowork paths containing control characters cannot be used by systemd".to_owned());
+        return Err(
+            "LiteCowork paths containing control characters cannot be used by systemd".to_owned(),
+        );
     }
     Ok(path.to_path_buf())
 }
@@ -114,14 +115,23 @@ fn install_unit(config_dir: &Path, daemon: &Path, state_dir: &Path) -> Result<Pa
                 || metadata.uid() != geteuid().as_raw()
                 || metadata.permissions().mode() & 0o022 != 0
             {
-                return Err("LiteCowork systemd unit path is not a private user-owned regular file".to_owned());
+                return Err(
+                    "LiteCowork systemd unit path is not a private user-owned regular file"
+                        .to_owned(),
+                );
             }
             let mut existing = String::new();
             File::open(&unit_path)
                 .and_then(|mut file| file.read_to_string(&mut existing))
                 .map_err(|_| "LiteCowork could not inspect the existing systemd unit".to_owned())?;
-            if !existing.lines().next().is_some_and(|line| line == UNIT_MARKER) {
-                return Err("A non-LiteCowork systemd unit already uses litecoworkd.service".to_owned());
+            if !existing
+                .lines()
+                .next()
+                .is_some_and(|line| line == UNIT_MARKER)
+            {
+                return Err(
+                    "A non-LiteCowork systemd unit already uses litecoworkd.service".to_owned(),
+                );
             }
             fs::set_permissions(&unit_path, fs::Permissions::from_mode(0o600))
                 .map_err(|_| "LiteCowork could not restrict systemd unit permissions".to_owned())?;
@@ -137,14 +147,17 @@ fn install_unit(config_dir: &Path, daemon: &Path, state_dir: &Path) -> Result<Pa
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let temporary = unit_path.with_file_name(format!(".{UNIT_NAME}.tmp-{}-{nonce}", std::process::id()));
+    let temporary =
+        unit_path.with_file_name(format!(".{UNIT_NAME}.tmp-{}-{nonce}", std::process::id()));
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(&temporary)
         .map_err(|_| "LiteCowork could not create a private systemd unit".to_owned())?;
-    let write_result = file.write_all(body.as_bytes()).and_then(|_| file.sync_all());
+    let write_result = file
+        .write_all(body.as_bytes())
+        .and_then(|_| file.sync_all());
     if write_result.is_err() {
         let _ = fs::remove_file(&temporary);
         return Err("LiteCowork could not persist its systemd unit".to_owned());
@@ -189,16 +202,18 @@ fn ensure_user_directory(path: &Path, private_mode: bool) -> Result<(), String> 
             return Err("LiteCowork systemd configuration path is not a directory".to_owned());
         }
         if private_mode && metadata.permissions().mode() & 0o077 != 0 {
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-                .map_err(|_| "LiteCowork could not restrict systemd configuration directory permissions".to_owned())?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|_| {
+                "LiteCowork could not restrict systemd configuration directory permissions"
+                    .to_owned()
+            })?;
         }
         return Ok(());
     }
     let mut builder = fs::DirBuilder::new();
     builder.mode(0o700);
-    builder
-        .create(path)
-        .map_err(|_| "LiteCowork could not create a private systemd configuration directory".to_owned())
+    builder.create(path).map_err(|_| {
+        "LiteCowork could not create a private systemd configuration directory".to_owned()
+    })
 }
 
 fn render_unit(daemon: &Path, state_dir: &Path) -> Result<String, String> {
@@ -227,17 +242,185 @@ fn render_unit(daemon: &Path, state_dir: &Path) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{render_unit, SYSTEMD_STOP_TIMEOUT_SECONDS};
-    use std::path::Path;
+    use super::{
+        install_unit, render_unit, validate_managed_unit, SYSTEMD_STOP_TIMEOUT_SECONDS,
+        UNIT_MARKER, UNIT_NAME,
+    };
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+
+    struct TestDirectory(std::path::PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+
+            let path = std::env::temp_dir().join(format!(
+                "litecowork-systemd-unit-test-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).expect("unique temporary directory is created");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn fixture_paths(directory: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        (
+            directory.join("opt/litecowork/litecoworkd"),
+            directory.join("state/runtime"),
+        )
+    }
 
     #[test]
     fn managed_unit_allows_operator_drain_before_systemd_kill_deadline() {
-        let unit = render_unit(Path::new("/usr/bin/litecoworkd"), Path::new("/var/lib/litecowork"))
-            .expect("absolute fixture paths should render");
+        let unit = render_unit(
+            Path::new("/usr/bin/litecoworkd"),
+            Path::new("/var/lib/litecowork"),
+        )
+        .expect("absolute fixture paths should render");
 
         assert!(unit.contains("TimeoutStopSec=90s\n"));
         assert!(SYSTEMD_STOP_TIMEOUT_SECONDS > 60);
         assert!(unit.contains("KillMode=control-group\n"));
+    }
+
+    #[test]
+    fn install_unit_writes_exact_managed_body_with_private_filesystem_modes() {
+        let directory = TestDirectory::new();
+        let (daemon, state_dir) = fixture_paths(directory.path());
+
+        let unit_path = install_unit(directory.path(), &daemon, &state_dir)
+            .expect("managed service unit installs without calling systemctl");
+        validate_managed_unit(&unit_path, &daemon, &state_dir)
+            .expect("installed unit exactly matches the selected Runtime");
+
+        let expected = render_unit(&daemon, &state_dir).expect("fixture unit renders");
+        assert_eq!(
+            fs::read_to_string(&unit_path).expect("unit body reads"),
+            expected
+        );
+        assert_eq!(
+            fs::metadata(unit_path.parent().expect("unit parent"))
+                .expect("unit directory metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            fs::metadata(&unit_path)
+                .expect("unit metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn install_unit_refreshes_only_a_marked_stale_unit() {
+        let directory = TestDirectory::new();
+        let (daemon, state_dir) = fixture_paths(directory.path());
+        let unit_path = install_unit(directory.path(), &daemon, &state_dir)
+            .expect("initial managed unit installs");
+        let stale = format!("{UNIT_MARKER}\n[Service]\nExecStart=/old/litecoworkd\n");
+        fs::write(&unit_path, stale).expect("stale managed body writes");
+        fs::set_permissions(&unit_path, fs::Permissions::from_mode(0o644))
+            .expect("stale unit permissions broaden for refresh test");
+        let replacement_daemon = directory.path().join("updated/litecoworkd");
+        let replacement_state = directory.path().join("updated/state");
+
+        let refreshed = install_unit(directory.path(), &replacement_daemon, &replacement_state)
+            .expect("marked stale unit refreshes");
+
+        assert_eq!(refreshed, unit_path);
+        assert_eq!(
+            fs::read_to_string(&refreshed).expect("refreshed unit reads"),
+            render_unit(&replacement_daemon, &replacement_state).expect("replacement renders")
+        );
+        assert_eq!(
+            fs::metadata(&refreshed)
+                .expect("refreshed unit metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn install_unit_rejects_unmarked_conflict_without_rewriting_it() {
+        let directory = TestDirectory::new();
+        let (daemon, state_dir) = fixture_paths(directory.path());
+        let unit_path =
+            install_unit(directory.path(), &daemon, &state_dir).expect("initial unit installs");
+        let conflicting = b"# owned by another application\n[Service]\nExecStart=/other\n";
+        fs::write(&unit_path, conflicting).expect("conflicting unit writes");
+
+        let result = install_unit(directory.path(), &daemon, &state_dir);
+
+        assert!(result.is_err(), "unmarked service unit is not overwritten");
+        assert_eq!(fs::read(&unit_path).expect("conflict remains"), conflicting);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_unit_rejects_symlink_object_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TestDirectory::new();
+        let (daemon, state_dir) = fixture_paths(directory.path());
+        let unit_directory = directory.path().join("systemd/user");
+        fs::create_dir_all(&unit_directory).expect("unit directory exists");
+        fs::set_permissions(&unit_directory, fs::Permissions::from_mode(0o700))
+            .expect("unit directory is private");
+        let target = directory.path().join("outside-sentinel");
+        fs::write(&target, b"preserve this file").expect("sentinel content writes");
+        let unit_path = unit_directory.join(UNIT_NAME);
+        symlink(&target, &unit_path).expect("unit path becomes a symlink");
+
+        let result = install_unit(directory.path(), &daemon, &state_dir);
+
+        assert!(result.is_err(), "symlinked unit is rejected");
+        assert!(fs::symlink_metadata(&unit_path)
+            .expect("symlink remains")
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            fs::read(&target).expect("sentinel remains readable"),
+            b"preserve this file"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_unit_rejects_symlinked_configuration_directory() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TestDirectory::new();
+        let target = TestDirectory::new();
+        let config_link = directory.path().join("config-link");
+        symlink(target.path(), &config_link).expect("configuration path becomes a symlink");
+        let (daemon, state_dir) = fixture_paths(directory.path());
+
+        assert!(install_unit(&config_link, &daemon, &state_dir).is_err());
+        assert_eq!(
+            fs::read_dir(target.path())
+                .expect("target remains untouched")
+                .count(),
+            0
+        );
     }
 }
 
@@ -248,7 +431,10 @@ fn systemd_argument(path: &Path) -> Result<String, String> {
         .to_str()
         .ok_or_else(|| "LiteCowork paths must be valid UTF-8 for systemd".to_owned())?;
     if !path.is_absolute() || text.chars().any(char::is_control) {
-        return Err("LiteCowork systemd arguments must be absolute and contain no control characters".to_owned());
+        return Err(
+            "LiteCowork systemd arguments must be absolute and contain no control characters"
+                .to_owned(),
+        );
     }
     let escaped = text
         .replace('\\', "\\\\")
@@ -274,7 +460,9 @@ fn validate_managed_unit(path: &Path, daemon: &Path, state_dir: &Path) -> Result
         .map_err(|_| "LiteCowork systemd unit could not be read".to_owned())?;
     let expected = render_unit(daemon, state_dir)?;
     if contents != expected {
-        return Err("LiteCowork systemd unit does not match the installed Runtime configuration".to_owned());
+        return Err(
+            "LiteCowork systemd unit does not match the installed Runtime configuration".to_owned(),
+        );
     }
     Ok(())
 }
@@ -319,13 +507,19 @@ fn verify_active_delegated_service(
     Ok(())
 }
 
-fn verify_main_process_arguments(main_pid: u32, daemon: &Path, state_dir: &Path) -> Result<(), String> {
+fn verify_main_process_arguments(
+    main_pid: u32,
+    daemon: &Path,
+    state_dir: &Path,
+) -> Result<(), String> {
     use std::os::unix::ffi::OsStrExt;
 
     let executable = fs::read_link(format!("/proc/{main_pid}/exe"))
         .map_err(|_| "LiteCowork systemd service executable identity is unavailable".to_owned())?;
     if executable != daemon {
-        return Err("LiteCowork systemd service is not running the selected Runtime executable".to_owned());
+        return Err(
+            "LiteCowork systemd service is not running the selected Runtime executable".to_owned(),
+        );
     }
 
     let command_line = fs::read(format!("/proc/{main_pid}/cmdline"))
@@ -340,18 +534,35 @@ fn verify_main_process_arguments(main_pid: u32, daemon: &Path, state_dir: &Path)
         b"--data-dir".as_slice(),
         state_dir.as_os_str().as_bytes(),
     ];
-    if actual.len() != expected.len() || actual.iter().zip(expected).any(|(actual, expected)| *actual != expected) {
-        return Err("LiteCowork systemd service is running a different Runtime command or data directory".to_owned());
+    if actual.len() != expected.len()
+        || actual
+            .iter()
+            .zip(expected)
+            .any(|(actual, expected)| *actual != expected)
+    {
+        return Err(
+            "LiteCowork systemd service is running a different Runtime command or data directory"
+                .to_owned(),
+        );
     }
     Ok(())
 }
 
-fn run_systemctl(args: &[&str], deadline: Instant, capture_stdout: bool) -> Result<Vec<u8>, String> {
+fn run_systemctl(
+    args: &[&str],
+    deadline: Instant,
+    capture_stdout: bool,
+) -> Result<Vec<u8>, String> {
     if Instant::now() >= deadline {
-        return Err("systemd user service operation exceeded the Runtime startup deadline".to_owned());
+        return Err(
+            "systemd user service operation exceeded the Runtime startup deadline".to_owned(),
+        );
     }
     let mut command = Command::new(SYSTEMCTL);
-    command.arg("--user").arg("--no-ask-password").arg("--no-pager");
+    command
+        .arg("--user")
+        .arg("--no-ask-password")
+        .arg("--no-pager");
     if args.first() != Some(&"show") {
         command.arg("--quiet");
     }
@@ -412,11 +623,15 @@ fn run_systemctl(args: &[&str], deadline: Instant, capture_stdout: bool) -> Resu
         if Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("systemd user service operation exceeded the Runtime startup deadline".to_owned());
+            return Err(
+                "systemd user service operation exceeded the Runtime startup deadline".to_owned(),
+            );
         }
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) => thread::sleep(Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now()))),
+            Ok(None) => thread::sleep(
+                Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
+            ),
             Err(_) => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -434,7 +649,9 @@ fn run_systemctl(args: &[&str], deadline: Instant, capture_stdout: bool) -> Resu
     let (output, oversized) = if let Some(receiver) = output_reader {
         receiver
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-            .map_err(|_| "systemd service status exceeded the Runtime startup deadline".to_owned())??
+            .map_err(|_| {
+                "systemd service status exceeded the Runtime startup deadline".to_owned()
+            })??
     } else {
         (Vec::new(), false)
     };

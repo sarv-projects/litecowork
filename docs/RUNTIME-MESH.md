@@ -730,3 +730,15 @@ cursors, then rebuilds projections before the Workspace is made writable. A rest
 new Runtime requires explicit identity re-pairing and new lease epochs; old fencing
 authority is never restored. Backup restore drills and recovery-point/recovery-time
 objectives are deployment requirements and are measured before hosted production.
+
+
+## EventRelay is not Runtime authority
+
+A future EventRelay may be reachable when a desktop Runtime is offline, but it is not a
+Runtime peer with Task execution authority unless separately enrolled as one. Relay receipt
+of a provider hint cannot author Runtime events, mint leases, resolve SecretRefs or execute
+local-only work.
+
+If a cloud TriggerHost is later introduced, it must use the existing authenticated
+Runtime/Workspace binding, host epoch, cursor transfer and fencing contracts rather than
+gaining authority merely because the relay is hosted.

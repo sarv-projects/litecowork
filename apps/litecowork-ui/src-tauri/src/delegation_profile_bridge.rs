@@ -9,9 +9,7 @@ pub(crate) struct DelegationProfileResponse {
 }
 
 fn valid_id(value: &str) -> bool {
-    !value.trim().is_empty()
-        && value.len() <= 256
-        && !value.chars().any(char::is_control)
+    !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
 
 /// Finite desktop bridge for the read-only Workspace worker-profile catalogue.
@@ -24,7 +22,9 @@ pub(crate) async fn list_delegation_profiles(
 ) -> Result<DelegationProfileResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !valid_id(&workspace_id)
-            || cursor.as_ref().is_some_and(|value| value.is_empty() || value.len() > 2048)
+            || cursor
+                .as_ref()
+                .is_some_and(|value| value.is_empty() || value.len() > 2048)
         {
             return Err("Delegation profile query is invalid".to_owned());
         }

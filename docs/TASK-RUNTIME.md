@@ -72,7 +72,7 @@ activation is stale and cannot be used as the submit precondition.
 The route requires the current Task aggregate version in `If-Match`, while
 `task_spec_revision` must equal the Task's current TaskSpec head. Both checks occur in the
 acceptance transaction with producer/session/lease revalidation. A Task version mismatch
-returns `409 CONFLICT` (or the typed `STALE_TASK_VERSION`); a spec mismatch returns
+returns HTTP `409` with typed `STALE_TASK_VERSION`; a spec mismatch returns
 `409 STALE_SPEC_REVISION`. A proposal whose authenticated producer is no longer current,
 active, or authorized is rejected with `403 FORBIDDEN` or `409 CONFLICT`, without
 creating a PlanRevision or Steps. The Task must still be in a plan-accepting state
@@ -296,7 +296,12 @@ current SQLite `AgentSessionStore` returns
 `StoreError::Invalid("TASK_PLANNING_ISOLATION_UNAVAILABLE")` from both planner start and
 activation before writing a session snapshot, event, request receipt, host binding, or Task
 transition. This storage-level gate protects direct internal callers as well as the
-readiness route. It may be removed only when a Runtime-owned, current-incarnation
+readiness route. This is an **internal** storage diagnostic, not a public ErrorCode:
+The read-only readiness API projects a sanitized dispatch blocker; any future
+command error response for this condition MUST use a typed `DEPENDENCY_UNAVAILABLE`
+error rather than the raw store-error text. Neither path may leak internal diagnostics. Qualification requires a negative API test and
+a no-session/no-event/no-receipt persistence check. It may be removed only when a
+Runtime-owned, current-incarnation
 `IsolationAttestation` and the remaining Trust, native-capability, process containment,
 lease, and session-settlement checks are produced and transactionally revalidated at
 admission; no caller-supplied Boolean or request field can satisfy the gate.
@@ -313,6 +318,19 @@ plugin/hook tools disabled or mediated. Planner admission remains unavailable un
 installed protocol applies and qualifies restricted roots, non-filesystem tools are
 disabled/mediated, and Task-specific Environment identity, process containment, and
 recovery are integrated.
+
+**Fallback design, not currently qualified:** LiteCowork may supply a Runtime-owned
+contained planner adapter rather than waiting for the native Codex restricted-roots
+protocol. This adapter must confine process/filesystem/network access *outside* the agent,
+supply Task Resources via scoped read-only handles, mediate or disable native external
+tools, bind a real authenticated TASK_PLANNING session to a narrowly scoped Gateway
+credential, and provide current-incarnation IsolationAttestation transactionally checked
+by the same admission path. Negative tests must prove cancellation, incarnation fencing,
+no ambient home/config/credential access and supported-OS isolation. Merely labeling an
+agent `readOnly`, changing its prompt, or setting a working directory is not isolation.
+An owner-authored plan UI is a separate authority/route that would require its own reviewed
+machine contracts; it cannot bypass producer-scoped plan submit. Until a qualified path
+exists, report planning unavailable instead of fabricating an executing Task.
 
 ## Plan acceptance
 
@@ -663,6 +681,7 @@ list; prior event/state snapshots remain immutable.
 ```text
 TASK_NOT_FOUND
 AGENT_UNAVAILABLE
+STALE_VERSION
 STALE_TASK_VERSION
 STALE_SPEC_REVISION
 INVALID_PLAN
@@ -680,6 +699,11 @@ STALE_FENCE
 INVALID_RESOURCE_REF
 CONFLICT
 ```
+
+`STALE_TASK_VERSION` identifies a stale Task aggregate version (including plan submission).
+`STALE_VERSION` is the existing generic stale-snapshot error used for the separately
+computed recovery placement-plan digest. Do not introduce a third alias or treat the two
+conditions as interchangeable.
 
 ## Host delegation admission
 

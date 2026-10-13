@@ -427,3 +427,28 @@ Owner acceptance for every launch-critical agent must demonstrate:
 
 Store sanitized evidence in the owning story review packet. No secret/API-key value may be
 recorded in test artifacts.
+
+
+## Connector, workflow, learning, and run-continuation qualification matrix
+
+Before product support claims, add executable coverage for:
+
+1. PKCE/state/loopback callback replay, wrong-state, duplicate, cancellation and restart.
+2. Token absence from logs/events/crash/state snapshots and SecretStore lock/rotation.
+3. Refresh serialization, revoked token, scope downgrade and Connection revoke mid-Invocation.
+4. Same Connection assigned to multiple Coworkers with independent access ceilings.
+5. Provider timeout after real write with no blind duplicate retry.
+6. EventRelay duplicate/reorder/delay/signature failure/offline replay and revoked account.
+7. External workflow partial effects, cancellation ambiguity, lost run handle and backend outage.
+8. Activepieces compatibility with safe fixture plus malicious install/dynamic/native dependency cases.
+9. Learning from explicit correction, conflict/supersession, temporary chat exclusion,
+   third-party prompt injection, secret detection, revoke and classifier outage.
+10. Automation Continue duplicate request, same Conversation, no cursor change, warm native
+    resume when qualified and honest cold durable rebuild otherwise.
+11. Code task preset proving the same Conversation/Task/Artifact/Workbench paths as normal chat.
+
+Mocks may validate contracts but cannot close provider/OS acceptance cells.
+
+## V1 detailed design integration — 2026-10-12
+
+Use implementation/V1-DESIGN-COVERAGE.md for explicit UAT cases and docs/RENDERING-CONFORMANCE-LLD.md for upstream-native golden corpus. Tests must verify real harness and Chrome OS version qualification, high-DPI browser coordinates, takeover races, idempotent Send, unknown native events, rich fallback, keyboard access and reduced motion. Pure UI snapshot tests are not SYSTEM evidence. Use focused tests per module and full release gates, not full-suite reruns for every CSS tweak.

@@ -2,6 +2,7 @@
 members = [
   "apps/litecoworkd",
   "crates/operator-ipc",
+  "crates/windows-local-security",
   "crates/storage-core",
   "crates/storage-sqlite",
   "crates/domain-task",
@@ -22,7 +23,9 @@ version = "0.1.0"
 rust-version = "1.88"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# Unsafe Win32 security calls are isolated to windows-local-security. Other crates may
+# not locally override this deny lint.
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = "warn"

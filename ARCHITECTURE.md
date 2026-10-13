@@ -469,9 +469,11 @@ an unqualified OS/provider pair remains unavailable for Task dispatch.
 
 ## 8. Durable state, resources, events, and replication
 
-Workspace context includes immutable `WorkspaceInstructionRevision` records. Each Task
-pins the instruction revision used at creation; later instruction edits affect a Task
-only through an explicit TaskSpecRevision. WorkspaceRoots are persistent, user-selected
+Workspace context includes immutable `WorkspaceInstructionRevision` records. A newly
+created instruction revision pins the Resource's current revision at commit; the immutable
+instruction pin remains valid if that Resource later advances. Each Task pins the
+instruction revision used at creation; later instruction edits affect a Task only through
+an explicit TaskSpecRevision. WorkspaceRoots are persistent, user-selected
 resource relationships. A one-time folder attachment does not create a root or enable
 ongoing indexing.
 
@@ -742,3 +744,37 @@ module only when a working vertical slice needs it.
 ## Coworker UX and autonomy vNext authority
 
 The accepted product decision is documented in [Coworker target](docs/COWORKERS-TARGET.md). Ordinary conversations do not require a Coworker. Named Coworkers are chat-first persistent identities; their optional integrated connections and configured responsibilities DO NOT create a new agent harness, execution engine, permissions authority, or hidden planner. A confirmed standing responsibility groups existing Goal/Routine/Automation objects and fences unattended Task admission. Its triggers, execution and verification remain owned by their established services. Connections are unbounded as CONFIGURED inventory, never unbounded live activation. Memory learning is automatically eligible only within a preauthorized source/scope policy; it does not authorize proactive actions. The target record sketches in that document require separate versioned IDL, event and migration implementation before any route or UI action may claim to work. Existing Runtime and Trust restrictions remain mandatory.
+
+
+## Connector, workflow, learning and run-continuation extension
+
+The final 2026-10-10 extension keeps existing architecture authority intact.
+
+~~~text
+                       LiteCowork Core
+              Conversation / Task / Automation
+                         /       \
+                        /         \
+             CapabilityBroker   TriggerCoordinator
+                   |                  |
+          Connector/Workflow       Event providers
+                   |                  |
+                  LiteSPM / qualified adapters
+~~~
+
+1. [Connectors & Workflows](docs/CONNECTORS-WORKFLOWS.md) defines ConnectorPackage,
+   local-first auth, optional AuthBackends, EventRelay and WorkflowBackendAdapter.
+2. [Learning](docs/LEARNING.md) defines typed candidate -> memory/instruction/skill/routine/
+   automation paths. It creates no permission authority.
+3. Automation Continue opens one on-demand Task follow-up Conversation. Native resume is
+   optional; durable LiteCowork state is the correctness floor.
+4. Code task is a launch preset, not a separate Code architecture. Native agent surfaces
+   remain owned by AgentModule/AgentControlDescriptor.
+
+Exact source-level research/pins are
+[Reference Implementations](docs/REFERENCE-IMPLEMENTATIONS.md). External frameworks never
+replace Task/Plan/Attempt/Effect/Evidence/Trust authority.
+
+## V1 detailed design integration — 2026-10-12
+
+The desktop/local implementation surface is made explicit by docs/V1-DESIGN-INDEX.md, docs/V1-FUNCTION-FILE-CATALOG.md and implementation/V1-DESIGN-COVERAGE.md. These are subordinate implementer LLDs, not new Core domains. Preserve Task, Attempt, AgentSession, Environment, Effect, Grant and Evidence authority. Conversation and Coworker paths remain one product. A Tauri WebView is not a Google Chrome execution engine; browser automation needs a qualified Chrome provider plus separate presentation and human-control lease. No new endpoint or event is considered served from design documentation alone.

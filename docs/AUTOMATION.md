@@ -442,3 +442,50 @@ disabling the Automation through an explicit transition.
 ## Standing responsibilities and unattended trigger UX target
 
 StandingResponsibility is a user-facing grouping and admission fence, not an alternative scheduler. One standing request may contain a daily watch and a separate weekly report using multiple existing Automation revisions. A confirmed enable action must atomically persist the reviewed configuration and durable trigger registration/outbox, or report blocked; never call a proposed definition enabled without host readiness. Source events require provider identity/replay verification. Deterministic filtering suppresses unchanged observations without model calls or noisy notifications. Offline reconciliation obeys the exact timezone, DST fold/gap, misfire and overlap policies; duplicate events/host epochs produce only one canonical occurrence. Run now creates a distinct manual occurrence under existing owner authority and never re-enables paused recurrence. Pausing new work fences new occurrences; Pause all additionally invokes safe Task pause. Future cloud TriggerHost placement is separate from the local Runtime that owns desktop resources. See [Coworker target](COWORKERS-TARGET.md).
+
+
+## Unified Automation UX, connector events, workflow calls, and run continuation
+
+The internal TriggerDefinition union remains explicit, but the normal UI presents one
+plain Automation concept. The first choice is **When** (On a schedule, Something happens
+in an app, A condition becomes true, etc.); the reusable Routine remains **Do**. Cron and
+subscription storage vocabulary is advanced detail, not the default product language.
+
+Connector event delivery follows
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md). A hosted EventRelay may queue a minimal
+signed event hint while a local Runtime is offline; it is not allowed to hold a general
+Connection grant or mint a Task. TriggerCoordinator still authenticates/deduplicates the
+source and creates the canonical AutomationOccurrence/Task under existing cursor and
+idempotency rules.
+
+A Routine may invoke an existing external deterministic workflow through a qualified
+WorkflowBackendAdapter, but that invocation is an ordinary capability operation inside the
+Task. The external engine does not become the Automation scheduler or Task state machine.
+
+### Run history and Continue
+
+Runs remains occurrence/Task history. When its Task is readable, the user may choose
+**Continue**.
+
+~~~text
+AutomationOccurrence -> Task
+                         |
+                         +-- user clicks Continue
+                              |
+                              v
+                    PRIMARY_FOLLOW_UP Conversation
+~~~
+
+Continue is on-demand; it does not create hidden Conversations for every unattended run.
+The command atomically creates or returns the Task's one follow-up Conversation. The UI
+renders a trusted run-context card rather than fake historical assistant messages.
+
+Native-session continuity is opportunistic, not invented. If the Task's AgentModule proves
+a durable resume point still matches binding/config/runtime policy, the first follow-up
+turn may reuse it. Otherwise LiteCowork rebuilds bounded context from durable TaskSpec,
+selected Artifacts, Evidence and unresolved blockers. Continue never reruns the Automation,
+changes its cursor, or grants new authority.
+
+## V1 detailed design integration — 2026-10-12
+
+The cross-surface V1 implementation sequence and required functions for Routine->Automation->Trigger->Occurrence->Task->Continue are in V1-WORKFLOW-EVENT-LLD.md and V1-FUNCTION-FILE-CATALOG.md. Enablement requires source/grants/host readiness and consent. Missed local offline slots and DST folds/gaps must be recorded honestly; Run now never enables recurrence. Notification content reflects persisted status, not an agent sentence.

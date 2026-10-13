@@ -25,11 +25,19 @@ pub(crate) async fn get_zip_intake_readiness(
         let body = read_bounded_response(response)?;
         let status: serde_json::Value = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned an unsupported ZIP-intake status".to_owned())?;
-        if status.get("capability_id").and_then(serde_json::Value::as_str)
+        if status
+            .get("capability_id")
+            .and_then(serde_json::Value::as_str)
             != Some("litecowork.zip-intake")
             || status.get("status").and_then(serde_json::Value::as_str) != Some("UNAVAILABLE")
-            || status.get("provider_integrated").and_then(serde_json::Value::as_bool) != Some(false)
-            || status.get("extraction_enabled").and_then(serde_json::Value::as_bool) != Some(false)
+            || status
+                .get("provider_integrated")
+                .and_then(serde_json::Value::as_bool)
+                != Some(false)
+            || status
+                .get("extraction_enabled")
+                .and_then(serde_json::Value::as_bool)
+                != Some(false)
         {
             return Err("Local Runtime returned an unsupported ZIP-intake status".to_owned());
         }

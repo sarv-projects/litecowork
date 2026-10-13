@@ -45,7 +45,7 @@ CoworkerContextPolicy {
   allowed_context_kinds: ContextDocumentKind[]
   max_retrieved_items: u32
   retain_task_summaries: bool
-  require_user_confirmation_for_memory: true
+  require_user_confirmation_for_memory: true # LEGACY interim field: reviewed proposals only; new LearningPolicy controls quiet private auto-commit
 }
 
 CoworkerInteractionPolicy {
@@ -407,9 +407,12 @@ Context precedence, highest first:
 
 Lower-priority context cannot override current instructions or policy. Contradictions
 that materially affect the Task become a clarification/blocker rather than an inferred
-merge. V1 supports user-authored ContextDocument revisions and retrieval only; providers
-cannot propose newly extracted personal memory until a separate reviewable proposal
-lifecycle exists. Revocation/deletion is honored by Core across provider sources where
+merge. The currently implemented source supports user-authored ContextDocument revisions and
+retrieval only; it does not yet perform automatic Coworker learning. The accepted V1
+TARGET additionally permits the narrowly qualified, Coworker-private learned-memory
+candidate and commit lifecycle in `LEARNING.md`, after that lifecycle, provenance,
+revocation and qualification gates are implemented. Unreviewed provider extraction does
+not itself authorize a memory commit. Revocation/deletion is honored by Core across provider sources where
 supported, with an auditable incomplete-deletion state when an external provider cannot
 confirm removal.
 
@@ -465,3 +468,19 @@ The [Coworker target](COWORKERS-TARGET.md) adds an optional StandingResponsibili
 Every enabled standing responsibility exposes **Test run**, **Run now**, **Pause/Resume**, **Edit**, **History**, and **Archive/Delete** only when the underlying Automation/Task APIs support them. A Test run is a real occurrence/Task and may have side effects; the review screen must say so and preserve ordinary Trust/approval boundaries.
 
 A Coworker may expose a secondary **Library** view containing actual authorized Artifacts, files/pages/links it created or explicitly shared, grouped by recency/source. Library is a projection of canonical Resource/Artifact refs, not a second storage system and not an implicit memory scope. Per-Coworker notification controls and recent responsibility outcomes are profile/settings surfaces, while Chat remains primary.
+
+
+## Connector and learning reconciliation — 2026-10-10
+
+Standing responsibilities may reference Routines that use direct ConnectorPackages or
+external WorkflowBackend capabilities, but the responsibility still owns neither
+credentials nor workflow execution. Connection setup, Coworker assignment, CapabilityGrant,
+SecretLease, Invocation and Effect remain separate layers.
+
+Automatic memory is now specified by [Learning](LEARNING.md): only narrowly qualified
+private memory can commit quietly under CoworkerLearningPolicy. Instruction, Skill, Routine,
+Automation and permission changes remain reviewed/versioned. A repeated Task may suggest an
+Automation, but a suggestion is never an enabled responsibility.
+
+See [Connectors & Workflows](CONNECTORS-WORKFLOWS.md) for task-time Connect and event relay
+semantics. A provider event or relay hint cannot self-authorize a responsibility.

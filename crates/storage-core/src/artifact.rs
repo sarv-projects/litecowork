@@ -94,6 +94,29 @@ pub struct ArtifactVersionRecord {
     pub created_at: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InvalidationRecord {
+    pub invalidation_record_id: String,
+    pub dependency_edge_id: String,
+    pub observed_revision_id: String,
+    pub reason_code: String,
+    pub created_at: String,
+}
+
+/// Owner, Workspace, and dependency-edge scoped keyset page request. The continuation
+/// position is the last `(created_at, invalidation_record_id)` pair from the previous page.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DependencyInvalidationPageRequest {
+    pub owner_principal_id: String,
+    pub workspace_id: String,
+    pub dependency_edge_id: String,
+    pub after_created_at: Option<String>,
+    pub after_invalidation_record_id: Option<String>,
+    pub limit: usize,
+}
+
 /// Read boundary over already committed Artifact records.
 pub trait ArtifactReadStore: Send + Sync {
     fn get_artifact(
@@ -117,6 +140,13 @@ pub trait ArtifactReadStore: Send + Sync {
         after_artifact_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ArtifactRecord>, StoreError>;
+    /// Returns a stable ascending invalidation page for an exact edge in a Workspace
+    /// owned by the principal. `None` hides absent or foreign edges; an existing edge
+    /// without invalidation rows returns `Some(Vec::new())`.
+    fn list_dependency_invalidations_page(
+        &self,
+        request: DependencyInvalidationPageRequest,
+    ) -> Result<Option<Vec<InvalidationRecord>>, StoreError>;
     fn get_artifact_version(
         &self,
         workspace_id: &str,

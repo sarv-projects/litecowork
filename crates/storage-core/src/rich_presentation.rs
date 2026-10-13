@@ -60,6 +60,12 @@ pub struct ConversationPresentationSnapshot {
     pub conversation_id: String,
     pub projection_revision: u64,
     pub stream_cursor: String,
+    /// Durable source frontier observed in the same read snapshot as this projection.
+    pub origin_sequence: String,
+    /// Latest append-only message identity observed in the same read transaction.
+    /// This is stream-internal metadata and is deliberately omitted from wire JSON.
+    #[serde(skip)]
+    pub stream_message_frontier: Option<String>,
     pub items: Vec<Value>,
     pub next_cursor: Option<String>,
     pub active_turn: Option<Value>,
@@ -68,6 +74,14 @@ pub struct ConversationPresentationSnapshot {
 pub const MAX_CONVERSATION_PRESENTATION_MESSAGES: usize = 100;
 pub const MAX_CONVERSATION_PRESENTATION_MESSAGE_BYTES: usize = 262_144;
 pub const MAX_CONVERSATION_PRESENTATION_PAGE_BYTES: usize = 4_194_304;
+pub const MAX_CONVERSATION_PRESENTATION_BATCH: usize = 20;
+
+/// One independently paged Conversation projection in an atomic batch read.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConversationPresentationRead {
+    pub conversation_id: String,
+    pub after_message_id: Option<String>,
+}
 
 /// This initial qualified adapter accepts semantic TEXT_SLICE, LAYOUT and DIVIDER
 /// blocks only. All source-bearing/host-bound blocks require future owning binders.
@@ -91,7 +105,19 @@ pub trait RichPresentationStore: Send + Sync {
         principal_id: &str,
         workspace_id: &str,
         conversation_id: &str,
+        origin_runtime_id: &str,
         after_message_id: Option<&str>,
         limit: usize,
     ) -> Result<ConversationPresentationSnapshot, StoreError>;
+
+    /// Reads a bounded set of owner-authorized Conversation projections from one storage
+    /// snapshot. Every returned projection carries the same durable origin frontier.
+    fn read_conversation_presentation_batch(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        reads: &[ConversationPresentationRead],
+        origin_runtime_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ConversationPresentationSnapshot>, StoreError>;
 }

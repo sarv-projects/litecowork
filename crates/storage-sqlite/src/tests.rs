@@ -2,8 +2,24 @@
 mod conversation_turn_tests;
 #[path = "invocation_tests.rs"]
 mod invocation_tests;
+#[path = "resource_upload_gc_tests.rs"]
+mod resource_upload_gc_tests;
 #[path = "rich_presentation_tests.rs"]
 mod rich_presentation_tests;
+#[path = "runtime_binding_tests.rs"]
+mod runtime_binding_tests;
+#[path = "runtime_capability_host_tests.rs"]
+mod runtime_capability_host_tests;
+#[path = "runtime_lifecycle_tests.rs"]
+mod runtime_lifecycle_tests;
+#[path = "runtime_offer_tests.rs"]
+mod runtime_offer_tests;
+#[path = "workspace_archive_tests.rs"]
+mod workspace_archive_tests;
+#[path = "workspace_instruction_tests.rs"]
+mod workspace_instruction_tests;
+#[path = "writer_shutdown_tests.rs"]
+mod writer_shutdown_tests;
 use super::*;
 #[path = "artifact_tests.rs"]
 mod artifact_tests;
@@ -84,7 +100,6 @@ fn automation_occurrence_aggregate_version_is_not_claim_fencing() {
             .is_err()
     );
 }
-
 #[test]
 fn effect_start_is_blocked_before_any_storage_mutation() {
     let directory = tempfile::tempdir().expect("temporary store directory");
@@ -1019,6 +1034,183 @@ fn context_document_status_revocation_restore_stale_and_replay_are_atomic() {
 }
 
 #[test]
+fn resource_location_list_is_workspace_scoped_public_and_uses_committed_freshness() {
+    const CURRENT_DIGEST: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const STALE_DIGEST: &str =
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-context");
+    seed_workspace_notes_resource(&directory);
+    let connection = Connection::open(state_database(&directory)).expect("fixture connection");
+    connection
+        .execute(
+            "UPDATE resource_locations SET locator_ref_id = 'opaque-stable-location-ref' WHERE location_id = 'location-context'",
+            [],
+        )
+        .expect("private locator sentinel");
+    connection
+        .execute(
+            "INSERT INTO resource_locations(location_id, resource_id, provider_ref, locator_ref_id, availability, writable, observed_revision_id, observed_digest, observed_at, last_checked_at)
+             VALUES ('location-offline', 'resource-context', 'provider.private', 'opaque-private-locator', 'OFFLINE', 1, 'revision-context', ?1, '2026-10-06T10:01:00Z', '2026-10-06T10:02:00Z'),
+                    ('location-stale', 'resource-context', 'provider.private', 'opaque-private-locator-2', 'AVAILABLE', 0, 'revision-context', ?2, '2026-10-06T10:03:00Z', NULL),
+                    ('location-unknown', 'resource-context', 'provider.private', 'opaque-private-locator-3', 'UNKNOWN', 0, NULL, NULL, '2026-10-06T10:04:00Z', NULL),
+                    ('location-placeholder', 'resource-context', 'provider.private', 'opaque-private-locator-5', 'PLACEHOLDER', 0, 'revision-context', ?1, '2026-10-06T10:04:30Z', NULL),
+                    ('location-revoked', 'resource-context', 'provider.private', 'opaque-private-locator-8', 'REVOKED', 0, 'revision-context', ?1, '2026-10-06T10:04:40Z', NULL),
+                    ('location-unavailable', 'resource-context', 'provider.private', 'opaque-private-locator-9', 'UNAVAILABLE', 0, 'revision-context', ?1, '2026-10-06T10:04:50Z', NULL)",
+            [CURRENT_DIGEST, STALE_DIGEST],
+        )
+        .expect("additional location observations");
+    connection
+        .execute(
+            "INSERT INTO resource_revisions(resource_revision_id, resource_id, content_digest, size_bytes, media_type, observed_at, created_by_json)
+             VALUES ('revision-old', 'resource-context', ?1, 0, 'text/plain', '2026-10-06T09:00:00Z', '{}')",
+            [CURRENT_DIGEST],
+        )
+        .expect("historical Resource revision");
+    connection
+        .execute(
+            "INSERT INTO resource_revision_parents(resource_id, child_revision_id, parent_revision_id)
+             VALUES ('resource-context', 'revision-context', 'revision-old')",
+            [],
+        )
+        .expect("historical revision ancestry");
+    connection
+        .execute(
+            "INSERT INTO resource_locations(location_id, resource_id, provider_ref, locator_ref_id, availability, writable, observed_revision_id, observed_digest, observed_at, last_checked_at)
+             VALUES ('location-old-revision', 'resource-context', 'provider.private', 'opaque-location-ref-6', 'AVAILABLE', 0, 'revision-old', ?1, '2026-10-06T10:04:45Z', NULL)",
+            [CURRENT_DIGEST],
+        )
+        .expect("historical revision location observation");
+    connection
+        .execute(
+            "INSERT INTO resources(resource_id, workspace_id, kind, provider_identity_json, display_name, current_revision_id, sensitivity, context_document_json, provenance_json, created_at, updated_at, version)
+             VALUES ('resource-without-locations', 'workspace-context', 'FILE', '{}', 'empty.txt', NULL, 'PERSONAL', NULL, '{}', '2026-10-06T10:05:00Z', '2026-10-06T10:05:00Z', 1)",
+            [],
+        )
+        .expect("resource without a location");
+    connection
+        .execute(
+            "INSERT INTO resources(resource_id, workspace_id, kind, provider_identity_json, display_name, current_revision_id, sensitivity, context_document_json, provenance_json, created_at, updated_at, version)
+             VALUES ('resource-no-digest', 'workspace-context', 'WEB_RESOURCE', '{}', 'remote', NULL, 'PERSONAL', NULL, '{}', '2026-10-06T10:06:00Z', '2026-10-06T10:06:00Z', 1)",
+            [],
+        )
+        .expect("resource with an uncomparable current revision");
+    connection
+        .execute(
+            "INSERT INTO resource_revisions(resource_revision_id, resource_id, content_digest, size_bytes, media_type, observed_at, created_by_json)
+             VALUES ('revision-no-digest', 'resource-no-digest', NULL, NULL, 'text/html', '2026-10-06T10:06:00Z', '{}')",
+            [],
+        )
+        .expect("current Resource revision without content digest");
+    connection
+        .execute(
+            "UPDATE resources SET current_revision_id = 'revision-no-digest' WHERE resource_id = 'resource-no-digest'",
+            [],
+        )
+        .expect("select digestless current revision");
+    connection
+        .execute(
+            "INSERT INTO resource_locations(location_id, resource_id, provider_ref, locator_ref_id, availability, writable, observed_revision_id, observed_digest, observed_at, last_checked_at)
+             VALUES ('location-no-current-digest', 'resource-no-digest', 'provider.private', 'opaque-location-ref-4', 'AVAILABLE', 0, 'revision-no-digest', ?1, '2026-10-06T10:06:00Z', '2026-10-06T10:06:00Z')",
+            [CURRENT_DIGEST],
+        )
+        .expect("location of Resource revision without digest");
+    connection
+        .execute(
+            "INSERT INTO resources(resource_id, workspace_id, kind, provider_identity_json, display_name, current_revision_id, sensitivity, context_document_json, provenance_json, created_at, updated_at, version)
+             VALUES ('resource-revisionless', 'workspace-context', 'FOLDER', '{}', 'folder', NULL, 'PERSONAL', NULL, '{}', '2026-10-06T10:07:00Z', '2026-10-06T10:07:00Z', 1)",
+            [],
+        )
+        .expect("revisionless Resource");
+    connection
+        .execute(
+            "INSERT INTO resource_locations(location_id, resource_id, provider_ref, locator_ref_id, availability, writable, observed_revision_id, observed_digest, observed_at, last_checked_at)
+             VALUES ('location-revisionless', 'resource-revisionless', 'provider.private', 'opaque-location-ref-7', 'AVAILABLE', 0, NULL, NULL, '2026-10-06T10:07:00Z', NULL)",
+            [],
+        )
+        .expect("revisionless resource location");
+
+    let locations = store
+        .list_resource_locations("workspace-context", "resource-context")
+        .expect("location projection query")
+        .expect("resource exists in selected Workspace");
+    assert_eq!(
+        locations
+            .iter()
+            .map(|location| (location.location_id.as_str(), location.freshness.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            ("location-context", "CURRENT"),
+            ("location-offline", "UNAVAILABLE"),
+            ("location-old-revision", "STALE"),
+            ("location-placeholder", "UNKNOWN"),
+            ("location-revoked", "UNAVAILABLE"),
+            ("location-stale", "STALE"),
+            ("location-unavailable", "UNAVAILABLE"),
+            ("location-unknown", "UNKNOWN"),
+        ]
+    );
+    assert_eq!(locations[0].runtime_id, None);
+    assert_eq!(locations[0].environment_id, None);
+    assert_eq!(locations[0].connection_id, None);
+    assert_eq!(
+        locations[0].last_checked_at.as_deref(),
+        Some("2026-10-06T10:00:00Z")
+    );
+    let public_json =
+        serde_json::to_string(&locations).expect("public location projection serializes");
+    assert!(!public_json.contains("opaque-stable-location-ref"));
+    assert!(!public_json.contains("opaque-location-ref"));
+    assert!(!public_json.contains("provider.private"));
+    assert!(!public_json.contains("locator_ref_id"));
+    assert!(!public_json.contains("provider_ref"));
+
+    assert_eq!(
+        store
+            .list_resource_locations("workspace-other", "resource-context")
+            .expect("cross-Workspace query succeeds as a lookup"),
+        None,
+        "a Resource from another Workspace is not disclosed"
+    );
+    assert_eq!(
+        store
+            .list_resource_locations("workspace-context", "missing-resource")
+            .expect("missing Resource query succeeds as a lookup"),
+        None
+    );
+    assert_eq!(
+        store
+            .list_resource_locations("workspace-context", "resource-without-locations")
+            .expect("empty location query succeeds"),
+        Some(Vec::new())
+    );
+    assert_eq!(
+        store
+            .list_resource_locations("workspace-context", "resource-no-digest")
+            .expect("uncomparable observation query succeeds")
+            .expect("resource exists")
+            .first()
+            .expect("location exists")
+            .freshness,
+        "UNKNOWN",
+        "freshness cannot be called STALE without a current digest to compare"
+    );
+    assert_eq!(
+        store
+            .list_resource_locations("workspace-context", "resource-revisionless")
+            .expect("revisionless observation query succeeds")
+            .expect("resource exists")
+            .first()
+            .expect("location exists")
+            .freshness,
+        "UNKNOWN"
+    );
+}
+
+#[test]
 fn applies_full_contract_schema_and_reports_sqlite_runtime() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let store = test_store(&directory, Duration::from_secs(1));
@@ -1276,6 +1468,176 @@ fn workspace_create_update_restart_and_projection_replay_match() {
 }
 
 #[test]
+fn workspace_event_replay_pages_use_stable_origin_sequences_and_reject_gaps() {
+    use storage_core::EventStore;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-replay-page");
+    service(store.clone())
+        .change_replication_policy(ChangeReplicationPolicy {
+            workspace_id: "workspace-replay-page".to_owned(),
+            expected_version: 1,
+            policy: ReplicationPolicy::MetadataOnly,
+            replication_scope_root_ids: Vec::new(),
+            event: EventContext {
+                event_id: "event-replay-page-2".to_owned(),
+                origin_runtime_id: "runtime-local".to_owned(),
+                hlc_timestamp: "2026-10-06T09:00:00Z".to_owned(),
+                correlation_id: "correlation-replay-page".to_owned(),
+                causation_id: None,
+                recorded_at: "2026-10-06T10:01:00Z".to_owned(),
+            },
+        })
+        .expect("second origin event commits");
+
+    let first = store
+        .read_workspace_event_page("workspace-replay-page", "runtime-local", 0, 1)
+        .expect("first replay page reads");
+    assert_eq!(first.head_sequence, 2);
+    assert_eq!(first.retained_from_sequence, Some(1));
+    assert_eq!(first.events.len(), 1);
+    assert_eq!(first.events[0].origin_sequence, 1);
+    assert_eq!(first.events[0].event_id, "event-create");
+    assert!(first.has_more);
+    assert!(!first.has_gap);
+    assert!(!first.cursor_is_ahead);
+
+    drop(store);
+    let reopened = test_store(&directory, Duration::from_secs(1));
+    let second = reopened
+        .read_workspace_event_page("workspace-replay-page", "runtime-local", 1, 1)
+        .expect("resume after restart reads the next event");
+    assert_eq!(second.head_sequence, 2);
+    assert_eq!(second.events.len(), 1);
+    assert_eq!(second.events[0].origin_sequence, 2);
+    assert_eq!(second.events[0].event_id, "event-replay-page-2");
+    assert!(!second.has_more);
+    assert!(!second.has_gap);
+
+    let ahead = reopened
+        .read_workspace_event_page("workspace-replay-page", "runtime-local", 3, 10)
+        .expect("future cursor is reported as a resync condition");
+    assert_eq!(ahead.head_sequence, 2);
+    assert!(ahead.cursor_is_ahead);
+    assert!(ahead.events.is_empty());
+
+    let isolated = reopened
+        .read_workspace_event_page("workspace-replay-page", "another-runtime", 0, 10)
+        .expect("origin scope is isolated");
+    assert_eq!(isolated.head_sequence, 0);
+    assert!(isolated.events.is_empty());
+    assert!(
+        reopened
+            .read_workspace_event_page("workspace-replay-page", "runtime-local", 0, 0)
+            .is_err()
+    );
+    assert!(
+        reopened
+            .read_workspace_event_page(
+                "workspace-replay-page",
+                "runtime-local",
+                0,
+                storage_core::MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE + 1,
+            )
+            .is_err()
+    );
+
+    let database = Connection::open(state_database(&directory)).expect("open gap fixture");
+    database
+        .execute(
+            "DELETE FROM domain_events WHERE workspace_id = ?1 AND origin_runtime_id = ?2 AND origin_sequence = 2",
+            params!["workspace-replay-page", "runtime-local"],
+        )
+        .expect("simulate an archived replay entry");
+    let gap = reopened
+        .read_workspace_event_page("workspace-replay-page", "runtime-local", 1, 10)
+        .expect("missing retained sequence is reported");
+    assert_eq!(gap.head_sequence, 2);
+    assert_eq!(gap.retained_from_sequence, Some(1));
+    assert!(gap.events.is_empty());
+    assert!(gap.has_gap);
+
+    database
+        .execute(
+            "DELETE FROM domain_events WHERE workspace_id = ?1 AND origin_runtime_id = ?2 AND origin_sequence = 1",
+            params!["workspace-replay-page", "runtime-local"],
+        )
+        .expect("simulate an expired replay prefix");
+    let expired = reopened
+        .read_workspace_event_page("workspace-replay-page", "runtime-local", 0, 10)
+        .expect("cursor older than retained floor is reported");
+    assert_eq!(expired.head_sequence, 2);
+    assert_eq!(expired.retained_from_sequence, None);
+    assert!(expired.has_gap);
+}
+
+#[test]
+fn workspace_event_replay_detects_gap_beyond_truncated_page() {
+    use storage_core::EventStore;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-replay-truncated-gap");
+    for (version, sequence) in [(1, 2), (2, 3)] {
+        service(store.clone())
+            .change_replication_policy(ChangeReplicationPolicy {
+                workspace_id: "workspace-replay-truncated-gap".to_owned(),
+                expected_version: version,
+                policy: ReplicationPolicy::MetadataOnly,
+                replication_scope_root_ids: Vec::new(),
+                event: EventContext {
+                    event_id: format!("event-truncated-gap-{sequence}"),
+                    origin_runtime_id: "runtime-local".to_owned(),
+                    hlc_timestamp: format!("2026-10-06T09:00:0{sequence}Z"),
+                    correlation_id: format!("correlation-truncated-gap-{sequence}"),
+                    causation_id: None,
+                    recorded_at: format!("2026-10-06T10:01:0{sequence}Z"),
+                },
+            })
+            .expect("origin event commits");
+    }
+
+    let database = Connection::open(state_database(&directory)).expect("open gap fixture");
+    database
+        .execute(
+            "DELETE FROM domain_events WHERE workspace_id = ?1 AND origin_runtime_id = ?2 AND origin_sequence = 3",
+            params!["workspace-replay-truncated-gap", "runtime-local"],
+        )
+        .expect("simulate a missing event after the returned page");
+
+    let page = store
+        .read_workspace_event_page("workspace-replay-truncated-gap", "runtime-local", 0, 1)
+        .expect("truncated replay page reads");
+    assert_eq!(page.head_sequence, 3);
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.events[0].origin_sequence, 1);
+    assert!(page.has_more);
+    assert!(page.has_gap);
+}
+
+#[test]
+fn workspace_event_replay_rejects_allocator_head_behind_persisted_events() {
+    use storage_core::EventStore;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-replay-corrupt");
+    let database = Connection::open(state_database(&directory)).expect("open corruption fixture");
+    database
+        .execute(
+            "UPDATE workspace_origin_sequences SET last_sequence = 0 WHERE workspace_id = ?1 AND origin_runtime_id = ?2",
+            params!["workspace-replay-corrupt", "runtime-local"],
+        )
+        .expect("simulate an inconsistent durable head");
+
+    assert!(matches!(
+        store.read_workspace_event_page("workspace-replay-corrupt", "runtime-local", 0, 10),
+        Err(StoreError::Integrity(_))
+    ));
+}
+
+#[test]
 fn concurrent_expected_version_writes_have_one_winner() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let store = test_store(&directory, Duration::from_secs(1));
@@ -1446,6 +1808,156 @@ fn injected_failures_roll_back_aggregate_event_and_sequence_together() {
 }
 
 #[test]
+fn before_commit_failure_rolls_back_request_receipt_with_workspace_event_and_sequence() {
+    fn assert_table_counts(connection: &Connection, expected: i64) {
+        for table in [
+            "workspaces",
+            "domain_events",
+            "workspace_origin_sequences",
+            "request_dedup",
+        ] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("count transaction rows");
+            assert_eq!(count, expected, "unexpected rows in {table}");
+        }
+    }
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database_path = directory.path().join("fault").join("fault.sqlite3");
+    ensure_private_directory(database_path.parent().expect("database parent"))
+        .expect("private database parent");
+    let mut connection = Connection::open(&database_path).expect("open test database");
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .expect("enable FK");
+    connection
+        .query_row("PRAGMA journal_mode = WAL", [], |row| {
+            row.get::<_, String>(0)
+        })
+        .expect("enable WAL");
+    migrate(&mut connection).expect("initial migration");
+
+    let command = || {
+        let workspace = Workspace {
+            workspace_id: "workspace-receipt-rollback".to_owned(),
+            name: "Receipt rollback".to_owned(),
+            owner_principal_id: "owner".to_owned(),
+            replication_policy: ReplicationPolicy::LocalOnly,
+            replication_scope_root_ids: Vec::new(),
+            current_instruction_revision: None,
+            default_agent_binding_id: None,
+            primary_coworker_id: None,
+            hub_runtime_id: None,
+            status: "ACTIVE".to_owned(),
+            created_at: "2026-10-13T10:00:00Z".to_owned(),
+            updated_at: "2026-10-13T10:00:00Z".to_owned(),
+            version: 1,
+        };
+        let event = EventDraft {
+            event_id: "event-receipt-rollback".to_owned(),
+            workspace_id: workspace.workspace_id.clone(),
+            entity_type: "Workspace".to_owned(),
+            entity_id: workspace.workspace_id.clone(),
+            origin_runtime_id: "runtime-1".to_owned(),
+            entity_revision: 1,
+            hlc_timestamp: workspace.created_at.clone(),
+            correlation_id: "correlation".to_owned(),
+            causation_id: None,
+            schema_version: 1,
+            event_type: "workspace.created.v1".to_owned(),
+            payload: json!({
+                "workspace_id": workspace.workspace_id,
+                "owner_principal_id": workspace.owner_principal_id,
+                "replication_policy": "LOCAL_ONLY",
+                "replication_scope_root_ids": [],
+            }),
+            recorded_at: workspace.created_at.clone(),
+        };
+        let state_ref = AggregateStateRef {
+            blob: BlobRef {
+                digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_owned(),
+                size_bytes: 1,
+                media_type: "application/json".to_owned(),
+            },
+            entity_revision: 1,
+            record_schema_version: 1,
+        };
+        (workspace, event, state_ref)
+    };
+    let request = || RequestDeduplication {
+        principal_id: "owner".to_owned(),
+        request_id: "create-workspace-receipt-rollback".to_owned(),
+        request_digest: digest(b"canonical create workspace request"),
+        archive_request_payload: None,
+        created_at: "2026-10-13T10:00:00Z".to_owned(),
+    };
+    let (workspace, event, state_ref) = command();
+    let failed = commit_workspace_transaction_with_dedup(
+        &mut connection,
+        None,
+        workspace,
+        event,
+        state_ref,
+        Some(request()),
+        Some(Failpoint::BeforeCommit),
+    );
+    assert!(matches!(
+        failed,
+        Err(StoreError::Database(message)) if message == "injected BeforeCommit"
+    ));
+    assert_table_counts(&connection, 0);
+
+    let (workspace, event, state_ref) = command();
+    let committed = commit_workspace_transaction_with_dedup(
+        &mut connection,
+        None,
+        workspace,
+        event,
+        state_ref,
+        Some(request()),
+        None,
+    )
+    .expect("retry the exact command after rollback");
+    assert_eq!(committed.workspace.version, 1);
+    assert_eq!(committed.event.origin_sequence, 1);
+    assert_table_counts(&connection, 1);
+
+    let (workspace, event, state_ref) = command();
+    let replayed = commit_workspace_transaction_with_dedup(
+        &mut connection,
+        None,
+        workspace,
+        event,
+        state_ref,
+        Some(request()),
+        None,
+    )
+    .expect("exact retry replays the committed response");
+    assert_eq!(replayed, committed);
+    assert_table_counts(&connection, 1);
+
+    let (request_digest, response_json, response_digest): (String, String, String) = connection
+        .query_row(
+            "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            ["owner", "create-workspace-receipt-rollback"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read committed request receipt");
+    assert_eq!(
+        request_digest,
+        digest(b"canonical create workspace request")
+    );
+    assert_eq!(response_digest, digest(response_json.as_bytes()));
+    let saved_response: CommittedWorkspace =
+        serde_json::from_str(&response_json).expect("decode saved response");
+    assert_eq!(saved_response, committed);
+}
+
+#[test]
 fn migration_crash_rolls_back_ddl_and_can_retry() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let mut connection =
@@ -1478,6 +1990,128 @@ fn migration_crash_rolls_back_ddl_and_can_retry() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read schema version");
     assert_eq!(version, SCHEMA_VERSION);
+}
+
+#[test]
+fn runtime_workspace_binding_migration_preserves_authorization_across_v4_retry() {
+    #[derive(Debug, PartialEq, Eq)]
+    struct MigratedBinding {
+        binding_id: String,
+        runtime_id: String,
+        workspace_id: String,
+        enrollment_mode: String,
+        status: String,
+        roles_json: String,
+        created_at: String,
+        activated_at: Option<String>,
+        revoked_at: Option<String>,
+        version: i64,
+    }
+
+    fn migrated_bindings(connection: &Connection) -> Vec<MigratedBinding> {
+        connection
+            .prepare(
+                "SELECT runtime_workspace_binding_id, runtime_id, workspace_id, enrollment_mode,
+                        status, roles_json, created_at, activated_at, revoked_at, version
+                 FROM runtime_workspace_bindings ORDER BY runtime_id",
+            )
+            .expect("prepare migrated binding query")
+            .query_map([], |row| {
+                Ok(MigratedBinding {
+                    binding_id: row.get(0)?,
+                    runtime_id: row.get(1)?,
+                    workspace_id: row.get(2)?,
+                    enrollment_mode: row.get(3)?,
+                    status: row.get(4)?,
+                    roles_json: row.get(5)?,
+                    created_at: row.get(6)?,
+                    activated_at: row.get(7)?,
+                    revoked_at: row.get(8)?,
+                    version: row.get(9)?,
+                })
+            })
+            .expect("query migrated bindings")
+            .collect::<Result<_, _>>()
+            .expect("collect migrated bindings")
+    }
+
+    let mut connection = Connection::open_in_memory().expect("open legacy database");
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .expect("enable foreign keys");
+    connection
+        .execute_batch(SQLITE_V1_DDL)
+        .expect("create v1 schema");
+    record_migration(&connection, 1, V1_MIGRATION_NAME, SQLITE_V1_DDL).expect("record v1 baseline");
+    connection
+        .execute_batch(SQLITE_V2_DDL)
+        .expect("create v2 schema");
+    record_migration(&connection, 2, V2_MIGRATION_NAME, SQLITE_V2_DDL).expect("record v2 baseline");
+    connection
+        .execute("INSERT INTO workspaces(workspace_id, name, owner_principal_id, replication_policy, status, created_at, updated_at, version) VALUES ('workspace-v2', 'Legacy workspace', 'owner', 'LOCAL_ONLY', 'ACTIVE', '2026-10-10T10:00:00Z', '2026-10-10T10:00:00Z', 1)", [])
+        .expect("insert legacy Workspace");
+    for (runtime_id, availability, roles_json) in [
+        (
+            "runtime-active",
+            "ONLINE",
+            r#"["EXECUTOR","WORKSPACE_HUB"]"#,
+        ),
+        ("runtime-revoked", "REVOKED", r#"["EXECUTOR"]"#),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO runtimes(runtime_id, workspace_id, device_identity_json, runtime_version,
+                    platform, architecture, roles_json, trust_zone, availability, startup_policy,
+                    current_incarnation_id, resource_capacity_json, last_seen, version)
+                 VALUES (?1, 'workspace-v2', '{}', '0.1.0', 'linux', 'x86_64', ?2,
+                    'PERSONAL_DEVICE', ?3, 'MANUAL', NULL, '{}', '2026-10-10T10:01:00Z', 1)",
+                params![runtime_id, roles_json, availability],
+            )
+            .expect("insert legacy Runtime");
+    }
+    connection
+        .pragma_update(None, "user_version", 2)
+        .expect("mark legacy schema version");
+
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV4Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read version after interrupted v4 migration");
+    assert_eq!(version, V3_SCHEMA_VERSION);
+    let expected = vec![
+        MigratedBinding {
+            binding_id: "rwb_migrated_runtime-active".to_owned(),
+            runtime_id: "runtime-active".to_owned(),
+            workspace_id: "workspace-v2".to_owned(),
+            enrollment_mode: "MESH_PAIRING".to_owned(),
+            status: "ACTIVE".to_owned(),
+            roles_json: r#"["EXECUTOR","WORKSPACE_HUB"]"#.to_owned(),
+            created_at: "2026-10-10T10:01:00Z".to_owned(),
+            activated_at: Some("2026-10-10T10:01:00Z".to_owned()),
+            revoked_at: None,
+            version: 1,
+        },
+        MigratedBinding {
+            binding_id: "rwb_migrated_runtime-revoked".to_owned(),
+            runtime_id: "runtime-revoked".to_owned(),
+            workspace_id: "workspace-v2".to_owned(),
+            enrollment_mode: "MESH_PAIRING".to_owned(),
+            status: "REVOKED".to_owned(),
+            roles_json: r#"["EXECUTOR"]"#.to_owned(),
+            created_at: "2026-10-10T10:01:00Z".to_owned(),
+            activated_at: None,
+            revoked_at: Some("2026-10-10T10:01:00Z".to_owned()),
+            version: 1,
+        },
+    ];
+    assert_eq!(migrated_bindings(&connection), expected);
+
+    migrate(&mut connection).expect("retry remaining migrations");
+    let final_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read final schema version");
+    assert_eq!(final_version, SCHEMA_VERSION);
+    assert_eq!(migrated_bindings(&connection), expected);
 }
 
 #[test]
@@ -1545,6 +2179,31 @@ fn schema_drift_and_unknown_newer_versions_fail_closed() {
     assert!(
         matches!(result, Err(StoreError::UnsupportedSchema(version)) if version == SCHEMA_VERSION + 1)
     );
+
+    let checksum_directory =
+        tempfile::tempdir_in(directory.path()).expect("temporary checksum-drift directory");
+    let checksum_path = state_database(&checksum_directory);
+    let checksum_store = test_store(&checksum_directory, Duration::from_secs(1));
+    drop(checksum_store);
+    let connection = Connection::open(&checksum_path).expect("open migrated checksum database");
+    connection
+        .execute(
+            "UPDATE schema_migrations SET source_checksum = ?1 WHERE version = 1",
+            [format!("sha256:{}", "0".repeat(64))],
+        )
+        .expect("tamper with recorded migration source checksum");
+    drop(connection);
+    let blob_store = Arc::new(FileBlobStore::new(
+        directory.path().join("blobs"),
+        TestKeys { key: [19_u8; 32] },
+    ));
+    let result = SqliteWorkspaceStore::open(&checksum_path, blob_store, SqliteConfig::default());
+    assert!(matches!(result, Err(StoreError::CorruptSchema(_))));
+    let connection = Connection::open(&checksum_path).expect("reopen checksum database");
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read schema version after refused open");
+    assert_eq!(version, SCHEMA_VERSION);
 }
 
 #[test]
@@ -1578,6 +2237,119 @@ fn external_writer_lock_returns_busy_without_partial_state() {
             .len(),
         1
     );
+}
+
+#[test]
+fn idempotent_workspace_policy_busy_leaves_no_receipt_and_retries_once() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_millis(30));
+    let created = create_workspace(&store, "workspace-busy-idempotent");
+    let lock = Connection::open(state_database(&directory)).expect("open lock connection");
+    lock.execute_batch("BEGIN IMMEDIATE")
+        .expect("hold external writer lock");
+
+    let principal_id = "owner-local".to_owned();
+    let request_id = "request-policy-busy-retry".to_owned();
+    let policy = ReplicationPolicy::MetadataOnly;
+    let request_payload = serde_json::json!({
+        "operation": "workspace.replication_policy.change.v1",
+        "workspace_id": "workspace-busy-idempotent",
+        "expected_version": 1,
+        "policy": "METADATA_ONLY",
+    });
+    let command = ChangeReplicationPolicy {
+        workspace_id: "workspace-busy-idempotent".to_owned(),
+        expected_version: 1,
+        policy,
+        replication_scope_root_ids: Vec::new(),
+        event: context("event-policy-busy-retry", 1),
+    };
+
+    let failed = service(store.clone()).change_replication_policy_idempotent(
+        command.clone(),
+        principal_id.clone(),
+        request_id.clone(),
+        request_payload.clone(),
+    );
+    assert!(matches!(failed, Err(StoreError::Busy)));
+    lock.execute_batch("ROLLBACK")
+        .expect("release external writer lock");
+
+    assert_eq!(
+        store
+            .get_workspace("workspace-busy-idempotent")
+            .expect("read Workspace after Busy"),
+        Some(created.workspace.clone())
+    );
+    let events_after_busy = store
+        .read_workspace_events("workspace-busy-idempotent")
+        .expect("read events after Busy");
+    assert_eq!(events_after_busy.len(), 1);
+    assert_eq!(events_after_busy[0].origin_sequence, 1);
+    assert_eq!(
+        store
+            .rebuild_workspace_projection("workspace-busy-idempotent")
+            .expect("replay after Busy"),
+        Some(created.workspace.clone())
+    );
+    let connection = Connection::open(state_database(&directory))
+        .expect("inspect receipt after Busy");
+    let receipts_after_busy: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            [&principal_id, &request_id],
+            |row| row.get(0),
+        )
+        .expect("count receipts after Busy");
+    assert_eq!(receipts_after_busy, 0);
+    drop(connection);
+
+    let retried = service(store.clone())
+        .change_replication_policy_idempotent(
+            command.clone(),
+            principal_id.clone(),
+            request_id.clone(),
+            request_payload.clone(),
+        )
+        .expect("retry identical policy request after lock release");
+    assert_eq!(retried.workspace.version, 2);
+    assert_eq!(retried.event.origin_sequence, 2);
+
+    let replayed = service(store.clone())
+        .change_replication_policy_idempotent(
+            command,
+            principal_id.clone(),
+            request_id.clone(),
+            request_payload,
+        )
+        .expect("replay the committed request");
+    assert_eq!(replayed, retried);
+
+    let events_after_replay = store
+        .read_workspace_events("workspace-busy-idempotent")
+        .expect("read events after replay");
+    assert_eq!(events_after_replay.len(), 2);
+    assert_eq!(events_after_replay[1].origin_sequence, 2);
+    assert_eq!(
+        store
+            .rebuild_workspace_projection("workspace-busy-idempotent")
+            .expect("replay committed policy update"),
+        Some(retried.workspace.clone())
+    );
+
+    let connection = Connection::open(state_database(&directory))
+        .expect("inspect committed request receipt");
+    let (response_json, response_digest): (String, String) = connection
+        .query_row(
+            "SELECT response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            [&principal_id, &request_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read committed policy receipt");
+    assert_eq!(response_digest, digest(response_json.as_bytes()));
+    let stored_response: CommittedWorkspace =
+        serde_json::from_str(&response_json).expect("decode committed policy response");
+    assert_eq!(stored_response, retried);
 }
 
 #[test]
@@ -1806,4 +2578,331 @@ fn sqlite_full_error_maps_safely_and_rolls_back_workspace_commit() {
         )
         .expect("read retried origin sequence");
     assert_eq!(final_sequence, 2);
+}
+
+#[test]
+fn sqlite_full_through_writer_actor_preserves_state_and_allows_retry() {
+    use storage_core::StateStore;
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    let created = create_workspace(&store, "workspace-actor-sqlite-full");
+
+    let (page_count_sender, page_count_receiver) = mpsc::channel();
+    let page_count = store
+        .execute_command(
+            Command::ConversationOperation {
+                operation: Box::new(move |connection| {
+                    let _ = page_count_sender.send(
+                        connection
+                            .pragma_query_value(None, "page_count", |row| row.get::<_, u32>(0))
+                            .map_err(map_database_error),
+                    );
+                }),
+            },
+            page_count_receiver,
+        )
+        .expect("read page count on production writer");
+
+    let (cap_sender, cap_receiver) = mpsc::channel();
+    let applied_cap = store
+        .execute_command(
+            Command::ConversationOperation {
+                operation: Box::new(move |connection| {
+                    let result = connection
+                        .pragma_update(None, "max_page_count", page_count)
+                        .map_err(map_database_error)
+                        .and_then(|()| {
+                            connection
+                                .pragma_query_value(None, "max_page_count", |row| {
+                                    row.get::<_, u32>(0)
+                                })
+                                .map_err(map_database_error)
+                        });
+                    let _ = cap_sender.send(result);
+                }),
+            },
+            cap_receiver,
+        )
+        .expect("cap production writer database");
+    assert_eq!(applied_cap, page_count);
+
+    let mut changed = created.workspace.clone();
+    changed.name = "x".repeat(1024 * 1024);
+    changed.version = 2;
+    changed.updated_at = "2026-10-12T12:00:00Z".to_owned();
+    let event = EventDraft {
+        event_id: "event-actor-full-update".to_owned(),
+        workspace_id: changed.workspace_id.clone(),
+        entity_type: "Workspace".to_owned(),
+        entity_id: changed.workspace_id.clone(),
+        origin_runtime_id: "runtime-local".to_owned(),
+        entity_revision: 2,
+        hlc_timestamp: "2026-10-12T12:00:00Z".to_owned(),
+        correlation_id: "correlation-actor-full".to_owned(),
+        causation_id: None,
+        schema_version: 1,
+        event_type: "workspace.replication_policy.changed.v1".to_owned(),
+        payload: serde_json::json!({"padding": "x".repeat(1024 * 1024)}),
+        recorded_at: "2026-10-12T12:00:00Z".to_owned(),
+    };
+
+    let failed = store.commit_workspace(Some(1), changed.clone(), event.clone());
+    assert!(matches!(
+        failed,
+        Err(StoreError::Io(ref message)) if message == "database disk is full"
+    ));
+    assert_eq!(
+        store
+            .get_workspace("workspace-actor-sqlite-full")
+            .expect("read after failed commit"),
+        Some(created.workspace.clone())
+    );
+    let events_after_failure = store
+        .read_workspace_events("workspace-actor-sqlite-full")
+        .expect("read events after failed commit");
+    assert_eq!(events_after_failure.len(), 1);
+    assert_eq!(events_after_failure[0].origin_sequence, 1);
+    assert_eq!(
+        store
+            .rebuild_workspace_projection("workspace-actor-sqlite-full")
+            .expect("replay after failed commit"),
+        Some(created.workspace)
+    );
+
+    let (restore_sender, restore_receiver) = mpsc::channel();
+    store
+        .execute_command(
+            Command::ConversationOperation {
+                operation: Box::new(move |connection| {
+                    let current_pages = connection
+                        .pragma_query_value(None, "page_count", |row| row.get::<_, u32>(0))
+                        .map_err(map_database_error);
+                    let result = current_pages.and_then(|pages| {
+                        connection
+                            .pragma_update(None, "max_page_count", pages.saturating_add(1024))
+                            .map_err(map_database_error)
+                    });
+                    let _ = restore_sender.send(result);
+                }),
+            },
+            restore_receiver,
+        )
+        .expect("restore production writer capacity");
+
+    let retried = store
+        .commit_workspace(Some(1), changed, event)
+        .expect("retry exact revision through production writer");
+    assert_eq!(retried.workspace.version, 2);
+    assert_eq!(retried.event.origin_sequence, 2);
+    let final_events = store
+        .read_workspace_events("workspace-actor-sqlite-full")
+        .expect("read retried event stream");
+    assert_eq!(final_events.len(), 2);
+    assert_eq!(final_events[1].origin_sequence, 2);
+    assert_eq!(
+        store
+            .rebuild_workspace_projection("workspace-actor-sqlite-full")
+            .expect("replay retried commit"),
+        Some(retried.workspace)
+    );
+}
+
+#[test]
+fn sqlite_full_workspace_policy_command_rolls_back_idempotency_receipt_and_retries() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    let created = create_workspace(&store, "workspace-policy-sqlite-full");
+    let database = state_database(&directory);
+    let principal_id = "owner-local".to_owned();
+
+    let (page_count_sender, page_count_receiver) = mpsc::channel();
+    let page_count = store
+        .execute_command(
+            Command::ConversationOperation {
+                operation: Box::new(move |connection| {
+                    let _ = page_count_sender.send(
+                        connection
+                            .pragma_query_value(None, "page_count", |row| row.get::<_, u32>(0))
+                            .map_err(map_database_error),
+                    );
+                }),
+            },
+            page_count_receiver,
+        )
+        .expect("read page count on production writer");
+
+    let (cap_sender, cap_receiver) = mpsc::channel();
+    let applied_cap = store
+        .execute_command(
+            Command::ConversationOperation {
+                operation: Box::new(move |connection| {
+                    let result = connection
+                        .pragma_update(None, "max_page_count", page_count)
+                        .map_err(map_database_error)
+                        .and_then(|()| {
+                            connection
+                                .pragma_query_value(None, "max_page_count", |row| {
+                                    row.get::<_, u32>(0)
+                                })
+                                .map_err(map_database_error)
+                        });
+                    let _ = cap_sender.send(result);
+                }),
+            },
+            cap_receiver,
+        )
+        .expect("cap production writer database");
+    assert_eq!(applied_cap, page_count);
+
+    let mut committed = created.clone();
+    let policies = [
+        ReplicationPolicy::MetadataOnly,
+        ReplicationPolicy::ActiveTaskInputs,
+        ReplicationPolicy::FullWorkspace,
+    ];
+    let mut failed_command = None;
+    for index in 0..10_000_u64 {
+        let policy = policies[index as usize % policies.len()].clone();
+        let request_id = format!("request-policy-sqlite-full-{index}");
+        let request_payload = serde_json::json!({
+            "operation": "workspace.replication_policy.change.v1",
+            "workspace_id": committed.workspace.workspace_id,
+            "expected_version": committed.workspace.version,
+            "policy": policy.as_str(),
+        });
+        let command = ChangeReplicationPolicy {
+            workspace_id: committed.workspace.workspace_id.clone(),
+            expected_version: committed.workspace.version,
+            policy,
+            replication_scope_root_ids: Vec::new(),
+            event: context(&format!("event-policy-sqlite-full-{index}"), 1),
+        };
+        match service(store.clone()).change_replication_policy_idempotent(
+            command.clone(),
+            principal_id.clone(),
+            request_id.clone(),
+            request_payload.clone(),
+        ) {
+            Ok(next) => committed = next,
+            Err(StoreError::Io(message)) if message == "database disk is full" => {
+                failed_command = Some((command, request_id, request_payload));
+                break;
+            }
+            Err(error) => {
+                panic!("unexpected policy command failure at iteration {index}: {error:?}")
+            }
+        }
+    }
+    let (command, request_id, request_payload) =
+        failed_command.expect("SQLite page cap eventually rejects a service command");
+
+    assert_eq!(
+        store
+            .get_workspace(&created.workspace.workspace_id)
+            .expect("read Workspace after failed command"),
+        Some(committed.workspace.clone())
+    );
+    let events_after_failure = store
+        .read_workspace_events(&created.workspace.workspace_id)
+        .expect("read events after failed command");
+    assert_eq!(
+        events_after_failure.len() as u64,
+        committed.workspace.version
+    );
+    assert_eq!(
+        events_after_failure
+            .last()
+            .map(|event| event.origin_sequence),
+        Some(committed.event.origin_sequence)
+    );
+    assert_eq!(
+        store
+            .rebuild_workspace_projection(&created.workspace.workspace_id)
+            .expect("replay after failed command"),
+        Some(committed.workspace.clone())
+    );
+    let connection = Connection::open(&database).expect("inspect failed receipt");
+    let failed_receipt_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            [&principal_id, &request_id],
+            |row| row.get(0),
+        )
+        .expect("count failed command receipts");
+    assert_eq!(failed_receipt_count, 0);
+    drop(connection);
+
+    let (restore_sender, restore_receiver) = mpsc::channel();
+    store
+        .execute_command(
+            Command::ConversationOperation {
+                operation: Box::new(move |connection| {
+                    let current_pages = connection
+                        .pragma_query_value(None, "page_count", |row| row.get::<_, u32>(0))
+                        .map_err(map_database_error);
+                    let result = current_pages.and_then(|pages| {
+                        connection
+                            .pragma_update(None, "max_page_count", pages.saturating_add(1024))
+                            .map_err(map_database_error)
+                    });
+                    let _ = restore_sender.send(result);
+                }),
+            },
+            restore_receiver,
+        )
+        .expect("restore production writer capacity");
+
+    let retried = service(store.clone())
+        .change_replication_policy_idempotent(
+            command.clone(),
+            principal_id.clone(),
+            request_id.clone(),
+            request_payload.clone(),
+        )
+        .expect("retry exact policy command through WorkspaceService");
+    assert_eq!(retried.workspace.version, committed.workspace.version + 1);
+    assert_eq!(retried.workspace.replication_policy, command.policy);
+    assert_eq!(
+        retried.event.origin_sequence,
+        committed.event.origin_sequence + 1
+    );
+
+    let replayed_receipt = service(store.clone())
+        .change_replication_policy_idempotent(
+            command,
+            principal_id.clone(),
+            request_id.clone(),
+            request_payload,
+        )
+        .expect("same request returns its original committed response");
+    assert_eq!(replayed_receipt, retried);
+
+    let connection = Connection::open(&database).expect("inspect committed receipt");
+    let (response_json, response_digest): (String, String) = connection
+        .query_row(
+            "SELECT response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            [&principal_id, &request_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read committed command receipt");
+    assert_eq!(response_digest, digest(response_json.as_bytes()));
+    let stored_response: CommittedWorkspace =
+        serde_json::from_str(&response_json).expect("decode idempotent response");
+    assert_eq!(stored_response, retried);
+
+    let final_events = store
+        .read_workspace_events(&created.workspace.workspace_id)
+        .expect("read events after receipt replay");
+    assert_eq!(final_events.len() as u64, retried.workspace.version);
+    assert_eq!(
+        final_events.last().map(|event| event.origin_sequence),
+        Some(retried.event.origin_sequence)
+    );
+    assert_eq!(
+        store
+            .rebuild_workspace_projection(&created.workspace.workspace_id)
+            .expect("replay after successful retry"),
+        Some(retried.workspace)
+    );
 }

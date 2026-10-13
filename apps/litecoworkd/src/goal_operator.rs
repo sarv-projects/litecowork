@@ -1,6 +1,8 @@
 //! Authenticated local Operator routes for passive, revisioned Goals.
 //! Goal commands record intent and references only; they never schedule work.
 
+#![allow(clippy::result_large_err)] // Handlers return full Axum Responses to preserve status, body, and headers.
+
 use super::*;
 use domain_responsibility::{
     Goal, GoalCommand, GoalError, GoalOwnerScope, GoalProgressProjection, GoalRevisionInput,
@@ -282,7 +284,7 @@ fn execute(
     response_status: StatusCode,
 ) -> Result<Response, Response> {
     let correlation = idempotent_id("cor", &state.principal_id, &request_id, "correlation");
-    let mut store = adapter(state, &correlation)?;
+    let store = adapter(state, &correlation)?;
     let goal = GoalService::new(store.clone())
         .execute(
             &GoalOwnerScope {

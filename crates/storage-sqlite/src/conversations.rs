@@ -1,5 +1,18 @@
 //! Durable Conversation catalog reads and owner-created Conversation aggregates.
 use super::*;
+
+type ConversationTurnStorageRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    i64,
+    String,
+    Option<String>,
+    i64,
+    String,
+);
 use domain_conversation::{ConversationTurn, TurnCommand};
 use storage_core::conversation::{validate_conversation_record, *};
 
@@ -757,7 +770,7 @@ fn load_turn(
     conversation_id: &str,
     turn_id: &str,
 ) -> Result<Option<domain_conversation::ConversationTurn>, StoreError> {
-    let raw: Option<(String, String, String, Option<String>, String, i64, String, Option<String>, i64, String)> = connection.query_row(
+    let raw: Option<ConversationTurnStorageRow> = connection.query_row(
         "SELECT t.turn_id,t.conversation_id,t.user_message_id,t.agent_session_id,t.status,t.retry_ordinal,t.created_at,t.settled_at,t.version,t.presentation_preference FROM conversation_turns t JOIN conversations c ON c.conversation_id=t.conversation_id WHERE c.workspace_id=?1 AND t.conversation_id=?2 AND t.turn_id=?3",
         params![workspace_id, conversation_id, turn_id],
         |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?,row.get(7)?,row.get(8)?,row.get(9)?)),

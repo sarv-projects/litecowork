@@ -8,10 +8,14 @@
     "node": ">=24.21.0 <25"
   },
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "tsc --noEmit && vite build",
-    "preview": "vite preview --host 127.0.0.1",
-    "tauri": "tauri"
+    "preinstall": "node scripts/check-node-version.mjs",
+    "check:node": "node scripts/check-node-version.mjs",
+    "dev": "pnpm run check:node && vite --host 127.0.0.1",
+    "build": "pnpm run check:node && pnpm run api:check && tsc --noEmit && vite build",
+    "api:generate": "pnpm run check:node && node scripts/generate-operator-api-types.mjs",
+    "api:check": "pnpm run check:node && node scripts/generate-operator-api-types.mjs --check",
+    "preview": "pnpm run check:node && vite preview --host 127.0.0.1",
+    "tauri": "pnpm run check:node && tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",
@@ -23,6 +27,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "openapi-typescript": "7.13.0",
     "typescript": "~5.8.3",
     "vite": "^6.3.5"
   }

@@ -122,3 +122,26 @@ integration; complete notification delivery; Coworker-to-Coworker handoff; Windo
 authenticated Operator transport; full local Task/Attempt dispatch with atomic
 Trust/Invocation/Effect admission; and supported-OS/provider SYSTEM + USER qualification.
 These are implementation gaps, not documentation ambiguities.
+
+
+## 2026-10-10 connector/workflow/learning reconciliation pass
+
+A second architecture pass added the pinned source map
+[REFERENCE-IMPLEMENTATIONS](../docs/REFERENCE-IMPLEMENTATIONS.md), the complete
+connector/auth/workflow target
+[CONNECTORS-WORKFLOWS](../docs/CONNECTORS-WORKFLOWS.md), and the Coworker learning
+control-plane target [LEARNING](../docs/LEARNING.md).
+
+The pass deliberately did not promote proposed target routes/events into canonical
+OpenAPI/event registries without implementation. Existing machine contracts remain the
+truth for what the daemon currently serves. Target docs supply function-level pseudocode,
+schemas, failure matrices and module boundaries so E04/E08/E09/E10 can promote each slice
+atomically with SQL/OpenAPI/events/tests.
+
+The exhaustive per-Markdown inventory for this pass is
+[DOC-AUDIT-2026-10-10](DOC-AUDIT-2026-10-10.md); it distinguishes changed/new documents
+from files reviewed with no architecture change needed.
+
+## 2026-10-13 implementation reconciliation after contract corrections
+
+The architecture/error, idempotency, skill-drift blocker, AgentAuthDescriptor, Task-version naming, memory current-versus-target wording, recovery matrix, terminal authority, ADR index, Windows root and external-reference corrections are recorded in [V1 contract reconciliation](V1-CONTRACT-RECONCILIATION-2026-10-13.md). These are **specification fixes** only. Existing Task planning has a fail-closed storage gate; its optional Runtime-owned containment approach is a *design alternative requiring qualification*, not an implemented bypass. Native Conversation Send, Windows root revalidation and automatic private Coworker learning are not release-qualified. Track implementation only through existing E01/E03/E07/E08/E10/E13 stories and their evidence; do not reclassify historic partial-source progress as ACCEPTED.

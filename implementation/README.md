@@ -50,3 +50,24 @@ lifecycle/configuration, read
 It maps existing files/functions to target services, storage, Tauri/UI APIs, deletion
 gates, research dependencies and CODE/SYSTEM/USER tests. Architecture authority remains
 docs/AGENT-CONTROL.md and docs/AGENT-FABRIC.md.
+
+
+## Final connector/learning design inputs — 2026-10-10
+
+Before implementing connector breadth, schedules/provider events, external workflows or
+Coworker learning, read:
+
+- ../docs/REFERENCE-IMPLEMENTATIONS.md
+- ../docs/CONNECTORS-WORKFLOWS.md
+- ../docs/LEARNING.md
+
+These targets intentionally preserve existing Core authority. Promote them slice by slice
+with matching migrations, machine contracts, UI truth and CODE/SYSTEM/USER evidence.
+
+## V1 detailed design integration — 2026-10-12
+
+Start with ../docs/V1-DESIGN-INDEX.md, V1-DESIGN-COVERAGE.md and the exact epic; read relevant new LLD only. See ../docs/V1-FUNCTION-FILE-CATALOG.md for function/file ownership. New browser/agent native parity, rendering and shell requirements map to existing E03/E07/E08/E09/E10 stories; do not create a second roadmap or mark designs as completed code.
+
+## 2026-10-13 implementation reconciliation handoff
+
+Read [V1 contract reconciliation](V1-CONTRACT-RECONCILIATION-2026-10-13.md) immediately after the current run and before dependency-ready E03/E07/E08/E13 work. It maps the corrected canonical API/schema/security/memory contracts to existing stories, code/system/user tests, platform release blockers and their truthful current statuses. Use the backlog as the status/dependency authority; a passing documentation validator does not unblock Task planning, native Send, Windows roots, browser/terminal or private automatic learning.

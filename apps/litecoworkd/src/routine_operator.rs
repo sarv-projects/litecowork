@@ -4,13 +4,15 @@
 //! manual save-only Task materialization. They do not start planning or trigger execution;
 //! Automation remains a separate aggregate.
 
+#![allow(clippy::result_large_err)] // Handlers return full Axum Responses to preserve status, body, and headers.
+
 use super::*;
 use domain_responsibility::{
     Routine, RoutineCommand, RoutineError, RoutineOwnerScope, RoutineRevision,
     RoutineRevisionInput, RoutineService, materialize_routine_inputs,
 };
 use domain_task::{CreateStandaloneTask, TaskService};
-use storage_core::{RoutineTaskAdmission, TaskStore, WorkspaceCreateRequest};
+use storage_core::{RoutineTaskAdmission, TaskStore};
 use storage_sqlite::{RoutineEventContext, SqliteRoutineStore};
 
 const MAX_ROUTINE_BODY_BYTES: usize = 128 * 1024;

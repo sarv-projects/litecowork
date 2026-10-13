@@ -30,13 +30,18 @@ pub(crate) async fn get_task_presentation(
         let body = read_bounded_response(response)?;
         let snapshot: serde_json::Value = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned an unsupported Task presentation".to_owned())?;
-        if snapshot.get("workspace_id").and_then(serde_json::Value::as_str)
+        if snapshot
+            .get("workspace_id")
+            .and_then(serde_json::Value::as_str)
             != Some(workspace_id.as_str())
-            || snapshot.get("task_id").and_then(serde_json::Value::as_str)
-                != Some(task_id.as_str())
-            || !snapshot.get("items").is_some_and(serde_json::Value::is_array)
+            || snapshot.get("task_id").and_then(serde_json::Value::as_str) != Some(task_id.as_str())
+            || !snapshot
+                .get("items")
+                .is_some_and(serde_json::Value::is_array)
         {
-            return Err("Local Runtime returned a presentation outside the selected Task".to_owned());
+            return Err(
+                "Local Runtime returned a presentation outside the selected Task".to_owned(),
+            );
         }
         Ok(snapshot)
     })
@@ -74,11 +79,19 @@ pub(crate) async fn get_task_progress(
         let body = read_bounded_response(response)?;
         let projection: serde_json::Value = serde_json::from_slice(&body)
             .map_err(|_| "Local Runtime returned unsupported Task progress".to_owned())?;
-        if projection.get("task_id").and_then(serde_json::Value::as_str)
+        if projection
+            .get("task_id")
+            .and_then(serde_json::Value::as_str)
             != Some(task_id.as_str())
-            || !projection.get("computed_at").is_some_and(serde_json::Value::is_string)
-            || !projection.get("active_workstreams").is_some_and(serde_json::Value::is_array)
-            || !projection.get("blockers").is_some_and(serde_json::Value::is_array)
+            || !projection
+                .get("computed_at")
+                .is_some_and(serde_json::Value::is_string)
+            || !projection
+                .get("active_workstreams")
+                .is_some_and(serde_json::Value::is_array)
+            || !projection
+                .get("blockers")
+                .is_some_and(serde_json::Value::is_array)
         {
             return Err("Local Runtime returned progress outside the selected Task".to_owned());
         }

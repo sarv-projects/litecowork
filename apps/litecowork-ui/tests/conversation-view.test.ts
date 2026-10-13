@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendConversationPage, ConversationRequestEpochs, parseConversationList, parseConversationSnapshot } from "../src/conversations/conversation-view.ts";
+import { appendConversationPage, ConversationRequestEpochs, mergeConversationStreamSnapshot, parseConversationList, parseConversationSnapshot } from "../src/conversations/conversation-view.ts";
 
 test("snapshot selection does not invalidate the initial Conversation list request", () => {
   const requests = new ConversationRequestEpochs();
@@ -12,9 +12,24 @@ test("snapshot selection does not invalidate the initial Conversation list reque
 
 test("Conversation snapshots preserve their bounded pagination cursor", () => {
   const message = { message_id: "message-1", conversation_id: "conversation-1", role: "AGENT", created_at: "2026-10-09T12:00:00Z", content: [{ kind: "TEXT", text: "Saved answer" }] };
-  const snapshot = { workspace_id: "workspace-1", conversation_id: "conversation-1", items: [{ message, rich_presentation: null, linked_items: [] }], next_cursor: "message-1", active_turn: null };
+  const snapshot = { workspace_id: "workspace-1", conversation_id: "conversation-1", projection_revision: 1, stream_cursor: "conversation:conversation-1:1", origin_sequence: "0", items: [{ message, rich_presentation: null, linked_items: [] }], next_cursor: "message-1", active_turn: null };
   assert.equal(parseConversationSnapshot(snapshot, "workspace-1", "conversation-1").next_cursor, "message-1");
   assert.throws(() => parseConversationSnapshot({ ...snapshot, next_cursor: "../foreign" }, "workspace-1", "conversation-1"), /pagination cursor/);
+});
+
+test("Conversation snapshots preserve a decimal source frontier separately from pagination", () => {
+  const message = { message_id: "message-1", conversation_id: "conversation-1", role: "AGENT", created_at: "2026-10-09T12:00:00Z", content: [{ kind: "TEXT", text: "Saved answer" }] };
+  const snapshot = {
+    workspace_id: "workspace-1", conversation_id: "conversation-1",
+    projection_revision: 7, stream_cursor: "conversation:conversation-1:7", origin_sequence: "9007199254740993",
+    items: [{ message, rich_presentation: null, linked_items: [] }], next_cursor: "message-1", active_turn: null,
+  };
+  const parsed = parseConversationSnapshot(snapshot, "workspace-1", "conversation-1");
+  assert.equal(parsed.origin_sequence, "9007199254740993");
+  assert.equal(parsed.next_cursor, "message-1");
+  assert.equal(parsed.stream_cursor, "conversation:conversation-1:7");
+  assert.equal(parsed.projection_revision, 7);
+  assert.throws(() => parseConversationSnapshot({ ...snapshot, origin_sequence: 9007199254740993 }, "workspace-1", "conversation-1"), /source frontier/);
 });
 
 test("Conversation pagination appends unseen messages in order and fences mismatched histories", () => {
@@ -27,6 +42,38 @@ test("Conversation pagination appends unseen messages in order and fences mismat
   assert.throws(() => appendConversationPage(base, { ...page, conversation_id: "conversation-2" }), /does not match/);
 });
 
+test("live Conversation refresh preserves the deeper loaded history cursor", () => {
+  const message = (message_id: string, second: string) => ({ message_id, role: "AGENT" as const, created_at: `2026-10-09T12:00:${second}Z`, content: [{ kind: "TEXT" as const, text: message_id }], rich_presentation: null });
+  const current = {
+    workspace_id: "workspace-1", conversation_id: "conversation-1", stream_cursor: "page-150",
+    messages: [message("message-001", "01"), message("message-100", "02"), message("message-150", "03")],
+    next_cursor: "message-150", active_turn: null,
+  };
+  const live = {
+    workspace_id: "workspace-1", conversation_id: "conversation-1",
+    messages: [message("message-001", "01"), message("message-100", "02")],
+    next_cursor: "message-100", active_turn: null,
+  };
+  const merged = mergeConversationStreamSnapshot(current, live, "workspace-1", "conversation-1");
+  assert.deepEqual(merged.messages.map(item => item.message_id), ["message-001", "message-100", "message-150"]);
+  assert.equal(merged.next_cursor, "message-150");
+});
+
+test("live Conversation refresh keeps an exhausted history exhausted", () => {
+  const current = {
+    workspace_id: "workspace-1", conversation_id: "conversation-1",
+    projection_revision: 10, stream_cursor: "current", origin_sequence: "10",
+    messages: [], next_cursor: null, active_turn: null,
+  };
+  const live = {
+    workspace_id: "workspace-1", conversation_id: "conversation-1",
+    projection_revision: 9, stream_cursor: "older", origin_sequence: "9",
+    messages: [], next_cursor: "message-100", active_turn: null,
+  };
+  const merged = mergeConversationStreamSnapshot(current, live, "workspace-1", "conversation-1");
+  assert.equal(merged.next_cursor, null);
+});
+
 test("Conversation list accepts only records pinned to the selected Workspace", () => {
   const row = { conversation_id: "conversation-1", workspace_id: "workspace-1", title: "Notes", active_agent_binding_id: null, version: 1, created_at: "2026-10-09T12:00:00Z" };
   assert.equal(parseConversationList({ items: [row] }, "workspace-1")[0]?.conversation_id, "conversation-1");
@@ -35,7 +82,7 @@ test("Conversation list accepts only records pinned to the selected Workspace", 
 
 test("Conversation snapshot preserves committed semantic text and rejects message identity drift", () => {
   const message = { message_id: "message-1", conversation_id: "conversation-1", role: "AGENT", created_at: "2026-10-09T12:00:00Z", content: [{ kind: "TEXT", text: "Saved answer" }] };
-  const snapshot = { workspace_id: "workspace-1", conversation_id: "conversation-1", items: [{ message, rich_presentation: null, linked_items: [] }], active_turn: null };
+  const snapshot = { workspace_id: "workspace-1", conversation_id: "conversation-1", projection_revision: 1, stream_cursor: "conversation:conversation-1:1", origin_sequence: "0", items: [{ message, rich_presentation: null, linked_items: [] }], active_turn: null };
   assert.equal(parseConversationSnapshot(snapshot, "workspace-1", "conversation-1").messages[0]?.content[0]?.kind, "TEXT");
   assert.throws(() => parseConversationSnapshot({ ...snapshot, items: [{ ...snapshot.items[0], message: { ...message, conversation_id: "conversation-2" } }] }, "workspace-1", "conversation-1"), /invalid message/);
 });
@@ -48,7 +95,7 @@ test("Conversation snapshot retains a bounded RichPresentation reference pinned 
     document_digest: `sha256:${"b".repeat(64)}`, document_size_bytes: 128, availability: "AVAILABLE",
   };
   const entry = { message, rich_presentation: rich, linked_items: [] };
-  const snapshot = { workspace_id: "workspace-1", conversation_id: "conversation-1", items: [entry], active_turn: null };
+  const snapshot = { workspace_id: "workspace-1", conversation_id: "conversation-1", projection_revision: 1, stream_cursor: "conversation:conversation-1:1", origin_sequence: "0", items: [entry], active_turn: null };
   assert.deepEqual(parseConversationSnapshot(snapshot, "workspace-1", "conversation-1").messages[0]?.rich_presentation, rich);
   assert.throws(() => parseConversationSnapshot({ ...snapshot, items: [{ ...entry, rich_presentation: { ...rich, message_id: "message-2" } }] }, "workspace-1", "conversation-1"), /RichPresentation reference/);
   assert.throws(() => parseConversationSnapshot({ ...snapshot, items: [{ ...entry, rich_presentation: { ...rich, document_size_bytes: 2_000_000 } }] }, "workspace-1", "conversation-1"), /RichPresentation reference/);

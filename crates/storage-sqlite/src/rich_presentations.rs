@@ -4,14 +4,28 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 use storage_core::rich_presentation::*;
 
+type SemanticMessageRow = (String, String, String, Option<String>, Option<String>);
+
 pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 #[derive(Clone)]
 pub struct SqliteRichPresentationStore {
     store: SqliteWorkspaceStore,
+    #[cfg(test)]
+    after_origin_frontier: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 impl SqliteRichPresentationStore {
     pub fn new(store: SqliteWorkspaceStore) -> Self {
-        Self { store }
+        Self {
+            store,
+            #[cfg(test)]
+            after_origin_frontier: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_frontier_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
+        self.after_origin_frontier = Some(Arc::new(hook));
+        self
     }
     fn run<T: Send + 'static>(
         &self,
@@ -48,7 +62,7 @@ fn semantic(
     c: &Connection,
     p: &RichPresentationRecord,
 ) -> Result<(String, String, Option<String>), StoreError> {
-    let row:Option<(String,String,String,Option<String>,Option<String>)>=c.query_row(
+    let row: Option<SemanticMessageRow> = c.query_row(
       "SELECT m.role,m.content_json,m.resource_refs_json,m.turn_id,m.agent_session_id FROM conversation_messages m JOIN conversations c ON c.conversation_id=m.conversation_id WHERE m.message_id=?1 AND m.conversation_id=?2 AND c.workspace_id=?3",
       params![p.message_id,p.conversation_id,p.workspace_id], |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(map_database_error)?;
     let Some((role, content, refs, turn, session)) = row else {
@@ -174,16 +188,16 @@ fn validate_document(
         return Err(invalid("presentation document binding/version mismatch"));
     }
     for key in ["citations", "actions"] {
-        if let Some(v) = doc.get(key) {
-            if !v.as_array().is_some_and(Vec::is_empty) {
-                return Err(invalid("presentation source/action binders unavailable"));
-            }
+        if let Some(v) = doc.get(key)
+            && !v.as_array().is_some_and(Vec::is_empty)
+        {
+            return Err(invalid("presentation source/action binders unavailable"));
         }
     }
-    if let Some(v) = doc.get("accessibility_summary") {
-        if !v.as_str().is_some_and(|s| s.chars().count() <= 4000) {
-            return Err(invalid("invalid accessibility summary"));
-        }
+    if let Some(v) = doc.get("accessibility_summary")
+        && !v.as_str().is_some_and(|s| s.chars().count() <= 4000)
+    {
+        return Err(invalid("invalid accessibility summary"));
     }
     let roots = doc["root_blocks"]
         .as_array()
@@ -256,10 +270,10 @@ fn validate_block(
         return Err(invalid("presentation nesting/block limit exceeded"));
     }
     paths.insert(path.to_owned());
-    if let Some(width) = b.get("width") {
-        if !matches!(width.as_str(), Some("READABLE" | "WIDE" | "FULL_AVAILABLE")) {
-            return Err(invalid("invalid width"));
-        }
+    if let Some(width) = b.get("width")
+        && !matches!(width.as_str(), Some("READABLE" | "WIDE" | "FULL_AVAILABLE"))
+    {
+        return Err(invalid("invalid width"));
     }
     match b["kind"].as_str() {
         Some("TEXT_SLICE") => {
@@ -406,145 +420,244 @@ impl RichPresentationStore for SqliteRichPresentationStore {
         principal_id: &str,
         workspace_id: &str,
         conversation_id: &str,
+        origin_runtime_id: &str,
         after_message_id: Option<&str>,
         limit: usize,
     ) -> Result<ConversationPresentationSnapshot, StoreError> {
+        let reads = [ConversationPresentationRead {
+            conversation_id: conversation_id.to_owned(),
+            after_message_id: after_message_id.map(str::to_owned),
+        }];
+        self.read_conversation_presentation_batch(
+            principal_id,
+            workspace_id,
+            &reads,
+            origin_runtime_id,
+            limit,
+        )?
+        .into_iter()
+        .next()
+        .ok_or_else(|| StoreError::Integrity("Conversation presentation batch was empty".into()))
+    }
+
+    fn read_conversation_presentation_batch(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        reads: &[ConversationPresentationRead],
+        origin_runtime_id: &str,
+        limit: usize,
+    ) -> Result<Vec<ConversationPresentationSnapshot>, StoreError> {
+        if reads.is_empty() || reads.len() > MAX_CONVERSATION_PRESENTATION_BATCH {
+            return Err(invalid("invalid Conversation presentation batch size"));
+        }
         if limit == 0 || limit > MAX_CONVERSATION_PRESENTATION_MESSAGES {
             return Err(invalid("invalid Conversation presentation page size"));
         }
-        let (principal, workspace, conversation, cursor) = (
+        let (principal, workspace, origin_runtime) = (
             principal_id.to_owned(),
             workspace_id.to_owned(),
-            conversation_id.to_owned(),
-            after_message_id.map(str::to_owned),
+            origin_runtime_id.to_owned(),
         );
+        validate_nonempty(&[&principal, &workspace, &origin_runtime])?;
+        let reads = reads.to_vec();
+        let mut seen = BTreeSet::new();
+        for read in &reads {
+            validate_nonempty(&[&read.conversation_id])?;
+            if !seen.insert(read.conversation_id.clone()) {
+                return Err(invalid("duplicate Conversation presentation filter"));
+            }
+        }
+        #[cfg(test)]
+        let after_origin_frontier = self.after_origin_frontier.clone();
         self.run(move |c| {
             let tx = c.transaction().map_err(map_database_error)?;
             authorize(&tx, &principal, &workspace, false)?;
-            let exists: bool = tx
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM conversations WHERE workspace_id=?1 AND conversation_id=?2)",
-                    params![workspace, conversation],
-                    |row| row.get(0),
-                )
-                .map_err(map_database_error)?;
-            if !exists {
-                return Err(StoreError::NotFound);
+            let origin_sequence =
+                super::read_workspace_origin_frontier(&tx, &workspace, &origin_runtime)?;
+            #[cfg(test)]
+            if let Some(hook) = &after_origin_frontier {
+                hook();
             }
-            if let Some(cursor_id) = cursor.as_deref() {
-                let cursor_exists: bool = tx
-                    .query_row(
-                        "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE conversation_id=?1 AND message_id=?2)",
-                        params![conversation, cursor_id],
-                        |row| row.get(0),
+            reads
+                .iter()
+                .map(|read| {
+                    read_conversation_presentation_in_transaction(
+                        &tx,
+                        &workspace,
+                        &read.conversation_id,
+                        read.after_message_id.as_deref(),
+                        origin_sequence,
+                        limit,
                     )
-                    .map_err(map_database_error)?;
-                if !cursor_exists {
-                    return Err(invalid("invalid Conversation presentation cursor"));
-                }
-            }
-
-            // Counts plus turn versions form a monotonic local projection revision for
-            // the append-only message/presentation view and mutable turn status.
-            let projection_revision: i64 = tx
-                .query_row(
-                    "SELECT MAX(1, (SELECT COUNT(*) FROM conversation_messages WHERE conversation_id=?1) + (SELECT COUNT(*) FROM rich_presentations WHERE workspace_id=?2 AND conversation_id=?1) + (SELECT COALESCE(SUM(version),0) FROM conversation_turns WHERE conversation_id=?1))",
-                    params![conversation, workspace],
-                    |row| row.get(0),
-                )
-                .map_err(map_database_error)?;
-
-            let mut statement = tx
-                .prepare(
-                    "SELECT json_object('message_id',m.message_id,'conversation_id',m.conversation_id,'author',json(m.author_json),'role',m.role,'agent_session_id',m.agent_session_id,'agent_binding_id',m.agent_binding_id,'turn_id',m.turn_id,'content',json(m.content_json),'resource_refs',json(m.resource_refs_json),'created_at',m.created_at), m.message_id, m.role, r.presentation_id, r.schema_version, r.renderer_contract_version, r.semantic_content_digest, r.document_digest, r.document_size_bytes FROM conversation_messages m LEFT JOIN rich_presentations r ON r.message_id=m.message_id AND r.workspace_id=?1 AND r.conversation_id=m.conversation_id WHERE m.conversation_id=?2 AND (?3 IS NULL OR (m.created_at,m.message_id) > (SELECT created_at,message_id FROM conversation_messages WHERE conversation_id=?2 AND message_id=?3)) ORDER BY m.created_at,m.message_id LIMIT ?4",
-                )
-                .map_err(map_database_error)?;
-            let rows = statement
-                .query_map(
-                    params![workspace, conversation, cursor, (limit + 1) as i64],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                            row.get::<_, Option<String>>(3)?,
-                            row.get::<_, Option<i64>>(4)?,
-                            row.get::<_, Option<i64>>(5)?,
-                            row.get::<_, Option<String>>(6)?,
-                            row.get::<_, Option<String>>(7)?,
-                            row.get::<_, Option<i64>>(8)?,
-                        ))
-                    },
-                )
-                .map_err(map_database_error)?;
-            let mut rows = rows.collect::<Result<Vec<_>, _>>().map_err(map_database_error)?;
-            drop(statement);
-            let has_more = rows.len() > limit;
-            if has_more {
-                rows.pop();
-            }
-            let next_cursor = has_more.then(|| rows.last().map(|row| row.1.clone())).flatten();
-            let mut items = Vec::with_capacity(rows.len());
-            let mut page_bytes = 0usize;
-            for (message_json, message_id, role, presentation_id, schema_version,
-                renderer_contract_version, semantic_digest, document_digest,
-                document_size_bytes) in rows
-            {
-                if message_json.len() > MAX_CONVERSATION_PRESENTATION_MESSAGE_BYTES {
-                    return Err(invalid("Conversation message exceeds presentation read limit"));
-                }
-                page_bytes = page_bytes.saturating_add(message_json.len());
-                if page_bytes > MAX_CONVERSATION_PRESENTATION_PAGE_BYTES {
-                    return Err(invalid("Conversation presentation page exceeds read limit"));
-                }
-                let message: Value = serde_json::from_str(&message_json)
-                    .map_err(|_| StoreError::Integrity("invalid Conversation message".into()))?;
-                let rich_presentation = match (
-                    presentation_id, schema_version, renderer_contract_version,
-                    semantic_digest, document_digest, document_size_bytes,
-                ) {
-                    (Some(id), Some(schema), Some(renderer), Some(semantic), Some(document), Some(size))
-                        if role == "AGENT" => Some(json!({
-                            "presentation_id": id,
-                            "message_id": message_id,
-                            "schema_version": schema,
-                            "renderer_contract_version": renderer,
-                            "semantic_content_digest": semantic,
-                            "document_digest": document,
-                            "document_size_bytes": size,
-                            "availability": "AVAILABLE"
-                        })),
-                    (None, None, None, None, None, None) => None,
-                    _ => return Err(StoreError::Integrity("invalid Conversation presentation reference".into())),
-                };
-                items.push(json!({
-                    "message": message,
-                    "rich_presentation": rich_presentation,
-                    "linked_items": []
-                }));
-            }
-
-            let active_turn: Option<Value> = tx
-                .query_row(
-                    "SELECT json_object('turn_id',turn_id,'status',status,'retry_ordinal',retry_ordinal,'presentation_preference',presentation_preference) FROM conversation_turns WHERE conversation_id=?1 AND status IN ('OPEN','RUNNING','WAITING_USER','WAITING_DEPENDENCY','CANCEL_REQUESTED') ORDER BY created_at DESC,turn_id DESC LIMIT 1",
-                    params![conversation],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()
-                .map_err(map_database_error)?
-                .map(|json| serde_json::from_str(&json))
-                .transpose()
-                .map_err(|_| StoreError::Integrity("invalid active Conversation turn".into()))?;
-
-            Ok(ConversationPresentationSnapshot {
-                workspace_id: workspace,
-                conversation_id: conversation.clone(),
-                projection_revision: projection_revision.max(1) as u64,
-                stream_cursor: format!("conversation:{conversation}:{projection_revision}"),
-                items,
-                next_cursor,
-                active_turn,
-            })
+                })
+                .collect()
         })
     }
+}
+
+fn read_conversation_presentation_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    workspace: &str,
+    conversation: &str,
+    cursor: Option<&str>,
+    origin_sequence: u64,
+    limit: usize,
+) -> Result<ConversationPresentationSnapshot, StoreError> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversations WHERE workspace_id=?1 AND conversation_id=?2)",
+            params![workspace, conversation],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if !exists {
+        return Err(StoreError::NotFound);
+    }
+    let stream_message_frontier: Option<String> = tx
+        .query_row(
+            "SELECT message_id FROM conversation_messages WHERE conversation_id=?1 ORDER BY created_at DESC,message_id DESC LIMIT 1",
+            params![conversation],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if let Some(cursor_id) = cursor {
+        let cursor_exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE conversation_id=?1 AND message_id=?2)",
+                params![conversation, cursor_id],
+                |row| row.get(0),
+            )
+            .map_err(map_database_error)?;
+        if !cursor_exists {
+            return Err(invalid("invalid Conversation presentation cursor"));
+        }
+    }
+    let projection_revision: i64 = tx
+        .query_row(
+            "SELECT MAX(1, (SELECT COUNT(*) FROM conversation_messages WHERE conversation_id=?1) + (SELECT COUNT(*) FROM rich_presentations WHERE workspace_id=?2 AND conversation_id=?1) + (SELECT COALESCE(SUM(version),0) FROM conversation_turns WHERE conversation_id=?1))",
+            params![conversation, workspace],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let mut statement = tx
+        .prepare(
+            "SELECT json_object('message_id',m.message_id,'conversation_id',m.conversation_id,'author',json(m.author_json),'role',m.role,'agent_session_id',m.agent_session_id,'agent_binding_id',m.agent_binding_id,'turn_id',m.turn_id,'content',json(m.content_json),'resource_refs',json(m.resource_refs_json),'created_at',m.created_at), m.message_id, m.role, r.presentation_id, r.schema_version, r.renderer_contract_version, r.semantic_content_digest, r.document_digest, r.document_size_bytes FROM conversation_messages m LEFT JOIN rich_presentations r ON r.message_id=m.message_id AND r.workspace_id=?1 AND r.conversation_id=m.conversation_id WHERE m.conversation_id=?2 AND (?3 IS NULL OR (m.created_at,m.message_id) > (SELECT created_at,message_id FROM conversation_messages WHERE conversation_id=?2 AND message_id=?3)) ORDER BY m.created_at,m.message_id LIMIT ?4",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map(
+            params![workspace, conversation, cursor, (limit + 1) as i64],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<i64>>(8)?,
+                ))
+            },
+        )
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    drop(statement);
+    let mut rows = rows;
+    let has_more = rows.len() > limit;
+    if has_more {
+        rows.pop();
+    }
+    let next_cursor = has_more
+        .then(|| rows.last().map(|row| row.1.clone()))
+        .flatten();
+    let mut items = Vec::with_capacity(rows.len());
+    let mut page_bytes = 0usize;
+    for (
+        message_json,
+        message_id,
+        role,
+        presentation_id,
+        schema_version,
+        renderer_contract_version,
+        semantic_digest,
+        document_digest,
+        document_size_bytes,
+    ) in rows
+    {
+        if message_json.len() > MAX_CONVERSATION_PRESENTATION_MESSAGE_BYTES {
+            return Err(invalid(
+                "Conversation message exceeds presentation read limit",
+            ));
+        }
+        page_bytes = page_bytes.saturating_add(message_json.len());
+        if page_bytes > MAX_CONVERSATION_PRESENTATION_PAGE_BYTES {
+            return Err(invalid("Conversation presentation page exceeds read limit"));
+        }
+        let message: Value = serde_json::from_str(&message_json)
+            .map_err(|_| StoreError::Integrity("invalid Conversation message".into()))?;
+        let rich_presentation = match (
+            presentation_id,
+            schema_version,
+            renderer_contract_version,
+            semantic_digest,
+            document_digest,
+            document_size_bytes,
+        ) {
+            (
+                Some(id),
+                Some(schema),
+                Some(renderer),
+                Some(semantic),
+                Some(document),
+                Some(size),
+            ) if role == "AGENT" => Some(json!({
+                "presentation_id": id,
+                "message_id": message_id,
+                "schema_version": schema,
+                "renderer_contract_version": renderer,
+                "semantic_content_digest": semantic,
+                "document_digest": document,
+                "document_size_bytes": size,
+                "availability": "AVAILABLE"
+            })),
+            (None, None, None, None, None, None) => None,
+            _ => {
+                return Err(StoreError::Integrity(
+                    "invalid Conversation presentation reference".into(),
+                ));
+            }
+        };
+        items.push(json!({
+            "message": message,
+            "rich_presentation": rich_presentation,
+            "linked_items": []
+        }));
+    }
+    let active_turn: Option<Value> = tx
+        .query_row(
+            "SELECT json_object('turn_id',turn_id,'status',status,'retry_ordinal',retry_ordinal,'presentation_preference',presentation_preference) FROM conversation_turns WHERE conversation_id=?1 AND status IN ('OPEN','RUNNING','WAITING_USER','WAITING_DEPENDENCY','CANCEL_REQUESTED') ORDER BY created_at DESC,turn_id DESC LIMIT 1",
+            params![conversation],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .map(|json| serde_json::from_str(&json))
+        .transpose()
+        .map_err(|_| StoreError::Integrity("invalid active Conversation turn".into()))?;
+    Ok(ConversationPresentationSnapshot {
+        workspace_id: workspace.to_owned(),
+        conversation_id: conversation.to_owned(),
+        projection_revision: projection_revision.max(1) as u64,
+        stream_cursor: format!("conversation:{conversation}:{projection_revision}"),
+        origin_sequence: origin_sequence.to_string(),
+        stream_message_frontier,
+        items,
+        next_cursor,
+        active_turn,
+    })
 }

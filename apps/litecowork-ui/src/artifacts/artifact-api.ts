@@ -1,52 +1,16 @@
 /** Wire types follow docs/schemas/operator-api.openapi.yaml, not Resource intake views. */
-export type PinnedResourceRef = { workspace_id: string; resource_id: string; revision_id: string };
-export type ResourceInput = { resource_ref: PinnedResourceRef; observed_digest?: string };
-export type ProvenanceRecord = {
-  source_inputs: ResourceInput[];
-  transformations: { operation: string; inputs: ResourceInput[]; output_digest?: string; capability_ref?: unknown }[];
-  tool_reports: PinnedResourceRef[];
-  provider_ref?: string;
-  created_by_attempt?: string;
-  capability_ref?: unknown;
-  folder_import?: { relative_path: string } | null;
-};
-export type Artifact = {
-  artifact_id: string; workspace_id: string; resource_id: string; task_id?: string | null;
-  kind: string; display_name: string; current_version: number;
-  library_status: "TRANSIENT" | "SAVED" | "ARCHIVED"; created_at: string; version: number;
-};
-export type ArtifactContent = {
-  kind: "MANAGED_BLOB";
-  storage_ref: { digest: string; size_bytes: number; media_type: string };
-  content_digest: string; media_type: string; size_bytes: number;
-} | {
-  kind: "EXTERNAL_RESOURCE"; resource_ref: PinnedResourceRef;
-  provider_revision?: string | null; observed_digest?: string | null; observed_at: string;
-};
-export type ArtifactVersion = {
-  artifact_id: string; version: number; resource_revision_id: string; input_refs: PinnedResourceRef[];
-  content: ArtifactContent; provenance: ProvenanceRecord; created_at: string;
-  created_by_attempt?: string | null; verification_refs?: string[];
-};
+import type { components, paths } from "../api/operator-api";
+
+export type PinnedResourceRef = components["schemas"]["PinnedResourceRef"];
+export type ResourceInput = components["schemas"]["ResourceInput"];
+export type ProvenanceRecord = components["schemas"]["ProvenanceRecord"];
+export type Artifact = paths["/artifacts/{artifactId}"]["get"]["responses"]["200"]["content"]["application/json"];
+export type ArtifactContent = components["schemas"]["ArtifactContent"];
+export type ArtifactVersion = paths["/artifacts/{artifactId}/versions/{version}"]["get"]["responses"]["200"]["content"]["application/json"];
 export type ComparableArtifactTextVersion = { version: ArtifactVersion; text: string };
-export type ArtifactTextEditHead = {
-  artifact_id: string;
-  aggregate_version: number;
-  content_version: number;
-  resource_version: number;
-  parent_resource_revision_id: string;
-};
-export type ArtifactTextVersionReceipt = {
-  artifact: Artifact;
-  version: ArtifactVersion;
-  replayed: boolean;
-};
-export type ArtifactTextVersionInput = {
-  expected_content_version: number;
-  expected_resource_version: number;
-  expected_parent_resource_revision_id: string;
-  content: string;
-};
+export type ArtifactTextEditHead = components["schemas"]["ArtifactTextEditHead"];
+export type ArtifactTextVersionReceipt = components["schemas"]["ArtifactTextVersionAppendResponse"];
+export type ArtifactTextVersionInput = components["schemas"]["AppendArtifactTextVersionRequest"];
 export type ArtifactSaveAsRequest = {
   workspace_id: string;
   artifact_id: string;

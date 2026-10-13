@@ -4,7 +4,7 @@
 
 ## CF01 — Quick Create to chat
 
-Precondition: active authorized Workspace; Coworker optional. User enters name and purpose and presses Create. UI retains RequestId across lost receipts, calls CoworkerService.create with default eligible native lead binding reference only when that binding exists, commits revision; CoworkerConversationService then creates a same-Workspace Conversation with immutable owner and opens it. If session admission is not implemented, surface real identity and explain chat unavailable; do not fabricate an Agent reply or Conversation. On timeout retry exact idempotency key; 409 keeps draft; no lead means repair with draft retained, not auto-switch. New Coworker defaults to no approved standing responsibility, private scoped memory policy, and no auto-provisioned connectors. Creation and conversation record are either combined with a durable repair cursor or reported as two independently recoverable committed operations.
+Precondition: active authorized Workspace; Coworker optional. User enters name and purpose and presses Create. UI retains RequestId across lost receipts, calls CoworkerService.create with default eligible native lead binding reference only when that binding exists, commits revision; CoworkerConversationService then creates a same-Workspace Conversation with immutable owner and opens it. If session admission is not implemented, surface real identity and explain chat unavailable; do not fabricate an Agent reply or Conversation. On timeout retry exact idempotency key; 409 keeps draft; no lead means repair with draft retained, not auto-switch. New Coworker defaults to no approved standing responsibility, no auto-provisioned connectors, and a visible, separately versioned private learning policy. The accepted target default is AUTO_CONFIRMED_PRIVATE for eligible low-sensitivity, explicitly confirmed owner preferences only after informing the owner during Create; owner may choose REVIEW_ALL or OFF. No inferred auto-commit, third-party mining, Workspace/personal sharing or unattended action is silently enabled. V1 uses two independently recoverable owner commits with stable, distinct per-step idempotency keys derived from one onboarding intent; a committed Coworker with failed first Conversation is shown as Created / Start first chat, and a retry reconciles only the missing step. No all-or-nothing UI claim or extra coordinating work engine.
 
 ## CF02 — Customize and skip optional steps
 
@@ -16,7 +16,7 @@ An active Task needs Calendar. CapabilityBroker returns typed not-connected bloc
 
 ## CF04 — Scheduled responsibility proposal and enable
 
-User requests daily watch and Friday briefing. Native chief proposes typed Goal + multiple Routine revisions and Automation trigger definitions; Core verifies syntax, timezone/DST, qualified TriggerHost, monitored inputs, actions, max usage, overlap, stop criteria, health and source authorization. Review card shows What/When/Where/Needs You; owner explicitly confirms. StandingResponsibilityService atomically records versioned grouping/authorization with outbox for trigger hosting, or leaves it paused/blocked until readiness; do not show Enabled early. Each AutomationOccurrence creates one canonical Task under existing admission, with exact pinning to revisions. No second scheduler or model planner.
+User requests daily watch and Friday briefing. The native chief may supply a typed proposal only through a qualified host proposal tool/input surface. Otherwise a committed message is inert content and the user explicitly chooses Create Routine/Automation from message to open a prefilled, reviewable editor. Neither free-form model text nor a UI parser may create/enable execution authority. The owning Goal/Routine/Automation services validate each draft, timezone/DST, qualified TriggerHost, monitored inputs, actions, max usage, overlap, stop criteria, health and source authorization. Review card shows What/When/Where/Needs You; owner explicitly confirms. StandingResponsibilityService atomically records versioned grouping/authorization with outbox for trigger hosting, or leaves it paused/blocked until readiness; do not show Enabled early. Each AutomationOccurrence creates one canonical Task under existing admission, with exact pinning to revisions. No second scheduler or model planner.
 
 ## CF05 — Proactive event/watch without model heartbeat flood
 
@@ -105,3 +105,62 @@ Test every control with: empty/loading/success/stale revision/offline/partial pr
 7. Descriptor refresh succeeds; original draft remains intact and may be sent.
 8. Active Tasks already admitted under the old descriptor follow normal settlement and
    are not rewritten.
+
+
+## CF21 — Continue an unattended run as a real follow-up Conversation
+
+1. AutomationOccurrence has a canonical Task with terminal or reviewable state.
+2. Runs UI shows **Continue** only when the owner can read that Task.
+3. Owner activates Continue with an idempotency key.
+4. ConversationService checks Workspace/Task/Coworker provenance and atomically creates or
+   returns the Task's unique PRIMARY_FOLLOW_UP Conversation.
+5. UI renders a host-owned run-context card with exact Task, outputs, Evidence and blockers;
+   it does not append fabricated assistant history.
+6. On first user turn, AgentModule may reuse a qualified durable native resume point only
+   if binding/config/runtime checks pass. Otherwise a fresh AgentSession receives bounded
+   durable context.
+7. New actions use fresh Grants/Approvals/SecretLeases. The old Automation cursor and
+   occurrence remain unchanged.
+8. Duplicate Continue returns the same Conversation. Revoked Task access or archived
+   Workspace fails closed.
+
+## CF22 — Local-first app auth and optional hosted backend
+
+1. User chooses a qualified ConnectorPackage from Connections or a Task blocker.
+2. UI states credential owner (On this device or named optional backend) and requested
+   feature/scopes.
+3. Public desktop recipe creates fresh state+PKCE and loopback listener; hosted/confidential
+   recipe uses only its declared callback owner.
+4. User authenticates in the system browser; chat never receives credentials.
+5. ConnectionService verifies callback/account, stores secrets in SecretStore/provider vault
+   and commits only SecretRefs plus normalized metadata.
+6. Coworker assignment is separate and still does not mint a Grant.
+7. Cancel/wrong-state/restart/commit failure leaves no fake Connected state.
+8. Refresh/revoke/scope changes block/resume dependent work only after revalidation.
+
+## CF23 — Existing workflow as one bounded capability
+
+1. User selects an authorized workflow backend Connection and an existing workflow.
+2. Adapter returns bounded input/output/effect metadata; no whole graph is copied to Core.
+3. Planner may select the workflow for an accepted Step.
+4. CapabilityInvocation/Effect admission completes before production dispatch.
+5. External run progress appears as Activity observations.
+6. Timeout/cancel/partial failure reconciles actual external Effects before retry.
+7. Result becomes Resource/Artifact/Evidence refs; verifier decides Step/Task acceptance.
+8. External workflow state never rewrites LiteCowork Plan/Step/Task state directly.
+
+## CF24 — Correction becomes bounded learning
+
+1. Authenticated owner corrects a Coworker's result or states a lasting preference.
+2. LearningService evaluates source eligibility; temporary chat/third-party content is
+   ineligible for automatic learning.
+3. Redaction/secret/sensitivity/contradiction checks run before persistence/commit.
+4. Qualified private confirmed memory may auto-commit under current LearningPolicy.
+5. Behavioral instruction, Skill, Routine or Automation becomes review proposal instead.
+6. User can inspect source, diff/tests, approve/dismiss, correct/revoke later.
+7. No learning path can widen Connection scope, Grant, Approval, channel assurance or
+   unattended autonomy.
+
+## V1 detailed design integration — 2026-10-12
+
+The Coworker roster/last-owned-chat/Quick Create, Connections & Tools, responsibilities and Workbench control list is in DESKTOP-SHELL-LLD.md; agent-dependent composer and native commands in NATIVE-COMPOSER-LLD.md. Existing domain flow remains mandatory and must be admitted by real Operator APIs rather than simulated UI.

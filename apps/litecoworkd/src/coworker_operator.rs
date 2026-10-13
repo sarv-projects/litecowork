@@ -1,5 +1,8 @@
 //! Authenticated Coworker configuration routes. No Automation hosting or Task
 //! execution is started by these commands. Presence awaits its complete projection.
+// Route handlers intentionally return full Axum Responses to preserve status, body, and headers.
+#![allow(clippy::result_large_err)]
+
 use super::*;
 use domain_responsibility::{
     CommittedResponsibility, Coworker, CoworkerDefinition, CoworkerRevision, CoworkerStatus,

@@ -1,5 +1,8 @@
 //! Authenticated local Conversation catalog lifecycle. Turn dispatch is intentionally
 //! absent here until the native AgentSession/runtime admission path is integrated.
+// Route handlers intentionally return full Axum Responses to preserve status, body, and headers.
+#![allow(clippy::result_large_err)]
+
 use super::*;
 use storage_core::conversation::request_payload_value;
 use storage_core::{

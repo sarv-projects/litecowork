@@ -3,6 +3,8 @@
 //! This router exposes the finite definition API and safe-stop commands over persisted
 //! aggregates. Local owner ManualTrigger runs atomically admit a claimed occurrence and
 //! an ordinary READY Task; recurring trigger hosting and `/resume` remain unavailable.
+// Route handlers intentionally return full Axum Responses to preserve status, body, and headers.
+#![allow(clippy::result_large_err)]
 
 use super::*;
 use domain_responsibility::{

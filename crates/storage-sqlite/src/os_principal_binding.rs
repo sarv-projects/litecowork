@@ -1,25 +1,25 @@
 //! Installation-local OS principal binding for authenticated local Operator IPC.
 //!
-//! Linux and macOS use the kernel-reported effective UID and a distinct random key in
-//! the OS credential store to fingerprint it. The Runtime data directory must already
-//! be a private, real directory owned by the same UID. Windows fails closed until its
-//! logon-session identity mechanism has been qualified.
+//! Linux and macOS use the kernel-reported effective UID; Windows uses the current
+//! logon-session SID. A distinct random key in the OS credential store fingerprints the
+//! observed principal. Unix Runtime data directories must already be private, real
+//! directories owned by the same UID.
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use keyring::Entry;
 use sha2::{Digest, Sha256};
 use std::path::Path;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::{Mutex, OnceLock};
 use storage_core::StoreError;
 use zeroize::{Zeroize, Zeroizing};
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const KEYRING_SERVICE: &str = "com.litecowork.runtime-os-principal-binding";
 const KEY_BYTES: usize = 32;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const BINDING_VERSION: u32 = 1;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static MUTATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// Platform recorded in a `RuntimeOsPrincipalBinding`.
@@ -28,6 +28,7 @@ static MUTATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 pub enum RuntimeOsPlatform {
     Linux,
     MacOs,
+    Windows,
 }
 
 /// Kernel-authenticated Unix identity used to compare with accepted peer credentials.
@@ -46,6 +47,29 @@ impl UnixPrincipalId {
     }
 }
 
+/// Kernel-authenticated principal used by the platform's local IPC adapter.
+/// Windows logon-session identity stays zeroized and is never serialized or debugged.
+pub enum RuntimeOsPrincipal {
+    UnixUid(UnixPrincipalId),
+    WindowsLogonSid(Zeroizing<String>),
+}
+
+impl RuntimeOsPrincipal {
+    pub const fn unix_uid(&self) -> Option<u32> {
+        match self {
+            Self::UnixUid(principal) => Some(principal.uid()),
+            Self::WindowsLogonSid(_) => None,
+        }
+    }
+
+    pub fn windows_logon_sid(&self) -> Option<&str> {
+        match self {
+            Self::UnixUid(_) => None,
+            Self::WindowsLogonSid(principal) => Some(principal.as_str()),
+        }
+    }
+}
+
 /// Non-secret, installation-local record for validating the expected IPC principal.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -60,7 +84,7 @@ pub struct RuntimeOsPrincipalBinding {
 /// Result of validating/creating the binding at trusted Runtime startup.
 pub struct RuntimeOsPrincipalIdentity {
     pub binding: RuntimeOsPrincipalBinding,
-    pub principal: UnixPrincipalId,
+    pub principal: RuntimeOsPrincipal,
     pseudonym_key: Zeroizing<[u8; KEY_BYTES]>,
 }
 
@@ -73,14 +97,14 @@ impl RuntimeOsPrincipalIdentity {
         message.extend_from_slice(namespace.as_bytes());
         message.push(0);
         message.extend_from_slice(material);
-        hex::encode(hmac_sha256(&*self.pseudonym_key, &message))
+        hex::encode(hmac_sha256(&self.pseudonym_key, &message))
     }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OsRuntimePrincipalBindingProvider;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct StoredBinding {
@@ -91,7 +115,7 @@ struct StoredBinding {
     fingerprint_key_hex: String,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl Drop for StoredBinding {
     fn drop(&mut self) {
         self.fingerprint_key_hex.zeroize();
@@ -122,7 +146,11 @@ impl OsRuntimePrincipalBindingProvider {
         {
             self.load_or_create_unix(data_directory, runtime_id, allow_create)
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(target_os = "windows")]
+        {
+            self.load_or_create_windows(data_directory, runtime_id, allow_create)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
             let _ = (data_directory, runtime_id, allow_create);
             Err(StoreError::Blob(
@@ -187,7 +215,7 @@ impl OsRuntimePrincipalBindingProvider {
                 let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
                 getrandom::fill(key.as_mut())
                     .map_err(|_| StoreError::Blob("secure random unavailable".to_owned()))?;
-                let fingerprint = fingerprint(&*key, platform, principal);
+                let fingerprint = fingerprint(&key, platform, principal);
                 let stored = StoredBinding {
                     runtime_id: runtime_id.to_owned(),
                     platform,
@@ -223,7 +251,7 @@ impl OsRuntimePrincipalBindingProvider {
             Zeroizing::new(key_bytes.as_slice().try_into().map_err(|_| {
                 StoreError::Integrity("OS principal fingerprint key has an invalid size".to_owned())
             })?);
-        let expected_fingerprint = fingerprint(&*key, platform, principal);
+        let expected_fingerprint = fingerprint(&key, platform, principal);
         if stored.principal_fingerprint != expected_fingerprint {
             return Err(StoreError::Integrity(
                 "OS principal changed for this Runtime installation".to_owned(),
@@ -237,7 +265,108 @@ impl OsRuntimePrincipalBindingProvider {
                 principal_fingerprint: stored.principal_fingerprint.clone(),
                 binding_version: stored.binding_version,
             },
-            principal,
+            principal: RuntimeOsPrincipal::UnixUid(principal),
+            pseudonym_key: key,
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    fn load_or_create_windows(
+        &self,
+        data_directory: &Path,
+        runtime_id: &str,
+        allow_create: bool,
+    ) -> Result<RuntimeOsPrincipalIdentity, StoreError> {
+        let path_metadata =
+            std::fs::symlink_metadata(data_directory).map_err(|_| unsafe_directory_error())?;
+        if path_metadata.file_type().is_symlink() || !path_metadata.is_dir() {
+            return Err(unsafe_directory_error());
+        }
+        let canonical_directory = data_directory
+            .canonicalize()
+            .map_err(|_| unsafe_directory_error())?;
+        let canonical_metadata = std::fs::symlink_metadata(&canonical_directory)
+            .map_err(|_| unsafe_directory_error())?;
+        if canonical_metadata.file_type().is_symlink() || !canonical_metadata.is_dir() {
+            return Err(unsafe_directory_error());
+        }
+
+        let logon_sid = windows_local_security::current_logon_sid().map_err(|_| {
+            StoreError::Blob("Windows logon-session identity is unavailable".to_owned())
+        })?;
+        let sid_text = logon_sid.as_str();
+        let account = account_for(&canonical_directory);
+        let entry = Entry::new(KEYRING_SERVICE, &account).map_err(|_| credential_store_error())?;
+        let _guard = mutation_lock()
+            .lock()
+            .map_err(|_| credential_store_error())?;
+
+        let stored = match entry.get_password() {
+            Ok(secret) => {
+                let secret = Zeroizing::new(secret);
+                serde_json::from_str::<StoredBinding>(&secret).map_err(|_| {
+                    StoreError::Integrity("stored OS principal binding is malformed".to_owned())
+                })?
+            }
+            Err(keyring::Error::NoEntry) => {
+                if !allow_create {
+                    return Err(StoreError::Integrity(
+                        "OS principal binding is missing; explicit local recovery is required"
+                            .to_owned(),
+                    ));
+                }
+                let mut key = Zeroizing::new([0_u8; KEY_BYTES]);
+                getrandom::fill(key.as_mut())
+                    .map_err(|_| StoreError::Blob("secure random unavailable".to_owned()))?;
+                let stored = StoredBinding {
+                    runtime_id: runtime_id.to_owned(),
+                    platform: RuntimeOsPlatform::Windows,
+                    principal_fingerprint: windows_fingerprint(&key, sid_text),
+                    binding_version: BINDING_VERSION,
+                    fingerprint_key_hex: hex::encode(key.as_ref()),
+                };
+                let encoded = Zeroizing::new(serde_json::to_string(&stored).map_err(|_| {
+                    StoreError::Blob("could not encode OS principal binding".to_owned())
+                })?);
+                entry
+                    .set_password(encoded.as_str())
+                    .map_err(|_| credential_store_error())?;
+                stored
+            }
+            Err(_) => return Err(credential_store_error()),
+        };
+
+        if stored.runtime_id != runtime_id
+            || stored.platform != RuntimeOsPlatform::Windows
+            || stored.binding_version != BINDING_VERSION
+        {
+            return Err(StoreError::Integrity(
+                "OS principal binding does not match this Runtime installation".to_owned(),
+            ));
+        }
+
+        let key_hex = Zeroizing::new(stored.fingerprint_key_hex.clone());
+        let key_bytes = Zeroizing::new(hex::decode(key_hex.as_str()).map_err(|_| {
+            StoreError::Integrity("OS principal fingerprint key is malformed".to_owned())
+        })?);
+        let key: Zeroizing<[u8; KEY_BYTES]> =
+            Zeroizing::new(key_bytes.as_slice().try_into().map_err(|_| {
+                StoreError::Integrity("OS principal fingerprint key has an invalid size".to_owned())
+            })?);
+        if stored.principal_fingerprint != windows_fingerprint(&key, sid_text) {
+            return Err(StoreError::Integrity(
+                "OS principal changed for this Runtime installation".to_owned(),
+            ));
+        }
+
+        Ok(RuntimeOsPrincipalIdentity {
+            binding: RuntimeOsPrincipalBinding {
+                runtime_id: stored.runtime_id.clone(),
+                platform: stored.platform,
+                principal_fingerprint: stored.principal_fingerprint.clone(),
+                binding_version: stored.binding_version,
+            },
+            principal: RuntimeOsPrincipal::WindowsLogonSid(Zeroizing::new(sid_text.to_owned())),
             pseudonym_key: key,
         })
     }
@@ -273,12 +402,21 @@ fn fingerprint(
     let platform_tag = match platform {
         RuntimeOsPlatform::Linux => b"linux-uid".as_slice(),
         RuntimeOsPlatform::MacOs => b"macos-uid".as_slice(),
+        RuntimeOsPlatform::Windows => unreachable!("Unix principal cannot be Windows"),
     };
     let mut message = Vec::with_capacity(48);
     message.extend_from_slice(b"litecowork-runtime-os-principal-v1\0");
     message.extend_from_slice(platform_tag);
     message.push(0);
     message.extend_from_slice(&principal.uid().to_be_bytes());
+    format!("hmac-sha256:{}", hex::encode(hmac_sha256(key, &message)))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_fingerprint(key: &[u8; KEY_BYTES], logon_sid: &str) -> String {
+    let mut message = Vec::with_capacity(logon_sid.len() + 48);
+    message.extend_from_slice(b"litecow-runtime-os-principal-v1\0windows-logon-sid\0");
+    message.extend_from_slice(logon_sid.as_bytes());
     format!("hmac-sha256:{}", hex::encode(hmac_sha256(key, &message)))
 }
 
@@ -318,17 +456,29 @@ fn account_for(path: &Path) -> String {
     hex::encode(digest.finalize())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "windows")]
+fn account_for(path: &Path) -> String {
+    use std::os::windows::ffi::OsStrExt;
+
+    let mut digest = Sha256::new();
+    digest.update(b"litecow-runtime-os-principal-binding-account-v1\0");
+    for unit in path.as_os_str().encode_wide() {
+        digest.update(unit.to_le_bytes());
+    }
+    hex::encode(digest.finalize())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn mutation_lock() -> &'static Mutex<()> {
     MUTATION_LOCK.get_or_init(|| Mutex::new(()))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn unsafe_directory_error() -> StoreError {
     StoreError::Blob("Runtime state directory is not private and Runtime-owned".to_owned())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn credential_store_error() -> StoreError {
     StoreError::Blob("OS credential store is unavailable or rejected the operation".to_owned())
 }

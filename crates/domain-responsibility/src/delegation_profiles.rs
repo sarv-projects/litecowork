@@ -3,7 +3,7 @@
 //! This module owns canonical name handling, input validation, immutable revisions,
 //! lifecycle transitions, and request fingerprints. Persistence adapters must recheck
 //! Workspace ownership and binding eligibility in their committing transaction.
-use crate::{ContractObject, PrincipalRef};
+use crate::PrincipalRef;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;

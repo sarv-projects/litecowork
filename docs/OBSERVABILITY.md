@@ -215,3 +215,27 @@ Trace spans may include `registry_agent_id`, `module_id`, descriptor digest pref
 Runtime/incarnation IDs and lifecycle operation ID. Auth spans record method **kind** and
 outcome only. Install/update traces record verified package identity/version, not
 credentials or private download tokens.
+
+
+## Connector/workflow/learning observability additions
+
+Observability for the accepted target architecture records normalized identifiers,
+durations, statuses and reason codes only.
+
+Never log OAuth codes, PKCE verifiers, access/refresh tokens, API keys, provider signed
+URLs, raw external workflow handles, LearningCandidate payload text, or unredacted source
+content. Safe fields include connector/package digest, AuthAttempt ID/state, Connection ID,
+scope-set digest, Invocation ID, external-run-ref digest, relay receipt ID, candidate ID,
+candidate kind/state and redaction reason code.
+
+Dashboards must distinguish Connected from Assigned/Granted/Invoked, and external workflow
+Started from Verified Task completion. Learning metrics count candidate outcomes without
+exposing candidate content.
+
+## V1 detailed design integration — 2026-10-12
+
+V1 UI events such as panel resize and command palette focus are local presentation events; durable domain events are emitted only on canonical state commits. Record sanitized native event schema version, browser control epoch, provider action receipt, renderer fallback reason and correlated Task/Attempt/Effect. Never log Chrome cookies, private URL query tokens or unsent chat drafts.
+
+## Multi-agent usage, health, and resilience — V1 detailed owner contract
+
+[Cross-Agent Telemetry/Usage/Resilience LLD](V1-TELEMETRY-USAGE-RESILIENCE-LLD.md) owns the V1 proposed measurement, aggregation, dashboard, cache and connection-health projection. Domain Task/Attempt/Effect status remains authoritative here and in STATE-MACHINES; the per-provider request must be a deduplicated leaf with measured/estimated/unknown usage and immutable price snapshot. A native subscription without exposed usage is UNKNOWN rather than $0.00, and total rollups must not count a delegated parent plus child leaves twice. The external OmniRoute patterns are research, not authority for agent-local usage or a second gateway. Adoption requires typed Operator contracts, source evidence and the TLM-001–012 tests in implementation/V1-OBSERVABILITY-AGENT-MEMORY-TERMINAL-UAT.md.

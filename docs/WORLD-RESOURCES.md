@@ -143,16 +143,33 @@ transaction, so that key-loss path does not yet durably mark roots unavailable. 
 The owner may pause an ACTIVE root without deleting its identity bindings or selected-folder
 replication preference; every observer, search, exposure, and replication transfer must
 still filter for ACTIVE status. Resuming a PAUSED root is a separate versioned user action
-and requires the current Runtime incarnation to have the matching AVAILABLE location and
-both validated private identity bindings. A stale/missing current-incarnation binding
-returns a conflict and leaves the root PAUSED. UNAVAILABLE is recovered only by Runtime
-identity revalidation, not by the resume button. Revocation remains terminal and deletes the
-private bindings and selected-root replication relation. Root observation does not grant a
+and requires an AVAILABLE ResourceLocation plus the current Runtime incarnation in READY or
+DEGRADED state. The Runtime reopens the saved private locator without following symlinks
+and compares live identity against the prior authorized binding pair and keyed Resource
+identity; that pair may belong to an earlier Runtime incarnation. The atomic resume commit
+refreshes both private bindings for the current incarnation. A stale, missing, or mismatched
+prior binding returns a conflict or unavailable result and leaves the root PAUSED. If the
+last committed ResourceLocation is UNAVAILABLE, Runtime identity revalidation must restore
+it before the owner can resume; a WorkspaceRoot whose status is UNAVAILABLE is not resumed
+through this action. Exact receipt replay does not reopen the path. Revocation remains
+terminal and deletes the private bindings and selected-root replication relation. Root observation does not grant a
 capability, secret, write permission, or cloud replication by
 itself; these are independent decisions. `SELECTED_FOLDERS` stores
 stable WorkspaceRoot IDs, not revision-pinned ResourceRefs, so newly observed content
 under an authorized selected root remains eligible. Workspace and root replication
 policies intersect; a root-level setting cannot broaden the Workspace's scope.
+
+Within one Workspace, two non-revoked folder roots must not have overlapping directory
+scopes. A proposed root conflicts when its canonical absolute directory path is the same
+as, an ancestor of, or a descendant of an existing root's canonical path; path components
+are compared as components, not as string prefixes, so sibling directories remain
+independent. This applies to `ACTIVE`, `PAUSED`, and `UNAVAILABLE` roots: pause and lost
+availability do not revoke the owner's persistent scope. Only `REVOKED` removes a root
+from overlap admission. Exact idempotent retries return their original receipt before this
+check; a new request is checked and committed under the serialized root-creation
+transaction. Canonical paths remain private Runtime-local locator data and are never copied
+to WorkspaceRoot aggregates, events, public projections, or error messages. Unsupported or
+malformed persisted locators fail closed during overlap admission.
 
 ## Relationships and dependency invalidation
 
@@ -359,3 +376,15 @@ This document does not define a semantic memory engine, embeddings service, gene
 machine activity monitor, or LiteSPM package contract. A separately isolated opt-in
 Machine Observer may publish specific observations only after explicit user authorization;
 it is not required for World Index or Task placement.
+
+
+## Connector resources and account scope
+
+A connected SaaS account does not make the whole account part of the World Index. Only
+authorized, actually discovered/selected provider resources become normalized ResourceRefs
+or index entries under current Workspace/Coworker scope. Provider search/catalog results
+remain observations until materialized with provenance.
+
+Disconnect/revoke fences future provider reads. Existing imported Resources retain their
+own provenance/retention/deletion policy; the World Index never treats a Connection as a
+wildcard grant to scan all mail, drives, calendars or chats.

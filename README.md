@@ -130,3 +130,27 @@ slash commands, references and native configuration are exposed through modular
 AgentModules. LiteSPM owns the cross-agent connector/MCP/plugin/skill package ecosystem;
 LiteCowork owns scoped authorization and durable work around their use. See
 docs/AGENT-CONTROL.md.
+
+
+## 2026-10-10 connector, automation, and learning architecture
+
+The finalized design now includes:
+
+- local-first direct connector/auth architecture and optional external auth backends;
+- first-party app bundles without making MCP setup mandatory;
+- external deterministic workflow backends as capabilities rather than a second Task engine;
+- event relay separated from credential custody;
+- typed Coworker learning: memory vs instruction vs skill vs routine vs automation;
+- Automation run history with on-demand follow-up Conversations;
+- one unified chat/work architecture: Code task is a preset, not a top-level product fork.
+
+Read:
+[Connectors & Workflows](docs/CONNECTORS-WORKFLOWS.md),
+[Learning](docs/LEARNING.md), and
+[Reference Implementations](docs/REFERENCE-IMPLEMENTATIONS.md).
+These are accepted target contracts; current implementation status remains governed by the
+epics/roadmap and CODE/SYSTEM/USER evidence.
+
+## V1 detailed design integration — 2026-10-12
+
+Implementation detail and acceptance crosswalk: docs/V1-DESIGN-INDEX.md and implementation/V1-DESIGN-COVERAGE.md. Native agent / and @ parity, browser profile security, right Workbench and event rendering are design targets pending actual end-to-end qualification; do not advertise a disabled composer, a browser screenshot or an agent registry probe as shipped features.

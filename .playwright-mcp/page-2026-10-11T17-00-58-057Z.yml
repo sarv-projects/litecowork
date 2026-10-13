@@ -1,0 +1,93 @@
+- generic [ref=e3]:
+  - button "Close main navigation" [ref=e143] [cursor=pointer]
+  - dialog "Main navigation" [ref=e51]:
+    - generic [ref=e52]:
+      - link "LiteCowork" [ref=e53] [cursor=pointer]:
+        - /url: "#home"
+        - generic [ref=e54]: L
+      - button "Close navigation" [active] [ref=e56] [cursor=pointer]: ×
+    - generic "Local Runtime status unknown; Operator API not ready" [ref=e57]:
+      - generic [ref=e59]:
+        - strong [ref=e60]: Desktop
+        - generic [ref=e61]: No Workspace · Checking
+    - navigation [ref=e62]:
+      - button "Conversations" [ref=e64] [cursor=pointer]:
+        - generic [ref=e65]: ▤
+      - button "Coworkers" [ref=e68] [cursor=pointer]:
+        - generic [ref=e69]: ◉
+      - button "Home" [ref=e72] [cursor=pointer]:
+        - generic [ref=e73]: ⌂
+      - button "Needs You" [ref=e76] [cursor=pointer]:
+        - generic [ref=e77]: ◇
+      - button "Work" [ref=e80] [cursor=pointer]:
+        - generic [ref=e81]: ▤
+      - button "Library" [ref=e84] [cursor=pointer]:
+        - generic [ref=e85]: ▧
+      - button "Automations" [ref=e88] [cursor=pointer]:
+        - generic [ref=e89]: ◷
+      - button "Routines" [ref=e92] [cursor=pointer]:
+        - generic [ref=e93]: ↻
+      - button "Goals" [ref=e96] [cursor=pointer]:
+        - generic [ref=e97]: ◎
+      - button "Ideas" [ref=e100] [cursor=pointer]:
+        - generic [ref=e101]: ✦
+      - generic [ref=e103]:
+        - generic [ref=e104]: Manage
+        - button "Settings" [ref=e105] [cursor=pointer]:
+          - generic [ref=e106]: ⚙
+    - generic [ref=e108]:
+      - status [ref=e109]:
+        - generic [ref=e111]: Runtime status unknown
+      - generic [ref=e112]:
+        - generic [ref=e113]: S
+        - generic [ref=e114]:
+          - strong [ref=e115]: Local desktop
+          - generic [ref=e116]: Personal Workspace
+        - button "More account options" [ref=e117] [cursor=pointer]: ···
+  - main [ref=e4]:
+    - generic [ref=e5]:
+      - button [expanded] [ref=e144] [cursor=pointer]:
+        - generic [ref=e7]: ☰
+        - generic [ref=e8]: Menu
+      - generic [ref=e9]:
+        - generic [ref=e10]: LiteCowork
+        - generic [ref=e11]: /
+        - strong [ref=e12]: Home
+      - button [ref=e145] [cursor=pointer]: "?"
+    - generic [ref=e15]:
+      - generic [ref=e16]:
+        - generic [ref=e17]: YOUR WORKSPACE
+        - heading [level=1] [ref=e146]: What should we work on?
+        - paragraph [ref=e19]: Save work in this Workspace. Saved Tasks are not sent to an agent yet.
+      - form [ref=e147]:
+        - generic [ref=e21]:
+          - generic [ref=e22]: For
+          - strong [ref=e23]: Loading Workspace defaults…
+        - generic [ref=e24]: Describe what you want to work on
+        - textbox [ref=e148]:
+          - /placeholder: Describe something you want to get done…
+        - generic [ref=e26]:
+          - generic [ref=e27]: Saves a durable Task in the selected Workspace using Workspace defaults. The selected Coworker identity and revision are checked at save time. Selected Resources are pinned as inputs; no agent is started yet.
+          - generic [ref=e28]:
+            - button [ref=e149]: Add inputs
+            - button [disabled] [ref=e150]:
+              - generic [ref=e31]: Save Task
+              - generic [ref=e32]: →
+        - paragraph [ref=e33]:
+          - text: Choose and enable a lead agent in Settings, or set one on the selected Coworker, before saving a Task.
+          - button [ref=e151] [cursor=pointer]: Set up a lead agent
+        - paragraph [ref=e35]: Start the local Runtime before saving work.
+      - status [ref=e36]:
+        - generic [ref=e37]: i
+        - generic [ref=e38]:
+          - strong [ref=e39]: Local Runtime setup
+          - paragraph [ref=e40]: Desktop Runtime status is unavailable.
+          - button [ref=e152] [cursor=pointer]: View Runtime details →
+      - generic [ref=e42]:
+        - generic [ref=e43]:
+          - heading [level=2] [ref=e153]: Recent work
+          - paragraph [ref=e45]: Persisted Tasks in the selected Workspace.
+        - button [ref=e154]: View all
+      - generic [ref=e47]:
+        - heading [level=2] [ref=e155]: Select a Workspace
+        - paragraph [ref=e49]: Choose or create a Workspace in Settings to browse its saved Tasks.

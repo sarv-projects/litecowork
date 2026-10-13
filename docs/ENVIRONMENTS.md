@@ -408,3 +408,23 @@ A Coworker has no implicit computer access. Browser, filesystem, terminal and in
 For general desktop users, authorized local roots should support explicit host-enforced modes: **read only**, **read/write**, and **read/write/no delete** where the platform provider can enforce them. This follows the useful security shape documented by Claude Cowork: the user chooses a comprehensible boundary once instead of reviewing shell commands they may not understand.
 
 Mount mode is an Environment/resource boundary, not a model instruction. Symlink/path resolution must occur before containment checks; a child path may not escape an authorized root. Credentials remain outside the execution guest/process where supported. A provider that cannot reliably enforce a requested no-delete/read-only boundary must mark that mode unsupported rather than simulate it in prompt text.
+
+
+## Coworker-private computer semantics
+
+A Coworker may prefer or own a COWORKER_PRIVATE persistent Environment where explicitly
+created, but the product phrase "its own computer" is not a requirement to provision a
+permanent VM/container. Default work can use Task/Attempt-private Environments and scoped
+browser/terminal/computer leases.
+
+Connector credentials remain separate SecretStore/Connection state and are injected only
+for authorized operations; cloning/checkpointing an Environment never clones provider
+refresh tokens or makes another Coworker eligible for them.
+
+## V1 detailed design integration — 2026-10-12
+
+The qualified Chrome/browser provider HLD/LLD is CHROME-BROWSER-LLD.md. Tauri WebView is NOT Chrome. Managed browser uses isolated persistent directory; existing Chrome needs user-visible per-session permission and high-trust scope; default Chrome user profile cannot be automated by pointing Playwright at it. Human takeover requires epoch-fenced single input actor, fresh DOM/a11y observation after return, and re-evaluated Trust/Effect/leases. Browser surface and provider are distinct.
+
+## Shell/PTY Environment specialization — V1 target
+
+[Integrated Terminal LLD](V1-INTEGRATED-TERMINAL-LLD.md) refines EnvironmentProvider behavior for local PTY and Windows ConPTY, Linux/macOS PTY, WSL, controlled cwd, session incarnation, viewport stream, manual-vs-Agent Attempt ownership and control epoch. A WebView terminal cannot spawn a process directly. A stopped Runtime/PTY is LOST, not magically resumed; the existing Environment/Task/Effect Trust authority stays intact. New command routes/services are unpromoted proposals until schema and native OS qualification.

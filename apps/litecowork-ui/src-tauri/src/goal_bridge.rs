@@ -9,17 +9,24 @@ pub(crate) struct GoalResponse {
 }
 
 fn valid_id(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 200
-        && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    !value.is_empty()
+        && value.len() <= 200
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 fn valid_request_id(value: &str) -> bool {
     !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_graphic())
 }
 fn read_goal_response(response: LocalOperatorResponse) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
-    response.take(1024 * 1024 + 1).read_to_end(&mut body)
+    response
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut body)
         .map_err(|_| "Local Goal response could not be read".to_owned())?;
-    if body.len() > 1024 * 1024 { return Err("Local Goal response exceeded its size limit".to_owned()); }
+    if body.len() > 1024 * 1024 {
+        return Err("Local Goal response exceeded its size limit".to_owned());
+    }
     Ok(body)
 }
 

@@ -7,12 +7,12 @@ domain owners still apply. Story status tracks planning through owner acceptance
 
 ## Coverage inventory
 
-- 84 source Markdown documents; 1302 heading-level sections are digest-pinned.
-- 36 implementation-plan documents and 291 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
+- 103 source Markdown documents; 1668 heading-level sections are digest-pinned.
+- 52 implementation-plan documents and 517 plan sections are indexed; the mutable current-run handoff is intentionally excluded.
 - 67 backlog stories with status recorded in backlog; each has CODE/SYSTEM/USER test case IDs.
 - 144 flows and 90 benchmarks.
 - 206 OpenAPI operations and 342 component schemas; 0 components are unreachable from every Operator operation.
-- 99 error codes; 259 shared IDs/value definitions.
+- 100 error codes; 261 shared IDs/value definitions.
 - 142 event types and 141 typed event payload schemas.
 - 107 SQLite tables, 1172 columns, 475 foreign-key columns, 68 unique constraints, 348 checks, 1 view(s), 140 triggers, and 76 indexes.
 
@@ -46,7 +46,9 @@ USER tests provide that evidence when executed.
 | [`docs/CAPABILITY-FABRIC.md`](../docs/CAPABILITY-FABRIC.md) | E04-S02 | Architecture contract |
 | [`docs/CAPABILITY-INVOCATIONS.md`](../docs/CAPABILITY-INVOCATIONS.md) | E04-S03 | Architecture contract |
 | [`docs/CHANNELS.md`](../docs/CHANNELS.md) | E11-S04 | Architecture contract |
+| [`docs/CHROME-BROWSER-LLD.md`](../docs/CHROME-BROWSER-LLD.md) | E07-S01 | Architecture contract |
 | [`docs/COMPETITIVE-RESEARCH.md`](../docs/COMPETITIVE-RESEARCH.md) | E08-S02 | Architecture contract |
+| [`docs/CONNECTORS-WORKFLOWS.md`](../docs/CONNECTORS-WORKFLOWS.md) | E04-S02 | Architecture contract |
 | [`docs/CONTEXT.md`](../docs/CONTEXT.md) | E08-S03 | Architecture contract |
 | [`docs/COVERAGE-MATRIX.md`](../docs/COVERAGE-MATRIX.md) | E01-S01 | Architecture contract |
 | [`docs/COWORKER-FLOWS.md`](../docs/COWORKER-FLOWS.md) | E09-S02 | Architecture contract |
@@ -54,6 +56,7 @@ USER tests provide that evidence when executed.
 | [`docs/DATA-MODEL.md`](../docs/DATA-MODEL.md) | E01-S02 | Architecture contract |
 | [`docs/DELEGATION.md`](../docs/DELEGATION.md) | E05-S04 | Architecture contract |
 | [`docs/DESIGN-SYSTEM.md`](../docs/DESIGN-SYSTEM.md) | E08-S05 | Architecture contract |
+| [`docs/DESKTOP-SHELL-LLD.md`](../docs/DESKTOP-SHELL-LLD.md) | E02-S01 | Architecture contract |
 | [`docs/ENVIRONMENTS.md`](../docs/ENVIRONMENTS.md) | E07-S01 | Architecture contract |
 | [`docs/EVENTS.md`](../docs/EVENTS.md) | E01-S02 | Architecture contract |
 | [`docs/EXPERIENCE.md`](../docs/EXPERIENCE.md) | E08-S04 | Architecture contract |
@@ -61,13 +64,17 @@ USER tests provide that evidence when executed.
 | [`docs/FLOWS.md`](../docs/FLOWS.md) | E13-S03 | Architecture contract |
 | [`docs/HOST-GUIDANCE.md`](../docs/HOST-GUIDANCE.md) | E08-S08 | Architecture contract |
 | [`docs/IMPLEMENTATION.md`](../docs/IMPLEMENTATION.md) | E01-S01 | Architecture contract |
+| [`docs/LEARNING.md`](../docs/LEARNING.md) | E08-S03 | Architecture contract |
 | [`docs/LOCAL-OPERATOR-IPC.md`](../docs/LOCAL-OPERATOR-IPC.md) | E01-S04 | Architecture contract |
 | [`docs/MOTION.md`](../docs/MOTION.md) | E08-S05 | Architecture contract |
+| [`docs/NATIVE-COMPOSER-LLD.md`](../docs/NATIVE-COMPOSER-LLD.md) | E03-S02 | Architecture contract |
 | [`docs/NETWORK-SECURITY.md`](../docs/NETWORK-SECURITY.md) | E04-S02 | Architecture contract |
 | [`docs/OBSERVABILITY.md`](../docs/OBSERVABILITY.md) | E13-S02 | Architecture contract |
 | [`docs/PRESENTATION-RUNTIME.md`](../docs/PRESENTATION-RUNTIME.md) | E08-S06 | Architecture contract |
 | [`docs/PRODUCT.md`](../docs/PRODUCT.md) | E08-S01 | Architecture contract |
 | [`docs/PROTOCOLS.md`](../docs/PROTOCOLS.md) | E01-S04 | Architecture contract |
+| [`docs/REFERENCE-IMPLEMENTATIONS.md`](../docs/REFERENCE-IMPLEMENTATIONS.md) | E13-S03 | Architecture contract |
+| [`docs/RENDERING-CONFORMANCE-LLD.md`](../docs/RENDERING-CONFORMANCE-LLD.md) | E08-S06 | Architecture contract |
 | [`docs/RESPONSIBILITIES.md`](../docs/RESPONSIBILITIES.md) | E08-S02 | Architecture contract |
 | [`docs/RICH-RESPONSE.md`](../docs/RICH-RESPONSE.md) | E08-S08 | Architecture contract |
 | [`docs/ROUTINES.md`](../docs/ROUTINES.md) | E09-S01 | Architecture contract |
@@ -82,6 +89,18 @@ USER tests provide that evidence when executed.
 | [`docs/TASK-RUNTIME.md`](../docs/TASK-RUNTIME.md) | E03-S04 | Architecture contract |
 | [`docs/TESTING.md`](../docs/TESTING.md) | E13-S03 | Architecture contract |
 | [`docs/TRUST.md`](../docs/TRUST.md) | E04-S01 | Architecture contract |
+| [`docs/V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md`](../docs/V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md) | E03-S06 | Architecture contract |
+| [`docs/V1-AGENT-MEMORY-FAST-PATH-LLD.md`](../docs/V1-AGENT-MEMORY-FAST-PATH-LLD.md) | E08-S03 | Architecture contract |
+| [`docs/V1-DESIGN-INDEX.md`](../docs/V1-DESIGN-INDEX.md) | E01-S01 | Architecture contract |
+| [`docs/V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md`](../docs/V1-END-TO-END-FLOW-AND-RACE-CONTRACTS.md) | E09-S02 | Architecture contract |
+| [`docs/V1-FUNCTION-CONTRACT-LEDGER.md`](../docs/V1-FUNCTION-CONTRACT-LEDGER.md) | E01-S01 | Architecture contract |
+| [`docs/V1-FUNCTION-FILE-CATALOG.md`](../docs/V1-FUNCTION-FILE-CATALOG.md) | E01-S01 | Architecture contract |
+| [`docs/V1-INTEGRATED-TERMINAL-LLD.md`](../docs/V1-INTEGRATED-TERMINAL-LLD.md) | E07-S01 | Architecture contract |
+| [`docs/V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md`](../docs/V1-REFERENCE-OMNIROUTE-OMNIRUSH-TERMINAL.md) | E13-S03 | Architecture contract |
+| [`docs/V1-SETTINGS-CONTRACT-LEDGER.md`](../docs/V1-SETTINGS-CONTRACT-LEDGER.md) | E02-S01 | Architecture contract |
+| [`docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md`](../docs/V1-TELEMETRY-USAGE-RESILIENCE-LLD.md) | E13-S03 | Architecture contract |
+| [`docs/V1-UI-ACTION-STATE-LEDGER.md`](../docs/V1-UI-ACTION-STATE-LEDGER.md) | E08-S01 | Architecture contract |
+| [`docs/V1-WORKFLOW-EVENT-LLD.md`](../docs/V1-WORKFLOW-EVENT-LLD.md) | E09-S02 | Architecture contract |
 | [`docs/WORLD-RESOURCES.md`](../docs/WORLD-RESOURCES.md) | E02-S03 | Architecture contract |
 | [`docs/adr/0001-durable-task-core.md`](../docs/adr/0001-durable-task-core.md) | E03-S04 | Architecture decision record |
 | [`docs/adr/0002-task-and-attempt-identity.md`](../docs/adr/0002-task-and-attempt-identity.md) | E03-S04 | Architecture decision record |

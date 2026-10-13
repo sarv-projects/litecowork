@@ -145,3 +145,30 @@ separate AgentBinding/Trust admission allows it.
 
 Install/update subprocesses use a lifecycle-specific environment allowlist and official
 module-defined distribution semantics. Registry text must never become a shell command.
+
+
+## Connector, workflow, relay, and learning abuse cases
+
+Additional security cases for the accepted connector/learning architecture:
+
+- malicious ConnectorPackage lies about an operation being read-only;
+- package update changes action/trigger schema or dependency install behavior;
+- OAuth state/PKCE callback is intercepted or replayed locally;
+- hosted AuthBackend is compromised or unavailable;
+- token refresh races with revoke/scope downgrade;
+- EventRelay forges, replays or reorders wake hints;
+- external workflow reports success after partial external Effects;
+- workflow cancellation returns success while downstream actions continue;
+- a compatibility package uses install hooks/native dependencies to escape qualification;
+- email/web/chat/document content injects instructions to remember or enable a schedule;
+- model-generated learning candidate contains credentials or inappropriate private data.
+
+Mitigation ownership remains split: LiteSPM verifies package provenance/dependencies,
+ConnectionService/SecretStore own auth material, CapabilityBroker/Trust own use authority,
+Effect reconciliation owns ambiguous mutations, TriggerCoordinator owns occurrence
+dedupe/cursors, and LearningService owns candidate eligibility/redaction. No connector
+adapter may bypass those layers.
+
+## V1 detailed design integration — 2026-10-12
+
+V1 Browser/Composer/Renderer threat model: untrusted native commands, prompt-injection metadata, unsafe terminal escapes/HTML, external Chrome privileged attach, profile data and cross-Workspace Workbench leakage. See NATIVE-COMPOSER-LLD.md, CHROME-BROWSER-LLD.md and RENDERING-CONFORMANCE-LLD.md. No secret in domain event/UI; every browser/agent action checked at provider boundary; human takeover fences stale agent actions.

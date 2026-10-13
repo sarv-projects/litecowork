@@ -1292,7 +1292,7 @@ WORKSPACE_ARCHIVED WORKSPACE_NOT_QUIESCENT STALE_WORKSPACE_VERSION
 INVALID_ARGUMENT INVALID_TRANSITION STALE_VERSION STALE_TASK_VERSION STALE_SPEC_REVISION CONFLICT
 ARTIFACT_ARCHIVED INVALID_ARTIFACT_TRANSITION
 TASK_NOT_FOUND TASK_TERMINAL INVALID_PLAN PLAN_CYCLE STEP_NOT_READY LEASE_CONFLICT STALE_FENCE
-INVALID_RESOURCE_REF RESOURCE_CONFLICT RESOURCE_REVISION_PARENT_MISMATCH TASK_PAUSE_UNSAFE TASK_ALREADY_PAUSED RECOVERY_EXHAUSTED
+INVALID_RESOURCE_REF RESOURCE_CONFLICT RESOURCE_REVISION_PARENT_MISMATCH TASK_PAUSE_UNSAFE TASK_ALREADY_PAUSED RECOVERY_EXHAUSTED SKILL_DRIFT_DETECTED
 CONTEXT_DOCUMENT_NOT_ACTIVE CONTEXT_DOCUMENT_OWNER_SCOPE_MISMATCH
 DELEGATION_PROFILE_DISABLED DELEGATION_PROFILE_ARCHIVED DELEGATION_PROFILE_INCOMPATIBLE
 DELEGATION_PROFILE_OPTIONS_INVALID
@@ -1395,3 +1395,43 @@ No SecretRef itself is included in that event.
 ## Future Coworker records and wire conformance gates
 
 The target data model is explicitly catalogued in [Coworker target](COWORKERS-TARGET.md) and [DATA-MODEL](DATA-MODEL.md). The current CoworkerContextPolicy.require_user_confirmation_for_memory is a legacy implemented field; new automatic learning needs a new policy and candidate status schema rather than reinterpreting this boolean. Before implementing any route, define closed JSON/TypeScript/Rust schema, IDs, authorization/Workspace cross-scope checks, expected-version/RequestId, bounded field sizes and typed errors for Coworker-owned Conversations, Responsibility/Revision, capability assignment, memory policy/candidate and handoff receipts. Do not list proposed event names as accepted wire events before adding their exact payloads to the canonical schema and validators.
+
+
+## Connector, workflow, learning, and follow-up target schema additions
+
+Accepted target-only types are defined in
+[Connectors & Workflows](CONNECTORS-WORKFLOWS.md),
+[Learning](LEARNING.md), and the target-record section of
+[Data Model](DATA-MODEL.md). They are not canonical machine schema names until the owning
+story updates schemas and OpenAPI together.
+
+Reserved identifier families:
+
+~~~text
+ConnectorId
+AuthAttemptId
+LearningCandidateId
+MemoryRecordId
+FeedbackId
+~~~
+
+Reserved enum families:
+
+~~~text
+AuthRecipeKind =
+  PUBLIC_OAUTH_PKCE_LOOPBACK | PUBLIC_OAUTH_PKCE_CUSTOM_URI | DEVICE_CODE |
+  CONFIDENTIAL_OAUTH | API_KEY | SERVICE_ACCOUNT | NATIVE_SESSION | NO_AUTH
+
+LearningCandidateState =
+  NEW | CLASSIFIED | NEEDS_REVIEW | AUTO_COMMIT_ELIGIBLE |
+  COMMITTED | DISMISSED | REJECTED | SUPERSEDED
+~~~
+
+Implementation must add typed failures for stale/expired/invalid auth attempts,
+reauth-required connections, stale connector digests, unavailable/ambiguous workflow
+backends, and stale/forbidden learning candidates. Error names enter the canonical
+registry only with the machine contract and executable tests in the same change.
+
+## V1 detailed design integration — 2026-10-12
+
+V1 frontend pseudotypes in the detailed design index are projections and proposals, not additions to canonical enum/schema definitions. Before implementing a new Agent descriptor field, native token, BrowserSessionProjection, Workbench item or renderer kind, promote its validated representation through existing OpenAPI/shared schema/versioning ownership. Never duplicate domain identity only for UI convenience.

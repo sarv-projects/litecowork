@@ -30,8 +30,9 @@ delivered only at a safe turn boundary with provenance.
 Instructions cannot grant capabilities, approve Effects, loosen Workspace policy, or
 override system/security rules. They are untrusted content for security purposes and are
 limited to 64 KiB of UTF-8 text per revision, versioned, digest-checked, and redacted from
-external telemetry. The referenced Resource revision is pinned and must belong to the same
-Workspace.
+external telemetry. The referenced Resource revision is pinned, must belong to the same
+Workspace, and must be its current head when a new instruction revision commits. The
+immutable instruction pin remains valid if the Resource later advances.
 
 ## Context boundaries
 
@@ -187,3 +188,23 @@ revocation behavior are specified in [`PRESENTATION-RUNTIME.md`](PRESENTATION-RU
 ## Scoped automatic memory target and revocation test obligations
 
 On meaningful committed Conversation-turn and verified Task-outcome checkpoints, an eligible agent-backed extractor may produce bounded memory candidates; no independent Core model planner is introduced. Deterministic gates validate consent eligibility, exact source revision, Workspace/Coworker/private scope, third-party privacy and secret classifications, provenance, deduplication, contradiction, age and budget. Only approved private eligibility permits quiet automatic commit. Connected sources are searchable KNOWLEDGE by default, not automatically mined into permanent memory. Memory corrections create immutable superseding revisions; stale or conflicting claims remain reviewable and do not overwrite evidence. Temporary chats never queue extraction, including deferred summaries. Shared Workspace/personal learning requires separately authorized policy. ContextUsed disclosures show only actual attached or retrieved sources. Revocation immediately blocks new retrieval and invalidates allowed context caching; an already-active external native session may have seen old bytes, so restart/fence affected sessions at a safe boundary. Provider deletion completion is truthful and receipt-backed. Extraction, metadata and read API are proposed—not current product capability.
+
+
+## Learning versus context — finalized 2026-10-10
+
+Context retrieval and Coworker learning are separate pipelines. Context answers "what
+authorized material should this turn see?" Learning answers "what durable Coworker state,
+if any, should change after an eligible correction/outcome?"
+
+[Learning](LEARNING.md) keeps memory Resource/ContextDocument-backed and source-provenanced.
+Third-party email/web/chat/document content may be retrieved for a Task but is ineligible
+for automatic memory commit by default. A context source cannot create an instruction,
+Skill, Routine, Automation, Grant or Connection scope merely by containing imperative text.
+
+Revoking context access fences future retrieval. Revoking a learned MemoryRecord separately
+fences future memory retrieval; neither operation pretends to erase text already sent to a
+native provider in an earlier turn.
+
+## Scoped agent memory retrieval and fast-path qualification
+
+[V1 Agent Memory Fast Path LLD](V1-AGENT-MEMORY-FAST-PATH-LLD.md) is subordinate to the ContextDocument revision/grant/revocation/deletion truth above. Qualified AgentModules may expose memory search/fetch under LiteSPM/native protocol, but Core does not take over native memory search decisions. Cache keys must include principal, Workspace, Coworker, current source and grant epochs; each final fetch/attachment rechecks revocation, including on a hot cache hit. The timing budget applies to local policy/cache operations, never an uncached semantic search or model call.
