@@ -1,5 +1,29 @@
 # Current run and agent handoff
 
+
+## 2026-10-13 — E01-S04 stalled Unix stream CODE checkpoint
+
+Added `stalled_stream_write_uses_production_deadline_and_poisons_exchange` in
+`crates/operator-ipc/src/unix.rs`. A real owner-only Unix endpoint and constrained
+socket send buffer exercise the production five-second write deadline, failed
+exchange rejection, released body-budget reservation, and truncated-frame closure
+when the failed server connection is dropped. No production behavior changed.
+
+Verification on the existing Linux WSL2/Rust 1.98.1 environment:
+`cargo test --locked -p operator-ipc` passed 20 unit and 4 integration tests;
+`cargo clippy --locked -p operator-ipc --all-targets -- -D warnings`,
+`cargo fmt --check`, and `git diff --check` passed. The focused test passed in
+5.06 seconds. Initial fixture failure was a temporary socket path exceeding the
+103-byte endpoint limit; shortening the fixture name resolved it.
+
+E01-S04 remains IN_PROGRESS. This does not qualify daemon dispatcher teardown,
+packaging, other OS transports, different-identity SYSTEM or owner USER gates.
+One worktree remains; no worktree or process was created for this test. Shared
+Cargo target grew from 2,134,685,555 to 2,288,252,691 bytes (153,567,136 bytes),
+retained for incremental verification. Owner `.playwright-mcp` remains 133,783
+bytes. Temporary test directories self-remove. CI dependency fixes b32ca45 and
+40b1233 are pushed; hosted CI results require separate inspection.
+
 Update this file when the active story, implementation state, or handoff changes. It is
 operational context; architecture and owning domain contracts remain authoritative.
 

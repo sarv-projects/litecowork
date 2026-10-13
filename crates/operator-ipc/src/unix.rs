@@ -771,3 +771,167 @@ impl SocketIdentity {
         self.device == metadata.dev() && self.inode == metadata.ino() && self.uid == metadata.uid()
     }
 }
+
+#[cfg(test)]
+mod production_stream_write_tests {
+    use super::*;
+    use crate::{
+        LogicalHeader, MAX_STREAM_FRAME_BYTES, PROTOCOL_VERSION, RequestFrame, RequestHeader,
+        ResponseFrame, ResponseHeader,
+    };
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    use tokio::time::{Instant, timeout};
+
+    struct PrivateTempDir(PathBuf);
+
+    impl PrivateTempDir {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after the Unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("lcw-ipc-{}-{nonce}", std::process::id()));
+            fs::create_dir(&path).expect("private test directory is created");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700))
+                .expect("directory is owner-only");
+            Self(path)
+        }
+    }
+
+    impl Drop for PrivateTempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn stalled_stream_write_uses_production_deadline_and_poisons_exchange() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        runtime.block_on(async {
+            let directory = PrivateTempDir::new();
+            let metadata = fs::metadata(&directory.0).expect("test directory metadata is readable");
+            assert_eq!(metadata.mode() & 0o777, 0o700, "test directory is private");
+            assert_eq!(
+                metadata.uid(),
+                effective_uid(),
+                "test directory has current owner"
+            );
+            let endpoint = UnixEndpoint::derive(&directory.0).expect("endpoint derives");
+            let listener = endpoint.bind().expect("endpoint binds");
+            let budget =
+                InFlightBodyBudget::new(MAX_STREAM_FRAME_BYTES).expect("single-frame body budget");
+            let mut client = endpoint.connect(|_| true).await.expect("client connects");
+            let mut server = listener
+                .accept(|_| true)
+                .await
+                .expect("authenticated test peer is accepted");
+
+            rustix::net::sockopt::set_socket_send_buffer_size(&server.stream, 4096)
+                .expect("test constrains the accepted socket send buffer");
+            let send_buffer_size = rustix::net::sockopt::socket_send_buffer_size(&server.stream)
+                .expect("send buffer size is observable");
+            assert!(
+                send_buffer_size < MAX_STREAM_FRAME_BYTES,
+                "the unread peer must block a maximum-size frame"
+            );
+
+            let request_body = b"{}";
+            let request = RequestFrame::new(
+                RequestHeader {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: "stalled-stream-write".to_owned(),
+                    method: "POST".to_owned(),
+                    path_and_query: "/v1/stream".to_owned(),
+                    headers: vec![LogicalHeader {
+                        name: "Content-Type".to_owned(),
+                        value: "application/json".to_owned(),
+                    }],
+                    body_length: request_body.len() as u64,
+                },
+                request_body.to_vec(),
+                &budget,
+            )
+            .expect("subscription request is valid");
+            client
+                .write_request(&request)
+                .await
+                .expect("request writes");
+            drop(request);
+            let received = server.read_request(&budget).await.expect("request reads");
+            assert_eq!(received.header.path_and_query, "/v1/stream");
+            drop(received);
+
+            let handshake = ResponseFrame::new(
+                ResponseHeader {
+                    protocol_version: PROTOCOL_VERSION,
+                    request_id: "stalled-stream-write".to_owned(),
+                    status: 200,
+                    headers: vec![LogicalHeader {
+                        name: "Content-Type".to_owned(),
+                        value: "application/vnd.litecowork.operator-stream+json".to_owned(),
+                    }],
+                    body_length: 0,
+                },
+                Vec::new(),
+                &budget,
+            )
+            .expect("stream handshake is valid");
+            server
+                .write_stream_response(&handshake)
+                .await
+                .expect("server completes stream handshake");
+            let received_handshake = client
+                .read_stream_response(&budget)
+                .await
+                .expect("client reads stream handshake");
+            assert_eq!(received_handshake.header.status, 200);
+            drop(received_handshake);
+
+            let payload = vec![b'x'; MAX_STREAM_FRAME_BYTES];
+            let started = Instant::now();
+            let result = timeout(
+                STREAM_WRITE_DEADLINE + Duration::from_secs(2),
+                server.write_stream_message(&payload, &budget),
+            )
+            .await
+            .expect("production deadline bounds a stalled socket write");
+            let elapsed = started.elapsed();
+
+            assert!(
+                matches!(result, Err(TransportError::DeadlineExceeded)),
+                "blocked output must report the production write deadline"
+            );
+            assert!(
+                elapsed >= STREAM_WRITE_DEADLINE - Duration::from_millis(100),
+                "write must use the configured five-second deadline; elapsed {elapsed:?}"
+            );
+            assert!(matches!(
+                server.write_stream_message(b"follow-up", &budget).await,
+                Err(TransportError::InvalidExchangeState)
+            ));
+
+            let released = budget
+                .reserve_bytes(MAX_STREAM_FRAME_BYTES)
+                .expect("timed-out writer releases its full body reservation");
+            drop(released);
+
+            drop(server);
+            let peer_observation =
+                timeout(Duration::from_secs(2), client.read_stream_message(&budget))
+                    .await
+                    .expect("dropping the failed exchange closes its peer promptly");
+            assert!(
+                matches!(peer_observation, Err(TransportError::Protocol(_))),
+                "peer must reject the now-truncated frame and observe connection closure"
+            );
+        });
+    }
+}
