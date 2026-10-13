@@ -103,7 +103,7 @@ docs/adr/0024-optional-chat-first-coworkers.md,35,5859,5a6cde423b5c209845b71bfb5
 docs/adr/0025-agent-module-registry-and-native-configuration.md,59,2979,79ff69084cb012098a2970ca40b72c6310d8ee03e8217df3a3e7129706be5c0d,agent/composer;workflow/recovery;trust/security,True
 docs/adr/README.md,39,3349,54afa5933f64b39dbeed80004bc0410fc19759281af145ac7defe5b709c86099,agent/composer;workflow/recovery;trust/security,True
 implementation/AGENT-MODULE-AUDIT.md,524,16948,bad51ed44a90ad6e806ece08215c423e147d7f5024e9b4d066a1d9ce4ac04f98,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
-implementation/ARCHITECTURE-COVERAGE.md,176,15887,913c50b8e3a1e395e414d0c536a5bc2179f0b2314c9d9b5be19bf9e08aac6431,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/ARCHITECTURE-COVERAGE.md,177,15968,0d23bb07372ba58a4c42c2b2efc1662d673b2ee3247a3d65b027681de83333bb,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/AUDIT.md,155,13284,a55491d4245364ded199718d9b6fdf513f531dc5ae4281fd95b1260bd8b8dc25,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/COVERAGE.md,33,2007,de61a91ec685c9bbfc359346fedbd14be20066ffbc2ace750bf0ceb29e60e945,rendering,True
 implementation/CURRENT-RUN.md,6942,504156,6292e6c27de37dcc4667c457847439eeb12b3cdc5ebfc074f733539b61c95e68,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True

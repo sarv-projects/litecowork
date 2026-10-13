@@ -14,6 +14,7 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parent.parent
 SKIP = {".git", "node_modules", "target", ".venv", ".pytest_cache", ".agent-worktrees",
+        "archive_code", "archives_docs", "ARCHIVE", "archives",
         ".code-intelligence", ".playwright-mcp", "dist", "build", "coverage", ".next"}
 EXCLUDED = {"implementation/V1-AUDIT-INVENTORY.md"}
 LINK = re.compile(r'(?<!!)\[[^\]]+\]\(([^)]+)\)')

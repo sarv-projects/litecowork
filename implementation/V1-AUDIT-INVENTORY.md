@@ -3,8 +3,8 @@
 This script read every line of every included first-party Markdown file and checked literal Markdown relative link targets. **Mechanical coverage does not imply that each statement was semantically audited, implemented or runtime-qualified.**
 
 - Files read: 160
-- Lines read: 57602
-- Bytes read: 4046083
+- Lines read: 57603
+- Bytes read: 4046164
 - Broken relative links: 0
 - Excluded: dependency/cache/output worktrees and this generated report; CSV inventory includes SHA-256 for every read Markdown source.
 
@@ -116,7 +116,7 @@ This script read every line of every included first-party Markdown file and chec
 | docs/adr/0025-agent-module-registry-and-native-configuration.md | 59 | 79ff69084cb0 | agent/composer;workflow/recovery;trust/security |
 | docs/adr/README.md | 39 | 54afa5933f64 | agent/composer;workflow/recovery;trust/security |
 | implementation/AGENT-MODULE-AUDIT.md | 524 | bad51ed44a90 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
-| implementation/ARCHITECTURE-COVERAGE.md | 176 | 913c50b8e3a1 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/ARCHITECTURE-COVERAGE.md | 177 | 0d23bb07372b | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/AUDIT.md | 155 | a55491d42453 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/COVERAGE.md | 33 | de61a91ec685 | rendering |
 | implementation/CURRENT-RUN.md | 6942 | 6292e6c27de3 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
