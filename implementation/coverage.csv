@@ -3661,7 +3661,7 @@ PLAN_SECTION,implementation/spikes/sp02-driver-compare/README.md### Commands,E01
 PLAN_TOOLING,.github/workflows/architecture-docs.yml,E01-S01,delivery-plan or validation input sha256:ab50cd00b77b96e95f8a72cd9a8e02e40caa32b080a8775f89cde7ff38cd52fd.
 PLAN_TOOLING,implementation/audit-inventory.csv,E01-S01,delivery-plan or validation input sha256:6d3b5471f42b2f8c9d6721232f30c7df01788bb8e68a12a8cf69c6a99658b9bb.
 PLAN_TOOLING,implementation/backlog.json,E01-S01,delivery-plan or validation input sha256:9c9a26f4b8fa919ab095d8b422712defc81cc161e507f5d8b9c051eb878d0a2f.
-PLAN_TOOLING,scripts/validate_implementation_coverage.py,E01-S01,delivery-plan or validation input sha256:a6359fe3bf4478d2dff99543f70b98d387255462c06a51230f19a0021b3518e8.
+PLAN_TOOLING,scripts/validate_implementation_coverage.py,E01-S01,delivery-plan or validation input sha256:3a655867c818cde9569300a98bb4613ab7e47ed8f2094bacfaeb4696f846fb42.
 PLAN_TOOLING,scripts/validate_implementation_plan.py,E01-S01,delivery-plan or validation input sha256:01a8f8d1afa1668055f575b94b9091377967d67b4d5cbcde122d7ccd5c0840f6.
 SCHEMA_DEF,delegation.schema.json#acceptance_criterion,E01-S04,delegation wire definition sha256:48f6199adeb7eb7884c311b40e3f3ac3472bbd7c21d87bc83e7be46e3a8da88d.
 SCHEMA_DEF,delegation.schema.json#artifact_version_ref,E04-S05,delegation wire definition sha256:03bf4b1a67bbd623c630a01873277ad6a2a40822d6a64859123f978006620e67.

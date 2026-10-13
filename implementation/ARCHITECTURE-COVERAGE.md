@@ -131,9 +131,10 @@ USER tests provide that evidence when executed.
 
 ## Not covered by this plan yet
 
-1. **Product behavior is not implemented or qualified.** The backlog is planned work. No
-   code, provider, cloud deployment, remote Runtime, platform installer, or real-user
-   acceptance is claimed by this coverage audit.
+1. **This coverage index does not establish implementation or qualification.**
+   Partial source paths and component tests exist, while substantial work remains
+   planned or unverified. This index does not claim provider, cloud deployment, remote
+   Runtime, platform installer, or real-user acceptance.
 2. **A digest is not a semantic test.** OpenAPI component digests catch any source change,
    but field-level required/optional/validation behavior must still be asserted in the
    owning story's executable contract tests. The same applies to narrative requirements
