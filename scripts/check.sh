@@ -17,6 +17,12 @@ if [[ -z "$expected_rust" || "$actual_rust" != "$expected_rust" ]]; then
   exit 1
 fi
 
+actual_cargo="$(cargo --version | awk '{print $2}')"
+if [[ "$actual_cargo" != "$expected_rust" ]]; then
+  printf 'Expected Cargo %s, found %s.\n' "$expected_rust" "$actual_cargo" >&2
+  exit 1
+fi
+
 printf 'Rust: %s\n' "$(rustc --version)"
 printf 'Cargo: %s\n' "$(cargo --version)"
 printf 'uv: %s\n' "$(uv --version)"

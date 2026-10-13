@@ -54,11 +54,17 @@ class JsonSchemaValidationTests(unittest.TestCase):
 
 class CheckScriptToolchainTests(unittest.TestCase):
     def run_with_stub(self, executable_name, content):
+        return self.run_with_stubs({executable_name: content})
+
+    def run_with_stubs(self, executables):
         with tempfile.TemporaryDirectory() as temporary_directory:
             bin_directory = Path(temporary_directory)
-            executable = bin_directory / executable_name
-            executable.write_text(f"#!/bin/sh\n{content}\n", encoding="utf-8")
-            executable.chmod(0o755)
+            for executable_name, content in executables.items():
+                executable = bin_directory / executable_name
+                executable.write_text(
+                    f"#!/bin/sh\n{content}\n", encoding="utf-8"
+                )
+                executable.chmod(0o755)
             environment = os.environ.copy()
             environment["PATH"] = f"{bin_directory}:{environment['PATH']}"
             return subprocess.run(
@@ -81,6 +87,22 @@ class CheckScriptToolchainTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Expected Rust 1.98.1, found 0.0.0", result.stderr)
+
+    def test_wrong_cargo_version_fails_before_uv_sync(self):
+        result = self.run_with_stubs(
+            {
+                "cargo": 'if [ "$1" = "--version" ]; then '
+                'printf "cargo 0.0.0 (stub)\\n"; else '
+                'printf "cargo unexpectedly invoked\\n" >&2; exit 99; fi',
+                "uv": 'if [ "$1" = "--version" ]; then '
+                'printf "uv 0.12.23\\n"; else '
+                'printf "uv unexpectedly invoked\\n" >&2; exit 98; fi',
+            }
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Expected Cargo 1.98.1, found 0.0.0", result.stderr)
+        self.assertNotIn("uv unexpectedly invoked", result.stderr)
 
     def test_wrong_python_version_fails_before_checks(self):
         result = self.run_with_stub(
