@@ -1,5 +1,40 @@
 # Current run and agent handoff
 
+## 2026-10-14 — E01-S04 Task presentation stream restart/resume CODE slice
+
+Added `spawned_daemon_task_stream_resumes_across_restart_and_delivers_live_update` to
+`apps/litecoworkd/src/runtime_workspace_replay_process_tests.rs`. It starts the real daemon
+through its test executable, creates a Workspace over authenticated same-UID Unix IPC, and
+uses the real TaskService/SQLite store for Task creation and two spec revisions. The test
+saves a Task presentation cursor, commits a revision while disconnected, gracefully stops
+and restarts the daemon against the same state directory, then verifies stable RuntimeId,
+new incarnation, authorized snapshot catch-up at origin sequence 3, and a live sequence 4
+update on the resumed stream. The fixture uses test-only identity/blob-key providers; it
+does not qualify production keyring access or packaged service behavior.
+
+Linux WSL2 x86_64 / Ubuntu 24.04.4 LTS, rustc `1.98.1 (48a229cea 2026-09-01)`, Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`:
+
+- Focused process test passed **1/1**.
+- `cargo test --locked -p litecoworkd` passed **154 unit + 4 CLI tests**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` passed.
+- `cargo fmt --all -- --check` passed.
+- `.venv/bin/python scripts/audit_v1_contracts.py --strict --write-report` — 0 errors,
+  206 OpenAPI operations, 158 supplemental UI cases, and 67 stories.
+- `.venv/bin/python scripts/audit_v1_markdown.py` — 173 files, 59,533 lines, 0 broken links.
+- `.venv/bin/python scripts/validate_implementation_coverage.py --write` regenerated
+  103-document / 1,668-section coverage with 6,445 traceability rows;
+  `.venv/bin/python scripts/validate_implementation_plan.py` and
+  `.venv/bin/python scripts/validate_architecture.py` passed, including 142 typed events.
+- `git -c core.whitespace=cr-at-eol diff --check` passed; the Markdown inventory uses its
+  existing CRLF format.
+
+This only records CODE evidence. The initial stream is closed before daemon shutdown and the
+test uses graceful SIGTERM; open-stream EOF/reconnect on shutdown and abrupt-crash recovery
+are not covered here. Production credential providers, packaged daemon/UI integration,
+systemd, separate OS identities, Windows/macOS, and owner USER acceptance remain pending.
+E01-S04 stays `IN_PROGRESS`.
+
 ## 2026-10-14 — E01-S04 spawned-daemon Workspace-create lost-ACK replay CODE slice
 
 Added and verified a real child-process restart/replay regression. The first daemon starts

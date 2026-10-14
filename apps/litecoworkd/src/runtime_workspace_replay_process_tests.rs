@@ -298,6 +298,415 @@ fn spawned_daemon_replays_workspace_create_after_lost_ack_and_restart() {
     );
 }
 
+#[test]
+fn spawned_daemon_task_stream_resumes_across_restart_and_delivers_live_update() {
+    use domain_task::{CreateStandaloneTask, ReviseTaskSpec, TaskService};
+
+    const AGENT_BINDING_ID: &str = "spawned-task-stream-agent-binding";
+    const TASK_ID: &str = "spawned-task-stream-task";
+
+    let directory = tempfile::tempdir().expect("private Runtime data directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("restrict Runtime directory");
+
+    let mut first_child = RuntimeChild::spawn(directory.path());
+    let first_readiness = wait_for_operator_readiness(first_child.child(), directory.path());
+    assert_operator_readiness(&first_readiness);
+    let runtime_id = first_readiness["runtime_id"]
+        .as_str()
+        .expect("first readiness exposes RuntimeId")
+        .to_owned();
+    let first_incarnation = first_readiness["local_incarnation_id"]
+        .as_str()
+        .expect("first readiness exposes local incarnation")
+        .to_owned();
+    let principal_id = read_state(&directory.path().join(STATE_FILE))
+        .expect("read first Runtime state")
+        .expect("first Runtime state exists")
+        .local_principal_id
+        .expect("test Runtime has a local principal");
+
+    let workspace_response = send_workspace_create(
+        directory.path(),
+        "task-stream-workspace-create",
+        "spawned-task-stream-workspace-create-v1",
+        br#"{"name":"Task stream restart fixture"}"#,
+    );
+    assert_eq!(workspace_response.header.status, 201);
+    let workspace: Value =
+        serde_json::from_slice(workspace_response.body()).expect("Workspace response is JSON");
+    let workspace_id = workspace["workspace_id"]
+        .as_str()
+        .expect("created Workspace exposes its ID")
+        .to_owned();
+
+    let storage = open_test_storage(
+        directory.path(),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("test service opens the daemon's real SQLite database");
+    let fixture_connection = Connection::open(directory.path().join("litecowork.sqlite3"))
+        .expect("Task agent fixture database connection opens");
+    fixture_connection
+        .busy_timeout(Duration::from_secs(2))
+        .expect("bound fixture database wait");
+    fixture_connection
+        .execute(
+            "INSERT INTO agent_profiles(agent_profile_id,provider_key,display_name,discovered_at) VALUES('spawned-task-stream-profile','fixture','Fixture Agent','2026-10-14T12:00:00.000000000Z')",
+            [],
+        )
+        .expect("Task AgentProfile persists");
+    fixture_connection
+        .execute(
+            "INSERT INTO agent_bindings(agent_binding_id,workspace_id,agent_profile_id,endpoint_selection_policy_json,configuration_json,enabled,lead_eligible,created_at,version) VALUES(?1,?2,'spawned-task-stream-profile','{}','{}',1,1,'2026-10-14T12:00:00.000000000Z',1)",
+            rusqlite::params![AGENT_BINDING_ID, workspace_id],
+        )
+        .expect("Task lead AgentBinding persists");
+    drop(fixture_connection);
+
+    let task_service = TaskService::new(storage.store.clone());
+    let task_payload = serde_json::json!({
+        "workspace_id": workspace_id,
+        "objective": "Task objective at the saved stream cursor",
+        "preferred_lead_agent_binding_id": AGENT_BINDING_ID,
+        "source_message_refs": [],
+        "constraints": [],
+        "non_goals": [],
+        "input_refs": [],
+        "required_outputs": [],
+        "acceptance_criteria": [],
+        "approvals_required": [],
+        "placement_preference": "AUTO"
+    });
+    task_service
+        .create_standalone(CreateStandaloneTask {
+            task_id: TASK_ID.to_owned(),
+            workspace_id: workspace_id.clone(),
+            workspace_instruction_revision: None,
+            lead_agent_binding_id: AGENT_BINDING_ID.to_owned(),
+            origin_coworker_id: None,
+            origin_coworker_revision: None,
+            expected_coworker_version: None,
+            coworker_default_lead_failover_policy: None,
+            principal_id: principal_id.clone(),
+            request_id: "spawned-task-stream-create".to_owned(),
+            request_payload: task_payload,
+            event: spawned_task_stream_event(
+                &runtime_id,
+                "spawned-task-stream-created",
+                "2026-10-14T12:00:01.000000000Z",
+            ),
+        })
+        .expect("Task commits through the real TaskService and SQLite store");
+
+    let initial_stream = open_task_stream(
+        directory.path(),
+        &workspace_id,
+        TASK_ID,
+        None,
+        "spawned-task-stream-initial-subscribe",
+    );
+    assert_eq!(initial_stream.ready["type"], "stream.ready");
+    assert_eq!(initial_stream.ready["workspace_id"], workspace_id);
+    assert_eq!(initial_stream.snapshot["type"], "projection");
+    assert_eq!(
+        initial_stream.snapshot["projection_type"],
+        "task_presentation"
+    );
+    assert_eq!(
+        initial_stream.ready["cursor"],
+        initial_stream.snapshot["cursor"]
+    );
+    assert_eq!(initial_stream.snapshot["payload"]["task_id"], TASK_ID);
+    assert_eq!(initial_stream.snapshot["payload"]["origin_sequence"], "2");
+    assert_eq!(
+        initial_stream.snapshot["payload"]["items"][0]["payload"]["objective"],
+        "Task objective at the saved stream cursor"
+    );
+    let saved_cursor = initial_stream.snapshot["cursor"]
+        .as_str()
+        .expect("initial Task projection has an opaque cursor")
+        .to_owned();
+    drop(initial_stream);
+
+    TaskService::new(storage.store.clone())
+        .revise_saved_spec(ReviseTaskSpec {
+            workspace_id: workspace_id.clone(),
+            task_id: TASK_ID.to_owned(),
+            principal_id: principal_id.clone(),
+            request_id: "spawned-task-stream-revise-before-restart".to_owned(),
+            request_payload: serde_json::json!({
+                "operation": "task.spec.revise.v1",
+                "task_id": TASK_ID,
+                "revision": 2
+            }),
+            expected_task_version: 1,
+            parent_revisions: vec![1],
+            objective: "Task objective committed while the stream is disconnected".to_owned(),
+            constraints: None,
+            non_goals: None,
+            input_refs: None,
+            required_outputs: None,
+            acceptance_criteria: None,
+            approvals_required: None,
+            placement_preference: None,
+            preferred_lead_agent_binding_id: None,
+            lead_failover_policy: None,
+            event: spawned_task_stream_event(
+                &runtime_id,
+                "spawned-task-stream-revised-before-restart",
+                "2026-10-14T12:00:02.000000000Z",
+            ),
+        })
+        .expect("Task revision commits while the subscriber is disconnected");
+
+    let (first_status, first_stdout, first_stderr) = first_child.terminate_and_wait();
+    assert!(
+        first_status.success(),
+        "first Runtime shutdown failed: stdout={first_stdout} stderr={first_stderr}"
+    );
+    drop(storage);
+
+    let mut restarted_child = RuntimeChild::spawn(directory.path());
+    let restarted_readiness =
+        wait_for_operator_readiness(restarted_child.child(), directory.path());
+    assert_operator_readiness(&restarted_readiness);
+    assert_eq!(
+        restarted_readiness["runtime_id"].as_str(),
+        Some(runtime_id.as_str()),
+        "Runtime identity remains stable across process restart"
+    );
+    let restarted_incarnation = restarted_readiness["local_incarnation_id"]
+        .as_str()
+        .expect("restarted readiness exposes local incarnation");
+    assert_ne!(restarted_incarnation, first_incarnation);
+
+    let storage_after_restart = open_test_storage(
+        directory.path(),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("test service reopens the same SQLite database after Runtime restart");
+    let mut resumed_stream = open_task_stream(
+        directory.path(),
+        &workspace_id,
+        TASK_ID,
+        Some(&saved_cursor),
+        "spawned-task-stream-resume-after-restart",
+    );
+    assert_eq!(resumed_stream.ready["type"], "stream.ready");
+    assert_eq!(resumed_stream.snapshot["type"], "projection");
+    assert_eq!(
+        resumed_stream.snapshot["projection_type"],
+        "task_presentation"
+    );
+    assert_eq!(resumed_stream.snapshot["payload"]["task_id"], TASK_ID);
+    assert_eq!(resumed_stream.snapshot["payload"]["origin_sequence"], "3");
+    assert_eq!(
+        resumed_stream.snapshot["payload"]["items"][0]["payload"]["objective"],
+        "Task objective committed while the stream is disconnected",
+        "resume catches up to the committed state newer than the saved cursor"
+    );
+    assert_ne!(resumed_stream.snapshot["cursor"], saved_cursor);
+    assert_eq!(
+        resumed_stream.ready["cursor"],
+        resumed_stream.snapshot["cursor"]
+    );
+
+    TaskService::new(storage_after_restart.store.clone())
+        .revise_saved_spec(ReviseTaskSpec {
+            workspace_id: workspace_id.clone(),
+            task_id: TASK_ID.to_owned(),
+            principal_id,
+            request_id: "spawned-task-stream-revise-after-restart".to_owned(),
+            request_payload: serde_json::json!({
+                "operation": "task.spec.revise.v1",
+                "task_id": TASK_ID,
+                "revision": 3
+            }),
+            expected_task_version: 2,
+            parent_revisions: vec![2],
+            objective: "Task objective delivered as a live post-restart update".to_owned(),
+            constraints: None,
+            non_goals: None,
+            input_refs: None,
+            required_outputs: None,
+            acceptance_criteria: None,
+            approvals_required: None,
+            placement_preference: None,
+            preferred_lead_agent_binding_id: None,
+            lead_failover_policy: None,
+            event: spawned_task_stream_event(
+                &runtime_id,
+                "spawned-task-stream-revised-after-restart",
+                "2026-10-14T12:00:03.000000000Z",
+            ),
+        })
+        .expect("post-restart Task revision commits through TaskService");
+    let live_update = resumed_stream.read_next();
+    assert_eq!(live_update["type"], "projection");
+    assert_eq!(live_update["projection_type"], "task_presentation");
+    assert_eq!(live_update["payload"]["task_id"], TASK_ID);
+    assert_eq!(live_update["payload"]["origin_sequence"], "4");
+    assert_eq!(
+        live_update["payload"]["items"][0]["payload"]["objective"],
+        "Task objective delivered as a live post-restart update"
+    );
+    assert_ne!(live_update["cursor"], resumed_stream.snapshot["cursor"]);
+
+    drop(resumed_stream);
+    drop(storage_after_restart);
+    let (restart_status, restart_stdout, restart_stderr) = restarted_child.terminate_and_wait();
+    assert!(
+        restart_status.success(),
+        "restarted Runtime shutdown failed: stdout={restart_stdout} stderr={restart_stderr}"
+    );
+}
+
+fn spawned_task_stream_event(
+    runtime_id: &str,
+    event_id: &str,
+    timestamp: &str,
+) -> domain_workspace::EventContext {
+    domain_workspace::EventContext {
+        event_id: event_id.to_owned(),
+        origin_runtime_id: runtime_id.to_owned(),
+        hlc_timestamp: timestamp.to_owned(),
+        correlation_id: format!("correlation-{event_id}"),
+        causation_id: None,
+        recorded_at: timestamp.to_owned(),
+    }
+}
+
+struct TaskStreamSession {
+    runtime: tokio::runtime::Runtime,
+    connection: operator_ipc::unix::AuthenticatedUnixConnection,
+    budget: Arc<InFlightBodyBudget>,
+    ready: Value,
+    snapshot: Value,
+}
+
+impl TaskStreamSession {
+    fn read_next(&mut self) -> Value {
+        let runtime = &self.runtime;
+        let connection = &mut self.connection;
+        let budget = &self.budget;
+        let frame = runtime.block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                connection.read_stream_message(budget),
+            )
+            .await
+            .expect("Task stream frame arrives before its deadline")
+            .expect("Task stream frame reads")
+            .expect("Task stream remains open")
+        });
+        serde_json::from_slice(frame.body()).expect("Task stream frame is JSON")
+    }
+}
+
+fn open_task_stream(
+    data_directory: &Path,
+    workspace_id: &str,
+    task_id: &str,
+    resume_cursor: Option<&str>,
+    request_id: &str,
+) -> TaskStreamSession {
+    let endpoint = UnixEndpoint::derive(data_directory).expect("safe Runtime endpoint");
+    let expected_uid = fs::metadata(data_directory)
+        .expect("Runtime data directory metadata")
+        .uid();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build Task stream client runtime");
+    let mut connection = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            endpoint.connect(|peer| peer.uid == expected_uid),
+        )
+        .await
+        .expect("authenticated Task stream connection arrives before deadline")
+        .expect("same-UID daemon authenticates Task stream client")
+    });
+    let budget = InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES)
+        .expect("Task stream client body budget");
+    let body = serde_json::to_vec(&serde_json::json!({
+        "workspace_id": workspace_id,
+        "task_ids": [task_id],
+        "projection_types": ["task_presentation"],
+        "resume_cursor": resume_cursor,
+    }))
+    .expect("Task stream subscription serializes");
+    let request = RequestFrame::new(
+        RequestHeader {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: request_id.to_owned(),
+            method: "POST".to_owned(),
+            path_and_query: "/v1/stream".to_owned(),
+            headers: vec![
+                LogicalHeader {
+                    name: "x-workspace-id".to_owned(),
+                    value: workspace_id.to_owned(),
+                },
+                LogicalHeader {
+                    name: "content-type".to_owned(),
+                    value: "application/json".to_owned(),
+                },
+            ],
+            body_length: body.len() as u64,
+        },
+        body,
+        &budget,
+    )
+    .expect("bounded Task stream subscription frame");
+    let (ready, snapshot) = runtime.block_on(async {
+        connection
+            .write_request(&request)
+            .await
+            .expect("Task stream subscription writes");
+        let handshake = tokio::time::timeout(
+            Duration::from_secs(3),
+            connection.read_stream_response(&budget),
+        )
+        .await
+        .expect("Task stream handshake arrives before deadline")
+        .expect("Task stream handshake reads");
+        assert_eq!(handshake.header.status, 200);
+        assert_eq!(handshake.body().len(), 0);
+        let ready = read_task_stream_value(&mut connection, &budget).await;
+        let snapshot = read_task_stream_value(&mut connection, &budget).await;
+        (ready, snapshot)
+    });
+    TaskStreamSession {
+        runtime,
+        connection,
+        budget,
+        ready,
+        snapshot,
+    }
+}
+
+async fn read_task_stream_value(
+    connection: &mut operator_ipc::unix::AuthenticatedUnixConnection,
+    budget: &Arc<InFlightBodyBudget>,
+) -> Value {
+    let frame = tokio::time::timeout(
+        Duration::from_secs(3),
+        connection.read_stream_message(budget),
+    )
+    .await
+    .expect("Task stream frame arrives before deadline")
+    .expect("Task stream frame reads")
+    .expect("Task stream remains open");
+    serde_json::from_slice(frame.body()).expect("Task stream frame is JSON")
+}
+
 fn submit_create_without_reading_response(
     data_directory: &Path,
     idempotency_key: &str,
@@ -533,17 +942,22 @@ fn wait_for_operator_readiness(child: &mut Child, data_directory: &Path) -> Valu
                 "Runtime exited before the replay test connected ({status}): stdout={stdout} stderr={stderr}"
             );
         }
-        if let Ok(readiness) = operator_get_request(
+        let readiness_error = match operator_get_request(
             data_directory,
             "/v1/operator/readiness",
             "workspace-replay-readiness-probe",
         ) {
-            return readiness;
+            Ok(readiness) => return readiness,
+            Err(error) => error,
+        };
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let status = child.wait().expect("reap Runtime after readiness timeout");
+            let (stdout, stderr) = capture_output(child);
+            panic!(
+                "Runtime did not expose authenticated Operator readiness ({readiness_error}); status={status}; stdout={stdout}; stderr={stderr}"
+            );
         }
-        assert!(
-            Instant::now() < deadline,
-            "Runtime did not expose authenticated Operator readiness"
-        );
         thread::sleep(Duration::from_millis(20));
     }
 }
