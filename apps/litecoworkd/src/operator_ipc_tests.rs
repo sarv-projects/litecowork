@@ -16,7 +16,7 @@ use super::{
 };
 use axum::{
     Json, Router,
-    body::{Body, to_bytes},
+    body::{Body, Bytes, to_bytes},
     http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     middleware,
     response::Response,
@@ -4082,29 +4082,31 @@ async fn authenticated_unix_stream_sends_correlated_handshake_and_authorized_sna
             .accept(|peer| peer.uid == expected_uid)
             .await
             .expect("same-UID peer accepted");
-        let disconnected = dispatch_ipc_exchange(
+        let settlement = dispatch_ipc_exchange(
             router.clone(),
             OperatorIpcConnection::Unix(connection),
             server_budget.clone(),
             Duration::from_secs(2),
         )
-        .await
-        .is_err();
-        let _ = idle_disconnect_sender.send(disconnected);
+        .await;
+        let _ = idle_disconnect_sender.send(settlement);
 
         let connection = listener
             .accept(|peer| peer.uid == expected_uid)
             .await
             .expect("same-UID peer accepted for shutdown session");
-        let disconnected = dispatch_ipc_exchange(
+        let settlement = dispatch_ipc_exchange(
             router,
             OperatorIpcConnection::Unix(connection),
             server_budget,
             Duration::from_secs(2),
         )
-        .await
-        .is_err();
-        assert!(disconnected, "reconnect client disconnect ends its stream");
+        .await;
+        assert_eq!(
+            settlement,
+            Ok(OperatorRequestSettlement::Complete),
+            "reconnect client disconnect ends its stream cleanly"
+        );
     });
 
     let mut client = endpoint
@@ -4220,12 +4222,14 @@ async fn authenticated_unix_stream_sends_correlated_handshake_and_authorized_sna
     // Closing an otherwise idle duplex subscription must be observed without
     // waiting for another Workspace event; the route-owned admission permit drops.
     drop(client);
-    assert!(
-        tokio::time::timeout(Duration::from_secs(2), idle_disconnect_receiver)
-            .await
-            .expect("idle peer disconnect is detected promptly")
-            .expect("disconnect result is reported"),
-        "disconnect must terminate the active stream exchange"
+    let settlement = tokio::time::timeout(Duration::from_secs(2), idle_disconnect_receiver)
+        .await
+        .expect("idle peer disconnect is detected promptly")
+        .expect("disconnect result is reported");
+    assert_eq!(
+        settlement,
+        Ok(OperatorRequestSettlement::Complete),
+        "clean disconnect must settle the active stream exchange successfully"
     );
     assert_eq!(stream_admission_observer.available_permits(), 2);
 
@@ -4612,14 +4616,11 @@ async fn authenticated_unix_stream_subscribes_to_two_conversations_and_scopes_up
             )
             .await;
             if connection_index < 2 {
-                if let Err(error) = result {
-                    assert!(
-                        error
-                            .to_string()
-                            .contains("peer closed or sent invalid data"),
-                        "first stream ends on client disconnect: {error}"
-                    );
-                }
+                assert_eq!(
+                    result,
+                    Ok(OperatorRequestSettlement::Complete),
+                    "a normal client disconnect must not fail request settlement"
+                );
             } else {
                 result.expect("reconnected multi-Conversation stream completes cleanly");
             }
@@ -5145,6 +5146,104 @@ async fn authenticated_unix_stream_subscribes_to_two_conversations_and_scopes_up
     server
         .await
         .expect("multi-Conversation stream server exits");
+}
+
+#[tokio::test]
+async fn authenticated_unix_stream_rejects_request_bytes_after_subscription() {
+    use tokio::io::AsyncWriteExt;
+
+    let directory = tempfile::tempdir().expect("temporary stream data directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("private data directory");
+    let expected_uid = fs::metadata(directory.path())
+        .expect("directory metadata")
+        .uid();
+    let endpoint = UnixEndpoint::derive(directory.path()).expect("safe endpoint");
+    let listener = endpoint.bind().expect("endpoint binds");
+    let server_budget =
+        InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES).expect("server body budget");
+    let router = Router::new()
+        .route(
+            "/v1/stream",
+            post(|| async {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(
+                        header::CONTENT_TYPE,
+                        "application/vnd.litecowork.operator-stream+json",
+                    )
+                    .body(Body::from_stream(futures_util::stream::pending::<
+                        Result<Bytes, std::convert::Infallible>,
+                    >()))
+                    .expect("stream response is valid")
+            }),
+        )
+        .route_layer(middleware::from_fn(authenticate));
+
+    let server = tokio::spawn(async move {
+        let connection = listener
+            .accept(|peer| peer.uid == expected_uid)
+            .await
+            .expect("same-UID stream client is accepted");
+        dispatch_ipc_exchange(
+            router,
+            OperatorIpcConnection::Unix(connection),
+            server_budget,
+            Duration::from_secs(2),
+        )
+        .await
+    });
+
+    let mut client = tokio::net::UnixStream::connect(endpoint.socket_path())
+        .await
+        .expect("raw same-UID socket connects for malformed-frame probe");
+    let client_budget =
+        InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES).expect("client body budget");
+    let body = br#"{"workspace_id":"workspace","conversation_ids":["conversation"],"projection_types":["conversation_presentation"]}"#.to_vec();
+    let request = RequestFrame::new(
+        RequestHeader {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: "stream-extra-request-byte".to_owned(),
+            method: "POST".to_owned(),
+            path_and_query: "/v1/stream".to_owned(),
+            headers: vec![
+                LogicalHeader {
+                    name: "x-workspace-id".to_owned(),
+                    value: "workspace".to_owned(),
+                },
+                LogicalHeader {
+                    name: "content-type".to_owned(),
+                    value: "application/json".to_owned(),
+                },
+            ],
+            body_length: body.len() as u64,
+        },
+        body,
+        &client_budget,
+    )
+    .expect("bounded stream request is valid");
+    operator_ipc::async_io::write_request(&mut client, &request)
+        .await
+        .expect("stream request frame writes");
+    let handshake = operator_ipc::async_io::read_response(
+        &mut client,
+        "stream-extra-request-byte",
+        &client_budget,
+    )
+    .await
+    .expect("stream handshake reads");
+    assert_eq!(handshake.header.status, StatusCode::OK.as_u16());
+
+    client
+        .write_all(b"unexpected")
+        .await
+        .expect("unexpected request-side byte writes");
+    let settlement = server.await.expect("stream server task joins");
+    assert!(
+        settlement
+            .expect_err("request-side bytes after subscription fail closed")
+            .contains("peer closed or sent invalid data")
+    );
 }
 
 #[tokio::test]

@@ -28,7 +28,7 @@ use storage_core::{
 };
 use storage_sqlite::{
     LocalWorkspaceStorage, OsRuntimeDeviceIdentityProvider, OsRuntimePrincipalBindingProvider,
-    SqliteConfig, SqliteStepAttemptStore, SqliteWorkspaceStore,
+    RuntimeOsPrincipalIdentity, SqliteConfig, SqliteStepAttemptStore, SqliteWorkspaceStore,
 };
 use tempfile::NamedTempFile;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
@@ -39,6 +39,9 @@ mod recovery_tests;
 #[cfg(test)]
 #[path = "runtime_revalidation_tests.rs"]
 mod revalidation_tests;
+#[cfg(all(test, unix, debug_assertions))]
+#[path = "runtime_process_tests.rs"]
+mod runtime_process_tests;
 
 const STATE_FILE: &str = "runtime-state.json";
 const LOCK_FILE: &str = "runtime.lock";
@@ -129,6 +132,47 @@ impl RuntimeLocalState {
 }
 
 pub fn run(data_directory: &Path) -> Result<(), String> {
+    run_with_identity_providers(
+        data_directory,
+        |directory, runtime_id, allow_create| {
+            OsRuntimePrincipalBindingProvider.load_or_create(directory, runtime_id, allow_create)
+        },
+        |directory, runtime_id, now| {
+            OsRuntimeDeviceIdentityProvider.load_or_create(directory, runtime_id, now)
+        },
+    )
+}
+
+#[cfg(all(test, unix, debug_assertions))]
+fn run_with_test_identity_providers(data_directory: &Path) -> Result<(), String> {
+    use sha2::Digest;
+
+    run_with_identity_providers(
+        data_directory,
+        |_, runtime_id, _| RuntimeOsPrincipalIdentity::test_support(runtime_id),
+        |_, _, _now| {
+            let public_key = [17_u8; 32];
+            let digest = sha2::Sha256::digest(public_key);
+            Ok(DeviceIdentityRecord {
+                device_id: format!("ed25519-sha256:{}", hex::encode(digest)),
+                public_key: format!("ed25519:{}", hex::encode(public_key)),
+                key_version: 1,
+                issued_at: "2026-10-14T00:00:00Z".to_owned(),
+                display_name: Some("test-only identity".to_owned()),
+            })
+        },
+    )
+}
+
+fn run_with_identity_providers(
+    data_directory: &Path,
+    load_principal: impl Fn(
+        &Path,
+        &str,
+        bool,
+    ) -> Result<RuntimeOsPrincipalIdentity, storage_core::StoreError>,
+    load_device: impl Fn(&Path, &str, &str) -> Result<DeviceIdentityRecord, storage_core::StoreError>,
+) -> Result<(), String> {
     ensure_private_state_directory(data_directory)?;
     let _instance_lock = InstanceLock::acquire(data_directory)?;
     let shutdown_receiver = install_shutdown_handler()?;
@@ -143,7 +187,7 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
     // This must precede durable bootstrap state creation: only an installation with
     // neither a Runtime record nor a database may establish its OS principal for the
     // first time. Losing the keyring entry for an existing install fails closed.
-    let os_principal = match OsRuntimePrincipalBindingProvider.load_or_create(
+    let os_principal = match load_principal(
         data_directory,
         &state.runtime_id,
         first_install && !state.os_principal_binding_established,
@@ -186,11 +230,7 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
             );
         }
     };
-    let identity = match OsRuntimeDeviceIdentityProvider.load_or_create(
-        data_directory,
-        &state.runtime_id,
-        &started_at,
-    ) {
+    let identity = match load_device(data_directory, &state.runtime_id, &started_at) {
         Ok(identity) => identity,
         Err(_) => {
             state.transition(

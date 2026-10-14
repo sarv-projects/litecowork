@@ -16,7 +16,11 @@ ROOT = Path(__file__).resolve().parent.parent
 SKIP = {".git", "node_modules", "target", ".venv", ".pytest_cache", ".agent-worktrees",
         "archive_code", "archives_docs", "ARCHIVE", "archives",
         ".code-intelligence", ".playwright-mcp", "dist", "build", "coverage", ".next"}
-EXCLUDED = {"implementation/V1-AUDIT-INVENTORY.md"}
+EXCLUDED = {
+    "implementation/V1-AUDIT-INVENTORY.md",
+    # Including this report would make it hash the Markdown inventory that hashes it.
+    "implementation/V1-DESIGN-DEPTH-AUDIT.md",
+}
 LINK = re.compile(r'(?<!!)\[[^\]]+\]\(([^)]+)\)')
 CATEGORY_KEYWORDS = {
     "agent/composer": re.compile(r"AgentBinding|AgentControlDescriptor|slash.command|native.agent|composer|session.option", re.I),
@@ -93,7 +97,7 @@ def emit(records, broken):
         f"- Lines read: {total_lines}",
         f"- Bytes read: {total_bytes}",
         f"- Broken relative links: {len(broken)}",
-        "- Excluded: dependency/cache/output worktrees and this generated report; "
+        "- Excluded: dependency/cache/output worktrees and generated audit reports; "
         "CSV inventory includes SHA-256 for every read Markdown source.",
         "",
         "## Per-file line and topical inventory",

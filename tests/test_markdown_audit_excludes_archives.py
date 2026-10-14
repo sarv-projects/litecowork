@@ -38,6 +38,23 @@ class MarkdownAuditArchiveExclusionTests(unittest.TestCase):
             visited,
         )
 
+    def test_generated_audit_reports_are_excluded_to_break_their_hash_cycle(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            current = root / "docs" / "current.md"
+            current.parent.mkdir(parents=True)
+            current.write_text("# Current\n", encoding="utf-8")
+            generated = root / "implementation"
+            generated.mkdir()
+            for name in ("V1-AUDIT-INVENTORY.md", "V1-DESIGN-DEPTH-AUDIT.md"):
+                (generated / name).write_text("# Generated\n", encoding="utf-8")
+
+            with patch.object(audit_v1_markdown, "ROOT", root):
+                records, broken = audit_v1_markdown.read_all()
+
+        self.assertEqual([record["file"] for record in records], ["docs/current.md"])
+        self.assertEqual(broken, [])
+
 
 if __name__ == "__main__":
     unittest.main()

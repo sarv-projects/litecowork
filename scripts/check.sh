@@ -102,19 +102,19 @@ run_freshness_check \
   implementation/V1-CONTRACT-CHECK.md -- \
   uv run --locked python scripts/audit_v1_contracts.py --strict --write-report
 run_freshness_check \
-  implementation/V1-DESIGN-DEPTH-AUDIT.md -- \
-  uv run --locked python scripts/audit_v1_design_depth.py --strict --write
+  implementation/ARCHITECTURE-COVERAGE.md \
+  implementation/coverage.csv -- \
+  uv run --locked python scripts/validate_implementation_coverage.py --write
 run_freshness_check \
   implementation/V1-AUDIT-INVENTORY.md \
   implementation/V1-MARKDOWN-INVENTORY.csv -- \
   uv run --locked python scripts/audit_v1_markdown.py
 run_freshness_check \
+  implementation/V1-DESIGN-DEPTH-AUDIT.md -- \
+  uv run --locked python scripts/audit_v1_design_depth.py --strict --write
+run_freshness_check \
   implementation/V1-CROSS-CONTRACT-GUARD.json -- \
   uv run --locked python scripts/validate_design_owner_consistency.py
-run_freshness_check \
-  implementation/ARCHITECTURE-COVERAGE.md \
-  implementation/coverage.csv -- \
-  uv run --locked python scripts/validate_implementation_coverage.py --write
 uv run --locked python scripts/validate_implementation_coverage.py
 uv run --locked python scripts/validate_implementation_plan.py
 uv run --locked python scripts/validate_architecture.py

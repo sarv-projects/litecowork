@@ -506,17 +506,38 @@ impl OperatorIpcConnection {
     async fn wait_for_stream_disconnect(&mut self) -> Result<(), String> {
         match self {
             #[cfg(unix)]
-            Self::Unix(connection) => connection
-                .wait_for_stream_disconnect()
-                .await
-                .map_err(|_| "local Operator stream peer closed or sent invalid data".to_owned()),
+            Self::Unix(connection) => match connection.wait_for_stream_disconnect().await {
+                Ok(()) => Ok(()),
+                Err(UnixTransportError::Io(error))
+                    if is_expected_stream_peer_disconnect(error.kind()) =>
+                {
+                    Ok(())
+                }
+                Err(_) => Err("local Operator stream peer closed or sent invalid data".to_owned()),
+            },
             #[cfg(windows)]
-            Self::Windows(connection) => connection
-                .wait_for_stream_disconnect()
-                .await
-                .map_err(|_| "local Operator stream peer closed or sent invalid data".to_owned()),
+            Self::Windows(connection) => match connection.wait_for_stream_disconnect().await {
+                Ok(()) => Ok(()),
+                Err(WindowsTransportError::Io(error))
+                    if is_expected_stream_peer_disconnect(error.kind()) =>
+                {
+                    Ok(())
+                }
+                Err(_) => Err("local Operator stream peer closed or sent invalid data".to_owned()),
+            },
         }
     }
+}
+
+#[cfg(any(unix, windows))]
+fn is_expected_stream_peer_disconnect(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::NotConnected
+    )
 }
 
 #[cfg(any(unix, windows))]
@@ -1594,8 +1615,8 @@ async fn dispatch_ipc_exchange(
             loop {
                 let frame = tokio::select! {
                     biased;
-                    _ = connection.wait_for_stream_disconnect() => {
-                        return Err("local Operator stream peer closed or sent invalid data".to_owned());
+                    disconnect = connection.wait_for_stream_disconnect() => {
+                        return disconnect.map(|()| OperatorRequestSettlement::Complete);
                     }
                     frame = std::future::poll_fn(|context| body.as_mut().poll_frame(context)) => frame,
                 };

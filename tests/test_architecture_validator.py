@@ -314,8 +314,20 @@ class CICoverageContractTests(unittest.TestCase):
         self.assertIn("implementation/V1-MARKDOWN-INVENTORY.csv", script)
         self.assertIn("implementation/V1-CROSS-CONTRACT-GUARD.json", script)
         self.assertLess(
-            script.index("scripts/audit_v1_markdown.py"),
+            script.index("scripts/audit_v1_contracts.py --strict --write-report"),
             script.index("scripts/validate_implementation_coverage.py --write"),
+        )
+        self.assertLess(
+            script.index("scripts/validate_implementation_coverage.py --write"),
+            script.index("scripts/audit_v1_markdown.py"),
+        )
+        self.assertLess(
+            script.index("scripts/audit_v1_markdown.py"),
+            script.index("scripts/audit_v1_design_depth.py --strict --write"),
+        )
+        self.assertLess(
+            script.index("scripts/audit_v1_design_depth.py --strict --write"),
+            script.index("scripts/validate_design_owner_consistency.py"),
         )
         self.assertLess(
             script.index("scripts/validate_implementation_coverage.py --write"),

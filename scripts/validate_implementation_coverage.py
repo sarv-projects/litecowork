@@ -133,8 +133,12 @@ def implementation_plan_docs() -> list[str]:
     excluded = {
         "implementation/ARCHITECTURE-COVERAGE.md",
         "implementation/CURRENT-RUN.md",
-        # Generated exhaustive audit output; excluding it avoids a self-referential
-        # coverage-digest loop while its source documents remain covered individually.
+        # Generated reports are outputs of audits, not architecture/plan authority.
+        # Excluding them avoids cross-report digest cycles while source documents
+        # remain covered individually.
+        "implementation/V1-CONTRACT-CHECK.md",
+        "implementation/V1-AUDIT-INVENTORY.md",
+        "implementation/V1-DESIGN-DEPTH-AUDIT.md",
         "implementation/DOC-AUDIT-2026-10-10.md",
     }
     return sorted(

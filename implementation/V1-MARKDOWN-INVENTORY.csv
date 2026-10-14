@@ -103,10 +103,10 @@ docs/adr/0024-optional-chat-first-coworkers.md,35,5859,5a6cde423b5c209845b71bfb5
 docs/adr/0025-agent-module-registry-and-native-configuration.md,59,2979,79ff69084cb012098a2970ca40b72c6310d8ee03e8217df3a3e7129706be5c0d,agent/composer;workflow/recovery;trust/security,True
 docs/adr/README.md,39,3349,54afa5933f64b39dbeed80004bc0410fc19759281af145ac7defe5b709c86099,agent/composer;workflow/recovery;trust/security,True
 implementation/AGENT-MODULE-AUDIT.md,524,16948,bad51ed44a90ad6e806ece08215c423e147d7f5024e9b4d066a1d9ce4ac04f98,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
-implementation/ARCHITECTURE-COVERAGE.md,177,15968,bf726bddb1048c765dac62a9783b4aa9a12b854308133209bf4def8c2364d2bc,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/ARCHITECTURE-COVERAGE.md,177,15968,4bc0272621fad98569e2e34cf98650feedca56527752b58ee62b52ed0cfd3350,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/AUDIT.md,155,13284,a55491d4245364ded199718d9b6fdf513f531dc5ae4281fd95b1260bd8b8dc25,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/COVERAGE.md,33,2007,de61a91ec685c9bbfc359346fedbd14be20066ffbc2ace750bf0ceb29e60e945,rendering,True
-implementation/CURRENT-RUN.md,7052,511477,4251a91ae31bd30a45df214308e418157f98ef75ee6704fcc1fe92304911426b,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/CURRENT-RUN.md,7114,516705,d421739138cb223a6f9081fc343fd5e2d3cfc29fbbcef51a1ce53968f81eb43c,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/DOC-AUDIT-2026-10-10.md,173,18626,ff27abd7e23a2a34fde65ae200540a04bdc376cd3a9527f07304e2790345bc1c,shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/NEXT-SESSION-HANDOFF-2026-10-13.md,363,25509,9c871129dcc1c536a6ef1d14b94fe099968a9f4222e15db1161853c3e466fa88,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/PROCESS.md,99,6027,9ec104a4a710c3587ca4395d86e4a1fba68c0a838cd4854639f0b9035b4e58b9,shell/settings/motion;workflow/recovery;trust/security,True
@@ -122,7 +122,6 @@ implementation/UI.md,776,43831,b6645ba0e06df9829b14800a049405394276cb7b16f8e5c66
 implementation/V1-CONTRACT-CHECK.md,42,2461,7132c1c7ed77bb16fa2a9fbacc156cb7053565a6006eaf931beae8e24ce231e3,agent/composer;browser/computer,True
 implementation/V1-CONTRACT-RECONCILIATION-2026-10-13.md,59,11250,a3b6be9662e0b314ca1308962796188253fa5d2ee1a30a34e10814b200abed1e,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/V1-DESIGN-COVERAGE.md,226,22204,d269d2d96e605ebdd5bb34ea0a5b316fe6824e0e301d752d2748b0af953f756c,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
-implementation/V1-DESIGN-DEPTH-AUDIT.md,232,14589,8357abbc92335a08bc2daa18204a58f1333754cacb1ef7a119752d5d90d0eb36,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/V1-DESIGN-DRYRUN-AND-RECONCILIATION-2026-10-13.md,116,16830,4836d42b5f953fcbbaa0450e65ac876534c883d4e4b46bbfa49c7dad4ac10ed1,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/V1-DESIGN-HANDOFF-2026-10-12.md,71,8257,a2ed19f4b45c84cf4a032d380800006141ae93b3621c519233e869f351bef132,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/V1-EVERY-MD-AUDIT-2026-10-12.md,179,18733,49fd6f683de5619982f2159c3341597454f0ba009ce82b6b68699ec05c7fc55c,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
@@ -131,7 +130,7 @@ implementation/V1-OBSERVABILITY-AGENT-MEMORY-TERMINAL-UAT.md,81,9015,744ac1294a3
 implementation/V1-SEMANTIC-MD-FINDINGS-2026-10-12.md,73,12463,716f85e04ed2ed99f385aabf8b41fa0e274f06b0d833136efa4ef647e285c68d,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/V1-SERVED-CAPABILITY-INVENTORY.md,60,10111,3340bfeff2ba3729d21fe80bcfeddf77b9f0e4c4dfdfa0d5555f717b3beda93b,agent/composer;workflow/recovery;trust/security,True
 implementation/WORKFLOWS.md,68,7133,506e29243c5f7780c21b6eff66f8ff8fb229c7359ef5dba8e4fa0a331f8505f2,browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
-implementation/epics/E01.md,677,56339,9d953e9a7d1b8136e261a3fe647f6b65749cfe50d20e98a4721c4269e2b8ef95,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
+implementation/epics/E01.md,688,57228,98355ee51fbd308f9a8a135dd83680181afa669ca41bb21e6d0fb570d302e0be,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/epics/E02.md,439,65741,71bb2e66ea4a6ca6b24c1db85a2072451754ba6c831b39a7cfd60875c06c32a7,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/epics/E03.md,428,41453,53afeafbcb78a08558a09e4d917ec720fa8833aef6552980e18344e4677bbf8e,agent/composer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/epics/E04.md,134,11233,27e02ac37fb0ed89bde515761c91c6b105f2085d9599291a4f794c37e4f6d7c5,workflow/recovery;trust/security,True
@@ -148,7 +147,7 @@ implementation/licensingandpkacgingresearch.md,196,11246,2e29b84d4b594d965581e88
 implementation/reviews/E01-S01.md,115,6630,52e28753cd56cc8a3a77769902e485e4043f13aa1424e1949a9de82d89abaa50,rendering;workflow/recovery;trust/security,True
 implementation/reviews/E01-S02-BUSY-RETRY-2026-10-13.md,80,5729,77e30693e49499a3be8f1d4807f910fb1d3c46dbc9984f02ddf96e424898ad57,workflow/recovery;trust/security,True
 implementation/reviews/E01-S02.md,528,32348,241368b82db76946f48f7a5feb7d1737c911dd81889b8fba358a9967bbb91914,rendering;workflow/recovery;trust/security,True
-implementation/reviews/E01-S03.md,603,37083,22dc0b9fa23069268e98214f620a6ec212e4e1226681f5da7e022a6e8cb476fe,shell/settings/motion;workflow/recovery;trust/security,True
+implementation/reviews/E01-S03.md,665,41176,7d1abd909e914ce4cb559e1a04aed98e478d150cd68525b6d234caac13dfaebe,shell/settings/motion;workflow/recovery;trust/security,True
 implementation/reviews/E01-S04.md,1374,91199,e72bf4ff3e6a00fc3cf44e9c44f169c0391b4289d8d8fee509dc5c35b5ee37a1,agent/composer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/reviews/E02-S01.md,199,12750,51bbb5fc91f5ad347b6f301386e215d60f8479008f2ad8199e4a27bd82661295,browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/reviews/E02-S02-TAURI-IPC-2026-10-13.md,86,6767,316d19024d468755d9100214520a03a317e69798ebacd62c5b4bca6cd11af085,shell/settings/motion;rendering;trust/security,True

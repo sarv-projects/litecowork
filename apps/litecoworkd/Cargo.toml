@@ -39,6 +39,7 @@ rustix = { version = "1.1", features = ["fs", "process"] }
 
 [dev-dependencies]
 rusqlite = { version = "0.40.2", default-features = false }
+storage-sqlite = { path = "../../crates/storage-sqlite", features = ["test-support"] }
 zeroize = "1.8"
 
 [lints]

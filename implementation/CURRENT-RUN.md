@@ -1,5 +1,67 @@
 # Current run and agent handoff
 
+## 2026-10-14 — E01-S03 spawned daemon lifecycle CODE checkpoint
+
+Closed a real spawned-daemon CODE gap without changing story status. A bounded child test
+starts the production Runtime startup flow with debug-only test identity providers, serves
+the actual SQLite-backed same-UID Unix Operator lifecycle route, and survives client
+disconnect. After SIGTERM, the parent verifies clean STOPPED state in both the local
+bootstrap file and SQLite; after restart from the same data directory, RuntimeId is stable,
+the incarnation changes, and the current durable projection remains truthfully DEGRADED.
+The debug-only test identity uses the test process effective UID and a stable synthetic
+device identity. It does not exercise the installed CLI or production OS credential
+providers. The stream EOF regression was fixed: normal disconnect settles successfully,
+while extra request-side bytes still fail closed.
+
+The final audit rerun exposed generated-report hash cycles: Markdown and design-depth
+inventories could hash each other, and implementation coverage indexed generated audit
+reports. Regression tests reproduce the inclusion failures. Coverage now omits generated
+reports while retaining source epics; Markdown excludes the design-depth report. A CI order
+test pins the acyclic generation order in `scripts/check.sh`: contract report, implementation
+coverage, Markdown inventory, design-depth, then the cross-contract digest. Source contracts
+remain covered by their owning inventories.
+
+Verification on Ubuntu 24.04.4 LTS / Linux WSL2 x86_64, kernel
+`6.18.54.1-microsoft-standard-WSL2`, rustc `1.98.1 (48a229cea 2026-09-01)`, Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`:
+
+- `cargo test --locked -p litecoworkd spawned_runtime_lifecycle_restarts_with_current_incarnation -- --nocapture` — **1 passed** on the final debug-only test seam.
+- `cargo test --locked -p litecoworkd authenticated_unix_stream -- --nocapture` — **3 passed**, including clean EOF/reconnect and malformed request-side data rejection.
+- `cargo test --locked -p storage-sqlite --features test-support test_support_identity_uses_fake_binding_and_stable_pseudonym -- --nocapture` — **1 passed**; the helper binds to the effective UID and is unavailable outside debug builds.
+- `cargo test --locked -p litecoworkd` — **151 unit + 4 CLI tests passed** on the final source.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` and `cargo fmt --all -- --check` — passed.
+- `.venv/bin/python -m unittest discover -s tests -v` — **24 passed**.
+- `.venv/bin/python scripts/audit_v1_design_depth.py --strict --write` — zero blockers (173 files, 59,203 lines, 20 domains, 226 named functions, 187 settings, 206 specified routes, 107 tables).
+- `.venv/bin/python scripts/audit_v1_contracts.py --strict --write-report` — 0 errors; 206 OpenAPI operations, 158 supplemental UI cases, 67 stories.
+- `.venv/bin/python scripts/audit_v1_markdown.py` — 173 files, 59,187 lines, 0 broken links.
+- `.venv/bin/python scripts/validate_design_owner_consistency.py` — 34 assertions, no issues.
+- `.venv/bin/python scripts/validate_implementation_coverage.py --write` — 103 documents, 6,442 rows; `.venv/bin/python scripts/validate_implementation_plan.py` passed for 67 stories.
+- `.venv/bin/python scripts/validate_architecture.py` — passed current schemas, 142 typed events, errors, OpenAPI, SQLite, Gateway names, product naming, and links.
+- `git -c core.whitespace=cr-at-eol diff --check` — passed after documentation generation.
+
+The previous hosted run `38562601251` passed Rust, UI, Tauri, and the earlier contract checks,
+then failed because `implementation/V1-DESIGN-DEPTH-AUDIT.md` was stale. It has now been
+regenerated and reviewed locally; the post-push hosted rerun is still pending.
+
+The test harness initially exposed two corrected defects: its child filter skipped the probe,
+and the synthetic device provider changed `issued_at` across restarts, correctly violating
+the durable device-identity equality check. No production identity or storage semantics were
+weakened. E01-S03 remains `IN_PROGRESS`; real-provider/SYSTEM behavior, package lifecycle,
+cross-platform qualification, owner USER acceptance, and the E01-S01/E01-S02 prerequisites
+remain pending. The next implementation lane is the E01-S04 lost-ACK create/replay check;
+its isolated test draft remains separate from this checkpoint.
+
+Resource audit: one `main` worktree and 26 branches at start/end; no agent worktree or
+temporary branch was created. Start/end byte measurements: root `target` 10,434,301,897 /
+10,554,803,268 (+120,501,371); Tauri `target` 4,918,395,031 / 4,918,395,031; UI `dist`
+937,816 / 937,816; Vite cache 6,261,857 / 6,261,857; owner `.playwright-mcp` 133,783 /
+133,783; `.venv` 15,863,068 / 15,863,068; `implementation/coverage.csv` 1,154,151 /
+1,189,957; `implementation/machine-inventory.json` 238,955 / 238,955. Free space changed
+from 908,963,819,520 to 908,830,306,304 bytes. Shared Cargo output grew during the daemon
+suite and is retained for active verification; no duplicate build tree or temporary test
+artifact remains. Owner MCP data was preserved. No Cargo, rustc, or daemon test process
+remained at the end measurement.
+
 ## 2026-10-14 — pushed source-repair evidence reconciliation
 
 The source checkpoint is pushed `5fb33ea4668625143c4c18afe69c9a5abac2a5aa`

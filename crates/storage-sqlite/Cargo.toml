@@ -9,6 +9,8 @@ publish = false
 default = ["sqlite-bundled", "sqlite-rusqlite-defaults"]
 sqlite-bundled = ["rusqlite/bundled"]
 sqlite-rusqlite-defaults = ["rusqlite/cache", "rusqlite/ffi-sqlite-wasm-rs"]
+# Enables synthetic identity helpers for debug-build integration tests only.
+test-support = []
 
 [dependencies]
 base64 = "0.22.1"
