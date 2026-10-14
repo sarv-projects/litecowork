@@ -7881,6 +7881,14 @@ async fn create_workspace_instruction_revision(
                 "INVALID_ARGUMENT",
                 "Workspace instruction revision is invalid",
             ),
+            storage_core::StoreError::Conflict {
+                expected: None,
+                actual: None,
+            } => operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Idempotency-Key was reused with a different instruction request",
+            ),
             storage_core::StoreError::Conflict { .. } => operator_error(
                 StatusCode::CONFLICT,
                 "STALE_WORKSPACE_VERSION",

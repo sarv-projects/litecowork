@@ -1,5 +1,61 @@
 # Current run and agent handoff
 
+## 2026-10-14 — E02-S02 spawned-daemon instruction replay CODE slice
+
+Added a process-level instruction revision replay regression in
+`apps/litecoworkd/src/runtime_workspace_replay_process_tests.rs`. It starts the real
+`litecoworkd` Runtime through the test-only identity seam, creates a Workspace through
+authenticated same-UID Unix IPC, seeds a managed encrypted text Resource, and submits the
+first instruction revision while leaving the response unread. After clean daemon shutdown
+and restart on the same data directory, the exact request replays under the same logical
+Idempotency-Key with a new IPC frame ID and returns the original revision and event
+correlation. Direct SQLite checks prove one instruction revision, event, and receipt remain
+and that source text is absent from the event payload. The test also distinguishes changed
+request reuse (`CONFLICT`) from a fresh stale `If-Match` (`STALE_WORKSPACE_VERSION`) and
+proves rejected requests add no receipt.
+
+The first red run exposed a route defect: SQLite uses `Conflict { expected: None,
+actual: None }` for changed receipt identity, while the instruction handler mislabeled all
+conflicts as `STALE_WORKSPACE_VERSION`. The handler now maps the receipt-conflict shape to
+`CONFLICT`; version conflicts retain the stale-version code. One post-fix focused run timed
+out waiting for daemon IPC readiness and reported an unsafe/missing endpoint before the
+deadline. The same test subsequently passed twice, including after the stale-version
+assertion, and passed in the full daemon suite; no separate cause for that single readiness
+timeout was isolated.
+
+F87 in `docs/FLOWS.md` was corrected to describe the current local Settings editor,
+paginated history, immutable Task instruction pins, and the local Hub's authority in a
+standalone install; remote Hub authority and cross-device sync remain outside this local
+flow. E02-S02 remains `IN_PROGRESS`.
+
+Linux WSL2 x86_64 / Ubuntu 24.04.4 LTS, rustc `1.98.1 (48a229cea 2026-09-01)`, Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`:
+
+- `cargo test --locked -p litecoworkd spawned_daemon_replays_workspace_instruction_revision_after_lost_ack_and_restart -- --nocapture --test-threads=1` — **1/1 passed** on final source.
+- `cargo test --locked -p litecoworkd` — **155 unit + 4 CLI tests passed**.
+- The package-suite result above preceded the test-only receipt-inspector follow-up; the
+  entire changed process-replay module was rerun after that addition, but the full package
+  suite was not repeated.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- Review follow-up: `durable_instruction_inspection_rejects_incomplete_receipt_rows`
+  first failed because the test helper treated a persisted incomplete receipt as absent;
+  after the helper was tightened, the complete spawned-daemon replay module passed **5/5**
+  with `cargo test --locked -p litecoworkd runtime::runtime_workspace_replay_process_tests:: -- --nocapture --test-threads=1`.
+  The focused test's initial fixture used a misspelled database filename and was corrected
+  before the behavior-red run. Strict Clippy and targeted rustfmt passed again afterward.
+- Targeted Rust 2024 `rustfmt --check` and CRLF-aware `git diff --check` — passed.
+- `.venv/bin/python scripts/audit_v1_contracts.py --strict --write-report` — **0 errors**, 206 OpenAPI operations, 158 supplemental UI cases, 67 stories.
+- `.venv/bin/python scripts/audit_v1_markdown.py` — 173 files, 59,747 lines, 0 broken links.
+- `.venv/bin/python scripts/validate_implementation_coverage.py --write` — 103 documents / 6,447 rows; plan validation passed for 67 stories; architecture validation passed with 142 typed events.
+
+CODE evidence only. This uses deterministic test identity and blob keys and a graceful
+restart; it does not inject a crash between database commit and response write, qualify
+production keyring/service startup, packaged Tauri/Settings behavior, macOS/Windows, or
+owner USER acceptance. Existing Task pin coverage remains the separate authenticated route
+regression documented below. The next dependency-ready CODE slice is E02-S03/F90 resumable
+Resource upload recovery across a daemon process restart; keep E02-S02 and earlier stories
+partial until their remaining SYSTEM/USER gates are met.
+
 ## 2026-10-14 — E01-S04 Task presentation stream restart/resume CODE slice
 
 Added `spawned_daemon_task_stream_resumes_across_restart_and_delivers_live_update` to

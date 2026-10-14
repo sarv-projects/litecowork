@@ -133,6 +133,26 @@ struct LostAckWorkspaceCreate {
     _runtime: tokio::runtime::Runtime,
 }
 
+#[derive(Debug, PartialEq)]
+struct DurableInstructionRevision {
+    owner_principal_id: String,
+    request_digest: String,
+    response_digest: String,
+    response: Value,
+    workspace_version: i64,
+    current_instruction_revision: Option<i64>,
+    revision_count: i64,
+    event_count: i64,
+    request_receipt_count: i64,
+    event_payload_json: String,
+}
+
+struct LostAckInstructionRevision {
+    receipt: DurableInstructionRevision,
+    _connection: operator_ipc::unix::AuthenticatedUnixConnection,
+    _runtime: tokio::runtime::Runtime,
+}
+
 #[test]
 fn spawned_workspace_replay_process_probe() {
     let Some(directory) = std::env::var_os(CHILD_DATA_DIRECTORY) else {
@@ -290,6 +310,220 @@ fn spawned_daemon_replays_workspace_create_after_lost_ack_and_restart() {
             .expect("committed Workspace receipt remains present after retries");
     assert_eq!(after_retry, committed_before_restart);
     assert_single_workspace_commit(&after_retry, &local_principal_id, WORKSPACE_CREATE_KEY);
+
+    let (restart_status, restart_stdout, restart_stderr) = restarted_child.terminate_and_wait();
+    assert!(
+        restart_status.success(),
+        "restarted Runtime shutdown failed: stdout={restart_stdout} stderr={restart_stderr}"
+    );
+}
+
+#[test]
+fn spawned_daemon_replays_workspace_instruction_revision_after_lost_ack_and_restart() {
+    const WORKSPACE_CREATE_KEY: &str = "spawned-instruction-workspace-create-v1";
+    const RESOURCE_ID: &str = "spawned-instruction-resource";
+    const RESOURCE_REVISION_ID: &str = "spawned-instruction-resource-revision-1";
+    const INSTRUCTION_KEY: &str = "spawned-instruction-create-revision-1-v1";
+    const CONTENT: &[u8] = b"Keep local instructions private and immutable.\n";
+
+    let directory = tempfile::tempdir().expect("private Runtime data directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("restrict Runtime directory");
+    let mut first_child = RuntimeChild::spawn(directory.path());
+    let readiness = wait_for_operator_readiness(first_child.child(), directory.path());
+    assert_operator_readiness(&readiness);
+    let local_principal_id = read_state(&directory.path().join(STATE_FILE))
+        .expect("read Runtime state")
+        .expect("Runtime state exists")
+        .local_principal_id
+        .expect("test Runtime has a local principal");
+
+    let workspace_response = send_workspace_create(
+        directory.path(),
+        "spawned-instruction-workspace-create-frame",
+        WORKSPACE_CREATE_KEY,
+        br#"{"name":"Instruction restart fixture"}"#,
+    );
+    assert_eq!(workspace_response.header.status, 201);
+    let workspace: Value =
+        serde_json::from_slice(workspace_response.body()).expect("Workspace response is JSON");
+    let workspace_id = workspace["workspace_id"]
+        .as_str()
+        .expect("created Workspace ID is returned")
+        .to_owned();
+    let content_digest = seed_instruction_resource(
+        directory.path(),
+        &workspace_id,
+        RESOURCE_ID,
+        RESOURCE_REVISION_ID,
+        CONTENT,
+    );
+    let body = workspace_instruction_revision_body(
+        &workspace_id,
+        RESOURCE_ID,
+        RESOURCE_REVISION_ID,
+        &content_digest,
+    );
+
+    let lost_ack = match submit_instruction_revision_without_reading_response(
+        directory.path(),
+        &workspace_id,
+        INSTRUCTION_KEY,
+        "spawned-instruction-frame-before-restart",
+        "1",
+        &body,
+        &local_principal_id,
+    ) {
+        Ok(lost_ack) => lost_ack,
+        Err(error) => {
+            let (status, stdout, stderr) = first_child.terminate_and_wait();
+            panic!("{error}; Runtime status={status}; stdout={stdout}; stderr={stderr}");
+        }
+    };
+    assert_single_instruction_revision(
+        &lost_ack.receipt,
+        &workspace_id,
+        &local_principal_id,
+        INSTRUCTION_KEY,
+    );
+    assert_eq!(
+        lost_ack.receipt.response["instruction_revision"]["revision"],
+        1
+    );
+
+    let (first_status, first_stdout, first_stderr) = first_child.terminate_and_wait();
+    assert!(
+        first_status.success(),
+        "first Runtime shutdown failed: stdout={first_stdout} stderr={first_stderr}"
+    );
+    drop(lost_ack._connection);
+    drop(lost_ack._runtime);
+
+    let mut restarted_child = RuntimeChild::spawn(directory.path());
+    let restarted_readiness =
+        wait_for_operator_readiness(restarted_child.child(), directory.path());
+    assert_operator_readiness(&restarted_readiness);
+    assert_eq!(restarted_readiness["runtime_id"], readiness["runtime_id"]);
+    assert_ne!(
+        restarted_readiness["local_incarnation_id"],
+        readiness["local_incarnation_id"]
+    );
+
+    let replay = send_workspace_instruction_revision(
+        directory.path(),
+        &workspace_id,
+        INSTRUCTION_KEY,
+        "spawned-instruction-frame-after-restart",
+        "1",
+        &body,
+    );
+    assert_eq!(replay.header.status, 201);
+    assert_eq!(
+        replay.header.request_id,
+        "spawned-instruction-frame-after-restart"
+    );
+    let replay_body: Value =
+        serde_json::from_slice(replay.body()).expect("replayed instruction response is JSON");
+    assert_eq!(
+        replay_body, lost_ack.receipt.response["instruction_revision"],
+        "restart retry returns the exact committed instruction revision"
+    );
+    assert_eq!(
+        replay
+            .header
+            .headers
+            .iter()
+            .find(|header| header.name.eq_ignore_ascii_case("x-correlation-id"))
+            .map(|header| header.value.as_str()),
+        lost_ack.receipt.response["event"]["correlation_id"].as_str()
+    );
+
+    let changed_body = workspace_instruction_revision_body_with_parents(
+        &workspace_id,
+        RESOURCE_ID,
+        RESOURCE_REVISION_ID,
+        &content_digest,
+        &[1],
+    );
+    let conflict = send_workspace_instruction_revision(
+        directory.path(),
+        &workspace_id,
+        INSTRUCTION_KEY,
+        "spawned-instruction-frame-changed-payload",
+        "1",
+        &changed_body,
+    );
+    assert_eq!(conflict.header.status, 409);
+    let conflict_body: Value =
+        serde_json::from_slice(conflict.body()).expect("conflict response is JSON");
+    assert_eq!(conflict_body["code"], "CONFLICT");
+
+    let stale = send_workspace_instruction_revision(
+        directory.path(),
+        &workspace_id,
+        "spawned-instruction-stale-version-v1",
+        "spawned-instruction-frame-stale-version",
+        "1",
+        &changed_body,
+    );
+    assert_eq!(stale.header.status, 409);
+    let stale_body: Value =
+        serde_json::from_slice(stale.body()).expect("stale-version response is JSON");
+    assert_eq!(stale_body["code"], "STALE_WORKSPACE_VERSION");
+    assert!(
+        read_durable_instruction_revision(
+            directory.path(),
+            &workspace_id,
+            "spawned-instruction-stale-version-v1",
+            &local_principal_id,
+        )
+        .expect("stale request receipt inspection succeeds")
+        .is_none()
+    );
+    let current_body = workspace_instruction_revision_body(
+        &workspace_id,
+        RESOURCE_ID,
+        RESOURCE_REVISION_ID,
+        &content_digest,
+    );
+    let stale_version = send_workspace_instruction_revision(
+        directory.path(),
+        &workspace_id,
+        "spawned-instruction-stale-if-match-v1",
+        "spawned-instruction-frame-stale-if-match",
+        "1",
+        &current_body,
+    );
+    assert_eq!(stale_version.header.status, 409);
+    let stale_version_body: Value =
+        serde_json::from_slice(stale_version.body()).expect("stale If-Match response is JSON");
+    assert_eq!(stale_version_body["code"], "STALE_WORKSPACE_VERSION");
+    assert!(
+        read_durable_instruction_revision(
+            directory.path(),
+            &workspace_id,
+            "spawned-instruction-stale-if-match-v1",
+            &local_principal_id,
+        )
+        .expect("stale If-Match receipt inspection succeeds")
+        .is_none()
+    );
+
+    let after_retry = read_durable_instruction_revision(
+        directory.path(),
+        &workspace_id,
+        INSTRUCTION_KEY,
+        &local_principal_id,
+    )
+    .expect("inspect instruction receipt after restart retry")
+    .expect("instruction receipt remains committed after restart retry");
+    assert_eq!(after_retry, lost_ack.receipt);
+    assert_single_instruction_revision(
+        &after_retry,
+        &workspace_id,
+        &local_principal_id,
+        INSTRUCTION_KEY,
+    );
 
     let (restart_status, restart_stdout, restart_stderr) = restarted_child.terminate_and_wait();
     assert!(
@@ -794,6 +1028,396 @@ fn send_workspace_create(
             .await
             .expect("read correlated Workspace-create response")
     })
+}
+
+fn seed_instruction_resource(
+    data_directory: &Path,
+    workspace_id: &str,
+    resource_id: &str,
+    revision_id: &str,
+    content: &[u8],
+) -> String {
+    let blobs = FileBlobStore::new(data_directory.join("blobs"), ReplayTestBlobKeys);
+    let blob = blobs
+        .put(workspace_id, BlobPurpose::Resource, content, "text/plain")
+        .expect("store encrypted instruction Resource bytes");
+    let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+        .expect("open Runtime database for instruction fixture");
+    connection
+        .busy_timeout(Duration::from_secs(2))
+        .expect("configure instruction fixture database timeout");
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("enable instruction fixture foreign keys");
+    let transaction = connection
+        .unchecked_transaction()
+        .expect("start instruction Resource fixture transaction");
+    transaction
+        .execute(
+            "INSERT INTO resources(resource_id,workspace_id,kind,provider_identity_json,display_name,current_revision_id,sensitivity,context_document_json,provenance_json,created_at,updated_at,version)
+             VALUES (?1,?2,'FILE','{}','spawned-instruction-resource',?3,'PERSONAL',NULL,'{}','2026-10-14T14:00:00Z','2026-10-14T14:00:00Z',1)",
+            rusqlite::params![resource_id, workspace_id, revision_id],
+        )
+        .expect("insert instruction fixture Resource");
+    transaction
+        .execute(
+            "INSERT INTO resource_revisions(resource_revision_id,resource_id,content_digest,size_bytes,media_type,observed_at,created_by_json)
+             VALUES (?1,?2,?3,?4,'text/plain','2026-10-14T14:00:00Z','{}')",
+            rusqlite::params![
+                revision_id,
+                resource_id,
+                blob.digest,
+                i64::try_from(content.len()).expect("bounded instruction fixture size"),
+            ],
+        )
+        .expect("insert instruction fixture revision");
+    transaction
+        .execute(
+            "INSERT INTO resource_locations(location_id,resource_id,provider_ref,locator_ref_id,availability,writable,observed_revision_id,observed_digest,observed_at,last_checked_at)
+             VALUES (?1,?2,'litecowork.encrypted_blob',?3,'AVAILABLE',0,?4,?3,'2026-10-14T14:00:00Z','2026-10-14T14:00:00Z')",
+            rusqlite::params![
+                format!("location-{resource_id}"),
+                resource_id,
+                blob.digest,
+                revision_id,
+            ],
+        )
+        .expect("insert instruction fixture Resource location");
+    transaction
+        .commit()
+        .expect("instruction fixture Resource commits");
+    blob.digest
+}
+
+fn workspace_instruction_revision_body(
+    workspace_id: &str,
+    resource_id: &str,
+    revision_id: &str,
+    content_digest: &str,
+) -> Vec<u8> {
+    workspace_instruction_revision_body_with_parents(
+        workspace_id,
+        resource_id,
+        revision_id,
+        content_digest,
+        &[],
+    )
+}
+
+fn workspace_instruction_revision_body_with_parents(
+    workspace_id: &str,
+    resource_id: &str,
+    revision_id: &str,
+    content_digest: &str,
+    parent_revisions: &[u64],
+) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "parent_revisions": parent_revisions,
+        "content_ref": {
+            "workspace_id": workspace_id,
+            "resource_id": resource_id,
+            "revision_id": revision_id,
+        },
+        "content_digest": content_digest,
+    }))
+    .expect("instruction revision request serializes")
+}
+
+fn workspace_instruction_revision_request(
+    workspace_id: &str,
+    frame_request_id: &str,
+    idempotency_key: &str,
+    if_match: &str,
+    body: &[u8],
+    budget: &std::sync::Arc<InFlightBodyBudget>,
+) -> RequestFrame {
+    RequestFrame::new(
+        RequestHeader {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: frame_request_id.to_owned(),
+            method: "POST".to_owned(),
+            path_and_query: format!("/v1/workspaces/{workspace_id}/instructions/revisions"),
+            headers: vec![
+                LogicalHeader {
+                    name: "content-type".to_owned(),
+                    value: "application/json".to_owned(),
+                },
+                LogicalHeader {
+                    name: "x-workspace-id".to_owned(),
+                    value: workspace_id.to_owned(),
+                },
+                LogicalHeader {
+                    name: "if-match".to_owned(),
+                    value: if_match.to_owned(),
+                },
+                LogicalHeader {
+                    name: "idempotency-key".to_owned(),
+                    value: idempotency_key.to_owned(),
+                },
+            ],
+            body_length: body.len() as u64,
+        },
+        body.to_vec(),
+        budget,
+    )
+    .expect("bounded instruction revision frame")
+}
+
+fn submit_instruction_revision_without_reading_response(
+    data_directory: &Path,
+    workspace_id: &str,
+    idempotency_key: &str,
+    frame_request_id: &str,
+    if_match: &str,
+    body: &[u8],
+    principal_id: &str,
+) -> Result<LostAckInstructionRevision, String> {
+    let endpoint = UnixEndpoint::derive(data_directory).expect("safe Runtime endpoint");
+    let expected_uid = fs::metadata(data_directory)
+        .expect("Runtime data directory metadata")
+        .uid();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build instruction IPC client runtime");
+    let (receipt, connection) = runtime.block_on(async {
+        let mut connection = endpoint
+            .connect(|peer| peer.uid == expected_uid)
+            .await
+            .expect("authenticate the real daemon Unix peer");
+        let budget = InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES)
+            .expect("instruction client body budget");
+        let request = workspace_instruction_revision_request(
+            workspace_id,
+            frame_request_id,
+            idempotency_key,
+            if_match,
+            body,
+            &budget,
+        );
+        connection
+            .write_request(&request)
+            .await
+            .expect("send instruction revision request");
+        let deadline = Instant::now() + RECEIPT_DEADLINE;
+        loop {
+            match read_durable_instruction_revision(
+                data_directory,
+                workspace_id,
+                idempotency_key,
+                principal_id,
+            ) {
+                Ok(Some(receipt)) => break Ok((receipt, connection)),
+                Ok(None) => {}
+                Err(error) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(20));
+                    let _ = error;
+                    continue;
+                }
+                Err(error) => break Err(error),
+            }
+            if Instant::now() >= deadline {
+                break Err(
+                    "instruction revision receipt was not durable before the deadline".to_owned(),
+                );
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+    })?;
+    Ok(LostAckInstructionRevision {
+        receipt,
+        _connection: connection,
+        _runtime: runtime,
+    })
+}
+
+fn send_workspace_instruction_revision(
+    data_directory: &Path,
+    workspace_id: &str,
+    idempotency_key: &str,
+    frame_request_id: &str,
+    if_match: &str,
+    body: &[u8],
+) -> ResponseFrame {
+    let endpoint = UnixEndpoint::derive(data_directory).expect("safe Runtime endpoint");
+    let expected_uid = fs::metadata(data_directory)
+        .expect("Runtime data directory metadata")
+        .uid();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build instruction IPC client runtime");
+    runtime.block_on(async {
+        let mut connection = endpoint
+            .connect(|peer| peer.uid == expected_uid)
+            .await
+            .expect("authenticate the real daemon Unix peer");
+        let budget = InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES)
+            .expect("instruction client body budget");
+        let request = workspace_instruction_revision_request(
+            workspace_id,
+            frame_request_id,
+            idempotency_key,
+            if_match,
+            body,
+            &budget,
+        );
+        connection
+            .write_request(&request)
+            .await
+            .expect("write instruction revision request");
+        connection
+            .read_response(&budget)
+            .await
+            .expect("read correlated instruction revision response")
+    })
+}
+
+fn read_durable_instruction_revision(
+    data_directory: &Path,
+    workspace_id: &str,
+    idempotency_key: &str,
+    principal_id: &str,
+) -> Result<Option<DurableInstructionRevision>, String> {
+    let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+        .map_err(|error| error.to_string())?;
+    connection
+        .busy_timeout(Duration::from_secs(1))
+        .map_err(|error| error.to_string())?;
+    let row: Option<(String, String, Option<String>, Option<String>)> = connection
+        .query_row(
+            "SELECT principal_id, request_digest, response_json, response_digest FROM request_dedup WHERE request_id = ?1",
+            [idempotency_key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((owner_principal_id, request_digest, response_json, response_digest)) = row else {
+        return Ok(None);
+    };
+    let (Some(response_json), Some(response_digest)) = (response_json, response_digest) else {
+        return Err("instruction receipt is incomplete".to_owned());
+    };
+    if owner_principal_id != principal_id {
+        return Err("instruction receipt belongs to a different Principal".to_owned());
+    }
+    let response: Value =
+        serde_json::from_str(&response_json).map_err(|error| error.to_string())?;
+    let (workspace_version, current_instruction_revision): (i64, Option<i64>) = connection
+        .query_row(
+            "SELECT version, current_instruction_revision FROM workspaces WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| error.to_string())?;
+    let revision_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM workspace_instruction_revisions WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let event_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE workspace_id = ?1 AND type = 'workspace.instructions.revision.created.v1'",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let request_receipt_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            rusqlite::params![principal_id, idempotency_key],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let event_payload_json: String = connection
+        .query_row(
+            "SELECT payload_json FROM domain_events WHERE workspace_id = ?1 AND type = 'workspace.instructions.revision.created.v1' ORDER BY entity_revision LIMIT 1",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(Some(DurableInstructionRevision {
+        owner_principal_id,
+        request_digest,
+        response_digest,
+        response,
+        workspace_version,
+        current_instruction_revision,
+        revision_count,
+        event_count,
+        request_receipt_count,
+        event_payload_json,
+    }))
+}
+
+#[test]
+fn durable_instruction_inspection_rejects_incomplete_receipt_rows() {
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let connection = Connection::open(directory.path().join("litecowork.sqlite3"))
+        .expect("temporary SQLite database");
+    connection
+        .execute_batch(
+            "CREATE TABLE request_dedup(
+                principal_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                request_digest TEXT NOT NULL,
+                response_json TEXT,
+                response_digest TEXT,
+                PRIMARY KEY(principal_id, request_id)
+            );
+            INSERT INTO request_dedup(principal_id, request_id, request_digest)
+            VALUES ('principal-local', 'incomplete-receipt-v1', 'sha256:request');",
+        )
+        .expect("incomplete receipt fixture");
+    drop(connection);
+
+    let result = read_durable_instruction_revision(
+        directory.path(),
+        "workspace-local",
+        "incomplete-receipt-v1",
+        "principal-local",
+    );
+
+    assert_eq!(
+        result.expect_err("incomplete durable receipt is invalid"),
+        "instruction receipt is incomplete"
+    );
+}
+
+fn assert_single_instruction_revision(
+    receipt: &DurableInstructionRevision,
+    workspace_id: &str,
+    principal_id: &str,
+    idempotency_key: &str,
+) {
+    assert_eq!(receipt.owner_principal_id, principal_id);
+    assert!(receipt.request_digest.starts_with("sha256:"));
+    assert!(receipt.response_digest.starts_with("sha256:"));
+    assert_eq!(
+        receipt.response["instruction_revision"]["workspace_id"],
+        workspace_id
+    );
+    assert_eq!(receipt.response["instruction_revision"]["revision"], 1);
+    assert_eq!(
+        receipt.response["event"]["type"],
+        "workspace.instructions.revision.created.v1"
+    );
+    assert_eq!(receipt.workspace_version, 2);
+    assert_eq!(receipt.current_instruction_revision, Some(1));
+    assert_eq!(receipt.revision_count, 1);
+    assert_eq!(receipt.event_count, 1);
+    assert_eq!(
+        receipt.request_receipt_count, 1,
+        "receipt for {idempotency_key}"
+    );
+    assert!(
+        !receipt
+            .event_payload_json
+            .contains("Keep local instructions private"),
+        "instruction source text must not enter the domain event payload"
+    );
 }
 
 fn workspace_create_request(

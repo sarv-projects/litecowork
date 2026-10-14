@@ -2003,10 +2003,13 @@ already imported a same-Workspace UTF-8 text Resource no larger than 64 KiB.
    immutable revision projection in ascending order using a Workspace-bound opaque cursor.
 
 **Failure/UI/postcondition:** No instruction text is copied into event payloads or logs;
-the event stores a pinned ResourceRef and digest. Current implementation is local-only and
-has no desktop editor, pagination, Hub authority, or TaskSpec pinning. The request can be
-retried safely after a lost response, but this slice is not complete Workspace-instruction
-product support.
+the event stores a pinned ResourceRef and digest. The local desktop edits instructions in
+Settings and displays revision history using the Workspace-scoped paginated list route.
+Future Tasks pin the current instruction revision when created; changing Workspace
+instructions never changes an existing TaskSpec. Instruction commits remain
+Hub-authoritative, with the standalone install's local Hub serving that role. This local
+desktop flow has no remote Hub authority or cross-device synchronization. The request can
+be retried safely after a lost response.
 
 ## F86 — Read and preview a committed local Resource
 
