@@ -12,12 +12,13 @@
     "check:node": "node scripts/check-node-version.mjs",
     "dev": "pnpm run check:node && vite --host 127.0.0.1",
     "build": "pnpm run check:node && pnpm run api:check && tsc --noEmit && vite build",
+    "build:daemon-sidecar": "node scripts/build-daemon-sidecar.mjs",
     "api:generate": "pnpm run check:node && node scripts/generate-operator-api-types.mjs",
     "api:check": "pnpm run check:node && node scripts/generate-operator-api-types.mjs --check",
     "test": "pnpm run check:node && node --experimental-transform-types --test \"tests/*.test.ts\" \"tests/*.test.mjs\"",
     "test:browser": "pnpm run check:node && node scripts/check-rendered-ui.mjs",
     "preview": "pnpm run check:node && vite preview --host 127.0.0.1",
-    "tauri": "pnpm run check:node && tauri"
+    "tauri": "pnpm run check:node && node scripts/run-tauri.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

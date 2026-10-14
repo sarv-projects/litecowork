@@ -26,3 +26,4 @@ target/
 node_modules/
 dist/
 apps/litecowork-ui/src-tauri/gen/
+apps/litecowork-ui/src-tauri/binaries/

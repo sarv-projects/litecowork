@@ -7271,3 +7271,27 @@ the pushed checkpoint. No `.vite` cache or temporary `litecowork-rendered-ui-chr
 profile remains. Browser/Vite/test processes ended. Three Chrome DevTools MCP processes
 (PIDs 29454, 29455, 29467) were present at both checks and were not started by this slice.
 The Tauri target and owner profile are retained.
+
+## E02-S01 Linux DEB daemon sidecar CODE slice — 2026-10-14
+
+The Tauri production build now compiles `litecoworkd` for Tauri's selected target and bundles
+it with the Operator. The sidecar builder uses Cargo's effective target directory, rejects a
+conflicting `LITECOWORKD_TARGET`, and verifies canonical path containment before creating the
+sidecar directory. The CLI wrapper invokes the pinned Tauri JS CLI through Node and defaults
+Linux production builds to DEB; AppImage is rejected because its mounted daemon path may not
+remain valid for a user service. E02-S01 stays `IN_PROGRESS`.
+
+On WSL2 Ubuntu 24.04.4 LTS / Linux x86_64, Rust and Cargo 1.98.1, Tauri CLI 2.12.1,
+tauri-build 2.7.1, Node 24.21.0, pnpm 12.10.1, and dpkg-deb 1.22.6:
+
+- `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 tauri build --bundles deb` passed.
+- The same Tauri build without `--bundles` passed and selected DEB by default.
+- `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 run build:daemon-sidecar` passed after final path/target checks.
+- `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH node --test tests/daemon-sidecar-build.test.mjs` passed 6/6.
+- `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 test` passed 210/210.
+- After the canonical path-containment edit, the final DEB at `apps/litecowork-ui/src-tauri/target/release/bundle/deb/LiteCowork_0.1.0_amd64.deb` was rebuilt at 2026-10-14 14:10:35 UTC and is 12,831,396 bytes. Extraction to a temporary directory confirmed executable `/usr/bin/litecowork-ui` and `/usr/bin/litecoworkd` are siblings; the latter is 23,441,176 bytes, mode 0755, and prints `litecoworkd 0.1.0` for `--version`. Exact extraction and wrapper-guard commands are recorded in the [review packet](reviews/E02-S01.md).
+- A direct wrapper invocation for Linux AppImage returned the expected fail-closed message. No DEB was installed; systemd, keyring, authenticated Workspace creation, reconnect, signing, macOS/Windows qualification, physical zoom, and owner USER acceptance remain pending.
+
+The package inspection initially assumed the daemon would be under `resources/binaries`; the observed Tauri DEB uses `/usr/bin` beside the app and the production resolver already checks the executable's sibling directory. The first ancestor-symlink test fixture also incorrectly put its external target inside the temporary repository; it was corrected to use a sibling temp directory, and the regression now passes. No product defect remains from either failed probe.
+
+Resource audit: one `main` worktree and 26 branches; no subagent worktree, branch, or build process remains. Start measurements were root `target` 10,737,667,337 bytes, Tauri `target` 4,918,395,031 bytes, UI `node_modules` 103,187,790 bytes, UI `dist` absent, and sidecar output absent. Before post-push cleanup, final end measurements were root `target` 11,149,403,213 bytes, Tauri `target` 6,534,664,424 bytes, `node_modules` unchanged at 103,187,790 bytes, regenerated `dist` 946,224 bytes, and sidecar binary 23,441,176 bytes. The Debian artifact is in the Tauri target tree. Available filesystem space was approximately 907.8 GB at the start and 906,517,286,912 bytes at the end. The shared Cargo targets are retained for the next Rust slice; only the confirmed sidecar, package staging output, and generated `dist` will be removed after this pushed checkpoint. Owner `.playwright-mcp` data is preserved.
