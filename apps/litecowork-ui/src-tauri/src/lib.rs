@@ -448,7 +448,10 @@ struct RuntimeWorkspaceBindingWire {
 #[derive(serde::Deserialize)]
 struct RuntimeWorkspaceBindingPageWire {
     items: Vec<RuntimeWorkspaceBindingWire>,
-    next_cursor: Option<String>,
+    // The current-local endpoint returns a zero-or-one page with a null cursor.
+    // Keep decoding the shared page envelope without exposing or consuming pagination.
+    #[serde(rename = "next_cursor")]
+    _next_cursor: Option<String>,
 }
 
 impl From<RuntimeWorkspaceBindingWire> for RuntimeWorkspaceBindingView {
@@ -3991,31 +3994,20 @@ impl LocalOperatorClient {
         })
     }
 
-    fn get(&self, path: impl Into<String>) -> LocalOperatorRequest {
+    fn get(&self, path: impl Into<String>) -> LocalOperatorRequest<'_> {
         LocalOperatorRequest::new(self, "GET", path.into())
     }
 
-    fn post(&self, path: impl Into<String>) -> LocalOperatorRequest {
+    fn post(&self, path: impl Into<String>) -> LocalOperatorRequest<'_> {
         LocalOperatorRequest::new(self, "POST", path.into())
     }
 
-    fn put(&self, path: impl Into<String>) -> LocalOperatorRequest {
+    fn put(&self, path: impl Into<String>) -> LocalOperatorRequest<'_> {
         LocalOperatorRequest::new(self, "PUT", path.into())
     }
 
-    fn patch(&self, path: impl Into<String>) -> LocalOperatorRequest {
+    fn patch(&self, path: impl Into<String>) -> LocalOperatorRequest<'_> {
         LocalOperatorRequest::new(self, "PATCH", path.into())
-    }
-
-    #[cfg(any(unix, windows))]
-    fn exchange(
-        &self,
-        method: String,
-        path_and_query: String,
-        headers: Vec<LogicalHeader>,
-        body: Vec<u8>,
-    ) -> Result<LocalOperatorResponse, String> {
-        self.exchange_with_deadline(method, path_and_query, headers, body, None)
     }
 
     #[cfg(any(unix, windows))]

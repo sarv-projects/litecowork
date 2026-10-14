@@ -162,12 +162,29 @@ kept outside SQLite and backups, and zeroized when practical. If the key provide
 encryption implementation is unavailable, the store fails closed; plaintext storage is
 not a fallback. Test-only key providers are not valid production providers.
 
-The local `FileBlobStore` checks the configured blob root and each Workspace-hash and
-purpose directory without following symlinks at those levels; on Unix, each must also
-deny group/other access. A symlinked/non-directory scope component fails the operation
-before an object is read, written, or removed. These path checks do not claim protection
-against a concurrent same-user replacement race; platform qualification must retain that
-limitation unless the adapter is changed to directory-handle-based no-follow operations.
+On Unix, the local `FileBlobStore` walks the configured root and Workspace-hash/purpose
+directories through held directory descriptors using no-follow opens. It checks the
+opened directory metadata and requires the configured root and scope directories to deny
+group/other access. Blob reads, temporary writes, no-clobber publication, deletion, and
+directory sync are relative to the held purpose descriptor. Replacing an ancestor path
+with a symlink after that descriptor is opened cannot redirect the in-flight operation to
+another tree. A regression test forces a Workspace-directory rename and symlink replacement
+between scope opening and object access; the read remains confined to the opened tree.
+The configured root's ancestor chain is synced before the first mutation per store
+instance and again if the root disappears and is recreated. Workspace and purpose scope
+entries are synced through their parent descriptors before a write or delete can report
+success, and retries resync those scope parents plus the held purpose directory. This
+includes idempotent writes after an earlier publish-sync failure and missing-object deletes
+after an earlier unlink-sync failure. Object reads and removals open with nonblocking
+semantics before regular-file validation, and `put` authenticates the published object
+before reporting success.
+
+This descriptor boundary does not defend against a compromised process with the same OS
+account modifying entries inside the private directory, and it does not establish crash
+durability on every Unix filesystem. The current automated race tests run on Linux; macOS
+and Windows still require platform qualification. Windows uses path-based BlobStore access
+and does not yet have equivalent reparse-safe handle-relative behavior. Do not claim these
+Unix CODE results as Windows behavior or general OS qualification.
 
 `storage-sqlite::OsWorkspaceBlobKeyProvider` is the desktop implementation. It stores
 versioned blob keys and the active-version pointer in the platform credential store

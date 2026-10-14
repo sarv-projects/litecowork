@@ -7518,14 +7518,14 @@ async fn set_workspace_default_agent_binding(
     ensure_workspace_owner_for(&state.store, &state.principal_id, &workspace_id)?;
     let expected_version = parse_if_match(&headers)?;
     let request_id = idempotency_key(&headers)?;
-    if let Some(binding_id) = body.agent_binding_id.as_deref() {
-        if binding_id.trim().is_empty() || binding_id.len() > 200 {
-            return Err(operator_error(
-                StatusCode::BAD_REQUEST,
-                "INVALID_ARGUMENT",
-                "AgentBinding selection is invalid",
-            ));
-        }
+    if let Some(binding_id) = body.agent_binding_id.as_deref()
+        && (binding_id.trim().is_empty() || binding_id.len() > 200)
+    {
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "AgentBinding selection is invalid",
+        ));
     }
     let request_payload = json!({
         "operation": "workspace.default_agent_binding.set.v1",

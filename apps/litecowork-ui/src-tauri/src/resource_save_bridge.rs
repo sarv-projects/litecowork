@@ -306,7 +306,7 @@ fn verify_current_revision(
     Err("Resource history is beyond the bounded desktop lookup".to_owned())
 }
 
-fn content_error(mut response: LocalOperatorResponse) -> String {
+fn content_error(response: LocalOperatorResponse) -> String {
     let status = response.status();
     if status == 409 {
         let mut body = Vec::new();

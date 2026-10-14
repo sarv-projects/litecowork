@@ -58,7 +58,7 @@ pub(crate) async fn coworker_request(
         }
 
         let (client, _) = operator_client(&app)?;
-        let mut request = match operation.as_str() {
+        let request = match operation.as_str() {
             "list" => {
                 let mut request = client
                     .get("/v1/coworkers".to_owned())

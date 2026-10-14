@@ -1502,7 +1502,7 @@
       "method": "POST",
       "operationId": "createConversation",
       "path": "/conversations",
-      "sha256": "3823888f7a908424bc3d79552825358b720cd1320699d0292cabeff62be8dbf9"
+      "sha256": "2af353f0a35ecec7d243a126ef9283dfebd839306fe1f9340c44f99848bc39c5"
     },
     {
       "method": "GET",
@@ -4417,7 +4417,7 @@
     },
     {
       "name": "ResourceTextIndexRebuildResult",
-      "sha256": "c9c4f382604ef798790910f7bca34dc1044e2c60303d1535fefd4d88033d0efb"
+      "sha256": "ab938697be0fc3c2af0185295401d7f6aec9984c1e33f4e57f427bc5fd1185ec"
     },
     {
       "name": "ResourceTextMatchSpan",

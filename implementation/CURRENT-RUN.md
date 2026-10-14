@@ -1,7 +1,117 @@
 # Current run and agent handoff
 
+## 2026-10-14 — pushed source-repair evidence reconciliation
 
-## 2026-10-13 — owner-requested source/documentation re-audit
+The source checkpoint is pushed `5fb33ea4668625143c4c18afe69c9a5abac2a5aa`
+(`main`). It contains the A01–A13 source corrections recorded in the
+[V1 implementation re-audit](V1-IMPLEMENTATION-REAUDIT-2026-10-13.md), including
+Resource draft/response fencing, RichPresentation invalidation and fetch recovery,
+Conversation Workspace fencing/retry/pagination, Needs You busy-state recovery, Task
+receipt replay, shared idempotency-key bounds, Workspace receipt-conflict classification,
+Resource upload chunk progression, and default-AgentBinding replay ordering. The audit
+and affected review packets now distinguish committed source/test definitions from test
+execution and release qualification. No story status is promoted.
+
+Confirmed local verification on this resumed checkout:
+
+- `cargo test --locked -p storage-sqlite` — **193 passed, 0 failed, 0 doc tests** in
+  241.96 seconds; rustc `1.98.1 (48a229cea 2026-09-01)`, Cargo
+  `1.98.1 (797e8a9bc 2026-08-05)`. This is CODE evidence for the storage package only;
+  it predates the later uncommitted owner edit to `crates/storage-sqlite/src/blob.rs` that
+  appeared in the shared worktree during this documentation pass, so that edit is not
+  covered by the 193-test result.
+- The exact final pinned UI unit-suite, rendered-browser, production-build, Tauri, and
+  `litecoworkd` full-suite outputs for `5fb33ea` are not in committed evidence. Their
+  current-checkpoint reruns/output capture remain pending; historical smaller test counts
+  below must not be read as results for this checkpoint. The current default shell reports
+  Node `22.23.1` and pnpm `12.10.1`; the UI package requires Node `24.21.0`, so a final UI
+  rerun must explicitly use the pinned Node runtime.
+- Hosted CI at `5fb33ea` reported `pnpm: not found` in a nested UI script. A local
+  `.github/workflows/architecture-docs.yml` Corepack availability correction is currently
+  uncommitted; no hosted rerun after that change is recorded, so CI is not green.
+
+Packaged desktop, real provider/OS conformance, crash/restart and cross-process recovery,
+SYSTEM integration, accessibility/physical-device checks, and owner USER acceptance remain
+open. The local V1 backlog remains 60 stories: 1 `IN_REVIEW`, 19 `IN_PROGRESS`, 40
+`PLANNED`, and zero `ACCEPTED`; E11/E12 remain post-V1. This evidence update does not
+close any story or release gate.
+
+At this documentation slice's start the worktree contained only the main worktree and
+pre-existing owner edits in `.github/workflows/architecture-docs.yml`,
+`apps/litecowork-ui/src-tauri/src/coworker_bridge.rs`,
+`apps/litecowork-ui/src-tauri/src/lib.rs`,
+`apps/litecowork-ui/src-tauri/src/resource_save_bridge.rs`, and
+`apps/litecoworkd/src/operator.rs`. No worktree, process, build, test output, or temporary
+file was created by this documentation correction; those owner changes are preserved.
+During the documentation pass, additional uncommitted changes appeared in
+`crates/storage-sqlite/src/blob.rs` and `docs/STORAGE.md`; they were left untouched.
+
+## 2026-10-14 — Unix BlobStore TOCTOU and sync-retry CODE checkpoint
+
+The owner-requested descriptor hardening was completed without changing story status.
+Unix `FileBlobStore` now holds no-follow root/Workspace/purpose descriptors through object
+operations; FIFO opens are nonblocking; writes verify the authenticated published object;
+and writes/deletes resync Workspace/purpose parents plus the held purpose directory before
+success. The configured-root ancestor chain is synced once per store instance and after
+root recreation. Sync failure injection verifies root retry, independent Workspace retry,
+idempotent retry after ordinary and competing publication-sync failures, and a missing-object
+retry after unlink-sync failure. The FIFO test runs in a killable subprocess with a five-second
+deadline, so a blocking-open regression cannot hang the suite or leave a worker behind.
+Windows remains on the documented path-based implementation; same-UID hostile directory-entry
+mutation and cross-filesystem crash durability are not claimed.
+
+Linux WSL2 x86_64, Ubuntu 24.04.4 LTS, kernel
+`6.18.54.1-microsoft-standard-WSL2`, rustc `1.98.1 (48a229cea 2026-09-01)`, Cargo
+`1.98.1 (797e8a9bc 2026-08-05)`:
+
+```sh
+cargo test --locked -p storage-sqlite blob::tests -- --nocapture
+cargo test --locked -p storage-sqlite
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo fmt --all -- --check
+rustfmt --edition 2024 --check crates/storage-sqlite/src/blob.rs
+CARGO_BUILD_WARNINGS=deny cargo test --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --workspace --locked
+PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 test
+PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 run build
+.venv/bin/python scripts/validate_implementation_coverage.py --write
+.venv/bin/python scripts/validate_implementation_plan.py
+.venv/bin/python scripts/validate_architecture.py
+.venv/bin/python scripts/audit_v1_contracts.py --strict --write-report
+.venv/bin/python scripts/audit_v1_markdown.py
+.venv/bin/python scripts/validate_design_owner_consistency.py
+git -c core.whitespace=cr-at-eol diff --check
+```
+
+Results: focused BlobStore tests **19/19 passed**; full storage package **202 passed, 0
+failed, 0 doc tests** in 300.11 seconds; strict workspace Clippy passed on the final source
+in 8.96 seconds (an earlier post-re-audit run also passed in 39.01 seconds); workspace
+formatting, blob rustfmt, architecture, implementation-plan, strict contract audit
+(0 errors; 206 OpenAPI operations, 158 UI cases, 67 stories), mechanical Markdown
+audit (0 broken links), owner consistency (34 assertions, no issues), and whitespace check
+passed. The first plan validation found stale generated inventory/coverage; refreshing
+`validate_implementation_coverage.py --write` resolved it. A plain diff check flags the
+Markdown inventory's intentional CRLF rows; the repository-prescribed `cr-at-eol` check
+passes.
+
+The concurrent desktop source fixes also passed locally: Node 24.21.0 / pnpm 12.10.1 UI
+suite **199/199** and Vite 6.4.4 production build; strict-warning Tauri workspace **70/70**.
+Hosted
+run 38469545485 failed before UI assertions because the runner lacked a nested `pnpm` shim,
+stopped root checks at `clippy::collapsible-if`, and denied Tauri warnings; local changes
+address all three. A hosted rerun after this checkpoint is still required. No `litecoworkd`
+full test rerun or owner SYSTEM/USER evidence is claimed here.
+
+Resource check: one `main` worktree and 26 branches before and after; no agent worktree,
+temporary branch, or build/test process remains. Root Cargo `target` measured 7,079,733,573
+bytes at end (approximately 6.86 GB at slice start); Tauri `target` measured 4,918,395,031
+bytes (approximately 4.83 GB at slice start); UI `dist` stayed 937,816 bytes; Vite cache
+measured 6,261,857 bytes; owner `.playwright-mcp` stayed 133,783 bytes; `.venv` measured
+15,863,068 bytes. Shared incremental build outputs and the UI cache are retained for the
+active V1 verification loop; owner MCP processes/data remain untouched. Free space ended at
+912,336,400,384 bytes. No task-created disposable build output or worktree required pruning.
+
+
+## Historical checkpoint — 2026-10-13 owner-requested source/documentation re-audit
 
 Pending IPC slice was committed/pushed first as `c8158ac`. Then three read-only
 agents and lead source inspection identified eleven source correctness gaps and
