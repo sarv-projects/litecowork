@@ -1,11 +1,27 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 import ReactDOM from "react-dom/client";
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC } from "@tauri-apps/api/mocks";
+import App from "../../src/App";
 import { ConversationsPage } from "../../src/conversations/ConversationsPage";
 import { ResourceRevisionEditor } from "../../src/resources/ResourceRevisionEditor";
 import { LibraryNavigationDialog, libraryNavigationMainIsInert, useLibraryNavigation } from "../../src/resources/library-navigation";
+import { WorkspaceFirstRun } from "../../src/workspaces/WorkspaceFirstRun";
 import "../../src/styles.css";
+
+type WorkspaceFirstRunProps = ComponentProps<typeof WorkspaceFirstRun>;
+type WorkspaceFirstRunScenario = "loading" | "error" | "offline" | "runtime-error" | "existing" | "ready" | "pending" | "busy";
+type WorkspaceRuntimeStatus = Exclude<WorkspaceFirstRunProps["runtime"], null>;
+type WorkspaceAppScenario = "workspace-list-race" | "workspace-list-failure" | "runtime-refresh-failure";
+type WorkspaceAppWorkspace = {
+  workspaceId: string;
+  name: string;
+  replicationPolicy: string;
+  defaultAgentBindingId: string | null;
+  primaryCoworkerId: string | null;
+  status: string;
+  version: number;
+};
 
 type InvokeArgs = Record<string, unknown>;
 type Call = { command: string; args: InvokeArgs };
@@ -204,8 +220,57 @@ const state = {
   resourceCommitMode: "success" as "success" | "defer" | "reject",
   resourceCommitPending: [] as Deferred<unknown>[],
   resourceUploadSession: null as RenderedUploadSession | null,
+  workspaceActions: { startRuntime: 0, refreshRuntime: 0, refreshWorkspaces: 0, createWorkspace: 0 },
+  appScenario: null as WorkspaceAppScenario | null,
+  appRuntimeStatusCalls: 0,
+  appWorkspaceListCalls: 0,
+  appInitialWorkspaceList: null as Deferred<WorkspaceAppWorkspace[]> | null,
+  appStaleWorkspaceList: null as Deferred<WorkspaceAppWorkspace[]> | null,
+  appCreatedWorkspace: null as WorkspaceAppWorkspace | null,
+  appWorkspaceCreateReceipt: null as Deferred<WorkspaceAppWorkspace> | null,
+  appWorkspaceCreateCalls: 0,
   frameId: 0,
 };
+
+function workspaceFirstRunFixtureProps(scenario: WorkspaceFirstRunScenario, onWorkspaceNameChange: (name: string) => void): WorkspaceFirstRunProps {
+  const stoppedRuntime: WorkspaceRuntimeStatus = {
+    state: "STOPPED",
+    blockers: [],
+    processRunning: false,
+    operatorReady: false,
+    daemonAvailable: true,
+  };
+  const readyRuntime: WorkspaceRuntimeStatus = {
+    state: "READY",
+    blockers: [],
+    processRunning: true,
+    operatorReady: true,
+    daemonAvailable: true,
+  };
+  const pending = scenario === "pending";
+  const busy = scenario === "busy";
+  return {
+    runtime: scenario === "offline" ? stoppedRuntime : scenario === "existing" || scenario === "ready" || pending || busy ? readyRuntime : null,
+    runtimeError: scenario === "offline"
+      ? "The local Runtime is not responding."
+      : scenario === "runtime-error" ? "Desktop Runtime status is unavailable." : null,
+    runtimeBusy: false,
+    onStartRuntime: async () => { state.workspaceActions.startRuntime += 1; },
+    onRefreshRuntime: async () => { state.workspaceActions.refreshRuntime += 1; },
+    workspaceListState: scenario === "loading" ? "LOADING" : scenario === "error" ? "ERROR" : "READY",
+    workspacesCount: scenario === "existing" ? 1 : 0,
+    workspaceError: scenario === "error"
+      ? "The Workspace list could not be loaded."
+      : pending ? "The previous Workspace request may have completed. Retry to check its receipt." : null,
+    onRefreshWorkspaces: async () => { state.workspaceActions.refreshWorkspaces += 1; return true; },
+    workspaceName: pending ? "Local Workspace" : busy ? "Starting Workspace" : "",
+    onWorkspaceNameChange,
+    workspaceCreateBusy: busy,
+    workspaceCreatePending: pending ? { name: "Local Workspace", requestId: "request-1" } : null,
+    onCreateWorkspace: async () => { state.workspaceActions.createWorkspace += 1; },
+    onOpenSettings: () => {},
+  };
+}
 
 function record(command: string, args: unknown): InvokeArgs {
   const value = args && typeof args === "object" ? args as InvokeArgs : {};
@@ -223,9 +288,94 @@ function commitConversationCreate(args: InvokeArgs) {
   return committed;
 }
 
+function appRuntimeStatus() {
+  return {
+    state: "READY",
+    runtimeId: "runtime-local-test",
+    localIncarnationId: "incarnation-local-test",
+    blockers: [],
+    lastShutdownClean: true,
+    processRunning: true,
+    operatorReady: true,
+    daemonAvailable: true,
+    detail: null,
+  };
+}
+
+function appRuntimeLifecycle() {
+  return {
+    runtimeId: "runtime-local-test",
+    startupPolicy: "MANUAL",
+    incarnation: {
+      runtimeIncarnationId: "incarnation-local-test",
+      runtimeId: "runtime-local-test",
+      processStartedAt: "2026-10-14T12:00:00.000Z",
+      litecoworkVersion: "test",
+      recoveredFromUncleanShutdown: false,
+      recoveryState: "READY",
+      readyAt: "2026-10-14T12:00:01.000Z",
+      stoppedAt: null,
+      version: 1,
+    },
+    availability: "ONLINE",
+    blockers: [],
+  };
+}
+
+function appWorkspaceListResponse(): WorkspaceAppWorkspace[] {
+  return state.appCreatedWorkspace ? [state.appCreatedWorkspace] : [];
+}
+
+function handleWorkspaceAppInvoke(command: string, args: InvokeArgs): unknown {
+  if (command === "get_runtime_status") {
+    state.appRuntimeStatusCalls += 1;
+    if (state.appScenario === "runtime-refresh-failure" && state.appRuntimeStatusCalls > 1) {
+      return Promise.reject(new Error("Rendered harness Runtime status probe failed."));
+    }
+    return appRuntimeStatus();
+  }
+  if (command === "get_runtime_lifecycle") return appRuntimeLifecycle();
+  if (command === "list_workspaces") {
+    state.appWorkspaceListCalls += 1;
+    if ((state.appScenario === "workspace-list-race" || state.appScenario === "workspace-list-failure") && state.appWorkspaceListCalls === 1) {
+      if (!state.appInitialWorkspaceList) throw new Error("Initial Workspace list response was not configured.");
+      return state.appInitialWorkspaceList.promise;
+    }
+    if (state.appWorkspaceListCalls === 2 && state.appStaleWorkspaceList) return state.appStaleWorkspaceList.promise;
+    return appWorkspaceListResponse();
+  }
+  if (command === "create_workspace") {
+    state.appWorkspaceCreateCalls += 1;
+    const created: WorkspaceAppWorkspace = {
+      workspaceId: "workspace-created-in-app-test",
+      name: String(args.name),
+      replicationPolicy: "LOCAL_ONLY",
+      defaultAgentBindingId: null,
+      primaryCoworkerId: null,
+      status: "ACTIVE",
+      version: 1,
+    };
+    state.appCreatedWorkspace = created;
+    return state.appWorkspaceCreateReceipt?.promise ?? created;
+  }
+  if (command === "list_agent_installations") return [];
+  if (command === "list_agent_profiles" || command === "list_agent_bindings") return { items: [], nextCursor: null };
+  if (command === "list_workspace_runtime_bindings" || command === "list_workspace_instructions") return [];
+  if (command === "list_resources") return { items: [], nextCursor: null };
+  if (command === "list_delegation_profiles") {
+    return {
+      status: 200,
+      contentType: "application/json",
+      bodyBase64: btoa(JSON.stringify({ items: [], next_cursor: null })),
+    };
+  }
+  throw new Error(`Production App rendered test received an unexpected Tauri command: ${command}`);
+}
+
 mockIPC((rawCommand, rawArgs) => {
   const args = record(rawCommand, rawArgs);
   const command = rawCommand;
+  if (state.appScenario !== null) return handleWorkspaceAppInvoke(command, args);
   if (command === "get_resource_detail") {
     const resourceId = String(args.resourceId);
     if (!state.resourceReadsDeferred) return resourceDetails[resourceId];
@@ -384,6 +534,16 @@ type HarnessApi = {
   resolveResourceCommit: () => true;
   emitReady: () => Promise<true>;
   emitSnapshot: (availability: string, revision: number) => Promise<true>;
+  configureWorkspaceFirstRun: (scenario: WorkspaceFirstRunScenario) => true;
+  workspaceActionCounts: () => { startRuntime: number; refreshRuntime: number; refreshWorkspaces: number; createWorkspace: number };
+  mountProductionApp: (scenario: WorkspaceAppScenario) => true;
+  resolveInitialAppWorkspaceList: () => Promise<true>;
+  rejectInitialAppWorkspaceList: () => Promise<true>;
+  deferNextAppWorkspaceListRefresh: () => true;
+  resolveStaleAppWorkspaceList: () => Promise<true>;
+  resolveAppWorkspaceCreateReceipt: () => true;
+  productionAppWorkspaceListCount: () => number;
+  productionAppWorkspaceCreateCount: () => number;
 };
 
 declare global {
@@ -398,6 +558,9 @@ function Harness() {
   const [conversationWorkspace, setConversationWorkspace] = useState("workspace-a");
   const [conversationMount, setConversationMount] = useState(0);
   const [showLibraryNavigationGuard, setShowLibraryNavigationGuard] = useState(false);
+  const [workspaceFirstRunProps, setWorkspaceFirstRunProps] = useState<WorkspaceFirstRunProps | null>(null);
+  const [showProductionApp, setShowProductionApp] = useState(false);
+  const [productionAppMount, setProductionAppMount] = useState(0);
 
   window.litecoworkHarness = {
     resetResource(deferredReads = false) {
@@ -514,9 +677,85 @@ function Harness() {
       });
       return true;
     },
+    configureWorkspaceFirstRun(scenario) {
+      state.workspaceActions = { startRuntime: 0, refreshRuntime: 0, refreshWorkspaces: 0, createWorkspace: 0 };
+      setShowLibraryNavigationGuard(false);
+      setShowProductionApp(false);
+      const onWorkspaceNameChange = (name: string) => setWorkspaceFirstRunProps(current => current ? { ...current, workspaceName: name } : current);
+      setWorkspaceFirstRunProps(workspaceFirstRunFixtureProps(scenario, onWorkspaceNameChange));
+      return true;
+    },
+    mountProductionApp(scenario) {
+      state.appScenario = scenario;
+      state.appRuntimeStatusCalls = 0;
+      state.appWorkspaceListCalls = 0;
+      state.appInitialWorkspaceList = scenario === "workspace-list-race" || scenario === "workspace-list-failure"
+        ? deferred<WorkspaceAppWorkspace[]>()
+        : null;
+      state.appStaleWorkspaceList = null;
+      state.appCreatedWorkspace = null;
+      state.appWorkspaceCreateReceipt = scenario === "workspace-list-race" ? deferred<WorkspaceAppWorkspace>() : null;
+      state.appWorkspaceCreateCalls = 0;
+      state.calls.length = 0;
+      localStorage.removeItem("litecowork.selectedWorkspaceId");
+      setShowLibraryNavigationGuard(false);
+      setWorkspaceFirstRunProps(null);
+      setShowProductionApp(true);
+      setProductionAppMount(value => value + 1);
+      return true;
+    },
+    async resolveInitialAppWorkspaceList() {
+      const pending = state.appInitialWorkspaceList;
+      if (!pending) throw new Error("There is no deferred initial production App Workspace list.");
+      state.appInitialWorkspaceList = null;
+      pending.resolve([]);
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0));
+      await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+      return true;
+    },
+    async rejectInitialAppWorkspaceList() {
+      const pending = state.appInitialWorkspaceList;
+      if (!pending) throw new Error("There is no deferred initial production App Workspace list.");
+      state.appInitialWorkspaceList = null;
+      pending.reject(new Error("Rendered harness initial Workspace list failed."));
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0));
+      await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+      return true;
+    },
+    deferNextAppWorkspaceListRefresh() {
+      if (state.appStaleWorkspaceList) throw new Error("A stale Workspace list response is already pending.");
+      state.appStaleWorkspaceList = deferred<WorkspaceAppWorkspace[]>();
+      return true;
+    },
+    async resolveStaleAppWorkspaceList() {
+      const pending = state.appStaleWorkspaceList;
+      if (!pending) throw new Error("There is no deferred stale Workspace list response.");
+      state.appStaleWorkspaceList = null;
+      pending.resolve([]);
+      await new Promise<void>(resolve => window.setTimeout(resolve, 0));
+      await new Promise<void>(resolve => window.requestAnimationFrame(() => resolve()));
+      return true;
+    },
+    resolveAppWorkspaceCreateReceipt() {
+      const pending = state.appWorkspaceCreateReceipt;
+      if (!pending || !state.appCreatedWorkspace) throw new Error("There is no pending production App Workspace create receipt.");
+      state.appWorkspaceCreateReceipt = null;
+      pending.resolve(state.appCreatedWorkspace);
+      return true;
+    },
+    productionAppWorkspaceListCount: () => state.appWorkspaceListCalls,
+    productionAppWorkspaceCreateCount: () => state.appWorkspaceCreateCalls,
+    workspaceActionCounts: () => ({ ...state.workspaceActions }),
   };
 
   if (showLibraryNavigationGuard) return <LibraryNavigationFixture />;
+  if (showProductionApp) return <App key={productionAppMount} />;
+  if (workspaceFirstRunProps) return <main className="harness-ready">
+    <h1>Workspace first-run rendered fixture</h1>
+    <section aria-label="First-run Workspace setup">
+      <WorkspaceFirstRun {...workspaceFirstRunProps} />
+    </section>
+  </main>;
 
   return <main className="harness-ready">
     <header>

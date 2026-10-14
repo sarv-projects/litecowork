@@ -142,6 +142,23 @@ async function clickButton(label, scopeSelector = null) {
   assert.equal(await evaluate(expression, `click ${label}`), true, `button ${JSON.stringify(label)} is rendered`);
 }
 
+async function clickButtonContaining(allTerms, scopeSelector = null) {
+  const root = scopeSelector === null ? "document" : `document.querySelector(${JSON.stringify(scopeSelector)})`;
+  const expression = `(() => {
+    const root = ${root};
+    if (!root) return false;
+    const terms = ${JSON.stringify(allTerms.map(term => term.toLowerCase()))};
+    const button = [...root.querySelectorAll("button")].find(candidate => {
+      const name = (candidate.getAttribute("aria-label") ?? candidate.textContent).trim().toLowerCase();
+      return terms.every(term => name.includes(term));
+    });
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`;
+  assert.equal(await evaluate(expression, `click button containing ${allTerms.join(" + ")}`), true, `button containing ${JSON.stringify(allTerms.join(" + "))} is rendered`);
+}
+
 async function clickHarness(method, ...args) {
   const serialized = JSON.stringify(args);
   assert.equal(
@@ -195,6 +212,31 @@ async function typeInputValue(selector, text) {
   await evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`);
   await cdp("Input.insertText", { text });
   await waitFor(() => evaluate(`document.querySelector(${JSON.stringify(selector)})?.value === ${JSON.stringify(text)}`), `${selector} value`);
+}
+
+async function typeWorkspaceName(text) {
+  await waitFor(() => evaluate(`(() => [...document.querySelectorAll("input")].some(input => {
+    const label = [...(input.labels ?? [])].map(node => node.textContent).join(" ");
+    return /workspace.*name|name.*workspace/i.test(label + " " + (input.getAttribute("aria-label") ?? ""));
+  }))()`), "accessible Workspace name input");
+  await evaluate(`(() => {
+    const input = [...document.querySelectorAll("input")].find(candidate => {
+      const label = [...(candidate.labels ?? [])].map(node => node.textContent).join(" ");
+      return /workspace.*name|name.*workspace/i.test(label + " " + (candidate.getAttribute("aria-label") ?? ""));
+    });
+    if (!input) return false;
+    input.focus();
+    input.setSelectionRange(0, input.value.length);
+    return true;
+  })()`);
+  await cdp("Input.insertText", { text });
+  await waitFor(() => evaluate(`(() => {
+    const input = [...document.querySelectorAll("input")].find(candidate => {
+      const label = [...(candidate.labels ?? [])].map(node => node.textContent).join(" ");
+      return /workspace.*name|name.*workspace/i.test(label + " " + (candidate.getAttribute("aria-label") ?? ""));
+    });
+    return input?.value === ${JSON.stringify(text)};
+  })()`), "Workspace name value");
 }
 
 async function openDirtyResource() {
@@ -531,6 +573,181 @@ async function runLibraryNavigationChecks() {
   return checks;
 }
 
+async function runWorkspaceFirstRunChecks() {
+  const checks = [];
+
+  await clickHarness("configureWorkspaceFirstRun", "loading");
+  await waitFor(() => evaluate(`(() => [...document.querySelectorAll('[role="status"], [aria-live]')]
+    .some(node => /checking/i.test(node.textContent ?? "")))()`), "announced Workspace list loading state");
+  checks.push("E02-S01 Workspace list loading is announced as a status");
+
+  await clickHarness("configureWorkspaceFirstRun", "error");
+  await waitFor(() => evaluate(`/workspace.*(?:unavailable|could not be checked|could not be loaded)/i.test(document.querySelector('[aria-label="First-run Workspace setup"]')?.textContent ?? "")`), "explicit unavailable Workspace list state");
+  assert.equal(await evaluate(`[...document.querySelectorAll('button')].some(button => /refresh|retry/i.test(button.textContent) && !button.disabled)`), true, "Workspace list failure offers an enabled refresh/retry action");
+  await clickButtonContaining(["retry"]);
+  assert.equal((await evaluate("window.litecoworkHarness.workspaceActionCounts()")).refreshWorkspaces, 1, "Workspace refresh invokes its callback once");
+  checks.push("E02-S01 failed Workspace listing explains unavailability and exposes a working refresh action");
+
+  await clickHarness("configureWorkspaceFirstRun", "offline");
+  await waitFor(() => evaluate(`/local runtime/i.test(document.querySelector('[aria-label="First-run Workspace setup"]')?.textContent ?? "") && /unavailable|offline|not running|not responding/i.test(document.querySelector('[aria-label="First-run Workspace setup"]')?.textContent ?? "")`), "explicit offline local Runtime state");
+  assert.equal(await evaluate(`[...document.querySelectorAll('button')].some(button => /refresh.*runtime|runtime.*refresh/i.test(button.textContent) && !button.disabled)`), true, "offline Runtime offers an enabled Runtime refresh action");
+  assert.equal(await evaluate(`[...document.querySelectorAll('button')].some(button => /start.*runtime|runtime.*start/i.test(button.textContent) && !button.disabled)`), true, "stopped local Runtime offers an enabled start action when eligible");
+  await clickButtonContaining(["refresh", "runtime"]);
+  await clickButtonContaining(["start", "runtime"]);
+  const runtimeActions = await evaluate("window.litecoworkHarness.workspaceActionCounts()");
+  assert.equal(runtimeActions.refreshRuntime, 1);
+  assert.equal(runtimeActions.startRuntime, 1);
+  checks.push("E02-S01 offline Runtime state is explicit and its eligible refresh/start actions call their handlers");
+
+  await clickHarness("configureWorkspaceFirstRun", "existing");
+  await waitFor(() => evaluate(`(() => {
+    const text = document.querySelector('[aria-label="First-run Workspace setup"]')?.textContent ?? '';
+    return /workspace/i.test(text) && /restor|select|already/i.test(text);
+  })()`), "existing Workspace selection/restoration state");
+  assert.equal(await evaluate(`/create one to continue/i.test(document.querySelector('[aria-label="First-run Workspace setup"]')?.textContent ?? '')`), false, "existing Workspace restoration does not tell the user to create another Workspace");
+  assert.equal(await evaluate(`Boolean(document.querySelector('[aria-label="First-run Workspace setup"] form'))`), false, "saved Workspaces are restored/selected instead of offering duplicate creation");
+  assert.equal(await evaluate(`[...document.querySelectorAll('[aria-label="First-run Workspace setup"] button')].some(button => /create.*workspace/i.test(button.textContent))`), false, "no duplicate Workspace create action is shown when one already exists");
+  assert.equal((await evaluate("window.litecoworkHarness.workspaceActionCounts()")).createWorkspace, 0, "existing Workspace selection does not create a duplicate");
+  checks.push("E02-S01 existing saved Workspace state shows restoration/selection and suppresses duplicate creation");
+
+  await clickHarness("configureWorkspaceFirstRun", "ready");
+  await waitFor(() => evaluate(`Boolean(document.querySelector('[aria-label="First-run Workspace setup"] form'))`), "authenticated first-run Workspace form");
+  const formState = await evaluate(`(() => {
+    const root = document.querySelector('[aria-label="First-run Workspace setup"]');
+    const input = [...(root?.querySelectorAll('input') ?? [])].find(candidate => {
+      const label = [...(candidate.labels ?? [])].map(node => node.textContent).join(' ');
+      return /workspace.*name|name.*workspace/i.test(label + ' ' + (candidate.getAttribute('aria-label') ?? ''));
+    });
+    const form = input?.form;
+    const submit = form?.querySelector('button[type="submit"], input[type="submit"]');
+    const actionText = [...(root?.querySelectorAll('button') ?? [])]
+      .map(button => button.textContent.trim())
+      .filter(Boolean);
+    return {
+      labeled: Boolean(input),
+      value: input?.value ?? null,
+      submitDisabled: submit?.disabled ?? null,
+      inputLocked: input?.disabled === true || input?.readOnly === true,
+      text: root?.textContent ?? '',
+      actionText,
+      hasTaskComposer: Boolean(root?.querySelector('textarea, [data-testid="home-task-composer"], .home-task-composer')),
+    };
+  })()`);
+  assert.equal(formState.labeled, true, "Workspace setup has a visibly associated name label");
+  assert.equal(formState.value, "", "new Workspace name starts blank");
+  assert.equal(formState.submitDisabled, true, "blank Workspace name cannot be submitted");
+  assert.equal(formState.inputLocked, false, "new Workspace form is editable before submission");
+  assert.equal(formState.hasTaskComposer, false, "first-run setup does not expose a Task composer");
+  assert.equal(/(?:task|agent|coworker|worker)\s+(?:is\s+)?(?:ready|created|started|connected|available)/i.test(formState.text), false, "first-run setup makes no Task or agent availability claim");
+  assert.equal(formState.actionText.some(label => /task|agent|coworker|worker/i.test(label)), false, "first-run actions do not imply Task or agent execution");
+
+  await clickHarness("configureWorkspaceFirstRun", "busy");
+  await waitFor(() => evaluate(`Boolean(document.querySelector('[aria-label="First-run Workspace setup"] form button[type="submit"]')?.disabled)`), "busy Workspace create button");
+  const busyButtonText = await evaluate(`document.querySelector('[aria-label="First-run Workspace setup"] form button[type="submit"]')?.textContent ?? ''`);
+  assert.match(busyButtonText, /creat|saving|setting up/i, "create button describes its busy state");
+  assert.equal((await evaluate("window.litecoworkHarness.workspaceActionCounts()")).createWorkspace, 0, "busy fixture has not submitted a Workspace request");
+  checks.push("E02-S01 Operator-ready setup labels the Workspace name, disables blank/busy submission, and shows no Task or agent claim");
+
+  await clickHarness("configureWorkspaceFirstRun", "pending");
+  await waitFor(() => evaluate(`Boolean(document.querySelector('[aria-label="First-run Workspace setup"] form'))`), "ambiguous Workspace create retry form");
+  const pendingState = await evaluate(`(() => {
+    const root = document.querySelector('[aria-label="First-run Workspace setup"]');
+    const input = [...(root?.querySelectorAll('input') ?? [])].find(candidate => {
+      const label = [...(candidate.labels ?? [])].map(node => node.textContent).join(' ');
+      return /workspace.*name|name.*workspace/i.test(label + ' ' + (candidate.getAttribute('aria-label') ?? ''));
+    });
+    return { value: input?.value, locked: input?.disabled === true || input?.readOnly === true };
+  })()`);
+  assert.equal(pendingState.value, "Local Workspace", "ambiguous create retains the exact Workspace name");
+  assert.equal(pendingState.locked, true, "ambiguous create locks the retained Workspace name while offering retry");
+  await clickButtonContaining(["retry"]);
+  assert.equal((await evaluate("window.litecoworkHarness.workspaceActionCounts()")).createWorkspace, 1, "retry invokes the existing create callback once");
+  checks.push("E02-S01 ambiguous Workspace creation retains and locks the name while exposing a retry");
+
+  await clickHarness("configureWorkspaceFirstRun", "ready");
+  await typeWorkspaceName("Rendered local Workspace");
+  await clickButtonContaining(["create", "workspace"], '[aria-label="First-run Workspace setup"]');
+  await waitFor(() => evaluate("window.litecoworkHarness.workspaceActionCounts().createWorkspace === 1"), "single Workspace create callback");
+  await new Promise(resolveDelay => setTimeout(resolveDelay, 120));
+  assert.equal((await evaluate("window.litecoworkHarness.workspaceActionCounts()")).createWorkspace, 1, "one submit event invokes Workspace create exactly once");
+  checks.push("E02-S01 submitting a named Workspace invokes the create callback once");
+
+  return checks;
+}
+
+async function runWorkspaceAppChecks() {
+  const checks = [];
+
+  await clickHarness("mountProductionApp", "workspace-list-failure");
+  await waitFor(() => evaluate(`document.querySelector('.workspace-switcher')?.getAttribute('aria-label')?.includes('READY') === true`), "production App Runtime readiness before Workspace list failure");
+  await waitFor(() => evaluate("window.litecoworkHarness.productionAppWorkspaceListCount() === 1"), "deferred initial production App Workspace list");
+  await clickButtonContaining(["settings"]);
+  await waitFor(() => evaluate(`document.querySelector('.page-content h1')?.textContent === 'Settings'`), "production App Settings page while the initial Workspace list is pending");
+  const createDisabledWhileListPending = await evaluate("document.querySelector('#workspace-name')?.form?.querySelector('button[type=submit]')?.disabled === true");
+  assert.equal(await evaluate("document.querySelector('#workspace-name')?.disabled === true"), true, "Workspace name remains locked while the saved Workspace list is unknown");
+  await clickButton("Create Workspace");
+  assert.equal(await evaluate("window.litecoworkHarness.productionAppWorkspaceCreateCount()"), 0, "Workspace creation is not sent while the initial list is pending");
+  await clickHarness("rejectInitialAppWorkspaceList");
+  await waitFor(() => evaluate(`[...document.querySelectorAll('[role="status"]')].some(node => /Workspace list is unavailable until the authenticated local Operator API is ready/i.test(node.textContent ?? ''))`), "initial Workspace list failure in production Settings");
+  const createDisabledAfterListFailure = await evaluate("document.querySelector('#workspace-name')?.form?.querySelector('button[type=submit]')?.disabled === true");
+  assert.equal(await evaluate("document.querySelector('#workspace-name')?.disabled === true"), true, "Workspace name remains locked after the saved Workspace list fails");
+  await clickButton("Create Workspace");
+  assert.equal(await evaluate("window.litecoworkHarness.productionAppWorkspaceCreateCount()"), 0, "Workspace creation is not sent after the initial list fails");
+  await clickButton("Refresh", ".workspace-list-card");
+  await waitFor(() => evaluate("window.litecoworkHarness.productionAppWorkspaceListCount() === 2"), "manual retry after initial Workspace list failure");
+  await typeInputValue("#workspace-name", "Wait for Workspace list");
+  await waitFor(() => evaluate("document.querySelector('#workspace-name')?.form?.querySelector('button[type=submit]')?.disabled === false"), "Workspace create enabled after empty list retry succeeds");
+  assert.deepEqual(
+    [createDisabledWhileListPending, createDisabledAfterListFailure],
+    [true, true],
+    "the Settings create action stays disabled while Workspace state is pending and after the list fails",
+  );
+  assert.equal(await evaluate("window.litecoworkHarness.productionAppWorkspaceCreateCount()"), 0, "a successful empty-list retry does not submit Workspace creation");
+  checks.push("E02-S01 Settings keeps Workspace creation disabled while the initial list is pending or failed, then enables it after an empty retry");
+
+  await clickHarness("mountProductionApp", "workspace-list-race");
+  await waitFor(() => evaluate(`document.querySelector('.workspace-switcher')?.getAttribute('aria-label')?.includes('READY') === true`), "production App Runtime readiness");
+  await waitFor(() => evaluate("window.litecoworkHarness.productionAppWorkspaceListCount() === 1"), "deferred initial production App Workspace list before creation race");
+  await clickButtonContaining(["settings"]);
+  await waitFor(() => evaluate(`document.querySelector('.page-content h1')?.textContent === 'Settings'`), "production App Settings page");
+  await clickHarness("resolveInitialAppWorkspaceList");
+  await typeInputValue("#workspace-name", "Created during list refresh");
+  await clickButton("Create Workspace");
+  await waitFor(() => evaluate("window.litecoworkHarness.productionAppWorkspaceCreateCount() === 1"), "deferred Workspace create receipt");
+  await clickHarness("deferNextAppWorkspaceListRefresh");
+  await clickButton("Refresh", ".workspace-list-card");
+  await waitFor(() => evaluate("window.litecoworkHarness.productionAppWorkspaceListCount() === 2"), "deferred stale Workspace list refresh");
+  await clickHarness("resolveAppWorkspaceCreateReceipt");
+  await waitFor(() => evaluate(`document.querySelector('.workspace-list')?.textContent.includes('Created during list refresh') === true`), "created Workspace in production Settings");
+  await clickHarness("resolveStaleAppWorkspaceList");
+  const createdWorkspaceSurvivedOldList = await evaluate(`document.querySelector('.workspace-list')?.textContent.includes('Created during list refresh') === true`);
+  assert.equal(createdWorkspaceSurvivedOldList, true, "a late stale Workspace list refresh cannot erase a Workspace whose create receipt arrived first");
+  checks.push("E02-S01 production App keeps a newly created Workspace when a stale manual list refresh arrives later");
+
+  await clickHarness("mountProductionApp", "runtime-refresh-failure");
+  await waitFor(() => evaluate(`Boolean(document.querySelector('form[aria-label="Create your first Workspace"]'))`), "production App first-run Workspace form");
+  await clickButtonContaining(["settings"]);
+  await waitFor(() => evaluate(`document.querySelector('.page-content h1')?.textContent === 'Settings'`), "production App Settings page for Runtime error");
+  await typeInputValue("#workspace-name", "Must wait for Runtime status");
+  await clickButton("Refresh status");
+  await waitFor(() => evaluate(`[...document.querySelectorAll('[role="alert"]')].some(node => /Desktop Runtime status is unavailable/i.test(node.textContent ?? ''))`), "rendered Runtime status refresh error");
+  const createStateAfterRuntimeFailure = await evaluate(`(() => {
+    const form = document.querySelector('#workspace-name')?.form;
+    const submit = form?.querySelector('button[type="submit"]');
+    return {
+      disabled: submit?.disabled ?? null,
+      workspaceCreated: document.querySelector('.workspace-list')?.textContent.includes('Must wait for Runtime status') === true,
+    };
+  })()`);
+  assert.equal(createStateAfterRuntimeFailure.disabled, true, "a failed Runtime readiness refresh disables Workspace creation even after an earlier READY result");
+  await clickButton("Create Workspace");
+  assert.equal(await evaluate("window.litecoworkHarness.productionAppWorkspaceCreateCount()"), 0, "the disabled Workspace action does not issue a create command after Runtime status fails");
+  assert.equal(createStateAfterRuntimeFailure.workspaceCreated, false, "the failed Runtime refresh leaves no falsely created Workspace in the rendered list");
+  checks.push("E02-S01 production App reports a failed Runtime refresh and disables Workspace creation after stale READY status");
+
+  return checks;
+}
+
 try {
   vite = spawn(process.execPath, [viteCli, "--host", "127.0.0.1", "--port", String(previewPort), "--strictPort"], {
     cwd: packageRoot,
@@ -577,6 +794,8 @@ try {
     ...await runResourceChecks(),
     ...await runConversationChecks(),
     ...await runLibraryNavigationChecks(),
+    ...await runWorkspaceFirstRunChecks(),
+    ...await runWorkspaceAppChecks(),
   ];
   throwIfInterrupted();
   console.log(JSON.stringify({ browser: browserVersion.Browser, checks }, null, 2));

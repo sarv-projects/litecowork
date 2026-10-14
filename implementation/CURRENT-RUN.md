@@ -7170,3 +7170,69 @@ coverage generation and read-only validation — 103 documents, 1,668 sections, 
 machine contracts. Generated Markdown inventory rows use the existing CRLF format; their
 trailing CR is ignored with `git -c core.whitespace=cr-at-eol diff --check`. These checks
 show documentation consistency, not product feature completion.
+
+## E02-S01 Home first-run Workspace setup CODE/UI slice — 2026-10-14
+
+Home now blocks its Task composer and recent-work panel until a Workspace is selected. It
+checks the authenticated Workspace list before offering creation, shows list loading/error
+and Runtime checking/offline/reconnecting/degraded/unavailable states, and uses the same
+authenticated `create_workspace` command as Settings. Ambiguous create failures retain the
+original name and Idempotency-Key for exact retry; the input locks until reconciliation.
+A synchronous guard blocks double submission before React rerenders. Selection epochs keep
+a late create response from replacing a Workspace selected after submission. If a committed
+Workspace exists after an app restart, its authenticated list projection is read before
+creation becomes available; a failed Workspace read keeps creation blocked. No Task,
+Coworker, or agent is claimed as running by this setup path.
+
+Race review exposed two additional production issues and they are fixed: successful create
+receipts now invalidate older Workspace-list requests and merge the committed Workspace
+into the visible list; Runtime refresh marks the prior readiness snapshot unknown while
+checking and after an IPC failure, so no stale READY snapshot enables Workspace creation.
+The App also checks current authenticated readiness at the create handler boundary. A copy
+review caught and corrected the existing-Workspace intro telling the owner to create another
+Workspace.
+
+On Linux x86_64 / WSL2 Ubuntu 24.04.4 LTS, Node.js `24.21.0`, Corepack pnpm `12.10.1`,
+Vite `6.4.4`, and Chrome `149.0.7827.200`, these commands passed:
+
+- Focused `tests/home-onboarding.test.ts`: **5/5** (trimmed request, exact retry identity,
+  synchronous duplicate guard, selection fencing, initial restoration, and stale-list/create
+  receipt fencing).
+- `corepack pnpm@12.10.1 test`: **204/204** UI helper tests.
+- `corepack pnpm@12.10.1 run build`: API freshness, TypeScript no-emit, and Vite build
+  passed. Existing bundle advisory: 810.26 kB minified JS / 224.16 kB gzip.
+- `corepack pnpm@12.10.1 run test:browser`: **26/26** rendered Chrome checks, including
+  seven component-level Workspace setup checks and three mounted production-App cases. They
+  cover list loading/failure/retry, Settings create blocked until a successful Workspace
+  list and enabled afterward, Runtime offline/start/refresh, Workspace restoration,
+  accessible/busy/blank states, ambiguous retry, single submit, a stale list refresh after
+  successful creation, and READY-to-failed Runtime refresh. App cases use mocked Tauri IPC.
+- `git -c core.whitespace=cr-at-eol diff --check` passed after documentation regeneration.
+- `.venv/bin/python scripts/audit_v1_contracts.py --strict --write-report` — 0 errors,
+  206 OpenAPI operations, 158 supplemental UI cases, and 67 stories.
+- `.venv/bin/python scripts/audit_v1_markdown.py` — 173 files, 59,423 lines, 0 broken links.
+- `.venv/bin/python scripts/validate_implementation_coverage.py --write` — 103 documents,
+  1,668 sections, and 6,444 traceability rows.
+- `.venv/bin/python scripts/validate_implementation_plan.py` and
+  `.venv/bin/python scripts/validate_architecture.py` passed; the latter checked 142 typed
+  events and the current schemas, OpenAPI, SQLite, error and naming contracts.
+
+The seven component cases mount `WorkspaceFirstRun` with local callbacks. The production App
+cases drive its `mockIPC` Tauri command boundary: Settings create denial while the list is
+loading/failed, a stale list refresh racing a successful create receipt, and Runtime
+readiness failure after READY. They do not launch the production daemon or exercise real
+SQLite. Packaged desktop behavior, provider reconnect, other OSes, physical zoom, and owner
+USER acceptance remain pending; E02-S01 stays `IN_PROGRESS`.
+
+Resource/worktree audit: one `main` worktree and 26 branches at start/end; no subagent
+worktree or branch was created. Start measurements: root Cargo `target` 10,893,382,888
+bytes, UI `node_modules` 103,187,790 bytes, and `df -h` showed 1.0 TB total / 847 GB
+available. End after UI/Rust verification: root shared Cargo `target` 10,736,386,712 bytes
+(156,996,176 bytes below the recorded start; concurrent shared-cache changes prevent
+attribution), UI `node_modules` 103,187,790 bytes (unchanged); Tauri shared target
+4,918,395,031 bytes; UI `dist` 945,338 bytes; owner
+`.playwright-mcp` 133,783 bytes. The Vite build regenerated `dist`; it will be pruned after
+the pushed checkpoint. No `.vite` cache or temporary `litecowork-rendered-ui-chrome-*`
+profile remains. Browser/Vite/test processes ended. Three Chrome DevTools MCP processes
+(PIDs 29454, 29455, 29467) were present at both checks and were not started by this slice.
+The Tauri target and owner profile are retained.

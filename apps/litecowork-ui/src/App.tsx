@@ -7,6 +7,7 @@ import type { PinnedResourceRef } from "./artifacts/artifact-api";
 import { CoworkerSettings, type CoworkerLeadBindingOption } from "./coworkers/CoworkerSettings";
 import { HomeCoworkerOnboarding } from "./coworkers/HomeCoworkerOnboarding";
 import { desktopCoworkerApi } from "./coworkers/desktop-coworker-api";
+import { WorkspaceFirstRun, type WorkspaceListState } from "./workspaces/WorkspaceFirstRun";
 import { desktopDelegationProfileCatalogApi } from "./coworkers/desktop-delegation-profile-api";
 import type { DelegationProfileCatalogItem } from "./coworkers/delegation-profile-api";
 import type { Coworker, WorkspacePrimaryReceipt } from "./coworkers/coworker-api";
@@ -69,6 +70,14 @@ import {
   isWorkspaceRootRevokeResponse,
   workspaceRootMutationRequest,
 } from "./workspaces/workspace-root-mutations.ts";
+import {
+  canAutoSelectCreatedWorkspace,
+  canRestoreInitialWorkspaceSelection,
+  nextWorkspaceCreateRequest,
+  WorkspaceListRequestFence,
+  WorkspaceCreateGuard,
+  type PendingWorkspaceCreate,
+} from "./workspaces/workspace-onboarding.ts";
 
 type Page = "Home" | "Conversations" | "Work" | "Library" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Routines" | "Automations" | "Settings";
 type RuntimeStatus = {
@@ -469,6 +478,8 @@ function App() {
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceView[]>([]);
+  const [workspaceListState, setWorkspaceListState] = useState<WorkspaceListState>("LOADING");
+  const workspaceListGeneration = useRef(new WorkspaceListRequestFence());
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [agentInstallations, setAgentInstallations] = useState<AgentInstallationView[]>([]);
   const [agentInstallationError, setAgentInstallationError] = useState<string | null>(null);
@@ -504,7 +515,9 @@ function App() {
   const [latestInstructionsAfterConflict, setLatestInstructionsAfterConflict] = useState<string | null>(null);
   const [pendingInstructions, setPendingInstructions] = useState<PendingWorkspaceInstructionSave | null>(null);
   const instructionGeneration = useRef(0);
-  const [pendingWorkspaceRequest, setPendingWorkspaceRequest] = useState<{ name: string; requestId: string } | null>(null);
+  const [pendingWorkspaceRequest, setPendingWorkspaceRequest] = useState<PendingWorkspaceCreate | null>(null);
+  const pendingWorkspaceRequestRef = useRef<PendingWorkspaceCreate | null>(null);
+  const workspaceCreateGuard = useRef(new WorkspaceCreateGuard());
   const [resources, setResources] = useState<ResourceView[]>([]);
   const [resourceCatalogRefreshNonce, setResourceCatalogRefreshNonce] = useState(0);
   const [resourceNextCursor, setResourceNextCursor] = useState<string | null>(null);
@@ -537,12 +550,23 @@ function App() {
   const rootStatusRequestKeys = useRef(new Map<string, string>());
   const selectedWorkspaceIdRef = useRef(selectedWorkspaceId);
   selectedWorkspaceIdRef.current = selectedWorkspaceId;
+  const workspaceSelectionEpoch = useRef(0);
+  const selectWorkspace = useCallback((workspaceId: string) => {
+    if (selectedWorkspaceIdRef.current !== workspaceId) workspaceSelectionEpoch.current += 1;
+    selectedWorkspaceIdRef.current = workspaceId;
+    setSelectedWorkspaceId(workspaceId);
+  }, []);
   useEffect(() => {
     rootStatusRequestKeys.current.clear();
   }, [selectedWorkspaceId]);
 
   const refreshRuntime = async () => {
     const generation = ++runtimeRefreshGeneration.current;
+    setRuntime(null);
+    setRuntimeError(null);
+    setRuntimeLifecycle(null);
+    setRuntimeLifecycleLoading(false);
+    setRuntimeLifecycleError(null);
     try {
       const status = await invoke<RuntimeStatus>("get_runtime_status");
       if (generation !== runtimeRefreshGeneration.current) return;
@@ -576,6 +600,7 @@ function App() {
       }
     } catch {
       if (generation !== runtimeRefreshGeneration.current) return;
+      setRuntime(null);
       setRuntimeLifecycle(null);
       setRuntimeLifecycleLoading(false);
       setRuntimeLifecycleError(null);
@@ -584,13 +609,21 @@ function App() {
   };
 
   const refreshWorkspaces = async () => {
+    const generation = workspaceListGeneration.current.begin();
+    setWorkspaceListState("LOADING");
+    setWorkspaceError(null);
     try {
       const items = await invoke<WorkspaceView[]>("list_workspaces");
+      if (!workspaceListGeneration.current.isCurrent(generation)) return false;
       setWorkspaces(items);
       setWorkspaceError(null);
+      setWorkspaceListState("READY");
       return true;
     } catch {
-      setWorkspaceError("Workspace list is unavailable until the local Operator API is ready.");
+      if (workspaceListGeneration.current.isCurrent(generation)) {
+        setWorkspaceError("Workspace list is unavailable until the authenticated local Operator API is ready.");
+        setWorkspaceListState("ERROR");
+      }
       return false;
     }
   };
@@ -834,10 +867,12 @@ function App() {
   }, [page, runtime?.operatorReady, selectedWorkspaceId, delegationProfileApi]);
 
   useEffect(() => {
-    if (workspaces.length > 0 && !workspaces.some((workspace) => workspace.workspaceId === selectedWorkspaceId)) {
-      setSelectedWorkspaceId(workspaces[0].workspaceId);
+    if (workspaceListState === "READY" && workspaces.length > 0
+      && !workspaces.some((workspace) => workspace.workspaceId === selectedWorkspaceId)
+      && canRestoreInitialWorkspaceSelection(workspaceSelectionEpoch.current)) {
+      selectWorkspace(workspaces[0].workspaceId);
     }
-  }, [workspaces, selectedWorkspaceId]);
+  }, [workspaces, selectedWorkspaceId, workspaceListState, selectWorkspace]);
 
   useEffect(() => {
     previewGeneration.current += 1;
@@ -958,28 +993,42 @@ function App() {
   };
 
   const createWorkspace = async () => {
-    const normalizedName = workspaceName.trim();
-    const requestId = pendingWorkspaceRequest?.name === normalizedName
-      ? pendingWorkspaceRequest.requestId
-      : crypto.randomUUID();
-    setPendingWorkspaceRequest({ name: normalizedName, requestId });
+    if (runtime?.operatorReady !== true) {
+      setWorkspaceError("Confirm authenticated local Runtime readiness before creating a Workspace.");
+      return;
+    }
+    if (!workspaceCreateGuard.current.tryAcquire()) return;
+    const pending = nextWorkspaceCreateRequest(workspaceName, pendingWorkspaceRequestRef.current, () => crypto.randomUUID());
+    if (!pending) {
+      setWorkspaceError(pendingWorkspaceRequestRef.current
+        ? "Retry the existing Workspace request with its original name before starting another creation."
+        : "Enter a Workspace name before creating it.");
+      workspaceCreateGuard.current.release();
+      return;
+    }
+    pendingWorkspaceRequestRef.current = pending;
+    setPendingWorkspaceRequest(pending);
+    const selectionEpochAtRequest = workspaceSelectionEpoch.current;
     setWorkspaceCreateBusy(true);
     setWorkspaceError(null);
     try {
       const created = await invoke<WorkspaceView>("create_workspace", {
-        name: normalizedName,
-        requestId,
+        name: pending.name,
+        requestId: pending.requestId,
       });
-      setWorkspaces((current) => current.some((item) => item.workspaceId === created.workspaceId)
-        ? current
-        : [...current, created]);
-      setSelectedWorkspaceId(created.workspaceId);
+      workspaceListGeneration.current.commitCreated(created, (update) => setWorkspaces(update));
+      if (canAutoSelectCreatedWorkspace(selectionEpochAtRequest, workspaceSelectionEpoch.current)) {
+        selectWorkspace(created.workspaceId);
+      }
       setWorkspaceName("");
+      pendingWorkspaceRequestRef.current = null;
       setPendingWorkspaceRequest(null);
+      setWorkspaceListState("READY");
     } catch (error) {
       setWorkspaceError(typeof error === "string" ? error : "Workspace could not be created.");
     } finally {
       setWorkspaceCreateBusy(false);
+      workspaceCreateGuard.current.release();
     }
   };
 
@@ -1676,7 +1725,7 @@ function App() {
       .map(({ workspaceId, resourceId, revisionId }) => ({ workspaceId, resourceId, revisionId })));
   const openPendingTaskWorkspace = () => {
     if (!pendingTaskSave) return;
-    setSelectedWorkspaceId(pendingTaskSave.workspaceId);
+    selectWorkspace(pendingTaskSave.workspaceId);
     setOpenedTask(null);
     requestPageNavigation("Work");
   };
@@ -1715,7 +1764,7 @@ function App() {
           <span className="workspace-label">
             <strong>Desktop</strong>
             {workspaces.length > 1 ? (
-              <select aria-label="Selected Workspace" value={selectedWorkspaceId} disabled={taskSaving} onChange={(event) => setSelectedWorkspaceId(event.target.value)}>
+              <select aria-label="Selected Workspace" value={selectedWorkspaceId} disabled={taskSaving} onChange={(event) => selectWorkspace(event.target.value)}>
                 {workspaces.map((workspace) => <option key={workspace.workspaceId} value={workspace.workspaceId}>{workspace.name}</option>)}
               </select>
             ) : <small>{workspaces[0]?.name ?? `No Workspace · ${runtime?.state ?? "Checking"}`}</small>}
@@ -1780,13 +1829,13 @@ function App() {
         </header>
 
         {page === "Home" ? (
-          <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => requestPageNavigation("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => requestPageNavigation("Settings")} onOpenCoworkers={() => requestPageNavigation("Coworkers")} onWorkspaceUpdated={(updated) => setWorkspaces(current => current.map(item => item.workspaceId === updated.workspace_id && item.version <= updated.version ? { ...item, primaryCoworkerId: updated.primary_coworker_id, version: updated.version } : item))} onOpenWork={() => { setOpenedTask(null); requestPageNavigation("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
+          <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} workspaceListState={workspaceListState} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} onWorkspaceNameChange={setWorkspaceName} workspaceCreateBusy={workspaceCreateBusy} pendingWorkspaceRequest={pendingWorkspaceRequest} createWorkspace={createWorkspace} workspacesCount={workspaces.length} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => requestPageNavigation("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => requestPageNavigation("Settings")} onOpenCoworkers={() => requestPageNavigation("Coworkers")} onWorkspaceUpdated={(updated) => setWorkspaces(current => current.map(item => item.workspaceId === updated.workspace_id && item.version <= updated.version ? { ...item, primaryCoworkerId: updated.primary_coworker_id, version: updated.version } : item))} onOpenWork={() => { setOpenedTask(null); requestPageNavigation("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
         ) : page === "Conversations" ? (
           <ConversationsPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} operatorReady={runtime?.operatorReady === true && Boolean(selectedWorkspaceId)} />
         ) : page === "Work" ? (
           <WorkPage key={selectedWorkspaceId} selectedWorkspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={runtime?.operatorReady === true} initialTaskId={openedTask?.workspaceId === selectedWorkspaceId ? openedTask.taskId : null} />
         ) : page === "Library" ? (
-          <LibraryPage selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={setSelectedWorkspaceId} selectedWorkspaceIdRef={selectedWorkspaceIdRef} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => {
+          <LibraryPage selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} selectedWorkspaceIdRef={selectedWorkspaceIdRef} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => {
             setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item));
             onLibraryDraftCommitted();
           }} onDraftSaveFailure={onLibraryDraftSaveFailed} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => requestPageNavigation("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
@@ -1850,7 +1899,7 @@ function App() {
             requestPageNavigation("Work");
           }} />
         ) : page === "Settings" ? (
-          <SettingsPage runtime={runtime} runtimeLifecycle={runtimeLifecycle?.identity === `${runtime?.runtimeId}:${runtime?.localIncarnationId}` ? runtimeLifecycle.view : null} runtimeLifecycleLoading={runtimeLifecycleLoading} runtimeLifecycleError={runtimeLifecycleError} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} agents={agentInstallations} agentError={agentInstallationError} refreshAgents={refreshAgentInstallations} agentProfiles={agentProfiles} agentProfileError={agentProfileError} runtimeInventoryStreamStatus={runtimeInventoryStreamStatus} agentBindings={agentBindings} agentBindingError={agentBindingError} agentActionMessage={agentActionMessage} agentActionError={agentActionError} agentActionBusy={agentActionBusy} onProbeCodex={probeCodexProfile} onProbeOpenCode={probeOpenCodeProfile} onRefreshAgentProfiles={() => refreshAgentProfiles(selectedWorkspaceId)} onRefreshAgentBindings={() => refreshAgentBindings(selectedWorkspaceId)} onCreateAgentBinding={createAgentBinding} onEnableAgentBinding={enableAgentBinding} runtimeBindings={runtimeBindings} runtimeBindingError={runtimeBindingError} runtimeBindingsLoading={runtimeBindingsLoading} runtimeEnrollmentBusy={runtimeEnrollmentBusy} runtimeEnrollmentMessage={runtimeEnrollmentMessage} runtimeEnrollmentError={runtimeEnrollmentError} onEnrollLocalRuntime={enrollLocalRuntime} onRefreshRuntimeBindings={() => refreshRuntimeBindings(selectedWorkspaceId)} workspaces={workspaces} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} setWorkspaceName={setWorkspaceName} createWorkspace={createWorkspace} workspaceCreateBusy={workspaceCreateBusy} selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={setSelectedWorkspaceId} onUpdatePolicy={updateWorkspacePolicy} policyBusy={workspacePolicyBusy} onArchiveWorkspace={archiveWorkspace} archiveBusy={workspaceArchiveBusy} onSetDefaultAgentBinding={setWorkspaceDefaultAgent} defaultAgentBusy={workspaceDefaultAgentBusy} instructions={instructionText} onInstructionsChange={changeWorkspaceInstructions} instructionHistory={workspaceInstructions} instructionMessage={instructionMessage} instructionBusy={instructionBusy} onSaveInstructions={saveWorkspaceInstructions} latestInstructionsAfterConflict={latestInstructionsAfterConflict} onUseLatestInstructions={useLatestWorkspaceInstructions} />
+          <SettingsPage runtime={runtime} runtimeLifecycle={runtimeLifecycle?.identity === `${runtime?.runtimeId}:${runtime?.localIncarnationId}` ? runtimeLifecycle.view : null} runtimeLifecycleLoading={runtimeLifecycleLoading} runtimeLifecycleError={runtimeLifecycleError} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} agents={agentInstallations} agentError={agentInstallationError} refreshAgents={refreshAgentInstallations} agentProfiles={agentProfiles} agentProfileError={agentProfileError} runtimeInventoryStreamStatus={runtimeInventoryStreamStatus} agentBindings={agentBindings} agentBindingError={agentBindingError} agentActionMessage={agentActionMessage} agentActionError={agentActionError} agentActionBusy={agentActionBusy} onProbeCodex={probeCodexProfile} onProbeOpenCode={probeOpenCodeProfile} onRefreshAgentProfiles={() => refreshAgentProfiles(selectedWorkspaceId)} onRefreshAgentBindings={() => refreshAgentBindings(selectedWorkspaceId)} onCreateAgentBinding={createAgentBinding} onEnableAgentBinding={enableAgentBinding} runtimeBindings={runtimeBindings} runtimeBindingError={runtimeBindingError} runtimeBindingsLoading={runtimeBindingsLoading} runtimeEnrollmentBusy={runtimeEnrollmentBusy} runtimeEnrollmentMessage={runtimeEnrollmentMessage} runtimeEnrollmentError={runtimeEnrollmentError} onEnrollLocalRuntime={enrollLocalRuntime} onRefreshRuntimeBindings={() => refreshRuntimeBindings(selectedWorkspaceId)} workspaces={workspaces} workspaceListState={workspaceListState} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} setWorkspaceName={setWorkspaceName} createWorkspace={createWorkspace} workspaceCreateBusy={workspaceCreateBusy} workspaceCreatePending={pendingWorkspaceRequest !== null} selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onUpdatePolicy={updateWorkspacePolicy} policyBusy={workspacePolicyBusy} onArchiveWorkspace={archiveWorkspace} archiveBusy={workspaceArchiveBusy} onSetDefaultAgentBinding={setWorkspaceDefaultAgent} defaultAgentBusy={workspaceDefaultAgentBusy} instructions={instructionText} onInstructionsChange={changeWorkspaceInstructions} instructionHistory={workspaceInstructions} instructionMessage={instructionMessage} instructionBusy={instructionBusy} onSaveInstructions={saveWorkspaceInstructions} latestInstructionsAfterConflict={latestInstructionsAfterConflict} onUseLatestInstructions={useLatestWorkspaceInstructions} />
         ) : (
           <PlaceholderPage page={page} onSettings={() => requestPageNavigation("Settings")} />
         )}
@@ -1865,7 +1914,7 @@ function App() {
   );
 }
 
-function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, startRuntime, workspace, coworkerApi, coworkerSelection, onCoworkerSelectionChange, taskInputs, onRemoveTaskInput, onOpenLibrary, operatorReady, taskSaving, taskSaveError, hasPendingTaskSave, pendingTaskRetryMatches, onOpenPendingTask, onClearPendingTaskAfterReview, onSaveTask, onSettings, onOpenCoworkers, onWorkspaceUpdated, onOpenWork, onOpenTask }: { draft: string; onDraftChange: (value: string) => void; runtime: RuntimeStatus | null; runtimeError: string | null; runtimeBusy: boolean; startRuntime: () => Promise<void>; workspace: WorkspaceView | null; coworkerApi: ReturnType<typeof desktopCoworkerApi>; coworkerSelection: HomeCoworkerSelection | null; onCoworkerSelectionChange: (selection: HomeCoworkerSelection) => void; taskInputs: TaskInputSelection[]; onRemoveTaskInput: (resourceId: string) => void; onOpenLibrary: () => void; operatorReady: boolean; taskSaving: boolean; taskSaveError: string | null; hasPendingTaskSave: boolean; pendingTaskRetryMatches: boolean; onOpenPendingTask: () => void; onClearPendingTaskAfterReview: () => void; onSaveTask: (selection: HomeCoworkerSelection) => Promise<void>; onSettings: () => void; onOpenCoworkers: () => void; onWorkspaceUpdated: (updated: WorkspacePrimaryReceipt) => void; onOpenWork: () => void; onOpenTask: (taskId: string) => void }) {
+function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, startRuntime, refreshRuntime, workspace, workspaceListState, workspaceError, refreshWorkspaces, workspaceName, onWorkspaceNameChange, workspaceCreateBusy, pendingWorkspaceRequest, createWorkspace, workspacesCount, coworkerApi, coworkerSelection, onCoworkerSelectionChange, taskInputs, onRemoveTaskInput, onOpenLibrary, operatorReady, taskSaving, taskSaveError, hasPendingTaskSave, pendingTaskRetryMatches, onOpenPendingTask, onClearPendingTaskAfterReview, onSaveTask, onSettings, onOpenCoworkers, onWorkspaceUpdated, onOpenWork, onOpenTask }: { draft: string; onDraftChange: (value: string) => void; runtime: RuntimeStatus | null; runtimeError: string | null; runtimeBusy: boolean; startRuntime: () => Promise<void>; refreshRuntime: () => Promise<void>; workspace: WorkspaceView | null; workspaceListState: WorkspaceListState; workspaceError: string | null; refreshWorkspaces: () => Promise<boolean>; workspaceName: string; onWorkspaceNameChange: (name: string) => void; workspaceCreateBusy: boolean; pendingWorkspaceRequest: PendingWorkspaceCreate | null; createWorkspace: () => Promise<void>; workspacesCount: number; coworkerApi: ReturnType<typeof desktopCoworkerApi>; coworkerSelection: HomeCoworkerSelection | null; onCoworkerSelectionChange: (selection: HomeCoworkerSelection) => void; taskInputs: TaskInputSelection[]; onRemoveTaskInput: (resourceId: string) => void; onOpenLibrary: () => void; operatorReady: boolean; taskSaving: boolean; taskSaveError: string | null; hasPendingTaskSave: boolean; pendingTaskRetryMatches: boolean; onOpenPendingTask: () => void; onClearPendingTaskAfterReview: () => void; onSaveTask: (selection: HomeCoworkerSelection) => Promise<void>; onSettings: () => void; onOpenCoworkers: () => void; onWorkspaceUpdated: (updated: WorkspacePrimaryReceipt) => void; onOpenWork: () => void; onOpenTask: (taskId: string) => void }) {
   const primaryCoworkerId = workspace?.primaryCoworkerId ?? null;
   const workspaceId = workspace?.workspaceId ?? "";
   const primaryCoworkerKey = workspace && primaryCoworkerId ? `${workspace.workspaceId}:${primaryCoworkerId}` : null;
@@ -2056,6 +2105,24 @@ function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, st
         <p>Save work in this Workspace. Saved Tasks are not sent to an agent yet.</p>
       </div>
 
+      {!workspace && <WorkspaceFirstRun
+        runtime={runtime}
+        runtimeError={runtimeError}
+        runtimeBusy={runtimeBusy}
+        onStartRuntime={startRuntime}
+        onRefreshRuntime={refreshRuntime}
+        workspaceListState={workspaceListState}
+        workspaceError={workspaceError}
+        onRefreshWorkspaces={refreshWorkspaces}
+        workspaceName={workspaceName}
+        onWorkspaceNameChange={onWorkspaceNameChange}
+        workspaceCreateBusy={workspaceCreateBusy}
+        workspaceCreatePending={pendingWorkspaceRequest}
+        onCreateWorkspace={createWorkspace}
+        onOpenSettings={onSettings}
+        workspacesCount={workspacesCount}
+      />}
+
       {workspace?.status === "ACTIVE" && !primaryCoworkerId && operatorReady && coworkerRoster?.key === workspaceId && coworkerRoster.status === "READY" && <HomeCoworkerOnboarding
         key={workspaceId}
         api={coworkerApi}
@@ -2069,7 +2136,7 @@ function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, st
         onManage={onOpenCoworkers}
       />}
 
-      <form className="composer-card" aria-label="Save a Task" onSubmit={(event) => { event.preventDefault(); if (currentSelection && selectionReady) void onSaveTask(currentSelection); }}>
+      {workspace && <form className="composer-card" aria-label="Save a Task" onSubmit={(event) => { event.preventDefault(); if (currentSelection && selectionReady) void onSaveTask(currentSelection); }}>
         <div className="composer-recipient">
           <span>For</span>
           {showCoworkerSelector ? (
@@ -2131,9 +2198,9 @@ function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, st
         {!workspace?.defaultAgentBindingId && !recipientSelection?.coworkerId && <p className="composer-hint">Choose and enable a lead agent in Settings, or set one on the selected Coworker, before saving a Task. <button type="button" className="text-button" onClick={onSettings}>Set up a lead agent</button></p>}
         {!operatorReady && <p className="composer-hint">Start the local Runtime before saving work.</p>}
         {taskSaveError && <p className="inline-error" role="alert">{taskSaveError}</p>}
-      </form>
+      </form>}
 
-      <div className="setup-callout" role="status">
+      {workspace && <div className="setup-callout" role="status">
         <span className="callout-icon" aria-hidden="true">i</span>
         <div>
           <strong>{runtime?.processRunning && !runtime.operatorReady ? "Local Runtime process is starting" : runtime?.processRunning && runtime.state === "DEGRADED" ? "Local Runtime is available; work execution is not" : canOfferLocalRuntimeStart(runtime) ? "Local Runtime is not running" : "Local Runtime setup"}</strong>
@@ -2144,13 +2211,13 @@ function HomePage({ draft, onDraftChange, runtime, runtimeError, runtimeBusy, st
             </button>
           ) : <button className="text-button" type="button" onClick={onSettings}>View Runtime details <span aria-hidden="true">→</span></button>}
         </div>
-      </div>
+      </div>}
 
-      <div className="section-heading">
+      {workspace && <div className="section-heading">
         <div><h2>Recent work</h2><p>Persisted Tasks in the selected Workspace.</p></div>
         <button className="quiet-button" type="button" onClick={onOpenWork}>View all</button>
-      </div>
-      <TaskListPanel workspaceId={workspaceId} operatorReady={operatorReady} status={null} limit={5} compact onOpenTask={onOpenTask} />
+      </div>}
+      {workspace && <TaskListPanel workspaceId={workspaceId} operatorReady={operatorReady} status={null} limit={5} compact onOpenTask={onOpenTask} />}
     </div>
   );
 }
@@ -2602,12 +2669,14 @@ type SettingsPageProps = {
   onCreateAgentBinding: (profile: AgentProfileView, leadEligible: boolean) => Promise<void>;
   onEnableAgentBinding: (binding: AgentBindingView) => Promise<void>;
   workspaces: WorkspaceView[];
+  workspaceListState: WorkspaceListState;
   workspaceError: string | null;
   refreshWorkspaces: () => Promise<boolean>;
   workspaceName: string;
   setWorkspaceName: (name: string) => void;
   createWorkspace: () => Promise<void>;
   workspaceCreateBusy: boolean;
+  workspaceCreatePending: boolean;
   selectedWorkspaceId: string;
   onSelectWorkspace: (id: string) => void;
   onUpdatePolicy: (policy: string) => Promise<void>;
@@ -2635,7 +2704,7 @@ function profileHasFreshAdmissionOffer(profile: AgentProfileView): boolean {
     && (latest.readiness === "AVAILABLE" || latest.readiness === "STARTABLE" || latest.readiness === "READY");
 }
 
-function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runtimeLifecycleError, runtimeError, runtimeBusy, startRuntime, refreshRuntime, agents, agentError, refreshAgents, agentProfiles, agentProfileError, runtimeInventoryStreamStatus, agentBindings, agentBindingError, agentActionMessage, agentActionError, agentActionBusy, onProbeCodex, onProbeOpenCode, onRefreshAgentProfiles, onRefreshAgentBindings, onCreateAgentBinding, onEnableAgentBinding, runtimeBindings, runtimeBindingError, runtimeBindingsLoading, runtimeEnrollmentBusy, runtimeEnrollmentMessage, runtimeEnrollmentError, onEnrollLocalRuntime, onRefreshRuntimeBindings, workspaces, workspaceError, refreshWorkspaces, workspaceName, setWorkspaceName, createWorkspace, workspaceCreateBusy, selectedWorkspaceId, onSelectWorkspace, onUpdatePolicy, policyBusy, onArchiveWorkspace, archiveBusy, onSetDefaultAgentBinding, defaultAgentBusy, instructions, onInstructionsChange, instructionHistory, instructionMessage, instructionBusy, onSaveInstructions, latestInstructionsAfterConflict, onUseLatestInstructions }: SettingsPageProps) {
+function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runtimeLifecycleError, runtimeError, runtimeBusy, startRuntime, refreshRuntime, agents, agentError, refreshAgents, agentProfiles, agentProfileError, runtimeInventoryStreamStatus, agentBindings, agentBindingError, agentActionMessage, agentActionError, agentActionBusy, onProbeCodex, onProbeOpenCode, onRefreshAgentProfiles, onRefreshAgentBindings, onCreateAgentBinding, onEnableAgentBinding, runtimeBindings, runtimeBindingError, runtimeBindingsLoading, runtimeEnrollmentBusy, runtimeEnrollmentMessage, runtimeEnrollmentError, onEnrollLocalRuntime, onRefreshRuntimeBindings, workspaces, workspaceListState, workspaceError, refreshWorkspaces, workspaceName, setWorkspaceName, createWorkspace, workspaceCreateBusy, workspaceCreatePending, selectedWorkspaceId, onSelectWorkspace, onUpdatePolicy, policyBusy, onArchiveWorkspace, archiveBusy, onSetDefaultAgentBinding, defaultAgentBusy, instructions, onInstructionsChange, instructionHistory, instructionMessage, instructionBusy, onSaveInstructions, latestInstructionsAfterConflict, onUseLatestInstructions }: SettingsPageProps) {
   const [archiveConfirmationFor, setArchiveConfirmationFor] = useState<string | null>(null);
   useEffect(() => setArchiveConfirmationFor(null), [selectedWorkspaceId]);
   const selectedWorkspace = workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId);
@@ -2670,11 +2739,13 @@ function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runt
         </div>
         <form className="workspace-create-form" onSubmit={(event) => { event.preventDefault(); void createWorkspace(); }}>
           <label className="sr-only" htmlFor="workspace-name">Workspace name</label>
-          <input id="workspace-name" type="text" value={workspaceName} maxLength={160} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="Name a Workspace" />
-          <button className="primary-button" type="submit" disabled={workspaceCreateBusy || !workspaceName.trim() || runtime?.operatorReady !== true}>
-            {workspaceCreateBusy ? "Creating…" : "Create Workspace"}
+          <input id="workspace-name" type="text" value={workspaceName} maxLength={160} disabled={workspaceCreateBusy || workspaceCreatePending || workspaceListState !== "READY"} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="Name a Workspace" />
+          <button className="primary-button" type="submit" disabled={workspaceCreateBusy || workspaceCreatePending || workspaceListState !== "READY" || !workspaceName.trim() || runtime?.operatorReady !== true}>
+            {workspaceCreateBusy ? "Creating…" : workspaceCreatePending ? "Retry Workspace creation" : "Create Workspace"}
           </button>
         </form>
+        {workspaceListState === "LOADING" && <p className="composer-hint" role="status">Checking local Workspaces before enabling creation…</p>}
+        {workspaceCreatePending && <p className="composer-hint" role="status">Retry the original Workspace name to confirm the same idempotent request.</p>}
         {workspaceError && <p className="inline-error" role="status">{workspaceError}</p>}
         {workspaces.length === 0 ? <p className="empty-inline">Create a local Workspace to organize resources and future work.</p> : (
           <ul className="workspace-list">{workspaces.map((workspace) => <li key={workspace.workspaceId} className={selectedWorkspaceId === workspace.workspaceId ? "selected" : ""}><button type="button" onClick={() => onSelectWorkspace(workspace.workspaceId)} aria-pressed={selectedWorkspaceId === workspace.workspaceId}><strong>{workspace.name}</strong><span>{workspace.status} · {workspace.replicationPolicy === "LOCAL_ONLY" ? "this computer only" : "saved sync policy · inactive"}</span></button>{selectedWorkspaceId === workspace.workspaceId && <small>Selected</small>}</li>)}</ul>
