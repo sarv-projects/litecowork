@@ -8,6 +8,7 @@ mod dependencies;
 mod effect_evidence;
 mod environments;
 mod invocations;
+mod needs_you;
 mod rich_presentations;
 pub use rich_presentations::SqliteRichPresentationStore;
 mod execution;
@@ -749,6 +750,10 @@ enum Command {
         after_task_id: Option<String>,
         limit: usize,
         reply: mpsc::Sender<Result<Vec<TaskSummaryRecord>, StoreError>>,
+    },
+    ListNeedsYouPage {
+        request: storage_core::NeedsYouPageRequest,
+        reply: mpsc::Sender<Result<storage_core::NeedsYouPage, StoreError>>,
     },
     CommitWorkspace {
         commit: Box<WorkspaceCommit>,
@@ -15344,6 +15349,10 @@ fn writer_loop(
                             after_task_id.as_deref(),
                             limit,
                         ));
+                    }
+                    Command::ListNeedsYouPage { request, reply } => {
+                        let _ =
+                            reply.send(needs_you::list_needs_you_page(&mut connection, request));
                     }
                     Command::CommitWorkspace { commit, reply } => {
                         let _ = reply.send(commit_workspace_transaction_with_dedup(

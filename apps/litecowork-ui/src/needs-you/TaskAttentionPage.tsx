@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { taskAttentionLoadReducer } from "./task-attention-state";
+import {
+  isValidNeedsYouPage,
+  mergeNeedsYouPage,
+  taskAttentionLoadReducer,
+  type NeedsYouItemView,
+  type NeedsYouPage,
+  type NeedsYouStatus,
+} from "./task-attention-state";
 import "./task-attention-page.css";
 
 type TaskStatus = "WAITING_USER" | "NEEDS_USER" | "BLOCKED";
@@ -97,23 +104,72 @@ export function TaskAttentionLoadMoreButton({
   </>;
 }
 
-const ATTENTION_STATUSES: readonly TaskStatus[] = ["WAITING_USER", "NEEDS_USER", "BLOCKED"];
 const PAGE_SIZE = 100;
 
-function statusLabel(status: TaskStatus): string {
-  switch (status) {
-    case "WAITING_USER": return "Waiting for your input";
-    case "NEEDS_USER": return "Needs your decision";
-    case "BLOCKED": return "Blocked";
+function kindLabel(kind: NeedsYouItemView["kind"]): string {
+  switch (kind) {
+    case "APPROVAL": return "Approval";
+    case "USER_REQUEST": return "User request";
+    case "TASK_BLOCKER": return "Task blocker";
   }
 }
 
-function displayTime(value: string): string {
+function displayTime(value: string | null): string {
+  if (value === null) return "Not recorded";
   const time = Date.parse(value);
   return Number.isFinite(time) ? new Date(time).toLocaleString() : "Time unavailable";
 }
 
-/** A factual task-status view, not the full Approval/UserRequest Needs You inbox. */
+export function NeedsYouFilter({ status, onChange }: {
+  status: NeedsYouStatus;
+  onChange: (status: NeedsYouStatus) => void;
+}) {
+  return <fieldset className="needs-you-filter">
+    <legend>Show Needs You items</legend>
+    <label><input type="radio" name="needs-you-status" value="OPEN" checked={status === "OPEN"} onChange={() => onChange("OPEN")} />Open</label>
+    <label><input type="radio" name="needs-you-status" value="RESOLVED" checked={status === "RESOLVED"} onChange={() => onChange("RESOLVED")} />Resolved history</label>
+  </fieldset>;
+}
+
+export function NeedsYouItemCard({ item, onOpenTask }: {
+  item: NeedsYouItemView;
+  onOpenTask: (taskId: string) => void;
+}) {
+  const canOpenTask = item.kind === "TASK_BLOCKER" && item.taskId !== null;
+  return <article className="needs-you-card">
+    <div className="needs-you-card-meta">
+      <span className={`needs-you-kind kind-${item.kind.toLowerCase()}`}>{kindLabel(item.kind)}</span>
+      <span className={`needs-you-status status-${item.status.toLowerCase()}`}>{item.status === "OPEN" ? "Open" : "Resolved"}</span>
+    </div>
+    <h2>{item.title}</h2>
+    <p className="needs-you-summary">{item.safeSummary}</p>
+    <p className="needs-you-timestamps">
+      Created {displayTime(item.createdAt)}
+      {item.status === "RESOLVED" ? ` · Resolved ${displayTime(item.resolvedAt)}` : ""}
+    </p>
+    {canOpenTask
+      ? <div className="needs-you-card-action">
+        <button type="button" className="quiet-button" onClick={() => onOpenTask(item.taskId!)}>Open current Task</button>
+        <span>Opening the Task does not resolve this blocker.</span>
+      </div>
+      : item.kind === "TASK_BLOCKER"
+        ? <p className="needs-you-action-note">Task details are unavailable for this item.</p>
+        : <p className="needs-you-action-note">Actions and request details are not connected here.</p>}
+  </article>;
+}
+
+function NeedsYouLoadMoreButton({ loading, disabled, onLoadMore }: {
+  loading: boolean;
+  disabled: boolean;
+  onLoadMore: () => void;
+}) {
+  return <div className="needs-you-load-more">
+    <button type="button" className="quiet-button task-attention-more" onClick={onLoadMore} disabled={disabled} aria-busy={loading}>Load more</button>
+    {loading && <p role="status">Loading more Needs You items…</p>}
+  </div>;
+}
+
+/** Workspace-scoped projection of persisted approval, request, and Task blocker rows. */
 export function TaskAttentionPage({
   workspaceId,
   operatorReady,
@@ -123,96 +179,88 @@ export function TaskAttentionPage({
   operatorReady: boolean;
   onOpenTask: (taskId: string) => void;
 }) {
-  const [items, setItems] = useState<TaskSummary[]>([]);
-  const [pages, setPages] = useState<StatusPage[]>([]);
+  const [status, setStatus] = useState<NeedsYouStatus>("OPEN");
+  const [items, setItems] = useState<NeedsYouItemView[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadedWorkspace, setLoadedWorkspace] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [loadedStatus, setLoadedStatus] = useState<NeedsYouStatus | null>(null);
+  const [busy, setBusy] = useState(Boolean(workspaceId));
   const [loadState, dispatchLoadState] = useReducer(taskAttentionLoadReducer, { generation: 0, loadingMore: false });
   const loadingMore = loadState.loadingMore;
   const [refreshToken, setRefreshToken] = useState(0);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<"refresh" | "more" | null>(null);
   const generation = useRef(0);
   const paginationGate = useRef(new TaskAttentionPaginationGate());
-  const visibleItems = loadedWorkspace === workspaceId ? items : [];
-  const sortedItems = useMemo(() => [...visibleItems].sort((a, b) => {
-    const timeOrder = Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
-    return Number.isFinite(timeOrder) && timeOrder !== 0 ? timeOrder : a.taskId.localeCompare(b.taskId);
-  }), [visibleItems]);
+  const visibleItems = loadedWorkspace === workspaceId && loadedStatus === status ? items : [];
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const current = ++generation.current;
     paginationGate.current.invalidate(current);
     dispatchLoadState({ type: "invalidate", generation: current });
+  }, [workspaceId, status, operatorReady, refreshToken]);
+
+  useEffect(() => {
+    const current = generation.current;
     let active = true;
-    setPages([]);
     setFailure(null);
     if (!workspaceId) {
       setItems([]);
+      setNextCursor(null);
       setLoadedWorkspace(null);
+      setLoadedStatus(null);
       setBusy(false);
       return () => { active = false; };
     }
     if (!operatorReady) {
       setBusy(false);
-      setFailure("The local Runtime is unavailable. Previously loaded Tasks remain visible only for this Workspace.");
+      setFailure("refresh");
       return () => { active = false; };
     }
 
     setBusy(true);
-    void Promise.all(ATTENTION_STATUSES.map(async status => ({
+    void invoke<NeedsYouPage>("list_needs_you", {
+      workspaceId,
       status,
-      page: await invoke<TaskPage>("list_tasks", { workspaceId, status, cursor: null, limit: PAGE_SIZE }),
-    }))).then(results => {
+      cursor: null,
+      limit: PAGE_SIZE,
+    }).then(page => {
       if (!active || generation.current !== current) return;
-      const combined = new Map<string, TaskSummary>();
-      for (const result of results) {
-        if (!isValidStatusPage(result.status, result.page, null)) {
-          throw new Error("Task status results did not include a valid advancing page cursor.");
-        }
-        for (const task of result.page.items) {
-          if (task.status !== result.status || !task.taskId || !task.objective) {
-            throw new Error("Task status results did not match the requested Workspace query.");
-          }
-          combined.set(task.taskId, task);
-        }
-      }
-      setItems([...combined.values()]);
-      setPages(results.map(result => ({ status: result.status, nextCursor: result.page.nextCursor })));
+      if (!isValidNeedsYouPage(status, page, null)) throw new Error("Needs You response did not match the requested status or page contract.");
+      setItems(page.items);
+      setNextCursor(page.nextCursor);
       setLoadedWorkspace(workspaceId);
+      setLoadedStatus(status);
       setFailure(null);
-    }).catch(error => {
+    }).catch(() => {
       if (!active || generation.current !== current) return;
-      setFailure(typeof error === "string" ? error : error instanceof Error ? error.message : "Task attention could not be refreshed.");
+      setFailure("refresh");
     }).finally(() => {
       if (active && generation.current === current) setBusy(false);
     });
     return () => { active = false; };
-  }, [workspaceId, operatorReady, refreshToken]);
+  }, [workspaceId, status, operatorReady, refreshToken]);
 
   const loadMore = async () => {
-    if (!operatorReady || pages.every(page => page.nextCursor === null)) return;
+    if (!operatorReady || nextCursor === null || !workspaceId) return;
     const current = generation.current;
     if (!paginationGate.current.begin(current)) return;
     dispatchLoadState({ type: "start-more", generation: current });
     setFailure(null);
     try {
-      const pending = pages.filter(page => page.nextCursor !== null);
-      const results = await Promise.all(pending.map(async entry => ({
-        status: entry.status,
-        ...(await invoke<TaskPage>("list_tasks", {
-          workspaceId,
-          status: entry.status,
-          cursor: entry.nextCursor,
-          limit: PAGE_SIZE,
-        }).then(page => ({ ok: true as const, page })).catch(() => ({ ok: false as const }))),
-      })));
+      const previousCursor = nextCursor;
+      const page = await invoke<NeedsYouPage>("list_needs_you", {
+        workspaceId,
+        status,
+        cursor: previousCursor,
+        limit: PAGE_SIZE,
+      });
       if (generation.current !== current) return;
-      const merged = mergeTaskAttentionPages(items, pages, results);
+      if (!isValidNeedsYouPage(status, page, previousCursor)) throw new Error("Needs You cursor page did not advance or did not match its contract.");
+      const merged = mergeNeedsYouPage(items, page);
       setItems(merged.items);
-      setPages(merged.pages);
-      if (merged.failed) setFailure("Some Task status pages could not be loaded. Load more to retry them.");
-    } catch (error) {
-      if (generation.current === current) setFailure(typeof error === "string" ? error : "More Tasks could not be loaded.");
+      setNextCursor(merged.nextCursor);
+    } catch {
+      if (generation.current === current) setFailure("more");
     } finally {
       if (paginationGate.current.finish(current)) {
         dispatchLoadState({ type: "finish-more", generation: current });
@@ -220,29 +268,33 @@ export function TaskAttentionPage({
     }
   };
 
-  const hasMore = pages.some(page => page.nextCursor !== null);
-  return <div className="page-content subpage-content task-attention-page">
-    <div className="eyebrow">WORKSPACE TASKS</div>
+  const hasMore = loadedWorkspace === workspaceId && loadedStatus === status && nextCursor !== null;
+  const showingSavedItems = visibleItems.length > 0;
+  const failureText = failure === "more"
+    ? "More Needs You items could not be loaded. Existing items remain available; retry when the local Runtime is ready."
+    : showingSavedItems
+      ? `Needs You could not be refreshed. Showing the last saved ${status === "OPEN" ? "open" : "resolved"} items for this Workspace.`
+      : "Needs You is unavailable. The current list could not be checked, so no empty state is inferred.";
+
+  return <div className="page-content subpage-content task-attention-page needs-you-page">
+    <div className="eyebrow">WORKSPACE INBOX</div>
     <div className="task-attention-heading">
-      <div><h1>Needs You</h1><p>Tasks saved as waiting for input, needing a decision, or blocked.</p></div>
+      <div><h1>Needs You</h1><p>Review open requests and blockers, or browse resolved history.</p></div>
       <button type="button" className="quiet-button" onClick={() => setRefreshToken(value => value + 1)} disabled={!operatorReady || busy}>Refresh</button>
     </div>
-    <p className="task-attention-scope-note">This view uses persisted Task status. Approval and UserRequest inbox actions are not connected here; opening a Task does not resolve its blocker.</p>
-    {failure && <p className="task-attention-notice" role="status">{loadedWorkspace === workspaceId && visibleItems.length > 0 ? "Showing the last saved Task list. " : ""}{failure}</p>}
-    {!workspaceId ? <section className="task-attention-empty"><h2>Select a Workspace</h2><p>Choose or create a Workspace before reviewing saved Tasks.</p></section>
-      : busy && visibleItems.length === 0 ? <p className="task-attention-empty" role="status">Loading Tasks that may need attention…</p>
-      : failure && visibleItems.length === 0 ? <section className="task-attention-empty"><h2>Task attention is unavailable</h2><p>Refresh when the local Runtime is available. No inbox state is inferred from an unavailable response.</p></section>
-      : sortedItems.length === 0 ? <section className="task-attention-empty"><h2>No waiting or blocked Tasks</h2><p>Tasks in other states are available in Work. Approval and UserRequest actions are not part of this view yet.</p></section>
-      : <ul className="task-attention-list">{sortedItems.map(task => <li key={task.taskId}>
-        <button type="button" className="task-attention-row" onClick={() => onOpenTask(task.taskId)}>
-          <span className={`task-attention-marker status-${task.status.toLowerCase()}`} aria-hidden="true" />
-          <span className="task-attention-copy"><strong>{task.objective}</strong><span>{statusLabel(task.status)} · Last updated {displayTime(task.updatedAt)}</span></span>
-          <span aria-hidden="true">→</span>
-        </button>
+    <p className="task-attention-scope-note">Approval and UserRequest actions and details are not connected here. Only Task blockers open Task detail, and opening a Task does not resolve it.</p>
+    <NeedsYouFilter status={status} onChange={setStatus} />
+    {failure && <p className="task-attention-notice" role="status">{failureText}</p>}
+    {!workspaceId ? <section className="task-attention-empty"><h2>Select a Workspace</h2><p>Choose or create a Workspace before reviewing Needs You items.</p></section>
+      : busy && visibleItems.length === 0 ? <p className="task-attention-empty" role="status">Loading {status === "OPEN" ? "open" : "resolved"} Needs You items…</p>
+      : failure === "refresh" && visibleItems.length === 0 ? <section className="task-attention-empty"><h2>Needs You is unavailable</h2><p>Refresh when the local Runtime is available. No inbox state is inferred from an unavailable response.</p></section>
+      : visibleItems.length === 0 ? <section className="task-attention-empty"><h2>{status === "OPEN" ? "No open Needs You items" : "No resolved history"}</h2><p>{status === "OPEN" ? "There are no open approvals, requests, or Task blockers in this Workspace." : "Resolved items will appear here while their source records remain available."}</p></section>
+      : <ul className="task-attention-list needs-you-list">{visibleItems.map(item => <li key={item.itemId}>
+        <NeedsYouItemCard item={item} onOpenTask={onOpenTask} />
       </li>)}</ul>}
-    {hasMore && <TaskAttentionLoadMoreButton
+    {hasMore && <NeedsYouLoadMoreButton
       loading={loadingMore}
-      disabled={!operatorReady || loadingMore}
+      disabled={!operatorReady || loadingMore || busy}
       onLoadMore={() => void loadMore()}
     />}
   </div>;

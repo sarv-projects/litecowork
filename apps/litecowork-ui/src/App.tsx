@@ -2862,7 +2862,7 @@ function PlaceholderPage({ page, onSettings }: { page: Page; onSettings: () => v
     Conversations: { title: "Conversations", description: "Saved local conversation history." },
     Work: { title: "Work", description: "Durable Tasks and their real progress will appear here after Task execution and the Operator API are integrated." },
     Library: { title: "Library", description: "Saved files and committed Artifacts for this Workspace." },
-    "Needs You": { title: "Needs You", description: "Approvals and blockers will appear here when the authenticated Operator API is integrated." },
+    "Needs You": { title: "Needs You", description: "Review Workspace-scoped open items and their resolved source history." },
     Ideas: { title: "Ideas", description: "Read-only proposals from approved Suggestion producers. Viewing an idea never starts work." },
     Coworkers: { title: "Coworkers", description: "Workspace assistants and their saved settings." },
     Goals: { title: "Goals", description: "Workspace outcomes and their linked, evidence-based progress." },

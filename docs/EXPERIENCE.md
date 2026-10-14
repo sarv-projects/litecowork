@@ -23,12 +23,14 @@ verification requests. Advanced technical detail lives in Inspector/Settings/Dis
 details. A Workspace selector is available in the app shell when more than one Workspace
 exists.
 
-**Current desktop/local implementation boundary:** The mounted page currently queries the
-authenticated Task list for `WAITING_USER`, `NEEDS_USER`, and `BLOCKED`, then links each
-persisted Task to its current detail view. This is a Task-attention view only. It is not
-the full Needs You inbox: Approval/UserRequest aggregation, notification/deep-link
-handling, blocker-specific actions, and resolve/dismiss mutations are not connected to
-this page. It must say so and must not imply that opening a Task resolves anything.
+**Current desktop/local implementation boundary:** The mounted page reads the authenticated,
+Workspace-scoped `GET /v1/needs-you` projection through the native Tauri bridge. It lists
+persisted Approval and UserRequest sources with safe summaries, plus current blockers from
+`BLOCKED` and `NEEDS_USER` Tasks; linked blockers deduplicate to their source record. It
+supports OPEN/RESOLVED history and bounded cursor paging. The page is read-only: only an
+unlinked Task blocker opens current Task detail, and opening it does not resolve anything.
+Approval/UserRequest details and actions, blocker resolution, notifications, and deep links
+remain unconnected. The UI never infers an empty result from a failed or unavailable read.
 
 ## V1 client scope
 

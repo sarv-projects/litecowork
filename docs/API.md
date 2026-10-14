@@ -101,7 +101,7 @@ POST /v1/recovery/backups/{backup_id}/restore
 ## Needs You inbox
 
 ```text
-GET /v1/needs-you?status=OPEN&cursor=&limit=
+GET /v1/needs-you?status=OPEN&limit=50
 ```
 
 This is a read-only, rebuildable Workspace projection over pending Approvals,
@@ -110,10 +110,25 @@ UserRequest, the linked record supplies the single inbox item; otherwise the ite
 its stable Task/blocker identity. Answer, approve, dismiss, and resolve operations remain
 on the owning resource routes. Notifications and delivery retries are not inbox items.
 
-This remains the target `GET /v1/needs-you` contract; the desktop/local Operator does not
-currently implement this route. The current Needs You page uses the existing authenticated
-Task-list route for a clearly labeled, narrower view of `WAITING_USER`, `NEEDS_USER`, and
-`BLOCKED` Tasks. It does not claim Approval/UserRequest coverage or provide inbox actions.
+`status` defaults to `OPEN`. A persisted `PENDING` Approval or UserRequest is `OPEN`; its
+persisted terminal source status is `RESOLVED`, whether or not the source recorded a
+resolution timestamp. Expiry time alone does not change the projected source status.
+Current blockers are included only while their Task is `BLOCKED` or `NEEDS_USER`; the source schema has no
+durable blocker-resolution history, so resolved blockers are not reconstructed. The
+projection uses generic safe titles and summaries and never returns Approval action text,
+targets, UserRequest prompts, choices, or response schemas. Items are ordered by
+`created_at` descending and `item_id` ascending. Continuation cursors bind the selected
+Workspace, normalized status/kind/Task filters, page limit, and last item; a mismatched
+cursor is rejected. `resolved_at` is copied from its source when present and remains null
+when the source did not record one.
+
+The desktop/local Operator serves this projection over authenticated local IPC, and the
+Needs You page reads it through the native Tauri bridge. The page is read-only: Task blockers
+open current Task detail, while Approval/UserRequest actions and details remain on their
+owning routes and are not connected in this desktop surface; the documented Approval and
+UserRequest action routes are not served by the local Operator yet. The projection does not
+create or resolve source records. Approval and UserRequest rows appear only when their
+canonical source records already exist in the local store.
 
 ## Workspace-persistent Environments
 

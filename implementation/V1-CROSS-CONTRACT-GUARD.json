@@ -1,7 +1,7 @@
 {
   "documents_read": 175,
-  "lines_read": 59632,
-  "sha256_document_index": "1f2be1e622756780a51a43cfe3233bbb28fa2143d62bcf61fee57305c15cf515",
+  "lines_read": 60526,
+  "sha256_document_index": "46e3ae3bd343912386ddf493753ebbc44fe570a424c06da180a19f9b4daf1cfe",
   "contract_assertions": 34,
   "issues": []
 }

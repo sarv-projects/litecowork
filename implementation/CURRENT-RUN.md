@@ -32,9 +32,64 @@ These checks establish CODE evidence only. The daemon test uses test identity/ke
 and clean SIGTERM after unread responses; no abrupt crash/failed IPC write, production
 keyring, non-Linux OS, packaged Tauri+daemon, or owner USER acceptance is claimed. The
 browser harness does not use the packaged Tauri bridge. E02-S03 remains `IN_PROGRESS`.
-Next dependency-ready work is E02-S04 Needs You: its current route is target-only, so first
-freeze a truthful read-only projection contract over available persisted blocker sources;
-Approval/UserRequest lifecycle sources and full story acceptance remain separate work.
+E02-S03 remains the dependency frontier. E02-S04 now has a read-only source projection with
+225/225 storage, 5/5 authenticated Unix IPC route, and 226/226 UI test evidence. Owner
+actions, packaged SYSTEM and USER evidence, and the remaining E02-S03 dependency stay open.
+
+## 2026-10-14 — E02-S04 pagination reliability CODE slice
+
+The Needs You UI reads the authenticated source projection through the Tauri bridge. This
+older pagination-reliability checkpoint describes the page mechanics: synchronous duplicate
+load-more prevention, generation-fenced completion, truthful refresh/pagination errors,
+cursor retry, and accessible busy state. The current read-only aggregate route is recorded
+in the 2026-10-14 source-projection checkpoint below. Approval/UserRequest actions and
+blocker resolution remain disconnected; E02-S04 remains `IN_PROGRESS` and depends on
+E02-S03.
+
+## 2026-10-14 — E02-S04 read-only Needs You source projection CODE slice
+
+The authenticated local Operator now serves `GET /v1/needs-you` for the selected owned
+Workspace. A single SQLite read snapshot projects persisted Approval/UserRequest records
+and current blockers from both `BLOCKED` and `NEEDS_USER` Tasks. A blocker linked to one of
+those records appears once under the canonical source identity. Generic summaries exclude
+source action text, targets, prompts, choices, schemas, and resolution hints. Bounded
+keyset cursors bind Workspace, normalized filters, page size, and ordering position. The
+Tauri bridge verifies response identity, shape, nullable wire fields, hash identity, and
+duplicate rows; the desktop page offers OPEN/RESOLVED history and guarded cursor paging,
+stale-response fencing, same-Workspace snapshot retention, and honest offline/error states.
+The page remains read-only: owning Approval/UserRequest actions, blocker resolution,
+notifications, and deep links are not connected.
+
+Focused evidence on Linux x86_64 / Ubuntu 24.04.4 WSL2, Rust/Cargo 1.98.1, Node.js
+24.21.0, pnpm 12.10.1, Chrome 149.0.7827.200:
+
+- `cargo test --locked -p storage-sqlite --lib needs_you -- --test-threads=1` — **8/8 passed**, including the final `NEEDS_USER` blocker and corrupted cross-Workspace UserRequest Task regressions.
+- `cargo test --locked -p litecoworkd needs_you_operator_tests -- --nocapture` — **5/5 passed**, including an authenticated framed Unix IPC request through the real route dispatcher.
+- `cargo test --locked -p storage-sqlite --lib -- --test-threads=1` — **225/225 passed** on final source after the cross-Workspace UserRequest Task regression.
+- `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings` — passed after the test fixture cleanup.
+- `cargo test --locked --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --lib needs_you_bridge::tests -- --nocapture` — **3/3 passed**.
+- `node --test tests/needs-you-page-interaction.test.mjs` under Node 24 — **2/2 rendered Chrome interaction tests passed**.
+- `pnpm test` — **226/226 passed**. Concurrent existing Vite test servers printed dependency-scan restart/outdated-request diagnostics despite the successful test exit; review for suite-level cache isolation remains open.
+- `pnpm run build` — API freshness, TypeScript, and Vite passed after regenerating `operator-api.ts`; output is 819.88 kB minified / 226.70 kB gzip with the existing large-chunk advisory.
+
+The authenticated Unix IPC frame test is CODE/integration evidence through the production
+transport dispatcher, but does not qualify the packaged Tauri+daemon. The Needs You
+actions and full E02-S04 acceptance remain pending. See
+[`reviews/E02-S04.md`](reviews/E02-S04.md) for commands, limitations, and release gates.
+
+## 2026-10-14 — E01-S04 stream peer-disconnect write settlement CODE slice
+
+The authenticated local Operator now maps only `BrokenPipe`, `ConnectionAborted`,
+`ConnectionReset`, and `NotConnected` I/O failures during stream handshake/frame writes to
+clean session completion. Timeouts, protocol errors, and unrelated failures remain errors.
+A real authenticated same-UID Unix socket regression holds the frame-budget slot, closes
+the unread client while the write is active, and verifies `Complete` settlement plus full
+body-budget recovery. The full combined package suite passed 207 storage tests, 160 daemon
+unit tests, and 4 CLI tests. Native and Windows-target strict Clippy passed; workspace
+formatting passed. A focused classification test also rejects timed-out I/O and invalid
+frames as clean disconnects. This is Linux CODE evidence only; Windows/macOS host,
+packaged Tauri/daemon, and owner USER acceptance are not claimed. E01-S04 remains
+`IN_PROGRESS`; see [`reviews/E01-S04.md`](reviews/E01-S04.md).
 
 ## 2026-10-14 — E02-S02 spawned-daemon instruction replay CODE slice
 

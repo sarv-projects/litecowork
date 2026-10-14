@@ -1730,7 +1730,7 @@
       "method": "GET",
       "operationId": "listNeedsYou",
       "path": "/needs-you",
-      "sha256": "6d108eb9cf87996ae3d2abd2903284753170c107ae48f2b7ab3f3194fc0fed6a"
+      "sha256": "d6cd8643472f5b2ba6d8c35f5706d8fbd9ee59ff8b4a47e5413f10d8daa61f40"
     },
     {
       "method": "GET",
@@ -4197,11 +4197,11 @@
     },
     {
       "name": "NeedsYouItem",
-      "sha256": "b148c6cd357580be238a7801d827498e7856d8702f619a17443249701dc7a982"
+      "sha256": "84f9985cbeb054ead58ccd0953d155134602ebe6d7bf8165b77a60c0cfbef51a"
     },
     {
       "name": "NeedsYouPage",
-      "sha256": "2293d381531814e1707a4135c1ec9074d8350df697239291e5f68a9058ea1dda"
+      "sha256": "51224bd7c8843cfda3ff756fc2d7c34dcd8629f7f6cdca2426a22afe6f5068e8"
     },
     {
       "name": "NetworkPolicy",

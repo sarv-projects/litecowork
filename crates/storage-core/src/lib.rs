@@ -51,6 +51,12 @@ pub use task_presentation::{
 };
 pub mod rich_presentation;
 
+pub mod needs_you;
+pub use needs_you::{
+    NeedsYouCursor, NeedsYouFilter, NeedsYouItem, NeedsYouItemKind, NeedsYouPage,
+    NeedsYouPageRequest, NeedsYouReadStore, NeedsYouStatus,
+};
+
 mod environment;
 pub use environment::{
     AttemptId, BudgetCeiling, BudgetEnforcement, BudgetEnforcementPolicy, CommittedEnvironment,

@@ -4093,6 +4093,10 @@ same-process desktop recovery, not restart-safe recovery or Task execution.
 
 ## F130 — Browse persisted Tasks needing attention
 
+This flow defines read-only selection of persisted Task statuses from Work. It is not the
+global Needs You inbox: the inbox now uses the source projection in E02-S04 and still does
+not connect owning-resource actions or blocker resolution.
+
 **Actors/preconditions:** Workspace owner, desktop Operator, authenticated `list_tasks`
 route; selected Workspace is active for the page.
 
@@ -4109,11 +4113,11 @@ route; selected Workspace is active for the page.
 4. Selecting a Task routes to Work/Task detail, which reloads current Task state. The
    attention row is read-only and cannot resolve a blocker or change Task state.
 
-**Failure/UI/postcondition:** Explain that this is a Task-attention view. The full
-Approval/UserRequest/actionable-blocker aggregation and its owning-resource resolution
-routes remain unimplemented; do not label this page an Approval inbox or “all caught up.”
-Stale Task state is corrected by the detail reread, not by assuming the old list status is
-still current. Duplicate Tasks from pagination appear once.
+**Failure/UI/postcondition:** Explain that this is a Work Task-status view, not the global
+Approval/UserRequest/blocker inbox or “all caught up” state. The Needs You source
+projection is served, but its owning-resource actions and blocker resolution remain
+unimplemented. Stale Task state is corrected by the detail reread, not by assuming the old
+list status is still current. Duplicate Tasks from pagination appear once.
 
 ## F131 — Compose an optional RichPresentation
 

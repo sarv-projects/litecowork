@@ -99,6 +99,8 @@ mod delegation_profiles_operator;
 mod dependency_invalidations_operator;
 #[path = "goal_operator.rs"]
 mod goal_operator;
+#[path = "needs_you_operator.rs"]
+mod needs_you_operator;
 #[cfg(all(test, unix))]
 #[path = "operator_ipc_tests.rs"]
 mod operator_ipc_tests;
@@ -1423,12 +1425,14 @@ fn build_operator_router(state: ApiState) -> Router {
         dependency_invalidations_operator::DependencyInvalidationsApiState::from_ref(&state);
     let resource_dependencies_state =
         resource_dependencies_operator::ResourceDependenciesApiState::from_ref(&state);
+    let needs_you_state = needs_you_operator::NeedsYouApiState::from_ref(&state);
     Router::new()
         .merge(artifact_operator::routes())
         .merge(
             dependency_invalidations_operator::routes().with_state(dependency_invalidations_state),
         )
         .merge(resource_dependencies_operator::routes().with_state(resource_dependencies_state))
+        .merge(needs_you_operator::routes().with_state(needs_you_state))
         .merge(automation_operator::router())
         .merge(coworker_operator::routes())
         .merge(conversation_operator::routes())

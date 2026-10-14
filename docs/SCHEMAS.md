@@ -457,6 +457,16 @@ that underlying identity and kind, so it produces one inbox item. Title, summary
 timestamps, and notification delivery state are excluded. The ID is a projection key, not
 a bearer credential or authorization token.
 
+Needs You projects persisted `PENDING` Approval/UserRequest rows as `OPEN` and persisted
+terminal source rows as `RESOLVED`; an expiry timestamp by itself does not change source
+status. Current Task blockers are `OPEN` only while their Task is `BLOCKED` or `NEEDS_USER`.
+No resolved
+blocker history is synthesized because the blocker schema has no durable resolution
+record. Items sort by `created_at` descending and `item_id` ascending. A continuation
+cursor is scoped to the Workspace, normalized filters, page limit, and last item key.
+Approval action details and targets, UserRequest prompts and choices, and blocker resolution
+hints are excluded from the safe projection.
+
 For `EndpointSelectionPolicy`, `PINNED_ENDPOINT` requires `endpoint_id`; `AUTO_COMPATIBLE`
 forbids it. An endpoint must support every `required_features` entry and satisfy the
 Runtime/Workspace constraints. Preferred topology ordering is a per-binding preference,

@@ -3392,21 +3392,39 @@ paths:
     get:
       tags: [needs-you]
       operationId: listNeedsYou
+      description: >-
+        Read-only Workspace inbox projection. PENDING Approval and UserRequest source
+        records are OPEN; their persisted terminal statuses are RESOLVED. Current blockers
+        are included only for BLOCKED or NEEDS_USER Tasks and have no reconstructed resolved history.
+        A blocker linked to a source record is represented once by that source item. The
+        order is created_at descending, then item_id ascending. Opaque cursors bind the
+        Workspace, normalized filters, page limit, and last ordering key.
       parameters:
       - name: status
         in: query
-        schema: {type: string, enum: [OPEN, RESOLVED]}
+        description: Defaults to OPEN. RESOLVED contains retained terminal Approval and UserRequest records.
+        schema: {type: string, enum: [OPEN, RESOLVED], default: OPEN}
       - name: kind
         in: query
+        description: Restrict the projection to one canonical source kind.
         schema: {type: string, enum: [APPROVAL, USER_REQUEST, TASK_BLOCKER]}
       - name: task_id
         in: query
-        schema: {type: string}
-      - {$ref: '#/components/parameters/Cursor'}
-      - {$ref: '#/components/parameters/Limit'}
+        description: Restrict to source records scoped to this Task and blockers on this Task. The local Operator and Tauri bridge also enforce a 200 UTF-8-byte limit.
+        schema: {type: string, maxLength: 200, x-litecowork-max-utf8-bytes: 200}
+      - name: cursor
+        in: query
+        required: false
+        description: Opaque keyset cursor bound to Workspace, filters, limit, and last item.
+        schema: {type: string, maxLength: 4096}
+      - name: limit
+        in: query
+        required: false
+        description: Page size; a continuation cursor is valid only with the same limit.
+        schema: {type: integer, minimum: 1, maximum: 200, default: 50}
       responses:
         '200':
-          description: Deduplicated authorized approvals, user requests, and actionable blockers
+          description: Deduplicated authorized source records and current actionable Task blockers
           content:
             application/json:
               schema: {$ref: '#/components/schemas/NeedsYouPage'}
@@ -3920,7 +3938,7 @@ components:
         task_id: {type: [string, 'null']}
         blocker_id: {type: [string, 'null']}
         title: {type: string, minLength: 1}
-        safe_summary: {type: string}
+        safe_summary: {type: string, minLength: 1}
         created_at: {type: string, format: date-time}
         resolved_at: {type: [string, 'null'], format: date-time}
       allOf:
@@ -3952,7 +3970,7 @@ components:
             blocker_id: {type: string, minLength: 1}
     NeedsYouPage:
       type: object
-      required: [items]
+      required: [items, next_cursor]
       properties:
         items: {type: array, items: {$ref: '#/components/schemas/NeedsYouItem'}}
         next_cursor: {type: [string, 'null']}

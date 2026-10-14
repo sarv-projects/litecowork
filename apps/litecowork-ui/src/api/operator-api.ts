@@ -2749,6 +2749,7 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
+        /** @description Read-only Workspace inbox projection. PENDING Approval and UserRequest source records are OPEN; their persisted terminal statuses are RESOLVED. Current blockers are included only for BLOCKED or NEEDS_USER Tasks and have no reconstructed resolved history. A blocker linked to a source record is represented once by that source item. The order is created_at descending, then item_id ascending. Opaque cursors bind the Workspace, normalized filters, page limit, and last ordering key. */
         get: operations["listNeedsYou"];
         put?: never;
         post?: never;
@@ -3166,7 +3167,7 @@ export type components = {
         } & (unknown & unknown & unknown);
         NeedsYouPage: {
             items: components["schemas"]["NeedsYouItem"][];
-            next_cursor?: string | null;
+            next_cursor: string | null;
         };
         CreateWorkspaceRequest: {
             name: string;
@@ -11635,11 +11636,16 @@ export interface operations {
     listNeedsYou: {
         parameters: {
             query?: {
+                /** @description Defaults to OPEN. RESOLVED contains retained terminal Approval and UserRequest records. */
                 status?: "OPEN" | "RESOLVED";
+                /** @description Restrict the projection to one canonical source kind. */
                 kind?: "APPROVAL" | "USER_REQUEST" | "TASK_BLOCKER";
+                /** @description Restrict to source records scoped to this Task and blockers on this Task. The local Operator and Tauri bridge also enforce a 200 UTF-8-byte limit. */
                 task_id?: string;
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
+                /** @description Opaque keyset cursor bound to Workspace, filters, limit, and last item. */
+                cursor?: string;
+                /** @description Page size; a continuation cursor is valid only with the same limit. */
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -11647,7 +11653,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deduplicated authorized approvals, user requests, and actionable blockers */
+            /** @description Deduplicated authorized source records and current actionable Task blockers */
             200: {
                 headers: {
                     [name: string]: unknown;

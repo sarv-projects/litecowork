@@ -26,6 +26,7 @@ mod delegation_profile_bridge;
 mod delegation_profile_write_bridge;
 mod goal_bridge;
 mod presentation_bridge;
+mod needs_you_bridge;
 mod resource_location_bridge;
 mod resource_save_bridge;
 mod routine_bridge;
@@ -5046,6 +5047,7 @@ pub fn run() {
             resume_workspace_root,
             list_tasks,
             create_task,
+            needs_you_bridge::list_needs_you,
             get_task,
             list_task_spec_revisions,
             get_task_planning_readiness,
