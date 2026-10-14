@@ -42,6 +42,9 @@ mod revalidation_tests;
 #[cfg(all(test, unix, debug_assertions))]
 #[path = "runtime_process_tests.rs"]
 mod runtime_process_tests;
+#[cfg(all(test, unix, debug_assertions))]
+#[path = "runtime_workspace_replay_process_tests.rs"]
+mod runtime_workspace_replay_process_tests;
 
 const STATE_FILE: &str = "runtime-state.json";
 const LOCK_FILE: &str = "runtime.lock";
@@ -140,6 +143,7 @@ pub fn run(data_directory: &Path) -> Result<(), String> {
         |directory, runtime_id, now| {
             OsRuntimeDeviceIdentityProvider.load_or_create(directory, runtime_id, now)
         },
+        |directory, config| LocalWorkspaceStorage::open(directory, config),
     )
 }
 
@@ -161,6 +165,9 @@ fn run_with_test_identity_providers(data_directory: &Path) -> Result<(), String>
                 display_name: Some("test-only identity".to_owned()),
             })
         },
+        |directory, config| {
+            runtime_workspace_replay_process_tests::open_test_storage(directory, config)
+        },
     )
 }
 
@@ -172,6 +179,10 @@ fn run_with_identity_providers(
         bool,
     ) -> Result<RuntimeOsPrincipalIdentity, storage_core::StoreError>,
     load_device: impl Fn(&Path, &str, &str) -> Result<DeviceIdentityRecord, storage_core::StoreError>,
+    open_storage: impl Fn(
+        &Path,
+        SqliteConfig,
+    ) -> Result<LocalWorkspaceStorage, storage_core::StoreError>,
 ) -> Result<(), String> {
     ensure_private_state_directory(data_directory)?;
     let _instance_lock = InstanceLock::acquire(data_directory)?;
@@ -207,7 +218,7 @@ fn run_with_identity_providers(
 
     // The local store is opened before the daemon announces any status. This applies
     // migrations and checks the storage adapter's startup gates. No workers are started.
-    let storage = match LocalWorkspaceStorage::open(data_directory, SqliteConfig::default()) {
+    let storage = match open_storage(data_directory, SqliteConfig::default()) {
         Ok(storage) => storage,
         Err(_) => {
             return fail_startup(

@@ -227,7 +227,7 @@ fn lifecycle_request(data_directory: &Path, request_id: &str) -> Result<Value, S
     })
 }
 
-fn assert_degraded_lifecycle(value: &Value, runtime_id: &str, incarnation_id: &str) {
+pub(super) fn assert_degraded_lifecycle(value: &Value, runtime_id: &str, incarnation_id: &str) {
     assert!(value.get("local_principal_id").is_none());
     assert_eq!(value["runtime_id"], runtime_id);
     assert_eq!(value["availability"], "DEGRADED");

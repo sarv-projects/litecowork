@@ -1,5 +1,63 @@
 # Current run and agent handoff
 
+## 2026-10-14 — E01-S04 spawned-daemon Workspace-create lost-ACK replay CODE slice
+
+Added and verified a real child-process restart/replay regression. The first daemon starts
+through the production Runtime startup path, passes authenticated Operator readiness, and
+receives `POST /v1/workspaces` over same-UID Unix IPC. The client leaves the response unread
+while waiting for SQLite to show one Workspace, one `workspace.created.v1` event, and one
+idempotency receipt; it keeps the connection open during graceful shutdown so the response
+write does not race a peer reset. Restart against the same data directory preserves the
+RuntimeId, creates a new incarnation, and exposes authenticated readiness plus the durable
+DEGRADED lifecycle view. Replaying the same payload/key with a different frame request ID
+returns the original Workspace and event correlation ID; changing the payload returns
+`409 CONFLICT`. Direct SQLite inspection confirms there is still only one Workspace,
+event, and receipt.
+
+The test-only child runner injects synthetic principal/device identity and a fixed blob key
+under `#[cfg(all(test, unix, debug_assertions))]`; it still uses real SQLite and the
+encrypted file BlobStore. Production startup remains bound to `LocalWorkspaceStorage::open`
+and its OS credential store. The first run failed at the real provider boundary because
+this host has no OS credential store; the isolated test seam allowed process-level CODE
+coverage without changing that production behavior.
+
+Verification on Linux WSL2 x86_64 / Ubuntu 24.04.4 LTS, Rust/Cargo 1.98.1:
+
+- The focused `spawned_daemon_replays_workspace_create_after_lost_ack_and_restart` test
+  passed twice (**1/1** each).
+- `cargo test --locked -p litecoworkd` — **153 unit + 4 CLI tests passed**.
+- `cargo clippy --locked -p litecoworkd --all-targets -- -D warnings` — passed.
+- `cargo fmt --all -- --check` — passed.
+- `.venv/bin/python scripts/audit_v1_contracts.py --strict --write-report` — 0 errors
+  (206 OpenAPI operations, 158 supplemental UI cases, 67 stories).
+- `.venv/bin/python scripts/audit_v1_markdown.py` — 173 files, 0 broken links.
+- `.venv/bin/python scripts/validate_implementation_coverage.py --write` — 103 documents,
+  6,443 rows; `.venv/bin/python scripts/validate_implementation_plan.py` passed for 67
+  stories and 6,443 rows.
+- `.venv/bin/python scripts/validate_architecture.py` — passed schemas, 142 typed events,
+  error codes, OpenAPI, SQLite, Gateway names, naming, and Markdown links.
+- `git -c core.whitespace=cr-at-eol diff --check` — passed. Plain `git diff --check`
+  reports the generated Markdown inventory CSV's expected CRLF line endings as trailing
+  whitespace; no source or Markdown whitespace errors were reported.
+
+The hosted run `38566711217` passed on parent commit `8a34771`; this local slice is not in
+that run. The hosted CI result for this slice will be checked after push.
+
+This closes one Workspace-create lost-ACK/restart CODE case only. E01-S04 remains
+`IN_PROGRESS`; packaged SYSTEM, production credential-provider and cross-OS qualification,
+stream/reconnect behavior, remaining routes, and owner USER acceptance remain open. The
+earlier S03 note that this test was an isolated draft is superseded by this checkpoint.
+
+Resource/worktree audit: one `main` worktree and 26 existing branches; no subagent
+worktree or branch was created. Start/end byte measurements: root `target`
+10,401,338,105 / 10,893,382,888 (+492,044,783); Tauri `target` 4,918,395,031 /
+4,918,395,031; UI `dist` 937,816 / 937,816; Vite cache 6,261,857 / 6,261,857; owner
+`.playwright-mcp` 133,783 / 133,783; `.venv` 15,863,068 / 15,863,068; coverage output
+1,189,957 / 1,190,243. `target` growth is the shared incremental Rust build cache and is
+retained for the next V1 slice; no duplicate build tree was created. Temporary SQLite and
+socket state self-cleaned. End free space was 908,483,833,856 bytes. No child daemon,
+Cargo, or validator process remained; owner MCP data was preserved.
+
 ## 2026-10-14 — E01-S03 spawned daemon lifecycle CODE checkpoint
 
 Closed a real spawned-daemon CODE gap without changing story status. A bounded child test
