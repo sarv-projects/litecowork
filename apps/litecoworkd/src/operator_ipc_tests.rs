@@ -4477,8 +4477,7 @@ fn unix_stream_write_disconnect_errors_are_clean_session_cancellation() {
     ));
     let timed_out = UnixTransportError::DeadlineExceeded;
     let timed_out_write = UnixTransportError::Io(Error::from(ErrorKind::TimedOut));
-    let invalid_frame =
-        UnixTransportError::Protocol(operator_ipc::ProtocolError::InvalidFrame);
+    let invalid_frame = UnixTransportError::Protocol(operator_ipc::ProtocolError::InvalidFrame);
 
     assert!(is_expected_unix_stream_write_disconnect(
         &closed_during_socket_write
