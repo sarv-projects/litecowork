@@ -1,6 +1,6 @@
 use super::*;
 use rusqlite::{Connection, params};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use storage_core::{
     BlobStore, ResourceRecord, ResourceRevisionRecord, ResourceStore,
@@ -30,10 +30,20 @@ struct GcRemovePause {
     first_only: Arc<AtomicBool>,
 }
 
+#[derive(Clone)]
+struct AggregateStatePutPause {
+    entered: Arc<Barrier>,
+    release: Arc<Barrier>,
+    armed: Arc<AtomicBool>,
+    first_only: Arc<AtomicBool>,
+}
+
 struct TestUploadBlobStore {
     inner: FileBlobStore<TestKeys>,
     chunk_put_pause: Option<ChunkPutPause>,
     gc_remove_pause: Option<GcRemovePause>,
+    aggregate_state_put_pause: Option<AggregateStatePutPause>,
+    aggregate_state_puts: Arc<AtomicUsize>,
     fail_next_remove: Arc<AtomicBool>,
 }
 
@@ -45,6 +55,16 @@ impl BlobStore for TestUploadBlobStore {
         bytes: &[u8],
         media_type: &str,
     ) -> Result<BlobRef, StoreError> {
+        if purpose == BlobPurpose::AggregateState {
+            self.aggregate_state_puts.fetch_add(1, Ordering::SeqCst);
+            if let Some(pause) = &self.aggregate_state_put_pause
+                && pause.armed.load(Ordering::SeqCst)
+                && pause.first_only.swap(false, Ordering::SeqCst)
+            {
+                pause.entered.wait();
+                pause.release.wait();
+            }
+        }
         if purpose == BlobPurpose::ResourceUploadChunk
             && let Some(pause) = &self.chunk_put_pause
             && pause.first_only.swap(false, Ordering::SeqCst)
@@ -450,8 +470,29 @@ fn paused_blob_store(
         ),
         chunk_put_pause: pause,
         gc_remove_pause,
+        aggregate_state_put_pause: None,
+        aggregate_state_puts: Arc::new(AtomicUsize::new(0)),
         fail_next_remove: Arc::new(AtomicBool::new(fail_next_remove)),
     })
+}
+
+fn observed_blob_store(
+    directory: &tempfile::TempDir,
+    aggregate_state_put_pause: Option<AggregateStatePutPause>,
+) -> (Arc<dyn BlobStore>, Arc<AtomicUsize>) {
+    let aggregate_state_puts = Arc::new(AtomicUsize::new(0));
+    let store = TestUploadBlobStore {
+        inner: FileBlobStore::new(
+            directory.path().join("blobs"),
+            TestKeys { key: [23_u8; 32] },
+        ),
+        chunk_put_pause: None,
+        gc_remove_pause: None,
+        aggregate_state_put_pause,
+        aggregate_state_puts: Arc::clone(&aggregate_state_puts),
+        fail_next_remove: Arc::new(AtomicBool::new(false)),
+    };
+    (Arc::new(store), aggregate_state_puts)
 }
 
 fn create_upload(store: &SqliteWorkspaceStore, upload_id: &str) -> ResourceUploadSessionRecord {
@@ -528,6 +569,272 @@ fn create_upload_with_context_document(
             },
         )
         .expect("upload session commits")
+}
+
+struct UploadCreateRequest<'a> {
+    upload_id: &'a str,
+    request_id: &'a str,
+    display_name: &'a str,
+    media_type: &'a str,
+    request_payload: serde_json::Value,
+    recorded_at: &'a str,
+    expires_at: &'a str,
+}
+
+fn create_upload_with_request(
+    store: &SqliteWorkspaceStore,
+    request: UploadCreateRequest<'_>,
+) -> Result<ResourceUploadSessionRecord, StoreError> {
+    let session = ResourceUploadSessionRecord {
+        upload_id: request.upload_id.to_owned(),
+        workspace_id: WORKSPACE.to_owned(),
+        display_name: request.display_name.to_owned(),
+        media_type: request.media_type.to_owned(),
+        expected_size_bytes: CHUNK.len() as u64,
+        expected_digest: Some(digest(CHUNK)),
+        context_document: None,
+        folder_import: None,
+        resource_id: None,
+        committed_resource_id: None,
+        expected_resource_version: None,
+        parent_revision_ids: Vec::new(),
+        chunk_size_bytes: 4_194_304,
+        received_ranges: Vec::new(),
+        next_missing_offset: 0,
+        state: ResourceUploadState::Open,
+        expires_at: request.expires_at.to_owned(),
+        created_at: request.recorded_at.to_owned(),
+        version: 1,
+        progress_version: 1,
+    };
+    let event_context = context(&format!("event-create-{}", request.upload_id), 1);
+    store.create(
+        WorkspaceCreateRequest {
+            principal_id: OWNER.to_owned(),
+            request_id: request.request_id.to_owned(),
+            request_payload: request.request_payload,
+        },
+        session.clone(),
+        EventDraft {
+            event_id: event_context.event_id,
+            workspace_id: WORKSPACE.to_owned(),
+            entity_type: "ResourceUpload".to_owned(),
+            entity_id: request.upload_id.to_owned(),
+            origin_runtime_id: event_context.origin_runtime_id,
+            entity_revision: 1,
+            hlc_timestamp: event_context.hlc_timestamp,
+            correlation_id: event_context.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "resource.upload.created.v1".to_owned(),
+            payload: json!({
+                "upload_id": request.upload_id,
+                "workspace_id": WORKSPACE,
+                "expected_size_bytes": CHUNK.len(),
+                "expected_digest": digest(CHUNK),
+                "chunk_size_bytes": 4_194_304,
+                "expires_at": request.expires_at,
+                "aggregate_version": 1,
+            }),
+            recorded_at: request.recorded_at.to_owned(),
+        },
+    )
+}
+
+fn upload_create_payload(display_name: &str, media_type: &str) -> serde_json::Value {
+    json!({
+        "operation": "resource.upload.create.v1",
+        "workspace_id": WORKSPACE,
+        "display_name": display_name,
+        "media_type": media_type,
+        "size_bytes": CHUNK.len(),
+        "expected_digest": digest(CHUNK),
+        "context_document": null,
+    })
+}
+
+#[test]
+fn upload_create_replay_and_changed_payload_do_not_write_orphan_aggregate_state() {
+    let directory = tempfile::tempdir().expect("temporary upload create directory");
+    let (blobs, aggregate_state_puts) = observed_blob_store(&directory, None);
+    let store = open_store(&directory, blobs);
+    create_workspace_for_uploads(&store);
+    let workspace_state_puts = aggregate_state_puts.load(Ordering::SeqCst);
+
+    let payload = upload_create_payload("resume.txt", "text/plain");
+    let created = create_upload_with_request(
+        &store,
+        UploadCreateRequest {
+            upload_id: "upload-create-original",
+            request_id: "request-create-replay",
+            display_name: "resume.txt",
+            media_type: "text/plain",
+            request_payload: payload.clone(),
+            recorded_at: CREATED,
+            expires_at: EXPIRES,
+        },
+    )
+    .expect("first upload session commits");
+    assert_eq!(
+        aggregate_state_puts.load(Ordering::SeqCst),
+        workspace_state_puts + 1,
+        "first upload writes its aggregate state once"
+    );
+
+    let replay = create_upload_with_request(
+        &store,
+        UploadCreateRequest {
+            upload_id: "upload-create-replay-candidate",
+            request_id: "request-create-replay",
+            display_name: "resume.txt",
+            media_type: "text/plain",
+            request_payload: payload,
+            recorded_at: "2026-10-12T10:00:01Z",
+            expires_at: "2026-10-12T10:01:01Z",
+        },
+    )
+    .expect("same-key exact upload replay returns its receipt");
+    assert_eq!(replay.upload_id, created.upload_id);
+    assert_eq!(replay.created_at, created.created_at);
+    assert_eq!(
+        aggregate_state_puts.load(Ordering::SeqCst),
+        workspace_state_puts + 1,
+        "exact replay must not persist an unreferenced candidate state"
+    );
+
+    assert!(matches!(
+        create_upload_with_request(
+            &store,
+            UploadCreateRequest {
+                upload_id: "upload-create-conflict-candidate",
+                request_id: "request-create-replay",
+                display_name: "changed.txt",
+                media_type: "text/plain",
+                request_payload: upload_create_payload("changed.txt", "text/plain"),
+                recorded_at: "2026-10-12T10:00:02Z",
+                expires_at: "2026-10-12T10:01:02Z",
+            },
+        ),
+        Err(StoreError::Conflict {
+            expected: None,
+            actual: None
+        })
+    ));
+    assert_eq!(
+        aggregate_state_puts.load(Ordering::SeqCst),
+        workspace_state_puts + 1,
+        "changed-payload conflict must be detected before writing candidate state"
+    );
+
+    let connection = Connection::open(state_database(&directory)).expect("inspect SQLite");
+    let session_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM resource_upload_sessions WHERE workspace_id = ?1 AND display_name = 'resume.txt'",
+            [WORKSPACE],
+            |row| row.get(0),
+        )
+        .expect("count sessions");
+    let event_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE workspace_id = ?1 AND entity_type = 'ResourceUpload' AND type = 'resource.upload.created.v1'",
+            [WORKSPACE],
+            |row| row.get(0),
+        )
+        .expect("count upload creation events");
+    let receipt_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = 'request-create-replay'",
+            [OWNER],
+            |row| row.get(0),
+        )
+        .expect("count idempotency receipts");
+    assert_eq!((session_count, event_count, receipt_count), (1, 1, 1));
+}
+
+#[test]
+fn concurrent_upload_create_replay_across_store_clones_serializes_blob_write() {
+    let directory = tempfile::tempdir().expect("temporary concurrent upload create directory");
+    let pause = AggregateStatePutPause {
+        entered: Arc::new(Barrier::new(2)),
+        release: Arc::new(Barrier::new(2)),
+        armed: Arc::new(AtomicBool::new(false)),
+        first_only: Arc::new(AtomicBool::new(true)),
+    };
+    let (blobs, aggregate_state_puts) = observed_blob_store(&directory, Some(pause.clone()));
+    let store = open_store(&directory, blobs);
+    create_workspace_for_uploads(&store);
+    let workspace_state_puts = aggregate_state_puts.load(Ordering::SeqCst);
+    pause.armed.store(true, Ordering::SeqCst);
+
+    let payload = upload_create_payload("concurrent.txt", "text/plain");
+    let first_store = store.clone();
+    let first_payload = payload.clone();
+    let first = std::thread::spawn(move || {
+        create_upload_with_request(
+            &first_store,
+            UploadCreateRequest {
+                upload_id: "upload-create-concurrent-first",
+                request_id: "request-create-concurrent",
+                display_name: "concurrent.txt",
+                media_type: "text/plain",
+                request_payload: first_payload,
+                recorded_at: CREATED,
+                expires_at: EXPIRES,
+            },
+        )
+    });
+    pause.entered.wait();
+
+    let second_store = store.clone();
+    let second_payload = payload;
+    let (second_started_sender, second_started_receiver) = std::sync::mpsc::channel();
+    let (second_result_sender, second_result_receiver) = std::sync::mpsc::channel();
+    let second = std::thread::spawn(move || {
+        let _ = second_started_sender.send(());
+        let result = create_upload_with_request(
+            &second_store,
+            UploadCreateRequest {
+                upload_id: "upload-create-concurrent-second",
+                request_id: "request-create-concurrent",
+                display_name: "concurrent.txt",
+                media_type: "text/plain",
+                request_payload: second_payload,
+                recorded_at: "2026-10-12T10:00:01Z",
+                expires_at: "2026-10-12T10:01:01Z",
+            },
+        );
+        let _ = second_result_sender.send(result);
+    });
+    second_started_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("second exact create retry starts");
+    let completed_before_first_blob_release = second_result_receiver
+        .recv_timeout(Duration::from_millis(250))
+        .ok();
+    let second_finished_early = completed_before_first_blob_release.is_some();
+    pause.release.wait();
+
+    let first_result = first.join().expect("first create thread joins");
+    let second_result = match completed_before_first_blob_release {
+        Some(result) => result,
+        None => second_result_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("serialized second create completes after first receipt commits"),
+    };
+    let first_session = first_result.expect("first session commits");
+    let second_session = second_result.expect("second call replays first session");
+    second.join().expect("second create thread joins");
+
+    assert!(
+        !second_finished_early,
+        "same-key create must not pass preflight/write while the first request is unresolved"
+    );
+    assert_eq!(first_session.upload_id, second_session.upload_id);
+    assert_eq!(
+        aggregate_state_puts.load(Ordering::SeqCst),
+        workspace_state_puts + 1,
+        "concurrent exact retries across store clones write only the winning state blob"
+    );
 }
 
 fn create_workspace_for_uploads(store: &SqliteWorkspaceStore) {

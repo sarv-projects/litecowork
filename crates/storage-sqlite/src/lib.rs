@@ -325,6 +325,7 @@ struct Inner {
     join: Mutex<Option<JoinHandle<()>>>,
     blobs: Arc<dyn BlobStore>,
     blob_operation_locks: Mutex<BlobOperationLockRegistry>,
+    upload_create_request_locks: Mutex<BlobOperationLockRegistry>,
     writer_metrics: SqliteWriterMetrics,
 }
 
@@ -372,6 +373,12 @@ enum Command {
         request_id: String,
         request_digest: String,
         reply: mpsc::Sender<Result<Option<ResourceTextIndexRebuildResult>, StoreError>>,
+    },
+    CheckResourceUploadCreateReceipt {
+        principal_id: String,
+        request_id: String,
+        request_digest: String,
+        reply: mpsc::Sender<Result<Option<ResourceUploadSessionRecord>, StoreError>>,
     },
     CommitResourceTextIndexRebuild {
         request: ResourceTextIndexRebuildRequest,
@@ -984,6 +991,7 @@ impl SqliteWorkspaceStore {
                     join: Mutex::new(Some(join)),
                     blobs,
                     blob_operation_locks: Mutex::new(HashMap::new()),
+                    upload_create_request_locks: Mutex::new(HashMap::new()),
                     writer_metrics: SqliteWriterMetrics::default(),
                 }),
             }),
@@ -3868,6 +3876,22 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
                 "Resource upload creation event is invalid".to_owned(),
             ));
         }
+        if request.principal_id.trim().is_empty() || request.request_id.trim().is_empty() {
+            return Err(StoreError::Invalid(
+                "principal and request IDs must not be empty".to_owned(),
+            ));
+        }
+        // Serialize same-key retries across store clones through receipt lookup, blob
+        // persistence, and the transactional create. Without this lock, concurrent
+        // first attempts can both miss the receipt and leave one unreferenced state blob.
+        let request_lock =
+            self.upload_create_request_lock(&request.principal_id, &request.request_id);
+        let _request_guard = request_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(receipt) = self.check_resource_upload_create_receipt(&request)? {
+            return Ok(receipt);
+        }
         let state_bytes = canonical_json(&session)?;
         let state_blob = self.inner.blobs.put(
             &session.workspace_id,
@@ -4496,6 +4520,39 @@ impl SqliteWorkspaceStore {
         let lock = Arc::new(Mutex::new(()));
         locks.insert(key, Arc::downgrade(&lock));
         lock
+    }
+
+    fn upload_create_request_lock(&self, principal_id: &str, request_id: &str) -> Arc<Mutex<()>> {
+        let key = (principal_id.to_owned(), request_id.to_owned());
+        let mut locks = self
+            .inner
+            .upload_create_request_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+
+    fn check_resource_upload_create_receipt(
+        &self,
+        request: &WorkspaceCreateRequest,
+    ) -> Result<Option<ResourceUploadSessionRecord>, StoreError> {
+        let request_digest = digest(&canonical_json(&request.request_payload)?);
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::CheckResourceUploadCreateReceipt {
+                principal_id: request.principal_id.clone(),
+                request_id: request.request_id.clone(),
+                request_digest,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
     }
 
     fn get_for_chunk(
@@ -14961,6 +15018,20 @@ fn writer_loop(
                         reply,
                     } => {
                         let result = verify_request_receipt::<ResourceTextIndexRebuildResult>(
+                            &connection,
+                            &principal_id,
+                            &request_id,
+                            &request_digest,
+                        );
+                        let _ = reply.send(result);
+                    }
+                    Command::CheckResourceUploadCreateReceipt {
+                        principal_id,
+                        request_id,
+                        request_digest,
+                        reply,
+                    } => {
+                        let result = verify_request_receipt::<ResourceUploadSessionRecord>(
                             &connection,
                             &principal_id,
                             &request_id,

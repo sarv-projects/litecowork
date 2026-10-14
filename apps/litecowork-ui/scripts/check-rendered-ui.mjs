@@ -214,6 +214,19 @@ async function typeInputValue(selector, text) {
   await waitFor(() => evaluate(`document.querySelector(${JSON.stringify(selector)})?.value === ${JSON.stringify(text)}`), `${selector} value`);
 }
 
+async function selectResourceUploadFile(fill = 37) {
+  assert.equal(await evaluate(`(() => {
+    const input = document.querySelectorAll('[aria-label="Add files to this Workspace"] input[type="file"]')[1];
+    if (!input || input.disabled) return false;
+    const transfer = new DataTransfer();
+    const bytes = new Uint8Array(4 * 1024 * 1024 + 1).fill(${fill});
+    transfer.items.add(new File([bytes], "f90-ambiguous-ack.txt", { type: "text/plain", lastModified: 1700000000000 }));
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`), true, "enabled Library input accepts the same 4 MiB + 1 byte test file");
+}
+
 async function typeWorkspaceName(text) {
   await waitFor(() => evaluate(`(() => [...document.querySelectorAll("input")].some(input => {
     const label = [...(input.labels ?? [])].map(node => node.textContent).join(" ");
@@ -748,6 +761,53 @@ async function runWorkspaceAppChecks() {
   return checks;
 }
 
+async function runResourceUploadRecoveryChecks() {
+  const checks = [];
+
+  await clickHarness("mountProductionApp", "resource-upload-ambiguous-chunk");
+  await waitFor(() => evaluate(`Boolean(document.querySelector('.workspace-switcher'))`), "production App shell for Resource intake recovery");
+  await clickButtonContaining(["library"]);
+  await waitFor(() => evaluate(`(() => { const inputs = document.querySelectorAll('[aria-label="Add files to this Workspace"] input[type="file"]'); return inputs.length === 2 && inputs[1].disabled === false; })()`), "selected Workspace and enabled file upload input");
+  await clickHarness("clearCalls");
+  await selectResourceUploadFile();
+  await waitFor(() => evaluate(`window.litecoworkHarness.calls().filter(call => call.command === "upload_resource_chunk").length === 1`), "first accepted upload chunk with lost acknowledgement");
+  await waitFor(() => evaluate(`document.querySelector('.resource-intake-status')?.textContent.includes("Rendered harness lost the chunk acknowledgement")`), "truthful upload error after ambiguous accepted chunk");
+  assert.equal((await evaluate(`window.litecoworkHarness.calls().filter(call => call.command === "commit_resource_upload").length`)), 0, "the UI must not commit while the final chunk is still missing");
+
+  await selectResourceUploadFile();
+  await waitFor(() => evaluate(`window.litecoworkHarness.calls().filter(call => call.command === "commit_resource_upload").length === 1`), "single commit after upload recovery");
+  const calls = await evaluate(`window.litecoworkHarness.calls()`);
+  const chunkCalls = calls.filter(call => call.command === "upload_resource_chunk");
+  assert.deepEqual(calls.filter(call => call.command === "create_resource_upload").length, 1, "retry reuses the original upload session");
+  assert.deepEqual(calls.filter(call => call.command === "get_resource_upload").length, 1, "retry rereads durable accepted ranges");
+  assert.deepEqual(chunkCalls.map(call => call.args.chunkIndex), [0, 1], "retry skips the accepted first chunk and sends only the missing final chunk");
+  assert.deepEqual(chunkCalls.map(call => call.args.contentRange), ["bytes 0-4194303/4194305", "bytes 4194304-4194304/4194305"]);
+  assert.deepEqual(calls.filter(call => ["create_resource_upload", "upload_resource_chunk", "get_resource_upload", "commit_resource_upload"].includes(call.command)).map(call => call.command), ["create_resource_upload", "upload_resource_chunk", "get_resource_upload", "upload_resource_chunk", "commit_resource_upload"], "commit follows the re-read and acceptance of the only missing chunk");
+  assert.equal(await evaluate(`document.querySelector('.resource-list')?.textContent.includes("f90-ambiguous-ack.txt") === true`), true, "the committed Resource appears in the Library only after its receipt");
+
+  await clickHarness("mountProductionApp", "resource-upload-ambiguous-chunk-bad-range");
+  await waitFor(() => evaluate(`Boolean(document.querySelector('.workspace-switcher'))`), "production App shell for received-range integrity recovery");
+  await clickButtonContaining(["library"]);
+  await waitFor(() => evaluate(`(() => { const inputs = document.querySelectorAll('[aria-label="Add files to this Workspace"] input[type="file"]'); return inputs.length === 2 && inputs[1].disabled === false; })()`), "selected Workspace and enabled file upload input for integrity recovery");
+  await clickHarness("clearCalls");
+  await selectResourceUploadFile();
+  await waitFor(() => evaluate(`window.litecoworkHarness.calls().filter(call => call.command === "upload_resource_chunk").length === 1`), "accepted first chunk before malformed range receipt");
+  await waitFor(() => evaluate(`document.querySelector('.resource-intake-status')?.textContent.includes("Rendered harness lost the chunk acknowledgement")`), "ambiguous first chunk acknowledgement before range verification");
+  await selectResourceUploadFile();
+  await waitFor(() => evaluate(`window.litecoworkHarness.calls().filter(call => call.command === "upload_resource_chunk").length === 3`), "fresh upload re-sends a chunk whose returned range hash does not match the selected bytes");
+  await waitFor(() => evaluate(`document.querySelector('.resource-list')?.textContent.includes("f90-ambiguous-ack.txt") === true`), "commit after every chunk on the replacement upload is accepted");
+  const integrityCalls = await evaluate(`window.litecoworkHarness.calls()`);
+  const integrityChunks = integrityCalls.filter(call => call.command === "upload_resource_chunk");
+  assert.equal(integrityCalls.filter(call => call.command === "get_resource_upload").length, 1, "retry inspects the accepted range before deciding whether to resume it");
+  assert.equal(integrityCalls.filter(call => call.command === "create_resource_upload").length, 2, "a range with an unverifiable byte digest starts a fresh upload session");
+  assert.deepEqual(integrityChunks.map(call => call.args.chunkIndex), [0, 0, 1], "the UI retransmits the range whose accepted digest failed verification");
+  const integrityLifecycle = integrityCalls.filter(call => ["create_resource_upload", "upload_resource_chunk", "get_resource_upload", "commit_resource_upload"].includes(call.command));
+  assert.deepEqual(integrityLifecycle.map(call => call.command), ["create_resource_upload", "upload_resource_chunk", "get_resource_upload", "create_resource_upload", "upload_resource_chunk", "upload_resource_chunk", "commit_resource_upload"], "no commit occurs until the replacement session accepts both chunks");
+  checks.push("F90 lost chunk acknowledgement rereads accepted ranges, verifies the reselected bytes, skips the committed chunk, and commits once after the final chunk");
+
+  return checks;
+}
+
 try {
   vite = spawn(process.execPath, [viteCli, "--host", "127.0.0.1", "--port", String(previewPort), "--strictPort"], {
     cwd: packageRoot,
@@ -796,6 +856,7 @@ try {
     ...await runLibraryNavigationChecks(),
     ...await runWorkspaceFirstRunChecks(),
     ...await runWorkspaceAppChecks(),
+    ...await runResourceUploadRecoveryChecks(),
   ];
   throwIfInterrupted();
   console.log(JSON.stringify({ browser: browserVersion.Browser, checks }, null, 2));

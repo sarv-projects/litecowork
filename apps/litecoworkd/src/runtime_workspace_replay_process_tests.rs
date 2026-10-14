@@ -7,6 +7,7 @@ use operator_ipc::{
 };
 use rusqlite::{Connection, OptionalExtension};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Read,
@@ -149,6 +150,11 @@ struct DurableInstructionRevision {
 
 struct LostAckInstructionRevision {
     receipt: DurableInstructionRevision,
+    _connection: operator_ipc::unix::AuthenticatedUnixConnection,
+    _runtime: tokio::runtime::Runtime,
+}
+
+struct LostAckOperatorRequest {
     _connection: operator_ipc::unix::AuthenticatedUnixConnection,
     _runtime: tokio::runtime::Runtime,
 }
@@ -315,6 +321,754 @@ fn spawned_daemon_replays_workspace_create_after_lost_ack_and_restart() {
     assert!(
         restart_status.success(),
         "restarted Runtime shutdown failed: stdout={restart_stdout} stderr={restart_stderr}"
+    );
+}
+
+#[test]
+fn spawned_daemon_recovers_resource_upload_create_chunk_and_commit_after_lost_ack() {
+    const CHUNK_SIZE: usize = 4 * 1024 * 1024;
+    const CREATE_KEY: &str = "resource-upload-create-lost-ack-v1";
+    const FIRST_CHUNK_KEY: &str = "resource-upload-chunk-zero-lost-ack-v1";
+    const COMMIT_KEY: &str = "resource-upload-commit-lost-ack-v1";
+
+    let directory = tempfile::tempdir().expect("private Runtime data directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("restrict Runtime directory");
+    let mut first_child = RuntimeChild::spawn(directory.path());
+    let first_readiness = wait_for_operator_readiness(first_child.child(), directory.path());
+    assert_operator_readiness(&first_readiness);
+    let principal_id = read_state(&directory.path().join(STATE_FILE))
+        .expect("read first Runtime state")
+        .expect("first Runtime state exists")
+        .local_principal_id
+        .expect("test Runtime has a local principal");
+
+    let workspace_response = send_workspace_create(
+        directory.path(),
+        "resource-upload-create-workspace",
+        "resource-upload-workspace-v1",
+        br#"{"name":"Resource upload recovery fixture"}"#,
+    );
+    assert_eq!(workspace_response.header.status, 201);
+    let workspace_body: Value =
+        serde_json::from_slice(workspace_response.body()).expect("Workspace response is JSON");
+    let workspace_id = workspace_body["workspace_id"]
+        .as_str()
+        .expect("Workspace response contains its ID")
+        .to_owned();
+
+    let mut content = vec![b'X'; CHUNK_SIZE + 1];
+    let marker = b"LITECOWORK-PRIVATE-UPLOAD-FIXTURE";
+    content[..marker.len()].copy_from_slice(marker);
+    let content_digest = format!("sha256:{:x}", Sha256::digest(&content));
+    let create_body = serde_json::to_vec(&serde_json::json!({
+        "workspace_id": workspace_id,
+        "display_name": "restart-upload.bin",
+        "media_type": "application/octet-stream",
+        "size_bytes": content.len(),
+        "expected_digest": content_digest,
+        "context_document": null,
+        "folder_import": null,
+    }))
+    .expect("Resource upload create request serializes");
+    let lost_create_ack = submit_operator_request_without_reading_response(
+        directory.path(),
+        "resource-upload-create-before-lost-ack",
+        "POST",
+        "/v1/resources/uploads",
+        vec![
+            ("content-type", "application/json"),
+            ("x-workspace-id", workspace_id.as_str()),
+            ("idempotency-key", CREATE_KEY),
+        ],
+        &create_body,
+    );
+    let original_session =
+        wait_for_durable_upload_create(directory.path(), CREATE_KEY, &principal_id).unwrap_or_else(
+            |error| {
+                let (status, stdout, stderr) = first_child.terminate_and_wait();
+                panic!("{error}; Runtime status={status}; stdout={stdout}; stderr={stderr}");
+            },
+        );
+    let upload_id = original_session["upload_id"]
+        .as_str()
+        .expect("durable create receipt contains upload ID")
+        .to_owned();
+    assert_eq!(original_session["expected_digest"], content_digest);
+    assert_eq!(original_session["state"], "OPEN");
+    assert_upload_create_has_one_durable_commit(directory.path(), &upload_id, CREATE_KEY);
+
+    let (first_status, first_stdout, first_stderr) = first_child.terminate_and_wait();
+    assert!(
+        first_status.success(),
+        "first Runtime shutdown failed: stdout={first_stdout} stderr={first_stderr}"
+    );
+    drop(lost_create_ack);
+
+    let mut second_child = RuntimeChild::spawn(directory.path());
+    let restarted_readiness = wait_for_operator_readiness(second_child.child(), directory.path());
+    assert_operator_readiness(&restarted_readiness);
+    let create_retry = send_operator_request(
+        directory.path(),
+        "resource-upload-create-after-restart-retry",
+        "POST",
+        "/v1/resources/uploads",
+        vec![
+            ("content-type", "application/json"),
+            ("x-workspace-id", workspace_id.as_str()),
+            ("idempotency-key", CREATE_KEY),
+        ],
+        &create_body,
+    );
+    assert_eq!(create_retry.header.status, 201);
+    let retried_session: Value =
+        serde_json::from_slice(create_retry.body()).expect("replayed session is JSON");
+    assert_eq!(retried_session, original_session);
+    assert_upload_create_has_one_durable_commit(directory.path(), &upload_id, CREATE_KEY);
+
+    let chunk_digest = format!("{:x}", Sha256::digest(&content[..CHUNK_SIZE]));
+    let first_chunk_path = format!("/v1/resources/uploads/{upload_id}/chunks/0");
+    let lost_chunk_ack = submit_operator_request_without_reading_response(
+        directory.path(),
+        "resource-upload-chunk-zero-before-lost-ack",
+        "PUT",
+        &first_chunk_path,
+        vec![
+            ("x-workspace-id", workspace_id.as_str()),
+            ("idempotency-key", FIRST_CHUNK_KEY),
+            ("content-range", "bytes 0-4194303/4194305"),
+            ("x-chunk-sha256", chunk_digest.as_str()),
+            ("content-type", "application/octet-stream"),
+        ],
+        &content[..CHUNK_SIZE],
+    );
+    wait_for_durable_upload_chunk(directory.path(), &upload_id, FIRST_CHUNK_KEY, 1).unwrap_or_else(
+        |error| {
+            let (status, stdout, stderr) = second_child.terminate_and_wait();
+            panic!("{error}; Runtime status={status}; stdout={stdout}; stderr={stderr}");
+        },
+    );
+    let chunk_request_digest_before_restart =
+        upload_chunk_request_digest(directory.path(), &upload_id, FIRST_CHUNK_KEY)
+            .expect("accepted chunk and its request receipt are durable before restart");
+    let (second_status, second_stdout, second_stderr) = second_child.terminate_and_wait();
+    assert!(
+        second_status.success(),
+        "second Runtime shutdown failed: stdout={second_stdout} stderr={second_stderr}"
+    );
+    drop(lost_chunk_ack);
+
+    let mut third_child = RuntimeChild::spawn(directory.path());
+    let third_readiness = wait_for_operator_readiness(third_child.child(), directory.path());
+    assert_operator_readiness(&third_readiness);
+    let session_after_chunk_restart = send_operator_request(
+        directory.path(),
+        "resource-upload-progress-after-chunk-restart",
+        "GET",
+        &format!("/v1/resources/uploads/{upload_id}"),
+        vec![("x-workspace-id", workspace_id.as_str())],
+        &[],
+    );
+    assert_eq!(session_after_chunk_restart.header.status, 200);
+    let progress: Value =
+        serde_json::from_slice(session_after_chunk_restart.body()).expect("progress is JSON");
+    assert_eq!(progress["state"], "OPEN");
+    assert_eq!(progress["next_missing_offset"], CHUNK_SIZE);
+    assert_eq!(
+        progress["received_ranges"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(progress["received_ranges"][0]["start_offset"], 0);
+    assert_eq!(
+        progress["received_ranges"][0]["end_offset_inclusive"],
+        CHUNK_SIZE - 1
+    );
+
+    let exact_chunk_replay = send_operator_request(
+        directory.path(),
+        "resource-upload-chunk-zero-after-restart-retry",
+        "PUT",
+        &first_chunk_path,
+        vec![
+            ("x-workspace-id", workspace_id.as_str()),
+            ("idempotency-key", FIRST_CHUNK_KEY),
+            ("content-range", "bytes 0-4194303/4194305"),
+            ("x-chunk-sha256", chunk_digest.as_str()),
+            ("content-type", "application/octet-stream"),
+        ],
+        &content[..CHUNK_SIZE],
+    );
+    assert_eq!(exact_chunk_replay.header.status, 204);
+    assert_upload_chunk_counts(directory.path(), &upload_id, 1, 1);
+    assert_eq!(
+        upload_chunk_request_digest(directory.path(), &upload_id, FIRST_CHUNK_KEY).as_deref(),
+        Some(chunk_request_digest_before_restart.as_str()),
+        "exact chunk retry preserves the original request receipt"
+    );
+
+    let tail_digest = format!("{:x}", Sha256::digest(&content[CHUNK_SIZE..]));
+    let tail_response = send_operator_request(
+        directory.path(),
+        "resource-upload-chunk-one-final",
+        "PUT",
+        &format!("/v1/resources/uploads/{upload_id}/chunks/1"),
+        vec![
+            ("x-workspace-id", workspace_id.as_str()),
+            ("idempotency-key", "resource-upload-chunk-one-final-v1"),
+            ("content-range", "bytes 4194304-4194304/4194305"),
+            ("x-chunk-sha256", tail_digest.as_str()),
+            ("content-type", "application/octet-stream"),
+        ],
+        &content[CHUNK_SIZE..],
+    );
+    assert_eq!(tail_response.header.status, 204);
+    assert_upload_chunk_counts(directory.path(), &upload_id, 2, 2);
+
+    let commit_path = format!("/v1/resources/uploads/{upload_id}/commit");
+    let lost_commit_ack = submit_operator_request_without_reading_response(
+        directory.path(),
+        "resource-upload-commit-before-lost-ack",
+        "POST",
+        &commit_path,
+        vec![
+            ("x-workspace-id", workspace_id.as_str()),
+            ("idempotency-key", COMMIT_KEY),
+        ],
+        &[],
+    );
+    let committed_before_restart =
+        wait_for_durable_upload_commit(directory.path(), &upload_id, &principal_id).unwrap_or_else(
+            |error| {
+                let (status, stdout, stderr) = third_child.terminate_and_wait();
+                panic!("{error}; Runtime status={status}; stdout={stdout}; stderr={stderr}");
+            },
+        );
+    let resource_id = committed_before_restart["resource"]["resource_id"]
+        .as_str()
+        .expect("commit receipt contains Resource ID")
+        .to_owned();
+    assert_eq!(
+        committed_before_restart["resource"]["display_name"],
+        "restart-upload.bin"
+    );
+    assert_eq!(
+        committed_before_restart["revision"]["content_digest"],
+        content_digest
+    );
+
+    let (third_status, third_stdout, third_stderr) = third_child.terminate_and_wait();
+    assert!(
+        third_status.success(),
+        "third Runtime shutdown failed: stdout={third_stdout} stderr={third_stderr}"
+    );
+    drop(lost_commit_ack);
+
+    let mut fourth_child = RuntimeChild::spawn(directory.path());
+    let fourth_readiness = wait_for_operator_readiness(fourth_child.child(), directory.path());
+    assert_operator_readiness(&fourth_readiness);
+    let commit_retry = send_operator_request(
+        directory.path(),
+        "resource-upload-commit-after-restart-retry",
+        "POST",
+        &commit_path,
+        vec![
+            ("x-workspace-id", workspace_id.as_str()),
+            ("idempotency-key", COMMIT_KEY),
+        ],
+        &[],
+    );
+    assert_eq!(commit_retry.header.status, 201);
+    let replayed_commit: Value =
+        serde_json::from_slice(commit_retry.body()).expect("replayed commit is JSON");
+    assert_eq!(
+        replayed_commit["resource"],
+        committed_before_restart["resource"]
+    );
+    assert_eq!(
+        replayed_commit["revision"],
+        committed_before_restart["revision"]
+    );
+    assert_eq!(replayed_commit["event"], committed_before_restart["event"]);
+    let replay_correlation = commit_retry
+        .header
+        .headers
+        .iter()
+        .find(|header| header.name.eq_ignore_ascii_case("x-correlation-id"))
+        .map(|header| header.value.as_str());
+    assert_eq!(
+        replay_correlation,
+        committed_before_restart["event"]["correlation_id"].as_str()
+    );
+    let revision_id = replayed_commit["revision"]["resource_revision_id"]
+        .as_str()
+        .expect("commit response contains Resource revision ID");
+    let content_after_restart = send_operator_request(
+        directory.path(),
+        "resource-content-after-upload-commit-restart",
+        "GET",
+        &format!(
+            "/v1/resources/{resource_id}/content?revision_id={revision_id}&max_bytes={}",
+            content.len()
+        ),
+        vec![("x-workspace-id", workspace_id.as_str())],
+        &[],
+    );
+    assert_eq!(content_after_restart.header.status, 200);
+    assert_eq!(
+        content_after_restart.body(),
+        content.as_slice(),
+        "committed Resource bytes remain readable and exact after daemon restart"
+    );
+    assert_resource_upload_commit_is_single_and_private(
+        directory.path(),
+        &upload_id,
+        &resource_id,
+        marker,
+    );
+
+    let changed_create_body = serde_json::to_vec(&serde_json::json!({
+        "workspace_id": workspace_id,
+        "display_name": "changed-upload.bin",
+        "media_type": "application/octet-stream",
+        "size_bytes": content.len(),
+        "expected_digest": content_digest,
+        "context_document": null,
+        "folder_import": null,
+    }))
+    .expect("changed Resource upload request serializes");
+    let changed_create = send_operator_request(
+        directory.path(),
+        "resource-upload-create-changed-payload",
+        "POST",
+        "/v1/resources/uploads",
+        vec![
+            ("content-type", "application/json"),
+            ("x-workspace-id", workspace_id.as_str()),
+            ("idempotency-key", CREATE_KEY),
+        ],
+        &changed_create_body,
+    );
+    assert_eq!(changed_create.header.status, 409);
+    let conflict: Value = serde_json::from_slice(changed_create.body()).expect("conflict is JSON");
+    assert_eq!(conflict["code"], "CONFLICT");
+    assert_upload_create_has_one_durable_commit(directory.path(), &upload_id, CREATE_KEY);
+
+    let (fourth_status, fourth_stdout, fourth_stderr) = fourth_child.terminate_and_wait();
+    assert!(
+        fourth_status.success(),
+        "fourth Runtime shutdown failed: stdout={fourth_stdout} stderr={fourth_stderr}"
+    );
+}
+
+fn submit_operator_request_without_reading_response(
+    data_directory: &Path,
+    frame_request_id: &str,
+    method: &str,
+    path: &str,
+    headers: Vec<(&str, &str)>,
+    body: &[u8],
+) -> LostAckOperatorRequest {
+    let endpoint = UnixEndpoint::derive(data_directory).expect("safe Runtime endpoint");
+    let expected_uid = fs::metadata(data_directory)
+        .expect("Runtime data directory metadata")
+        .uid();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build upload IPC client runtime");
+    let connection = runtime.block_on(async {
+        let mut connection = endpoint
+            .connect(|peer| peer.uid == expected_uid)
+            .await
+            .expect("authenticate the real daemon Unix peer");
+        let budget = InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES)
+            .expect("upload client in-flight body budget");
+        let request =
+            operator_request_frame(frame_request_id, method, path, headers, body, &budget);
+        connection
+            .write_request(&request)
+            .await
+            .expect("send real upload Operator request");
+        connection
+    });
+    LostAckOperatorRequest {
+        _connection: connection,
+        _runtime: runtime,
+    }
+}
+
+fn send_operator_request(
+    data_directory: &Path,
+    frame_request_id: &str,
+    method: &str,
+    path: &str,
+    headers: Vec<(&str, &str)>,
+    body: &[u8],
+) -> ResponseFrame {
+    let endpoint = UnixEndpoint::derive(data_directory).expect("safe Runtime endpoint");
+    let expected_uid = fs::metadata(data_directory)
+        .expect("Runtime data directory metadata")
+        .uid();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build upload IPC client runtime");
+    runtime.block_on(async {
+        let mut connection = endpoint
+            .connect(|peer| peer.uid == expected_uid)
+            .await
+            .expect("authenticate the real daemon Unix peer");
+        let budget = InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES)
+            .expect("upload client in-flight body budget");
+        let request =
+            operator_request_frame(frame_request_id, method, path, headers, body, &budget);
+        connection
+            .write_request(&request)
+            .await
+            .expect("write upload Operator request");
+        let response = connection
+            .read_response(&budget)
+            .await
+            .expect("read correlated upload Operator response");
+        assert_eq!(response.header.request_id, frame_request_id);
+        response
+    })
+}
+
+fn operator_request_frame(
+    frame_request_id: &str,
+    method: &str,
+    path: &str,
+    headers: Vec<(&str, &str)>,
+    body: &[u8],
+    budget: &std::sync::Arc<InFlightBodyBudget>,
+) -> RequestFrame {
+    RequestFrame::new(
+        RequestHeader {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: frame_request_id.to_owned(),
+            method: method.to_owned(),
+            path_and_query: path.to_owned(),
+            headers: headers
+                .into_iter()
+                .map(|(name, value)| LogicalHeader {
+                    name: name.to_owned(),
+                    value: value.to_owned(),
+                })
+                .collect(),
+            body_length: body.len() as u64,
+        },
+        body.to_vec(),
+        budget,
+    )
+    .expect("bounded Resource upload Operator frame")
+}
+
+fn wait_for_durable_upload_create(
+    data_directory: &Path,
+    idempotency_key: &str,
+    principal_id: &str,
+) -> Result<Value, String> {
+    let deadline = Instant::now() + RECEIPT_DEADLINE;
+    loop {
+        match read_durable_upload_create(data_directory, idempotency_key, principal_id) {
+            Ok(Some(receipt)) => return Ok(receipt),
+            Ok(None) => {}
+            Err(error) if Instant::now() < deadline => {
+                let _ = error;
+            }
+            Err(error) => return Err(error),
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                "Resource upload create receipt was not durable before the deadline".to_owned(),
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn read_durable_upload_create(
+    data_directory: &Path,
+    idempotency_key: &str,
+    principal_id: &str,
+) -> Result<Option<Value>, String> {
+    let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+        .map_err(|error| error.to_string())?;
+    connection
+        .busy_timeout(Duration::from_secs(1))
+        .map_err(|error| error.to_string())?;
+    let row: Option<(String, Option<String>, Option<String>)> = connection
+        .query_row(
+            "SELECT principal_id, response_json, response_digest FROM request_dedup WHERE request_id = ?1",
+            [idempotency_key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((receipt_principal, response_json, response_digest)) = row else {
+        return Ok(None);
+    };
+    if receipt_principal != principal_id {
+        return Err("Resource upload create receipt belongs to a different Principal".to_owned());
+    }
+    let response_json =
+        response_json.ok_or_else(|| "Resource upload create receipt is incomplete".to_owned())?;
+    let response_digest = response_digest
+        .ok_or_else(|| "Resource upload create receipt digest is absent".to_owned())?;
+    if response_digest != format!("sha256:{:x}", Sha256::digest(response_json.as_bytes())) {
+        return Err("Resource upload create receipt digest is invalid".to_owned());
+    }
+    serde_json::from_str(&response_json)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+fn assert_upload_create_has_one_durable_commit(
+    data_directory: &Path,
+    upload_id: &str,
+    create_key: &str,
+) {
+    let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+        .expect("open durable upload database");
+    let session_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM resource_upload_sessions WHERE upload_id = ?1",
+            [upload_id],
+            |row| row.get(0),
+        )
+        .expect("count upload session");
+    let event_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE type = 'resource.upload.created.v1' AND entity_id = ?1",
+            [upload_id],
+            |row| row.get(0),
+        )
+        .expect("count upload create events");
+    let receipt_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE request_id = ?1",
+            [create_key],
+            |row| row.get(0),
+        )
+        .expect("count upload create receipts");
+    assert_eq!(session_count, 1, "one upload session is durable");
+    assert_eq!(event_count, 1, "one upload-created event is durable");
+    assert_eq!(receipt_count, 1, "one create receipt is durable");
+}
+
+fn wait_for_durable_upload_chunk(
+    data_directory: &Path,
+    upload_id: &str,
+    request_id: &str,
+    expected_chunk_count: i64,
+) -> Result<(), String> {
+    let deadline = Instant::now() + RECEIPT_DEADLINE;
+    loop {
+        let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+            .map_err(|error| error.to_string())?;
+        connection
+            .busy_timeout(Duration::from_secs(1))
+            .map_err(|error| error.to_string())?;
+        let chunk_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM resource_upload_chunks WHERE upload_id = ?1",
+                [upload_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        let request_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM resource_upload_chunk_requests WHERE upload_id = ?1 AND request_id = ?2 AND chunk_index = 0",
+                rusqlite::params![upload_id, request_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if chunk_count == expected_chunk_count && request_count == 1 {
+            return Ok(());
+        }
+        if chunk_count > expected_chunk_count || request_count > 1 || Instant::now() >= deadline {
+            return Err(format!(
+                "Resource upload chunk/request counts were {chunk_count}/{request_count}, expected {expected_chunk_count}/1"
+            ));
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn upload_chunk_request_digest(
+    data_directory: &Path,
+    upload_id: &str,
+    request_id: &str,
+) -> Option<String> {
+    let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+        .expect("open durable upload database");
+    connection
+        .query_row(
+            "SELECT request_payload_digest FROM resource_upload_chunk_requests WHERE upload_id = ?1 AND request_id = ?2 AND chunk_index = 0",
+            rusqlite::params![upload_id, request_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .expect("read upload chunk request receipt")
+}
+
+fn assert_upload_chunk_counts(
+    data_directory: &Path,
+    upload_id: &str,
+    expected_chunks: i64,
+    expected_requests: i64,
+) {
+    let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+        .expect("open durable upload database");
+    let chunk_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM resource_upload_chunks WHERE upload_id = ?1",
+            [upload_id],
+            |row| row.get(0),
+        )
+        .expect("count accepted upload chunks");
+    let request_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM resource_upload_chunk_requests WHERE upload_id = ?1",
+            [upload_id],
+            |row| row.get(0),
+        )
+        .expect("count upload chunk request receipts");
+    assert_eq!(chunk_count, expected_chunks);
+    assert_eq!(request_count, expected_requests);
+}
+
+fn wait_for_durable_upload_commit(
+    data_directory: &Path,
+    upload_id: &str,
+    principal_id: &str,
+) -> Result<Value, String> {
+    let request_id = format!("resource-upload-commit:{upload_id}");
+    let deadline = Instant::now() + RECEIPT_DEADLINE;
+    loop {
+        let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+            .map_err(|error| error.to_string())?;
+        connection
+            .busy_timeout(Duration::from_secs(1))
+            .map_err(|error| error.to_string())?;
+        let row: Option<(String, Option<String>, Option<String>)> = connection
+            .query_row(
+                "SELECT principal_id, response_json, response_digest FROM request_dedup WHERE request_id = ?1",
+                [&request_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?;
+        if let Some((owner, response_json, response_digest)) = row {
+            if owner != principal_id {
+                return Err(
+                    "Resource upload commit receipt belongs to a different Principal".to_owned(),
+                );
+            }
+            let response_json = response_json
+                .ok_or_else(|| "Resource upload commit receipt is incomplete".to_owned())?;
+            let response_digest = response_digest
+                .ok_or_else(|| "Resource upload commit receipt digest is absent".to_owned())?;
+            if response_digest != format!("sha256:{:x}", Sha256::digest(response_json.as_bytes())) {
+                return Err("Resource upload commit receipt digest is invalid".to_owned());
+            }
+            return serde_json::from_str(&response_json).map_err(|error| error.to_string());
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                "Resource upload commit receipt was not durable before the deadline".to_owned(),
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn assert_resource_upload_commit_is_single_and_private(
+    data_directory: &Path,
+    upload_id: &str,
+    resource_id: &str,
+    private_marker: &[u8],
+) {
+    let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+        .expect("open committed upload database");
+    let count = |sql: &str, parameter: &str| {
+        connection
+            .query_row(sql, [parameter], |row| row.get::<_, i64>(0))
+            .expect("count committed upload records")
+    };
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM resource_upload_sessions WHERE upload_id = ?1 AND state = 'COMMITTED'",
+            upload_id
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM resources WHERE resource_id = ?1",
+            resource_id
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM resource_revisions WHERE resource_id = ?1",
+            resource_id
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM resource_locations WHERE resource_id = ?1",
+            resource_id
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM domain_events WHERE type = 'resource.created.v1' AND entity_id = ?1",
+            resource_id
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM domain_events WHERE type = 'resource.upload.created.v1' AND entity_id = ?1",
+            upload_id
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM domain_events WHERE type = 'resource.upload.status.changed.v1' AND entity_id = ?1",
+            upload_id
+        ),
+        2
+    );
+    assert_eq!(
+        count(
+            "SELECT COUNT(*) FROM request_dedup WHERE request_id = ?1",
+            &format!("resource-upload-commit:{upload_id}")
+        ),
+        1
+    );
+    let mut statement = connection
+        .prepare("SELECT payload_json FROM domain_events WHERE entity_id IN (?1, ?2)")
+        .expect("prepare upload event privacy inspection");
+    let payloads = statement
+        .query_map(rusqlite::params![upload_id, resource_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .expect("query upload event payloads")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read upload event payloads");
+    let marker = String::from_utf8_lossy(private_marker);
+    assert!(
+        payloads
+            .iter()
+            .all(|payload| !payload.contains(marker.as_ref())),
+        "ordinary Resource and upload events must not contain uploaded bytes"
     );
 }
 

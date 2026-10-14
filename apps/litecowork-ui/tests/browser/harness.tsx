@@ -12,7 +12,7 @@ import "../../src/styles.css";
 type WorkspaceFirstRunProps = ComponentProps<typeof WorkspaceFirstRun>;
 type WorkspaceFirstRunScenario = "loading" | "error" | "offline" | "runtime-error" | "existing" | "ready" | "pending" | "busy";
 type WorkspaceRuntimeStatus = Exclude<WorkspaceFirstRunProps["runtime"], null>;
-type WorkspaceAppScenario = "workspace-list-race" | "workspace-list-failure" | "runtime-refresh-failure";
+type WorkspaceAppScenario = "workspace-list-race" | "workspace-list-failure" | "runtime-refresh-failure" | "resource-upload-ambiguous-chunk" | "resource-upload-ambiguous-chunk-bad-range";
 type WorkspaceAppWorkspace = {
   workspaceId: string;
   name: string;
@@ -41,6 +41,22 @@ type RenderedUploadSession = {
   nextMissingOffset: number;
   state: "OPEN" | "CONTENT_RECEIVED" | "COMMITTED";
   committedResourceId: string | null;
+  expiresAt: string;
+};
+type RenderedResourceUploadSession = {
+  uploadId: string;
+  workspaceId: string;
+  displayName: string;
+  mediaType: string;
+  expectedSizeBytes: number;
+  expectedDigest: string;
+  contextDocument: null;
+  folderRelativePath: string | null;
+  committedResourceId: string | null;
+  chunkSizeBytes: number;
+  receivedRanges: { startOffset: number; endOffsetInclusive: number; sha256: string }[];
+  nextMissingOffset: number;
+  state: "OPEN" | "CONTENT_RECEIVED" | "COMMITTED";
   expiresAt: string;
 };
 
@@ -229,6 +245,19 @@ const state = {
   appCreatedWorkspace: null as WorkspaceAppWorkspace | null,
   appWorkspaceCreateReceipt: null as Deferred<WorkspaceAppWorkspace> | null,
   appWorkspaceCreateCalls: 0,
+  f90UploadSession: null as RenderedResourceUploadSession | null,
+  f90UploadCreates: 0,
+  f90LoseNextChunkAck: false,
+  f90CorruptNextRangeRead: false,
+  f90CommittedResource: null as {
+    resourceId: string;
+    workspaceId: string;
+    resourceRevisionId: string;
+    displayName: string;
+    mediaType: string;
+    contentDigest: string;
+    sizeBytes: number;
+  } | null,
   frameId: 0,
 };
 
@@ -326,6 +355,31 @@ function appWorkspaceListResponse(): WorkspaceAppWorkspace[] {
   return state.appCreatedWorkspace ? [state.appCreatedWorkspace] : [];
 }
 
+function isF90UploadScenario(scenario: WorkspaceAppScenario | null): boolean {
+  return scenario?.startsWith("resource-upload-ambiguous-chunk") === true;
+}
+
+function createRenderedResourceUpload(args: InvokeArgs): RenderedResourceUploadSession {
+  const session: RenderedResourceUploadSession = {
+    uploadId: `upload-f90-${state.f90UploadCreates}`,
+    workspaceId: String(args.workspaceId),
+    displayName: String(args.displayName),
+    mediaType: String(args.mediaType),
+    expectedSizeBytes: Number(args.sizeBytes),
+    expectedDigest: String(args.expectedDigest),
+    contextDocument: null,
+    folderRelativePath: typeof args.folderRelativePath === "string" ? args.folderRelativePath : null,
+    committedResourceId: null,
+    chunkSizeBytes: 4 * 1024 * 1024,
+    receivedRanges: [],
+    nextMissingOffset: 0,
+    state: "OPEN",
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  };
+  state.f90UploadSession = session;
+  return session;
+}
+
 function handleWorkspaceAppInvoke(command: string, args: InvokeArgs): unknown {
   if (command === "get_runtime_status") {
     state.appRuntimeStatusCalls += 1;
@@ -358,10 +412,79 @@ function handleWorkspaceAppInvoke(command: string, args: InvokeArgs): unknown {
     state.appCreatedWorkspace = created;
     return state.appWorkspaceCreateReceipt?.promise ?? created;
   }
+  if (isF90UploadScenario(state.appScenario) && command === "create_resource_upload") {
+    state.f90UploadCreates += 1;
+    return structuredClone(createRenderedResourceUpload(args));
+  }
+  if (isF90UploadScenario(state.appScenario) && command === "get_resource_upload") {
+    if (!state.f90UploadSession || state.f90UploadSession.uploadId !== args.uploadId) {
+      return Promise.reject(new Error("Rendered harness has no matching Resource upload session."));
+    }
+    const view = structuredClone(state.f90UploadSession);
+    if (state.f90CorruptNextRangeRead && view.receivedRanges.length > 0) {
+      state.f90CorruptNextRangeRead = false;
+      view.receivedRanges[0].sha256 = `sha256:${"0".repeat(64)}`;
+    }
+    return view;
+  }
+  if (isF90UploadScenario(state.appScenario) && command === "upload_resource_chunk") {
+    const session = state.f90UploadSession;
+    if (!session || session.uploadId !== args.uploadId) return Promise.reject(new Error("Rendered harness has no matching Resource upload session."));
+    const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(String(args.contentRange));
+    if (!match || Number(match[3]) !== session.expectedSizeBytes) {
+      return Promise.reject(new Error("Rendered harness received an invalid chunk range."));
+    }
+    const startOffset = Number(match[1]);
+    const endOffsetInclusive = Number(match[2]);
+    const acceptedRange = {
+      startOffset,
+      endOffsetInclusive,
+      sha256: `sha256:${String(args.chunkSha256)}`,
+    };
+    const existing = session.receivedRanges.find(range => range.startOffset === startOffset);
+    if (existing) {
+      if (existing.endOffsetInclusive !== endOffsetInclusive || existing.sha256 !== acceptedRange.sha256) {
+        return Promise.reject(new Error("Rendered harness rejected a changed chunk replay."));
+      }
+    } else {
+      session.receivedRanges.push(acceptedRange);
+      session.receivedRanges.sort((left, right) => left.startOffset - right.startOffset);
+    }
+    session.nextMissingOffset = 0;
+    for (const range of session.receivedRanges) {
+      if (range.startOffset !== session.nextMissingOffset) break;
+      session.nextMissingOffset = range.endOffsetInclusive + 1;
+    }
+    if (session.nextMissingOffset === session.expectedSizeBytes) session.state = "CONTENT_RECEIVED";
+    if (state.f90LoseNextChunkAck) {
+      state.f90LoseNextChunkAck = false;
+      return Promise.reject(new Error("Rendered harness lost the chunk acknowledgement."));
+    }
+    return null;
+  }
+  if (isF90UploadScenario(state.appScenario) && command === "commit_resource_upload") {
+    const session = state.f90UploadSession;
+    if (!session || session.uploadId !== args.uploadId || session.state !== "CONTENT_RECEIVED") {
+      return Promise.reject(new Error("Rendered harness refused to commit before every chunk was accepted."));
+    }
+    session.state = "COMMITTED";
+    session.committedResourceId = "resource-f90";
+    state.f90CommittedResource = {
+      resourceId: "resource-f90",
+      workspaceId: session.workspaceId,
+      resourceRevisionId: "resource-f90-revision-1",
+      displayName: session.displayName,
+      mediaType: session.mediaType,
+      contentDigest: session.expectedDigest,
+      sizeBytes: session.expectedSizeBytes,
+    };
+    return structuredClone(state.f90CommittedResource);
+  }
   if (command === "list_agent_installations") return [];
   if (command === "list_agent_profiles" || command === "list_agent_bindings") return { items: [], nextCursor: null };
   if (command === "list_workspace_runtime_bindings" || command === "list_workspace_instructions") return [];
-  if (command === "list_resources") return { items: [], nextCursor: null };
+  if (command === "list_resources") return { items: state.f90CommittedResource ? [state.f90CommittedResource] : [], nextCursor: null };
+  if (command === "list_workspace_roots") return { items: [], nextCursor: null };
   if (command === "list_delegation_profiles") {
     return {
       status: 200,
@@ -693,9 +816,22 @@ function Harness() {
         ? deferred<WorkspaceAppWorkspace[]>()
         : null;
       state.appStaleWorkspaceList = null;
-      state.appCreatedWorkspace = null;
+      state.appCreatedWorkspace = isF90UploadScenario(scenario) ? {
+        workspaceId: "workspace-a",
+        name: "Workspace A",
+        replicationPolicy: "LOCAL_ONLY",
+        defaultAgentBindingId: null,
+        primaryCoworkerId: null,
+        status: "ACTIVE",
+        version: 1,
+      } : null;
       state.appWorkspaceCreateReceipt = scenario === "workspace-list-race" ? deferred<WorkspaceAppWorkspace>() : null;
       state.appWorkspaceCreateCalls = 0;
+      state.f90UploadSession = null;
+      state.f90UploadCreates = 0;
+      state.f90LoseNextChunkAck = isF90UploadScenario(scenario);
+      state.f90CorruptNextRangeRead = scenario === "resource-upload-ambiguous-chunk-bad-range";
+      state.f90CommittedResource = null;
       state.calls.length = 0;
       localStorage.removeItem("litecowork.selectedWorkspaceId");
       setShowLibraryNavigationGuard(false);

@@ -1,5 +1,41 @@
 # Current run and agent handoff
 
+## 2026-10-14 — E02-S03 upload replay and orphan AggregateState CODE slice
+
+Added a real child-process `litecoworkd` regression that creates a Resource upload through
+authenticated same-UID Unix IPC, leaves each create/chunk/commit response unread, confirms
+durable receipts, and restarts the daemon between requests. Exact retries with new IPC frame
+IDs return the original session and committed Resource/revision/event/correlation. The test
+also verifies persisted chunk progress and fetches the committed pinned revision after
+restart to compare all Resource bytes. Changed payload reuse of the create key remains a
+conflict without extra durable records.
+
+The storage fix checks the create receipt before writing a new AggregateState blob and uses
+a request lock shared by store clones across preflight, blob persistence, and the existing
+final transactional receipt check. Replay/conflict tests count blob puts; a barrier-controlled
+case proves same-key concurrency across clones produces one aggregate-state write. The lock
+does not coordinate separately opened stores pointing to the same database.
+
+Linux WSL2 x86_64 / Ubuntu 24.04.4 LTS, rustc `1.98.1`, Cargo `1.98.1`, Node `24.21.0`,
+pnpm `12.10.1`, Chrome `149.0.7827.200`:
+
+- `cargo test --locked -p litecoworkd spawned_daemon_recovers_resource_upload_create_chunk_and_commit_after_lost_ack -- --nocapture --test-threads=1` — **1/1 passed**.
+- `cargo test --locked -p storage-sqlite -p litecoworkd` — **205 storage tests + 157 daemon unit tests + 4 CLI tests passed**.
+- After the test-helper argument cleanup, `cargo test --locked -p storage-sqlite resource_upload_gc_tests:: -- --nocapture --test-threads=1` — **9/9 passed**.
+- `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings` — passed.
+- `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 test` — **210/210 passed**.
+- `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 run test:browser` — **27/27 passed**.
+- `cargo fmt --all -- --check` and CRLF-aware `git diff --check` passed.
+- Contract audit: 0 errors, 206 OpenAPI operations, 158 UI cases, 67 stories; Markdown audit: 173 files / 59,834 lines / 0 broken links; coverage/plan validation: 103 documents, 1,668 sections, 6,448 traceability rows; architecture validation: 142 typed events. All validators passed.
+
+These checks establish CODE evidence only. The daemon test uses test identity/key providers
+and clean SIGTERM after unread responses; no abrupt crash/failed IPC write, production
+keyring, non-Linux OS, packaged Tauri+daemon, or owner USER acceptance is claimed. The
+browser harness does not use the packaged Tauri bridge. E02-S03 remains `IN_PROGRESS`.
+Next dependency-ready work is E02-S04 Needs You: its current route is target-only, so first
+freeze a truthful read-only projection contract over available persisted blocker sources;
+Approval/UserRequest lifecycle sources and full story acceptance remain separate work.
+
 ## 2026-10-14 — E02-S02 spawned-daemon instruction replay CODE slice
 
 Added a process-level instruction revision replay regression in
