@@ -13,6 +13,89 @@ type TaskSummary = {
 };
 type TaskPage = { items: TaskSummary[]; nextCursor: string | null };
 type StatusPage = { status: TaskStatus; nextCursor: string | null };
+type StatusPageOutcome =
+  | { status: TaskStatus; ok: true; page: TaskPage }
+  | { status: TaskStatus; ok: false };
+
+/** Synchronously fences same-render duplicate clicks and completions from old refreshes. */
+export class TaskAttentionPaginationGate {
+  private generation = -1;
+  private active = false;
+
+  invalidate(generation: number): void {
+    this.generation = generation;
+    this.active = false;
+  }
+
+  begin(generation: number): boolean {
+    if (generation !== this.generation || this.active) return false;
+    this.active = true;
+    return true;
+  }
+
+  finish(generation: number): boolean {
+    if (generation !== this.generation || !this.active) return false;
+    this.active = false;
+    return true;
+  }
+}
+
+function isValidStatusPage(status: TaskStatus, page: TaskPage, previousCursor: string | null): boolean {
+  return Boolean(page && Array.isArray(page.items)
+    && (page.nextCursor === null || (typeof page.nextCursor === "string" && page.nextCursor.length > 0 && page.nextCursor !== previousCursor))
+    && page.items.every(task => task && task.status === status && Boolean(task.taskId) && Boolean(task.objective)));
+}
+
+/** Applies only complete, valid status pages so one failed status cannot discard sibling progress. */
+export function mergeTaskAttentionPages(
+  items: TaskSummary[],
+  pages: StatusPage[],
+  outcomes: StatusPageOutcome[],
+): { items: TaskSummary[]; pages: StatusPage[]; failed: boolean } {
+  const successful = new Map<TaskStatus, TaskPage>();
+  let failed = false;
+  for (const outcome of outcomes) {
+    const previousCursor = pages.find(page => page.status === outcome.status)?.nextCursor ?? null;
+    if (!outcome.ok || !isValidStatusPage(outcome.status, outcome.page, previousCursor)) {
+      failed = true;
+      continue;
+    }
+    successful.set(outcome.status, outcome.page);
+  }
+
+  const mergedItems = [...items];
+  const seen = new Set(items.map(item => item.taskId));
+  for (const page of successful.values()) {
+    for (const task of page.items) {
+      if (seen.has(task.taskId)) continue;
+      seen.add(task.taskId);
+      mergedItems.push(task);
+    }
+  }
+
+  const mergedPages = pages.map(current => {
+    const page = successful.get(current.status);
+    return page ? { status: current.status, nextCursor: page.nextCursor } : current;
+  });
+  return { items: mergedItems, pages: mergedPages, failed };
+}
+
+export function TaskAttentionLoadMoreButton({
+  loading,
+  disabled,
+  onLoadMore,
+}: {
+  loading: boolean;
+  disabled: boolean;
+  onLoadMore: () => void;
+}) {
+  return <>
+    <button type="button" className="quiet-button task-attention-more" onClick={onLoadMore} disabled={disabled} aria-busy={loading}>
+      Load more
+    </button>
+    {loading && <p role="status">Loading more Tasks…</p>}
+  </>;
+}
 
 const ATTENTION_STATUSES: readonly TaskStatus[] = ["WAITING_USER", "NEEDS_USER", "BLOCKED"];
 const PAGE_SIZE = 100;
@@ -49,6 +132,7 @@ export function TaskAttentionPage({
   const [refreshToken, setRefreshToken] = useState(0);
   const [failure, setFailure] = useState<string | null>(null);
   const generation = useRef(0);
+  const paginationGate = useRef(new TaskAttentionPaginationGate());
   const visibleItems = loadedWorkspace === workspaceId ? items : [];
   const sortedItems = useMemo(() => [...visibleItems].sort((a, b) => {
     const timeOrder = Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
@@ -57,6 +141,7 @@ export function TaskAttentionPage({
 
   useEffect(() => {
     const current = ++generation.current;
+    paginationGate.current.invalidate(current);
     dispatchLoadState({ type: "invalidate", generation: current });
     let active = true;
     setPages([]);
@@ -81,6 +166,9 @@ export function TaskAttentionPage({
       if (!active || generation.current !== current) return;
       const combined = new Map<string, TaskSummary>();
       for (const result of results) {
+        if (!isValidStatusPage(result.status, result.page, null)) {
+          throw new Error("Task status results did not include a valid advancing page cursor.");
+        }
         for (const task of result.page.items) {
           if (task.status !== result.status || !task.taskId || !task.objective) {
             throw new Error("Task status results did not match the requested Workspace query.");
@@ -102,42 +190,33 @@ export function TaskAttentionPage({
   }, [workspaceId, operatorReady, refreshToken]);
 
   const loadMore = async () => {
-    if (!operatorReady || loadingMore || pages.every(page => page.nextCursor === null)) return;
+    if (!operatorReady || pages.every(page => page.nextCursor === null)) return;
     const current = generation.current;
+    if (!paginationGate.current.begin(current)) return;
     dispatchLoadState({ type: "start-more", generation: current });
     setFailure(null);
     try {
       const pending = pages.filter(page => page.nextCursor !== null);
       const results = await Promise.all(pending.map(async entry => ({
         status: entry.status,
-        page: await invoke<TaskPage>("list_tasks", {
+        ...(await invoke<TaskPage>("list_tasks", {
           workspaceId,
           status: entry.status,
           cursor: entry.nextCursor,
           limit: PAGE_SIZE,
-        }),
+        }).then(page => ({ ok: true as const, page })).catch(() => ({ ok: false as const }))),
       })));
       if (generation.current !== current) return;
-      const seen = new Set(items.map(item => item.taskId));
-      const nextItems = results.flatMap(result => result.page.items.map(task => {
-        if (task.status !== result.status || !task.taskId || !task.objective) {
-          throw new Error("Task status results did not match the requested Workspace query.");
-        }
-        return task;
-      })).filter(task => {
-        if (seen.has(task.taskId)) return false;
-        seen.add(task.taskId);
-        return true;
-      });
-      setItems(currentItems => [...currentItems, ...nextItems]);
-      setPages(currentPages => currentPages.map(currentPage => {
-        const updated = results.find(result => result.status === currentPage.status);
-        return updated ? { status: currentPage.status, nextCursor: updated.page.nextCursor } : currentPage;
-      }));
+      const merged = mergeTaskAttentionPages(items, pages, results);
+      setItems(merged.items);
+      setPages(merged.pages);
+      if (merged.failed) setFailure("Some Task status pages could not be loaded. Load more to retry them.");
     } catch (error) {
       if (generation.current === current) setFailure(typeof error === "string" ? error : "More Tasks could not be loaded.");
     } finally {
-      dispatchLoadState({ type: "finish-more", generation: current });
+      if (paginationGate.current.finish(current)) {
+        dispatchLoadState({ type: "finish-more", generation: current });
+      }
     }
   };
 
@@ -161,6 +240,10 @@ export function TaskAttentionPage({
           <span aria-hidden="true">→</span>
         </button>
       </li>)}</ul>}
-    {hasMore && <button type="button" className="quiet-button task-attention-more" onClick={() => void loadMore()} disabled={!operatorReady || loadingMore}>{loadingMore ? "Loading more…" : "Load more"}</button>}
+    {hasMore && <TaskAttentionLoadMoreButton
+      loading={loadingMore}
+      disabled={!operatorReady || loadingMore}
+      onLoadMore={() => void loadMore()}
+    />}
   </div>;
 }
