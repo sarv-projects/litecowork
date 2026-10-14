@@ -9,10 +9,11 @@ mod runtime_capability_hosts_tests;
 use super::runtime_offers_operator::{RuntimeOffersApiState, runtime_offers_router};
 use super::{
     AuthenticatedLocalPeer, OperatorIpcConnection, OperatorRequestSettlement,
-    RuntimeLifecycleApiState, RuntimeLifecycleBlocker, TaskCreateApiState,
+    RuntimeLifecycleApiState, RuntimeLifecycleBlocker, TaskCreateApiState, UnixTransportError,
     WorkspaceArchiveApiState, WorkspaceCreateApiState, WorkspaceInstructionApiState,
-    WorkspacePolicyApiState, authenticate, dispatch_ipc_exchange, runtime_lifecycle_router,
-    workspace_archive_routes, workspace_instruction_routes, workspace_policy_routes,
+    WorkspacePolicyApiState, authenticate, dispatch_ipc_exchange,
+    is_expected_unix_stream_write_disconnect, runtime_lifecycle_router, workspace_archive_routes,
+    workspace_instruction_routes, workspace_policy_routes,
 };
 use axum::{
     Json, Router,
@@ -26,8 +27,8 @@ use base64::Engine;
 use domain_workspace::{ArchiveWorkspace, CreateWorkspace, EventContext, WorkspaceService};
 use http_body::Body as HttpBody;
 use operator_ipc::{
-    DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, InFlightBodyBudget, LogicalHeader, PROTOCOL_VERSION,
-    RequestFrame, RequestHeader, unix::UnixEndpoint,
+    DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, InFlightBodyBudget, LogicalHeader, MAX_STREAM_FRAME_BYTES,
+    PROTOCOL_VERSION, RequestFrame, RequestHeader, unix::UnixEndpoint,
 };
 use serde_json::{Value, json};
 use sha2::Digest;
@@ -4464,6 +4465,260 @@ async fn authenticated_unix_stream_sends_correlated_handshake_and_authorized_sna
 
     drop(client);
     server.await.expect("server task completes");
+}
+
+#[test]
+fn unix_stream_write_disconnect_errors_are_clean_session_cancellation() {
+    use std::io::{Error, ErrorKind};
+
+    let closed_during_socket_write = UnixTransportError::Io(Error::from(ErrorKind::BrokenPipe));
+    let closed_during_frame_write = UnixTransportError::Protocol(operator_ipc::ProtocolError::Io(
+        Error::from(ErrorKind::ConnectionReset),
+    ));
+    let timed_out = UnixTransportError::DeadlineExceeded;
+    let timed_out_write = UnixTransportError::Io(Error::from(ErrorKind::TimedOut));
+    let invalid_frame =
+        UnixTransportError::Protocol(operator_ipc::ProtocolError::InvalidFrame);
+
+    assert!(is_expected_unix_stream_write_disconnect(
+        &closed_during_socket_write
+    ));
+    assert!(is_expected_unix_stream_write_disconnect(
+        &closed_during_frame_write
+    ));
+    assert!(!is_expected_unix_stream_write_disconnect(&timed_out));
+    assert!(!is_expected_unix_stream_write_disconnect(&timed_out_write));
+    assert!(!is_expected_unix_stream_write_disconnect(&invalid_frame));
+}
+
+#[tokio::test]
+async fn unix_stream_write_after_client_close_returns_peer_disconnected() {
+    let directory = tempfile::tempdir().expect("temporary IPC stream directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("private directory");
+    let expected_uid = fs::metadata(directory.path())
+        .expect("directory metadata")
+        .uid();
+    let endpoint = UnixEndpoint::derive(directory.path()).expect("safe endpoint");
+    let listener = endpoint.bind().expect("endpoint binds");
+    let server_accept = tokio::spawn(async move {
+        listener
+            .accept(|peer| peer.uid == expected_uid)
+            .await
+            .expect("same-UID client connects")
+    });
+    let mut client = endpoint
+        .connect(|peer| peer.uid == expected_uid)
+        .await
+        .expect("client authenticates server");
+    let mut server =
+        OperatorIpcConnection::Unix(server_accept.await.expect("server accept task joins"));
+    let client_budget =
+        InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES).expect("client body budget");
+    let server_budget =
+        InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES).expect("server body budget");
+    let request = RequestFrame::new(
+        RequestHeader {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: "closed-stream-write".to_owned(),
+            method: "POST".to_owned(),
+            path_and_query: "/v1/stream".to_owned(),
+            headers: Vec::new(),
+            body_length: 0,
+        },
+        Vec::new(),
+        &client_budget,
+    )
+    .expect("bounded stream request is valid");
+    client
+        .write_request(&request)
+        .await
+        .expect("stream request writes");
+    server
+        .read_request(&server_budget)
+        .await
+        .expect("server reads stream request");
+
+    let handshake = operator_ipc::ResponseFrame::new(
+        operator_ipc::ResponseHeader {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: "closed-stream-write".to_owned(),
+            status: StatusCode::OK.as_u16(),
+            headers: vec![LogicalHeader {
+                name: "content-type".to_owned(),
+                value: "application/vnd.litecowork.operator-stream+json".to_owned(),
+            }],
+            body_length: 0,
+        },
+        Vec::new(),
+        &server_budget,
+    )
+    .expect("stream handshake is valid");
+    server
+        .write_stream_response(&handshake)
+        .await
+        .expect("server sends stream handshake");
+    client
+        .read_stream_response(&client_budget)
+        .await
+        .expect("client reads stream handshake");
+    drop(client);
+
+    let payload = vec![b'x'; 64 * 1024];
+    let outcome = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut outcome = Ok(super::StreamWriteOutcome::Sent);
+        for _ in 0..8 {
+            outcome = server.write_stream_message(&payload, &server_budget).await;
+            if outcome != Ok(super::StreamWriteOutcome::Sent) {
+                break;
+            }
+        }
+        outcome
+    })
+    .await
+    .expect("closed peer write is bounded");
+    assert_eq!(outcome, Ok(super::StreamWriteOutcome::PeerDisconnected));
+}
+
+#[tokio::test]
+async fn unix_stream_write_disconnect_settles_dispatch_and_releases_body_budget() {
+    use tokio::sync::oneshot;
+
+    let directory = tempfile::tempdir().expect("temporary IPC stream dispatch directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("private directory");
+    let expected_uid = fs::metadata(directory.path())
+        .expect("directory metadata")
+        .uid();
+    let endpoint = UnixEndpoint::derive(directory.path()).expect("safe endpoint");
+    let listener = endpoint.bind().expect("endpoint binds");
+    let server_budget =
+        InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES).expect("server body budget");
+    let dispatch_budget = Arc::clone(&server_budget);
+    let (frame_sender, frame_receiver) = oneshot::channel::<()>();
+    let frame_receiver = Arc::new(std::sync::Mutex::new(Some(frame_receiver)));
+    let route_frame_receiver = Arc::clone(&frame_receiver);
+    let router = Router::new()
+        .route(
+            "/v1/stream",
+            post(move || {
+                let frame_receiver = route_frame_receiver
+                    .lock()
+                    .expect("stream frame receiver lock")
+                    .take()
+                    .expect("one stream frame receiver");
+                async move {
+                    let body = Body::from_stream(futures_util::stream::once(async move {
+                        frame_receiver.await.expect("test releases stream frame");
+                        Ok::<Bytes, std::convert::Infallible>(Bytes::from(vec![
+                            b'x';
+                            MAX_STREAM_FRAME_BYTES
+                        ]))
+                    }));
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(
+                            header::CONTENT_TYPE,
+                            "application/vnd.litecowork.operator-stream+json",
+                        )
+                        .body(body)
+                        .expect("stream response is valid")
+                }
+            }),
+        )
+        .route_layer(middleware::from_fn(authenticate));
+    let server = tokio::spawn(async move {
+        let connection = listener
+            .accept(|peer| peer.uid == expected_uid)
+            .await
+            .expect("same-UID stream client is accepted");
+        dispatch_ipc_exchange(
+            router,
+            OperatorIpcConnection::Unix(connection),
+            dispatch_budget,
+            Duration::from_secs(2),
+        )
+        .await
+    });
+
+    let mut client = endpoint
+        .connect(|peer| peer.uid == expected_uid)
+        .await
+        .expect("client authenticates server");
+    let client_budget =
+        InFlightBodyBudget::new(DEFAULT_MAX_IN_FLIGHT_BODY_BYTES).expect("client body budget");
+    let request = RequestFrame::new(
+        RequestHeader {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: "stream-write-disconnect-dispatch".to_owned(),
+            method: "POST".to_owned(),
+            path_and_query: "/v1/stream".to_owned(),
+            headers: Vec::new(),
+            body_length: 0,
+        },
+        Vec::new(),
+        &client_budget,
+    )
+    .expect("bounded stream request is valid");
+    client
+        .write_request(&request)
+        .await
+        .expect("stream request writes");
+    client
+        .read_stream_response(&client_budget)
+        .await
+        .expect("stream handshake arrives before update");
+    // Keep exactly one maximum-size frame reservation available before the body
+    // yields. The dispatcher already holds its fixed stream reservation, so the
+    // writer can claim the remaining slot without racing this test for capacity.
+    let mut held_budget = Vec::new();
+    let slots_without_frame = (DEFAULT_MAX_IN_FLIGHT_BODY_BYTES
+        - super::OPERATOR_STREAM_OUTPUT_RESERVATION_BYTES)
+        / MAX_STREAM_FRAME_BYTES;
+    for _ in 1..slots_without_frame {
+        held_budget.push(
+            server_budget
+                .reserve_bytes(MAX_STREAM_FRAME_BYTES)
+                .expect("reserve all but one stream-frame slot"),
+        );
+    }
+    frame_sender
+        .send(())
+        .expect("server body accepts one large update");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match server_budget.reserve_bytes(MAX_STREAM_FRAME_BYTES) {
+                Ok(permit) => drop(permit),
+                Err(_) => break,
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("dispatcher claims the remaining frame-budget slot");
+    assert_eq!(
+        held_budget.len(),
+        slots_without_frame - 1,
+        "the remaining frame slot belongs to the active stream writer"
+    );
+    // No await occurs between releasing the test reservations and closing the
+    // client. On the current-thread test runtime, dispatch cannot finish the
+    // stalled write in that gap.
+    drop(held_budget);
+    drop(client);
+
+    let settlement = tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .expect("peer write disconnect settles within deadline")
+        .expect("dispatch task joins");
+    assert_eq!(settlement, Ok(OperatorRequestSettlement::Complete));
+    let first_budget_reservation = server_budget
+        .reserve_bytes(64 * 1024 * 1024)
+        .expect("first half of in-flight capacity is returned");
+    let second_budget_reservation = server_budget
+        .reserve_bytes(64 * 1024 * 1024)
+        .expect("all stream reservations are released after settlement");
+    drop((first_budget_reservation, second_budget_reservation));
 }
 
 #[tokio::test]

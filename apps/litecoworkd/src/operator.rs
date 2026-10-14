@@ -337,6 +337,12 @@ enum OperatorIpcConnection {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamWriteOutcome {
+    Sent,
+    PeerDisconnected,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OperatorAcceptError {
     Rejected,
     Capacity,
@@ -469,18 +475,24 @@ impl OperatorIpcConnection {
     async fn write_stream_response(
         &mut self,
         frame: &operator_ipc::ResponseFrame,
-    ) -> Result<(), String> {
+    ) -> Result<StreamWriteOutcome, String> {
         match self {
             #[cfg(unix)]
-            Self::Unix(connection) => connection
-                .write_stream_response(frame)
-                .await
-                .map_err(|_| "local Operator stream handshake could not be sent".to_owned()),
+            Self::Unix(connection) => match connection.write_stream_response(frame).await {
+                Ok(()) => Ok(StreamWriteOutcome::Sent),
+                Err(error) if is_expected_unix_stream_write_disconnect(&error) => {
+                    Ok(StreamWriteOutcome::PeerDisconnected)
+                }
+                Err(_) => Err("local Operator stream handshake could not be sent".to_owned()),
+            },
             #[cfg(windows)]
-            Self::Windows(connection) => connection
-                .write_stream_response(frame)
-                .await
-                .map_err(|_| "local Operator stream handshake could not be sent".to_owned()),
+            Self::Windows(connection) => match connection.write_stream_response(frame).await {
+                Ok(()) => Ok(StreamWriteOutcome::Sent),
+                Err(error) if is_expected_windows_stream_write_disconnect(&error) => {
+                    Ok(StreamWriteOutcome::PeerDisconnected)
+                }
+                Err(_) => Err("local Operator stream handshake could not be sent".to_owned()),
+            },
         }
     }
 
@@ -488,18 +500,28 @@ impl OperatorIpcConnection {
         &mut self,
         message: &[u8],
         budget: &Arc<InFlightBodyBudget>,
-    ) -> Result<(), String> {
+    ) -> Result<StreamWriteOutcome, String> {
         match self {
             #[cfg(unix)]
-            Self::Unix(connection) => connection
-                .write_stream_message(message, budget)
-                .await
-                .map_err(|_| "local Operator stream message could not be sent".to_owned()),
+            Self::Unix(connection) => {
+                match connection.write_stream_message(message, budget).await {
+                    Ok(()) => Ok(StreamWriteOutcome::Sent),
+                    Err(error) if is_expected_unix_stream_write_disconnect(&error) => {
+                        Ok(StreamWriteOutcome::PeerDisconnected)
+                    }
+                    Err(_) => Err("local Operator stream message could not be sent".to_owned()),
+                }
+            }
             #[cfg(windows)]
-            Self::Windows(connection) => connection
-                .write_stream_message(message, budget)
-                .await
-                .map_err(|_| "local Operator stream message could not be sent".to_owned()),
+            Self::Windows(connection) => {
+                match connection.write_stream_message(message, budget).await {
+                    Ok(()) => Ok(StreamWriteOutcome::Sent),
+                    Err(error) if is_expected_windows_stream_write_disconnect(&error) => {
+                        Ok(StreamWriteOutcome::PeerDisconnected)
+                    }
+                    Err(_) => Err("local Operator stream message could not be sent".to_owned()),
+                }
+            }
         }
     }
 
@@ -526,6 +548,28 @@ impl OperatorIpcConnection {
                 Err(_) => Err("local Operator stream peer closed or sent invalid data".to_owned()),
             },
         }
+    }
+}
+
+#[cfg(unix)]
+fn is_expected_unix_stream_write_disconnect(error: &UnixTransportError) -> bool {
+    match error {
+        UnixTransportError::Io(error)
+        | UnixTransportError::Protocol(operator_ipc::ProtocolError::Io(error)) => {
+            is_expected_stream_peer_disconnect(error.kind())
+        }
+        _ => false,
+    }
+}
+
+#[cfg(windows)]
+fn is_expected_windows_stream_write_disconnect(error: &WindowsTransportError) -> bool {
+    match error {
+        WindowsTransportError::Io(error)
+        | WindowsTransportError::Protocol(operator_ipc::ProtocolError::Io(error)) => {
+            is_expected_stream_peer_disconnect(error.kind())
+        }
+        _ => false,
     }
 }
 
@@ -1606,7 +1650,12 @@ async fn dispatch_ipc_exchange(
                 &budget,
             )
             .map_err(|_| "local Operator stream handshake could not be framed".to_owned())?;
-            connection.write_stream_response(&handshake).await?;
+            match connection.write_stream_response(&handshake).await? {
+                StreamWriteOutcome::Sent => {}
+                StreamWriteOutcome::PeerDisconnected => {
+                    return Ok(OperatorRequestSettlement::Complete);
+                }
+            }
             // Cover the bounded initial snapshot and one generated update before
             // their Bytes allocations enter the response body. The framed writer
             // applies an additional exact-size reservation while writing each frame.
@@ -1623,7 +1672,12 @@ async fn dispatch_ipc_exchange(
                 match frame {
                     Some(Ok(frame)) => {
                         if let Ok(data) = frame.into_data() {
-                            connection.write_stream_message(&data, &budget).await?;
+                            match connection.write_stream_message(&data, &budget).await? {
+                                StreamWriteOutcome::Sent => {}
+                                StreamWriteOutcome::PeerDisconnected => {
+                                    return Ok(OperatorRequestSettlement::Complete);
+                                }
+                            }
                         }
                     }
                     Some(Err(_)) => {
