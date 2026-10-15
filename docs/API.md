@@ -875,8 +875,10 @@ metadata. Active AgentSessions remain pinned to their admitted descriptor/config
 digests; edits affect future admissions.
 
 `lead_eligible` remains distinct from `enabled`. Disabling blocks new admission while
-already admitted sessions settle under their pinned contract. No agent/provider/model is
-silently substituted.
+already admitted sessions settle under their pinned contract. An exact owner-scoped
+enable/disable receipt replay returns the original response before active-only binding
+reads, including after Workspace archival; a fresh mutation remains blocked. No
+agent/provider/model is silently substituted.
 
 ### Composer/session option dependency
 

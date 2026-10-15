@@ -7,9 +7,11 @@ import { ConversationsPage } from "../../src/conversations/ConversationsPage";
 import { ResourceRevisionEditor } from "../../src/resources/ResourceRevisionEditor";
 import { LibraryNavigationDialog, libraryNavigationMainIsInert, useLibraryNavigation } from "../../src/resources/library-navigation";
 import { WorkspaceFirstRun } from "../../src/workspaces/WorkspaceFirstRun";
+import { AgentCatalogSettings } from "../../src/agents/AgentCatalogSettings";
 import "../../src/styles.css";
 
 type WorkspaceFirstRunProps = ComponentProps<typeof WorkspaceFirstRun>;
+type AgentCatalogSettingsProps = ComponentProps<typeof AgentCatalogSettings>;
 type WorkspaceFirstRunScenario = "loading" | "error" | "offline" | "runtime-error" | "existing" | "ready" | "pending" | "busy";
 type WorkspaceRuntimeStatus = Exclude<WorkspaceFirstRunProps["runtime"], null>;
 type WorkspaceAppScenario = "workspace-list-race" | "workspace-list-failure" | "runtime-refresh-failure" | "resource-upload-ambiguous-chunk" | "resource-upload-ambiguous-chunk-bad-range" | "workspace-policy-lost-ack" | "workspace-policy-lost-ack-confirmed" | "workspace-policy-list-race";
@@ -664,6 +666,8 @@ type HarnessApi = {
   configureWorkspaceFirstRun: (scenario: WorkspaceFirstRunScenario) => true;
   workspaceActionCounts: () => { startRuntime: number; refreshRuntime: number; refreshWorkspaces: number; createWorkspace: number };
   mountProductionApp: (scenario: WorkspaceAppScenario) => true;
+  mountAgentCatalogDefaultPrompt: () => true;
+  selectAgentCatalogWorkspace: (workspaceId: string) => true;
   resolveInitialAppWorkspaceList: () => Promise<true>;
   rejectInitialAppWorkspaceList: () => Promise<true>;
   deferNextAppWorkspaceListRefresh: () => true;
@@ -688,6 +692,8 @@ function Harness() {
   const [workspaceFirstRunProps, setWorkspaceFirstRunProps] = useState<WorkspaceFirstRunProps | null>(null);
   const [showProductionApp, setShowProductionApp] = useState(false);
   const [productionAppMount, setProductionAppMount] = useState(0);
+  const [agentCatalogFixture, setAgentCatalogFixture] = useState<AgentCatalogSettingsProps | null>(null);
+  const [lastDisabledAgentBindingId, setLastDisabledAgentBindingId] = useState<string | null>(null);
 
   window.litecoworkHarness = {
     resetResource(deferredReads = false) {
@@ -844,6 +850,69 @@ function Harness() {
       setProductionAppMount(value => value + 1);
       return true;
     },
+    mountAgentCatalogDefaultPrompt() {
+      setShowLibraryNavigationGuard(false);
+      setShowProductionApp(false);
+      setWorkspaceFirstRunProps(null);
+      setLastDisabledAgentBindingId(null);
+      setAgentCatalogFixture({
+        workspaceId: "workspace-a",
+        workspaceName: "Workspace A",
+        workspaceActive: true,
+        runtimeReady: true,
+        runtimeEnrolled: false,
+        selectedDefaultLeadBindingId: "binding-a",
+        installations: [],
+        profiles: [
+          { agentProfileId: "profile-a", providerKey: "TEST_A", displayName: "Primary Agent", endpoints: [], discoveredAt: "2026-10-15T00:00:00Z", observations: [] },
+          { agentProfileId: "profile-b", providerKey: "TEST_B", displayName: "Secondary Agent", endpoints: [], discoveredAt: "2026-10-15T00:00:00Z", observations: [] },
+        ],
+        bindings: [
+          {
+            agentBindingId: "binding-a",
+            workspaceId: "workspace-a",
+            agentProfileId: "profile-a",
+            runtimeId: null,
+            endpointSelectionPolicy: {},
+            authRef: null,
+            configuration: {},
+            enabled: true,
+            leadEligible: true,
+            createdAt: "2026-10-15T00:00:00Z",
+            version: 1,
+          },
+          {
+            agentBindingId: "binding-secondary",
+            workspaceId: "workspace-a",
+            agentProfileId: "profile-b",
+            runtimeId: null,
+            endpointSelectionPolicy: {},
+            authRef: null,
+            configuration: {},
+            enabled: true,
+            leadEligible: true,
+            createdAt: "2026-10-15T00:00:00Z",
+            version: 1,
+          },
+        ],
+        onRefresh() {},
+        onProbeCodex() {},
+        onProbeOpenCode() {},
+        onCreateBinding() {},
+        onEnableBinding() {},
+        onDisableBinding(binding) { setLastDisabledAgentBindingId(binding.agentBindingId); },
+        onSetDefaultLead() {},
+      });
+      return true;
+    },
+    selectAgentCatalogWorkspace(workspaceId) {
+      setAgentCatalogFixture(current => current ? {
+        ...current,
+        workspaceId,
+        workspaceName: workspaceId === "workspace-a" ? "Workspace A" : "Workspace B",
+      } : current);
+      return true;
+    },
     async resolveInitialAppWorkspaceList() {
       const pending = state.appInitialWorkspaceList;
       if (!pending) throw new Error("There is no deferred initial production App Workspace list.");
@@ -890,6 +959,10 @@ function Harness() {
 
   if (showLibraryNavigationGuard) return <LibraryNavigationFixture />;
   if (showProductionApp) return <App key={productionAppMount} />;
+  if (agentCatalogFixture) return <main className="harness-ready" data-agent-catalog-workspace={agentCatalogFixture.workspaceId}>
+    <output data-last-disabled-agent-binding={lastDisabledAgentBindingId ?? ""}>{lastDisabledAgentBindingId ?? ""}</output>
+    <AgentCatalogSettings {...agentCatalogFixture} />
+  </main>;
   if (workspaceFirstRunProps) return <main className="harness-ready">
     <h1>Workspace first-run rendered fixture</h1>
     <section aria-label="First-run Workspace setup">

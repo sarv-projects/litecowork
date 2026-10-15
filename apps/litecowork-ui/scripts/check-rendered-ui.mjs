@@ -761,6 +761,30 @@ async function runWorkspaceAppChecks() {
   return checks;
 }
 
+async function runAgentBindingUiChecks() {
+  const checks = [];
+  await clickHarness("mountAgentCatalogDefaultPrompt");
+  await waitFor(() => evaluate("Boolean(document.querySelector('.agent-catalog__bindings'))"), "Workspace agent binding controls");
+  await clickButton("Clear Workspace default…");
+  assert.equal(
+    await evaluate("Boolean(document.querySelector('[aria-label=\"Confirm clearing Workspace default lead\"]'))"),
+    true,
+    "the owner sees a confirmation before clearing the selected default",
+  );
+  await clickHarness("selectAgentCatalogWorkspace", "workspace-b");
+  await clickHarness("selectAgentCatalogWorkspace", "workspace-a");
+  await waitFor(() => evaluate("document.querySelector('main[data-agent-catalog-workspace=\"workspace-a\"] .agent-catalog__default-note') !== null"), "return to the original Workspace default controls");
+  assert.equal(
+    await evaluate("Boolean(document.querySelector('[aria-label=\"Confirm clearing Workspace default lead\"]'))"),
+    false,
+    "switching away and back cannot revive an old default-clear confirmation",
+  );
+  await clickButton("Disable");
+  await waitFor(() => evaluate("document.querySelector('[data-last-disabled-agent-binding]')?.textContent === 'binding-secondary'"), "Disable action receives the selected non-default binding");
+  checks.push("E03-S01 default-clear confirmation resets after Workspace switch and return, and Disable routes the exact binding");
+  return checks;
+}
+
 async function runResourceUploadRecoveryChecks() {
   const checks = [];
 
@@ -856,6 +880,7 @@ try {
     ...await runLibraryNavigationChecks(),
     ...await runWorkspaceFirstRunChecks(),
     ...await runWorkspaceAppChecks(),
+    ...await runAgentBindingUiChecks(),
     ...await runResourceUploadRecoveryChecks(),
   ];
   throwIfInterrupted();

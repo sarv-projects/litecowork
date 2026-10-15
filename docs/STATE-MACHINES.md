@@ -403,8 +403,9 @@ DISABLED -> ENABLED -> DISABLED
 ```
 
 AgentBindingService owns enablement and version checks. A new binding is DISABLED.
-Disabling immediately prevents new planning/Attempt admission; sessions already admitted
-remain pinned and settle under their current lifecycle, lease, and Effect rules. A
+Disabling immediately prevents new Conversation session and Task planning/Attempt
+admission; sessions already admitted remain pinned and continue under their current
+lifecycle, lease, and Effect rules. A
 disabled binding can be enabled again after TrustService and runtime eligibility checks.
 The service rejects disabling the current Workspace default or removing its lead
 eligibility until the owner explicitly clears or changes the Workspace default; these

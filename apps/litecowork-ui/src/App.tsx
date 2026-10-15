@@ -23,6 +23,22 @@ import { desktopRoutineApi } from "./routines/desktop-routine-api";
 import { AgentCatalogSettings } from "./agents/AgentCatalogSettings";
 import type { AgentProviderKey } from "./agents/agent-catalog-api";
 import { desktopAgentCatalogApi } from "./agents/desktop-agent-catalog-api";
+import {
+  AgentBindingRefreshFence,
+  agentActionFeedbackForWorkspace,
+  agentBindingMutationFailureMessage,
+  agentBindingMutationSuccessMessage,
+  clearAgentBindingMutationRequest,
+  clearAgentActionBusyIfMatches,
+  getOrCreateAgentBindingMutationRequest,
+  mergeAgentBindingProjection,
+  mergeAgentBindingProjections,
+  reconcileAgentBindingMutationRequests,
+  updateAgentActionFeedback as applyAgentActionFeedback,
+  type AgentActionFeedbackByWorkspace,
+  type AgentActionFeedback,
+  type PendingAgentBindingMutation,
+} from "./agents/agent-binding-mutation.ts";
 import { ZipIntakeNotice } from "./resources/ZipIntakeNotice";
 import { isSensitiveOrGenerated, resourceDisplayName, resourceFolderRelativePath, resourceIndexAction, validateResourceFileSelection } from "./resources/resource-intake";
 import {
@@ -505,7 +521,9 @@ function App() {
   const [agentProfiles, setAgentProfiles] = useState<AgentProfileView[]>([]);
   const [agentProfileError, setAgentProfileError] = useState<string | null>(null);
   const [runtimeInventoryStreamStatus, setRuntimeInventoryStreamStatus] = useState<RuntimeInventoryStreamStatus | "UNAVAILABLE">("UNAVAILABLE");
-  const agentProfilesGeneration = useRef(0);
+  const agentProfilesGeneration = useRef(new AgentBindingRefreshFence());
+  const agentBindingsGeneration = useRef(new AgentBindingRefreshFence());
+  const pendingAgentBindingMutations = useRef(new Map<string, PendingAgentBindingMutation>());
   const [agentBindings, setAgentBindings] = useState<AgentBindingView[]>([]);
   const [agentBindingError, setAgentBindingError] = useState<string | null>(null);
   const [delegationProfiles, setDelegationProfiles] = useState<DelegationProfileCatalogItem[]>([]);
@@ -517,9 +535,10 @@ function App() {
   const [runtimeEnrollmentBusy, setRuntimeEnrollmentBusy] = useState(false);
   const [runtimeEnrollmentMessage, setRuntimeEnrollmentMessage] = useState<string | null>(null);
   const [runtimeEnrollmentError, setRuntimeEnrollmentError] = useState<string | null>(null);
-  const [agentActionMessage, setAgentActionMessage] = useState<string | null>(null);
-  const [agentActionError, setAgentActionError] = useState<string | null>(null);
-  const [agentActionBusy, setAgentActionBusy] = useState<string | null>(null);
+  const [agentActionFeedback, setAgentActionFeedback] = useState<AgentActionFeedbackByWorkspace>({});
+  const updateAgentActionFeedback = (workspaceId: string, update: Partial<AgentActionFeedback>) => {
+    setAgentActionFeedback(current => applyAgentActionFeedback(current, workspaceId, update));
+  };
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceCreateBusy, setWorkspaceCreateBusy] = useState(false);
   const [workspacePolicyBusy, setWorkspacePolicyBusy] = useState(false);
@@ -661,29 +680,35 @@ function App() {
   };
 
   const refreshAgentProfiles = async (workspaceId: string) => {
-    const generation = ++agentProfilesGeneration.current;
     if (!workspaceId) { setAgentProfiles([]); setAgentProfileError(null); return; }
+    const generation = agentProfilesGeneration.current.begin(workspaceId);
     try {
       const page = await invoke<AgentProfilePageView>("list_agent_profiles", { workspaceId });
-      if (generation !== agentProfilesGeneration.current || selectedWorkspaceIdRef.current !== workspaceId) return;
+      if (!agentProfilesGeneration.current.isCurrent(workspaceId, generation, selectedWorkspaceIdRef.current)) return;
       setAgentProfiles(page.items);
       setAgentProfileError(null);
     } catch {
-      if (generation !== agentProfilesGeneration.current || selectedWorkspaceIdRef.current !== workspaceId) return;
+      if (!agentProfilesGeneration.current.isCurrent(workspaceId, generation, selectedWorkspaceIdRef.current)) return;
       setAgentProfiles([]);
       setAgentProfileError("Agent profiles and current Runtime offers are unavailable. Start the local Runtime and try again.");
     }
   };
 
   const refreshAgentBindings = async (workspaceId: string) => {
-    if (!workspaceId) { setAgentBindings([]); setAgentBindingError(null); return; }
+    if (!workspaceId) { setAgentBindings([]); setAgentBindingError(null); return []; }
+    const generation = agentBindingsGeneration.current.begin(workspaceId);
     try {
       const page = await invoke<AgentBindingPageView>("list_agent_bindings", { workspaceId });
-      setAgentBindings(page.items);
+      if (!agentBindingsGeneration.current.isCurrent(workspaceId, generation, selectedWorkspaceIdRef.current)) return null;
+      setAgentBindings(current => mergeAgentBindingProjections(current, page.items));
+      reconcileAgentBindingMutationRequests(pendingAgentBindingMutations.current, workspaceId, page.items);
       setAgentBindingError(null);
+      return page.items;
     } catch {
-      setAgentBindings([]);
-      setAgentBindingError("Workspace agent bindings are unavailable. Start the local Runtime and try again.");
+      if (agentBindingsGeneration.current.isCurrent(workspaceId, generation, selectedWorkspaceIdRef.current)) {
+        setAgentBindingError("Workspace agent bindings are unavailable. Start the local Runtime and try again.");
+      }
+      return null;
     }
   };
 
@@ -728,15 +753,15 @@ function App() {
   };
 
   const probeAgentProfile = async (providerKey: AgentProviderKey) => {
+    const workspaceId = selectedWorkspaceIdRef.current;
+    if (!workspaceId) return;
     const action = providerKey === "CODEX" ? "probe" : "probe:OPENCODE";
     const displayName = providerKey === "CODEX" ? "Codex" : "OpenCode";
-    setAgentActionBusy(action);
-    setAgentActionMessage(null);
-    setAgentActionError(null);
+    const isCurrentWorkspace = () => selectedWorkspaceIdRef.current === workspaceId;
+    updateAgentActionFeedback(workspaceId, { busy: action, message: null, error: null });
     try {
-      const workspaceId = selectedWorkspaceIdRef.current;
       if (!workspaceId || !runtimeBindings.some((binding) => binding.workspaceId === workspaceId && binding.runtimeId === runtime?.runtimeId && binding.status === "ACTIVE")) {
-        setAgentActionError(`Enroll this computer in the selected Workspace before probing ${displayName}.`);
+        if (isCurrentWorkspace()) updateAgentActionFeedback(workspaceId, { error: `Enroll this computer in the selected Workspace before probing ${displayName}.` });
         return;
       }
       const profile = providerKey === "CODEX"
@@ -745,17 +770,17 @@ function App() {
       if (profile.providerKey !== providerKey) {
         throw new Error("The local Runtime returned a different agent profile than requested.");
       }
-      if (selectedWorkspaceIdRef.current !== workspaceId) return;
+      if (!isCurrentWorkspace()) return;
       setAgentProfiles((profiles) => [profile, ...profiles.filter((item) => item.agentProfileId !== profile.agentProfileId)]);
-      setAgentActionMessage(providerKey === "OPENCODE"
+      updateAgentActionFeedback(workspaceId, { message: providerKey === "OPENCODE"
         ? "OpenCode profile probe finished. The refreshed catalog is display-only; authentication, inference, model selection, and Task execution are not qualified."
-        : "Codex profile probe completed. Review the current offer below; this does not validate model entitlement or run a Task.");
+        : "Codex profile probe completed. Review the current offer below; this does not validate model entitlement or run a Task." });
       await refreshAgentInstallations();
-      if (selectedWorkspaceIdRef.current === workspaceId) await refreshAgentProfiles(workspaceId);
+      if (isCurrentWorkspace()) await refreshAgentProfiles(workspaceId);
     } catch {
-      setAgentActionError(`${displayName} profile probe could not complete. The local Runtime or probe route may be unavailable; refresh Runtime status and try again.`);
+      if (isCurrentWorkspace()) updateAgentActionFeedback(workspaceId, { error: `${displayName} profile probe could not complete. The local Runtime or probe route may be unavailable; refresh Runtime status and try again.` });
     } finally {
-      setAgentActionBusy(null);
+      setAgentActionFeedback(current => clearAgentActionBusyIfMatches(current, workspaceId, action));
     }
   };
 
@@ -763,58 +788,115 @@ function App() {
   const probeOpenCodeProfile = () => probeAgentProfile("OPENCODE");
 
   const createAgentBinding = async (profile: AgentProfileView, leadEligible: boolean) => {
-    if (!selectedWorkspaceId) return;
+    const workspaceId = selectedWorkspaceIdRef.current;
+    if (!workspaceId) return;
+    const isCurrentWorkspace = () => selectedWorkspaceIdRef.current === workspaceId;
     if (!profileHasFreshAdmissionOffer(profile)) {
-      setAgentActionError("Refresh the profile and confirm a fresh compatible Runtime offer before creating a binding.");
+      if (isCurrentWorkspace()) updateAgentActionFeedback(workspaceId, { error: "Refresh the profile and confirm a fresh compatible Runtime offer before creating a binding." });
       return;
     }
-    if (!runtimeBindings.some((binding) => binding.workspaceId === selectedWorkspaceId && binding.runtimeId === runtime?.runtimeId && binding.status === "ACTIVE")) {
-      setAgentActionError("Enroll this computer in the selected Workspace before creating an agent binding.");
+    if (!runtimeBindings.some((binding) => binding.workspaceId === workspaceId && binding.runtimeId === runtime?.runtimeId && binding.status === "ACTIVE")) {
+      if (isCurrentWorkspace()) updateAgentActionFeedback(workspaceId, { error: "Enroll this computer in the selected Workspace before creating an agent binding." });
       return;
     }
-    setAgentActionBusy(`create:${profile.agentProfileId}`);
-    setAgentActionMessage(null);
-    setAgentActionError(null);
+    const action = `create:${profile.agentProfileId}`;
+    updateAgentActionFeedback(workspaceId, { busy: action, message: null, error: null });
     try {
       await invoke<AgentBindingView>("create_agent_binding", {
-        workspaceId: selectedWorkspaceId,
+        workspaceId,
         agentProfileId: profile.agentProfileId,
         leadEligible,
         runtimeId: runtime?.runtimeId ?? null,
         requestId: crypto.randomUUID(),
       });
-      setAgentActionMessage(`${profile.displayName} was added to this Workspace in the disabled state. Enable it separately when you are ready.`);
-      await refreshAgentBindings(selectedWorkspaceId);
+      if (isCurrentWorkspace()) updateAgentActionFeedback(workspaceId, { message: `${profile.displayName} was added to this Workspace in the disabled state. Enable it separately when you are ready.` });
+      await refreshAgentBindings(workspaceId);
     } catch {
-      setAgentActionError("The Workspace binding could not be created. Refresh the profile and selected Workspace, then try again.");
+      if (isCurrentWorkspace()) updateAgentActionFeedback(workspaceId, { error: "The Workspace binding could not be created. Refresh the profile and selected Workspace, then try again." });
     } finally {
-      setAgentActionBusy(null);
+      setAgentActionFeedback(current => clearAgentActionBusyIfMatches(current, workspaceId, action));
     }
   };
 
-  const enableAgentBinding = async (binding: AgentBindingView) => {
-    if (!runtimeBindings.some((item) => item.workspaceId === binding.workspaceId && item.runtimeId === runtime?.runtimeId && item.status === "ACTIVE")) {
-      setAgentActionError("Enroll this computer in the selected Workspace before enabling an agent binding.");
+  const changeAgentBindingState = async (binding: AgentBindingView, operation: "enable" | "disable") => {
+    if (selectedWorkspaceIdRef.current !== binding.workspaceId) return;
+    const currentWorkspace = workspacesRef.current.find((item) => item.workspaceId === binding.workspaceId);
+    if (operation === "enable" && !runtimeBindings.some((item) => item.workspaceId === binding.workspaceId && item.runtimeId === runtime?.runtimeId && item.status === "ACTIVE")) {
+      updateAgentActionFeedback(binding.workspaceId, { error: "Enroll this computer in the selected Workspace before enabling an agent." });
       return;
     }
-    setAgentActionBusy(`enable:${binding.agentBindingId}`);
-    setAgentActionMessage(null);
-    setAgentActionError(null);
+    if (operation === "disable" && currentWorkspace?.defaultAgentBindingId === binding.agentBindingId) {
+      updateAgentActionFeedback(binding.workspaceId, { error: "Clear or change the Workspace default before disabling this agent." });
+      return;
+    }
+    const pending = getOrCreateAgentBindingMutationRequest(pendingAgentBindingMutations.current, {
+      operation,
+      workspaceId: binding.workspaceId,
+      agentBindingId: binding.agentBindingId,
+      expectedVersion: binding.version,
+    }, () => crypto.randomUUID());
+    const command = operation === "enable" ? "enable_agent_binding" : "disable_agent_binding";
+    const desiredEnabled = operation === "enable";
+    const busyAction = `${operation}:${binding.agentBindingId}`;
+    const isCurrentWorkspace = () => selectedWorkspaceIdRef.current === binding.workspaceId;
+    updateAgentActionFeedback(binding.workspaceId, { busy: busyAction });
+    if (isCurrentWorkspace()) {
+      updateAgentActionFeedback(binding.workspaceId, { message: null, error: null });
+    }
     try {
-      await invoke<AgentBindingView>("enable_agent_binding", {
+      const updated = await invoke<AgentBindingView>(command, {
         workspaceId: binding.workspaceId,
         agentBindingId: binding.agentBindingId,
         expectedVersion: binding.version,
-        requestId: crypto.randomUUID(),
+        requestId: pending.requestId,
       });
-      setAgentActionMessage("Binding enabled for future admission. This does not select a Workspace default, start an agent, or execute Tasks.");
-      await refreshAgentBindings(binding.workspaceId);
+      if (updated.workspaceId !== binding.workspaceId
+        || updated.agentBindingId !== binding.agentBindingId
+        || updated.version <= binding.version
+        || updated.enabled !== desiredEnabled) {
+        throw new Error("The AgentBinding mutation response did not match its request.");
+      }
+      clearAgentBindingMutationRequest(pendingAgentBindingMutations.current, pending);
+      if (isCurrentWorkspace()) {
+        setAgentBindings(current => mergeAgentBindingProjection(current, updated));
+        updateAgentActionFeedback(binding.workspaceId, { message: operation === "enable"
+          ? "This agent is enabled for future work. It will not become the Workspace default or start anything on its own."
+          : "New Conversation and Task sessions cannot use this agent. Sessions already admitted stay attached; later Task steps may need another enabled agent." });
+      }
+      const refreshed = await refreshAgentBindings(binding.workspaceId);
+      if (isCurrentWorkspace()) {
+        const latestBinding = refreshed === null
+          ? updated
+          : mergeAgentBindingProjections([updated], refreshed).find(item => item.workspaceId === binding.workspaceId && item.agentBindingId === binding.agentBindingId);
+        updateAgentActionFeedback(binding.workspaceId, {
+          message: agentBindingMutationSuccessMessage(operation, latestBinding, refreshed !== null),
+        });
+      }
     } catch {
-      setAgentActionError("The binding could not be enabled. Refresh the Workspace and review its current state before retrying.");
+      const [refreshed, workspaceRefreshed] = await Promise.all([
+        refreshAgentBindings(binding.workspaceId),
+        operation === "disable" ? refreshWorkspaces() : Promise.resolve(true),
+      ]);
+      const current = refreshed?.find(item => item.workspaceId === binding.workspaceId && item.agentBindingId === binding.agentBindingId);
+      if (isCurrentWorkspace()) {
+        const latestWorkspace = workspaceRefreshed
+          ? workspacesRef.current.find(item => item.workspaceId === binding.workspaceId)
+          : undefined;
+        updateAgentActionFeedback(binding.workspaceId, { error: agentBindingMutationFailureMessage(
+          operation,
+          binding.agentBindingId,
+          binding.version,
+          current,
+          latestWorkspace?.defaultAgentBindingId,
+        ) });
+      }
     } finally {
-      setAgentActionBusy(null);
+      setAgentActionFeedback(current => clearAgentActionBusyIfMatches(current, binding.workspaceId, busyAction));
     }
   };
+
+  const enableAgentBinding = (binding: AgentBindingView) => changeAgentBindingState(binding, "enable");
+  const disableAgentBinding = (binding: AgentBindingView) => changeAgentBindingState(binding, "disable");
 
   useEffect(() => {
     void refreshRuntime();
@@ -1960,7 +2042,7 @@ function App() {
             requestPageNavigation("Work");
           }} />
         ) : page === "Settings" ? (
-          <SettingsPage runtime={runtime} runtimeLifecycle={runtimeLifecycle?.identity === `${runtime?.runtimeId}:${runtime?.localIncarnationId}` ? runtimeLifecycle.view : null} runtimeLifecycleLoading={runtimeLifecycleLoading} runtimeLifecycleError={runtimeLifecycleError} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} agents={agentInstallations} agentError={agentInstallationError} refreshAgents={refreshAgentInstallations} agentProfiles={agentProfiles} agentProfileError={agentProfileError} runtimeInventoryStreamStatus={runtimeInventoryStreamStatus} agentBindings={agentBindings} agentBindingError={agentBindingError} agentActionMessage={agentActionMessage} agentActionError={agentActionError} agentActionBusy={agentActionBusy} onProbeCodex={probeCodexProfile} onProbeOpenCode={probeOpenCodeProfile} onRefreshAgentProfiles={() => refreshAgentProfiles(selectedWorkspaceId)} onRefreshAgentBindings={() => refreshAgentBindings(selectedWorkspaceId)} onCreateAgentBinding={createAgentBinding} onEnableAgentBinding={enableAgentBinding} runtimeBindings={runtimeBindings} runtimeBindingError={runtimeBindingError} runtimeBindingsLoading={runtimeBindingsLoading} runtimeEnrollmentBusy={runtimeEnrollmentBusy} runtimeEnrollmentMessage={runtimeEnrollmentMessage} runtimeEnrollmentError={runtimeEnrollmentError} onEnrollLocalRuntime={enrollLocalRuntime} onRefreshRuntimeBindings={() => refreshRuntimeBindings(selectedWorkspaceId)} workspaces={workspaces} workspaceListState={workspaceListState} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} setWorkspaceName={setWorkspaceName} createWorkspace={createWorkspace} workspaceCreateBusy={workspaceCreateBusy} workspaceCreatePending={pendingWorkspaceRequest !== null} selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onUpdatePolicy={updateWorkspacePolicy} policyBusy={workspacePolicyBusy} policyRetryPending={workspacePolicyRequests.some(request => request.workspaceId === selectedWorkspaceId && request.expectedVersion === workspaces.find(item => item.workspaceId === selectedWorkspaceId)?.version && request.replicationPolicy === "LOCAL_ONLY")} onArchiveWorkspace={archiveWorkspace} archiveBusy={workspaceArchiveBusy} onSetDefaultAgentBinding={setWorkspaceDefaultAgent} defaultAgentBusy={workspaceDefaultAgentBusy} instructions={instructionText} onInstructionsChange={changeWorkspaceInstructions} instructionHistory={workspaceInstructions} instructionMessage={instructionMessage} instructionBusy={instructionBusy} onSaveInstructions={saveWorkspaceInstructions} latestInstructionsAfterConflict={latestInstructionsAfterConflict} onUseLatestInstructions={useLatestWorkspaceInstructions} />
+          <SettingsPage runtime={runtime} runtimeLifecycle={runtimeLifecycle?.identity === `${runtime?.runtimeId}:${runtime?.localIncarnationId}` ? runtimeLifecycle.view : null} runtimeLifecycleLoading={runtimeLifecycleLoading} runtimeLifecycleError={runtimeLifecycleError} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} agents={agentInstallations} agentError={agentInstallationError} refreshAgents={refreshAgentInstallations} agentProfiles={agentProfiles} agentProfileError={agentProfileError} runtimeInventoryStreamStatus={runtimeInventoryStreamStatus} agentBindings={agentBindings} agentBindingError={agentBindingError} agentActionMessage={agentActionFeedbackForWorkspace(agentActionFeedback, selectedWorkspaceId).message} agentActionError={agentActionFeedbackForWorkspace(agentActionFeedback, selectedWorkspaceId).error} agentActionBusy={agentActionFeedbackForWorkspace(agentActionFeedback, selectedWorkspaceId).busy} onProbeCodex={probeCodexProfile} onProbeOpenCode={probeOpenCodeProfile} onRefreshAgentProfiles={() => refreshAgentProfiles(selectedWorkspaceId)} onRefreshAgentBindings={async () => { await refreshAgentBindings(selectedWorkspaceId); }} onCreateAgentBinding={createAgentBinding} onEnableAgentBinding={enableAgentBinding} onDisableAgentBinding={disableAgentBinding} runtimeBindings={runtimeBindings} runtimeBindingError={runtimeBindingError} runtimeBindingsLoading={runtimeBindingsLoading} runtimeEnrollmentBusy={runtimeEnrollmentBusy} runtimeEnrollmentMessage={runtimeEnrollmentMessage} runtimeEnrollmentError={runtimeEnrollmentError} onEnrollLocalRuntime={enrollLocalRuntime} onRefreshRuntimeBindings={() => refreshRuntimeBindings(selectedWorkspaceId)} workspaces={workspaces} workspaceListState={workspaceListState} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} setWorkspaceName={setWorkspaceName} createWorkspace={createWorkspace} workspaceCreateBusy={workspaceCreateBusy} workspaceCreatePending={pendingWorkspaceRequest !== null} selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} onUpdatePolicy={updateWorkspacePolicy} policyBusy={workspacePolicyBusy} policyRetryPending={workspacePolicyRequests.some(request => request.workspaceId === selectedWorkspaceId && request.expectedVersion === workspaces.find(item => item.workspaceId === selectedWorkspaceId)?.version && request.replicationPolicy === "LOCAL_ONLY")} onArchiveWorkspace={archiveWorkspace} archiveBusy={workspaceArchiveBusy} onSetDefaultAgentBinding={setWorkspaceDefaultAgent} defaultAgentBusy={workspaceDefaultAgentBusy} instructions={instructionText} onInstructionsChange={changeWorkspaceInstructions} instructionHistory={workspaceInstructions} instructionMessage={instructionMessage} instructionBusy={instructionBusy} onSaveInstructions={saveWorkspaceInstructions} latestInstructionsAfterConflict={latestInstructionsAfterConflict} onUseLatestInstructions={useLatestWorkspaceInstructions} />
         ) : (
           <PlaceholderPage page={page} onSettings={() => requestPageNavigation("Settings")} />
         )}
@@ -2729,6 +2811,7 @@ type SettingsPageProps = {
   onRefreshAgentBindings: () => Promise<void>;
   onCreateAgentBinding: (profile: AgentProfileView, leadEligible: boolean) => Promise<void>;
   onEnableAgentBinding: (binding: AgentBindingView) => Promise<void>;
+  onDisableAgentBinding: (binding: AgentBindingView) => Promise<void>;
   workspaces: WorkspaceView[];
   workspaceListState: WorkspaceListState;
   workspaceError: string | null;
@@ -2766,7 +2849,7 @@ function profileHasFreshAdmissionOffer(profile: AgentProfileView): boolean {
     && (latest.readiness === "AVAILABLE" || latest.readiness === "STARTABLE" || latest.readiness === "READY");
 }
 
-function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runtimeLifecycleError, runtimeError, runtimeBusy, startRuntime, refreshRuntime, agents, agentError, refreshAgents, agentProfiles, agentProfileError, runtimeInventoryStreamStatus, agentBindings, agentBindingError, agentActionMessage, agentActionError, agentActionBusy, onProbeCodex, onProbeOpenCode, onRefreshAgentProfiles, onRefreshAgentBindings, onCreateAgentBinding, onEnableAgentBinding, runtimeBindings, runtimeBindingError, runtimeBindingsLoading, runtimeEnrollmentBusy, runtimeEnrollmentMessage, runtimeEnrollmentError, onEnrollLocalRuntime, onRefreshRuntimeBindings, workspaces, workspaceListState, workspaceError, refreshWorkspaces, workspaceName, setWorkspaceName, createWorkspace, workspaceCreateBusy, workspaceCreatePending, selectedWorkspaceId, onSelectWorkspace, onUpdatePolicy, policyBusy, policyRetryPending, onArchiveWorkspace, archiveBusy, onSetDefaultAgentBinding, defaultAgentBusy, instructions, onInstructionsChange, instructionHistory, instructionMessage, instructionBusy, onSaveInstructions, latestInstructionsAfterConflict, onUseLatestInstructions }: SettingsPageProps) {
+function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runtimeLifecycleError, runtimeError, runtimeBusy, startRuntime, refreshRuntime, agents, agentError, refreshAgents, agentProfiles, agentProfileError, runtimeInventoryStreamStatus, agentBindings, agentBindingError, agentActionMessage, agentActionError, agentActionBusy, onProbeCodex, onProbeOpenCode, onRefreshAgentProfiles, onRefreshAgentBindings, onCreateAgentBinding, onEnableAgentBinding, onDisableAgentBinding, runtimeBindings, runtimeBindingError, runtimeBindingsLoading, runtimeEnrollmentBusy, runtimeEnrollmentMessage, runtimeEnrollmentError, onEnrollLocalRuntime, onRefreshRuntimeBindings, workspaces, workspaceListState, workspaceError, refreshWorkspaces, workspaceName, setWorkspaceName, createWorkspace, workspaceCreateBusy, workspaceCreatePending, selectedWorkspaceId, onSelectWorkspace, onUpdatePolicy, policyBusy, policyRetryPending, onArchiveWorkspace, archiveBusy, onSetDefaultAgentBinding, defaultAgentBusy, instructions, onInstructionsChange, instructionHistory, instructionMessage, instructionBusy, onSaveInstructions, latestInstructionsAfterConflict, onUseLatestInstructions }: SettingsPageProps) {
   const [archiveConfirmationFor, setArchiveConfirmationFor] = useState<string | null>(null);
   useEffect(() => setArchiveConfirmationFor(null), [selectedWorkspaceId]);
   const selectedWorkspace = workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId);
@@ -2911,6 +2994,7 @@ function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runt
         onProbeOpenCode={() => { void onProbeOpenCode(); }}
         onCreateBinding={(profile, leadEligible) => { void onCreateAgentBinding(profile, leadEligible); }}
         onEnableBinding={(binding) => { void onEnableAgentBinding(binding); }}
+        onDisableBinding={(binding) => { void onDisableAgentBinding(binding); }}
         onSetDefaultLead={(agentBindingId) => { void onSetDefaultAgentBinding(agentBindingId); }}
       />
       <p className="settings-note">Operator API serving confirms the authenticated desktop connection only. The Runtime remains degraded until Task recovery and execution services are implemented; it does not yet accept work or start coding agents.</p>

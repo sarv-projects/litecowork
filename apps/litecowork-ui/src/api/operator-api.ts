@@ -3733,7 +3733,10 @@ export type components = {
             probe_readiness: "COMPLETE" | "PARTIAL" | "FAILED";
             /** @enum {string|null} */
             failure: "INVALID_ADMISSION" | "HOST_UNAVAILABLE" | "PROVIDER_STATUS_UNAVAILABLE" | "CATALOG_UNAVAILABLE" | "HOST_STOP_UNOBSERVED" | "UNSUPPORTED_VERSION" | null;
-            /** @enum {string} */
+            /**
+             * @description OBSERVED means the bounded provider-catalog route returned a valid catalog array; it does not establish provider connection
+             * @enum {string}
+             */
             reported_provider_status: "OBSERVED" | "UNKNOWN" | "NOT_PROBED";
             reported_connected_provider_ids: string[];
             reported_connected_provider_ids_truncated: boolean;
@@ -9243,7 +9246,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Binding enabled for new planning/Attempt admission */
+            /** @description Binding enabled for new Conversation session and Task planning/Attempt admission. Exact owner-scoped receipt replay returns the original response before active-only binding reads, including after Workspace archival; fresh mutations remain blocked after archival. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9270,7 +9273,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Binding disabled for new admission; already admitted sessions remain pinned and settle safely */
+            /** @description Binding disabled for new Conversation session and Task planning/Attempt admission; already admitted sessions remain pinned and continue under their normal lifecycle, lease, and Effect rules. Exact owner-scoped receipt replay returns the original response before active-only binding reads, including after Workspace archival; fresh mutations remain blocked after archival. */
             200: {
                 headers: {
                     [name: string]: unknown;

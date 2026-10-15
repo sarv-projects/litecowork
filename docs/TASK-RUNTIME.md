@@ -291,6 +291,15 @@ admission authority.
 
 TaskService creates a transient PlanningAssignment for the current lead binding and TaskSpecRevision. PlanningCoordinator asks AgentSessionSupervisor to reserve a durable `STARTING` TASK_PLANNING AgentSession in a short storage transaction. Storage rechecks Task version/status/spec/lead, Workspace ownership, binding eligibility, endpoint binding, and current READY Runtime incarnation while claiming the unique planner slot. The coordinator then starts the native adapter outside the transaction. Only observed adapter readiness permits a serialized activation that transitions the session to `ACTIVE` and a first-planning Task from `READY` to `RUNNING` atomically. A `STARTING` session grants no planning tools or invocation authority. After daemon restart, stranded prior-incarnation `STARTING` sessions are reconciled before another planner is admitted.
 
+The committed `STARTING` reservation is the admission boundary. A later AgentBinding
+disable or lead-eligibility change affects future reservations; it does not invalidate
+that pinned startup. Activation still rechecks Task state and Workspace identity, the exact
+AgentSession reservation, an active Runtime enrollment for the Task's Workspace, endpoint
+binding, host readiness, and Runtime incarnation. The activation transaction verifies the
+Task's Workspace identity and active Runtime enrollment; Workspace archival is serialized
+against admission and blocked while the Task or AgentSession remains unsettled. Activation
+does not use mutable binding enablement as a reason to abandon an already-admitted session.
+
 That is the target admission contract, not the current desktop implementation status. The
 current SQLite `AgentSessionStore` returns
 `StoreError::Invalid("TASK_PLANNING_ISOLATION_UNAVAILABLE")` from both planner start and

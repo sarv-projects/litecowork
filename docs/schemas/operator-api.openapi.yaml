@@ -1787,7 +1787,7 @@ paths:
       - {$ref: '#/components/parameters/IfMatch'}
       responses:
         '200':
-          description: Binding enabled for new planning/Attempt admission
+          description: Binding enabled for new Conversation session and Task planning/Attempt admission. Exact owner-scoped receipt replay returns the original response before active-only binding reads, including after Workspace archival; fresh mutations remain blocked after archival.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AgentBinding'}
@@ -1805,7 +1805,7 @@ paths:
       - {$ref: '#/components/parameters/IfMatch'}
       responses:
         '200':
-          description: Binding disabled for new admission; already admitted sessions remain pinned and settle safely
+          description: Binding disabled for new Conversation session and Task planning/Attempt admission; already admitted sessions remain pinned and continue under their normal lifecycle, lease, and Effect rules. Exact owner-scoped receipt replay returns the original response before active-only binding reads, including after Workspace archival; fresh mutations remain blocked after archival.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AgentBinding'}
@@ -4815,12 +4815,13 @@ components:
         protocol_version: {type: [string, 'null'], maxLength: 48, pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'}
         probe_readiness: {type: string, enum: [COMPLETE, PARTIAL, FAILED]}
         failure: {type: [string, 'null'], enum: [INVALID_ADMISSION, HOST_UNAVAILABLE, PROVIDER_STATUS_UNAVAILABLE, CATALOG_UNAVAILABLE, HOST_STOP_UNOBSERVED, UNSUPPORTED_VERSION, null]}
-        reported_provider_status: {type: string, enum: [OBSERVED, UNKNOWN, NOT_PROBED]}
+        reported_provider_status: {type: string, enum: [OBSERVED, UNKNOWN, NOT_PROBED], description: OBSERVED means the bounded provider-catalog route returned a valid catalog array; it does not establish provider connection, authentication, entitlement, or inference.}
         reported_connected_provider_ids:
           type: array
-          maxItems: 32
+          description: Transitional compatibility field; the current OpenCode adapter always returns an empty list because its catalog probe does not observe provider connection state.
+          maxItems: 0
           items: {type: string, maxLength: 128, pattern: '^[A-Za-z0-9_.:/-]+$'}
-        reported_connected_provider_ids_truncated: {type: boolean}
+        reported_connected_provider_ids_truncated: {type: boolean, const: false, description: Always false because connected-provider IDs are not observed by this catalog probe.}
         reported_provider_ids:
           type: array
           maxItems: 32

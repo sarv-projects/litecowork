@@ -82,6 +82,7 @@ export type AgentCatalogSettingsProps = {
   onProbeOpenCode: () => void;
   onCreateBinding: (profile: AgentProfile, leadEligible: boolean) => void;
   onEnableBinding: (binding: AgentBinding) => void;
+  onDisableBinding: (binding: AgentBinding) => void;
   onSetDefaultLead: (agentBindingId: string | null) => void;
 };
 
@@ -118,13 +119,56 @@ type OpenCodeProviderDisplay = {
 type OpenCodeProbeDiagnostic = {
   readiness: string;
   failure?: string;
-  providerStatus: string;
-  connectedProviderIds: string[];
-  connectedProviderIdsTruncated: boolean;
+  providerCatalogStatus: string;
+  authentication: string;
+  sessionModelSelection: string;
+  profileAdmissionSupported: boolean;
   providers: OpenCodeProviderDisplay[];
   catalogObserved: boolean;
   catalogTruncated: boolean;
 };
+
+type WorkspaceDefaultLeadControlsProps = {
+  selectedDefaultLeadBindingId: string | null;
+  defaultBinding: AgentBinding | undefined;
+  defaultBindingName: string | undefined;
+  canChangeWorkspaceAgentPolicy: boolean;
+  defaultAgentBusy: boolean;
+  onSetDefaultLead: (agentBindingId: string | null) => void;
+};
+
+function WorkspaceDefaultLeadControls({
+  selectedDefaultLeadBindingId,
+  defaultBinding,
+  defaultBindingName,
+  canChangeWorkspaceAgentPolicy,
+  defaultAgentBusy,
+  onSetDefaultLead,
+}: WorkspaceDefaultLeadControlsProps) {
+  const [confirming, setConfirming] = useState(false);
+  const eligibleDefault = defaultBinding?.enabled && defaultBinding.leadEligible;
+
+  return <div className="agent-catalog__default-note">
+    <div className="agent-catalog__default-copy">
+      <strong>Workspace default lead</strong>
+      <span>{defaultBinding
+        ? `${defaultBindingName ?? "Selected agent"} · ${eligibleDefault ? "eligible for new work" : "currently unavailable"}`
+        : selectedDefaultLeadBindingId ? "Saved lead selection is unavailable in the current binding list" : "No Workspace default lead selected"}</span>
+      <small>New Conversation turns and Tasks without another selected lead use this default. Current sessions stay with their chosen agent. If no eligible agent is available, new work will not start.</small>
+    </div>
+    {selectedDefaultLeadBindingId && !confirming && <button
+      type="button"
+      className="agent-catalog__secondary"
+      disabled={!canChangeWorkspaceAgentPolicy || defaultAgentBusy}
+      onClick={() => setConfirming(true)}
+    >Clear Workspace default…</button>}
+    {confirming && selectedDefaultLeadBindingId && <div className="agent-catalog__clear-default-confirm" role="group" aria-label="Confirm clearing Workspace default lead">
+      <span>Clear this default? New Conversation turns and Tasks without another selected lead will need a different eligible agent.</span>
+      <button type="button" className="agent-catalog__secondary" disabled={defaultAgentBusy} onClick={() => setConfirming(false)}>Keep default</button>
+      <button type="button" className="agent-catalog__primary" disabled={!canChangeWorkspaceAgentPolicy || defaultAgentBusy} onClick={() => { setConfirming(false); onSetDefaultLead(null); }}>{defaultAgentBusy ? "Clearing…" : "Confirm clear"}</button>
+    </div>}
+  </div>;
+}
 
 function recordValue(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -155,16 +199,9 @@ function safeOpenCodeDisplayName(value: unknown): string | null {
 function openCodeProbeDiagnostic(observation: AgentProfileObservation | undefined): OpenCodeProbeDiagnostic | null {
   const constraints = recordValue(observation?.constraints);
   if (!constraints || constraints.protocol !== "OPENCODE_SERVER") return null;
-  const readiness = enumValue(constraints.readiness, ["COMPLETE", "PARTIAL", "FAILED"]);
+  const readiness = enumValue(constraints.probe_readiness, ["COMPLETE", "PARTIAL", "FAILED"]);
   if (!readiness) return null;
 
-  const connectedIdsValue = Array.isArray(constraints.reported_connected_provider_ids)
-    ? constraints.reported_connected_provider_ids
-    : [];
-  const rawConnectedIds = connectedIdsValue.slice(0, 32);
-  const connectedProviderIds = rawConnectedIds
-    .map(safeOpenCodeId)
-    .filter((id): id is string => id !== null);
   const providerValue = Array.isArray(constraints.configured_providers)
     ? constraints.configured_providers
     : [];
@@ -189,10 +226,11 @@ function openCodeProbeDiagnostic(observation: AgentProfileObservation | undefine
 
   return {
     readiness,
-    failure: enumValue(constraints.failure, ["INVALID_ADMISSION", "HOST_UNAVAILABLE", "PROVIDER_STATUS_UNAVAILABLE", "CATALOG_UNAVAILABLE", "HOST_STOP_UNOBSERVED"]),
-    providerStatus: enumValue(constraints.reported_provider_status, ["OBSERVED", "UNKNOWN", "NOT_PROBED"]) ?? "UNKNOWN",
-    connectedProviderIds,
-    connectedProviderIdsTruncated: constraints.reported_connected_provider_ids_truncated === true || connectedIdsValue.length > 32,
+    failure: enumValue(constraints.failure, ["INVALID_ADMISSION", "HOST_UNAVAILABLE", "PROVIDER_STATUS_UNAVAILABLE", "CATALOG_UNAVAILABLE", "HOST_STOP_UNOBSERVED", "UNSUPPORTED_VERSION"]),
+    providerCatalogStatus: enumValue(constraints.reported_provider_status, ["OBSERVED", "UNKNOWN", "NOT_PROBED"]) ?? "UNKNOWN",
+    authentication: enumValue(constraints.authentication_observation, ["UNKNOWN"]) ?? "UNKNOWN",
+    sessionModelSelection: enumValue(constraints.session_model_selection, ["NOT_QUALIFIED"]) ?? "NOT_QUALIFIED",
+    profileAdmissionSupported: constraints.profile_admission_supported === true,
     providers,
     catalogObserved: constraints.reported_model_catalog === "OBSERVED",
     catalogTruncated: constraints.catalog_truncated === true || localCatalogTruncated,
@@ -284,9 +322,10 @@ function openCodeFailureLabel(value: string | undefined): string | undefined {
   switch (value) {
     case "INVALID_ADMISSION": return "Probe preconditions were not valid";
     case "HOST_UNAVAILABLE": return "OpenCode Server could not start";
-    case "PROVIDER_STATUS_UNAVAILABLE": return "Provider connection status could not be read";
+    case "PROVIDER_STATUS_UNAVAILABLE": return "OpenCode provider catalog could not be read";
     case "CATALOG_UNAVAILABLE": return "Provider/model catalog could not be read";
     case "HOST_STOP_UNOBSERVED": return "The probe could not confirm its server stopped";
+    case "UNSUPPORTED_VERSION": return "Installed OpenCode version is not qualified";
     default: return undefined;
   }
 }
@@ -353,10 +392,9 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
     workspaceId, workspaceName, workspaceActive, runtimeReady, runtimeEnrolled,
     selectedDefaultLeadBindingId, installations, profiles, runtimeInventoryStreamStatus = "UNAVAILABLE", bindings, loading = false,
     error, actionMessage, actionError, busyAction, defaultAgentBusy = false, onRefresh, onProbeCodex,
-    onProbeOpenCode, onCreateBinding, onEnableBinding, onSetDefaultLead,
+    onProbeOpenCode, onCreateBinding, onEnableBinding, onDisableBinding, onSetDefaultLead,
   } = props;
   const [leadEligibleByProfile, setLeadEligibleByProfile] = useState<Record<string, boolean>>({});
-  const [clearDefaultPrompt, setClearDefaultPrompt] = useState<{ workspaceId: string; bindingId: string } | null>(null);
   const [offerClock, setOfferClock] = useState(() => Date.now());
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
@@ -502,9 +540,8 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
   const canProbeCodex = canProbe && codexProbeAvailable;
   const canProbeOpenCode = canProbe && openCodeProbeAvailable;
   const canConfigureBinding = hasWorkspace && workspaceActive && runtimeReady && runtimeEnrolled && busyAction == null;
+  const canChangeWorkspaceAgentPolicy = hasWorkspace && workspaceActive && runtimeReady && busyAction == null;
   const defaultBinding = workspaceBindings.find((binding) => binding.agentBindingId === selectedDefaultLeadBindingId);
-  const confirmingDefaultClear = clearDefaultPrompt?.workspaceId === workspaceId
-    && clearDefaultPrompt.bindingId === selectedDefaultLeadBindingId;
 
   return (
     <section className="agent-catalog" aria-labelledby="agent-catalog-title">
@@ -588,7 +625,7 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
           </button>
         </div>
         {!openCodeProbeAvailable && <p className="agent-catalog__footnote">Probe is unavailable because the local inventory has not confirmed an installed OpenCode executable.</p>}
-        <p className="agent-catalog__footnote">OpenCode probing is owner-triggered and reads only sanitized provider/model IDs and display names plus OpenCode’s reported connected-provider status. Authentication, inference access, and session model selection are unqualified. This probe starts no Task or work session; OpenCode remains incompatible for Task execution and cannot be bound for use.</p>
+        <p className="agent-catalog__footnote">OpenCode profile probing is owner-triggered. Probe details show only sanitized provider/model catalog IDs and display names. Provider connection and authentication are not reported. Inference access and session model selection are unqualified. This probe starts no Task or work session; OpenCode remains incompatible for Task execution and cannot be bound for use.</p>
       </section>
 
       <section className="agent-catalog__section" aria-labelledby="agent-profiles-title">
@@ -658,12 +695,11 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
                   <summary>OpenCode provider and model catalog</summary>
                   <p>{observationLabel(openCodeProbe.readiness)}{openCodeFailureLabel(openCodeProbe.failure) ? ` · ${openCodeFailureLabel(openCodeProbe.failure)}` : ""}</p>
                   <div className="agent-catalog__opencode-status">
-                    <strong>Reported connected-provider status</strong>
-                    <span>{openCodeProbe.providerStatus === "OBSERVED" ? "OpenCode returned a connected-provider list" : openCodeProbe.providerStatus === "NOT_PROBED" ? "Not probed" : "Status unknown"}</span>
-                    {openCodeProbe.connectedProviderIds.length > 0
-                      ? <ul aria-label="Provider IDs reported connected by OpenCode">{openCodeProbe.connectedProviderIds.map((id) => <li key={id}><code>{id}</code></li>)}</ul>
-                      : <span>No connected provider IDs were reported{openCodeProbe.connectedProviderIdsTruncated ? " in the displayed portion" : ""}.</span>}
-                    {openCodeProbe.connectedProviderIdsTruncated && <small>Provider list was truncated.</small>}
+                    <div><strong>Provider catalog response</strong><span>{openCodeProbe.providerCatalogStatus === "OBSERVED" ? "Observed" : openCodeProbe.providerCatalogStatus === "NOT_PROBED" ? "Not probed" : "Unknown"}</span></div>
+                    <div><strong>Provider connection</strong><span>Unknown · not reported by this probe</span></div>
+                    <div><strong>Authentication</strong><span>{observationLabel(openCodeProbe.authentication)}</span></div>
+                    <div><strong>Session model selection</strong><span>{openCodeProbe.sessionModelSelection === "NOT_QUALIFIED" ? "Not qualified" : "Unknown"}</span></div>
+                    <div><strong>Task lead eligibility</strong><span>{openCodeProbe.profileAdmissionSupported ? "Supported by qualified profile admission" : "Not eligible for Task admission"}</span></div>
                   </div>
                   <div className="agent-catalog__opencode-catalog">
                     <strong>{openCodeProbe.catalogObserved ? "Configured provider/model catalog" : "Provider/model catalog not observed"}</strong>
@@ -673,7 +709,7 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
                     </li>)}</ul> : <p>No sanitized provider/model entries were returned.</p>}
                     {openCodeProbe.catalogTruncated && <small>Catalog was truncated to the bounded display limit.</small>}
                   </div>
-                  <p>“Connected” is only OpenCode’s reported status; it does not prove authentication, entitlement, or inference. Authentication, inference, and session model selection are unqualified. No Task or AgentSession is started, and this profile is incompatible with Task execution.</p>
+                  <p>Provider catalog IDs are display-only; they do not establish connection, authentication, entitlement, or inference. No Task or AgentSession is started, and this profile is incompatible with Task execution.</p>
                 </details>}
                 {isBound ? <p className="agent-catalog__bound">A Workspace binding exists below. A detected profile alone does not make it a lead or a worker.</p> : (
                   <div className="agent-catalog__configure">
@@ -700,39 +736,33 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
             return <li key={binding.agentBindingId}>
               <div className="agent-catalog__binding-copy">
                 <strong>{profile?.displayName ?? "Profile unavailable"}</strong>
-                <span>{binding.enabled ? "Enabled for future admission" : "Disabled"} · {binding.leadEligible ? "lead eligible" : "worker only"}</span>
+                <span>{binding.enabled ? "Enabled" : "Disabled"} · {binding.leadEligible ? "can be a default agent" : "worker only"}</span>
                 {isDefaultLead && <span className="agent-catalog__default">Current Workspace default lead</span>}
                 <small>Configuration: {Object.keys(binding.configuration).length === 0 ? "no adapter overrides" : "adapter overrides present"} · auth reference: {binding.authRef ? "configured (value hidden)" : "none reported"}</small>
+                <small>{binding.enabled
+                  ? "Disabling this binding prevents new Conversation and Task sessions from using this agent. Sessions already admitted stay attached; later Task steps may need another enabled agent."
+                  : "New Conversation and Task sessions cannot use this agent. Sessions already admitted stay attached; later Task steps may need another enabled agent."}</small>
               </div>
               <div className="agent-catalog__binding-action">
                 <span className={`agent-catalog__badge ${binding.enabled ? "is-good" : "is-muted"}`}>{binding.enabled ? "Enabled" : "Disabled"}</span>
                 {!binding.enabled && <button type="button" className="agent-catalog__secondary" disabled={!canConfigureBinding || busyAction != null} onClick={() => onEnableBinding(binding)}>{busyAction === `enable:${binding.agentBindingId}` ? "Enabling…" : "Enable"}</button>}
-                {eligibleLead && !isDefaultLead && <button type="button" className="agent-catalog__secondary" disabled={!canConfigureBinding || defaultAgentBusy} onClick={() => onSetDefaultLead(binding.agentBindingId)}>{defaultAgentBusy ? "Saving lead…" : "Set as default lead"}</button>}
+                {binding.enabled && !isDefaultLead && <button type="button" className="agent-catalog__secondary" disabled={!canChangeWorkspaceAgentPolicy || busyAction != null} onClick={() => onDisableBinding(binding)}>{busyAction === `disable:${binding.agentBindingId}` ? "Disabling…" : "Disable"}</button>}
+                {binding.enabled && isDefaultLead && <span className="agent-catalog__hint">Choose another default agent or clear this one before disabling it.</span>}
+                {eligibleLead && !isDefaultLead && <button type="button" className="agent-catalog__secondary" disabled={!canChangeWorkspaceAgentPolicy || defaultAgentBusy} onClick={() => onSetDefaultLead(binding.agentBindingId)}>{defaultAgentBusy ? "Saving lead…" : "Set as default lead"}</button>}
                 {binding.enabled && !binding.leadEligible && <span className="agent-catalog__hint">Cannot be selected as a lead</span>}
               </div>
             </li>;
           })}
         </ul>}
-        <div className="agent-catalog__default-note">
-          <div className="agent-catalog__default-copy">
-            <strong>Workspace default lead</strong>
-            <span>{defaultBinding
-              ? `${profilesById.get(defaultBinding.agentProfileId)?.displayName ?? "Selected binding"} · ${defaultBinding.enabled && defaultBinding.leadEligible ? "eligible for new work" : "currently unavailable"}`
-              : selectedDefaultLeadBindingId ? "Saved lead selection is unavailable in the current binding list" : "No Workspace default lead selected"}</span>
-            <small>Changing or clearing this default affects future Task admission only. Active Tasks and Attempts stay pinned to their current lead. A Coworker's explicit lead remains higher priority; without any configured lead, new Task creation is rejected and the composer draft is preserved.</small>
-          </div>
-          {selectedDefaultLeadBindingId && !confirmingDefaultClear && <button
-            type="button"
-            className="agent-catalog__secondary"
-            disabled={!canConfigureBinding || defaultAgentBusy}
-            onClick={() => setClearDefaultPrompt({ workspaceId: workspaceId!, bindingId: selectedDefaultLeadBindingId })}
-          >Clear Workspace default…</button>}
-          {confirmingDefaultClear && <div className="agent-catalog__clear-default-confirm" role="group" aria-label="Confirm clearing Workspace default lead">
-            <span>Clear this default for future work? Tasks without an explicit or Coworker lead will be rejected as unavailable.</span>
-            <button type="button" className="agent-catalog__secondary" disabled={defaultAgentBusy} onClick={() => setClearDefaultPrompt(null)}>Keep default</button>
-            <button type="button" className="agent-catalog__primary" disabled={!canConfigureBinding || defaultAgentBusy} onClick={() => { setClearDefaultPrompt(null); onSetDefaultLead(null); }}>{defaultAgentBusy ? "Clearing…" : "Confirm clear"}</button>
-          </div>}
-        </div>
+        <WorkspaceDefaultLeadControls
+          key={`${workspaceId ?? "no-workspace"}:${selectedDefaultLeadBindingId ?? "no-default"}`}
+          selectedDefaultLeadBindingId={selectedDefaultLeadBindingId}
+          defaultBinding={defaultBinding}
+          defaultBindingName={defaultBinding ? profilesById.get(defaultBinding.agentProfileId)?.displayName : undefined}
+          canChangeWorkspaceAgentPolicy={canChangeWorkspaceAgentPolicy}
+          defaultAgentBusy={defaultAgentBusy}
+          onSetDefaultLead={onSetDefaultLead}
+        />
       </section>}
 
       {hasWorkspace && <section className="agent-catalog__section" aria-labelledby="worker-profiles-title">

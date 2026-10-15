@@ -2,6 +2,8 @@ use super::dependency_invalidations_operator::{
     DependencyInvalidationsApiState, test_router as dependency_invalidations_test_router,
 };
 use super::presentation_operator::{StreamApiState, subscribe_stream};
+#[path = "agent_binding_disable_operator_tests.rs"]
+mod agent_binding_disable_operator_tests;
 #[path = "needs_you_operator_tests.rs"]
 mod needs_you_operator_tests;
 #[path = "resource_dependencies_operator_tests.rs"]

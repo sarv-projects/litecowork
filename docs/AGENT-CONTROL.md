@@ -834,6 +834,28 @@ function admit_conversation_turn(draft, surface_selection):
       do not lose draft
 ```
 
+Disabling an AgentBinding blocks new Conversation sessions and new Task planning or
+Attempt sessions from using it. Existing Conversation and Task sessions remain pinned
+to their admitted binding and continue under their normal lifecycle, lease, and Effect
+rules. A committed `STARTING` Task-planning reservation is already admitted; a later
+disable or lead-eligibility change does not prevent that exact pinned session from
+activating if its Task state, active Runtime enrollment for the Task's Workspace, host,
+endpoint, and incarnation checks still pass. The activation transaction verifies the
+Task's Workspace identity and active Runtime enrollment. Workspace archival is serialized
+against admission and blocked while the Task or AgentSession remains unsettled. Disabling
+is an admission control; it does not cancel or stop work already in progress. A later Task
+step that needs a new session may be unable to proceed until the Task's agent setup is
+resolved.
+
+Owner enable and disable transitions on an AgentBinding append an `ALLOW` AuditRecord
+with the authenticated principal, binding reference, stable reason code, event correlation
+ID, operation time, and digest of the non-secret transition identity. The AuditRecord,
+binding projection change, domain event, and idempotency receipt commit atomically. An exact
+replay returns the original receipt before current binding state is checked, including
+after Workspace archival; it does not add another AuditRecord. A fresh mutation remains
+rejected after archival. Rejected or rolled-back transitions add no AuditRecord. Audit data
+excludes configuration values and SecretRefs.
+
 ## 10. Native command and reference namespaces
 
 LiteCowork has its own host actions (attach Resource, create Task, schedule responsibility,
@@ -958,7 +980,8 @@ changed_at
 ```
 
 Installation/update/auth observations are Runtime-local operational state and do not
-become Workspace domain events. Security-relevant owner actions still create AuditRecords.
+become Workspace domain events. Security-relevant owner actions still create AuditRecords;
+AgentBinding enable and disable use the atomic transition rule in §9.7.
 
 ### Runtime-local storage
 

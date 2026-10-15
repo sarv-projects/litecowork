@@ -31,4 +31,10 @@ export const desktopAgentCatalogApi: AgentCatalogApi = {
     expectedVersion: input.expectedVersion,
     requestId: input.requestId,
   }),
+  disableBinding: (input) => invoke<AgentBinding>("disable_agent_binding", {
+    workspaceId: input.workspaceId,
+    agentBindingId: input.agentBindingId,
+    expectedVersion: input.expectedVersion,
+    requestId: input.requestId,
+  }),
 };

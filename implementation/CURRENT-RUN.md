@@ -1,5 +1,55 @@
 # Current run and agent handoff
 
+## 2026-10-15 — E03-S01 binding refresh/version race and truthful state copy
+
+Closed the two UI defects found in adversarial review: enabled and disabled bindings now
+describe their actual Conversation/Task admission behavior, and a successful mutation
+notice is reconciled against the newest refreshed binding. A concurrent re-enable no
+longer leaves a false disable-success message; stale refresh pages cannot regress a newer
+binding projection. The shared AgentBinding contract remains the existing versioned
+Workspace binding and no API, event, or schema was added.
+
+On Linux WSL2 x86_64, Node `24.21.0`, pnpm `12.10.1`, Vite `6.4.4`, and Chrome
+`149.0.7827.200`; Rust/Cargo `1.98.1`: the combined AgentBinding filter passed **3/3**
+daemon route tests and **5/5** SQLite tests. Focused mutation/component checks **19/19**;
+full current-worktree UI helper suite **268/268**; the full rendered Chrome harness passed
+with the E03 check included; production API-freshness, TypeScript, and Vite build plus the
+Tauri `cargo check --locked` passed (844.17 kB minified JS / 232.76 kB gzip, existing chunk
+advisory). The first full-suite attempt used Node `22.23.1` and was rejected by the
+repository's `>=24.21.0 <25` guard; rerun used installed Node `24.21.0`. UI code and review
+packet evidence are recorded in [`E03-S01 review`](reviews/E03-S01.md). This is CODE only;
+provider, packaged SYSTEM, supported-OS and owner USER evidence remain pending.
+The checkpoint uses one worktree. Retained output sizes: main `target/` 17,172,876,078 bytes
+(16,936,060,182 baseline), Tauri `target/` 8,918,743,504 bytes (8,842,855,191 baseline),
+`node_modules/` 97,159,500 bytes (100,066,382 starting measurement), and `dist/` 983,968 bytes
+(981,446 baseline). The main Cargo cache and 75,888,313-byte Tauri target increment remain
+useful for continuing V1 verification. Free space measured 892,575,744,000 bytes; no agent
+worktree or duplicate build directory was created.
+
+## 2026-10-15 — E03-S01 archived replay and pinned startup corrections
+
+An authenticated exact AgentBinding enable/disable receipt now replays before the
+active-only binding read, including after Workspace archival. A fresh archived mutation
+still fails without creating a receipt. The disable route regression first reproduced
+HTTP 404 after archive and now passes with exact response, one event, one receipt and one
+audit record. A symmetric enable replay regression uses a real SQLite Runtime enrollment,
+endpoint binding and fresh offer; it also confirms archived replay and fresh-mutation
+rejection. A second transaction-level regression proves a committed `STARTING`
+TASK_PLANNING reservation can activate after its binding is disabled and lead eligibility
+changes; future reservations still check enabled/eligible. That inspection also found
+stale `runtimes.workspace_id` references in planning reservation/activation SQL. Both now
+use current `runtime_workspace_bindings` membership and EXECUTOR role. Focused results:
+`cargo test --locked -p litecoworkd
+disable_exact_receipt_replays_after_workspace_archive_but_fresh_mutations_are_rejected --
+--nocapture --test-threads=1` **1/1**, `cargo test --locked -p litecoworkd
+enable_exact_receipt_replays_after_workspace_archive_but_fresh_mutations_are_rejected --
+--nocapture --test-threads=1` **1/1**, and `cargo test --locked -p storage-sqlite
+durable_starting_planner_can_activate_after_its_binding_is_disabled -- --nocapture
+--test-threads=1` **1/1** on Rust/Cargo `1.98.1`. The startup test calls the SQLite
+transaction directly; the global `TASK_PLANNING_ISOLATION_UNAVAILABLE` gate remains, no
+Conversation admission route is served, and no native/provider path is qualified. Keep
+E03-S01 `IN_PROGRESS`; SYSTEM, supported-OS/provider, and owner USER gates remain open.
+
 ## 2026-10-14 — E02-S03 upload replay and orphan AggregateState CODE slice
 
 Added a real child-process `litecoworkd` regression that creates a Resource upload through

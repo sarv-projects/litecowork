@@ -11,6 +11,8 @@ mod invocations;
 mod needs_you;
 mod rich_presentations;
 pub use rich_presentations::SqliteRichPresentationStore;
+#[cfg(test)]
+mod agent_binding_tests;
 mod execution;
 mod goals;
 mod os_key_provider;
@@ -62,13 +64,13 @@ use std::{
     time::{Duration, Instant},
 };
 use storage_core::{
-    ActivateTaskPlanningSession, AgentBindingCreateRequest, AgentBindingEnableRequest,
-    AgentBindingRecord, AgentCatalogStore, AgentEndpointRecord, AgentEndpointViewRecord,
-    AgentHostInstanceRecord, AgentHostStore, AgentProfileRecord, AgentProfileViewRecord,
-    AgentSessionRecord, AgentSessionStore, AggregateStateRef, AutomationTaskAdmission, BlobPurpose,
-    BlobRef, BlobStore, CommittedAgentBinding, CommittedAgentSession,
-    CommittedContextDocumentStatus, CommittedPlanningActivation, CommittedResource,
-    CommittedResourceUpload, CommittedTaskSpecRevision, CommittedWorkspace,
+    ActivateTaskPlanningSession, AgentBindingCreateRequest, AgentBindingDisableRequest,
+    AgentBindingEnableRequest, AgentBindingRecord, AgentCatalogStore, AgentEndpointRecord,
+    AgentEndpointViewRecord, AgentHostInstanceRecord, AgentHostStore, AgentProfileRecord,
+    AgentProfileViewRecord, AgentSessionRecord, AgentSessionStore, AggregateStateRef,
+    AutomationTaskAdmission, BlobPurpose, BlobRef, BlobStore, CommittedAgentBinding,
+    CommittedAgentSession, CommittedContextDocumentStatus, CommittedPlanningActivation,
+    CommittedResource, CommittedResourceUpload, CommittedTaskSpecRevision, CommittedWorkspace,
     CommittedWorkspaceInstructionRevision, CommittedWorkspaceRoot,
     CommittedWorkspaceRootRevalidation, CommittedWorkspaceRootStatus, ContextDocumentOwnerStatus,
     ContextDocumentStatusCommand, ContextDocumentStatusStore, DeviceIdentityRecord, DomainEvent,
@@ -545,6 +547,11 @@ enum Command {
     },
     EnableAgentBinding {
         request: AgentBindingEnableRequest,
+        state_ref: AggregateStateRef,
+        reply: mpsc::Sender<Result<CommittedAgentBinding, StoreError>>,
+    },
+    DisableAgentBinding {
+        request: AgentBindingDisableRequest,
         state_ref: AggregateStateRef,
         reply: mpsc::Sender<Result<CommittedAgentBinding, StoreError>>,
     },
@@ -2002,21 +2009,35 @@ impl AgentCatalogStore for SqliteWorkspaceStore {
         )
     }
 
+    fn get_agent_binding_mutation_receipt(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        request_payload: &Value,
+    ) -> Result<Option<CommittedAgentBinding>, StoreError> {
+        validate_nonempty(&[principal_id, request_id])?;
+        let request_digest = digest(&canonical_json(request_payload)?);
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::GetAgentBindingReceipt {
+                principal_id: principal_id.to_owned(),
+                request_id: request_id.to_owned(),
+                request_digest,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
     fn enable_agent_binding(
         &self,
         request: AgentBindingEnableRequest,
     ) -> Result<CommittedAgentBinding, StoreError> {
         validate_agent_binding_enable(&request)?;
-        let request_digest = digest(&canonical_json(&request.request.request_payload)?);
-        let (receipt_sender, receipt_receiver) = mpsc::channel();
-        if let Some(replay) = self.execute_command(
-            Command::GetAgentBindingReceipt {
-                principal_id: request.request.principal_id.clone(),
-                request_id: request.request.request_id.clone(),
-                request_digest,
-                reply: receipt_sender,
-            },
-            receipt_receiver,
+        if let Some(replay) = self.get_agent_binding_mutation_receipt(
+            &request.request.principal_id,
+            &request.request.request_id,
+            &request.request.request_payload,
         )? {
             return Ok(replay);
         }
@@ -2048,6 +2069,66 @@ impl AgentCatalogStore for SqliteWorkspaceStore {
         let (reply_sender, reply_receiver) = mpsc::channel();
         self.execute_command(
             Command::EnableAgentBinding {
+                request,
+                state_ref,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn disable_agent_binding(
+        &self,
+        request: AgentBindingDisableRequest,
+    ) -> Result<CommittedAgentBinding, StoreError> {
+        validate_agent_binding_disable(&request)?;
+        if let Some(replay) = self.get_agent_binding_mutation_receipt(
+            &request.request.principal_id,
+            &request.request.request_id,
+            &request.request.request_payload,
+        )? {
+            return Ok(replay);
+        }
+
+        let current = self
+            .get_agent_binding(
+                &request.request.principal_id,
+                &request.workspace_id,
+                &request.agent_binding_id,
+            )?
+            .ok_or(StoreError::NotFound)?;
+        if current.version != request.expected_version {
+            return Err(StoreError::Conflict {
+                expected: Some(request.expected_version),
+                actual: Some(current.version),
+            });
+        }
+        if !current.enabled {
+            return Err(StoreError::Invalid(
+                "AgentBinding is already disabled".to_owned(),
+            ));
+        }
+        let workspace = self
+            .get_workspace(&request.workspace_id)?
+            .ok_or(StoreError::NotFound)?;
+        if workspace.default_agent_binding_id.as_deref() == Some(request.agent_binding_id.as_str())
+        {
+            return Err(StoreError::Conflict {
+                expected: None,
+                actual: None,
+            });
+        }
+
+        let mut next = current;
+        next.enabled = false;
+        next.version = next
+            .version
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Integrity("AgentBinding version exhausted".to_owned()))?;
+        let state_ref = self.agent_binding_state_ref(&next)?;
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::DisableAgentBinding {
                 request,
                 state_ref,
                 reply: reply_sender,
@@ -9502,6 +9583,9 @@ fn start_task_planning_session_transaction(
            JOIN agent_endpoints e ON e.agent_profile_id = b.agent_profile_id AND e.endpoint_id = ?2
            JOIN agent_endpoint_bindings eb ON eb.endpoint_id = e.endpoint_id
            JOIN runtimes r ON r.runtime_id = eb.runtime_id
+           JOIN runtime_workspace_bindings rwb
+             ON rwb.runtime_id = r.runtime_id AND rwb.workspace_id = ?1
+            AND rwb.status = 'ACTIVE' AND rwb.revoked_at IS NULL
            JOIN runtime_incarnations ri ON ri.runtime_id = r.runtime_id AND ri.runtime_incarnation_id = ?5
            WHERE b.workspace_id = ?1 AND b.agent_binding_id = ?3
              AND b.enabled = 1 AND b.lead_eligible = 1
@@ -9510,7 +9594,8 @@ fn start_task_planning_session_transaction(
                   OR json_extract(b.endpoint_selection_policy_json, '$.endpoint_id') = ?2)
              AND eb.runtime_id = ?4 AND eb.runtime_incarnation_id = ?5
              AND (eb.expires_at IS NULL OR eb.expires_at > ?6)
-             AND r.workspace_id = ?1 AND r.availability = 'ONLINE'
+             AND EXISTS(SELECT 1 FROM json_each(rwb.roles_json) role WHERE role.value = 'EXECUTOR')
+             AND r.availability = 'ONLINE'
              AND r.current_incarnation_id = ?5 AND ri.recovery_state = 'READY'
          )",
         params![session.workspace_id, session.endpoint_id, session.agent_binding_id,
@@ -9719,22 +9804,25 @@ fn activate_task_planning_session_transaction(
              ON eb.endpoint_id = h.endpoint_id
             AND eb.runtime_id = h.runtime_id
             AND eb.runtime_incarnation_id = h.runtime_incarnation_id
+           JOIN runtime_workspace_bindings rwb
+             ON rwb.runtime_id = h.runtime_id
+            AND rwb.workspace_id = ?6
+            AND rwb.status = 'ACTIVE'
+            AND rwb.revoked_at IS NULL
            WHERE h.host_instance_id = ?2
              AND h.runtime_id = ?3
              AND h.runtime_incarnation_id = ?4
              AND h.endpoint_id = ?5
              AND b.agent_profile_id = h.agent_profile_id
              AND b.workspace_id = ?6
-             AND b.enabled = 1
-             AND b.lead_eligible = 1
              AND (b.runtime_id IS NULL OR b.runtime_id = h.runtime_id)
              AND (json_extract(b.endpoint_selection_policy_json, '$.mode') <> 'PINNED_ENDPOINT'
                   OR json_extract(b.endpoint_selection_policy_json, '$.endpoint_id') = h.endpoint_id)
              AND (eb.expires_at IS NULL OR eb.expires_at > ?7)
-             AND r.workspace_id = ?6
              AND r.availability = 'ONLINE'
              AND r.current_incarnation_id = h.runtime_incarnation_id
              AND ri.recovery_state = 'READY'
+             AND EXISTS(SELECT 1 FROM json_each(rwb.roles_json) role WHERE role.value = 'EXECUTOR')
              AND h.state IN ('READY', 'BUSY')
          )",
         params![session.agent_binding_id, activation.host_instance_id, session.runtime_id,
@@ -11424,7 +11512,7 @@ fn accept_initial_plan_transaction(
            WHERE s.agent_session_id = ?1 AND s.workspace_id = ?2 AND s.task_id = ?3
              AND s.task_spec_revision = ?4 AND s.scope_kind = 'TASK_PLANNING'
              AND s.status = 'ACTIVE' AND s.attempt_id IS NULL
-             AND s.agent_binding_id = ?5 AND b.enabled = 1 AND b.lead_eligible = 1
+             AND s.agent_binding_id = ?5
              AND (b.runtime_id IS NULL OR b.runtime_id = s.runtime_id)
              AND (json_extract(b.endpoint_selection_policy_json, '$.mode') <> 'PINNED_ENDPOINT'
                   OR json_extract(b.endpoint_selection_policy_json, '$.endpoint_id') = s.endpoint_id)
@@ -12949,6 +13037,29 @@ fn validate_agent_binding_enable(request: &AgentBindingEnableRequest) -> Result<
     Ok(())
 }
 
+fn validate_agent_binding_disable(request: &AgentBindingDisableRequest) -> Result<(), StoreError> {
+    validate_nonempty(&[
+        &request.request.principal_id,
+        &request.request.request_id,
+        &request.workspace_id,
+        &request.agent_binding_id,
+    ])?;
+    validate_timestamp(&request.now)?;
+    canonical_json(&request.request.request_payload)?;
+    if request.expected_version == u64::MAX
+        || request.event.workspace_id != request.workspace_id
+        || request.event.entity_type != "AgentBinding"
+        || request.event.entity_id != request.agent_binding_id
+        || request.event.entity_revision != request.expected_version + 1
+        || request.event.event_type != "agent.binding.changed.v1"
+    {
+        return Err(StoreError::Invalid(
+            "AgentBinding disable event does not match the requested transition".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_secret_ref(value: &Value) -> Result<(), StoreError> {
     let object = value.as_object().ok_or_else(|| {
         StoreError::Invalid("AgentBinding auth_ref must be a SecretRef object".to_owned())
@@ -13042,6 +13153,22 @@ fn agent_binding_enabled_payload(binding: &AgentBindingRecord, principal_id: &st
         "agent_profile_id": binding.agent_profile_id,
         "from_enabled": false,
         "to_enabled": true,
+        "aggregate_version": binding.version,
+        "requested_by": {"principal_id": principal_id, "kind": "USER"},
+    });
+    if let Some(runtime_id) = &binding.runtime_id {
+        payload["runtime_id"] = Value::String(runtime_id.clone());
+    }
+    payload
+}
+
+fn agent_binding_disabled_payload(binding: &AgentBindingRecord, principal_id: &str) -> Value {
+    let mut payload = json!({
+        "agent_binding_id": binding.agent_binding_id,
+        "workspace_id": binding.workspace_id,
+        "agent_profile_id": binding.agent_profile_id,
+        "from_enabled": true,
+        "to_enabled": false,
         "aggregate_version": binding.version,
         "requested_by": {"principal_id": principal_id, "kind": "USER"},
     });
@@ -14249,6 +14376,17 @@ fn enable_agent_binding_transaction(
             actual: None,
         });
     }
+    insert_agent_binding_transition_audit_record(
+        &tx,
+        &request.request.principal_id,
+        &request.request.request_id,
+        &current,
+        &next,
+        "enable",
+        "OWNER_REQUESTED_AGENT_BINDING_ENABLE",
+        &request.now,
+        &request.event.correlation_id,
+    )?;
     let event = insert_domain_event(&tx, request.event, state_ref)?;
     let committed = CommittedAgentBinding {
         binding: next,
@@ -14257,6 +14395,189 @@ fn enable_agent_binding_transaction(
     let response_json = String::from_utf8(canonical_json(&committed)?)
         .map_err(|error| StoreError::Invalid(error.to_string()))?;
     tx.execute("INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)", params![request.request.principal_id, request.request.request_id, request_digest, response_json, digest(response_json.as_bytes()), request.now]).map_err(map_database_error)?;
+    tx.commit().map_err(map_database_error)?;
+    Ok(committed)
+}
+
+fn insert_agent_binding_transition_audit_record(
+    tx: &Transaction<'_>,
+    principal_id: &str,
+    request_id: &str,
+    current: &AgentBindingRecord,
+    next: &AgentBindingRecord,
+    operation: &str,
+    reason_code: &str,
+    occurred_at: &str,
+    correlation_id: &str,
+) -> Result<(), StoreError> {
+    let principal_json = String::from_utf8(canonical_json(&json!({
+        "principal_id": principal_id,
+        "kind": "USER",
+    }))?)
+    .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    let resource_ref_json = String::from_utf8(canonical_json(&json!({
+        "kind": "AGENT_BINDING",
+        "workspace_id": next.workspace_id,
+        "agent_binding_id": next.agent_binding_id,
+        "agent_profile_id": next.agent_profile_id,
+    }))?)
+    .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    let audit_identity = json!({
+        "operation": format!("agent.binding.{operation}"),
+        "workspace_id": next.workspace_id,
+        "agent_binding_id": next.agent_binding_id,
+        "agent_profile_id": next.agent_profile_id,
+        "principal_id": principal_id,
+        "request_id": request_id,
+        "from_enabled": current.enabled,
+        "to_enabled": next.enabled,
+        "expected_version": current.version,
+        "aggregate_version": next.version,
+    });
+    let audit_digest = digest(&canonical_json(&audit_identity)?);
+    let audit_record_id = format!("audit_agent_binding_{operation}_{}", &audit_digest[7..]);
+    let action = format!("agent.binding.{operation}");
+    tx.execute(
+        "INSERT INTO audit_records(audit_record_id, workspace_id, principal_json, action, resource_ref_json, decision, reason_code, correlation_id, occurred_at, payload_digest) VALUES (?1, ?2, ?3, ?4, ?5, 'ALLOW', ?6, ?7, ?8, ?9)",
+        params![
+            audit_record_id,
+            next.workspace_id,
+            principal_json,
+            action,
+            resource_ref_json,
+            reason_code,
+            correlation_id,
+            occurred_at,
+            audit_digest,
+        ],
+    )
+    .map_err(map_database_error)?;
+    Ok(())
+}
+
+fn disable_agent_binding_transaction(
+    connection: &mut Connection,
+    request: AgentBindingDisableRequest,
+    state_ref: AggregateStateRef,
+) -> Result<CommittedAgentBinding, StoreError> {
+    let request_digest = digest(&canonical_json(&request.request.request_payload)?);
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    if let Some(replay) = verify_request_receipt::<CommittedAgentBinding>(
+        &tx,
+        &request.request.principal_id,
+        &request.request.request_id,
+        &request_digest,
+    )? {
+        return Ok(replay);
+    }
+    workspace_owner_active(&tx, &request.request.principal_id, &request.workspace_id)?;
+    let sql = format!(
+        "SELECT {AGENT_BINDING_COLUMNS} FROM agent_bindings WHERE workspace_id = ?1 AND agent_binding_id = ?2"
+    );
+    let current = tx
+        .query_row(
+            &sql,
+            params![request.workspace_id, request.agent_binding_id],
+            parse_agent_binding,
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(StoreError::NotFound)?;
+    if current.version != request.expected_version {
+        return Err(StoreError::Conflict {
+            expected: Some(request.expected_version),
+            actual: Some(current.version),
+        });
+    }
+    if !current.enabled {
+        return Err(StoreError::Invalid(
+            "AgentBinding is already disabled".to_owned(),
+        ));
+    }
+    let current_default: Option<String> = tx
+        .query_row(
+            "SELECT default_agent_binding_id FROM workspaces WHERE workspace_id = ?1",
+            [&request.workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if current_default.as_deref() == Some(request.agent_binding_id.as_str()) {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+
+    let mut next = current.clone();
+    next.enabled = false;
+    next.version = current
+        .version
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Integrity("AgentBinding version exhausted".to_owned()))?;
+    if state_ref.entity_revision != next.version || state_ref.record_schema_version != 1 {
+        return Err(StoreError::Invalid(
+            "AgentBinding state reference is invalid".to_owned(),
+        ));
+    }
+    let payload = agent_binding_disabled_payload(&next, &request.request.principal_id);
+    validate_binding_event(
+        &request.event,
+        &next,
+        next.version,
+        "agent.binding.changed.v1",
+        &payload,
+    )?;
+    let updated = tx
+        .execute(
+            "UPDATE agent_bindings SET enabled = 0, version = ?1
+             WHERE workspace_id = ?2 AND agent_binding_id = ?3
+               AND version = ?4 AND enabled = 1",
+            params![
+                to_sql_i64(next.version, "AgentBinding version")?,
+                next.workspace_id,
+                next.agent_binding_id,
+                to_sql_i64(request.expected_version, "expected AgentBinding version")?,
+            ],
+        )
+        .map_err(map_database_error)?;
+    if updated != 1 {
+        return Err(StoreError::Conflict {
+            expected: Some(request.expected_version),
+            actual: None,
+        });
+    }
+    insert_agent_binding_transition_audit_record(
+        &tx,
+        &request.request.principal_id,
+        &request.request.request_id,
+        &current,
+        &next,
+        "disable",
+        "OWNER_REQUESTED_AGENT_BINDING_DISABLE",
+        &request.now,
+        &request.event.correlation_id,
+    )?;
+    let event = insert_domain_event(&tx, request.event, state_ref)?;
+    let committed = CommittedAgentBinding {
+        binding: next,
+        event,
+    };
+    let response_json = String::from_utf8(canonical_json(&committed)?)
+        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    tx.execute(
+        "INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+        params![
+            request.request.principal_id,
+            request.request.request_id,
+            request_digest,
+            response_json,
+            digest(response_json.as_bytes()),
+            request.now,
+        ],
+    )
+    .map_err(map_database_error)?;
     tx.commit().map_err(map_database_error)?;
     Ok(committed)
 }
@@ -14801,6 +15122,17 @@ fn writer_loop(
                         reply,
                     } => {
                         let _ = reply.send(enable_agent_binding_transaction(
+                            &mut connection,
+                            request,
+                            state_ref,
+                        ));
+                    }
+                    Command::DisableAgentBinding {
+                        request,
+                        state_ref,
+                        reply,
+                    } => {
+                        let _ = reply.send(disable_agent_binding_transaction(
                             &mut connection,
                             request,
                             state_ref,

@@ -64,8 +64,9 @@ use std::{
     thread::{self, JoinHandle},
 };
 use storage_core::{
-    AgentBindingCreateRequest, AgentBindingEnableRequest, AgentBindingRecord, AgentCatalogStore,
-    AgentEndpointRecord, AgentProfileRecord, AgentProfileViewRecord, ContextDocumentOwnerStatus,
+    AgentBindingCreateRequest, AgentBindingDisableRequest, AgentBindingEnableRequest,
+    AgentBindingRecord, AgentCatalogStore, AgentEndpointRecord, AgentProfileRecord,
+    AgentProfileViewRecord, ContextDocumentOwnerStatus,
     FolderImportMetadata, IdempotentWorkspaceStore, LocalAgentEndpointBindingInput,
     LocalRuntimeWorkspaceBindingLookup, LocalRuntimeWorkspaceEnrollmentRequest, ReplicationPolicy,
     ResourceRecord, ResourceRevisionRecord, ResourceSearchRecord, ResourceStore, ResourceSummary,
@@ -1473,6 +1474,10 @@ fn build_operator_router(state: ApiState) -> Router {
         .route(
             "/v1/agent-bindings/{agent_binding_id}/enable",
             post(enable_agent_binding),
+        )
+        .route(
+            "/v1/agent-bindings/{agent_binding_id}/disable",
+            post(disable_agent_binding),
         )
         .route("/v1/tasks", get(list_tasks).post(create_task))
         .route("/v1/tasks/{task_id}", get(get_task))
@@ -7106,6 +7111,23 @@ async fn enable_agent_binding(
     ensure_workspace_owner(&state, &workspace_id)?;
     let expected_version = parse_if_match(&headers)?;
     let request_id = idempotency_key(&headers)?;
+    let request_payload = json!({"operation":"agent.binding.enable.v1", "workspace_id":workspace_id, "agent_binding_id":agent_binding_id, "expected_version":expected_version});
+    if let Some(replay) = state
+        .store
+        .get_agent_binding_mutation_receipt(&state.principal_id, &request_id, &request_payload)
+        .map_err(|error| map_agent_store_error(error, "Agent binding receipt is unavailable"))?
+    {
+        if replay.binding.workspace_id != workspace_id
+            || replay.binding.agent_binding_id != agent_binding_id
+        {
+            return Err(operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTEGRITY_FAILURE",
+                "Stored AgentBinding receipt does not match the request",
+            ));
+        }
+        return Ok(Json(replay.binding));
+    }
     let now = operator_now()?;
     let binding = state
         .store
@@ -7132,7 +7154,6 @@ async fn enable_agent_binding(
             "Agent binding event could not be initialized",
         )
     })?;
-    let request_payload = json!({"operation":"agent.binding.enable.v1", "workspace_id":workspace_id, "agent_binding_id":agent_binding_id, "expected_version":expected_version});
     let mut enabled_payload = json!({
         "agent_binding_id": agent_binding_id,
         "workspace_id": workspace_id,
@@ -7175,6 +7196,103 @@ async fn enable_agent_binding(
             event,
         })
         .map_err(|error| map_agent_store_error(error, "Agent binding could not be enabled"))?;
+    Ok(Json(committed.binding))
+}
+
+async fn disable_agent_binding(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(agent_binding_id): Path<String>,
+) -> Result<Json<AgentBindingRecord>, Response> {
+    let workspace_id = selected_workspace(&headers)?;
+    ensure_workspace_owner(&state, &workspace_id)?;
+    let expected_version = parse_if_match(&headers)?;
+    let request_id = idempotency_key(&headers)?;
+    let request_payload = json!({"operation":"agent.binding.disable.v1", "workspace_id":workspace_id, "agent_binding_id":agent_binding_id, "expected_version":expected_version});
+    if let Some(replay) = state
+        .store
+        .get_agent_binding_mutation_receipt(&state.principal_id, &request_id, &request_payload)
+        .map_err(|error| map_agent_store_error(error, "Agent binding receipt is unavailable"))?
+    {
+        if replay.binding.workspace_id != workspace_id
+            || replay.binding.agent_binding_id != agent_binding_id
+        {
+            return Err(operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTEGRITY_FAILURE",
+                "Stored AgentBinding receipt does not match the request",
+            ));
+        }
+        return Ok(Json(replay.binding));
+    }
+    let now = operator_now()?;
+    let binding = state
+        .store
+        .get_agent_binding(&state.principal_id, &workspace_id, &agent_binding_id)
+        .map_err(|error| map_agent_store_error(error, "Workspace agent binding is unavailable"))?
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Workspace agent binding is unavailable",
+            )
+        })?;
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Agent binding event could not be initialized",
+        )
+    })?;
+    let context = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Agent binding event could not be initialized",
+        )
+    })?;
+    let mut disabled_payload = json!({
+        "agent_binding_id": agent_binding_id,
+        "workspace_id": workspace_id,
+        "agent_profile_id": binding.agent_profile_id,
+        "from_enabled": true,
+        "to_enabled": false,
+        "aggregate_version": expected_version.saturating_add(1),
+        "requested_by": {"principal_id": state.principal_id, "kind":"USER"},
+    });
+    if let Some(runtime_id) = &binding.runtime_id {
+        disabled_payload["runtime_id"] = json!(runtime_id);
+    }
+    let event = storage_core::EventDraft {
+        event_id: context.event_id,
+        workspace_id: workspace_id.clone(),
+        entity_type: "AgentBinding".to_owned(),
+        entity_id: agent_binding_id.clone(),
+        origin_runtime_id: context.origin_runtime_id,
+        entity_revision: expected_version.saturating_add(1),
+        hlc_timestamp: context.hlc_timestamp,
+        correlation_id: context.correlation_id,
+        causation_id: None,
+        schema_version: 1,
+        event_type: "agent.binding.changed.v1".to_owned(),
+        payload: disabled_payload,
+        recorded_at: context.recorded_at,
+    };
+    let committed = state
+        .store
+        .disable_agent_binding(AgentBindingDisableRequest {
+            request: WorkspaceCreateRequest {
+                principal_id: state.principal_id.clone(),
+                request_id,
+                request_payload,
+            },
+            workspace_id,
+            agent_binding_id,
+            expected_version,
+            now,
+            event,
+        })
+        .map_err(|error| map_agent_store_error(error, "Agent binding could not be disabled"))?;
     Ok(Json(committed.binding))
 }
 

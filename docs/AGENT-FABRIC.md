@@ -137,9 +137,9 @@ selects a compatible endpoint using topology and negotiated features, not one gl
 ranking. If
 `runtime_id` is null, placement may choose any eligible Runtime currently advertising
 that profile; otherwise only the named Runtime is eligible. New
-bindings are disabled until explicitly enabled. Disabling prevents new planning/Attempt
-admission; sessions already admitted stay pinned and settle under their current Task,
-lease, and Effect rules.
+bindings are disabled until explicitly enabled. Disabling prevents new Conversation
+session and Task planning/Attempt admissions. Sessions already admitted stay pinned and
+continue under their current Task, lease, and Effect rules.
 
 AgentBinding configuration is adapter-specific but never arbitrary. The target binding
 stores only non-secret values validated against the current closed

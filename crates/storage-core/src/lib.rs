@@ -775,6 +775,17 @@ pub struct AgentBindingEnableRequest {
     pub event: EventDraft,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentBindingDisableRequest {
+    pub request: WorkspaceCreateRequest,
+    pub workspace_id: String,
+    pub agent_binding_id: String,
+    pub expected_version: u64,
+    pub now: String,
+    pub event: EventDraft,
+}
+
 /// Agent catalog persistence is split by ownership: stable profiles/endpoints are
 /// non-secret identities; offers and endpoint locators are Runtime-local observations;
 /// AgentBindings are Workspace authorization state and therefore carry domain events.
@@ -844,9 +855,24 @@ pub trait AgentCatalogStore: Send + Sync {
         workspace_id: &str,
     ) -> Result<Vec<AgentBindingRecord>, StoreError>;
 
+    /// Resolves an exact principal-scoped enable/disable receipt before current
+    /// Workspace or binding state is consulted. A changed payload under the same key
+    /// returns a conflict; this read performs no mutation.
+    fn get_agent_binding_mutation_receipt(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        request_payload: &serde_json::Value,
+    ) -> Result<Option<CommittedAgentBinding>, StoreError>;
+
     fn enable_agent_binding(
         &self,
         request: AgentBindingEnableRequest,
+    ) -> Result<CommittedAgentBinding, StoreError>;
+
+    fn disable_agent_binding(
+        &self,
+        request: AgentBindingDisableRequest,
     ) -> Result<CommittedAgentBinding, StoreError>;
 }
 

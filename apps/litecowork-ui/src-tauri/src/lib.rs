@@ -2497,6 +2497,39 @@ async fn enable_agent_binding(
 }
 
 #[tauri::command]
+async fn disable_agent_binding(
+    app: AppHandle,
+    workspace_id: String,
+    agent_binding_id: String,
+    expected_version: u64,
+    request_id: String,
+) -> Result<AgentBindingView, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if workspace_id.trim().is_empty()
+            || agent_binding_id.trim().is_empty()
+            || !valid_idempotency_key(&request_id)
+        {
+            return Err("Agent binding disable request is invalid".to_owned());
+        }
+        let (client, workspace_url) = operator_client(&app)?;
+        let base = workspace_url.replace("/v1/workspaces", "/v1/agent-bindings");
+        let response = client
+            .post(format!("{base}/{agent_binding_id}/disable"))
+            .header("X-Workspace-ID", &workspace_id)
+            .header("If-Match", expected_version.to_string())
+            .header("Idempotency-Key", request_id)
+            .send()
+            .map_err(|_| "Workspace agent binding could not be disabled".to_owned())?;
+        let body = read_bounded_response(response)?;
+        let binding: AgentBindingWire = serde_json::from_slice(&body)
+            .map_err(|_| "Local Runtime returned an unsupported agent binding".to_owned())?;
+        Ok(AgentBindingView::from(binding))
+    })
+    .await
+    .map_err(|_| "Agent binding disable request did not complete".to_owned())?
+}
+
+#[tauri::command]
 async fn list_workspace_runtime_bindings(
     app: AppHandle,
     workspace_id: String,
@@ -5060,6 +5093,7 @@ pub fn run() {
             list_agent_bindings,
             create_agent_binding,
             enable_agent_binding,
+            disable_agent_binding,
             list_workspace_runtime_bindings,
             enroll_local_runtime,
             list_workspaces,
