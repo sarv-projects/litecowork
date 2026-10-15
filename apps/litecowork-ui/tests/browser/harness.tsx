@@ -12,7 +12,7 @@ import "../../src/styles.css";
 type WorkspaceFirstRunProps = ComponentProps<typeof WorkspaceFirstRun>;
 type WorkspaceFirstRunScenario = "loading" | "error" | "offline" | "runtime-error" | "existing" | "ready" | "pending" | "busy";
 type WorkspaceRuntimeStatus = Exclude<WorkspaceFirstRunProps["runtime"], null>;
-type WorkspaceAppScenario = "workspace-list-race" | "workspace-list-failure" | "runtime-refresh-failure" | "resource-upload-ambiguous-chunk" | "resource-upload-ambiguous-chunk-bad-range";
+type WorkspaceAppScenario = "workspace-list-race" | "workspace-list-failure" | "runtime-refresh-failure" | "resource-upload-ambiguous-chunk" | "resource-upload-ambiguous-chunk-bad-range" | "workspace-policy-lost-ack" | "workspace-policy-lost-ack-confirmed" | "workspace-policy-list-race";
 type WorkspaceAppWorkspace = {
   workspaceId: string;
   name: string;
@@ -391,6 +391,10 @@ function handleWorkspaceAppInvoke(command: string, args: InvokeArgs): unknown {
   if (command === "get_runtime_lifecycle") return appRuntimeLifecycle();
   if (command === "list_workspaces") {
     state.appWorkspaceListCalls += 1;
+    if (state.appScenario === "workspace-policy-lost-ack" && state.appWorkspacePolicyListRefreshFails) {
+      state.appWorkspacePolicyListRefreshFails = false;
+      return Promise.reject(new Error("Rendered harness Workspace refresh failed after ambiguous policy response."));
+    }
     if ((state.appScenario === "workspace-list-race" || state.appScenario === "workspace-list-failure") && state.appWorkspaceListCalls === 1) {
       if (!state.appInitialWorkspaceList) throw new Error("Initial Workspace list response was not configured.");
       return state.appInitialWorkspaceList.promise;

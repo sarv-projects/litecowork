@@ -2586,6 +2586,29 @@ fn validate_workspace_policy_request(
     Ok(())
 }
 
+fn operator_error_code(error: &str) -> Option<&str> {
+    let diagnostic = error.rsplit_once('[')?.1.strip_suffix(']')?;
+    let (code, _) = diagnostic.split_once(';')?;
+    if code.is_empty()
+        || !code
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return None;
+    }
+    Some(code)
+}
+
+fn workspace_policy_error(response: LocalOperatorResponse) -> String {
+    let status = response.status();
+    let detail = read_bounded_response(response).err().unwrap_or_default();
+    if status == 409 && operator_error_code(&detail) == Some("STALE_WORKSPACE_VERSION") {
+        "STALE_WORKSPACE_VERSION".to_owned()
+    } else {
+        "Workspace policy could not be updated; refresh and retry".to_owned()
+    }
+}
+
 #[tauri::command]
 async fn update_workspace_policy(
     app: AppHandle,
@@ -2606,7 +2629,7 @@ async fn update_workspace_policy(
             .send()
             .map_err(|_| "Workspace policy update did not complete".to_owned())?;
         if !response.is_success() {
-            return Err("Workspace policy could not be updated; refresh and retry".to_owned());
+            return Err(workspace_policy_error(response));
         }
         let body = read_bounded_response(response)?;
         let response: WorkspaceWire = serde_json::from_slice(&body).map_err(|_| {
@@ -5290,7 +5313,7 @@ mod workspace_archive_request_tests {
 
 #[cfg(test)]
 mod workspace_policy_request_tests {
-    use super::validate_workspace_policy_request;
+    use super::{operator_error_code, validate_workspace_policy_request};
 
     #[test]
     fn policy_request_accepts_contract_values_supported_by_the_desktop() {
@@ -5309,6 +5332,17 @@ mod workspace_policy_request_tests {
         for policy in ["ACTIVE_TASKS", "SELECTED_FOLDERS"] {
             assert!(validate_workspace_policy_request("workspace-1", policy, "request-1").is_err());
         }
+    }
+
+    #[test]
+    fn operator_error_code_projects_only_a_safe_canonical_code() {
+        assert_eq!(
+            operator_error_code("Workspace changed [STALE_WORKSPACE_VERSION; retryable=false; reference=abc]"),
+            Some("STALE_WORKSPACE_VERSION")
+        );
+        assert_eq!(operator_error_code("Workspace changed [bad code; retryable=false]"), None);
+        assert_eq!(operator_error_code("[STALE_WORKSPACE_VERSION]"), None);
+        assert_eq!(operator_error_code("request failed"), None);
     }
 }
 
