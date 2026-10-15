@@ -106,7 +106,7 @@ implementation/AGENT-MODULE-AUDIT.md,524,16948,bad51ed44a90ad6e806ece08215c423e1
 implementation/ARCHITECTURE-COVERAGE.md,177,15968,b5d175322d562916b4476b974da81a87496ec5fa9889847ef46dda8137deae69,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/AUDIT.md,155,13284,a55491d4245364ded199718d9b6fdf513f531dc5ae4281fd95b1260bd8b8dc25,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/COVERAGE.md,33,2007,de61a91ec685c9bbfc359346fedbd14be20066ffbc2ace750bf0ceb29e60e945,rendering,True
-implementation/CURRENT-RUN.md,7444,543258,35468c767fadd54c2258ec3a3eb6b33b04c902d74dc87cb39e42ac046ed74d68,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/CURRENT-RUN.md,7471,545173,11f8beab3f0d8815e57b97801e4394eb627537e6f0121c191b9175e2432b85ac,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/DOC-AUDIT-2026-10-10.md,173,18626,ff27abd7e23a2a34fde65ae200540a04bdc376cd3a9527f07304e2790345bc1c,shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/NEXT-SESSION-HANDOFF-2026-10-13.md,363,25509,9c871129dcc1c536a6ef1d14b94fe099968a9f4222e15db1161853c3e466fa88,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/PROCESS.md,99,6027,9ec104a4a710c3587ca4395d86e4a1fba68c0a838cd4854639f0b9035b4e58b9,shell/settings/motion;workflow/recovery;trust/security,True
@@ -159,7 +159,7 @@ implementation/reviews/E03-S03.md,108,6646,e99d7236399aaa2d91c785738404eed9dde4a
 implementation/reviews/E05-S01.md,76,4562,4fea0770ff9a1ab6200b85c9d48e8a941bb3592ef3b36781fec07491f66b85c4,shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/reviews/E07-S00.md,91,5013,7b1cc7765f6e02420c3bfa72a579678ccf7a88f6b69ecbf6aaa25e3f239d9156,shell/settings/motion;workflow/recovery;trust/security,True
 implementation/reviews/E07-S01.md,82,4664,9c6610218f904d75df7640fc78a4f167310ab7102934429774a99557c8566a68,shell/settings/motion;workflow/recovery;trust/security,True
-implementation/reviews/E08-S02.md,106,6149,0bb9124383087405520fa9716f9122ecb0ba35335b70c6f28c79430ec7a82461,shell/settings/motion;workflow/recovery;trust/security,True
+implementation/reviews/E08-S02.md,124,7292,4d71226b73a83b6f9d2abdd22d3d0f2ee4165aced69a5ae9c8394c7f3f2888ed,shell/settings/motion;workflow/recovery;trust/security,True
 implementation/reviews/E08-S03.md,116,6950,0fb658b225c9a8c36bf54f9f167fddd4df440001a1afb00c0809533da945add5,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/reviews/E08-S04.md,84,4757,1e935f47736a5707ca364412adcfbf0264b21fc4fc4c679017028fb4c54ea6f9,shell/settings/motion;workflow/recovery;trust/security,True
 implementation/reviews/E08-S07.md,96,6103,7c4aec63e15ad103d7a783a2cbb89d3cb1582cc9d34c1906d7fab3f7f9c3a7ea,shell/settings/motion;rendering,True

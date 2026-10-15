@@ -3,8 +3,8 @@
 This script read every line of every included first-party Markdown file and checked literal Markdown relative link targets. **Mechanical coverage does not imply that each statement was semantically audited, implemented or runtime-qualified.**
 
 - Files read: 173
-- Lines read: 60081
-- Bytes read: 4227874
+- Lines read: 60126
+- Bytes read: 4230932
 - Broken relative links: 0
 - Excluded: dependency/cache/output worktrees and generated audit reports; CSV inventory includes SHA-256 for every read Markdown source.
 
@@ -119,7 +119,7 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/ARCHITECTURE-COVERAGE.md | 177 | b5d175322d56 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/AUDIT.md | 155 | a55491d42453 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/COVERAGE.md | 33 | de61a91ec685 | rendering |
-| implementation/CURRENT-RUN.md | 7444 | 35468c767fad | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/CURRENT-RUN.md | 7471 | 11f8beab3f0d | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/DOC-AUDIT-2026-10-10.md | 173 | ff27abd7e23a | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/NEXT-SESSION-HANDOFF-2026-10-13.md | 363 | 9c871129dcc1 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/PROCESS.md | 99 | 9ec104a4a710 | shell/settings/motion;workflow/recovery;trust/security |
@@ -172,7 +172,7 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/reviews/E05-S01.md | 76 | 4fea0770ff9a | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/reviews/E07-S00.md | 91 | 7b1cc7765f6e | shell/settings/motion;workflow/recovery;trust/security |
 | implementation/reviews/E07-S01.md | 82 | 9c6610218f90 | shell/settings/motion;workflow/recovery;trust/security |
-| implementation/reviews/E08-S02.md | 106 | 0bb912438308 | shell/settings/motion;workflow/recovery;trust/security |
+| implementation/reviews/E08-S02.md | 124 | 4d71226b73a8 | shell/settings/motion;workflow/recovery;trust/security |
 | implementation/reviews/E08-S03.md | 116 | 0fb658b225c9 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | implementation/reviews/E08-S04.md | 84 | 1e935f47736a | shell/settings/motion;workflow/recovery;trust/security |
 | implementation/reviews/E08-S07.md | 96 | 7c4aec63e15a | shell/settings/motion;rendering |
