@@ -10080,7 +10080,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                "Idempotency-Key": string;
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
                 /** @description Expected aggregate version for optimistic concurrency. */
                 "If-Match": components["parameters"]["IfMatch"];
             };

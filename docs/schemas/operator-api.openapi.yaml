@@ -2300,7 +2300,7 @@ paths:
       parameters:
       - {name: workspaceId, in: path, required: true, schema: {type: string}}
       - {name: kind, in: path, required: true, schema: {type: string, enum: [TASK_OPPORTUNITY, ROUTINE_OPPORTUNITY, AUTOMATION_OPPORTUNITY]}}
-      - {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
       - {$ref: '#/components/parameters/IfMatch'}
       requestBody:
         required: true
@@ -3689,7 +3689,7 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      schema: {type: string, minLength: 1, maxLength: 200}
+      schema: {type: string, minLength: 1, maxLength: 200, pattern: '^(?![\s\S]*[\r\n\u2028\u2029])[!-~]+$'}
     IfMatch:
       name: If-Match
       in: header

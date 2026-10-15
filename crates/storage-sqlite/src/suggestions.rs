@@ -242,9 +242,7 @@ impl SuggestionPreferenceStore for SqliteSuggestionStore {
     ) -> Result<SuggestionPreference, SuggestionServiceError> {
         if owner_principal_id.trim().is_empty()
             || workspace_id.trim().is_empty()
-            || request_id.trim().is_empty()
-            || request_id.len() > 128
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
+            || !super::valid_shared_idempotency_key(request_id)
         {
             return Err(SuggestionServiceError::InvalidRequest);
         }

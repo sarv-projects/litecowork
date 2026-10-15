@@ -208,19 +208,6 @@ fn idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
     super::idempotency_key(headers)
 }
 
-fn preference_idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
-    headers
-        .get("idempotency-key")
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| {
-            !value.is_empty()
-                && value.len() <= 128
-                && value.bytes().all(|byte| byte.is_ascii_graphic())
-        })
-        .map(str::to_owned)
-        .ok_or_else(invalid)
-}
-
 fn expected_version(headers: &HeaderMap) -> Result<u64, Response> {
     let text = headers
         .get(header::IF_MATCH)
@@ -396,7 +383,7 @@ async fn set_suggestion_preference(
         ));
     }
     let body: SetSuggestionPreferenceBody = serde_json::from_slice(&body).map_err(|_| invalid())?;
-    let request_id = preference_idempotency_key(&headers)?;
+    let request_id = idempotency_key(&headers)?;
     let version = expected_preference_version(&headers)?;
     let mut service = action_service(&state, &request_id)?;
     let preference = service
@@ -927,4 +914,287 @@ async fn list_suggestions(
         header::HeaderValue::from_static("no-store"),
     );
     Ok(response)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode, header},
+        middleware,
+    };
+    use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
+    use sha2::Digest;
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        sync::{Arc, atomic::AtomicU64},
+        time::Duration,
+    };
+    use storage_core::{
+        BlobPurpose, DeviceIdentityRecord, LocalRuntimeWorkspaceEnrollmentRequest,
+        RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
+        RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeRecord,
+        RuntimeWorkspaceBindingStore, StoreError, WorkspaceCreateRequest,
+    };
+    use storage_sqlite::{
+        FileBlobStore, RuntimeOsPrincipalIdentity, SqliteConfig, SqliteWorkspaceStore,
+        WorkspaceBlobKey, WorkspaceBlobKeyProvider,
+    };
+    use tower::ServiceExt;
+    use zeroize::Zeroizing;
+
+    #[derive(Clone)]
+    struct PreferenceRouteTestKeys;
+
+    impl WorkspaceBlobKeyProvider for PreferenceRouteTestKeys {
+        fn current_key(
+            &self,
+            _workspace_id: &str,
+            _purpose: BlobPurpose,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            Ok(WorkspaceBlobKey {
+                version: 1,
+                bytes: Zeroizing::new([73_u8; 32]),
+            })
+        }
+
+        fn key_by_version(
+            &self,
+            workspace_id: &str,
+            purpose: BlobPurpose,
+            version: u32,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            if version != 1 {
+                return Err(StoreError::Blob("unknown test key version".to_owned()));
+            }
+            self.current_key(workspace_id, purpose)
+        }
+    }
+
+    #[tokio::test]
+    async fn preference_route_accepts_200_byte_key_and_replays_one_commit() {
+        const OWNER: &str = "suggestion-preference-route-owner";
+        const WORKSPACE: &str = "suggestion-preference-route-workspace";
+        const RUNTIME: &str = "suggestion-preference-route-runtime";
+        const INCARNATION: &str = "suggestion-preference-route-incarnation";
+        const NOW: &str = "2026-10-15T10:00:00Z";
+
+        let directory = tempfile::tempdir().expect("temporary Runtime data directory");
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+            .expect("private data directory permissions");
+        let database = directory.path().join("state.sqlite3");
+        let store = SqliteWorkspaceStore::open(
+            &database,
+            Arc::new(FileBlobStore::new(
+                directory.path().join("blobs"),
+                PreferenceRouteTestKeys,
+            )),
+            SqliteConfig {
+                writer_queue_capacity: 8,
+                busy_timeout: Duration::from_secs(2),
+            },
+        )
+        .expect("real SQLite store opens");
+
+        let public_key = [23_u8; 32];
+        store
+            .register_local_incarnation(
+                RuntimeRecord {
+                    runtime_id: RUNTIME.to_owned(),
+                    device_identity: DeviceIdentityRecord {
+                        device_id: format!(
+                            "ed25519-sha256:{}",
+                            hex::encode(sha2::Sha256::digest(public_key))
+                        ),
+                        public_key: format!("ed25519:{}", hex::encode(public_key)),
+                        key_version: 1,
+                        issued_at: NOW.to_owned(),
+                        display_name: None,
+                    },
+                    runtime_version: "0.1.0-test".to_owned(),
+                    platform: "linux".to_owned(),
+                    architecture: "x86_64".to_owned(),
+                    roles: vec!["OPERATOR_ENDPOINT".to_owned()],
+                    trust_zone: "PERSONAL_DEVICE".to_owned(),
+                    availability: "RECOVERING".to_owned(),
+                    startup_policy: "MANUAL".to_owned(),
+                    current_incarnation_id: INCARNATION.to_owned(),
+                    resource_capacity: json!({"sampled_at": NOW}),
+                    last_seen: NOW.to_owned(),
+                },
+                RuntimeIncarnationRecord {
+                    runtime_incarnation_id: INCARNATION.to_owned(),
+                    runtime_id: RUNTIME.to_owned(),
+                    process_started_at: NOW.to_owned(),
+                    litecowork_version: "0.1.0-test".to_owned(),
+                    recovered_from_unclean_shutdown: false,
+                    recovery_state: "RECOVERING".to_owned(),
+                    ready_at: None,
+                    stopped_at: None,
+                    version: 1,
+                },
+                RuntimeIncarnationLocalObservationRecord {
+                    runtime_incarnation_id: INCARNATION.to_owned(),
+                    os_boot_id: Some("boot-suggestion-preference-route".to_owned()),
+                    observed_at: NOW.to_owned(),
+                },
+            )
+            .expect("Runtime registers");
+        store
+            .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: INCARNATION.to_owned(),
+                expected_version: 1,
+                recovery_state: "DEGRADED".to_owned(),
+                availability: "DEGRADED".to_owned(),
+                observed_at: NOW.to_owned(),
+                stopped_at: None,
+            })
+            .expect("Runtime becomes available");
+        WorkspaceService::new(store.clone())
+            .create(CreateWorkspace {
+                workspace_id: WORKSPACE.to_owned(),
+                name: "Suggestion preference route fixture".to_owned(),
+                owner_principal_id: OWNER.to_owned(),
+                event: EventContext {
+                    event_id: "suggestion-preference-route-workspace-created".to_owned(),
+                    origin_runtime_id: RUNTIME.to_owned(),
+                    hlc_timestamp: NOW.to_owned(),
+                    correlation_id: "suggestion-preference-route-workspace-create".to_owned(),
+                    causation_id: None,
+                    recorded_at: NOW.to_owned(),
+                },
+            })
+            .expect("Workspace commits");
+        store
+            .enroll_local_runtime(LocalRuntimeWorkspaceEnrollmentRequest {
+                request: WorkspaceCreateRequest {
+                    principal_id: OWNER.to_owned(),
+                    request_id: "suggestion-preference-route-enrollment".to_owned(),
+                    request_payload: json!({"workspace_id": WORKSPACE}),
+                },
+                expected_workspace_version: 1,
+                runtime_workspace_binding_id: "suggestion-preference-route-binding".to_owned(),
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: INCARNATION.to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                now: NOW.to_owned(),
+                correlation_id: "suggestion-preference-route-enroll-correlation".to_owned(),
+            })
+            .expect("Workspace grants this local Runtime binding");
+
+        let (_shutdown_sender, stream_shutdown) = tokio::sync::watch::channel(false);
+        let state = ApiState {
+            store,
+            principal_id: OWNER.to_owned(),
+            runtime_id: RUNTIME.to_owned(),
+            local_incarnation_id: INCARNATION.to_owned(),
+            lifecycle_blockers: Vec::new(),
+            runtime_identity: Arc::new(
+                RuntimeOsPrincipalIdentity::test_support(RUNTIME)
+                    .expect("test-only OS identity is available"),
+            ),
+            stream_admission: Arc::new(tokio::sync::Semaphore::new(2)),
+            runtime_inventory_revision: Arc::new(AtomicU64::new(1)),
+            stream_shutdown,
+        };
+        let router = super::routes()
+            .route_layer(middleware::from_fn(super::super::authenticate))
+            .with_state(state);
+        let idempotency_key = "k".repeat(200);
+        let request = |key: &str, muted: bool| {
+            let mut request = Request::put(format!(
+                "/v1/workspaces/{WORKSPACE}/suggestion-preferences/TASK_OPPORTUNITY"
+            ))
+            .header("x-workspace-id", WORKSPACE)
+            .header("if-match", "0")
+            .header("idempotency-key", key)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"muted": muted}).to_string()))
+            .expect("preference request is valid HTTP");
+            request
+                .extensions_mut()
+                .insert(super::super::AuthenticatedLocalPeer);
+            request
+        };
+
+        let first = router
+            .clone()
+            .oneshot(request(&idempotency_key, true))
+            .await
+            .expect("first preference mutation returns a response");
+        assert_eq!(first.status(), StatusCode::OK);
+        let first_body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(first.into_body(), 4096)
+                .await
+                .expect("bounded preference response"),
+        )
+        .expect("preference response is valid JSON");
+        assert_eq!(first_body["muted"], true);
+        assert_eq!(first_body["version"], 1);
+
+        let replay = router
+            .clone()
+            .oneshot(request(&idempotency_key, true))
+            .await
+            .expect("same key and payload resolve the saved receipt");
+        assert_eq!(replay.status(), StatusCode::OK);
+        let replay_body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(replay.into_body(), 4096)
+                .await
+                .expect("bounded replay response"),
+        )
+        .expect("replay response is valid JSON");
+        assert_eq!(replay_body, first_body);
+
+        let conflict = router
+            .clone()
+            .oneshot(request(&idempotency_key, false))
+            .await
+            .expect("changed payload returns a receipt conflict");
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+
+        let too_long_key = "k".repeat(201);
+        let too_long = router
+            .oneshot(request(&too_long_key, true))
+            .await
+            .expect("201-byte key returns validation error");
+        assert_eq!(too_long.status(), StatusCode::BAD_REQUEST);
+        let too_long_body: serde_json::Value = serde_json::from_slice(
+            &to_bytes(too_long.into_body(), 4096)
+                .await
+                .expect("bounded validation error"),
+        )
+        .expect("validation error is valid JSON");
+        assert_eq!(too_long_body["code"], "INVALID_ARGUMENT");
+
+        let connection =
+            rusqlite::Connection::open(&database).expect("inspect committed preference mutation");
+        let preference_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM suggestion_preferences WHERE workspace_id = ?1 AND kind = 'TASK_OPPORTUNITY'",
+                [WORKSPACE],
+                |row| row.get(0),
+            )
+            .expect("count persisted preference");
+        let event_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM domain_events WHERE workspace_id = ?1 AND type = 'suggestion.preference.changed.v1'",
+                [WORKSPACE],
+                |row| row.get(0),
+            )
+            .expect("count preference events");
+        let receipt_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+                rusqlite::params![OWNER, idempotency_key],
+                |row| row.get(0),
+            )
+            .expect("count preference receipts");
+        assert_eq!(preference_count, 1);
+        assert_eq!(event_count, 1);
+        assert_eq!(receipt_count, 1);
+    }
 }

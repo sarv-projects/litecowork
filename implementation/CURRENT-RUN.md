@@ -7442,3 +7442,30 @@ tauri-build 2.7.1, Node 24.21.0, pnpm 12.10.1, and dpkg-deb 1.22.6:
 The package inspection initially assumed the daemon would be under `resources/binaries`; the observed Tauri DEB uses `/usr/bin` beside the app and the production resolver already checks the executable's sibling directory. The first ancestor-symlink test fixture also incorrectly put its external target inside the temporary repository; it was corrected to use a sibling temp directory, and the regression now passes. No product defect remains from either failed probe.
 
 Resource audit: one `main` worktree and 26 branches; no subagent worktree, branch, or build process remains. Start measurements were root `target` 10,737,667,337 bytes, Tauri `target` 4,918,395,031 bytes, UI `node_modules` 103,187,790 bytes, UI `dist` absent, and sidecar output absent. Before post-push cleanup, final end measurements were root `target` 11,149,403,213 bytes, Tauri `target` 6,534,664,424 bytes, `node_modules` unchanged at 103,187,790 bytes, regenerated `dist` 946,224 bytes, and sidecar binary 23,441,176 bytes. After pushing the implementation commit, the generated sidecar, DEB plus staging directory, and Vite `dist` were removed; their paths are absent. Tauri `target` is now 6,461,731,612 bytes; shared root `target` remains 11,149,403,213 bytes; `node_modules` remains 103,187,790 bytes. Available space increased from 906,517,286,912 to 906,613,747,712 bytes (+96,460,800 bytes). One `main` worktree and 26 branches remain, no build/test/Vite process remains, and the shared Cargo targets are retained for the next Rust slice. Owner data and dependencies were preserved.
+
+## Suggestion preference idempotency bound correction — 2026-10-15
+
+The repository-wide A10 recheck found one remaining route-specific 128-byte cap on
+`PUT /v1/workspaces/{workspaceId}/suggestion-preferences/{kind}`. The operation now
+references the reusable 1–200 printable-ASCII OpenAPI parameter. Daemon parsing, domain
+validation, SQLite validation, and the Tauri bridge now use their existing shared
+validators. The change preserves the durable receipt and authorization path.
+
+Before the correction, the new mounted-route test failed with HTTP 400 for a valid 200-byte
+key. After the correction it passed **1/1** using a real temporary SQLite store and an
+authenticated Axum route: one preference/event/receipt commits, exact retry returns the
+same body, changed-payload reuse conflicts, and 201 bytes are rejected. Focused domain,
+SQLite, and Tauri boundary tests each passed **1/1**. Environment: Linux WSL2 x86_64,
+Rust/Cargo 1.98.1. E01-S04 and E08-S02 remain IN_PROGRESS; packaged IPC, supported-OS, and
+owner USER evidence remain pending.
+
+Hosted run `38696071612` on `64d5f772` completed with Tauri passing and two independent
+failures: UI Chrome DevTools startup exceeded its 8-second test deadline before the page
+mounted, and the clean checkout's generated `V1-CROSS-CONTRACT-GUARD.json` digest was
+stale. The UI harness now captures Chrome spawn/exit details and bounded stderr, waits up to
+30 seconds for DevTools and React mount, and disables Vite dependency discovery from
+unrelated generated Tauri output. The focused mounted test passed **4/4** on Node `24.21.0`,
+pnpm `12.10.1`, Chrome `149.0.7827.200`; the full pinned UI suite passed **229/229**.
+The guard mismatch was verified against committed Markdown and must be regenerated from
+the committed tree after intended documentation changes are committed. No hosted run after
+these fixes or the current A10 correction is yet recorded.

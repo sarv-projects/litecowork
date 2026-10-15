@@ -12,7 +12,7 @@ fn valid_suggestion_idempotency_key(value: &str) -> bool {
 }
 
 fn valid_suggestion_preference_key(value: &str) -> bool {
-    !value.is_empty() && value.len() <= 128 && value.bytes().all(|byte| byte.is_ascii_graphic())
+    valid_suggestion_idempotency_key(value)
 }
 
 /// Read-only Suggestions list bridge. It accepts a finite visibility/cursor set and
@@ -326,8 +326,13 @@ mod idempotency_key_tests {
     }
 
     #[test]
-    fn preference_mutations_keep_their_explicit_128_byte_contract() {
+    fn preference_mutations_accept_the_shared_200_byte_contract() {
+        assert!(super::valid_suggestion_preference_key("k"));
         assert!(super::valid_suggestion_preference_key(&"k".repeat(128)));
-        assert!(!super::valid_suggestion_preference_key(&"k".repeat(129)));
+        assert!(super::valid_suggestion_preference_key(&"k".repeat(129)));
+        assert!(super::valid_suggestion_preference_key(&"k".repeat(200)));
+        assert!(!super::valid_suggestion_preference_key(&"k".repeat(201)));
+        assert!(!super::valid_suggestion_preference_key("key with spaces"));
+        assert!(!super::valid_suggestion_preference_key("é"));
     }
 }
