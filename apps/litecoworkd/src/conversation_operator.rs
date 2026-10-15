@@ -311,3 +311,7 @@ fn internal() -> Response {
         "Conversation service is unavailable",
     )
 }
+
+#[cfg(test)]
+#[path = "conversation_operator_tests.rs"]
+mod tests;
