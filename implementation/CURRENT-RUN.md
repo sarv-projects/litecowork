@@ -8741,3 +8741,21 @@ bytes, and 899,697,438,720 bytes free. No slice worktree or branch was created. 
 test/browser/Vite/daemon process remains; three pre-existing `chrome-devtools-mcp` process
 trees were observed and left intact. The shared Cargo target and existing UI outputs/cache
 were retained; no duplicate regenerable output was found to remove.
+
+## 2026-10-16 — AgentBinding rejects unowned SecretRefs
+
+The authenticated AgentBinding create route rejects a supplied legacy `auth_ref` before
+receipt creation because the current create contract does not accept it and no
+AgentControlDescriptor slot/SecretStore ownership path is served. SQLite enforces the same
+rejection at its create boundary. Existing rows remain readable; no credential slot or
+SecretStore integration was added. The route test first observed the unsafe `201` response
+containing a fabricated ref, then passed after the guard. A credential-free create still
+commits its binding, one event, and one receipt.
+
+Verification: storage AgentBinding tests **12/12**; authenticated daemon AgentBinding
+route group **6/6**; Cline inventory tests **10/10** (Rust/Cargo `1.98.1`, Linux WSL2
+x86_64). The Cline inventory source test had already passed, replacing the older pending
+note in its review packet. Exact route behavior and limitations are in
+[E03-S01 review](reviews/E03-S01.md).
+This remains CODE evidence, not packaged/provider/OS or owner USER evidence. E03-S01 stays
+`IN_PROGRESS`.

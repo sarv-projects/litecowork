@@ -911,14 +911,45 @@ async fn create_route_rejects_unowned_secret_ref_without_durable_side_effects() 
 
     let status = response.status();
     let body = response_json(response).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "unexpected error body: {body}");
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unexpected error body: {body}"
+    );
     assert_eq!(body["code"], "INVALID_ARGUMENT");
-    let connection = rusqlite::Connection::open(&fixture.database)
-        .expect("open database after rejected create");
+    let connection =
+        rusqlite::Connection::open(&fixture.database).expect("open database after rejected create");
     let after_bindings: i64 = connection
         .query_row("SELECT COUNT(*) FROM agent_bindings", [], |row| row.get(0))
         .expect("count bindings after rejected create");
     assert_eq!(after_bindings, before_bindings);
     assert_eq!(event_count(&fixture.store, "agent.binding.created.v1"), 0);
     assert_eq!(receipt_count(&fixture.database, OWNER, key), 0);
+
+    let accepted = send(
+        &fixture.owner_router,
+        create_binding_request(
+            WORKSPACE,
+            "create-agent-binding-without-credentials",
+            json!({
+                "workspace_id": WORKSPACE,
+                "agent_profile_id": PROFILE,
+                "lead_eligible": false
+            }),
+        ),
+        true,
+    )
+    .await;
+    assert_eq!(accepted.status(), StatusCode::CREATED);
+    let created = response_json(accepted).await;
+    assert_eq!(created["auth_ref"], Value::Null);
+    assert_eq!(event_count(&fixture.store, "agent.binding.created.v1"), 1);
+    assert_eq!(
+        receipt_count(
+            &fixture.database,
+            OWNER,
+            "create-agent-binding-without-credentials"
+        ),
+        1
+    );
 }
