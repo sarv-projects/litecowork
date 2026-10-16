@@ -1,3 +1,40 @@
+## 2026-10-16 — E03-S01 Agent Catalog truthful status CODE slice
+
+The Agent Catalog now separates Runtime offer compatibility, process readiness, and Codex
+Conversation safety eligibility. It explains why a current incompatible profile cannot be
+bound, keeps refresh guidance for missing/expired observations, and calls the Workspace
+default a saved lead preference: explicit lead choices and Coworker lead settings take
+precedence, and LiteCowork rechecks compatibility and session authorization before work
+starts. The clear-default prompt preserves those higher-priority settings. Codex safety
+blockers are visible outside probe details. This is a UI projection correction; no server,
+API, event, or schema behavior changed, and E03-S01 remains `IN_PROGRESS`.
+
+On Linux x86_64/WSL2 with Node `24.21.0`, pnpm `12.10.1`, Vite `6.4.4`, and Chrome
+`149.0.7827.200`, final focused AgentBinding/catalog tests passed **14/14**, the full UI
+helper suite passed **275/275**, the rendered Chrome AgentBinding interaction group
+passed **1/1**. The production API-freshness/TypeScript/Vite build passed. One first focused run had an
+expectation mismatch against a six-blocker fixture; the corrected assertion passed. The
+read-only adversarial review caught missing explicit/Coworker lead precedence; the new
+copy assertions first failed, then passed after clarifying the fallback order. The
+first build found stale generated types against broader dirty OpenAPI edits; generation
+refreshed that working-tree client, which contains unrelated contract output and remains
+outside this UI slice. `git diff --check` passed. Exact commands and limitations are in the
+[Agent Catalog review packet](reviews/E03-S01-agent-catalog-truthful-status-2026-10-16.md).
+Provider-backed, packaged SYSTEM, supported-OS, and owner USER evidence remain pending.
+
+At this slice's initial measurement, one worktree was present and 907,405,287,424 bytes
+were free. Root `target/` measured 5,770,833,682 bytes, Tauri `target/` 4,173,253,860
+bytes, UI `dist/` 990,242 bytes, and UI `node_modules/` 97,159,500 bytes.
+
+End measurement: one worktree and 26 local branches remain; no branch or worktree was
+created, and no rendered-UI, Vite, or Chrome test process remains. Free bytes are
+907,396,956,160. Root `target/` remains 5,770,833,682 bytes and Tauri `target/` remains
+4,173,253,860 bytes. UI `dist/` is 992,193 bytes (+1,951); UI `node_modules/` is
+100,066,382 bytes, including a 3,140,449-byte Vite `.vite` optimization cache refreshed by
+the test run. The single dist output and reusable Vite cache were retained; no duplicate
+build output or temporary worktree was found. No owner cache or unrelated output was
+removed.
+
 # Current run and agent handoff
 
 ## 2026-10-15 — E03-S01 binding refresh/version race and truthful state copy

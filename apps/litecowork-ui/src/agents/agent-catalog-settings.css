@@ -23,6 +23,7 @@
 .agent-catalog__profiles { display: grid; gap: 10px; }
 .agent-catalog__profile { display: grid; gap: 11px; padding: 14px; border: 1px solid var(--color-border); border-radius: 9px; }
 .agent-catalog__profile-top { align-items: flex-start; }
+.agent-catalog__profile-status { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 52%; }
 .agent-catalog__profile h4 { font-size: 14px; }
 .agent-catalog__profile-top p, .agent-catalog__readiness { font-size: 12px; }
 .agent-catalog__readiness { margin: 0; color: var(--color-text-subtle); }
@@ -104,6 +105,8 @@
 .agent-catalog__safety span { color: var(--color-text-subtle); }
 @media (max-width: 700px) {
   .agent-catalog__header, .agent-catalog__probe-row, .agent-catalog__installations > li, .agent-catalog__bindings > li, .agent-catalog__worker-profiles > li, .agent-catalog__worker-create { align-items: flex-start; flex-direction: column; }
+  .agent-catalog__profile-top { flex-direction: column; }
+  .agent-catalog__profile-status { justify-content: flex-start; max-width: 100%; }
   .agent-catalog__inventory-state { justify-items: start; }
   .agent-catalog__facts { grid-template-columns: 1fr; }
   .agent-catalog__probe-facts { grid-template-columns: 1fr; }

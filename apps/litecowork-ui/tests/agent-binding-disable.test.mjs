@@ -151,8 +151,12 @@ test("an owner can clear the Workspace default without Runtime enrollment", () =
   assert.match(enable.html, /\sdisabled(?:="")?(?:\s|>)/, "enabling a binding still requires Runtime enrollment");
 });
 
-test("changing the Workspace default names new Conversation turns and Tasks using that default", () => {
+test("changing the Workspace default describes a saved preference without claiming admission is ready", () => {
   const html = renderBindings();
-  assert.match(html, /new Conversation turns and Tasks without another selected lead/i);
-  assert.match(html, /Current sessions stay with their chosen agent/i);
+  assert.match(html, /An explicit lead choice takes priority/i);
+  assert.match(html, /Work started for a Coworker uses that Coworker.s lead setting before this Workspace fallback/i);
+  assert.match(html, /LiteCowork uses this Workspace choice only after those higher-priority lead choices/i);
+  assert.match(html, /rechecks a compatible Runtime offer and session-specific authorization before starting work/i);
+  assert.match(html, /A saved default may remain selected while those checks fail/i);
+  assert.doesNotMatch(html, /eligible for new work/i);
 });

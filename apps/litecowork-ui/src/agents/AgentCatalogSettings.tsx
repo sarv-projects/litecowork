@@ -152,9 +152,9 @@ function WorkspaceDefaultLeadControls({
     <div className="agent-catalog__default-copy">
       <strong>Workspace default lead</strong>
       <span>{defaultBinding
-        ? `${defaultBindingName ?? "Selected agent"} · ${eligibleDefault ? "eligible for new work" : "currently unavailable"}`
+        ? `${defaultBindingName ?? "Selected agent"} · ${eligibleDefault ? "lead eligible in saved settings" : "currently unavailable"}`
         : selectedDefaultLeadBindingId ? "Saved lead selection is unavailable in the current binding list" : "No Workspace default lead selected"}</span>
-      <small>New Conversation turns and Tasks without another selected lead use this default. Current sessions stay with their chosen agent. If no eligible agent is available, new work will not start.</small>
+      <small>An explicit lead choice takes priority. Work started for a Coworker uses that Coworker’s lead setting before this Workspace fallback. LiteCowork uses this Workspace choice only after those higher-priority lead choices. LiteCowork rechecks a compatible Runtime offer and session-specific authorization before starting work. A saved default may remain selected while those checks fail.</small>
     </div>
     {selectedDefaultLeadBindingId && !confirming && <button
       type="button"
@@ -163,7 +163,7 @@ function WorkspaceDefaultLeadControls({
       onClick={() => setConfirming(true)}
     >Clear Workspace default…</button>}
     {confirming && selectedDefaultLeadBindingId && <div className="agent-catalog__clear-default-confirm" role="group" aria-label="Confirm clearing Workspace default lead">
-      <span>Clear this default? New Conversation turns and Tasks without another selected lead will need a different eligible agent.</span>
+      <span>Clear this Workspace fallback? Explicit choices and Coworker lead settings stay in place; other work will need an eligible lead selected.</span>
       <button type="button" className="agent-catalog__secondary" disabled={defaultAgentBusy} onClick={() => setConfirming(false)}>Keep default</button>
       <button type="button" className="agent-catalog__primary" disabled={!canChangeWorkspaceAgentPolicy || defaultAgentBusy} onClick={() => { setConfirming(false); onSetDefaultLead(null); }}>{defaultAgentBusy ? "Clearing…" : "Confirm clear"}</button>
     </div>}
@@ -334,16 +334,20 @@ function latestObservation(profile: AgentProfile): AgentProfileObservation | und
   return [...profile.observations].sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt))[0];
 }
 
+function observationIsFresh(observation: AgentProfileObservation | undefined, nowMs: number): boolean {
+  if (!observation) return false;
+  const expiry = Date.parse(observation.offerExpiresAt);
+  return Number.isFinite(expiry) && expiry > nowMs;
+}
+
 function readiness(observation: AgentProfileObservation | undefined, nowMs: number): Readiness {
   if (!observation) return { label: "No current offer", tone: "quiet", detail: "Refresh the profile through its supported adapter to request a current Runtime observation." };
-  const expiry = Date.parse(observation.offerExpiresAt);
-  if (!Number.isFinite(expiry) || expiry <= nowMs) {
+  if (!observationIsFresh(observation, nowMs)) {
     return { label: "Offer expired", tone: "quiet", detail: "This observation is historical. Refresh it before using it to configure a binding." };
   }
-  if (!observation.compatible) return { label: "Not compatible", tone: "caution", detail: "The Runtime did not mark this endpoint compatible for current admission." };
   switch (observation.readiness) {
-    case "STARTABLE": return { label: "Can start when needed", tone: "good", detail: "The adapter reported a startable endpoint. Listing or probing did not start a work session." };
-    case "AVAILABLE": return { label: "Available", tone: "good", detail: "The endpoint reported availability; this is not proof of model entitlement or Task execution support." };
+    case "STARTABLE": return { label: "Startable", tone: "good", detail: "The Runtime reports that the process can start. A profile probe does not test a work session or inference." };
+    case "AVAILABLE": return { label: "Available", tone: "good", detail: "The Runtime reports this endpoint as available; this is not proof of model entitlement or Task execution support." };
     case "READY": return { label: "Ready", tone: "good", detail: "Readiness was observed, but entitlement and production-safe execution are not implied." };
     case "NEEDS_AUTH": return { label: "Sign-in needed", tone: "caution", detail: "The adapter reported that authentication is needed. LiteCowork does not read or display credentials here." };
     case "BUSY": return { label: "Busy", tone: "caution", detail: "The endpoint reported that it is busy; this screen does not queue or launch work." };
@@ -353,12 +357,18 @@ function readiness(observation: AgentProfileObservation | undefined, nowMs: numb
   }
 }
 
+function offerCompatibility(observation: AgentProfileObservation | undefined, nowMs: number): Readiness {
+  if (!observation) return { label: "Compatibility unknown", tone: "quiet", detail: "No current Runtime compatibility observation is available." };
+  if (!observationIsFresh(observation, nowMs)) return { label: "Compatibility expired", tone: "quiet", detail: "The last compatibility result is historical. Refresh the profile before configuring a binding." };
+  if (!observation.compatible) return { label: "Not compatible for Workspace binding", tone: "caution", detail: "This profile cannot be bound while its Runtime offer is incompatible." };
+  return { label: "Compatible for Workspace binding", tone: "good", detail: "The Runtime marks this endpoint compatible. Session admission still checks current readiness, authorization, and use-specific safety requirements." };
+}
+
 function freshCompatibleOffer(profile: AgentProfile, nowMs: number): boolean {
   const offer = latestObservation(profile);
   return !!offer
     && offer.compatible
-    && Number.isFinite(Date.parse(offer.offerExpiresAt))
-    && Date.parse(offer.offerExpiresAt) > nowMs
+    && observationIsFresh(offer, nowMs)
     && ["AVAILABLE", "STARTABLE", "READY"].includes(offer.readiness);
 }
 
@@ -647,18 +657,37 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
             {profiles.map((profile) => {
               const observation = latestObservation(profile);
               const state = readiness(observation, offerClock);
+              const compatibility = offerCompatibility(observation, offerClock);
               const probe = profile.providerKey === "CODEX" ? codexProbeDiagnostic(observation) : null;
               const openCodeProbe = profile.providerKey === "OPENCODE" ? openCodeProbeDiagnostic(observation) : null;
               const isBound = profileIdsBound.has(profile.agentProfileId);
               const offerReady = freshCompatibleOffer(profile, offerClock);
+              const currentOfferIsIncompatible = observationIsFresh(observation, offerClock) && observation?.compatible === false;
               const protocols = [...new Set(profile.endpoints.map((endpoint) => humanize(endpoint.protocol)))];
               const features = capabilitySummary(profile);
+              const bindingActionLabel = busyAction === `create:${profile.agentProfileId}`
+                ? "Adding…"
+                : offerReady
+                  ? "Add disabled Workspace binding"
+                  : currentOfferIsIncompatible
+                    ? "Binding unavailable"
+                    : "Refresh the offer first";
               return <article className="agent-catalog__profile" key={profile.agentProfileId}>
                 <div className="agent-catalog__profile-top">
                   <div><span className="agent-catalog__eyebrow">{profile.providerKey} · ADAPTER PROFILE</span><h4>{profile.displayName}</h4><p>{protocols.join(" · ") || "Protocol not reported"}</p></div>
-                  <span className={`agent-catalog__badge is-${state.tone}`}>{state.label}</span>
+                  <div className="agent-catalog__profile-status" role="group" aria-label="Runtime offer status">
+                    <span className={`agent-catalog__badge is-${compatibility.tone}`} aria-label={`Runtime offer compatibility: ${compatibility.label}`}>{compatibility.label}</span>
+                    <span className={`agent-catalog__badge is-${state.tone}`} aria-label={`Process readiness: ${state.label}`}>Process: {state.label}</span>
+                  </div>
                 </div>
-                <p className="agent-catalog__readiness">{state.detail}</p>
+                <p className="agent-catalog__readiness"><strong>Offer compatibility:</strong> {compatibility.detail}</p>
+                <p className="agent-catalog__readiness"><strong>Process readiness:</strong> {state.detail}</p>
+                {probe && probe.conversationEligibility !== "ELIGIBLE" && <div className="agent-catalog__safety-blocker" role="note">
+                  <strong>Codex Conversation turns are unavailable on this profile.</strong>
+                  {(probe.conversationBlockers ?? []).length > 0
+                    ? <ul>{probe.conversationBlockers?.map((blocker) => <li key={blocker}>{conversationBlockerLabel(blocker)}</li>)}</ul>
+                    : <p>Required Conversation safety controls have not been qualified.</p>}
+                </div>}
                 {observation && <dl className="agent-catalog__facts">
                   <div><dt>Observed</dt><dd>{formatTime(observation.observedAt)}</dd></div>
                   <div><dt>Offer expires</dt><dd>{formatTime(observation.offerExpiresAt)}</dd></div>
@@ -684,11 +713,7 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
                     <div><dt>Probe host</dt><dd>{probe.hostProcessStopped === true ? "Direct process stopped" : probe.hostProcessStopped === false ? "Stop not confirmed" : "Not reported"}</dd></div>
                     <div><dt>Writer quiescence</dt><dd>{probe.writerQuiescenceProven === true ? "Reported proven" : "Not proven"}</dd></div>
                   </dl>
-                  {probe.conversationEligibility !== "ELIGIBLE" && <div className="agent-catalog__safety-blocker" role="note">
-                    <strong>Codex Conversation turns are unavailable on this profile.</strong>
-                    <ul>{(probe.conversationBlockers ?? []).map((blocker) => <li key={blocker}>{conversationBlockerLabel(blocker)}</li>)}</ul>
-                    {probe.conversationDiagnostic && <small>Diagnostic: {probe.conversationDiagnostic}</small>}
-                  </div>}
+                  {probe.conversationDiagnostic && <small>Diagnostic: {probe.conversationDiagnostic}</small>}
                   <p>These are bounded read-only observations. A listed model is not proof of entitlement or successful inference; this probe does not test a work session or safe switching.</p>
                 </details>}
                 {openCodeProbe && <details className="agent-catalog__capabilities agent-catalog__probe-diagnostics" open>
@@ -713,9 +738,11 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
                 </details>}
                 {isBound ? <p className="agent-catalog__bound">A Workspace binding exists below. A detected profile alone does not make it a lead or a worker.</p> : (
                   <div className="agent-catalog__configure">
-                    <label><input type="checkbox" checked={leadEligibleByProfile[profile.agentProfileId] ?? true} onChange={(event) => setLeadEligibleByProfile((current) => ({ ...current, [profile.agentProfileId]: event.target.checked }))} /> Allow this binding to be selected as a lead</label>
+                    {offerReady
+                      ? <label><input type="checkbox" checked={leadEligibleByProfile[profile.agentProfileId] ?? true} onChange={(event) => setLeadEligibleByProfile((current) => ({ ...current, [profile.agentProfileId]: event.target.checked }))} /> Allow this binding to be selected as a lead</label>
+                      : <p className="agent-catalog__hint" role="status">{currentOfferIsIncompatible ? "Lead selection is unavailable because this profile is not compatible for Workspace binding." : "Lead selection requires a fresh compatible Runtime offer with usable readiness."}</p>}
                     <button type="button" className="agent-catalog__secondary" disabled={!canConfigureBinding || !offerReady} onClick={() => onCreateBinding(profile, leadEligibleByProfile[profile.agentProfileId] ?? true)}>
-                      {busyAction === `create:${profile.agentProfileId}` ? "Adding…" : !offerReady ? "Refresh the offer first" : "Add disabled Workspace binding"}
+                      {bindingActionLabel}
                     </button>
                     <small>Adding creates a disabled binding. It does not select a default lead, create a DelegationProfile, start an agent, or run a Task.</small>
                   </div>
@@ -736,7 +763,7 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
             return <li key={binding.agentBindingId}>
               <div className="agent-catalog__binding-copy">
                 <strong>{profile?.displayName ?? "Profile unavailable"}</strong>
-                <span>{binding.enabled ? "Enabled" : "Disabled"} · {binding.leadEligible ? "can be a default agent" : "worker only"}</span>
+                <span>{binding.enabled ? "Enabled" : "Disabled"} · {binding.leadEligible ? "lead eligible by settings" : "worker only"}</span>
                 {isDefaultLead && <span className="agent-catalog__default">Current Workspace default lead</span>}
                 <small>Configuration: {Object.keys(binding.configuration).length === 0 ? "no adapter overrides" : "adapter overrides present"} · auth reference: {binding.authRef ? "configured (value hidden)" : "none reported"}</small>
                 <small>{binding.enabled

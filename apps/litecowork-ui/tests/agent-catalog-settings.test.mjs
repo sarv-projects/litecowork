@@ -91,6 +91,82 @@ function renderOpenCodeCatalog(bindings = [], selectedDefaultLeadBindingId = nul
   }));
 }
 
+function renderCodexCatalog() {
+  return renderToStaticMarkup(createElement(AgentCatalogSettings, {
+    workspaceId: "workspace-1",
+    workspaceName: "Workspace One",
+    workspaceActive: true,
+    runtimeReady: true,
+    runtimeEnrolled: true,
+    selectedDefaultLeadBindingId: null,
+    installations: [{
+      agentId: "codex",
+      displayName: "Codex",
+      protocolCandidate: "CODEX_APP_SERVER",
+      installation: "INSTALLED",
+      version: "0.162.0",
+      authentication: "UNKNOWN",
+      sessionReadiness: "NOT_PROBED",
+    }],
+    profiles: [{
+      agentProfileId: "profile-codex",
+      providerKey: "CODEX",
+      displayName: "Codex",
+      endpoints: [{
+        endpointId: "endpoint-codex",
+        agentProfileId: "profile-codex",
+        protocol: "CODEX_APP_SERVER",
+        topology: "LOCAL",
+        protocolVersion: "0.162.0",
+        capabilities: {},
+      }],
+      discoveredAt: "2026-10-15T00:00:00Z",
+      observations: [{
+        endpointId: "endpoint-codex",
+        runtimeId: "runtime-1",
+        runtimeIncarnationId: "incarnation-1",
+        compatible: true,
+        readiness: "STARTABLE",
+        observedAt: "2026-10-15T00:00:00Z",
+        offerExpiresAt: "2099-01-01T00:00:00Z",
+        constraints: {
+          protocol: "CODEX_APP_SERVER",
+          readiness: "COMPLETE",
+          protocol_initialize: "SUPPORTED",
+          account_read: "SUPPORTED",
+          authentication: "CONFIGURED",
+          model_list: "SUPPORTED",
+          model_catalog: "OBSERVED",
+          listed_model_options: [{ id: "gpt-safe" }],
+          session_start: "UNKNOWN",
+          host_process_stopped: true,
+          writer_quiescence_proven: false,
+          conversation_eligibility: {
+            status: "NOT_ELIGIBLE",
+            diagnostic_code: "CODEX_CONVERSATION_SAFETY_UNQUALIFIED",
+            blockers: [
+              "RESTRICTED_READ_ROOTS_NOT_QUALIFIED",
+              "READ_ONLY_WRITE_BOUNDARY_NOT_QUALIFIED",
+              "SHELL_NETWORK_BOUNDARY_NOT_QUALIFIED",
+              "NATIVE_MCP_TOOLS_NOT_DISABLED",
+              "NATIVE_APP_TOOLS_NOT_DISABLED",
+              "NATIVE_PLUGINS_AND_HOOKS_NOT_DISABLED",
+            ],
+          },
+        },
+      }],
+    }],
+    bindings: [],
+    onRefresh() {},
+    onProbeCodex() {},
+    onProbeOpenCode() {},
+    onCreateBinding() {},
+    onEnableBinding() {},
+    onDisableBinding() {},
+    onSetDefaultLead() {},
+  }));
+}
+
 function openCodeBinding(enabled) {
   return {
     agentBindingId: "binding-opencode",
@@ -128,4 +204,46 @@ test("binding admission copy describes the current state for enabled and disable
   const disabled = renderOpenCodeCatalog([openCodeBinding(false)]);
   assert.match(disabled, /New Conversation and Task sessions cannot use this agent\./);
   assert.doesNotMatch(disabled, /Disabling this binding prevents new Conversation and Task sessions from using this agent\./);
+});
+
+test("Codex offer compatibility, process readiness, and Conversation safety remain independent", () => {
+  const html = renderCodexCatalog();
+
+  assert.match(html, /Runtime offer compatibility[\s\S]*?Compatible for Workspace binding/);
+  assert.match(html, /Process readiness[\s\S]*?Startable/);
+  assert.match(html, /Codex Conversation turns are unavailable on this profile\./);
+  assert.match(html, /Conversation turns[\s\S]*?Not eligible · safety controls not qualified/);
+  assert.doesNotMatch(html, /The current offer is incompatible for Conversation admission/);
+});
+
+test("an incompatible profile explains why binding is unavailable instead of asking for a refresh", () => {
+  const html = renderOpenCodeCatalog();
+
+  assert.match(html, /Runtime offer compatibility[\s\S]*?Not compatible for Workspace binding/);
+  assert.match(html, /This profile cannot be bound while its Runtime offer is incompatible\./);
+  assert.match(html, /Binding unavailable/);
+  assert.doesNotMatch(html, /Refresh the offer first/);
+});
+
+test("a saved default lead is a preference, not a claim that work can start now", () => {
+  const html = renderOpenCodeCatalog([openCodeBinding(true)], "binding-opencode");
+
+  assert.match(html, /OpenCode · lead eligible in saved settings/);
+  assert.doesNotMatch(html, /eligible for new work/);
+  assert.match(html, /An explicit lead choice takes priority/);
+  assert.match(html, /Work started for a Coworker uses that Coworker.s lead setting before this Workspace fallback/);
+  assert.match(html, /LiteCowork rechecks a compatible Runtime offer and session-specific authorization before starting work\./);
+  assert.match(html, /Enabled · lead eligible by settings/);
+});
+
+test("Codex Conversation safety blockers are visible without opening probe details", () => {
+  const html = renderCodexCatalog();
+  const safetyNote = html.slice(html.indexOf("Codex Conversation turns are unavailable"), html.indexOf("<details class=\"agent-catalog__capabilities agent-catalog__probe-diagnostics\""));
+
+  assert.match(safetyNote, /File reads are not proven to stay within an explicit allowed root\./);
+  assert.match(safetyNote, /The read-only write boundary is not qualified\./);
+  assert.match(safetyNote, /Shell network access is not proven disabled\./);
+  assert.match(safetyNote, /Native MCP tools are not proven disabled or mediated\./);
+  assert.match(safetyNote, /Native app tools are not proven disabled or mediated\./);
+  assert.match(safetyNote, /Native plugins and hooks are not proven disabled or mediated\./);
 });
