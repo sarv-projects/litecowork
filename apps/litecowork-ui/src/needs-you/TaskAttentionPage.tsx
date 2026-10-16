@@ -8,6 +8,7 @@ import {
   type NeedsYouPage,
   type NeedsYouStatus,
 } from "./task-attention-state";
+import { UserRequestDetail } from "./UserRequestDetail";
 import "./task-attention-page.css";
 
 type TaskStatus = "WAITING_USER" | "NEEDS_USER" | "BLOCKED";
@@ -131,9 +132,10 @@ export function NeedsYouFilter({ status, onChange }: {
   </fieldset>;
 }
 
-export function NeedsYouItemCard({ item, onOpenTask }: {
+export function NeedsYouItemCard({ item, onOpenTask, onOpenUserRequest }: {
   item: NeedsYouItemView;
   onOpenTask: (taskId: string) => void;
+  onOpenUserRequest: (requestId: string, trigger: HTMLButtonElement) => void;
 }) {
   const canOpenTask = item.kind === "TASK_BLOCKER" && item.taskId !== null;
   return <article className="needs-you-card">
@@ -152,9 +154,14 @@ export function NeedsYouItemCard({ item, onOpenTask }: {
         <button type="button" className="quiet-button" onClick={() => onOpenTask(item.taskId!)}>Open current Task</button>
         <span>Opening the Task does not resolve this blocker.</span>
       </div>
-      : item.kind === "TASK_BLOCKER"
-        ? <p className="needs-you-action-note">Task details are unavailable for this item.</p>
-        : <p className="needs-you-action-note">Actions and request details are not connected here.</p>}
+        : item.kind === "TASK_BLOCKER"
+          ? <p className="needs-you-action-note">Task details are unavailable for this item.</p>
+          : item.kind === "USER_REQUEST" && item.userRequestId
+            ? <div className="needs-you-card-action">
+              <button type="button" className="quiet-button" onClick={event => onOpenUserRequest(item.userRequestId!, event.currentTarget)}>View request details</button>
+              <span>Review only. Opening this request does not answer or dismiss it.</span>
+            </div>
+            : <p className="needs-you-action-note">Approval details remain on their owning review surface.</p>}
   </article>;
 }
 
@@ -179,6 +186,9 @@ export function TaskAttentionPage({
   operatorReady: boolean;
   onOpenTask: (taskId: string) => void;
 }) {
+  const [selectedUserRequest, setSelectedUserRequest] = useState<{ workspaceId: string; requestId: string } | null>(null);
+  const userRequestOpener = useRef<HTMLButtonElement | null>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
   const [status, setStatus] = useState<NeedsYouStatus>("OPEN");
   const [items, setItems] = useState<NeedsYouItemView[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -190,10 +200,16 @@ export function TaskAttentionPage({
   const [refreshToken, setRefreshToken] = useState(0);
   const [failure, setFailure] = useState<"refresh" | "more" | null>(null);
   const generation = useRef(0);
+  const previousWorkspace = useRef(workspaceId);
   const paginationGate = useRef(new TaskAttentionPaginationGate());
   const visibleItems = loadedWorkspace === workspaceId && loadedStatus === status ? items : [];
 
   useLayoutEffect(() => {
+    if (previousWorkspace.current !== workspaceId) {
+      previousWorkspace.current = workspaceId;
+      userRequestOpener.current = null;
+      setSelectedUserRequest(null);
+    }
     const current = ++generation.current;
     paginationGate.current.invalidate(current);
     dispatchLoadState({ type: "invalidate", generation: current });
@@ -270,6 +286,7 @@ export function TaskAttentionPage({
 
   const hasMore = loadedWorkspace === workspaceId && loadedStatus === status && nextCursor !== null;
   const showingSavedItems = visibleItems.length > 0;
+  const refreshingSavedItems = busy && showingSavedItems && failure === null;
   const failureText = failure === "more"
     ? "More Needs You items could not be loaded. Existing items remain available; retry when the local Runtime is ready."
     : showingSavedItems
@@ -279,18 +296,40 @@ export function TaskAttentionPage({
   return <div className="page-content subpage-content task-attention-page needs-you-page">
     <div className="eyebrow">WORKSPACE INBOX</div>
     <div className="task-attention-heading">
-      <div><h1>Needs You</h1><p>Review open requests and blockers, or browse resolved history.</p></div>
+      <div><h1 ref={heading} tabIndex={-1}>Needs You</h1><p>Review open requests and blockers, or browse resolved history.</p></div>
       <button type="button" className="quiet-button" onClick={() => setRefreshToken(value => value + 1)} disabled={!operatorReady || busy}>Refresh</button>
     </div>
-    <p className="task-attention-scope-note">Approval and UserRequest actions and details are not connected here. Only Task blockers open Task detail, and opening a Task does not resolve it.</p>
+    <p className="task-attention-scope-note">UserRequest rows open read-only details; opening one does not answer or dismiss it. Task blockers open current Task detail. Approval actions remain on their owning review surface.</p>
+    {selectedUserRequest?.workspaceId === workspaceId && <UserRequestDetail
+      workspaceId={selectedUserRequest.workspaceId}
+      requestId={selectedUserRequest.requestId}
+      operatorReady={operatorReady}
+      refreshToken={refreshToken}
+      onBack={() => {
+        const opener = userRequestOpener.current;
+        setSelectedUserRequest(null);
+        requestAnimationFrame(() => {
+          if (opener?.isConnected) opener.focus();
+          else heading.current?.focus();
+        });
+      }}
+    />}
     <NeedsYouFilter status={status} onChange={setStatus} />
     {failure && <p className="task-attention-notice" role="status">{failureText}</p>}
+    {refreshingSavedItems && <p className="task-attention-notice" role="status">Checking the latest Needs You items. Showing the last saved {status === "OPEN" ? "open" : "resolved"} items for this Workspace until refresh completes.</p>}
     {!workspaceId ? <section className="task-attention-empty"><h2>Select a Workspace</h2><p>Choose or create a Workspace before reviewing Needs You items.</p></section>
       : busy && visibleItems.length === 0 ? <p className="task-attention-empty" role="status">Loading {status === "OPEN" ? "open" : "resolved"} Needs You items…</p>
       : failure === "refresh" && visibleItems.length === 0 ? <section className="task-attention-empty"><h2>Needs You is unavailable</h2><p>Refresh when the local Runtime is available. No inbox state is inferred from an unavailable response.</p></section>
       : visibleItems.length === 0 ? <section className="task-attention-empty"><h2>{status === "OPEN" ? "No open Needs You items" : "No resolved history"}</h2><p>{status === "OPEN" ? "There are no open approvals, requests, or Task blockers in this Workspace." : "Resolved items will appear here while their source records remain available."}</p></section>
       : <ul className="task-attention-list needs-you-list">{visibleItems.map(item => <li key={item.itemId}>
-        <NeedsYouItemCard item={item} onOpenTask={onOpenTask} />
+        <NeedsYouItemCard
+          item={item}
+          onOpenTask={onOpenTask}
+          onOpenUserRequest={(requestId, trigger) => {
+            userRequestOpener.current = trigger;
+            setSelectedUserRequest({ workspaceId, requestId });
+          }}
+        />
       </li>)}</ul>}
     {hasMore && <NeedsYouLoadMoreButton
       loading={loadingMore}

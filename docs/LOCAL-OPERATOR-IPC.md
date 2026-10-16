@@ -152,6 +152,11 @@ before this binding is treated as production-ready.
   Runtime may persist a clean stop only after all admitted request tasks complete without
   an ambiguous handler timeout and the endpoint thread exits successfully; a failed or
   expired drain leaves the Runtime unclean.
+- Runtime supervises the endpoint thread after readiness. Unexpected listener/thread exit
+  signals active streams, settles the bounded request drain, and causes a nonzero Runtime
+  exit. It never turns endpoint failure into a clean stop; startup failures leave the
+  already-committed incarnation `DEGRADED`, while failures during graceful shutdown retain
+  the current unclean lifecycle state.
 - On crash recovery, inspect endpoint ownership and type before stale cleanup. Never
   unlink an active endpoint based only on a stale status file.
 

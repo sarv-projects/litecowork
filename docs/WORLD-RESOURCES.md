@@ -13,6 +13,18 @@ OCR-heavy interpretation, and domain-specific search remain capabilities. `DATA-
 owns the canonical record fields; `API.md`, `STATE-MACHINES.md`, `EVENTS.md`, and
 `schemas/sqlite-v19.sql` carries the current persistence form.
 
+### Served implementation boundary
+
+The current desktop implementation can create a persistent `WorkspaceRoot` through
+authenticated native folder selection, list roots, pause/resume/revoke them, revalidate
+saved identity at Runtime startup on supported Linux/macOS source paths, and perform an
+explicit bounded metadata census on Linux. The census returns and durably records only a
+no-store count/status summary scoped to the Workspace, root, request, and root version, with
+a safe partial reason and completion time; it does not create Resources, revisions,
+locations, membership, or events. The mounted `GET /v1/resources/search` searches existing
+managed Resources and is not root-aware. Membership reconciliation, root-aware search,
+and a local-root watcher remain target contracts, not claims about the current product.
+
 ## Identity and location
 
 Resource identity is independent of where bytes can be reached. A resource may have
@@ -122,9 +134,10 @@ already-created Artifacts; retained derived content follows Workspace retention 
 
 ## Workspace roots
 
-Adding a folder as a message attachment is a one-time input reference. Adding it as a
-WorkspaceRoot is a persistent user-authorized relationship that enables ongoing
-observation and deterministic search under the selected policy. A WorkspaceRoot becomes
+Adding a folder as a message attachment is a one-time input reference. A `WorkspaceRoot` is
+the persistent user-authorized relationship intended to bound ongoing observation and
+deterministic search under the selected policy. Root lifecycle persistence and an explicit
+Linux-only metadata census are served. A WorkspaceRoot becomes
 `UNAVAILABLE` when its observing Runtime cannot prove the saved root identity. Before
 Operator IPC starts, Runtime startup reopens the saved private locator using no-follow
 directory-handle traversal, compares the prior raw operating-system identity, and checks the
@@ -139,7 +152,8 @@ excluded and cannot be reactivated. `PAUSED` is an explicit user/service lifecyc
 not a synonym for offline availability. This startup implementation currently has Linux/macOS
 source support only and is not OS-qualified; Windows and unsupported platforms fail closed.
 Loss of the OS-principal/keyring identity currently blocks startup before this root
-transaction, so that key-loss path does not yet durably mark roots unavailable. Root
+transaction, so that key-loss path does not yet durably mark roots unavailable.
+
 The owner may pause an ACTIVE root without deleting its identity bindings or selected-folder
 replication preference; every observer, search, exposure, and replication transfer must
 still filter for ACTIVE status. Resuming a PAUSED root is a separate versioned user action
@@ -165,10 +179,12 @@ as, an ancestor of, or a descendant of an existing root's canonical path; path c
 are compared as components, not as string prefixes, so sibling directories remain
 independent. This applies to `ACTIVE`, `PAUSED`, and `UNAVAILABLE` roots: pause and lost
 availability do not revoke the owner's persistent scope. Only `REVOKED` removes a root
-from overlap admission. Exact idempotent retries return their original receipt before this
-check; a new request is checked and committed under the serialized root-creation
-transaction. Canonical paths remain private Runtime-local locator data and are never copied
-to WorkspaceRoot aggregates, events, public projections, or error messages. Unsupported or
+from overlap admission. The serialized root-creation transaction checks an exact
+owner/request/payload receipt before the expected Workspace-version compare-and-swap and
+overlap checks. A retry of a committed request therefore returns its original receipt after
+an unrelated Workspace version advance; a new request with a stale Workspace version
+conflicts. Canonical paths remain private Runtime-local locator data and are never copied to
+WorkspaceRoot aggregates, events, public projections, or error messages. Unsupported or
 malformed persisted locators fail closed during overlap admission.
 
 ## Relationships and dependency invalidation
@@ -187,26 +203,53 @@ Re-verification creates a new VerificationRun bound to new `ResourceInput` value
 
 ## Indexing and freshness
 
-`WorldIndexer` watches only active roots and provider locations authorized for the
-Workspace. Watcher notifications are hints, not a complete change log. On startup,
-reconnect, overflow, permission error, or detected watcher gap, it marks affected
-locations `UNKNOWN` or `STALE` and schedules a bounded reconciliation scan. It records
-observed revision/digest and timestamp after a successful read. A freshness claim is
-never stronger than the most recent successful observation.
+The served WorkspaceRoot scan is a bounded Linux metadata census only: at most 1,000
+directory entries considered internally (known private/generated names consume this
+budget but are not opened or reported), depth 32, 1 MiB aggregate relative locator bytes,
+and a cooperative 8-second total deadline that begins before filesystem work is scheduled;
+traversal stops at 7 seconds to reserve the final second for mandatory saved-root identity
+revalidation. At most two scan jobs run concurrently. Linux resolves each candidate from the selected root with
+`openat2` beneath-root, no-symlink, no-magic-link, and no-cross-mount constraints. It records
+one idempotent count/status receipt whose caller identity is stable across Runtime process
+restarts; current Runtime identity still fences a new receipt at commit. The response and
+receipt expose no path, name, identity, file content, or deletion inference. It neither
+creates a Resource or ResourceLocation nor changes membership or freshness. A successful
+response is not an atomic filesystem snapshot. A new scan attempt on macOS and Windows
+fails closed as unsupported until metadata-only traversal is qualified; an exact committed
+receipt is replayed before that platform check.
 
-Index projections are rebuildable and are not replicated as authoritative event history.
-The durable Resource, ResourceRevision, ResourceLocation, root, and edge changes are
-evented. Local indexes may use SQLite FTS or an equivalent deterministic inverted index.
-Extracted text is bounded by media type, size, and Workspace policy; index data is
-workspace-scoped and deleted or rebuilt according to root revocation and retention rules.
+### WorkspaceRoot watcher — target only
 
-## Deterministic resource search
+The `F28 — Persistent WorkspaceRoot and deterministic search` flow in `FLOWS.md` remains
+a target scenario. The bounded Linux metadata census described above is served, but it
+does not reconcile file membership or freshness. Membership-producing root scans,
+watchers, and root-aware search are not served by the current implementation. The
+`WorldIndexer` contract below remains target-only:
+when implemented, it will watch only active roots and provider locations authorized for
+the Workspace. Watcher notifications will be hints, not a complete change log. On startup,
+reconnect, overflow, permission error, or detected watcher gap, it will mark affected
+locations `UNKNOWN` or `STALE` and schedule a bounded reconciliation scan. It will record
+observed revision/digest and timestamp after a successful read. A freshness claim must
+never be stronger than the most recent successful observation.
 
-LiteCowork provides first-party `LocalResourceSearch` for selected local roots and
-available connected/replicated Resources. It consumes no model tokens. Search supports
-name/path tokens, type/media type, timestamps, revision/freshness, and bounded extracted
-text matches. Results include a stable ResourceRef, matching location(s), freshness,
-availability, and why each result matched. It does not claim semantic relevance.
+### Managed Resource index projections
+
+Managed Resource index projections are rebuildable and are not replicated as authoritative
+event history. Durable Resource, ResourceRevision, ResourceLocation, WorkspaceRoot
+lifecycle, and ResourceEdge changes are evented. The current managed-Resource text index
+is workspace-scoped; its encrypted storage, bounded extraction, and deletion behavior are
+described below. A future root-membership projection must remain scoped by Workspace and
+root authorization and follow root revocation and retention rules.
+
+## Deterministic resource search — target root-aware behavior
+
+The target first-party `LocalResourceSearch` will search selected local roots and available
+connected/replicated Resources without model tokens. Root-relative name/path matching,
+type/media type, timestamps, revision/freshness, and bounded extracted-text matching are
+target behavior. Results will include a stable ResourceRef, matching location(s), freshness,
+availability, and why each result matched; the search will not claim semantic relevance.
+The currently served Resource search operates over persisted managed Resources and does
+not discover or include files merely because their containing folder is a `WorkspaceRoot`.
 
 ```text
 interface LocalResourceSearch {
@@ -228,9 +271,10 @@ outside those parser bounds are left unindexed rather than represented by a part
 index. The
 index is a rebuildable projection scoped by Workspace, Resource, and exact
 ResourceRevision. Extracted UTF-8 text is stored only as an encrypted `RESOURCE_INDEX`
-BlobStore object under a Workspace/purpose key. SQLite stores the encrypted blob digest,
-source revision/digest, parser version, key version, and distinct HMAC-SHA256 term tokens;
-it stores neither plaintext extracted text nor raw terms. Matching is deterministic,
+BlobStore object under a Workspace/purpose key. SQLite stores the snapshot's plaintext
+content digest and byte size, source revision/digest, parser version, key version, and
+distinct HMAC-SHA256 term tokens; it stores neither plaintext extracted text nor raw terms.
+Matching is deterministic,
 case-normalized Unicode token equality with AND across query terms, not semantic
 similarity. Results include the exact revision-pinned ResourceRef and a bounded excerpt
 read back from the encrypted index object. `ResourceSearchResult` also carries that
@@ -242,8 +286,13 @@ Resource head or to the shortened display snippet. Non-indexed results carry an 
 `source_matches` array, and on-demand excerpts do not currently have exact span metadata.
 The search boundary must recheck Workspace,
 current revision, source digest, and ContextDocument active status after reading the
-snapshot. An unavailable/lost index key disables indexed search and never falls back to
-plaintext indexing.
+snapshot. Each indexed-search request examines at most 200 candidate snapshots and 64 MiB
+of verified snapshot bytes. When this bound or stale candidates leave a page underfilled,
+the response may contain fewer than the requested number of items, even zero, with a
+filter-bound cursor after the last examined candidate. All verified matches before that
+frontier are returned in that response. Pagination is keyset-based and does not promise a
+snapshot across requests while Resources change. An unavailable/lost index key disables
+indexed search and never falls back to plaintext indexing.
 
 The mounted daemon route returns these fields and checks their revision/digest binding
 before serialization. The desktop accepts spans only when they match the normalized

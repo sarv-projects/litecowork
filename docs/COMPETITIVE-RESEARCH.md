@@ -234,3 +234,114 @@ Normative targets:
 ## V1 detailed design integration — 2026-10-12
 
 Use V1-DESIGN-INDEX.md and implementation/V1-DESIGN-COVERAGE.md to distinguish current code gaps from target competitor parity: native / @ and session/model semantics; managed Chrome and optional explicit existing-session attach; verified work/cowork and rendering. Claims require an exact-date vendor source and own real feature tests; do not infer account availability or planned V1 parity from a marketing screenshot.
+
+## 2026-10-14 Manus 2.0 and local UI comparison
+
+The owner-provided `manusui/` folder contains 20 screenshots. They show a task-centered
+workspace with visible agent activity, a Library and Creations area, separate connector
+and Skills catalogs, account connection flows, and Automation setup for schedules and
+triggers. Screenshot dates, account tier, rollout status, and product version are not
+known, so these are visual references rather than proof that every shown path is generally
+available.
+
+Manus's current product pages describe Manus Studio as a shared workspace for creating and
+editing websites, videos, games, and other project outputs alongside local files and tools
+([Manus 2.0](https://manus.im/en/blog/introducing-manus-2-0),
+[Desktop](https://manus.im/desktop?locale=en)). Its connector catalog exposes app
+connectors and custom MCP/API setup, while its Skills page presents reusable abilities as a
+separate surface ([Connectors](https://www.manus.com/features/connectors),
+[Skills](https://manus.im/features/skills)). The Automation page describes scheduled and
+event-triggered work, test runs, confirmation settings, updates, and failed-run repair
+([Automations](https://www.manus.com/features/automations)). Plan Mode adds a user-editable
+review step before execution ([Plan Mode](https://manus.im/blog/manus-plan-mode)). Its
+Cloud Browser documentation describes live browser visibility, account sessions, and
+user takeover during verification; its Wide Research help page describes automatic
+parallel decomposition, paid-user availability, and a vendor claim of up to 20 concurrent
+subtasks ([Cloud Browser](https://manus.im/docs/features/cloud-browser),
+[Wide Research](https://help.manus.im/en/articles/11960169-what-is-wide-research)). These
+are vendor claims, not independent reliability or performance measurements. Manus's
+reported 2.0 performance numbers compare with its own prior system, not LiteCowork.
+
+Against the current LiteCowork source, the main deficit is an unfinished end-to-end work
+flow rather than an unusable visual shell. LiteCowork has a durable Task surface and real
+Resource/Artifact browsing, but Home explicitly says saved Tasks are not sent to an agent,
+Conversation sending is disabled until native turn execution is connected, and there is no
+general Discover/connector/Skills catalog. Needs You is a real read-only projection of
+persisted Approvals, UserRequests, and Task blockers. Task detail also has a live-updating,
+read-only Outcome and activity panel derived from saved Task records. That panel can show
+persisted progress and outputs; it does not show a native agent actively executing or prove
+that a Task is running. Automation definitions can include schedules, but the desktop
+Runtime does not yet host or execute recurring schedules. The UI uses a light color scheme
+and its navigation is mostly ungrouped, although Settings is grouped under Manage; the
+browser harness shows card surfaces, so “flat” would overstate the visual evidence. These
+screenshots are not packaged Tauri acceptance evidence. See `implementation/UI.md` and
+`docs/EXPERIENCE.md` for the product target.
+
+Priority from this comparison: first complete native Conversation/Task execution and
+connect its real Attempt progress, controls, verification, and recovery to Task detail.
+Task detail already links committed Task outputs to the Workbench; this is a source-backed
+flow, while Attempt-level Evidence and verification remain absent. Next expose only
+qualified connectors and Skills with clear installed/connected/assigned/granted/ready
+states; finish truthful Automation schedule hosting and run history; then refine navigation
+grouping, icons, theme, and empty/loading/error states. Do not copy Manus's connection
+model or terminal permission policy without review: its launch post and Help Center
+currently describe different command-approval defaults
+([launch post](https://manus.im/blog/manus-my-computer-desktop),
+[Help Center](https://help.manus.im/en/articles/14178443-what-is-the-my-computer-feature-capable-of)).
+LiteCowork's Trust and local authorization contracts remain authoritative.
+
+The impression that Manus is quicker to understand comes from the connected task/activity
+surface and visible setup paths; no comparative timed study or packaged-build usability
+test was run.
+
+## 2026-10-15 competitor recheck and LiteCowork priorities
+
+Current official materials reinforce that the competitive bar is a single, outcome-first
+entry into ordinary questions and larger work. Anthropic is gradually merging Claude chat
+and Cowork into one conversation, where the system can answer a quick question or produce
+editable work, while cloud work can continue away from the computer and local file access
+depends on Desktop ([unified Claude experience](https://support.claude.com/en/articles/16761823-claude-cowork-and-chat-are-one-claude)). ChatGPT Work keeps Chat and Work in one desktop history and supports projects, reviewable progress, approvals, schedules and eligible event triggers; local Work runs on the computer, but messages and task context may still be stored in the cloud ([ChatGPT Work and Codex](https://help.openai.com/en/articles/20001275-chatgpt-work-and-codex)).
+
+The desktop/work competitors also converge on persistent context and visible results. Grok
+Bot offers named Bots, parallel work, routines and a shared cloud computer that continues
+when the user closes the app; access to the user's local computer is a separate permission
+([Grok Bot overview](https://docs.x.ai/grok-bot/overview), [approvals and local-computer
+access](https://docs.x.ai/grok-bot/approvals-security-and-privacy)). Kimi Work is a Mac and
+Windows local-agent beta with goal-driven work, parallel agents, Skills, plugins, widgets,
+and a dashboard ([Kimi Work overview](https://www.kimi.com/en/help/kimi-work/overview)).
+Manus combines cloud research and production, local Desktop computer access, connectors,
+projects, and schedule/event-triggered Automations with run review ([Manus Desktop](https://manus.im/desktop?locale=en), [Automations](https://www.manus.im/features/automations), [Connectors](https://www.manus.im/features/connectors)). These are vendor-described product behaviors and availability remains account/platform dependent; they are not comparative reliability measurements.
+
+### What LiteCowork must deliver to compete
+
+1. **A useful first answer in one conversation.** New session should be the obvious primary
+   action. The same composer should support quick questions and requests for larger work;
+   selecting a Coworker should remain optional. This requires a real, qualified native
+   Conversation turn and must not be faked with a saved Task or simulated response
+   ([E03-S02](../implementation/epics/E03.md), [Native Composer LLD](NATIVE-COMPOSER-LLD.md)).
+2. **Visible progress and steerable work.** A user should see what was accepted, what is
+   running, where it is waiting for them, and what failed, then resume from durable state.
+   Task/Attempt, approval, stop, retry, and recovery states must come from Core and the
+   native provider, not decorative activity.
+3. **Deliverables that are easy to inspect and continue editing.** Make completed files,
+   source references, versions, and follow-up actions easy to find in the Workbench. Rich
+   and interactive output must remain inside the approved renderer boundary; do not run
+   competitor-style generated HTML as trusted LiteCowork UI.
+4. **Useful local context with visible boundaries.** Add/focus on a chosen Workspace and
+   selected files in everyday language. Explain exactly which local data is available,
+   what will be sent to an external provider, and when the device must remain awake. Keep
+   exact identity, revision, authorization, Effect, and Evidence details inspectable for
+   advanced users.
+5. **Breadth only when it works end to end.** Discover, connectors, Skills, browser work,
+   recurring responsibilities, and proactive suggestions are important expectations, but
+   each must have its actual provider, permission lifecycle, recovery, and trustworthy UI
+   before it appears enabled.
+
+The current source's largest competitive deficit is still real execution: Home explicitly
+says a saved Task is not sent to an agent, Conversation Send is disabled, and schedule
+hosting and a served Discover catalog remain absent. Therefore implementation order stays
+native Conversation/Task execution and evidence first, followed by the accepted chat-first
+shell and reliable Workbench outcomes; provider breadth and visual polish cannot compensate
+for a nonfunctional primary action. LiteCowork can differentiate through local-first
+ownership, explicit Workspace and file scope, native-agent parity, and durable trust/effect
+records, but those are product claims only where the actual provider path enforces them.

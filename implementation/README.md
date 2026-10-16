@@ -75,7 +75,8 @@ Read [V1 contract reconciliation](V1-CONTRACT-RECONCILIATION-2026-10-13.md) imme
 ## 2026-10-13 implementation re-audit
 
 Read [the source-backed audit and remaining V1 work](V1-IMPLEMENTATION-REAUDIT-2026-10-13.md)
-and [refreshed next-session handoff](NEXT-SESSION-HANDOFF-2026-10-13.md).
+and the current evidence at [CURRENT-RUN](CURRENT-RUN.md).
 The audit lists open source defects, corrected documentation contradictions, tooling
 gaps, exact observed checks and remaining E01–E10/E13 qualification. It does not
-promote story status or certify universal semantic/runtime correctness.
+promote story status or certify universal semantic/runtime correctness. The 2026-10-13
+next-session handoff is historical; do not use it as the current implementation frontier.

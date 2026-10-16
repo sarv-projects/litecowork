@@ -472,13 +472,13 @@ Resource revision DAG. The current local V1 implementation of
 `set_context_document_status` accepts only `ACTIVE -> REVOKED` and `REVOKED -> ACTIVE`;
 it atomically commits the Resource metadata/version, aggregate snapshot, status event, and
 idempotency receipt. It does not invalidate content already delivered to an agent session,
-and no session-revocation integration is currently wired. Deletion remains a separate
-target contract: the purge worker first seals a `ContextDocumentPurgePlan` over the exact registered Core-managed
-blob/index replicas, then marks `DELETION_PENDING` and creates one pending receipt per
-target in the same transaction. It marks `DELETED` only after the acknowledged receipt set
-equals that plan, including a verified empty plan. A provider-backed replica remains
-pending until its registered adapter confirms removal; unrelated context providers do not
-become deletion authorities.
+and no session-revocation integration is currently wired. The local V1 deletion command
+seals a `ContextDocumentPurgePlan` over exact registered Core-managed blob, index, and
+linked upload-chunk targets in the same transaction as `DELETION_PENDING` and one pending
+receipt per target. It marks `DELETED` only after the acknowledged receipt set equals that
+plan, including a verified empty plan. External/provider-backed Resource locations fail
+closed before admission; provider-owned purge remains unavailable until a registered real
+adapter confirms removal. Unrelated context providers do not become deletion authorities.
 
 ```text
 ResourceService.create_revision_upload(ResourceId, parent_revision_ids, if_match, RequestId) -> ResourceUploadSession

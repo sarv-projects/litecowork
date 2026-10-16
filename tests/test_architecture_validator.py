@@ -321,6 +321,15 @@ class CICoverageContractTests(unittest.TestCase):
             script.index("scripts/audit_v1_markdown.py"),
             script.index("scripts/validate_implementation_coverage.py --write"),
         )
+        self.assertEqual(
+            script.count("uv run --locked python scripts/audit_v1_markdown.py"),
+            2,
+            "Markdown freshness must be rechecked after coverage regeneration updates its input document",
+        )
+        self.assertLess(
+            script.index("scripts/validate_implementation_coverage.py --write"),
+            script.rindex("scripts/audit_v1_markdown.py"),
+        )
         self.assertLess(
             script.index("scripts/validate_implementation_coverage.py --write"),
             script.index("scripts/audit_v1_design_depth.py --strict --write"),

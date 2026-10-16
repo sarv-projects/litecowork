@@ -21,6 +21,39 @@ use storage_core::{
 
 const AT: &str = "2026-10-09T12:00:00.000000000Z";
 const PROVIDER_OBSERVED_AT: &str = "2026-10-09T08:00:00.000000000Z";
+type UploadChunkBlobRegistryRow = (String, i64, String, Option<String>, Option<String>);
+type V17UploadReservationRow = (
+    String,
+    String,
+    String,
+    i64,
+    String,
+    i64,
+    String,
+    String,
+    String,
+);
+
+#[derive(Clone, Copy, Debug)]
+enum MalformedV17UploadSource {
+    DigestHasConflictingSizes,
+    ChunkSizeExceedsRegistryLimit,
+    ChunkDigestDiffersFromBlobReference,
+    LiveChunkHasDeletionFence,
+    ReservationHasNoSession,
+    ReservationWorkspaceDiffersFromSession,
+    DeletingReservationHasNoFence,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct V17UploadSourceSnapshot {
+    workspaces: Vec<(String, String, String, String, i64)>,
+    migration_receipts: Vec<(i64, String, String, String, String)>,
+    sessions: Vec<(String, String, String, i64)>,
+    chunks: Vec<(String, i64, i64, i64, String, String, String)>,
+    reservations: Vec<V17UploadReservationRow>,
+    fences: Vec<(String, String, i64, String)>,
+}
 
 #[test]
 fn v11_to_v19_migrations_are_ordered_atomic_and_retryable() {
@@ -239,6 +272,693 @@ fn v11_to_v19_migrations_are_ordered_atomic_and_retryable() {
         ),
         (SCHEMA_VERSION, 9, 1, 1)
     );
+}
+
+#[test]
+fn resource_upload_chunk_registry_migration_backfills_shared_and_fenced_objects() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("state")).unwrap();
+    let mut connection = Connection::open(state_database(&directory)).unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .unwrap();
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV18Migration)).is_err());
+    let v17: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(v17, 17);
+
+    connection
+        .execute(
+            "INSERT INTO workspaces(
+               workspace_id, name, owner_principal_id, replication_policy, status,
+               created_at, updated_at, version
+             ) VALUES ('workspace-v18-backfill', 'Backfill', 'owner', 'LOCAL_ONLY',
+                       'ACTIVE', ?1, ?1, 1)",
+            [AT],
+        )
+        .unwrap();
+    let tracked = format!("sha256:{}", "a".repeat(64));
+    let reserved = format!("sha256:{}", "b".repeat(64));
+    let deleting = format!("sha256:{}", "c".repeat(64));
+    for (upload_id, state, expires_at) in [
+        (
+            "upload-tracked-a",
+            "CONTENT_RECEIVED",
+            "2026-10-09T13:00:00Z",
+        ),
+        (
+            "upload-tracked-b",
+            "CONTENT_RECEIVED",
+            "2026-10-09T13:00:00Z",
+        ),
+        ("upload-reserved", "OPEN", "2026-10-09T13:00:00Z"),
+        ("upload-deleting", "EXPIRED", "2026-10-09T13:00:00Z"),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO resource_upload_sessions(
+                   upload_id, workspace_id, display_name, media_type, expected_size_bytes,
+                   expected_digest, context_document_json, chunk_size_bytes, state, expires_at,
+                   resource_id, expected_resource_version, parent_revision_ids_json, created_at,
+                   version, committed_resource_id, progress_version, folder_import_json
+                 ) VALUES (?1, 'workspace-v18-backfill', ?1, 'application/octet-stream', 4,
+                           ?2, NULL, 4194304, ?3, ?4, NULL, NULL, '[]', ?5, 1, NULL, 1, NULL)",
+                params![upload_id, tracked, state, expires_at, AT],
+            )
+            .unwrap();
+    }
+    for (upload_id, chunk_digest) in [
+        ("upload-tracked-a", tracked.as_str()),
+        ("upload-tracked-b", tracked.as_str()),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO resource_upload_chunks(
+                   upload_id, chunk_index, start_offset, end_offset_exclusive,
+                   sha256, temporary_blob_ref, received_at
+                 ) VALUES (?1, 0, 0, 4, ?2, ?2, ?3)",
+                params![upload_id, chunk_digest, AT],
+            )
+            .unwrap();
+    }
+    for (upload_id, chunk_digest, state) in [
+        ("upload-reserved", reserved.as_str(), "RESERVED"),
+        ("upload-deleting", deleting.as_str(), "DELETING"),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO resource_upload_blob_reservations(
+                   upload_id, request_id, workspace_id, chunk_index, digest, size_bytes,
+                   created_at, expires_at, state
+                 ) VALUES (?1, ?2, 'workspace-v18-backfill', 0, ?3, 4, ?4, ?5, ?6)",
+                params![
+                    upload_id,
+                    format!("request-{upload_id}"),
+                    chunk_digest,
+                    AT,
+                    "2026-10-09T13:00:00Z",
+                    state,
+                ],
+            )
+            .unwrap();
+    }
+    connection
+        .execute(
+            "INSERT INTO resource_upload_blob_gc_fences(
+               workspace_id, digest, size_bytes, claimed_at
+             ) VALUES ('workspace-v18-backfill', ?1, 4, ?2)",
+            params![deleting, AT],
+        )
+        .unwrap();
+
+    type ResourceUploadReservationSnapshot = (
+        String,
+        String,
+        String,
+        i64,
+        String,
+        i64,
+        String,
+        String,
+        String,
+    );
+    let snapshot_v17_source_rows = |connection: &Connection| {
+        let chunks: Vec<(String, i64, i64, i64, String, String, String)> = connection
+            .prepare(
+                "SELECT upload_id, chunk_index, start_offset, end_offset_exclusive,
+                        sha256, temporary_blob_ref, received_at
+                 FROM resource_upload_chunks ORDER BY upload_id, chunk_index",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let reservations: Vec<ResourceUploadReservationSnapshot> = connection
+            .prepare(
+                "SELECT upload_id, request_id, workspace_id, chunk_index, digest,
+                            size_bytes, created_at, expires_at, state
+                     FROM resource_upload_blob_reservations
+                     ORDER BY upload_id, request_id",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let fences: Vec<(String, String, i64, String)> = connection
+            .prepare(
+                "SELECT workspace_id, digest, size_bytes, claimed_at
+                 FROM resource_upload_blob_gc_fences ORDER BY workspace_id, digest",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        (chunks, reservations, fences)
+    };
+    let source_rows_before_failure = snapshot_v17_source_rows(&connection);
+    assert_eq!(source_rows_before_failure.0.len(), 2);
+    assert_eq!(source_rows_before_failure.1.len(), 2);
+    assert_eq!(source_rows_before_failure.2.len(), 1);
+
+    let snapshot_schema =
+        |connection: &Connection| -> Vec<(String, String, String, Option<String>)> {
+            connection
+                .prepare(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master
+                 WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+                )
+                .unwrap()
+                .query_map([], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+    let v17_schema_before_failure = snapshot_schema(&connection);
+
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV18Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    let v18_receipts: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 18",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!((version, v18_receipts), (17, 0));
+    assert_eq!(
+        snapshot_v17_source_rows(&connection),
+        source_rows_before_failure
+    );
+    assert_eq!(snapshot_schema(&connection), v17_schema_before_failure);
+
+    migrate(&mut connection).expect("migrate and backfill upload chunk registry");
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, SCHEMA_VERSION);
+    assert_eq!(
+        snapshot_v17_source_rows(&connection),
+        source_rows_before_failure
+    );
+    let rows: Vec<UploadChunkBlobRegistryRow> = connection
+        .prepare(
+            "SELECT digest, size_bytes, state, expires_at, claimed_at
+             FROM resource_upload_chunk_blob_registry ORDER BY digest",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (tracked, 4, "TRACKED".to_owned(), None, None),
+            (
+                reserved,
+                4,
+                "RESERVED".to_owned(),
+                Some("2026-10-09T13:00:00Z".to_owned()),
+                None,
+            ),
+            (
+                deleting,
+                4,
+                "DELETING".to_owned(),
+                None,
+                Some(AT.to_owned()),
+            ),
+        ]
+    );
+    let foreign_key_violations: i64 = connection
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(foreign_key_violations, 0);
+    migrate(&mut connection).expect("current v19 migration checksums and fingerprint verify");
+}
+
+#[test]
+fn v18_migration_rejects_each_malformed_v17_upload_source_atomically() {
+    use MalformedV17UploadSource as Case;
+
+    // The five fail-closed preflight booleans cover seven malformed source patterns:
+    // conflicting sizes for one digest, an oversized chunk, chunk/ref digest mismatch, a
+    // live chunk behind a deletion fence, an orphan reservation, a cross-Workspace
+    // reservation, and a DELETING reservation without its exact fence. The chunk-length
+    // bound is checked by two predicates but needs only one fixture.
+    for case in [
+        Case::DigestHasConflictingSizes,
+        Case::ChunkSizeExceedsRegistryLimit,
+        Case::ChunkDigestDiffersFromBlobReference,
+        Case::LiveChunkHasDeletionFence,
+        Case::ReservationHasNoSession,
+        Case::ReservationWorkspaceDiffersFromSession,
+        Case::DeletingReservationHasNoFence,
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(directory.path().join("state")).unwrap();
+        let mut connection = Connection::open(state_database(&directory)).unwrap();
+        connection
+            .pragma_update(None, "foreign_keys", true)
+            .unwrap();
+        assert!(
+            migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV18Migration)).is_err()
+        );
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 17, "fixture must stop at v17 before {case:?}");
+
+        for (workspace_id, name) in [
+            ("workspace-v18-malformed-a", "Malformed A"),
+            ("workspace-v18-malformed-b", "Malformed B"),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO workspaces(
+                       workspace_id, name, owner_principal_id, replication_policy, status,
+                       created_at, updated_at, version
+                     ) VALUES (?1, ?2, 'owner', 'LOCAL_ONLY', 'ACTIVE', ?3, ?3, 1)",
+                    params![workspace_id, name, AT],
+                )
+                .unwrap();
+        }
+
+        seed_malformed_v17_upload_source(&mut connection, case);
+        let schema_before = snapshot_sqlite_schema(&connection);
+        let source_before = snapshot_v17_upload_source(&connection);
+        let foreign_key_violations_before = foreign_key_violation_count(&connection);
+
+        let migration = migrate(&mut connection);
+        assert!(
+            matches!(migration, Err(StoreError::CorruptSchema(_))),
+            "v18 must reject {case:?} as corrupt legacy source; got {migration:?}"
+        );
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        let v18_receipts: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 18",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let v18_registry: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'resource_upload_chunk_blob_registry'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(
+            version, 17,
+            "failed {case:?} migration advanced schema version"
+        );
+        assert_eq!(v18_receipts, 0, "failed {case:?} migration wrote a receipt");
+        assert_eq!(
+            v18_registry, 0,
+            "failed {case:?} migration left its registry table"
+        );
+        assert_eq!(
+            snapshot_sqlite_schema(&connection),
+            schema_before,
+            "schema changed for {case:?}"
+        );
+        assert_eq!(
+            snapshot_v17_upload_source(&connection),
+            source_before,
+            "source rows changed for {case:?}"
+        );
+        assert_eq!(
+            foreign_key_violation_count(&connection),
+            foreign_key_violations_before,
+            "foreign-key state changed for {case:?}"
+        );
+    }
+}
+
+fn seed_malformed_v17_upload_source(connection: &mut Connection, case: MalformedV17UploadSource) {
+    let digest_a = format!("sha256:{}", "a".repeat(64));
+    let digest_b = format!("sha256:{}", "b".repeat(64));
+    let digest_c = format!("sha256:{}", "c".repeat(64));
+
+    match case {
+        MalformedV17UploadSource::DigestHasConflictingSizes => {
+            insert_v17_upload_session(connection, "upload-size-chunk", "workspace-v18-malformed-a");
+            insert_v17_upload_session(
+                connection,
+                "upload-size-reservation",
+                "workspace-v18-malformed-a",
+            );
+            insert_v17_upload_chunk(connection, "upload-size-chunk", &digest_a, &digest_a, 4);
+            insert_v17_upload_reservation(
+                connection,
+                "upload-size-reservation",
+                "workspace-v18-malformed-a",
+                &digest_a,
+                5,
+                "RESERVED",
+            );
+        }
+        MalformedV17UploadSource::ChunkSizeExceedsRegistryLimit => {
+            insert_v17_upload_session(
+                connection,
+                "upload-oversized-chunk",
+                "workspace-v18-malformed-a",
+            );
+            insert_v17_upload_chunk(
+                connection,
+                "upload-oversized-chunk",
+                &digest_a,
+                &digest_a,
+                4_194_305,
+            );
+        }
+        MalformedV17UploadSource::ChunkDigestDiffersFromBlobReference => {
+            insert_v17_upload_session(
+                connection,
+                "upload-mismatched-digest",
+                "workspace-v18-malformed-a",
+            );
+            insert_v17_upload_chunk(
+                connection,
+                "upload-mismatched-digest",
+                &digest_a,
+                &digest_b,
+                4,
+            );
+        }
+        MalformedV17UploadSource::LiveChunkHasDeletionFence => {
+            insert_v17_upload_session(
+                connection,
+                "upload-fenced-live",
+                "workspace-v18-malformed-a",
+            );
+            insert_v17_upload_chunk(connection, "upload-fenced-live", &digest_a, &digest_a, 4);
+            connection
+                .execute(
+                    "INSERT INTO resource_upload_blob_gc_fences(
+                       workspace_id, digest, size_bytes, claimed_at
+                     ) VALUES ('workspace-v18-malformed-a', ?1, 4, ?2)",
+                    params![digest_a, AT],
+                )
+                .unwrap();
+        }
+        MalformedV17UploadSource::ReservationHasNoSession => {
+            connection
+                .pragma_update(None, "foreign_keys", false)
+                .unwrap();
+            insert_v17_upload_reservation(
+                connection,
+                "upload-reservation-orphan",
+                "workspace-v18-malformed-a",
+                &digest_a,
+                4,
+                "RESERVED",
+            );
+            connection
+                .pragma_update(None, "foreign_keys", true)
+                .unwrap();
+        }
+        MalformedV17UploadSource::ReservationWorkspaceDiffersFromSession => {
+            insert_v17_upload_session(
+                connection,
+                "upload-reservation-owner",
+                "workspace-v18-malformed-a",
+            );
+            insert_v17_upload_reservation(
+                connection,
+                "upload-reservation-owner",
+                "workspace-v18-malformed-b",
+                &digest_b,
+                4,
+                "RESERVED",
+            );
+        }
+        MalformedV17UploadSource::DeletingReservationHasNoFence => {
+            insert_v17_upload_session(
+                connection,
+                "upload-deleting-without-fence",
+                "workspace-v18-malformed-a",
+            );
+            insert_v17_upload_reservation(
+                connection,
+                "upload-deleting-without-fence",
+                "workspace-v18-malformed-a",
+                &digest_c,
+                4,
+                "DELETING",
+            );
+        }
+    }
+}
+
+fn insert_v17_upload_session(connection: &Connection, upload_id: &str, workspace_id: &str) {
+    let expected_digest = format!("sha256:{}", "d".repeat(64));
+    connection
+        .execute(
+            "INSERT INTO resource_upload_sessions(
+               upload_id, workspace_id, display_name, media_type, expected_size_bytes,
+               expected_digest, context_document_json, chunk_size_bytes, state, expires_at,
+               resource_id, expected_resource_version, parent_revision_ids_json, created_at,
+               version, committed_resource_id, progress_version, folder_import_json
+             ) VALUES (?1, ?2, ?1, 'application/octet-stream', 4, ?3, NULL, 4194304,
+                       'OPEN', ?4, NULL, NULL, '[]', ?5, 1, NULL, 1, NULL)",
+            params![upload_id, workspace_id, expected_digest, AT, AT],
+        )
+        .unwrap();
+}
+
+fn insert_v17_upload_chunk(
+    connection: &Connection,
+    upload_id: &str,
+    sha256: &str,
+    temporary_blob_ref: &str,
+    size_bytes: i64,
+) {
+    connection
+        .execute(
+            "INSERT INTO resource_upload_chunks(
+               upload_id, chunk_index, start_offset, end_offset_exclusive,
+               sha256, temporary_blob_ref, received_at
+             ) VALUES (?1, 0, 0, ?2, ?3, ?4, ?5)",
+            params![upload_id, size_bytes, sha256, temporary_blob_ref, AT],
+        )
+        .unwrap();
+}
+
+fn insert_v17_upload_reservation(
+    connection: &Connection,
+    upload_id: &str,
+    workspace_id: &str,
+    digest: &str,
+    size_bytes: i64,
+    state: &str,
+) {
+    connection
+        .execute(
+            "INSERT INTO resource_upload_blob_reservations(
+               upload_id, request_id, workspace_id, chunk_index, digest, size_bytes,
+               created_at, expires_at, state
+             ) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                upload_id,
+                format!("request-{upload_id}"),
+                workspace_id,
+                digest,
+                size_bytes,
+                AT,
+                "2026-10-16T12:00:00Z",
+                state,
+            ],
+        )
+        .unwrap();
+}
+
+fn snapshot_sqlite_schema(
+    connection: &Connection,
+) -> Vec<(String, String, String, Option<String>)> {
+    connection
+        .prepare(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master
+             WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+fn snapshot_v17_upload_source(connection: &Connection) -> V17UploadSourceSnapshot {
+    let workspaces = connection
+        .prepare(
+            "SELECT workspace_id, name, owner_principal_id, status, version
+             FROM workspaces ORDER BY workspace_id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let migration_receipts = connection
+        .prepare(
+            "SELECT version, name, source_checksum, schema_fingerprint, applied_at
+             FROM schema_migrations ORDER BY version",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let sessions = connection
+        .prepare(
+            "SELECT upload_id, workspace_id, state, version
+             FROM resource_upload_sessions ORDER BY upload_id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let chunks = connection
+        .prepare(
+            "SELECT upload_id, chunk_index, start_offset, end_offset_exclusive,
+                    sha256, temporary_blob_ref, received_at
+             FROM resource_upload_chunks ORDER BY upload_id, chunk_index",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let reservations = connection
+        .prepare(
+            "SELECT upload_id, request_id, workspace_id, chunk_index, digest, size_bytes,
+                    created_at, expires_at, state
+             FROM resource_upload_blob_reservations ORDER BY upload_id, request_id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let fences = connection
+        .prepare(
+            "SELECT workspace_id, digest, size_bytes, claimed_at
+             FROM resource_upload_blob_gc_fences ORDER BY workspace_id, digest",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+
+    V17UploadSourceSnapshot {
+        workspaces,
+        migration_receipts,
+        sessions,
+        chunks,
+        reservations,
+        fences,
+    }
+}
+
+fn foreign_key_violation_count(connection: &Connection) -> i64 {
+    connection
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
 }
 
 fn adapter(store: &SqliteWorkspaceStore) -> SqliteEnvironmentStore {

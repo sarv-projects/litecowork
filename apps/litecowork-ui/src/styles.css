@@ -85,7 +85,7 @@ h1 { margin: 9px 0 8px; font-size: 32px; line-height: 1.2; letter-spacing: -.035
 .composer-selection-note.is-warning { color: #8a4c12; }
 .composer-selection-note .text-button { min-height: 28px; }
 .composer-load-more { display: block; min-height: 28px; margin: -4px 0 8px 34px; }
-.composer-card textarea { display: block; width: 100%; min-height: 74px; resize: vertical; border: 0; outline: 0; background: transparent; color: var(--color-text); font-size: 16px; line-height: 1.5; }
+.composer-card textarea { display: block; width: 100%; min-height: 74px; resize: vertical; border: 0; background: transparent; color: var(--color-text); font-size: 16px; line-height: 1.5; }
 .composer-card textarea::placeholder { color: #7a8493; }
 .composer-card textarea:disabled { opacity: 1; cursor: not-allowed; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-top: 12px; border-top: 1px solid var(--color-border); }
@@ -108,7 +108,7 @@ h1 { margin: 9px 0 8px; font-size: 32px; line-height: 1.2; letter-spacing: -.035
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-top: 47px; margin-bottom: 15px; }
 .section-heading h2 { margin: 0; font-size: 20px; letter-spacing: -.02em; font-weight: 650; }
 .section-heading p { margin: 4px 0 0; color: var(--color-text-subtle); font-size: 13px; }
-.quiet-button { min-height: 36px; padding: 0 11px; border: 1px solid var(--color-border); border-radius: 8px; background: white; color: #8791a0; font-size: 13px; }
+.quiet-button { min-height: 36px; padding: 0 11px; border: 1px solid var(--color-border); border-radius: 8px; background: white; color: var(--color-text-muted); font-size: 13px; }
 .empty-panel { display: flex; flex-direction: column; align-items: center; padding: 35px 28px 37px; border: 1px dashed var(--color-border-strong); border-radius: var(--radius-card); background: rgb(255 255 255 / 55%); text-align: center; }
 .empty-panel h3 { margin: 16px 0 5px; font-size: 15px; font-weight: 650; }
 .empty-panel p { max-width: 420px; margin: 0; color: var(--color-text-subtle); font-size: 13px; line-height: 1.55; }
@@ -187,8 +187,14 @@ h1 { margin: 9px 0 8px; font-size: 32px; line-height: 1.2; letter-spacing: -.035
 .empty-inline { margin: 0; }
 .runtime-card .section-heading { align-items: center; margin: 0 0 18px; }
 .runtime-card .section-heading h2 { font-size: 18px; }
+.runtime-status-copy { max-width: 520px; line-height: 1.5; }
 .status-pill { display: inline-flex; align-items: center; min-height: 26px; padding: 2px 10px; border-radius: 999px; background: var(--lc-neutral-100); color: var(--color-text-muted); font-size: 11px; font-weight: 700; letter-spacing: .03em; }
 .status-pill.success { background: #e4f4eb; color: #17643f; }
+.runtime-advanced-details { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--color-border); }
+.runtime-advanced-details > summary { width: max-content; color: var(--color-text-muted); cursor: pointer; font-size: 13px; font-weight: 600; }
+.runtime-advanced-details > summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; border-radius: 4px; }
+.runtime-advanced-details[open] > summary { margin-bottom: 12px; }
+.runtime-advanced-details .runtime-details { margin: 0 0 14px; }
 .runtime-details { display: grid; gap: 10px; margin: 18px 0; }
 .runtime-details div { display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 12px; }
 .runtime-details dt { color: var(--color-text-subtle); font-size: 12px; }
@@ -205,6 +211,7 @@ h1 { margin: 9px 0 8px; font-size: 32px; line-height: 1.2; letter-spacing: -.035
 .runtime-enrollment-card { margin-top: 18px; }
 .runtime-enrollment-status { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .runtime-enrollment-status > span:last-child { color: var(--color-text-muted); font-size: 13px; font-weight: 600; }
+.runtime-enrollment-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .runtime-enrollment-copy { margin: 11px 0 0; color: var(--color-text-muted); font-size: 12px; line-height: 1.55; }
 .agent-enrollment-gate { margin: 12px 0; padding: 10px 12px; border-radius: 8px; background: #fff7e8; color: #67440c; font-size: 12px; line-height: 1.5; }
 .agent-probe-panel { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 18px 0 15px; padding: 16px; border: 1px solid var(--color-border); border-radius: 11px; background: #fbfcfe; }
@@ -451,7 +458,7 @@ h1 { margin: 9px 0 8px; font-size: 32px; line-height: 1.2; letter-spacing: -.035
   .agent-probe-panel { align-items: stretch; flex-direction: column; }
   .agent-probe-panel .primary-button { align-self: flex-start; }
   .agent-profile-heading { align-items: flex-start; flex-direction: column; }
-  .agent-observation-details { grid-template-columns: minmax(0, 1fr); }
+  .agent-observation-details, .runtime-enrollment-details { grid-template-columns: minmax(0, 1fr); }
   .agent-profile-actions, .agent-binding-list li { align-items: flex-start; flex-direction: column; }
   .agent-binding-actions { flex-wrap: wrap; }
 }

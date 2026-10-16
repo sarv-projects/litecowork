@@ -386,9 +386,7 @@ fn run_with_identity_providers(
     // This is currently reachable only from the process-supervisor signal handler.
     // Do not wire an Operator route to this receiver until RuntimeLifecycleService
     // can prove Task/Attempt, Effect, lease, and local service-reference settlement.
-    shutdown_receiver
-        .recv()
-        .map_err(|_| "daemon shutdown signal channel closed unexpectedly".to_owned())?;
+    operator.wait_for_shutdown_signal_or_endpoint_failure(&shutdown_receiver)?;
 
     let shutdown_blockers = state.blockers.clone();
     // Stop accepting new Operator commands before publishing DRAINING. Existing
@@ -637,6 +635,7 @@ fn revalidate_workspace_roots<K: RuntimeIdentityKey>(
 
 #[derive(Debug)]
 pub(crate) enum WorkspaceRootResumeError {
+    IdempotencyConflict,
     Stale,
     Unavailable,
     NotFound,
@@ -671,7 +670,12 @@ pub(crate) fn resume_workspace_root_live<K: RuntimeIdentityKey>(
             expected_root_version,
             storage_core::WorkspaceRootStatusAction::Resume,
         )
-        .map_err(|_| WorkspaceRootResumeError::Internal)?
+        .map_err(|error| match error {
+            storage_core::StoreError::IdempotencyConflict => {
+                WorkspaceRootResumeError::IdempotencyConflict
+            }
+            _ => WorkspaceRootResumeError::Internal,
+        })?
     {
         return Ok(receipt);
     }
@@ -853,6 +857,9 @@ pub(crate) fn resume_workspace_root_live<K: RuntimeIdentityKey>(
             event,
         })
         .map_err(|error| match error {
+            storage_core::StoreError::IdempotencyConflict => {
+                WorkspaceRootResumeError::IdempotencyConflict
+            }
             storage_core::StoreError::Conflict {
                 expected: Some(expected),
                 actual: Some(actual),
@@ -1077,6 +1084,10 @@ fn local_directory_failure(error: LocalDirectoryError) -> WorkspaceRootRevalidat
         LocalDirectoryError::NotDirectory | LocalDirectoryError::OpenFailed => {
             WorkspaceRootRevalidationFailure::IdentityUnavailable
         }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        LocalDirectoryError::ScanDeadlineExceeded => {
+            WorkspaceRootRevalidationFailure::IdentityUnavailable
+        }
     }
 }
 
@@ -1208,6 +1219,32 @@ impl OperatorLifecycle {
             server.stop()
         } else {
             Ok(())
+        }
+    }
+
+    fn wait_for_shutdown_signal_or_endpoint_failure(
+        &mut self,
+        shutdown_receiver: &mpsc::Receiver<()>,
+    ) -> Result<(), String> {
+        loop {
+            match shutdown_receiver.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(()) => return Ok(()),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("daemon shutdown signal channel closed unexpectedly".to_owned());
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+
+            if self
+                .server
+                .as_ref()
+                .is_some_and(OperatorServer::endpoint_finished)
+            {
+                return match self.stop() {
+                    Err(error) => Err(error),
+                    Ok(()) => Err("local Operator endpoint stopped unexpectedly".to_owned()),
+                };
+            }
         }
     }
 }

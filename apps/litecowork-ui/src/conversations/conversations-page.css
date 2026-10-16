@@ -2,10 +2,21 @@
 .conversation-intro { margin: 0 0 24px; color: var(--color-text-muted); }
 .conversation-layout { display: grid; grid-template-columns: minmax(255px, 320px) minmax(0, 1fr); min-height: min(720px, calc(100vh - 210px)); overflow: hidden; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: var(--shadow-card); }
 .conversation-list { min-width: 0; border-right: 1px solid var(--color-border); background: #fbfcfe; }
-.conversation-create { display: grid; gap: 10px; padding: 18px; border-bottom: 1px solid var(--color-border); }
+.conversation-create-recovery { margin: 12px; padding: 12px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface); color: var(--color-text-muted); font-size: 12px; }
+.conversation-create-recovery p { margin: 0 0 8px; }
+.conversation-create-recovery ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.conversation-create-recovery li { display: grid; gap: 6px; min-width: 0; }
+.conversation-create-recovery li span { overflow: hidden; color: var(--color-text); text-overflow: ellipsis; white-space: nowrap; }
+.conversation-create-recovery button { justify-self: start; min-height: 32px; padding: 5px 9px; border: 1px solid var(--color-border); border-radius: 7px; background: var(--color-surface); color: var(--color-primary-hover); font: inherit; font-weight: 600; cursor: pointer; }
+.conversation-create-recovery button:disabled { cursor: wait; opacity: 0.7; }
+.conversation-create-details { padding: 12px 16px; border-bottom: 1px solid var(--color-border); }
+.conversation-create-details summary { color: var(--color-primary-hover); font-size: 12px; font-weight: 600; cursor: pointer; }
+.conversation-create-details summary:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-primary) 28%, transparent); outline-offset: 3px; border-radius: 3px; }
+.conversation-create { display: grid; gap: 10px; margin-top: 12px; }
 .conversation-create label { font-size: 13px; font-weight: 650; }
 .conversation-create input { min-width: 0; min-height: 40px; padding: 8px 10px; border: 1px solid var(--color-border-strong); border-radius: 8px; background: #fff; font: inherit; font-size: 13px; }
-.conversation-list-heading { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 8px; color: var(--color-text-subtle); font-size: 12px; }
+.conversation-create p { margin: 0; color: var(--color-text-subtle); font-size: 11px; line-height: 1.5; }
+.conversation-list-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px 8px; color: var(--color-text-subtle); font-size: 12px; }
 .conversation-list ul { margin: 0; padding: 0 8px 12px; list-style: none; }
 .conversation-list-item { display: grid; gap: 4px; width: 100%; min-height: 58px; padding: 10px; border: 0; border-radius: 9px; background: transparent; text-align: left; cursor: pointer; }
 .conversation-list-item:hover { background: var(--lc-neutral-100); }
@@ -34,6 +45,17 @@
 .conversation-empty { display: grid; align-content: center; justify-items: center; flex: 1; min-height: 260px; padding: 32px; text-align: center; }
 .conversation-empty h2 { margin: 0 0 8px; font-size: 19px; font-weight: 640; }
 .conversation-empty p { max-width: 520px; margin: 0; color: var(--color-text-muted); font-size: 14px; }
+.conversation-first-use, .conversation-unavailable { display: grid; align-content: center; justify-items: start; gap: 12px; width: min(680px, 100%); min-height: 300px; margin: auto; padding: clamp(24px, 5vw, 52px); }
+.conversation-first-use h2, .conversation-unavailable h2 { margin: 0; font-size: clamp(23px, 3vw, 30px); line-height: 1.2; font-weight: 650; letter-spacing: -0.025em; }
+.conversation-first-use > p:not(.conversation-first-use-status), .conversation-unavailable > p:not(.conversation-first-use-status) { max-width: 600px; margin: 0; color: var(--color-text-muted); font-size: 14px; line-height: 1.6; }
+.conversation-first-use label, .conversation-unavailable label { margin-top: 8px; color: var(--color-text); font-size: 13px; font-weight: 650; }
+.conversation-first-use textarea, .conversation-unavailable textarea { width: 100%; min-height: 116px; padding: 13px 14px; resize: vertical; border: 1px solid var(--color-border-strong); border-radius: 11px; background: #fff; color: var(--color-text); font: inherit; font-size: 15px; line-height: 1.5; }
+.conversation-first-use textarea::placeholder, .conversation-unavailable textarea::placeholder { color: var(--color-text-subtle); }
+.conversation-first-use textarea:focus-visible, .conversation-unavailable textarea:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-primary) 28%, transparent); outline-offset: 2px; border-color: var(--color-primary); }
+.conversation-first-use-status { min-height: 18px; margin: 0; color: var(--color-text-subtle); font-size: 12px; line-height: 1.5; }
+.conversation-first-use .primary-button, .conversation-unavailable .primary-button { min-height: 42px; margin-top: 4px; }
+.conversation-offline-notice, .conversation-refresh-notice { margin: 12px 18px 0; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: #f8f9fb; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
+.conversation-list-error { gap: 12px; }
 .conversation-composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; padding: 14px 18px; border-top: 1px solid var(--color-border); }
 .conversation-composer textarea { min-height: 66px; padding: 10px; resize: vertical; border: 1px solid var(--color-border); border-radius: 9px; background: #fbfcfe; color: var(--color-text-subtle); font-size: 13px; }
 .conversation-composer button { align-self: end; }
@@ -44,6 +66,7 @@
   .conversation-layout { grid-template-columns: minmax(0, 1fr); }
   .conversation-list { border-right: 0; border-bottom: 1px solid var(--color-border); }
   .conversation-list ul { display: flex; gap: 6px; max-height: 120px; overflow: auto; }
+  .conversation-create-recovery ul { display: grid; max-height: none; overflow: visible; }
   .conversation-list ul li { flex: 0 0 min(250px, 70%); }
   .conversation-list-item { min-height: 50px; }
 }

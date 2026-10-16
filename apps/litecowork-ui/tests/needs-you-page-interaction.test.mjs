@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { after, test } from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import net from "node:net";
+import { createServer as createHttpServer } from "node:http";
 import react from "@vitejs/plugin-react";
 import { createServer } from "vite";
 
@@ -15,13 +15,6 @@ const CHROME_STDERR_LIMIT = 4096;
 const CHROME_STARTUP_TIMEOUT_MS = 30_000;
 const PAGE_MOUNT_TIMEOUT_MS = 30_000;
 const wait = ms => new Promise(resolveWait => setTimeout(resolveWait, ms));
-async function freePort() {
-  const server = net.createServer();
-  await new Promise((resolveListen, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolveListen); });
-  const { port } = server.address();
-  await new Promise(resolveClose => server.close(resolveClose));
-  return port;
-}
 async function until(check, label, timeout = 8000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -78,6 +71,30 @@ async function waitForChromePage(port, getChildState, getStderr, timeout = CHROM
   }));
 }
 
+async function waitForChromePageFromProfile(profile, getChildState, getStderr, timeout = CHROME_STARTUP_TIMEOUT_MS) {
+  const deadline = Date.now() + timeout;
+  const portFile = join(profile, "DevToolsActivePort");
+  while (Date.now() < deadline) {
+    const { spawnError, exit } = getChildState();
+    if (spawnError || exit) {
+      throw new Error(formatChromeStartupFailure("the DevTools endpoint did not become ready", {
+        spawnError, exit, stderr: getStderr(),
+      }));
+    }
+    try {
+      const port = Number((await readFile(portFile, "utf8")).split(/\r?\n/, 1)[0]);
+      if (Number.isInteger(port) && port > 0 && port <= 65_535) {
+        return await waitForChromePage(port, getChildState, getStderr, Math.max(1, deadline - Date.now()));
+      }
+    } catch {}
+    await wait(100);
+  }
+  const { spawnError, exit } = getChildState();
+  throw new Error(formatChromeStartupFailure(`no DevTools page after ${timeout}ms`, {
+    spawnError, exit, stderr: getStderr(),
+  }));
+}
+
 test("Chrome startup failure diagnostics bound stderr and include child exit details", () => {
   const stderr = appendBoundedStderr("x".repeat(CHROME_STDERR_LIMIT), "Chrome failed to bind");
   const message = formatChromeStartupFailure("DevTools did not become ready", {
@@ -107,15 +124,17 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 const { TaskAttentionPage } = await import('/src/needs-you/TaskAttentionPage.tsx');
 let workspace = 'workspace-a';
+let operatorReady = true;
 const root = createRoot(document.getElementById('root'));
 window.setWorkspace = value => { workspace = value; render(); };
+window.setOperatorReady = value => { operatorReady = value; render(); };
 window.resolveCall = (index, value) => window.__pending[index].resolve(value);
 window.rejectCall = (index, message) => window.__pending[index].reject(new Error(message));
-function render() { root.render(React.createElement(TaskAttentionPage, {workspaceId: workspace, operatorReady: true, onOpenTask: id => window.__openedTasks.push(id)})); }
+function render() { root.render(React.createElement(TaskAttentionPage, {workspaceId: workspace, operatorReady, onOpenTask: id => window.__openedTasks.push(id)})); }
 render(); window.__mounted = true;
 </script></body></html>`;
 
-let vite, chromeProcess, socket, tempProfile, tempViteCache;
+let vite, httpServer, chromeProcess, socket, tempProfile, tempViteCache;
 let chromeSpawnError = null;
 let chromeExit = null;
 let chromeStderr = "";
@@ -152,6 +171,7 @@ after(async () => {
     try { process.kill(-chromeProcess.pid, "SIGTERM"); } catch {}
     await new Promise(resolveExit => { if (chromeProcess.exitCode !== null || chromeProcess.signalCode !== null) resolveExit(); else chromeProcess.once("exit", resolveExit); });
   }
+  if (httpServer?.listening) await new Promise(resolveClose => httpServer.close(resolveClose));
   await vite?.close();
   if (tempProfile) await rm(tempProfile, { recursive: true, force: true });
   if (tempViteCache) await rm(tempViteCache, { recursive: true, force: true });
@@ -160,25 +180,30 @@ after(async () => {
 test("mounted Needs You page fences Workspace switches and renders selected status", async () => {
   try {
     if (!chrome) throw new Error("Set LITECOWORK_CHROME to a local Chrome/Chromium executable.");
-    const port = await freePort();
-    const cdpPort = await freePort();
     tempViteCache = await mkdtemp(join(tmpdir(), "litecowork-needs-you-vite-"));
     vite = await createServer({
       configFile: false, root: packageRoot,
       cacheDir: tempViteCache,
-      server: { host: "127.0.0.1", port, strictPort: true },
+      server: { middlewareMode: true, hmr: false, ws: false },
       appType: "custom",
       optimizeDeps: { noDiscovery: true, include: ["react", "react-dom/client"] },
-      plugins: [react(), { name: "needs-you-test-document", configureServer(server) { server.middlewares.use("/__needs-you-test", async (req, res, next) => { try { res.setHeader("content-type", "text/html"); res.end(await server.transformIndexHtml(req.url ?? "/__needs-you-test", html)); } catch (error) { next(error); } }); } }],
+      plugins: [react(), { name: "needs-you-test-document", configureServer(server) { server.middlewares.use("/__needs-you-test", async (_req, res, next) => { try { res.setHeader("content-type", "text/html"); res.end(await server.transformIndexHtml("/__needs-you-test", html)); } catch (error) { next(error); } }); } }],
     });
-    await vite.listen();
+    httpServer = createHttpServer(vite.middlewares);
+    await new Promise((resolveListen, rejectListen) => {
+      httpServer.once("error", rejectListen);
+      httpServer.listen(0, "127.0.0.1", resolveListen);
+    });
+    const httpAddress = httpServer.address();
+    assert.ok(httpAddress && typeof httpAddress === "object", "the harness HTTP server listens on an OS-assigned port");
+    const port = httpAddress.port;
     tempProfile = await mkdtemp(join(tmpdir(), "litecowork-needs-you-ui-"));
-    chromeProcess = spawn(chrome, ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--remote-debugging-port=" + cdpPort, "--remote-allow-origins=*", `--user-data-dir=${tempProfile}`, "about:blank"], { detached: process.platform !== "win32", stdio: ["ignore", "ignore", "pipe"] });
+    chromeProcess = spawn(chrome, ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--remote-debugging-port=0", "--remote-allow-origins=*", `--user-data-dir=${tempProfile}`, "about:blank"], { detached: process.platform !== "win32", stdio: ["ignore", "ignore", "pipe"] });
     chromeProcess.stderr?.setEncoding("utf8");
     chromeProcess.stderr?.on("data", chunk => { chromeStderr = appendBoundedStderr(chromeStderr, chunk); });
     chromeProcess.once("error", error => { chromeSpawnError = error; });
     chromeProcess.once("exit", (code, signal) => { chromeExit = { code, signal }; });
-    const target = await waitForChromePage(cdpPort, () => ({ spawnError: chromeSpawnError, exit: chromeExit }), () => chromeStderr);
+    const target = await waitForChromePageFromProfile(tempProfile, () => ({ spawnError: chromeSpawnError, exit: chromeExit }), () => chromeStderr);
     socket = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((resolveSocket, reject) => { socket.addEventListener("open", resolveSocket, { once: true }); socket.addEventListener("error", reject, { once: true }); });
     socket.addEventListener("message", event => { const message = JSON.parse(event.data); if (message.method === "Runtime.exceptionThrown") diagnostics.push(message.params.exceptionDetails.exception?.description ?? message.params.exceptionDetails.text); if (message.method === "Log.entryAdded") diagnostics.push(message.params.entry.text); if (message.id) pending.get(message.id)?.(message); });
@@ -190,6 +215,10 @@ test("mounted Needs You page fences Workspace switches and renders selected stat
       const pageState = await evaluate("document.readyState + ': ' + document.body.innerText + ': ' + document.body.innerHTML.slice(0, 400)").catch(failure => failure.message);
       throw new Error(`${error.message}; diagnostics=${diagnostics.join(" | ")}; page=${pageState}`);
     }
+    const entryModule = await evaluate("[...document.querySelectorAll('script[type=module][src]')].map(script => script.src).find(src => src.includes('html-proxy')) ?? null");
+    assert.ok(entryModule, "Vite serves the inline module through an external entry URL");
+    assert.match(entryModule, /__needs-you-test/, "the test route keeps its own Vite module identity");
+    assert.doesNotMatch(entryModule, /index\.html\?html-proxy/, "the mounted middleware route does not alias its module to index.html");
     await until(async () => (await callCount()) >= 1, "initial Workspace request");
     await evaluate("window.setWorkspace('workspace-b')");
     await until(async () => (await callCount()) >= 2, "new Workspace request");
@@ -241,4 +270,87 @@ test("mounted page reports refresh and pagination failures truthfully, releases 
   assert.equal(await evaluate("[...document.querySelectorAll('article')].find(x=>x.innerText.includes('approval-row')).querySelector('button') === null"), true, "Approval is display-only");
   await evaluate("(() => { const article=[...document.querySelectorAll('article')].find(x=>x.innerText.includes('blocker-row')); article.querySelector('button').click(); })()");
   assert.deepEqual(await evaluate("window.__openedTasks"), ["task-a"], "only blocker navigation opens the Task");
+});
+
+test("mounted page ignores a stale pagination completion after refresh without unlocking the newer page", async context => {
+  const skipReason = dependentBrowserSkipReason(browserSetupFailure, socket);
+  if (skipReason) {
+    context.skip(skipReason);
+    return;
+  }
+
+  const firstRefreshIndex = await callCount();
+  await click("Refresh");
+  await until(async () => (await callCount()) >= firstRefreshIndex + 1, "initial page before pagination race");
+  await settle(firstRefreshIndex, { items: [item("race-before-refresh")], nextCursor: "cursor-before-refresh" });
+  await until(() => evaluate("document.body.innerText.includes('race-before-refresh') && document.querySelector('.needs-you-load-more button')?.disabled === false"), "initial race fixture page");
+
+  await click("Load more");
+  const stalePageIndex = firstRefreshIndex + 1;
+  await until(async () => (await callCount()) >= stalePageIndex + 1, "held old pagination request");
+  assert.equal(await evaluate("window.__calls[" + stalePageIndex + "].args.cursor"), "cursor-before-refresh", "old page starts from the first cursor");
+  assert.equal(await evaluate("document.querySelector('.needs-you-load-more button')?.getAttribute('aria-busy')"), "true");
+
+  const refreshedPageIndex = stalePageIndex + 1;
+  await click("Refresh");
+  await until(async () => (await callCount()) >= refreshedPageIndex + 1, "refreshed first-page request while old pagination is pending");
+  await settle(refreshedPageIndex, { items: [item("race-after-refresh")], nextCursor: "cursor-after-refresh" });
+  await until(() => evaluate("document.body.innerText.includes('race-after-refresh') && document.querySelector('button.quiet-button:not(.task-attention-more)')?.disabled === false"), "refreshed first page");
+  assert.equal(await evaluate("document.body.innerText.includes('race-before-refresh')"), false, "refresh replaces the first-page snapshot");
+
+  const currentPageIndex = refreshedPageIndex + 1;
+  await click("Load more");
+  await until(async () => (await callCount()) >= currentPageIndex + 1, "new-generation pagination request");
+  assert.equal(await evaluate("window.__calls[" + currentPageIndex + "].args.cursor"), "cursor-after-refresh", "new page starts from the refreshed cursor");
+  assert.equal(await evaluate("document.querySelector('.needs-you-load-more button')?.getAttribute('aria-busy')"), "true");
+
+  await settle(stalePageIndex, { items: [item("stale-pagination-row")], nextCursor: "cursor-stale" });
+  await wait(100);
+  assert.equal(await evaluate("document.body.innerText.includes('stale-pagination-row')"), false, "late pagination rows are ignored");
+  assert.equal(await evaluate("document.body.innerText.includes('race-after-refresh')"), true, "refreshed rows remain visible");
+  assert.equal(await evaluate("document.querySelector('.needs-you-load-more button')?.getAttribute('aria-busy')"), "true", "old completion cannot clear the newer page busy state");
+  assert.equal(await evaluate("document.querySelector('.needs-you-load-more button')?.disabled"), true, "the newer page remains non-retryable while its request is pending");
+
+  await settle(currentPageIndex, "offline", true);
+  await until(() => evaluate("document.body.innerText.includes('More Needs You items could not be loaded') && document.querySelector('.needs-you-load-more button')?.disabled === false && document.querySelector('.needs-you-load-more button')?.getAttribute('aria-busy') === 'false'"), "newer page failure releases only its own busy state");
+
+  const retryPageIndex = currentPageIndex + 1;
+  await click("Load more");
+  await until(async () => (await callCount()) >= retryPageIndex + 1, "retry after the current page failure");
+  assert.equal(await evaluate("window.__calls[" + retryPageIndex + "].args.cursor"), "cursor-after-refresh", "stale cursor cannot replace the refreshed cursor used for retry");
+  await settle(retryPageIndex, { items: [item("race-retry-row")], nextCursor: null });
+  await until(() => evaluate("document.body.innerText.includes('race-retry-row')"), "retry page after the race");
+});
+
+test("mounted Needs You labels its saved page stale while Runtime is offline and reconnecting", async context => {
+  const skipReason = dependentBrowserSkipReason(browserSetupFailure, socket);
+  if (skipReason) {
+    context.skip(skipReason);
+    return;
+  }
+
+  const seedIndex = await callCount();
+  await click("Refresh");
+  await until(async () => (await callCount()) >= seedIndex + 1, "saved page before Runtime disconnect");
+  await settle(seedIndex, { items: [item("runtime-last-known")], nextCursor: "cursor-offline" });
+  await until(() => evaluate("document.body.innerText.includes('runtime-last-known') && document.querySelector('.needs-you-load-more button')?.disabled === false"), "saved page with another cursor");
+
+  await evaluate("window.setOperatorReady(false)");
+  await until(() => evaluate("document.body.innerText.includes('Showing the last saved open items')"), "offline stale-list notice");
+  assert.equal(await evaluate("document.body.innerText.includes('runtime-last-known')"), true, "offline preserves the same-Workspace saved page");
+  assert.equal(await evaluate("document.body.innerText.includes('No open Needs You items')"), false, "offline never infers an empty inbox");
+  assert.equal(await evaluate("document.querySelector('.needs-you-load-more button')?.disabled"), true, "pagination stays disabled without Runtime authority");
+  assert.equal(await evaluate("document.querySelector('.needs-you-load-more button')?.getAttribute('aria-busy')"), "false", "disconnect releases any pagination busy state");
+
+  const reconnectIndex = await callCount();
+  await evaluate("window.setOperatorReady(true)");
+  await until(async () => (await callCount()) >= reconnectIndex + 1, "first-page refresh after Runtime reconnect");
+  assert.equal(await evaluate("document.body.innerText.includes('runtime-last-known')"), true, "the saved page stays visible while reconnect refresh is pending");
+  assert.equal(await evaluate("document.body.innerText.includes('Showing the last saved open items')"), true, "the saved page remains marked stale until the refreshed response arrives");
+  assert.equal(await evaluate("document.querySelector('.needs-you-load-more button')?.disabled"), true, "pagination remains disabled while the reconnect refresh is pending");
+
+  await settle(reconnectIndex, { items: [item("runtime-refreshed")], nextCursor: null });
+  await until(() => evaluate("document.body.innerText.includes('runtime-refreshed')"), "fresh page after Runtime reconnect");
+  assert.equal(await evaluate("document.body.innerText.includes('runtime-last-known')"), false, "the successful refresh replaces the prior snapshot");
+  assert.equal(await evaluate("document.body.innerText.includes('Showing the last saved open items')"), false, "fresh data clears the stale label");
 });

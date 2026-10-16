@@ -1623,7 +1623,7 @@ paths:
             schema: {$ref: '#/components/schemas/ProbeLocalAgentProfileRequest'}
       responses:
         '200':
-          description: Explicit owner-triggered, bounded local adapter observation. Each request performs a new probe and records a refreshed expiring Runtime offer; it is not an idempotent domain mutation. Requires the selected Workspace owner and an active local RuntimeWorkspaceBinding. Codex and OpenCode are accepted. OpenCode currently accepts only qualified CLI 2.0.26 and reads /api/provider plus /api/model; it returns bounded sanitized catalog IDs and display names, never native provider/model objects, options, headers, keys, URLs, raw responses, or location paths. Catalog provider IDs are not connected-provider or authentication evidence. Unsupported versions fail closed without route fallback. OpenCode session-model selection is NOT_QUALIFIED and its offer is always incompatible, so the profile cannot be bound or enabled. Raw native messages, endpoint locators, account identifiers, and private configuration are omitted.
+          description: Explicit owner-triggered, bounded local adapter observation. Each request performs a new probe and records a refreshed expiring Runtime offer; it is not an idempotent domain mutation. Requires the selected Workspace owner and an active local RuntimeWorkspaceBinding. Codex and OpenCode are accepted. OpenCode accepts only the exactly qualified CLI versions 2.0.26 and 2.0.28 and reads /api/provider plus /api/model. Version 2.0.26 readiness uses /api/health with healthy=true and username litecowork; version 2.0.28 uses /api/info with exact version and owned child PID matching, and username opencode. It returns bounded sanitized catalog IDs and display names, never native provider/model objects, options, headers, keys, URLs, raw responses, or location paths. Catalog provider IDs are not connected-provider or authentication evidence. Unsupported versions fail closed without route fallback. OpenCode session-model selection is NOT_QUALIFIED and its offer is always incompatible, so the profile cannot be bound or enabled. Raw native messages, endpoint locators, account identifiers, and private configuration are omitted.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AgentProfileView'}
@@ -2766,7 +2766,7 @@ paths:
     put:
       tags: [resources]
       operationId: uploadResourceChunk
-      description: Content-Range uses inclusive HTTP byte offsets. For fixed chunk_size_bytes, chunkIndex n covers [n*chunk_size_bytes, min((n+1)*chunk_size_bytes, size)-1]. Overlap or a different replay for an accepted chunk index is rejected.
+      description: Content-Range uses inclusive HTTP byte offsets. For fixed chunk_size_bytes, chunkIndex n covers [n*chunk_size_bytes, min((n+1)*chunk_size_bytes, size)-1]. Overlap or a different replay for an accepted chunk index is rejected. Exact retries remain idempotent after ordinary TTL expiry or Workspace archival, but are rejected for a revision upload expired by ContextDocument deletion while that Resource is DELETION_PENDING or DELETED.
       parameters:
       - {$ref: '#/components/parameters/IdempotencyKey'}
       - name: uploadId
@@ -2797,6 +2797,7 @@ paths:
     post:
       tags: [resources]
       operationId: commitResourceUpload
+      description: Requires the caller Idempotency-Key as the principal-scoped primary RequestId. Exact replay of the same upload returns the original response; reuse for a different upload under the same principal returns CONFLICT. The commit transaction also stores a deterministic resource-upload-commit:{upload_id} recovery receipt. If the caller key is lost, a new key resolves that committed receipt, is persisted as an alias, and returns the original response without another Resource or event. Caller-key replay and deterministic-receipt recovery are resolved before the archived-Workspace mutation gate; fresh commits remain blocked after archival.
       parameters:
       - name: uploadId
         in: path
@@ -2878,6 +2879,8 @@ paths:
       responses:
         '202':
           description: The local purge plan and DELETION_PENDING tombstone are committed; poll the status projection until every target is acknowledged.
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ContextDocumentDeletionStatus'}
@@ -2885,6 +2888,7 @@ paths:
     get:
       tags: [resources]
       operationId: getContextDocumentDeletionStatus
+      security: [{operatorAuth: [], workspaceContext: []}]
       parameters:
       - name: resourceId
         in: path
@@ -2892,7 +2896,9 @@ paths:
         schema: {type: string, minLength: 1}
       responses:
         '200':
-          description: Current deletion/tombstone projection with manifest digest and target counts only; content, storage locators, and provider results are never included.
+          description: Current deletion/tombstone projection with manifest digest and target counts only; content, storage locators, and provider results are never included. The response is no-store.
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ContextDocumentDeletionStatus'}
@@ -3017,11 +3023,16 @@ paths:
       parameters:
       - name: status
         in: query
-        schema: {type: string}
+        schema: {type: string, enum: [ACTIVE, PAUSED, REVOKED, UNAVAILABLE]}
       - {$ref: '#/components/parameters/Cursor'}
+      - name: limit
+        in: query
+        required: false
+        description: Page size from 1 to 100; defaults to 100.
+        schema: {type: integer, minimum: 1, maximum: 100, default: 100}
       responses:
         '200':
-          description: Owner-scoped persistent roots with last committed ResourceLocation availability (not a live Runtime probe); response is no-store and includes no private locator or identity binding.
+          description: Owner-scoped persistent roots with last committed ResourceLocation availability (not a live Runtime probe); response is no-store and includes no private locator or identity binding. The cursor is scoped to this Workspace and status filter and is returned as nextCursor.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/WorkspaceRootPage'}
@@ -3029,6 +3040,7 @@ paths:
     post:
       tags: [resources]
       operationId: addWorkspaceRoot
+      description: Target-only generic create operation. The served desktop flow creates a persistent folder root through authenticated local folder selection; no public Operator POST handler is mounted at this path.
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true
@@ -3046,6 +3058,7 @@ paths:
     patch:
       tags: [resources]
       operationId: updateWorkspaceRoot
+      description: Target-only generic policy-update operation. No public Operator PATCH handler is mounted at this path.
       parameters:
       - name: rootId
         in: path
@@ -3080,10 +3093,10 @@ paths:
       - {$ref: '#/components/parameters/IdempotencyKey'}
       responses:
         '200':
-          description: WorkspaceRoot paused
+          description: WorkspaceRoot paused. The response flattens the WorkspaceRoot record together with its last committed location_availability.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/WorkspaceRoot'}
+              schema: {$ref: '#/components/schemas/WorkspaceRootView'}
         default: {$ref: '#/components/responses/Error'}
   /workspace-roots/{rootId}/resume:
     post:
@@ -3100,10 +3113,10 @@ paths:
       - {$ref: '#/components/parameters/IdempotencyKey'}
       responses:
         '200':
-          description: WorkspaceRoot resumed after fresh directory identity validation and current-incarnation binding refresh
+          description: WorkspaceRoot resumed after fresh directory identity validation and current-incarnation binding refresh. The response flattens the WorkspaceRoot record together with its last committed location_availability.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/WorkspaceRoot'}
+              schema: {$ref: '#/components/schemas/WorkspaceRootView'}
         default: {$ref: '#/components/responses/Error'}
   /workspace-roots/{rootId}/revoke:
     post:
@@ -3118,10 +3131,50 @@ paths:
       - {$ref: '#/components/parameters/IdempotencyKey'}
       responses:
         '200':
-          description: WorkspaceRoot permanently revoked
+          description: WorkspaceRoot permanently revoked. The response flattens the WorkspaceRoot record together with its last committed location_availability.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/WorkspaceRoot'}
+              schema: {$ref: '#/components/schemas/WorkspaceRootView'}
+        default: {$ref: '#/components/responses/Error'}
+  /workspace-roots/{rootId}/scan:
+    post:
+      tags: [resources]
+      operationId: scanWorkspaceRoot
+      summary: Scan a persistent Workspace folder for a bounded metadata summary
+      description: >-
+        Served authenticated local Operator operation for the selected Workspace owner. If-Match supplies the expected WorkspaceRoot version as a plain decimal integer; the current parser also accepts a quoted decimal. This Linux-only summary slice revalidates Workspace ownership/status, WorkspaceRoot status/version, current Runtime incarnation, and local binding records in the final SQLite transaction. The local Runtime revalidates the selected directory after traversal. A request scans metadata only, with maximum traversal depth 32, 1,000 internally budgeted directory entries (known private/generated names consume budget but are neither opened nor reported), and 1 MiB aggregate relative locators. Its cooperative 8-second total deadline starts before the blocking worker is scheduled; traversal stops at 7 seconds to reserve the final second for the mandatory saved-root identity fence. At most two filesystem scan jobs run concurrently. Admission saturation returns 503 SCAN_UNAVAILABLE before filesystem I/O and creates no receipt. Failure to verify required local directory or mount identity metadata returns the same status/code after filesystem work starts and creates no receipt. A Runtime-incarnation fence change returns 503 RUNTIME_UNAVAILABLE without creating a receipt. Transient SQLite busy/locked errors return 503 SCAN_UNAVAILABLE; retry with the same idempotency key so an already committed receipt is replayed. If no receipt exists, current request preconditions are checked and a new bounded scan runs only if the root remains eligible. Filesystem operations run on a bounded blocking worker; an individual kernel call cannot be preempted by the cooperative deadline. Linux candidate paths are opened relative to the selected directory with beneath-root, no-symlink, no-magic-link, and no-cross-mount resolution. The returned entries_examined count includes each non-excluded in-root entry opened with O_PATH and inspected, including directories, final-component symlink objects, regular files, and special entries such as FIFOs; it excludes the selected root and excluded private/generated names. Final-component symlink objects are inspected with O_PATH | O_NOFOLLOW and are never followed. files_observed counts only regular files, and only regular files reach the file visitor. Excluded private/generated names are not opened or reported, but each name consumes one internal directory-entry budget unit. The scan does not read file contents, compute hashes, create index or membership records, search, watch for changes, or infer deletion from missing entries or an incomplete traversal. The response contains Workspace/root/request IDs, requested root version, status, counts, safe partial reason, and completion time; it never contains filesystem paths, file or directory names, filesystem identities, file contents, or membership. Successful responses use Cache-Control: no-store. Exact replay returns the same committed safe summary before filesystem I/O, including after a daemon process restart. The idempotency payload is operation, Workspace ID, root ID, and requested root version; current Runtime identity is a commit-time fence for a new receipt and is not part of caller idempotency identity. Reuse of an Idempotency-Key with changed caller inputs conflicts. A PARTIAL result is final for that key; an explicit retry must use a new key. A new scan attempt on macOS or Windows returns 501 until qualified; an exact committed receipt is replayed before platform support is checked.
+      security: [{operatorAuth: [], workspaceContext: []}]
+      parameters:
+      - name: rootId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1}
+      - {$ref: '#/components/parameters/WorkspaceContextHeader'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WorkspaceRootScanRequest'}
+      responses:
+        '200':
+          description: Committed bounded scan summary for this WorkspaceRoot version. COMPLETE has a null partial_reason; PARTIAL has one of TIME_LIMIT_REACHED, SCAN_BUDGET_REACHED, ENTRY_CHANGED_OR_UNREADABLE, or MOUNT_BOUNDARY_REACHED.
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkspaceRootScanSummary'}
+        '501':
+          description: A new scan attempt is unsupported on this platform until qualified. Exact committed receipt replay is resolved before platform support is checked.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+        '503':
+          description: Admission saturation returns before filesystem I/O and creates no receipt; required directory/mount identity verification failure returns after filesystem work starts but creates no receipt; a Runtime-incarnation fence change returns RUNTIME_UNAVAILABLE without creating a receipt; transient SQLite busy/locked errors are retryable with the same key, which replays an existing committed receipt or rechecks current preconditions before scanning if none exists.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
         default: {$ref: '#/components/responses/Error'}
   /user-requests:
     get:
@@ -3457,17 +3510,22 @@ paths:
     get:
       tags: [conversations]
       operationId: getUserRequest
+      description: >-
+        Authenticated read-only detail for an exact UserRequest in the selected owned Workspace. Missing and foreign-Workspace requests are indistinguishable. The response is no-store and excludes response schemas, provider URLs, ProviderInputBindings, native session handles, and response records. Prompt UTF-8 bytes are capped at 262144, serialized choices at 524288 UTF-8 bytes, and the encoded response at 921600 bytes. Opening this route never answers or dismisses the request.
       parameters:
       - name: requestId
         in: path
         required: true
-        schema: {type: string}
+        schema: {type: string, minLength: 1, maxLength: 512}
+      - {$ref: '#/components/parameters/WorkspaceContextHeader'}
       responses:
         '200':
-          description: Structured request and current status
+          description: Safe structured request detail and current status
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/UserRequest'}
+              schema: {$ref: '#/components/schemas/UserRequestDetail'}
         default: {$ref: '#/components/responses/Error'}
   /user-requests/{requestId}/dismiss:
     post:
@@ -3709,6 +3767,12 @@ components:
       in: path
       required: true
       schema: {type: string}
+    WorkspaceContextHeader:
+      name: X-Workspace-ID
+      in: header
+      required: true
+      description: Selected Workspace scope for this authenticated operation.
+      schema: {type: string, minLength: 1, maxLength: 200}
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -3718,8 +3782,8 @@ components:
       name: If-Match
       in: header
       required: true
-      description: Expected aggregate version for optimistic concurrency.
-      schema: {type: string}
+      description: Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes.
+      schema: {type: string, pattern: '^(?:[0-9]+|"[0-9]+")$'}
     Cursor:
       name: cursor
       in: query
@@ -5765,14 +5829,13 @@ components:
     ContextDocumentDeletionStatus:
       type: object
       additionalProperties: false
-      required: [resource_id, status, manifest_digest, required_replica_count, acknowledged_replica_count, pending_provider_sources, updated_at]
+      required: [resource_id, status, manifest_digest, required_replica_count, acknowledged_replica_count, updated_at]
       properties:
         resource_id: {type: string}
         status: {type: string, enum: [ACTIVE, REVOKED, DELETION_PENDING, DELETED]}
         manifest_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
-        required_replica_count: {type: integer, minimum: 0}
-        acknowledged_replica_count: {type: integer, minimum: 0}
-        pending_provider_sources: {type: array, items: {type: string}}
+        required_replica_count: {type: integer, minimum: 0, maximum: 4294967295}
+        acknowledged_replica_count: {type: integer, minimum: 0, maximum: 4294967295}
         updated_at: {type: string, format: date-time}
     ResourceUploadSession:
       type: object
@@ -7167,13 +7230,13 @@ components:
         replication_policy: {type: string, enum: [NONE, ACTIVE_TASKS, SELECTED_WORKSPACE_POLICY]}
     WorkspaceRootPage:
       type: object
-      required: [items]
+      required: [items, nextCursor]
       properties:
         items:
           type: array
-          items: {$ref: '#/components/schemas/WorkspaceRootListItem'}
-        next_cursor: {type: [string, 'null']}
-    WorkspaceRootListItem:
+          items: {$ref: '#/components/schemas/WorkspaceRootView'}
+        nextCursor: {type: [string, 'null']}
+    WorkspaceRootView:
       allOf:
       - {$ref: '#/components/schemas/WorkspaceRoot'}
       - type: object
@@ -7183,6 +7246,54 @@ components:
             type: string
             description: Last committed ResourceLocation observation; not a live Runtime probe.
             enum: [AVAILABLE, OFFLINE, PLACEHOLDER, REVOKED, UNKNOWN, UNAVAILABLE]
+    WorkspaceRootScanRequest:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+      description: Exactly an empty JSON object; scan inputs are carried only by the path and required headers.
+    WorkspaceRootScanSummary:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, workspace_root_id, request_id, root_version, status, entries_examined, files_observed, partial_reason, completed_at]
+      allOf:
+      - if:
+          properties:
+            status: {const: COMPLETE}
+          required: [status]
+        then:
+          properties:
+            partial_reason: {type: 'null'}
+      - if:
+          properties:
+            status: {const: PARTIAL}
+          required: [status]
+        then:
+          properties:
+            partial_reason:
+              type: string
+              minLength: 1
+              enum: [TIME_LIMIT_REACHED, SCAN_BUDGET_REACHED, ENTRY_CHANGED_OR_UNREADABLE, MOUNT_BOUNDARY_REACHED]
+      properties:
+        workspace_id: {type: string, minLength: 1}
+        workspace_root_id: {type: string, minLength: 1}
+        request_id: {type: string, minLength: 1, maxLength: 200, pattern: '^(?![\s\S]*[\r\n\u2028\u2029])[!-~]+$'}
+        root_version: {type: integer, minimum: 1}
+        status: {type: string, enum: [COMPLETE, PARTIAL]}
+        entries_examined:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          description: Non-excluded in-root entries opened with O_PATH and inspected, including directories, final-component symlink objects, regular files, and special entries such as FIFOs. Excludes the selected root. Excluded private/generated names are omitted from this count but consume one internal budget unit each.
+        files_observed:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          description: Count of regular files only; directories, symlink objects, and special entries do not contribute.
+        partial_reason:
+          type: [string, 'null']
+          enum: [null, TIME_LIMIT_REACHED, SCAN_BUDGET_REACHED, ENTRY_CHANGED_OR_UNREADABLE, MOUNT_BOUNDARY_REACHED]
+          description: Null for COMPLETE; PARTIAL requires one of the bounded scanner reason codes.
+        completed_at: {type: string, format: date-time}
     ResourceSearchResult:
       type: object
       required: [resource_ref, source_content_digest, source_matches, display_name, locations, freshness, match_reasons]
@@ -7214,6 +7325,7 @@ components:
         end_utf8_byte_exclusive: {type: integer, minimum: 1, maximum: 1048576}
     ResourceSearchPage:
       type: object
+      description: A keyset page of Workspace-scoped Resource matches. Indexed search is bounded to 200 candidate snapshots and 64 MiB of verified snapshot bytes per request; stale candidates or this budget may produce a short or empty items array with a progressing filter-bound next_cursor. Pagination does not promise a cross-request snapshot while Resources change.
       required: [items, mode, content_scan]
       properties:
         items:
@@ -7335,6 +7447,57 @@ components:
           required: [kind]
         then:
           properties: {interaction_mode: {const: EXTERNAL_URL}}
+    UserRequestDetailScope:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        required: [kind, conversation_id, conversation_turn_id]
+        properties:
+          kind: {type: string, const: CONVERSATION}
+          conversation_id: {type: string, minLength: 1, maxLength: 512}
+          conversation_turn_id: {type: string, minLength: 1, maxLength: 512}
+      - type: object
+        additionalProperties: false
+        required: [kind, task_id]
+        properties:
+          kind: {type: string, const: TASK_PLANNING}
+          task_id: {type: string, minLength: 1, maxLength: 512}
+      - type: object
+        additionalProperties: false
+        required: [kind, task_id, attempt_id]
+        properties:
+          kind: {type: string, const: ATTEMPT_EXECUTION}
+          task_id: {type: string, minLength: 1, maxLength: 512}
+          attempt_id: {type: string, minLength: 1, maxLength: 512}
+    UserRequestDetailChoice:
+      type: object
+      additionalProperties: false
+      required: [choice_id, label, description]
+      properties:
+        choice_id: {type: string, minLength: 1, maxLength: 512}
+        label: {type: string, minLength: 1, maxLength: 16384}
+        description: {type: [string, 'null'], maxLength: 16384}
+    UserRequestDetail:
+      type: object
+      additionalProperties: false
+      required: [request_id, workspace_id, scope, kind, interaction_mode, prompt, choices, status, version, created_at, expires_at, resolved_at]
+      properties:
+        request_id: {type: string, minLength: 1, maxLength: 512}
+        workspace_id: {type: string, minLength: 1, maxLength: 512}
+        scope: {$ref: '#/components/schemas/UserRequestDetailScope'}
+        kind: {type: string, enum: [QUESTION, DECISION, RESOURCE_SELECTION, EXTERNAL_AUTHORIZATION]}
+        interaction_mode: {type: string, enum: [FORM, EXTERNAL_URL]}
+        prompt: {type: string, minLength: 1, maxLength: 262144, description: UTF-8 prompt budget is at most 262144 bytes.}
+        choices:
+          type: array
+          maxItems: 500
+          description: Serialized choices JSON is bounded to 524288 UTF-8 bytes.
+          items: {$ref: '#/components/schemas/UserRequestDetailChoice'}
+        status: {type: string, enum: [PENDING, ANSWERED, DISMISSED, EXPIRED, CANCELLED]}
+        version: {type: integer, minimum: 1}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: [string, 'null'], format: date-time}
+        resolved_at: {type: [string, 'null'], format: date-time}
     UserRequestPage:
       type: object
       required: [items]

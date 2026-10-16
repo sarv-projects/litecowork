@@ -157,6 +157,9 @@ A new Coworker begins with Ask me for unattended behavior. Automatic memory is a
 | --- | --- | --- |
 | First run with no Coworker | Ordinary composer ready if agent eligible | Primary Create Coworker remains optional |
 | No eligible native lead | Draft retained and setup CTA | Focus on lead repair, do not submit |
+| Conversation sending is not implemented for this build | Name that sending is unavailable; label text as an unsent, unsaved window-only draft; do not offer agent setup as a repair unless a real missing binding/auth state is known | Settings never auto-sends the draft; retain it across in-app navigation |
+| Runtime disconnects after Conversation history loaded | Keep the last loaded same-Workspace list and messages visible as read-only with a clear offline label; mark them stale until a successful reconnect refresh | Disable refresh, pagination, and new writes while Runtime is unavailable; never turn an unreadable list into an empty state |
+| Runtime unavailable before Conversation history loads | Explain that saved history cannot be checked while the local Runtime is unavailable | Do not claim the Workspace has no saved conversations |
 | Loading Coworker last chat | Skeleton only while awaited; no fake chat | Cancel stale request on roster switch |
 | Coworker offline/revoked | Named blocked state and read-only saved history | Retry exact read; do not auto-open other owner's chat |
 | OAuth cancelled | Connection remains unassigned | Return focus to Connect card |

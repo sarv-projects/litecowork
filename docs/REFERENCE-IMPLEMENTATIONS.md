@@ -1,6 +1,6 @@
 # Reference Implementations and Upstream Design Sources
 
-**Checked:** 2026-10-10
+**Baseline checked:** 2026-10-10. ACP Registry and OpenIntelligentUI references were reviewed on 2026-10-16.
 
 This file is a pinned research map for LiteCowork architecture work. It records the exact
 upstream repositories, revisions, files, and the narrow design ideas we intentionally study.
@@ -28,7 +28,23 @@ control plane.
 | REF-ARCADE-MCP | https://github.com/ArcadeAI/arcade-mcp | `79a2dc90d347e4cd1a96366a2d94c8ddc356f1c3` | MIT | Study authorized MCP tool declarations and secret injection boundaries. Optional provider only. |
 | REF-CAMEL | https://github.com/camel-ai/camel | `24fde60ad739b4be8f8f533fea9ba54256fbc4a2` | Apache-2.0 | Reference for decomposition, worker channels, task events, retry/replan. LiteCowork keeps its own accepted Plan/Step/Attempt model. |
 | REF-COMPOSIO | https://github.com/ComposioHQ/composio | `f9ce49953598e13371c406ac346846696a4d8385` on `next` | MIT at checked root LICENSE | Optional integration/tool provider and catalog reference; never a mandatory dependency or secret owner. |
+| REF-ACP-REGISTRY | https://github.com/agentclientprotocol/registry | `4d1729af836732b46840080920912dac7d5a2935` | Apache-2.0 | Descriptive agent/distribution metadata and protocol adaptation matrix only. Registry presence does not establish LiteCowork support, installation, auth, capability, readiness, or safety. |
 | REF-OPENINTELLIGENTUI | [CopilotKit/OpenIntelligentUI](https://github.com/CopilotKit/OpenIntelligentUI) | [`f6e4388b26a64b9a0714943b08a1ce622b924eec`](https://github.com/CopilotKit/OpenIntelligentUI/tree/f6e4388b26a64b9a0714943b08a1ce622b924eec) | MIT at checked root LICENSE | E08-S08 UX, sandbox lifecycle, explicit bridge, and renderer-test reference. Do not adopt its arbitrary generated HTML/CSS/JavaScript renderer or CSP policy as LiteCowork's RichPresentation implementation. |
+
+## ACP Registry exact files and boundary
+
+Repository: [agentclientprotocol/registry](https://github.com/agentclientprotocol/registry)
+
+Reviewed at commit [`4d1729af836732b46840080920912dac7d5a2935`](https://github.com/agentclientprotocol/registry/tree/4d1729af836732b46840080920912dac7d5a2935); root license is Apache-2.0.
+
+| File | Exact link | What to study | LiteCowork decision |
+|---|---|---|---|
+| `README.md`, `FORMAT.md` | [README](https://github.com/agentclientprotocol/registry/blob/4d1729af836732b46840080920912dac7d5a2935/README.md) · [FORMAT](https://github.com/agentclientprotocol/registry/blob/4d1729af836732b46840080920912dac7d5a2935/FORMAT.md) | Registry purpose, record format, and distribution metadata | Discovery input only; the owner-curated V1 portfolio remains independent of remote entries |
+| `agent.schema.json` | [Pinned schema](https://github.com/agentclientprotocol/registry/blob/4d1729af836732b46840080920912dac7d5a2935/agent.schema.json) | Shape and constraints of registry records | Validate bounded metadata against a reviewed schema; never execute registry-provided command, environment, auth, or install instructions |
+| `.protocol-matrix/latest.md` | [Pinned matrix snapshot](https://github.com/agentclientprotocol/registry/blob/4d1729af836732b46840080920912dac7d5a2935/.protocol-matrix/latest.md) | Versioned initialize/session method observations for registry candidates | Research evidence only. The snapshot was generated 2026-10-15, does not test standard `session/cancel`, and is not LiteCowork provider or lifecycle qualification |
+| `LICENSE` | [Pinned license](https://github.com/agentclientprotocol/registry/blob/4d1729af836732b46840080920912dac7d5a2935/LICENSE) | Registry repository license | Research reference; no registry source or dependency is copied |
+
+The remote Registry is untrusted descriptive input. It cannot add or remove curated portfolio candidates, create an AgentBinding, authenticate an account, launch an executable, select a capability, or create a Conversation or Task. Treat registry redirects, origins, cache age, schema drift, duplicate identifiers, malformed records, and oversized responses as explicit validation cases. Registry observations and protocol handshakes remain distinct from module implementation and qualified support. See [E03-S06](../implementation/epics/E03.md) for the planned implementation and acceptance contract.
 
 ## OpenIntelligentUI exact files
 

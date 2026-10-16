@@ -9,6 +9,7 @@ const vite = await createServer({
   configFile: false,
   root: new URL("..", import.meta.url).pathname,
   plugins: [react()],
+  optimizeDeps: { noDiscovery: true, include: [] },
   server: { middlewareMode: true, hmr: false },
   appType: "custom",
 });
@@ -80,8 +81,13 @@ test("Approval and UserRequest entries are display-only even when linked to a Ta
     }));
 
     assert.match(html, /<article/);
-    assert.match(html, /Actions and request details are not connected here\./);
-    assert.doesNotMatch(html, /<button/);
+    if (kind === "APPROVAL") {
+      assert.match(html, /Approval details remain on their owning review surface\./);
+      assert.doesNotMatch(html, /<button/);
+    } else {
+      assert.match(html, /<button[^>]*>View request details<\/button>/);
+      assert.match(html, /Opening this request does not answer or dismiss it\./);
+    }
   }
 });
 

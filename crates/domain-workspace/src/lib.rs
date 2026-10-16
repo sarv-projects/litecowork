@@ -10,7 +10,8 @@ use storage_core::{
     ResourceStore, ResourceUploadSessionRecord, ResourceUploadState, ResourceUploadStore,
     StoreError, Workspace, WorkspaceCreateRequest, WorkspaceInstructionRevisionRecord,
     WorkspaceRootCreateCommit, WorkspaceRootListRecord, WorkspaceRootRecord,
-    WorkspaceRootResumeCommit, WorkspaceRootStatusAction, WorkspaceRootStatusCommit,
+    WorkspaceRootResumeCommit, WorkspaceRootScanCandidate, WorkspaceRootScanCommit,
+    WorkspaceRootScanResult, WorkspaceRootStatusAction, WorkspaceRootStatusCommit,
     WorkspaceRootStore, WorkspaceStore, is_sha256_digest,
 };
 
@@ -440,6 +441,19 @@ pub struct ChangeWorkspaceRootStatus {
     pub event: EventContext,
 }
 
+/// Owner-authorized bounded metadata scan request. The request key identifies the
+/// durable summary receipt; no filesystem locator or content crosses this boundary.
+#[derive(Clone, Debug)]
+pub struct ScanWorkspaceRoot {
+    pub workspace_id: String,
+    pub workspace_root_id: String,
+    pub principal_id: String,
+    pub request_id: String,
+    pub expected_version: u64,
+    pub runtime_id: String,
+    pub runtime_incarnation_id: String,
+}
+
 pub struct ResumeWorkspaceRoot {
     pub workspace_id: String,
     pub workspace_root_id: String,
@@ -470,6 +484,69 @@ where
 {
     pub fn new(store: S) -> Self {
         Self { store }
+    }
+
+    /// Resolve an exact scan replay before filesystem I/O. Request payload fields are
+    /// stable and intentionally exclude paths, identities, scan output, and content.
+    pub fn get_scan_receipt(
+        &self,
+        command: &ScanWorkspaceRoot,
+    ) -> Result<Option<WorkspaceRootScanResult>, StoreError> {
+        validate_workspace_root_scan_command(command)?;
+        self.store
+            .get_workspace_root_scan_receipt(&workspace_root_scan_receipt_request(command))
+    }
+
+    /// Load the private scan authorization context. The storage adapter applies the
+    /// owner, Workspace, root, Runtime, location, and local binding predicates in one
+    /// query so a path is never opened from a stale public projection.
+    pub fn get_scan_candidate(
+        &self,
+        command: &ScanWorkspaceRoot,
+    ) -> Result<Option<WorkspaceRootScanCandidate>, StoreError> {
+        validate_workspace_root_scan_command(command)?;
+        self.store.get_workspace_root_scan_candidate(
+            &command.principal_id,
+            &command.workspace_id,
+            &command.workspace_root_id,
+            &command.runtime_id,
+            &command.runtime_incarnation_id,
+        )
+    }
+
+    /// Persist the safe scan summary only after filesystem traversal and final CAS
+    /// validation have succeeded. SQLite rechecks authorization and replay atomically.
+    pub fn commit_scan(
+        &self,
+        command: &ScanWorkspaceRoot,
+        result: WorkspaceRootScanResult,
+    ) -> Result<WorkspaceRootScanResult, StoreError> {
+        validate_workspace_root_scan_command(command)?;
+        if result.workspace_id != command.workspace_id
+            || result.workspace_root_id != command.workspace_root_id
+            || result.request_id != command.request_id
+            || result.root_version != command.expected_version
+            || result.entries_examined > storage_core::MAX_WORKSPACE_ROOT_SCAN_ENTRIES
+            || result.entries_examined < result.files_observed
+            || (result.status == storage_core::WorkspaceRootScanStatus::Complete
+                && result.partial_reason.is_some())
+            || (result.status == storage_core::WorkspaceRootScanStatus::Partial
+                && result.partial_reason.is_none())
+        {
+            return Err(StoreError::Invalid(
+                "WorkspaceRoot scan result does not match its request".to_owned(),
+            ));
+        }
+        self.store
+            .commit_workspace_root_scan(WorkspaceRootScanCommit {
+                request: workspace_root_scan_receipt_request(command),
+                workspace_id: command.workspace_id.clone(),
+                workspace_root_id: command.workspace_root_id.clone(),
+                expected_root_version: command.expected_version,
+                runtime_id: command.runtime_id.clone(),
+                runtime_incarnation_id: command.runtime_incarnation_id.clone(),
+                result,
+            })
     }
 
     pub fn add_root(
@@ -531,12 +608,10 @@ where
                 "an archived Workspace is read-only".to_owned(),
             ));
         }
-        if workspace.version != command.expected_workspace_version {
-            return Err(StoreError::Conflict {
-                expected: Some(command.expected_workspace_version),
-                actual: Some(workspace.version),
-            });
-        }
+        // The SQLite create transaction checks an exact prior receipt before its
+        // expected Workspace version. Keep the CAS there so a lost-response retry
+        // remains replayable after an unrelated Workspace edit; the serialized
+        // transaction still rejects every fresh stale command.
 
         let provenance = json!({"source_inputs": [], "transformations": [], "tool_reports": []});
         let resource = ResourceRecord {
@@ -1157,7 +1232,7 @@ where
 
         let session = ResourceUploadSessionRecord {
             upload_id: command.upload_id,
-            workspace_id: workspace.workspace_id.clone(),
+            workspace_id: command.workspace_id.clone(),
             display_name: command.display_name,
             media_type: command.media_type,
             expected_size_bytes: command.size_bytes,
@@ -1180,11 +1255,7 @@ where
         session.validate_initial_metadata()?;
 
         if command.context_document.as_ref().is_some_and(|metadata| {
-            !valid_context_document_metadata(
-                metadata,
-                &workspace.workspace_id,
-                &command.principal_id,
-            )
+            !valid_context_document_metadata(metadata, &command.workspace_id, &command.principal_id)
         }) {
             return Err(StoreError::Invalid(
                 "Context Document metadata does not match the authenticated owner and Workspace"
@@ -1538,6 +1609,12 @@ impl<S: WorkspaceStore> WorkspaceService<S> {
     where
         S: IdempotentWorkspaceStore,
     {
+        if let Some(committed) =
+            self.store
+                .get_workspace_commit_receipt(&principal_id, &request_id, &request_payload)?
+        {
+            return Ok(committed);
+        }
         let (expected_version, workspace, event) =
             self.build_replication_policy_change(command, false)?;
         self.store.commit_workspace_idempotent(
@@ -1721,6 +1798,13 @@ impl<S: WorkspaceStore> WorkspaceService<S> {
         require_non_empty("workspace_id", &command.workspace_id)?;
         require_non_empty("principal_id", &command.authored_by_principal_id)?;
         validate_event_context(&command.event)?;
+        if let Some(committed) = self.store.get_workspace_instruction_revision_receipt(
+            &command.authored_by_principal_id,
+            &request_id,
+            &request_payload,
+        )? {
+            return Ok(committed);
+        }
         let mut workspace = self
             .store
             .get_workspace(&command.workspace_id)?
@@ -1925,6 +2009,44 @@ fn build_workspace_commit(
     };
 
     Ok((workspace, event))
+}
+
+fn validate_workspace_root_scan_command(command: &ScanWorkspaceRoot) -> Result<(), StoreError> {
+    for (name, value) in [
+        ("workspace_id", command.workspace_id.as_str()),
+        ("workspace_root_id", command.workspace_root_id.as_str()),
+        ("principal_id", command.principal_id.as_str()),
+        ("request_id", command.request_id.as_str()),
+        ("runtime_id", command.runtime_id.as_str()),
+        (
+            "runtime_incarnation_id",
+            command.runtime_incarnation_id.as_str(),
+        ),
+    ] {
+        require_non_empty(name, value)?;
+        if value.contains('\0') {
+            return Err(StoreError::Invalid(format!("{name} contains a NUL byte")));
+        }
+    }
+    if command.expected_version == 0 || command.request_id.len() > 200 {
+        return Err(StoreError::Invalid(
+            "WorkspaceRoot scan precondition is invalid".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn workspace_root_scan_receipt_request(command: &ScanWorkspaceRoot) -> WorkspaceCreateRequest {
+    WorkspaceCreateRequest {
+        principal_id: command.principal_id.clone(),
+        request_id: command.request_id.clone(),
+        request_payload: json!({
+            "operation": "workspace.root.scan.v1",
+            "workspace_id": command.workspace_id,
+            "workspace_root_id": command.workspace_root_id,
+            "root_version": command.expected_version,
+        }),
+    }
 }
 
 fn require_non_empty(field: &str, value: &str) -> Result<(), StoreError> {

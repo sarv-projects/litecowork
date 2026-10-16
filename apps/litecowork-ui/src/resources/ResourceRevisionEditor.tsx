@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { resourceLocationApi, resourceLocationStateForSelection, type ResourceLocationView, type ResourceLocationLoadState } from "./resource-location-api";
+import {
+  contextDocumentDeletionNeedsPolling,
+  contextDocumentDeletionProgress,
+  contextDocumentDeletionRejectionCode,
+  contextDocumentDeletionReducer,
+  decodeContextDocumentDeletionStatus,
+  isWorkspaceNoteOwnedBySelectedWorkspace,
+  newContextDocumentDeletionState,
+  restoreContextDocumentDeletionFocus,
+  type ContextDocumentDeletionRequest,
+  type ContextDocumentDeletionScope,
+  type ContextDocumentDeletionStatus,
+} from "./context-document-deletion";
 import "./resource-revision-editor.css";
 
 type Resource = {
@@ -155,6 +168,18 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
   const [statusRequest, setStatusRequest] = useState<{ target: OwnerStatus; expectedVersion: number; requestId: string } | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [deletion, dispatchDeletion] = useReducer(
+    contextDocumentDeletionReducer,
+    { workspaceId: requestedResource.workspaceId, resourceId: requestedResource.resourceId, generation: 0 },
+    newContextDocumentDeletionState,
+  );
+  const [pendingDeletionDetailRefresh, setPendingDeletionDetailRefresh] = useState<string | null>(null);
+  const pendingDeletionDetailRefreshRef = useRef<string | null>(null);
+  const [deletionConfirmation, setDeletionConfirmation] = useState(false);
+  const deletionTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const deletionConfirmRef = useRef<HTMLButtonElement | null>(null);
+  const deletionPanelRef = useRef<HTMLElement | null>(null);
+  const deletionMountedRef = useRef(false);
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareLeftId, setCompareLeftId] = useState("");
   const [compareRightId, setCompareRightId] = useState("");
@@ -164,6 +189,7 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
   const comparisonRequest = useRef(0);
   const resourceReadRequest = useRef(0);
   const resourceSelectionGeneration = useRef(0);
+  const deletionStatusReadSequence = useRef(0);
   const selectedResourceRef = useRef({ workspaceId: requestedResource.workspaceId, resourceId: requestedResource.resourceId });
   const headPreviewRequest = useRef(0);
   const [locationState, setLocationState] = useState<ResourceLocationLoadState | null>(null);
@@ -174,7 +200,7 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
     resource.resourceId,
   );
   const hasUnsavedDraft = selectedFile !== null || (draftText !== null && draftText !== textBaseline);
-  const operationPending = busy || statusBusy || statusRequest !== null;
+  const operationPending = busy || statusBusy || statusRequest !== null || deletion.busy || deletion.request !== null;
   const navigationDecision = resourceNavigationDecision(
     resource,
     requestedResource,
@@ -184,9 +210,18 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
   );
   const navigationKey = JSON.stringify([activeWorkspaceId, requestedResource.workspaceId, requestedResource.resourceId]);
 
+  useEffect(() => {
+    deletionMountedRef.current = true;
+    return () => { deletionMountedRef.current = false; };
+  }, []);
+
   const switchResource = (next: Resource) => {
     selectedResourceRef.current = { workspaceId: next.workspaceId, resourceId: next.resourceId };
     resourceSelectionGeneration.current += 1;
+    deletionStatusReadSequence.current += 1;
+    pendingDeletionDetailRefreshRef.current = null;
+    setPendingDeletionDetailRefresh(null);
+    dispatchDeletion({ type: "select", scope: { workspaceId: next.workspaceId, resourceId: next.resourceId, generation: resourceSelectionGeneration.current } });
     resourceReadRequest.current += 1;
     headPreviewRequest.current += 1;
     comparisonRequest.current += 1;
@@ -215,6 +250,7 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
     setStatusConfirmation(null);
     setStatusRequest(null);
     setStatusError(null);
+    setDeletionConfirmation(false);
     setCompareOpen(false);
     setCompareLeftId("");
     setCompareRightId("");
@@ -253,7 +289,10 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
     setUploadRecovery(recovery);
   };
 
-  const reload = useCallback(async (append = false) => {
+  const reload = useCallback(async (
+    append = false,
+    expectedContextStatus?: ContextDocumentDeletionStatus["status"],
+  ) => {
     const request = ++resourceReadRequest.current;
     const requestGeneration = resourceSelectionGeneration.current;
     const selection = { workspaceId: resource.workspaceId, resourceId: resource.resourceId };
@@ -265,17 +304,22 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
         invoke<RevisionPage>("list_resource_revisions", { workspaceId: resource.workspaceId, resourceId: resource.resourceId, cursor: append ? cursor : null }),
       ]);
       if (!isCurrentResourceSelection(selection, selectedResourceRef.current, requestGeneration, resourceSelectionGeneration.current)
-        || request !== resourceReadRequest.current) return;
+        || request !== resourceReadRequest.current) return false;
       if (nextDetail.workspaceId !== resource.workspaceId || nextDetail.resourceId !== resource.resourceId) throw new Error("Resource response did not match this Workspace.");
+      if (expectedContextStatus !== undefined && nextDetail.contextDocument?.status !== expectedContextStatus) {
+        throw new Error("Resource details have not caught up with the confirmed ContextDocument status.");
+      }
       setDetail(nextDetail);
       setHistory((current) => append ? [...current, ...page.items] : page.items);
       setCursor(page.nextCursor);
       if (!append) setRebaseReloadPending(false);
+      return true;
     } catch (cause) {
       if (isCurrentResourceSelection(selection, selectedResourceRef.current, requestGeneration, resourceSelectionGeneration.current)
         && request === resourceReadRequest.current) {
         setError(messageOf(cause, "Resource details and revision history could not be loaded."));
       }
+      return false;
     } finally {
       if (isCurrentResourceSelection(selection, selectedResourceRef.current, requestGeneration, resourceSelectionGeneration.current)
         && request === resourceReadRequest.current) setLoading(false);
@@ -293,6 +337,21 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
   }, [resource.resourceId, resource.workspaceId]);
 
   const context = detail?.contextDocument ?? null;
+  const canDeleteContextDocument = isWorkspaceNoteOwnedBySelectedWorkspace(context, resource.workspaceId);
+  const deletionStateMatchesResource = deletion.scope.workspaceId === resource.workspaceId
+    && deletion.scope.resourceId === resource.resourceId
+    && deletion.scope.generation === resourceSelectionGeneration.current;
+  const contextStatus = deletionStateMatchesResource
+    ? deletion.status?.status === "DELETION_PENDING" || deletion.status?.status === "DELETED"
+      ? deletion.status.status
+      : context?.status ?? deletion.status?.status
+    : context?.status;
+  const currentDeletionDetailRefreshKey = deletionStateMatchesResource && deletion.status
+    ? JSON.stringify([deletion.scope.workspaceId, deletion.scope.resourceId, deletion.scope.generation, deletion.status.status])
+    : null;
+  const terminalDeletionDetailRefreshPending = deletion.status?.status === "DELETED"
+    && currentDeletionDetailRefreshKey !== null
+    && pendingDeletionDetailRefresh === currentDeletionDetailRefreshKey;
   const isCurrentTextEditable = isSmallText(resource.mediaType, resource.sizeBytes);
   const recoveryMatchesCurrentHead = !!(detail && uploadRecovery && sameRevisionUploadPins(uploadRecovery, resource, detail));
   const rebaseIsApproved = rebaseRequired && !rebaseReloadPending && detail?.currentRevisionId !== null
@@ -300,7 +359,7 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
     && rebaseApproval.headId === detail.currentRevisionId;
   const headTextMatchesCurrent = reviewedHeadText !== null && reviewedHeadText.resourceVersion === detail?.version
     && reviewedHeadText.headId === detail?.currentRevisionId;
-  const canSaveDraft = hasUnsavedDraft && context?.status === "ACTIVE" && detail?.currentRevisionId !== null
+  const canSaveDraft = hasUnsavedDraft && contextStatus === "ACTIVE" && detail?.currentRevisionId !== null
     && detail?.currentRevisionId !== undefined && !operationPending && (!rebaseRequired || rebaseIsApproved)
     && (selectedFile !== null || draftText !== null);
   const notifyNavigationSaveFailure = (message: string) => {
@@ -405,7 +464,7 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
   };
 
   const requestClose = () => {
-    if (busy || statusBusy || statusRequest !== null) return;
+    if (operationPending) return;
     if (hasUnsavedDraft) {
       setConfirmDiscard(true);
       return;
@@ -545,6 +604,11 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
         throw new Error("Local Runtime returned a different ContextDocument status.");
       }
       setDetail(updated);
+      dispatchDeletion({ type: "select", scope: {
+        workspaceId: resource.workspaceId,
+        resourceId: resource.resourceId,
+        generation: resourceSelectionGeneration.current,
+      } });
       setStatusRequest(null);
       setStatusConfirmation(null);
       setMessage(request.target === "REVOKED"
@@ -564,12 +628,190 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
   };
 
   const beginContextStatusChange = (target: OwnerStatus) => {
-    if (!detail || !context || hasUnsavedDraft || statusRequest !== null
-      || context.status !== (target === "REVOKED" ? "ACTIVE" : "REVOKED")) return;
+    if (!detail || !context || hasUnsavedDraft || statusRequest !== null || deletion.request !== null
+      || contextStatus !== (target === "REVOKED" ? "ACTIVE" : "REVOKED")) return;
     const request = { target, expectedVersion: detail.version, requestId: crypto.randomUUID() };
     setStatusRequest(request);
     void commitContextStatus(request);
   };
+
+  const deletionScopeIsCurrent = (scope: ContextDocumentDeletionScope) =>
+    deletionMountedRef.current && isCurrentResourceSelection(
+      { workspaceId: scope.workspaceId, resourceId: scope.resourceId },
+      selectedResourceRef.current,
+      scope.generation,
+      resourceSelectionGeneration.current,
+    );
+
+  const showDeletionStatus = (scope: ContextDocumentDeletionScope, status: ContextDocumentDeletionStatus) => {
+    if (!deletionScopeIsCurrent(scope)) return false;
+    const matchingDetail = detail?.workspaceId === scope.workspaceId && detail.resourceId === scope.resourceId;
+    if (!matchingDetail || (status.status !== "DELETION_PENDING" && status.status !== "DELETED")) return false;
+    const refreshKey = JSON.stringify([scope.workspaceId, scope.resourceId, scope.generation, status.status]);
+    const refreshResourceDetail = detail?.contextDocument?.status !== status.status
+      || pendingDeletionDetailRefreshRef.current === refreshKey;
+    if (refreshResourceDetail && pendingDeletionDetailRefreshRef.current !== refreshKey) {
+      pendingDeletionDetailRefreshRef.current = refreshKey;
+      setPendingDeletionDetailRefresh(refreshKey);
+    }
+    return refreshResourceDetail;
+  };
+
+  const refreshDeletionResourceDetail = async (
+    scope: ContextDocumentDeletionScope,
+    status: ContextDocumentDeletionStatus,
+  ) => {
+    if (!showDeletionStatus(scope, status)) return;
+    const refreshKey = JSON.stringify([scope.workspaceId, scope.resourceId, scope.generation, status.status]);
+    if (await reload(false, status.status) && deletionScopeIsCurrent(scope)
+      && pendingDeletionDetailRefreshRef.current === refreshKey) {
+      pendingDeletionDetailRefreshRef.current = null;
+      setPendingDeletionDetailRefresh(null);
+    }
+  };
+
+  const readDeletionStatus = async (scope: ContextDocumentDeletionScope) => {
+    if (!deletionScopeIsCurrent(scope)) return null;
+    const sequence = ++deletionStatusReadSequence.current;
+    dispatchDeletion({ type: "statusStarted", scope, sequence });
+    try {
+      const value = await invoke<unknown>("get_context_document_deletion_status", {
+        workspaceId: scope.workspaceId,
+        resourceId: scope.resourceId,
+      });
+      const status = decodeContextDocumentDeletionStatus(value, scope.resourceId);
+      if (sequence === deletionStatusReadSequence.current && deletionScopeIsCurrent(scope)) {
+        dispatchDeletion({ type: "statusReceived", scope, sequence, status });
+        await refreshDeletionResourceDetail(scope, status);
+      }
+      return status;
+    } catch (cause) {
+      if (sequence === deletionStatusReadSequence.current && deletionScopeIsCurrent(scope)) {
+        dispatchDeletion({ type: "statusFailed", scope, sequence, error: messageOf(cause, "ContextDocument deletion status could not be read.") });
+      }
+      return null;
+    }
+  };
+
+  const commitContextDocumentDeletion = async (request: ContextDocumentDeletionRequest) => {
+    if (!deletionScopeIsCurrent(request)) return;
+    dispatchDeletion({ type: "postStarted", request });
+    try {
+      const value = await invoke<unknown>("begin_context_document_deletion", {
+        workspaceId: request.workspaceId,
+        resourceId: request.resourceId,
+        expectedVersion: request.expectedVersion,
+        requestId: request.requestId,
+      });
+      const status = decodeContextDocumentDeletionStatus(value, request.resourceId);
+      if (status.status !== "DELETION_PENDING" && status.status !== "DELETED") {
+        throw new Error("Local Runtime did not confirm ContextDocument deletion admission.");
+      }
+      if (deletionScopeIsCurrent(request)) {
+        dispatchDeletion({ type: "postAccepted", request, status });
+        setMessage(status.status === "DELETED"
+          ? "Local deletion is complete. Resource and revision metadata remain for provenance; content already delivered to an active native agent session cannot be recalled."
+          : "Local deletion was admitted. LiteCowork is removing the registered local content and index objects; already-delivered native session content cannot be recalled.");
+        await refreshDeletionResourceDetail(request, status);
+      }
+    } catch (cause) {
+      if (!deletionScopeIsCurrent(request)) return;
+      const errorText = messageOf(cause, "ContextDocument deletion outcome is unknown.");
+      const rejectionCode = contextDocumentDeletionRejectionCode(errorText);
+      if (rejectionCode !== null) {
+        dispatchDeletion({ type: "postRejected", request, error: errorText });
+        await readDeletionStatus(request);
+        if (rejectionCode === "RESOURCE_CONFLICT") {
+          await reload(false);
+          if (deletionScopeIsCurrent(request)) {
+            setMessage("No deletion was admitted because the Resource changed. Review its refreshed status and version before requesting deletion again.");
+          }
+        } else if (deletionScopeIsCurrent(request)) {
+          setMessage(errorText);
+        }
+      } else {
+        dispatchDeletion({ type: "postFailed", request, error: errorText });
+        await readDeletionStatus(request);
+      }
+    }
+  };
+
+  const beginContextDocumentDeletion = () => {
+    if (!detail || !context || (contextStatus !== "ACTIVE" && contextStatus !== "REVOKED")
+      || hasUnsavedDraft || operationPending || statusRequest !== null) return;
+    const request: ContextDocumentDeletionRequest = {
+      workspaceId: resource.workspaceId,
+      resourceId: resource.resourceId,
+      generation: resourceSelectionGeneration.current,
+      expectedVersion: detail.version,
+      requestId: crypto.randomUUID(),
+    };
+    dispatchDeletion({ type: "begin", request });
+    setDeletionConfirmation(false);
+    void commitContextDocumentDeletion(request);
+  };
+
+  useEffect(() => {
+    if (!deletionConfirmation) return;
+    const trigger = deletionTriggerRef.current;
+    deletionConfirmRef.current?.focus();
+    return () => {
+      restoreContextDocumentDeletionFocus(trigger, deletionPanelRef.current,
+        (target) => document.activeElement === (target as unknown as Element));
+    };
+  }, [deletionConfirmation]);
+
+  useEffect(() => {
+    const detailStatus = detail?.contextDocument?.status;
+    const currentStatus = deletionStateMatchesResource ? deletion.status?.status : null;
+    if (currentStatus !== "DELETED"
+      && (detailStatus === "DELETION_PENDING" || detailStatus === "DELETED")
+      && currentStatus !== detailStatus && !deletion.checkingStatus) {
+      void readDeletionStatus({
+        workspaceId: resource.workspaceId,
+        resourceId: resource.resourceId,
+        generation: resourceSelectionGeneration.current,
+      });
+    }
+  }, [deletion.checkingStatus, deletion.status?.status, detail?.contextDocument?.status,
+    deletionStateMatchesResource, resource.resourceId, resource.workspaceId]);
+
+  useEffect(() => {
+    if (!contextDocumentDeletionNeedsPolling(deletion.status)) return;
+    const scope = deletion.scope;
+    let cancelled = false;
+    let timer: number | undefined;
+    let latestStatus = deletion.status;
+    const poll = async () => {
+      if (cancelled || !deletionScopeIsCurrent(scope)) return;
+      const sequence = ++deletionStatusReadSequence.current;
+      dispatchDeletion({ type: "statusStarted", scope, sequence });
+      try {
+        const value = await invoke<unknown>("get_context_document_deletion_status", {
+          workspaceId: scope.workspaceId,
+          resourceId: scope.resourceId,
+        });
+        const status = decodeContextDocumentDeletionStatus(value, scope.resourceId);
+        if (!cancelled && sequence === deletionStatusReadSequence.current && deletionScopeIsCurrent(scope)) {
+          latestStatus = status;
+          dispatchDeletion({ type: "statusReceived", scope, sequence, status });
+          await refreshDeletionResourceDetail(scope, status);
+        }
+      } catch (cause) {
+        if (!cancelled && sequence === deletionStatusReadSequence.current && deletionScopeIsCurrent(scope)) {
+          dispatchDeletion({ type: "statusFailed", scope, sequence, error: messageOf(cause, "ContextDocument deletion status could not be read.") });
+        }
+      }
+      if (!cancelled && contextDocumentDeletionNeedsPolling(latestStatus)) {
+        timer = window.setTimeout(() => void poll(), 1500);
+      }
+    };
+    timer = window.setTimeout(() => void poll(), 1500);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [deletion.status, deletion.scope, resource.resourceId, resource.workspaceId]);
 
   const openTextEditor = async () => {
     if (!detail?.currentRevisionId || !isCurrentTextEditable || statusRequest !== null) return;
@@ -767,7 +1009,7 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
   >
     <header className="resource-revision-header">
       <div><p className="eyebrow">RESOURCE HISTORY</p><h2 id="resource-revision-title">{resource.displayName}</h2><p>Each save creates a new immutable revision.</p></div>
-      <button className="quiet-button" type="button" onClick={requestClose} disabled={busy || statusBusy || statusRequest !== null}>{hasUnsavedDraft ? "Close editor…" : "Close"}</button>
+      <button className="quiet-button" type="button" onClick={requestClose} disabled={operationPending}>{hasUnsavedDraft ? "Close editor…" : "Close"}</button>
     </header>
     {pendingNavigation && <div className="resource-discard-backdrop">
       <section className="resource-discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="resource-navigation-title" aria-describedby="resource-navigation-description" onKeyDown={(event) => {
@@ -840,6 +1082,34 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
         </div>
       </section>
     </div>}
+    {deletionConfirmation && <div className="resource-discard-backdrop">
+      <section className="resource-discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="resource-deletion-confirm-title" aria-describedby="resource-deletion-confirm-description" onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setDeletionConfirmation(false);
+          return;
+        }
+        if (event.key !== "Tab") return;
+        const controls = event.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled)");
+        const first = controls.item(0);
+        const last = controls.item(controls.length - 1);
+        if (!first || !last) return;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}>
+        <h3 id="resource-deletion-confirm-title">Permanently delete local content?</h3>
+        <p id="resource-deletion-confirm-description">LiteCowork will permanently remove this Resource’s content bytes from encrypted local storage and its Core-managed derived indexes. Any in-progress revision uploads for this Resource will expire, and their staged chunks will be removed. Resource and revision identities and digest metadata remain for provenance. The request is rejected if any revision has an external or provider-backed location. Content already delivered to an active native agent session cannot be recalled, and this action does not stop that session.</p>
+        <div className="resource-discard-actions">
+          <button className="quiet-button" type="button" onClick={() => setDeletionConfirmation(false)}>Cancel</button>
+          <button ref={deletionConfirmRef} className="primary-button resource-context-delete-confirm" type="button" onClick={beginContextDocumentDeletion}>Permanently delete local content</button>
+        </div>
+      </section>
+    </div>}
     {loading && !detail ? <p className="inline-status" role="status">Loading Resource metadata…</p> : null}
     {error && <p className="inline-error" role="alert">{error}</p>}
     {message && <p className="inline-status" role="status">{message}</p>}
@@ -848,7 +1118,7 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
         <span><strong>Kind</strong>{detail.kind}</span>
         <span><strong>Resource version</strong>{detail.version}</span>
         <span><strong>Current revision</strong>{detail.currentRevisionId ?? "Conflicted or unavailable"}</span>
-        <span><strong>Context status</strong>{context?.status ?? "Not a ContextDocument"}</span>
+        <span><strong>Context status</strong>{contextStatus ?? "Not a ContextDocument"}</span>
       </div>
       <section className="resource-location-observations" aria-labelledby="resource-location-observations-title">
         <div className="section-heading">
@@ -886,8 +1156,8 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
       </section>
       {context ? <p className="resource-context-owner">{context.kind} · owner-authored ContextDocument</p> : <p className="inline-status">Revision editing is available only for owner-authored ContextDocuments.</p>}
       {context && <section className="resource-context-status" aria-labelledby="resource-context-status-title">
-        <div><h3 id="resource-context-status-title">Context availability</h3><p>Current status: <strong>{context.status}</strong></p></div>
-        {context.status === "ACTIVE" || context.status === "REVOKED" ? <>
+        <div><h3 id="resource-context-status-title">Context availability</h3><p>Current status: <strong>{contextStatus}</strong></p></div>
+        {contextStatus === "ACTIVE" || contextStatus === "REVOKED" ? <>
           <p>Revoking blocks future LiteCowork content reads and index updates, but retains the stored bytes. It cannot recall content already delivered to an agent session.</p>
           {hasUnsavedDraft && <p>Save or discard the local revision draft before changing ContextDocument availability.</p>}
           {statusRequest && !statusError && <p role="status">Waiting for the previous status request to resolve. Editing and closing are paused so its result can be confirmed or retried safely.</p>}
@@ -897,11 +1167,43 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
             : statusConfirmation
               ? <div className="resource-context-status-confirm"><p>{statusConfirmation === "REVOKED"
                 ? "Revoke future reads? The retained content will remain stored; already-delivered content cannot be recalled."
-                : "Restore future reads? This allows new LiteCowork reads of the retained content."}</p><button className="primary-button" type="button" disabled={statusBusy || busy || hasUnsavedDraft || statusRequest !== null} onClick={() => beginContextStatusChange(statusConfirmation)}>{statusBusy ? "Updating…" : statusConfirmation === "REVOKED" ? "Confirm revocation" : "Confirm restoration"}</button><button className="quiet-button" type="button" disabled={statusBusy || busy || statusRequest !== null} onClick={() => setStatusConfirmation(null)}>Cancel</button></div>
-              : <button className="quiet-button" type="button" disabled={statusBusy || busy || hasUnsavedDraft || statusRequest !== null} onClick={() => setStatusConfirmation(context.status === "ACTIVE" ? "REVOKED" : "ACTIVE")}>{context.status === "ACTIVE" ? "Revoke future reads…" : "Restore future reads…"}</button>}
+                : "Restore future reads? This allows new LiteCowork reads of the retained content."}</p><button className="primary-button" type="button" disabled={statusBusy || busy || hasUnsavedDraft || statusRequest !== null || deletion.busy || deletion.request !== null} onClick={() => beginContextStatusChange(statusConfirmation)}>{statusBusy ? "Updating…" : statusConfirmation === "REVOKED" ? "Confirm revocation" : "Confirm restoration"}</button><button className="quiet-button" type="button" disabled={statusBusy || busy || statusRequest !== null || deletion.busy || deletion.request !== null} onClick={() => setStatusConfirmation(null)}>Cancel</button></div>
+              : <button className="quiet-button" type="button" disabled={statusBusy || busy || hasUnsavedDraft || statusRequest !== null || deletion.busy || deletion.request !== null} onClick={() => setStatusConfirmation(contextStatus === "ACTIVE" ? "REVOKED" : "ACTIVE")}>{contextStatus === "ACTIVE" ? "Revoke future reads…" : "Restore future reads…"}</button>}
         </> : <p>This status is managed by the deletion lifecycle. Owner status changes are unavailable here.</p>}
       </section>}
-      {context && context.status !== "ACTIVE" && <p className="inline-status">This ContextDocument is {context.status.toLowerCase()}. Revision editing is unavailable.</p>}
+      {context && contextStatus !== "ACTIVE" && <p className="inline-status">This ContextDocument is {contextStatus?.toLowerCase()}. Revision editing is unavailable.</p>}
+      {canDeleteContextDocument && <section ref={deletionPanelRef} tabIndex={-1} className="resource-context-deletion" aria-labelledby="resource-context-deletion-title">
+        <div><h3 id="resource-context-deletion-title">Permanent local deletion</h3>
+          <p>This removes Core-managed local content and derived index objects. Resource and revision identity metadata remains for provenance. Already-delivered content cannot be recalled from a native agent session.</p>
+        </div>
+        {deletion.error && <p className="inline-error" role="alert">{deletion.error}</p>}
+        {contextStatus === "ACTIVE" || contextStatus === "REVOKED" ? <>
+          {hasUnsavedDraft && <p>Save or discard this local revision draft before requesting deletion.</p>}
+          {deletion.request && !deletion.error && <p role="status">Waiting for the deletion request to resolve. The exact request identity is retained so a retry cannot create a duplicate.</p>}
+          <div className="resource-context-deletion-actions">
+            {deletion.request && deletion.error ? <>
+              <button className="quiet-button" type="button" disabled={deletion.busy || deletion.checkingStatus} onClick={() => void commitContextDocumentDeletion(deletion.request!)}>{deletion.busy ? "Retrying…" : "Retry the same deletion request"}</button>
+              <button className="quiet-button" type="button" disabled={deletion.checkingStatus} onClick={() => void readDeletionStatus(deletion.scope)}>{deletion.checkingStatus ? "Checking…" : "Check deletion status"}</button>
+            </> : <button ref={deletionTriggerRef} className="quiet-button" type="button" disabled={operationPending || hasUnsavedDraft || statusRequest !== null} onClick={() => setDeletionConfirmation(true)}>
+              {deletion.busy ? "Requesting deletion…" : "Delete local content…"}
+            </button>}
+          </div>
+          {deletion.checkingStatus && <p className="inline-status" role="status">Checking the durable ContextDocument deletion status…</p>}
+        </> : contextStatus === "DELETION_PENDING" ? <>
+          <p className="inline-status" role="status">{deletion.status ? contextDocumentDeletionProgress(deletion.status) : "Deletion is pending. Checking durable removal receipts…"}</p>
+          {deletion.checkingStatus && <p className="inline-status" role="status">Checking the durable ContextDocument deletion status…</p>}
+          {deletion.error && <button className="quiet-button" type="button" disabled={deletion.checkingStatus} onClick={() => void readDeletionStatus(deletion.scope)}>{deletion.checkingStatus ? "Checking…" : "Retry status check"}</button>}
+        </> : contextStatus === "DELETED" ? <>
+          <p className="inline-status" role="status">Deletion is complete. The local encrypted content has been removed; Resource and revision metadata remains for provenance. Content already delivered to an active native agent session cannot be recalled.</p>
+          {terminalDeletionDetailRefreshPending && <>
+            <p className="inline-error" role="alert">Deletion is confirmed, but Resource details have not refreshed. The version shown is from the last successful read.</p>
+            <button className="quiet-button" type="button" disabled={loading} onClick={() => deletion.status && void refreshDeletionResourceDetail(deletion.scope, deletion.status)}>
+              {loading ? "Refreshing Resource details…" : "Retry Resource detail refresh"}
+            </button>
+          </>}
+        </>
+          : <p className="inline-status">Deletion status is unavailable.</p>}
+      </section>}
       {uploadRecovery && <section className="resource-upload-recovery" aria-labelledby="resource-upload-recovery-title">
         <div><h3 id="resource-upload-recovery-title">Interrupted revision upload</h3>
           <p>{recoveryMatchesCurrentHead
@@ -915,8 +1217,8 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
           setMessage("Local resume details cleared. The incomplete server upload remains until its normal expiry; no Resource revision was removed.");
         }}>Forget resume details</button>
       </section>}
-      {context?.status === "ACTIVE" && !detail.currentRevisionId && <p className="inline-status">This Resource has conflicting or unavailable revision heads. Resolve the conflict before editing; this screen will not select a branch for you.</p>}
-      {context?.status === "ACTIVE" && rebaseRequired && <section className="resource-rebase-review" aria-labelledby="resource-rebase-title">
+      {contextStatus === "ACTIVE" && !detail.currentRevisionId && <p className="inline-status">This Resource has conflicting or unavailable revision heads. Resolve the conflict before editing; this screen will not select a branch for you.</p>}
+      {contextStatus === "ACTIVE" && rebaseRequired && <section className="resource-rebase-review" aria-labelledby="resource-rebase-title">
         <h3 id="resource-rebase-title">The Resource changed before this revision was saved</h3>
         <p>Your exact local draft and original text baseline are preserved. Review Resource version {detail.version}, current head {detail.currentRevisionId ?? "unavailable or conflicted"}, and the revision history below. This action does not merge; it authorizes your complete draft as the next revision on the current head.</p>
         {rebaseReloadPending && <p role="status">Refreshing current Resource metadata before any rebase can be authorized…</p>}
@@ -928,7 +1230,7 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
         {!rebaseReloadPending && detail.currentRevisionId && <button className="quiet-button" type="button" disabled={!hasUnsavedDraft || statusRequest !== null} onClick={approveRebase}>{rebaseIsApproved ? "Draft authorized for this head" : "I reviewed this head; use my draft as the next revision"}</button>}
         {!rebaseReloadPending && !detail.currentRevisionId && <p role="alert">The Resource has no single current head. The draft remains local; this editor will not choose or merge branches.</p>}
       </section>}
-      {context?.status === "ACTIVE" && detail.currentRevisionId && <div className="resource-revision-edit">
+      {contextStatus === "ACTIVE" && detail.currentRevisionId && <div className="resource-revision-edit">
         <h3>Create a revision</h3>
         <p>New uploads are pinned to Resource version {detail.version} and current head {detail.currentRevisionId}. A concurrent change blocks commit.</p>
         <label className="resource-revision-file">{uploadRecovery ? "Choose the original file to resume this revision upload" : "Choose a revised local file"}

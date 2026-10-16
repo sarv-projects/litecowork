@@ -64,6 +64,237 @@ fn shared_idempotency_key_bound_is_200_printable_ascii_bytes() {
 }
 
 #[test]
+fn workspace_root_status_receipt_replays_exact_payload_and_rejects_key_reuse() {
+    use storage_core::{
+        AggregateStateRef, BlobRef, CommittedWorkspaceRootStatus, DomainEvent,
+        WorkspaceCreateRequest, WorkspaceRootRecord,
+    };
+
+    let connection = Connection::open_in_memory().expect("in-memory SQLite");
+    connection
+        .execute_batch(
+            "CREATE TABLE request_dedup(
+               principal_id TEXT NOT NULL,
+               request_id TEXT NOT NULL,
+               request_digest TEXT NOT NULL,
+               response_json TEXT,
+               response_digest TEXT,
+               created_at TEXT NOT NULL,
+               expires_at TEXT,
+               PRIMARY KEY(principal_id, request_id)
+             );",
+        )
+        .expect("idempotency receipt fixture");
+
+    let request_payload = json!({
+        "operation": "workspace.root.pause.v1",
+        "workspace_id": "workspace-root-receipt",
+        "workspace_root_id": "root-receipt",
+        "expected_version": 1,
+    });
+    let committed = CommittedWorkspaceRootStatus {
+        root: WorkspaceRootRecord {
+            workspace_root_id: "root-receipt".to_owned(),
+            workspace_id: "workspace-root-receipt".to_owned(),
+            resource_id: "resource-root-receipt".to_owned(),
+            location_id: "location-root-receipt".to_owned(),
+            display_name: "root".to_owned(),
+            watch_policy: "METADATA".to_owned(),
+            replication_policy: "NONE".to_owned(),
+            status: "PAUSED".to_owned(),
+            added_by: json!({"kind":"USER","principal_id":"owner"}),
+            created_at: "2026-10-15T10:00:00Z".to_owned(),
+            updated_at: "2026-10-15T10:01:00Z".to_owned(),
+            version: 2,
+        },
+        location_availability: Some("AVAILABLE".to_owned()),
+        event: DomainEvent {
+            event_id: "event-root-receipt".to_owned(),
+            workspace_id: "workspace-root-receipt".to_owned(),
+            entity_type: "WorkspaceRoot".to_owned(),
+            entity_id: "root-receipt".to_owned(),
+            origin_runtime_id: "runtime-root-receipt".to_owned(),
+            origin_sequence: 1,
+            entity_revision: 2,
+            hlc_timestamp: "2026-10-15T10:01:00Z".to_owned(),
+            correlation_id: "correlation-root-receipt".to_owned(),
+            causation_id: None,
+            schema_version: 1,
+            event_type: "workspace.root.status.changed.v1".to_owned(),
+            payload: json!({"workspace_root_id":"root-receipt","from":"ACTIVE","to":"PAUSED","reason_code":"USER_PAUSED","aggregate_version":2}),
+            aggregate_state_ref: AggregateStateRef {
+                blob: BlobRef {
+                    digest: format!("sha256:{}", "a".repeat(64)),
+                    size_bytes: 1,
+                    media_type: "application/vnd.litecowork.workspace-root+json".to_owned(),
+                },
+                entity_revision: 2,
+                record_schema_version: 1,
+            },
+            recorded_at: "2026-10-15T10:01:00Z".to_owned(),
+            payload_digest: format!("sha256:{}", "b".repeat(64)),
+        },
+    };
+    let response_json = String::from_utf8(canonical_json(&committed).expect("canonical response"))
+        .expect("response JSON is UTF-8");
+    connection
+        .execute(
+            "INSERT INTO request_dedup(
+               principal_id, request_id, request_digest, response_json,
+               response_digest, created_at, expires_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+            rusqlite::params![
+                "owner",
+                "root-status-key",
+                digest(&canonical_json(&request_payload).expect("canonical request")),
+                response_json,
+                digest(response_json.as_bytes()),
+                "2026-10-15T10:01:00Z",
+            ],
+        )
+        .expect("committed receipt fixture");
+
+    let request = WorkspaceCreateRequest {
+        principal_id: "owner".to_owned(),
+        request_id: "root-status-key".to_owned(),
+        request_payload: request_payload.clone(),
+    };
+    assert_eq!(
+        get_workspace_root_status_receipt(&connection, &request)
+            .expect("exact payload replays")
+            .expect("receipt exists"),
+        committed,
+    );
+
+    let changed_request = WorkspaceCreateRequest {
+        request_payload: json!({
+            "operation": "workspace.root.pause.v1",
+            "workspace_id": "workspace-root-receipt",
+            "workspace_root_id": "root-receipt",
+            "expected_version": 2,
+        }),
+        ..request
+    };
+    let error = get_workspace_root_status_receipt(&connection, &changed_request)
+        .expect_err("changed payload cannot replay the receipt");
+    assert_eq!(
+        error.to_string(),
+        "idempotency key was reused with a different request payload"
+    );
+}
+
+#[test]
+fn workspace_root_status_transaction_rejects_changed_digest_at_commit_boundary() {
+    use storage_core::{
+        AggregateStateRef, BlobRef, EventDraft, WorkspaceCreateRequest, WorkspaceRootRecord,
+        WorkspaceRootStatusAction, WorkspaceRootStatusCommit,
+    };
+
+    let mut connection = Connection::open_in_memory().expect("in-memory SQLite");
+    connection
+        .execute_batch(
+            "CREATE TABLE request_dedup(
+               principal_id TEXT NOT NULL,
+               request_id TEXT NOT NULL,
+               request_digest TEXT NOT NULL,
+               response_json TEXT,
+               response_digest TEXT,
+               created_at TEXT NOT NULL,
+               expires_at TEXT,
+               PRIMARY KEY(principal_id, request_id)
+             );",
+        )
+        .expect("idempotency receipt fixture");
+
+    let request_payload = json!({
+        "operation": "workspace.root.pause.v1",
+        "workspace_id": "workspace-root-transaction-receipt",
+        "workspace_root_id": "root-transaction-receipt",
+        "expected_version": 1,
+    });
+    let prior_payload = json!({
+        "operation": "workspace.root.pause.v1",
+        "workspace_id": "workspace-root-transaction-receipt",
+        "workspace_root_id": "root-transaction-receipt",
+        "expected_version": 2,
+    });
+    connection
+        .execute(
+            "INSERT INTO request_dedup(
+               principal_id, request_id, request_digest, response_json,
+               response_digest, created_at, expires_at
+             ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, NULL)",
+            rusqlite::params![
+                "owner",
+                "root-status-transaction-key",
+                digest(&canonical_json(&prior_payload).expect("canonical prior request")),
+                "2026-10-15T10:01:00Z",
+            ],
+        )
+        .expect("seed the concurrent request's receipt");
+
+    let commit = WorkspaceRootStatusCommit {
+        request: WorkspaceCreateRequest {
+            principal_id: "owner".to_owned(),
+            request_id: "root-status-transaction-key".to_owned(),
+            request_payload,
+        },
+        expected_version: 1,
+        action: WorkspaceRootStatusAction::Pause,
+        runtime_id: None,
+        runtime_incarnation_id: None,
+        root: WorkspaceRootRecord {
+            workspace_root_id: "root-transaction-receipt".to_owned(),
+            workspace_id: "workspace-root-transaction-receipt".to_owned(),
+            resource_id: "resource-transaction-receipt".to_owned(),
+            location_id: "location-transaction-receipt".to_owned(),
+            display_name: "root".to_owned(),
+            watch_policy: "METADATA".to_owned(),
+            replication_policy: "NONE".to_owned(),
+            status: "PAUSED".to_owned(),
+            added_by: json!({"kind":"USER","principal_id":"owner"}),
+            created_at: "2026-10-15T10:00:00Z".to_owned(),
+            updated_at: "2026-10-15T10:01:00Z".to_owned(),
+            version: 2,
+        },
+        event: EventDraft {
+            event_id: "event-root-transaction-receipt".to_owned(),
+            workspace_id: "workspace-root-transaction-receipt".to_owned(),
+            entity_type: "WorkspaceRoot".to_owned(),
+            entity_id: "root-transaction-receipt".to_owned(),
+            origin_runtime_id: "runtime-root-transaction-receipt".to_owned(),
+            entity_revision: 2,
+            hlc_timestamp: "2026-10-15T10:01:00Z".to_owned(),
+            correlation_id: "correlation-root-transaction-receipt".to_owned(),
+            causation_id: None,
+            schema_version: 1,
+            event_type: "workspace.root.status.changed.v1".to_owned(),
+            payload: json!({
+                "workspace_root_id": "root-transaction-receipt",
+                "from": "ACTIVE",
+                "to": "PAUSED",
+                "reason_code": "USER_PAUSED",
+                "aggregate_version": 2,
+            }),
+            recorded_at: "2026-10-15T10:01:00Z".to_owned(),
+        },
+    };
+    let root_state_ref = AggregateStateRef {
+        blob: BlobRef {
+            digest: format!("sha256:{}", "a".repeat(64)),
+            size_bytes: 1,
+            media_type: "application/vnd.litecowork.workspace-root+json".to_owned(),
+        },
+        entity_revision: 2,
+        record_schema_version: 1,
+    };
+
+    let error = update_workspace_root_status_transaction(&mut connection, commit, root_state_ref)
+        .expect_err("transactional receipt recheck rejects a changed request digest");
+    assert!(matches!(error, StoreError::IdempotencyConflict));
+}
+
+#[test]
 fn automation_occurrence_aggregate_version_is_not_claim_fencing() {
     let connection = Connection::open_in_memory().expect("in-memory SQLite");
     connection.execute_batch(

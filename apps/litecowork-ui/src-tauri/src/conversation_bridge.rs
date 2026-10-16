@@ -4,6 +4,16 @@ use std::io::Read;
 const MAX_CONVERSATION_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CONVERSATION_CURSOR_BYTES: usize = 2048;
 
+fn conversation_create_journal(
+    app: &AppHandle,
+) -> Result<super::conversation_create_journal::ConversationCreateJournal, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| "LiteCowork application data directory is unavailable".to_owned())?;
+    Ok(super::conversation_create_journal::ConversationCreateJournal::new(app_data_dir))
+}
+
 fn valid_id(value: &str) -> bool {
     !value.trim().is_empty()
         && value.len() <= 256
@@ -110,6 +120,47 @@ fn read_json(response: LocalOperatorResponse) -> Result<serde_json::Value, Strin
     Ok(value)
 }
 
+fn clear_pending_create(
+    journal: &super::conversation_create_journal::ConversationCreateJournal,
+    workspace_id: &str,
+    request_id: &str,
+) -> Result<(), String> {
+    journal
+        .acknowledge(workspace_id, request_id)
+        .map_err(|_| "Pending Conversation retry record could not be cleared".to_owned())
+}
+
+fn initialize_create_client<T>(
+    journal: &super::conversation_create_journal::ConversationCreateJournal,
+    workspace_id: &str,
+    request_id: &str,
+    initialize: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    match initialize() {
+        Ok(client) => Ok(client),
+        Err(error) => {
+            clear_pending_create(journal, workspace_id, request_id).map_err(|cleanup_error| {
+                format!("{error}; pending retry record could not be cleared: {cleanup_error}")
+            })?;
+            Err(error)
+        }
+    }
+}
+
+fn read_create_response(
+    response: LocalOperatorResponse,
+    journal: &super::conversation_create_journal::ConversationCreateJournal,
+    workspace_id: &str,
+    request_id: &str,
+) -> Result<serde_json::Value, String> {
+    let status = response.status();
+    let result = read_json(response);
+    if (400..500).contains(&status) {
+        clear_pending_create(journal, workspace_id, request_id)?;
+    }
+    result
+}
+
 #[tauri::command]
 pub(crate) async fn list_conversations(
     app: AppHandle,
@@ -155,6 +206,28 @@ pub(crate) async fn list_conversations(
 }
 
 #[tauri::command]
+pub(crate) async fn list_pending_conversation_creates(
+    app: AppHandle,
+) -> Result<Vec<super::conversation_create_journal::PendingConversationCreate>, String> {
+    tauri::async_runtime::spawn_blocking(move || conversation_create_journal(&app)?.list())
+        .await
+        .map_err(|_| "Pending Conversation requests could not be loaded".to_owned())?
+}
+
+#[tauri::command]
+pub(crate) async fn acknowledge_conversation_create(
+    app: AppHandle,
+    workspace_id: String,
+    request_id: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        conversation_create_journal(&app)?.acknowledge(&workspace_id, &request_id)
+    })
+    .await
+    .map_err(|_| "Conversation creation acknowledgement did not complete".to_owned())?
+}
+
+#[tauri::command]
 pub(crate) async fn create_conversation(
     app: AppHandle,
     workspace_id: String,
@@ -162,28 +235,31 @@ pub(crate) async fn create_conversation(
     request_id: String,
 ) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let title = super::conversation_create_journal::normalize_title(title)?;
         if !valid_id(&workspace_id)
-            || request_id.is_empty()
-            || request_id.len() > 200
-            || !request_id.bytes().all(|byte| byte.is_ascii_graphic())
-            || title.as_ref().is_some_and(|value| {
-                value.trim().is_empty()
-                    || value.chars().count() > 160
-                    || value.chars().any(char::is_control)
-            })
+            || !super::conversation_create_journal::valid_request_id(&request_id)
         {
             return Err("Conversation creation request is invalid".to_owned());
         }
-        let (client, _) = operator_client(&app)?;
-        let value = read_json(
-            client
-                .post("/v1/conversations")
-                .header("X-Workspace-ID", &workspace_id)
-                .header("Idempotency-Key", request_id)
-                .json(&serde_json::json!({"workspace_id":workspace_id,"title":title}))
-                .send()
-                .map_err(|_| "Local Conversation service is unavailable".to_owned())?,
+        let journal = conversation_create_journal(&app)?;
+        journal.record(
+            super::conversation_create_journal::PendingConversationCreate {
+                workspace_id: workspace_id.clone(),
+                title: title.clone(),
+                request_id: request_id.clone(),
+            },
         )?;
+        let (client, _) = initialize_create_client(&journal, &workspace_id, &request_id, || {
+            operator_client(&app)
+        })?;
+        let response = client
+            .post("/v1/conversations")
+            .header("X-Workspace-ID", &workspace_id)
+            .header("Idempotency-Key", &request_id)
+            .json(&serde_json::json!({"workspace_id":workspace_id,"title":title}))
+            .send()
+            .map_err(|_| "Local Conversation service is unavailable".to_owned())?;
+        let value = read_create_response(response, &journal, &workspace_id, &request_id)?;
         if value
             .get("workspace_id")
             .and_then(serde_json::Value::as_str)
@@ -364,5 +440,186 @@ mod conversation_cursor_tests {
         assert!(!valid_cursor("../another-workspace"));
         assert!(!valid_cursor("cursor=value"));
         assert!(!valid_cursor(&"a".repeat(2049)));
+    }
+}
+
+#[cfg(test)]
+mod create_recovery_tests {
+    use super::*;
+    use crate::conversation_create_journal::{
+        ConversationCreateJournal, PendingConversationCreate,
+    };
+    use operator_ipc::ResponseHeader;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "litecowork-conversation-bridge-{}-{}",
+                std::process::id(),
+                TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).expect("create unique temporary directory");
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn pending() -> PendingConversationCreate {
+        PendingConversationCreate {
+            workspace_id: "workspace-1".to_owned(),
+            title: Some("Draft".to_owned()),
+            request_id: "request-1".to_owned(),
+        }
+    }
+
+    fn local_response(status: u16, body: &str) -> LocalOperatorResponse {
+        let budget = InFlightBodyBudget::new(body.len().max(1)).expect("create response budget");
+        let frame = ResponseFrame::new(
+            ResponseHeader {
+                protocol_version: PROTOCOL_VERSION,
+                request_id: "test-response".to_owned(),
+                status,
+                headers: Vec::new(),
+                body_length: body.len() as u64,
+            },
+            body.as_bytes().to_vec(),
+            &budget,
+        )
+        .expect("construct bounded local response");
+        let (header, body) = frame.into_parts();
+        LocalOperatorResponse {
+            status: header.status,
+            headers: header.headers,
+            body,
+            body_offset: 0,
+        }
+    }
+
+    #[test]
+    fn confirmed_client_rejection_clears_only_the_exact_pending_request() {
+        let directory = TestDirectory::new();
+        let journal = ConversationCreateJournal::new(directory.path());
+        let rejected = pending();
+        let other = PendingConversationCreate {
+            workspace_id: "workspace-2".to_owned(),
+            title: Some("Draft".to_owned()),
+            request_id: "request-2".to_owned(),
+        };
+        journal
+            .record(rejected.clone())
+            .expect("pending rejected request");
+        journal
+            .record(other.clone())
+            .expect("unrelated pending request");
+
+        let error = read_create_response(
+            local_response(422, r#"{"error":{"message":"title rejected"}}"#),
+            &journal,
+            &rejected.workspace_id,
+            &rejected.request_id,
+        )
+        .expect_err("client rejection is returned to the UI");
+
+        assert_eq!(error, "title rejected");
+        assert_eq!(
+            journal.list().expect("unrelated entry remains"),
+            vec![other]
+        );
+    }
+
+    #[test]
+    fn server_failure_and_malformed_success_preserve_the_ambiguous_request() {
+        let directory = TestDirectory::new();
+        let journal = ConversationCreateJournal::new(directory.path());
+        let request = pending();
+        journal.record(request.clone()).expect("pending request");
+
+        let transport_failure: Result<LocalOperatorResponse, String> =
+            Err("connection closed after request send".to_owned());
+        assert!(transport_failure
+            .and_then(|response| {
+                read_create_response(
+                    response,
+                    &journal,
+                    &request.workspace_id,
+                    &request.request_id,
+                )
+            })
+            .is_err());
+        assert_eq!(
+            journal.list().expect("transport failure keeps request"),
+            vec![request.clone()]
+        );
+
+        assert!(read_create_response(
+            local_response(503, r#"{"error":{"message":"unavailable"}}"#),
+            &journal,
+            &request.workspace_id,
+            &request.request_id,
+        )
+        .is_err());
+        assert_eq!(
+            journal.list().expect("5xx keeps request"),
+            vec![request.clone()]
+        );
+
+        assert!(read_create_response(
+            local_response(200, "not-json"),
+            &journal,
+            &request.workspace_id,
+            &request.request_id,
+        )
+        .is_err());
+        assert_eq!(
+            journal.list().expect("malformed success keeps request"),
+            vec![request]
+        );
+    }
+
+    #[test]
+    fn local_operator_client_initialization_failure_clears_before_any_post() {
+        let directory = TestDirectory::new();
+        let journal = ConversationCreateJournal::new(directory.path());
+        let request = pending();
+        journal
+            .record(request.clone())
+            .expect("journal before client setup");
+        let mut post_started = false;
+
+        let initialized: Result<(), String> =
+            initialize_create_client(&journal, &request.workspace_id, &request.request_id, || {
+                Err("Local Operator initialization failed".to_owned())
+            });
+        if initialized.is_ok() {
+            post_started = true;
+        }
+
+        assert_eq!(
+            initialized.unwrap_err(),
+            "Local Operator initialization failed"
+        );
+        assert!(!post_started);
+        assert!(journal
+            .list()
+            .expect("preflight failure clears request")
+            .is_empty());
     }
 }

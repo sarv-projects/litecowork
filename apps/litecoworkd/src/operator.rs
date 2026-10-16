@@ -71,10 +71,10 @@ use storage_core::{
     LocalRuntimeWorkspaceBindingLookup, LocalRuntimeWorkspaceEnrollmentRequest, ReplicationPolicy,
     ResourceRecord, ResourceRevisionRecord, ResourceSearchRecord, ResourceStore, ResourceSummary,
     ResourceTextIndexRebuildRequest, ResourceTextMatchSpan, ResourceUploadChunkInput,
-    ResourceUploadContentRange, ResourceUploadSessionRecord, ResourceUploadState,
-    ResourceUploadStore, RuntimeIncarnationRecord, RuntimeLifecycleStore, RuntimeOfferRecord,
-    RuntimeWorkspaceBindingRecord, RuntimeWorkspaceBindingStore, StateStore, StoreError,
-    SuggestionTaskAcceptanceStore, TaskStore, TaskSummaryRecord, TaskView, Workspace,
+    ResourceUploadChunkReceiptRequest, ResourceUploadContentRange, ResourceUploadSessionRecord,
+    ResourceUploadState, ResourceUploadStore, RuntimeIncarnationRecord, RuntimeLifecycleStore,
+    RuntimeOfferRecord, RuntimeWorkspaceBindingRecord, RuntimeWorkspaceBindingStore, StateStore,
+    StoreError, SuggestionTaskAcceptanceStore, TaskStore, TaskSummaryRecord, TaskView, Workspace,
     WorkspaceCreateRequest, WorkspaceInstructionRevisionRecord, WorkspaceRootRecord,
     WorkspaceRootStatusAction,
 };
@@ -102,6 +102,8 @@ mod dependency_invalidations_operator;
 mod goal_operator;
 #[path = "needs_you_operator.rs"]
 mod needs_you_operator;
+#[path = "user_request_operator.rs"]
+mod user_request_operator;
 #[cfg(all(test, unix))]
 #[path = "operator_ipc_tests.rs"]
 mod operator_ipc_tests;
@@ -110,6 +112,9 @@ mod operator_ipc_tests;
 mod operator_runtime_binding_tests;
 #[path = "presentation_operator.rs"]
 mod presentation_operator;
+#[cfg(all(test, unix))]
+#[path = "resource_content_gc_operator_tests.rs"]
+mod resource_content_gc_operator_tests;
 #[path = "resource_dependencies_operator.rs"]
 mod resource_dependencies_operator;
 #[path = "routine_operator.rs"]
@@ -120,6 +125,11 @@ mod runtime_capability_hosts_operator;
 mod runtime_offers_operator;
 #[path = "suggestions_operator.rs"]
 mod suggestions_operator;
+#[path = "workspace_root_scan_operator.rs"]
+mod workspace_root_scan_operator;
+#[cfg(all(test, unix))]
+#[path = "workspace_root_selection_operator_tests.rs"]
+mod workspace_root_selection_operator_tests;
 #[path = "zip_intake_operator.rs"]
 mod zip_intake_operator;
 
@@ -1177,6 +1187,9 @@ impl OperatorServer {
     ) -> Result<Self, String> {
         #[cfg(any(unix, windows))]
         {
+            #[cfg(test)]
+            let test_failure_marker = std::env::var_os("LITECOWORK_TEST_OPERATOR_FAILURE_MARKER")
+                .map(std::path::PathBuf::from);
             let endpoint = OperatorIpcEndpoint::derive(data_directory, &runtime_identity)?;
             let (stream_shutdown_sender, stream_shutdown) = tokio::sync::watch::channel(false);
             let state = ApiState {
@@ -1232,10 +1245,18 @@ impl OperatorServer {
                     let mut listener_failed = false;
                     let mut expiry_tick = tokio::time::interval(std::time::Duration::from_secs(30));
                     expiry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                    #[cfg(test)]
+                    let test_failure = wait_for_test_operator_failure(test_failure_marker.as_deref());
+                    #[cfg(not(test))]
+                    let test_failure = std::future::pending::<()>();
+                    tokio::pin!(test_failure);
                     loop {
                         tokio::select! {
+                            _ = &mut test_failure => {
+                                listener_failed = true;
+                                break;
+                            }
                             _ = &mut shutdown_receiver => {
-                                let _ = stream_shutdown_sender.send(true);
                                 if let Some(Err(error)) = poll_ready_future(listener.accept()).await {
                                     listener_failed |= error == OperatorAcceptError::Failed;
                                 }
@@ -1276,6 +1297,7 @@ impl OperatorServer {
                             }
                         }
                     }
+                    let _ = stream_shutdown_sender.send(true);
                     drop(listener);
                     let _ = admission_stopped_sender.send(());
                     drain_operator_workers(
@@ -1346,6 +1368,10 @@ impl OperatorServer {
         Ok(())
     }
 
+    pub fn endpoint_finished(&self) -> bool {
+        self.thread.as_ref().is_some_and(JoinHandle::is_finished)
+    }
+
     fn shutdown_server(&mut self) -> Result<(), String> {
         let admission_result = self.stop_admission();
         let thread_result = self.thread.take().map_or(Ok(()), |thread| {
@@ -1359,6 +1385,20 @@ impl OperatorServer {
             }
         });
         admission_result.and(thread_result)
+    }
+}
+
+#[cfg(test)]
+async fn wait_for_test_operator_failure(marker: Option<&FsPath>) {
+    let Some(marker) = marker else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    loop {
+        if marker.exists() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }
 
@@ -1427,6 +1467,7 @@ fn build_operator_router(state: ApiState) -> Router {
     let resource_dependencies_state =
         resource_dependencies_operator::ResourceDependenciesApiState::from_ref(&state);
     let needs_you_state = needs_you_operator::NeedsYouApiState::from_ref(&state);
+    let user_request_state = user_request_operator::UserRequestApiState::from_ref(&state);
     Router::new()
         .merge(artifact_operator::routes())
         .merge(
@@ -1434,6 +1475,7 @@ fn build_operator_router(state: ApiState) -> Router {
         )
         .merge(resource_dependencies_operator::routes().with_state(resource_dependencies_state))
         .merge(needs_you_operator::routes().with_state(needs_you_state))
+        .merge(user_request_operator::routes().with_state(user_request_state))
         .merge(automation_operator::router())
         .merge(coworker_operator::routes())
         .merge(conversation_operator::routes())
@@ -1442,6 +1484,7 @@ fn build_operator_router(state: ApiState) -> Router {
         .merge(suggestions_operator::routes())
         .merge(presentation_operator::routes())
         .merge(routine_operator::routes())
+        .merge(workspace_root_scan_operator::routes())
         .merge(runtime_workspace_bindings_routes().with_state(runtime_workspace_bindings_state))
         .merge(workspace_instruction_routes().with_state(workspace_instruction_state))
         .merge(workspace_archive_routes().with_state(workspace_archive_state))
@@ -2048,9 +2091,7 @@ async fn create_resource(
             "Workspace is unavailable",
         )
     })?;
-    if !workspace.is_some_and(|workspace| {
-        workspace.owner_principal_id == state.principal_id && workspace.status == "ACTIVE"
-    }) {
+    if !workspace.is_some_and(|workspace| workspace.owner_principal_id == state.principal_id) {
         return Err(operator_error(
             StatusCode::FORBIDDEN,
             "FORBIDDEN",
@@ -2173,6 +2214,13 @@ async fn create_resource(
         )
     })?;
     let committed = result.map_err(|error| {
+        if matches!(&error, storage_core::StoreError::Invalid(message) if message == "archived Workspace is read-only") {
+            return operator_error(
+                StatusCode::CONFLICT,
+                "WORKSPACE_ARCHIVED",
+                "Archived Workspaces are read-only",
+            );
+        }
         if matches!(error, storage_core::StoreError::Conflict { .. }) {
             return operator_error(
                 StatusCode::CONFLICT,
@@ -2281,6 +2329,15 @@ async fn create_resource_upload(
         )
     })?
     .map_err(|error| match error {
+        storage_core::StoreError::Invalid(message)
+            if message == "an archived Workspace is read-only" =>
+        {
+            operator_error(
+                StatusCode::CONFLICT,
+                "WORKSPACE_ARCHIVED",
+                "Archived Workspaces are read-only",
+            )
+        }
         storage_core::StoreError::Invalid(_) => operator_error(
             StatusCode::BAD_REQUEST,
             "INVALID_ARGUMENT",
@@ -2313,14 +2370,7 @@ async fn create_resource_revision_upload(
     Json(body): Json<CreateResourceRevisionUploadBody>,
 ) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
-    let workspace = ensure_workspace_owner(&state, &workspace_id)?;
-    if workspace.status != "ACTIVE" {
-        return Err(operator_error(
-            StatusCode::CONFLICT,
-            "CONFLICT",
-            "Archived Workspaces are read-only",
-        ));
-    }
+    ensure_workspace_owner(&state, &workspace_id)?;
     let expected_resource_version = parse_if_match(&headers)?;
     let request_id = idempotency_key(&headers)?;
     let correlation_id = new_id("cor").map_err(|_| {
@@ -2381,6 +2431,15 @@ async fn create_resource_revision_upload(
         )
     })?
     .map_err(|error| match error {
+        storage_core::StoreError::Invalid(message)
+            if message == "an archived Workspace is read-only" =>
+        {
+            operator_error(
+                StatusCode::CONFLICT,
+                "WORKSPACE_ARCHIVED",
+                "Archived Workspaces are read-only",
+            )
+        }
         storage_core::StoreError::Invalid(_) => operator_error(
             StatusCode::BAD_REQUEST,
             "INVALID_ARGUMENT",
@@ -3129,7 +3188,10 @@ async fn expire_due_upload_sessions(state: &ApiState) {
     let sessions =
         match tokio::task::spawn_blocking(move || store.list_expired(&now_for_expiry, 100)).await {
             Ok(Ok(sessions)) => sessions,
-            _ => return,
+            _ => {
+                eprintln!("litecoworkd: expired upload-session scan deferred; it will retry");
+                Vec::new()
+            }
         };
     for session in sessions {
         let _ = expire_upload_if_due(state, session).await;
@@ -3139,8 +3201,9 @@ async fn expire_due_upload_sessions(state: &ApiState) {
     // transactions. The daemon process lock guarantees a single periodic collector;
     // durable DELETING fences let the next daemon incarnation retry after a crash.
     let store = state.store.clone();
+    let upload_gc_now = now.clone();
     let collected =
-        tokio::task::spawn_blocking(move || store.collect_orphan_chunks(&now, 100)).await;
+        tokio::task::spawn_blocking(move || store.collect_orphan_chunks(&upload_gc_now, 100)).await;
     if !matches!(collected, Ok(Ok(_))) {
         // Keep cleanup failure non-fatal. Any claimed object stays fenced and is retried
         // by the next bounded sweep; uploads and other Operator requests continue.
@@ -3205,13 +3268,6 @@ async fn put_resource_upload_chunk(
     }
     let workspace_id = selected_workspace(&headers)?;
     let workspace = ensure_workspace_owner(&state, &workspace_id)?;
-    if workspace.status != "ACTIVE" {
-        return Err(operator_error(
-            StatusCode::CONFLICT,
-            "CONFLICT",
-            "Archived Workspaces are read-only",
-        ));
-    }
     let request_id = idempotency_key(&headers)?;
     let content_range = headers
         .get(header::CONTENT_RANGE)
@@ -3273,6 +3329,40 @@ async fn put_resource_upload_chunk(
             StatusCode::NOT_FOUND,
             "NOT_FOUND",
             "Upload session is unavailable",
+        ));
+    }
+    let receipt_request = ResourceUploadChunkReceiptRequest {
+        workspace_id: workspace_id.clone(),
+        upload_id: upload_id.clone(),
+        request_id: request_id.to_owned(),
+        chunk_index,
+        content_range: ResourceUploadContentRange {
+            start_offset: content_range.0,
+            end_offset_inclusive: content_range.1,
+            total_size_bytes: content_range.2,
+        },
+        sha256: format!("sha256:{supplied_digest}"),
+    };
+    let store = state.store.clone();
+    let exact_receipt =
+        tokio::task::spawn_blocking(move || store.get_chunk_receipt(&receipt_request))
+            .await
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Upload receipt is unavailable",
+                )
+            })?
+            .map_err(upload_store_error)?;
+    if exact_receipt {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    if workspace.status != "ACTIVE" {
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "WORKSPACE_ARCHIVED",
+            "Archived Workspaces are read-only",
         ));
     }
     let received_at = time::OffsetDateTime::now_utc()
@@ -3357,52 +3447,47 @@ async fn commit_resource_upload(
 ) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
     let workspace = ensure_workspace_owner(&state, &workspace_id)?;
-    if workspace.status != "ACTIVE" {
-        return Err(operator_error(
-            StatusCode::CONFLICT,
-            "CONFLICT",
-            "Archived Workspaces are read-only",
-        ));
-    }
     let request_id = idempotency_key(&headers)?;
     let store = state.store.clone();
     let scoped_workspace = workspace_id.clone();
-    let session = tokio::task::spawn_blocking(move || store.get(&scoped_workspace, &upload_id))
-        .await
-        .map_err(|_| {
-            operator_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "INTERNAL",
-                "Upload session is unavailable",
-            )
-        })?
-        .map_err(upload_store_error)?
-        .ok_or_else(|| {
-            operator_error(
-                StatusCode::NOT_FOUND,
-                "NOT_FOUND",
-                "Upload session is unavailable",
-            )
-        })?;
-    let session = expire_upload_if_due(&state, session).await?;
-    if session.state == ResourceUploadState::Expired {
-        return Err(operator_error(
-            StatusCode::GONE,
-            "UPLOAD_EXPIRED",
-            "Upload session has expired",
-        ));
-    }
-    if session.state == ResourceUploadState::Failed {
-        return Err(operator_error(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "INTEGRITY_FAILURE",
-            "Upload content failed verification; start a new upload",
-        ));
-    }
-    if session.state == ResourceUploadState::Committed {
-        let committed = state.store.committed_resource_for_upload(&state.principal_id, &session.upload_id)
+    let scoped_upload_id = upload_id.clone();
+    let session =
+        tokio::task::spawn_blocking(move || store.get(&scoped_workspace, &scoped_upload_id))
+            .await
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL",
+                    "Upload session is unavailable",
+                )
+            })?
             .map_err(upload_store_error)?
-            .ok_or_else(|| operator_error(StatusCode::CONFLICT, "RESOURCE_CONFLICT", "The committed upload has no replayable receipt; review the Resource before retrying"))?;
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::NOT_FOUND,
+                    "NOT_FOUND",
+                    "Upload session is unavailable",
+                )
+            })?;
+    if session.state == ResourceUploadState::Committed {
+        let committed = state
+            .store
+            .resolve_commit_receipt(&state.principal_id, &request_id, &session)
+            .map_err(|error| match error {
+                storage_core::StoreError::IdempotencyConflict => operator_error(
+                    StatusCode::CONFLICT,
+                    "CONFLICT",
+                    "Idempotency-Key was reused with a different upload commit request",
+                ),
+                error => upload_store_error(error),
+            })?
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::CONFLICT,
+                    "RESOURCE_CONFLICT",
+                    "The committed upload has no replayable receipt; review the Resource before retrying",
+                )
+            })?;
         let correlation_id = committed.event.correlation_id.clone();
         let mut response = (
             StatusCode::CREATED,
@@ -3423,6 +3508,28 @@ async fn commit_resource_upload(
                 .insert(header::HeaderName::from_static("x-correlation-id"), value);
         }
         return Ok(response);
+    }
+    if workspace.status != "ACTIVE" {
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "WORKSPACE_ARCHIVED",
+            "Archived Workspaces are read-only",
+        ));
+    }
+    let session = expire_upload_if_due(&state, session).await?;
+    if session.state == ResourceUploadState::Expired {
+        return Err(operator_error(
+            StatusCode::GONE,
+            "UPLOAD_EXPIRED",
+            "Upload session has expired",
+        ));
+    }
+    if session.state == ResourceUploadState::Failed {
+        return Err(operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INTEGRITY_FAILURE",
+            "Upload content failed verification; start a new upload",
+        ));
     }
     let expected_digest = session.expected_digest.as_deref().ok_or_else(|| {
         operator_error(StatusCode::CONFLICT, "RESOURCE_CONFLICT", "This older upload has no whole-file digest and cannot be safely resumed or committed; start a new upload")
@@ -3635,17 +3742,19 @@ async fn commit_resource_upload(
     } else {
         None
     };
+    let store = state.store.clone();
+    let upload_id = session.upload_id.clone();
     let request = WorkspaceCreateRequest {
         principal_id: state.principal_id.clone(),
         request_id: request_id.to_owned(),
         request_payload: json!({"operation":"resource.upload.commit.v1", "upload_id":session.upload_id.clone()}),
     };
-    let store = state.store.clone();
-    let upload_id = session.upload_id.clone();
     let committed = tokio::task::spawn_blocking(move || store.commit(request, &upload_id, resource, revision, event, upload_status_event, upload_failure_event)).await
         .map_err(|_| operator_error(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL", "Resource commit did not complete"))?
         .map_err(|error| match error {
+            storage_core::StoreError::IdempotencyConflict => operator_error(StatusCode::CONFLICT, "CONFLICT", "Idempotency-Key was reused with a different upload commit request"),
             storage_core::StoreError::Conflict { .. } if revision_upload => operator_error(StatusCode::CONFLICT, "RESOURCE_CONFLICT", "Resource changed while the revision was uploading; start a new revision upload from current heads"),
+            storage_core::StoreError::Conflict { .. } => operator_error(StatusCode::CONFLICT, "RESOURCE_CONFLICT", "Resource commit conflicts with the current upload or Workspace state"),
             storage_core::StoreError::Invalid(message) if message.contains("ContextDocument is not active") => operator_error(StatusCode::CONFLICT, "CONTEXT_DOCUMENT_NOT_ACTIVE", "This ContextDocument is no longer active"),
             other => upload_store_error(other),
         })?;
@@ -4808,6 +4917,15 @@ fn upload_store_error(error: storage_core::StoreError) -> Response {
             "RESOURCE_CONFLICT",
             "An older upload is already committed, but its Resource mapping is unavailable. Review the Workspace before retrying; LiteCowork did not create another Resource.",
         ),
+        storage_core::StoreError::Invalid(message)
+            if message == "an archived Workspace is read-only" =>
+        {
+            operator_error(
+                StatusCode::CONFLICT,
+                "WORKSPACE_ARCHIVED",
+                "Archived Workspaces are read-only",
+            )
+        }
         storage_core::StoreError::Invalid(_) => operator_error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "INVALID_ARGUMENT",
@@ -4893,7 +5011,7 @@ async fn list_workspace_roots(
     State(state): State<ApiState>,
     headers: HeaderMap,
     Query(query): Query<WorkspaceRootListQuery>,
-) -> Result<Json<WorkspaceRootListResponse>, Response> {
+) -> Result<Response, Response> {
     let workspace_id = selected_workspace(&headers)?;
     let status = query.status.as_deref();
     if status.is_some_and(|value| !matches!(value, "ACTIVE" | "PAUSED" | "REVOKED" | "UNAVAILABLE"))
@@ -4958,7 +5076,11 @@ async fn list_workspace_roots(
     } else {
         None
     };
-    Ok(Json(WorkspaceRootListResponse { items, next_cursor }))
+    let mut response = Json(WorkspaceRootListResponse { items, next_cursor }).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
 }
 
 async fn revoke_workspace_root(
@@ -5049,6 +5171,7 @@ async fn change_workspace_root_status(
             expected_version,
             event,
         ).map_err(|error| match error {
+            crate::runtime::WorkspaceRootResumeError::IdempotencyConflict => operator_error(StatusCode::CONFLICT, "CONFLICT", "This idempotency key was already used for a different folder action."),
             crate::runtime::WorkspaceRootResumeError::Stale => operator_error(StatusCode::CONFLICT, "STALE_WORKSPACE_VERSION", "Folder state changed; refresh before retrying"),
             crate::runtime::WorkspaceRootResumeError::Unavailable => operator_error(StatusCode::CONFLICT, "RESOURCE_IDENTITY_UNAVAILABLE", "The saved folder could not be verified. Check the original folder or remove and add it again."),
             crate::runtime::WorkspaceRootResumeError::NotFound => operator_error(StatusCode::NOT_FOUND, "NOT_FOUND", "WorkspaceRoot is unavailable"),
@@ -5081,6 +5204,11 @@ async fn change_workspace_root_status(
             event,
         })
         .map_err(|error| match error {
+            StoreError::IdempotencyConflict => operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "This idempotency key was already used for a different folder action.",
+            ),
             StoreError::Conflict {
                 expected: Some(expected),
                 actual: Some(actual),
@@ -5818,14 +5946,34 @@ fn encode_resource_search_cursor(
     freshness: Option<&str>,
     summary: &ResourceSummary,
 ) -> Result<String, Response> {
+    encode_resource_search_cursor_position(
+        workspace_id,
+        query,
+        mode,
+        kind,
+        freshness,
+        &summary.created_at,
+        &summary.resource_id,
+    )
+}
+
+fn encode_resource_search_cursor_position(
+    workspace_id: &str,
+    query: Option<&str>,
+    mode: &str,
+    kind: Option<&str>,
+    freshness: Option<&str>,
+    created_at: &str,
+    resource_id: &str,
+) -> Result<String, Response> {
     let cursor = ResourceSearchCursor {
         workspace_id: workspace_id.to_owned(),
         query: query.map(str::to_owned),
         mode: mode.to_owned(),
         kind: kind.map(str::to_owned),
         freshness: freshness.map(str::to_owned),
-        created_at: summary.created_at.clone(),
-        resource_id: summary.resource_id.clone(),
+        created_at: created_at.to_owned(),
+        resource_id: resource_id.to_owned(),
     };
     serde_json::to_vec(&cursor)
         .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
@@ -6213,23 +6361,15 @@ async fn create_workspace_root_from_native_selection(
                 "Workspace is unavailable",
             )
         })?;
-    let Some(workspace) = workspace.filter(|workspace| {
+    if !workspace.is_some_and(|workspace| {
         workspace.owner_principal_id == state.principal_id && workspace.status == "ACTIVE"
-    }) else {
+    }) {
         return Err(operator_error(
             StatusCode::NOT_FOUND,
             "NOT_FOUND",
             "Workspace is unavailable",
         ));
     };
-    if workspace.version != request.expected_workspace_version {
-        return Err(operator_error(
-            StatusCode::CONFLICT,
-            "STALE_WORKSPACE_VERSION",
-            "Workspace changed; refresh it before adding a folder",
-        ));
-    }
-
     use std::os::unix::ffi::OsStringExt;
     let raw_path = URL_SAFE_NO_PAD
         .decode(request.selected_path_base64.as_bytes())
@@ -6280,6 +6420,7 @@ async fn create_workspace_root_from_native_selection(
     let locator_ref_id = idempotent_id("lr", &state.principal_id, request_id, "locator");
     let workspace_root_id =
         idempotent_id("wroot", &state.principal_id, request_id, "workspace-root");
+    let expected_workspace_version = request.expected_workspace_version;
     let file_identity_binding = identity.binding_record(
         location_id.clone(),
         state.runtime_id.clone(),
@@ -6308,6 +6449,14 @@ async fn create_workspace_root_from_native_selection(
             event: context,
         })
         .map_err(|error| match error {
+            StoreError::Conflict {
+                expected: Some(expected),
+                actual: Some(_),
+            } if expected == expected_workspace_version => operator_error(
+                StatusCode::CONFLICT,
+                "STALE_WORKSPACE_VERSION",
+                "Workspace changed; refresh it before adding a folder",
+            ),
             StoreError::Conflict { .. } => operator_error(
                 StatusCode::CONFLICT,
                 "CONFLICT",
@@ -6936,20 +7085,10 @@ async fn probe_local_agent_profile(
                 "Probe time could not be recorded",
             )
         })?;
-        let readiness = if !probe.host_process_stopped
-            || probe.readiness == crate::agents::ProbeReadiness::Failed
-        {
-            "UNAVAILABLE"
-        } else if probe.authentication == crate::agents::AuthenticationObservation::NeedsAuth {
-            "NEEDS_AUTH"
-        } else if probe.readiness == crate::agents::ProbeReadiness::Complete
-            && probe.authentication == crate::agents::AuthenticationObservation::Configured
-        {
-            "STARTABLE"
-        } else {
-            "UNAVAILABLE"
-        };
-        let compatible = readiness == "STARTABLE";
+        let crate::agents::RuntimeOfferAssessment {
+            compatible,
+            readiness,
+        } = crate::agents::codex_runtime_offer_assessment(&probe);
         let constraints = serde_json::to_value(&probe).map_err(|_| {
             operator_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -7213,6 +7352,13 @@ async fn create_agent_binding(
     headers: HeaderMap,
     Json(body): Json<CreateAgentBindingBody>,
 ) -> Result<Response, Response> {
+    if body.auth_ref.is_some() {
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "AgentBinding credentials require a declared credential slot",
+        ));
+    }
     let workspace_id = selected_workspace(&headers)?;
     if body.workspace_id != workspace_id {
         return Err(operator_error(
@@ -7874,6 +8020,15 @@ async fn update_workspace_policy(
             request_payload,
         )
         .map_err(|error| match error {
+            storage_core::StoreError::Invalid(message)
+                if message == "an archived Workspace is read-only" =>
+            {
+                operator_error(
+                    StatusCode::CONFLICT,
+                    "WORKSPACE_ARCHIVED",
+                    "Archived Workspaces are read-only",
+                )
+            }
             storage_core::StoreError::Invalid(_) => operator_error(
                 StatusCode::BAD_REQUEST,
                 "INVALID_ARGUMENT",
@@ -8158,6 +8313,43 @@ async fn create_workspace_instruction_revision(
             "Instructions must reference a pinned Resource in this Workspace",
         ));
     }
+    let request_payload = json!({
+        "operation": "workspace.instructions.revision.create.v1",
+        "workspace_id": workspace_id.clone(),
+        "expected_version": expected_version,
+        "parent_revisions": body.parent_revisions.clone(),
+        "content_ref": body.content_ref.clone(),
+        "content_digest": body.content_digest.clone(),
+    });
+    let prior = state
+        .store
+        .get_workspace_instruction_revision_receipt(
+            &state.principal_id,
+            request_id,
+            &request_payload,
+        )
+        .map_err(|error| match error {
+            storage_core::StoreError::Conflict { .. } => operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Idempotency-Key was reused with a different instruction request",
+            ),
+            _ => operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Workspace instruction receipt could not be read",
+            ),
+        })?;
+    if let Some(committed) = prior {
+        return Ok(workspace_instruction_revision_response(committed));
+    }
+    if workspace.status != "ACTIVE" {
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "WORKSPACE_ARCHIVED",
+            "Archived Workspaces cannot change instructions",
+        ));
+    }
     let resource_id = resource_id.unwrap_or_default();
     let content = state
         .store
@@ -8220,13 +8412,6 @@ async fn create_workspace_instruction_revision(
             "Instructions must be a pinned UTF-8 text Resource no larger than 64 KiB",
         ));
     }
-    if workspace.status != "ACTIVE" {
-        return Err(operator_error(
-            StatusCode::CONFLICT,
-            "WORKSPACE_ARCHIVED",
-            "Archived Workspaces cannot change instructions",
-        ));
-    }
     let correlation_id = new_id("cor").map_err(|_| {
         operator_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -8241,14 +8426,6 @@ async fn create_workspace_instruction_revision(
             "Workspace instruction request could not be initialized",
         )
     })?;
-    let request_payload = json!({
-        "operation": "workspace.instructions.revision.create.v1",
-        "workspace_id": workspace_id.clone(),
-        "expected_version": expected_version,
-        "parent_revisions": body.parent_revisions.clone(),
-        "content_ref": body.content_ref.clone(),
-        "content_digest": body.content_digest.clone(),
-    });
     let service = WorkspaceService::new(state.store.clone());
     let committed = service
         .create_instruction_revision_idempotent(
@@ -8294,13 +8471,19 @@ async fn create_workspace_instruction_revision(
                 "Workspace instructions could not be saved",
             ),
         })?;
+    Ok(workspace_instruction_revision_response(committed))
+}
+
+fn workspace_instruction_revision_response(
+    committed: storage_core::CommittedWorkspaceInstructionRevision,
+) -> Response {
     let mut response = (StatusCode::CREATED, Json(committed.instruction_revision)).into_response();
     if let Ok(value) = header::HeaderValue::from_str(&committed.event.correlation_id) {
         response
             .headers_mut()
             .insert(header::HeaderName::from_static("x-correlation-id"), value);
     }
-    Ok(response)
+    response
 }
 
 async fn list_workspace_instruction_revisions(

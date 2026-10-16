@@ -109,6 +109,12 @@ run_freshness_check \
   implementation/ARCHITECTURE-COVERAGE.md \
   implementation/coverage.csv -- \
   uv run --locked python scripts/validate_implementation_coverage.py --write
+# Coverage generation updates ARCHITECTURE-COVERAGE.md, which the Markdown
+# inventory hashes. Recheck the inventory after that dependency is regenerated.
+run_freshness_check \
+  implementation/V1-AUDIT-INVENTORY.md \
+  implementation/V1-MARKDOWN-INVENTORY.csv -- \
+  uv run --locked python scripts/audit_v1_markdown.py
 run_freshness_check \
   implementation/V1-DESIGN-DEPTH-AUDIT.md -- \
   uv run --locked python scripts/audit_v1_design_depth.py --strict --write

@@ -809,8 +809,8 @@ ResourceUploadService owns the session. A complete contiguous chunk set changes 
 CONTENT_RECEIVED. Commit verifies size, media policy, and the whole-object digest before
 creating a Resource and ResourceRevision; failed final verification is terminal and
 requires a new upload. Identical chunk replay is idempotent; a conflicting chunk range
-fails with UPLOAD_OFFSET_CONFLICT. Chunk metadata is local transfer state, not replicated
-or journaled as one event per chunk; only session creation and lifecycle transitions are
+fails with UPLOAD_OFFSET_CONFLICT. Chunk metadata is local transfer state, not cross-Runtime
+replication or one event per chunk; only session creation and lifecycle transitions are
 DomainEvents. The session's `version` advances only on lifecycle transitions and matches
 the aggregate revision in lifecycle events. `progress_version` advances on each newly
 accepted chunk and is used for concurrent chunk/expiry fencing; it is not a DomainEvent
@@ -818,6 +818,20 @@ revision. The final accepted chunk atomically advances both versions and emits
 OPEN -> CONTENT_RECEIVED. Commit atomically advances lifecycle `version`, creates the
 Resource, and emits CONTENT_RECEIVED -> COMMITTED. TTL expiry advances only lifecycle
 `version` and emits the current open state -> EXPIRED transition.
+
+When ContextDocument deletion is admitted, the Resource version check serializes against
+revision-upload session creation, chunk acceptance, and commit. In the same SQLite
+transaction as the tombstone and sealed purge plan, each linked revision-upload session in
+OPEN or CONTENT_RECEIVED transitions to EXPIRED with
+`reason_code=CONTEXT_DOCUMENT_DELETION`; accepted ResourceUploadChunk objects and
+outstanding durable chunk-blob reservations are grouped by temporary blob digest as exact
+`UPLOAD_CHUNK` targets, whose sorted
+`target_upload_chunk_refs` preserve `(upload_id, chunk_index)` identities. The session and
+chunk ledger metadata remain as non-resumable history. A concurrent chunk is either
+committed before admission and included in the sealed target set, or rejected after the
+tombstone commits. `DELETED` requires
+acknowledgement of every Resource, derived-index, and upload-chunk target; expiry by itself
+does not complete deletion.
 
 ## Artifact and ArtifactVersion
 
@@ -973,10 +987,11 @@ observation, search, exposure, and transfer eligibility must require an ACTIVE r
 pause/resume/revoke events use reason codes `USER_PAUSED`, `USER_RESUMED`, and
 `USER_REVOKED`. A resume transition requires a fresh proof that the saved directory still
 matches both identity bindings; a previously validated database row alone is not a fresh
-proof after a possible same-session path replacement. Current source checks the current-
-incarnation bindings but does not reopen the directory on the resume request, so this
-production safety condition remains unimplemented. Until then, consumers must perform
-their own no-follow identity check before accessing folder content. Resource changes append
+proof after a possible same-session path replacement. The current Resume path reopens the
+saved directory through no-follow handle traversal, compares its live identity with the
+prior authorized binding and keyed Resource identity, then atomically refreshes both private
+bindings for the current Runtime incarnation with the status transition. Exact receipt replay
+does not reopen the path. Resource changes append
 InvalidationRecords for dependent artifacts and verification projections. ArtifactStore
 and VerifierRunner create immutable DependencyEdges from exact pinned input ResourceRefs;
 DependencyService maintains/rebuilds the reverse index and appends invalidations when a
@@ -1024,14 +1039,30 @@ ACTIVE | REVOKED -> DELETION_PENDING -> DELETED
 
 ResourceService owns status transitions and event writes. Revocation immediately blocks
 future context resolution/attachment and new content-read admission while retaining the
-content; an already-admitted read may finish. `DELETION_PENDING` is a replicated tombstone
-that blocks all new content reads while Core-managed blobs/indexes are purged. Derived
+content; an already-admitted read may finish. Desktop V1 Workspaces are `LOCAL_ONLY`;
+`DELETION_PENDING` is a durable local tombstone that blocks all new content reads while
+Core-managed Resource blobs, upload-chunk objects, and indexes are purged. Derived
 state prepared from an in-flight read must recheck status in its final transaction and
-cannot commit after revocation/deletion. The purge reconciler records one immutable receipt per required replica and exact
-revision set; only after all required acknowledgements (and any provider-backed deletion
-confirmation) may ResourceService commit `DELETED`. A ContextDocument with no purge targets
-can complete only after the reconciler verifies that the owned replica inventory is empty.
-Historical Task/Evidence references retain IDs and digests, not access to deleted bytes.
+cannot commit after revocation/deletion. The current local deletion command fails closed
+before writing a tombstone if any exact Resource revision has an external/provider-backed
+location; its immutable plan contains only local managed Resource blobs, derived-index
+objects, and exact ResourceUploadChunk objects from linked in-progress revision uploads,
+including both accepted chunk ledger rows and outstanding durable blob reservations. The
+purge reconciler records one immutable receipt per target only after the
+exact local object is physically removed and its recovery-registry row is durably cleared.
+Failed or ambiguous removal keeps the receipt pending and the `DELETING` fence for retry.
+A ContextDocument with no local purge targets can complete only after the reconciler verifies
+that the owned local replica inventory is empty. A future qualified provider-backed path may
+add registered owned targets and require their adapter acknowledgements before `DELETED`.
+The planned V1 backup contract preserves the local tombstone, exact sealed plan, and receipt
+states so a restored Runtime can resume reconciliation; this is not a claim that backup is
+implemented. Current event payloads do not contain enough information to reconstruct a
+pending target manifest. Cross-Runtime replication is post-V1 and must add a reconstructible
+purge-intent transfer contract before it is enabled. Historical Task/Evidence references
+retain IDs and digests, not access to deleted bytes.
+This Resource state machine does not automatically invalidate an already-fed native
+AgentSession; session stop/replacement requires a separate qualified lifecycle path, and
+native history cannot be recalled.
 Concurrent content edits use the same Resource revision DAG and expected-version rules;
 status changes and revision appends serialize on the Resource version.
 

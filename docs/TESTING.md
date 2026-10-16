@@ -17,8 +17,9 @@ Task Runtime + storage + one agent adapter + one capability + one environment.
 ### Fault injection
 Kill processes, sever network, expire leases, corrupt provider responses, duplicate events, reorder event batches, expire secrets, fail blob uploads.
 
-### Cross-runtime
+### Post-V1 cross-runtime
 At least local + cloud runtime with real event/artifact replication and lease handoff.
+This is the E11 post-V1 qualification layer; it is not a desktop/local V1 release gate.
 
 ### Security
 Permission bypass attempts, stale execution/control fencing tokens, Gateway token replay
@@ -87,10 +88,10 @@ Kill worker mid-Task; replacement must continue from ResumePacket and complete.
 ### Gate 2 — heterogeneous delegation
 Lead agent delegates bounded child to different external agent; no shared full transcript; child result integrates and verifies.
 
-### Gate 3 — cloud
+### Post-V1 Gate 3 — cloud (E11)
 Local Task replicates; explicit handoff creates higher-epoch cloud Attempt; reconnect shows same final state. Kill local runtime mid-effect and prove no duplicate external action.
 
-### Gate 4 — channels
+### Post-V1 Gate 4 — channels (E11)
 Telegram/email creates/steers the same Conversation/Task; a reply to one delivered FORM
 UserRequest resolves only that exact request; sensitive approval and external sign-in stay
 on the stronger Operator surface. Reassign the ChannelBinding between Runtimes during a
@@ -105,6 +106,11 @@ is PROCESSING or any accepted RECEIVED receipt is unreplicated/unaccounted for; 
 pre-drain RECEIVED row can be claimed by the successor after reassignment; after proof, no
 late source receipt can appear before lease release. The successor replays and deduplicates
 any unacknowledged event, or the owner-confirmed gap is audited.
+
+Cloud continuation, Hub-hosted channel operation, and cross-Runtime handoff belong to the
+post-V1 E11 gate. Local desktop V1 still requires its local Task, security, automation,
+provider, restart, and owner-acceptance evidence; these post-V1 gates do not replace or
+relax the local gates.
 
 ### Gate 5 — automation
 Recurring trigger creates ordinary Task and deduplicates duplicate trigger delivery.

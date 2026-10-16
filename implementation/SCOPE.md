@@ -49,9 +49,14 @@ a revised coverage/release record.
 
 ## Coverage versus integration breadth
 
-Implement the complete framework/contract and prove representative providers per class.
-Claude, Codex, OpenCode and Cline each get qualification work; publish each one's actual
-capability matrix. Unsupported upstream features remain unavailable with an explanation.
+Implement the complete framework and module integration for every entry in the
+[owner-directed 15-agent local V1 portfolio](AGENT-PORTFOLIO-2026-10-16.md). This is an
+implementation and qualification target, not an empirically ranked popularity list or a
+claim of current support. E03-S06 tracks all entries as candidates; E03-S07–S10 apply to
+each roster entry; E03-S11 records evidence per exact agent, version, and operating
+system. Discovery, profile observation, module implementation, and protocol handshake
+remain distinct from qualified support. Unsupported capabilities stay unavailable with
+an explanation, and each exact combination's actual capability matrix is published.
 Never claim complete harness equivalence based on a chat completion test. The owner
 selects supported provider versions and target operating systems at the qualification gate.
 

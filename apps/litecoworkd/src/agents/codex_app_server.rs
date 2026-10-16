@@ -1234,3 +1234,138 @@ impl Write for BoundedBytes {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod initialize_validation_tests {
+    use super::*;
+
+    fn transport_with_initialize_response(result: Value) -> (CodexAppServer, Receiver<WriteJob>) {
+        let (outgoing, writes) = mpsc::sync_channel(4);
+        let (incoming_sender, incoming) = mpsc::sync_channel(1);
+        let value = json!({"id":1,"result":result});
+        let byte_count = value.to_string().len() + 1;
+        let retained = Arc::new(RetentionBudget {
+            wire_bytes: AtomicUsize::new(byte_count),
+            events: AtomicUsize::new(1),
+        });
+        incoming_sender
+            .send(IncomingMessage {
+                value,
+                permit: BytePermit {
+                    retained,
+                    bytes: byte_count,
+                },
+            })
+            .expect("enqueue initialize response");
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let lifecycle = LifecycleObservation(Arc::new(Mutex::new(LifecycleState {
+            initialized: false,
+            fault: None,
+            process: ProcessObservation::Running,
+            stop_requested: false,
+            next_rpc_deadline: Some(deadline),
+        })));
+        let server = CodexAppServer {
+            outgoing,
+            incoming,
+            lifecycle,
+            limits: TransportLimits::default(),
+            initialized: false,
+            next_id: 2,
+            pending: HashMap::from([(
+                RpcId(1),
+                PendingRpc {
+                    method: RpcMethod::Initialize,
+                    deadline,
+                },
+            )]),
+            server_requests: HashMap::new(),
+        };
+        (server, writes)
+    }
+
+    fn valid_initialize_response() -> Value {
+        json!({
+            "codexHome":"/private/codex-home",
+            "platformFamily":"unix",
+            "platformOs":"linux",
+            "userAgent":"codex/0.162.0"
+        })
+    }
+
+    #[test]
+    fn malformed_or_partial_initialize_never_acknowledges_or_admits_read_rpcs() {
+        let responses = [
+            json!({
+                "codexHome":"/SENTINEL_LOCAL_CODEX_HOME",
+                "platformFamily":"unix",
+                "platformOs":"linux"
+            }),
+            json!({
+                "codexHome":"/SENTINEL_LOCAL_CODEX_HOME",
+                "platformFamily":"unix",
+                "platformOs":"linux",
+                "userAgent":17
+            }),
+        ];
+
+        for response in responses {
+            let (mut server, writes) = transport_with_initialize_response(response);
+
+            assert!(matches!(
+                server.poll_event(),
+                Err(TransportError::InvalidMessage)
+            ));
+            assert!(!server.state().initialized);
+            assert_eq!(server.state().fault, Some(TransportError::InvalidMessage));
+            assert!(matches!(
+                server.account_read(),
+                Err(TransportError::InvalidMessage)
+            ));
+            assert!(matches!(
+                server.model_list(),
+                Err(TransportError::InvalidMessage)
+            ));
+            assert!(server.pending.is_empty());
+            assert!(matches!(writes.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        }
+    }
+
+    #[test]
+    fn valid_initialize_response_emits_exactly_one_initialized_notification() {
+        let (mut server, writes) = transport_with_initialize_response(valid_initialize_response());
+        let observed = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let writer_observed = Arc::clone(&observed);
+        let writer = thread::spawn(move || {
+            while let Ok(job) = writes.recv() {
+                writer_observed
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .push(serde_json::from_slice(&job.bytes).expect("decode outbound JSONL"));
+                job.ack.send(Ok(())).expect("acknowledge outbound JSONL");
+            }
+        });
+
+        let event = server
+            .poll_event()
+            .expect("valid initialize response is accepted")
+            .expect("initialize response is queued");
+        assert!(matches!(
+            event.kind(),
+            NativeEventKind::RpcResponse {
+                id: RpcId(1),
+                method: RpcMethod::Initialize,
+                ..
+            }
+        ));
+        assert!(server.state().initialized);
+        drop(event);
+        drop(server);
+        writer.join().expect("outbound writer exits");
+
+        let observed = observed.lock().unwrap_or_else(|error| error.into_inner());
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0]["method"], "initialized");
+    }
+}

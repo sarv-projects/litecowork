@@ -1,14 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { RichResponseView } from "../presentation/RichResponseView";
 import { parseRichPresentationResponse, type ValidatedRichPresentation } from "../presentation/rich-presentation";
-import { appendConversationListPage, appendConversationPage, ConversationCreateRequestCache, ConversationRequestEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
+import { appendConversationListPage, appendConversationPage, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
 import { ConversationStreamController, type ConversationStreamDriver, type StreamEnvelope } from "./conversation-stream";
+import { firstUseConversationGuidance } from "./first-use-guidance";
 import "./conversations-page.css";
 
 // Keep ambiguous create receipts across keyed Workspace page remounts for this app session.
 const pendingCreates = new ConversationCreateRequestCache();
+const conversationWorkspaceSelections = new ConversationWorkspaceSelectionEpochs();
 
 function messageText(message: ConversationMessageView): string {
   return message.content.map(block => block.kind === "TEXT" ? block.text : "Attachment").join("\n");
@@ -18,11 +20,12 @@ function semanticText(message: ConversationMessageView): string {
   return message.content.filter((block): block is { kind: "TEXT"; text: string } => block.kind === "TEXT").map(block => block.text).join("\n");
 }
 
-function ConversationMessageContent({ workspaceId, conversationId, message, autoLoadRich }: {
+function ConversationMessageContent({ workspaceId, conversationId, message, autoLoadRich, presentationEpoch }: {
   workspaceId: string;
   conversationId: string;
   message: ConversationMessageView;
   autoLoadRich: boolean;
+  presentationEpoch: number;
 }) {
   const element = useRef<HTMLDivElement | null>(null);
   const [requestedKey, setRequestedKey] = useState<string | null>(null);
@@ -33,7 +36,8 @@ function ConversationMessageContent({ workspaceId, conversationId, message, auto
   const presentationId = reference?.presentation_id ?? null;
   const semanticContentDigest = reference?.semantic_content_digest ?? null;
   const text = semanticText(message);
-  const cacheKey = richPresentationCacheKey(workspaceId, conversationId, message.message_id, reference);
+  const immutableCacheKey = richPresentationCacheKey(workspaceId, conversationId, message.message_id, reference);
+  const cacheKey = immutableCacheKey === null ? null : `${immutableCacheKey}\u0000${presentationEpoch}`;
   const requested = cacheKey !== null && requestedKey === cacheKey;
   const status = cacheKey === null || loadState?.key !== cacheKey ? "IDLE" : loadState.status;
   const presentation = cacheKey !== null && loadedPresentation?.key === cacheKey ? loadedPresentation.presentation : null;
@@ -112,35 +116,93 @@ function timeLabel(value: string): string {
   return Number.isNaN(date.getTime()) ? "Saved conversation" : date.toLocaleString();
 }
 
-export function ConversationsPage({ workspaceId, workspaceName, operatorReady }: { workspaceId: string; workspaceName: string; operatorReady: boolean }) {
+export function ConversationsPage({ workspaceId, workspaceName, operatorReady, draft, onDraftChange, onOpenAgentSettings }: {
+  workspaceId: string;
+  workspaceName: string;
+  operatorReady: boolean;
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onOpenAgentSettings: () => void;
+}) {
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [listCursor, setListCursor] = useState<string | null>(null);
   const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<ConversationSnapshotView | null>(null);
+  const [richPresentationEpochs, setRichPresentationEpochs] = useState<Map<string, number>>(() => new Map());
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
+  const [listStatus, setListStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
+  const [createJournalStatus, setCreateJournalStatus] = useState<"LOADING" | "READY" | "FAILED">("LOADING");
+  const [createJournalAttempt, setCreateJournalAttempt] = useState(0);
+  const [pendingCreateRequests, setPendingCreateRequests] = useState<PendingConversationCreate[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [createReceiptError, setCreateReceiptError] = useState<{ workspaceId: string; requestId: string; message: string } | null>(null);
   const [snapshotLoadedKey, setSnapshotLoadedKey] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<"CONNECTING" | "LIVE" | "RECONNECTING" | null>(null);
   const requests = useRef(new ConversationRequestEpochs());
   const activeListEpoch = useRef<number | null>(null);
   const activeSnapshotEpoch = useRef<number | null>(null);
+  const previousOperatorReady = useRef(operatorReady);
+  const preserveOnReconnect = useRef(false);
+  const snapshotLoadedKeyRef = useRef(snapshotLoadedKey);
+  snapshotLoadedKeyRef.current = snapshotLoadedKey;
   const mounted = useRef(false);
   const activeWorkspace = useRef(workspaceId);
   activeWorkspace.current = workspaceId;
   const selectionKey = workspaceId && selectedId ? `${workspaceId}\u0000${selectedId}` : null;
 
-  const refresh = useCallback(async () => {
+  useLayoutEffect(() => {
+    conversationWorkspaceSelections.select(workspaceId);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    if (!operatorReady || !workspaceId) {
+      setPendingCreateRequests([]);
+      setCreateJournalStatus("READY");
+      return;
+    }
+    let current = true;
+    const requestWorkspaceId = workspaceId;
+    setCreateJournalStatus("LOADING");
+    void invoke<unknown>("list_pending_conversation_creates", {})
+      .then(value => {
+        if (!current || activeWorkspace.current !== requestWorkspaceId) return;
+        setPendingCreateRequests(pendingCreates.replace(value));
+        setCreateJournalStatus("READY");
+      })
+      .catch(cause => {
+        if (!current || activeWorkspace.current !== requestWorkspaceId) return;
+        setCreateJournalStatus("FAILED");
+        setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => { current = false; };
+  }, [createJournalAttempt, operatorReady, workspaceId]);
+
+  const refresh = useCallback(async (preserveCurrent = false) => {
     const current = requests.current.beginList();
     activeListEpoch.current = current;
-    setListCursor(null);
     setLoadingMoreConversations(false);
-    setSnapshot(null);
-    setSnapshotLoadedKey(null);
-    setSelectedId(null);
-    if (!operatorReady || !workspaceId) { setItems([]); setBusy(false); return; }
+    if (!operatorReady || !workspaceId) {
+      setBusy(false);
+      if (!workspaceId) {
+        setItems([]);
+        setListCursor(null);
+        setSnapshot(null);
+        setSnapshotLoadedKey(null);
+        setSelectedId(null);
+        setListStatus("READY");
+      }
+      return;
+    }
+    if (!preserveCurrent) {
+      setListCursor(null);
+      setSnapshot(null);
+      setSnapshotLoadedKey(null);
+      setSelectedId(null);
+    }
+    setListStatus("LOADING");
     setBusy(true); setError(null);
     try {
       const response = await invoke<unknown>("list_conversations", { workspaceId, cursor: null });
@@ -148,13 +210,23 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
       const page = parseConversationListPage(response, workspaceId);
       setItems(page.items);
       setListCursor(page.next_cursor);
-      if (page.items[0]) setSelectedId(page.items[0].conversation_id);
+      setSelectedId(page.items[0]?.conversation_id ?? null);
+      setListStatus("READY");
     } catch (cause) {
-      if (activeWorkspace.current === workspaceId && requests.current.isCurrentList(current)) setError(cause instanceof Error ? cause.message : String(cause));
+      if (activeWorkspace.current === workspaceId && requests.current.isCurrentList(current)) {
+        setListStatus("FAILED");
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
     } finally { if (activeWorkspace.current === workspaceId && requests.current.isCurrentList(current)) setBusy(false); }
   }, [operatorReady, workspaceId]);
 
-  useEffect(() => { void refresh(); return () => { requests.current.invalidateList(); }; }, [refresh]);
+  useEffect(() => {
+    const reconnecting = !previousOperatorReady.current && operatorReady;
+    previousOperatorReady.current = operatorReady;
+    preserveOnReconnect.current = reconnecting;
+    void refresh(reconnecting);
+    return () => { requests.current.invalidateList(); };
+  }, [operatorReady, refresh]);
 
   useEffect(() => {
     mounted.current = true;
@@ -185,10 +257,21 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
   useEffect(() => {
     const current = requests.current.beginSnapshot();
     activeSnapshotEpoch.current = current;
-    setSnapshot(null);
-    setSnapshotLoadedKey(null);
     setLoadingMore(false);
-    if (!operatorReady || !workspaceId || !selectedId) return () => { requests.current.invalidateSnapshot(); };
+    if (!operatorReady) {
+      setBusy(false);
+      if (snapshotLoadedKeyRef.current !== selectionKey) {
+        setSnapshot(null);
+        setSnapshotLoadedKey(null);
+      }
+      return () => { requests.current.invalidateSnapshot(); };
+    }
+    if (!preserveOnReconnect.current || snapshotLoadedKeyRef.current !== selectionKey) {
+      setSnapshot(null);
+      setSnapshotLoadedKey(null);
+    }
+    preserveOnReconnect.current = false;
+    if (!workspaceId || !selectedId) return () => { requests.current.invalidateSnapshot(); };
     setBusy(true); setError(null);
     void invoke<unknown>("get_conversation_presentation", { workspaceId, conversationId: selectedId })
       .then(value => {
@@ -216,8 +299,23 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
       stop: sessionId => invoke<void>("unsubscribe_conversation_stream", { sessionId }),
       newSessionId: () => crypto.randomUUID(),
     };
-    const controller = new ConversationStreamController(workspaceId, selectedId!, driver, state => {
+    const controller = new ConversationStreamController(workspaceId, selectedId!, driver, (state, frame) => {
       const live = state.conversationSnapshot;
+      if (frame && typeof frame === "object" && !Array.isArray(frame)) {
+        const projectionFrame = frame as Record<string, unknown>;
+        if (projectionFrame.type === "projection" && projectionFrame.projection_type === "conversation_presentation") {
+          const invalidatedMessageIds = live?.messages
+            .filter(message => message.rich_presentation !== null && message.rich_presentation.availability !== "AVAILABLE")
+            .map(message => message.message_id) ?? [];
+          if (invalidatedMessageIds.length > 0) {
+            setRichPresentationEpochs(current => {
+              const next = new Map(current);
+              for (const messageId of invalidatedMessageIds) next.set(messageId, (next.get(messageId) ?? 0) + 1);
+              return next;
+            });
+          }
+        }
+      }
       if (live && activeWorkspace.current === workspaceId) {
         setSnapshot(current => mergeConversationStreamSnapshot(current, live, workspaceId, selectedId!));
       }
@@ -247,41 +345,101 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
     }
   };
 
-  const create = async () => {
-    if (!operatorReady || busy) return;
-    const requestWorkspaceId = workspaceId;
-    const normalizedTitle = title.trim() || null;
-    let request: PendingConversationCreate;
-    try {
-      request = pendingCreates.get(requestWorkspaceId, normalizedTitle, () => crypto.randomUUID());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-      return;
-    }
+  const submitCreate = async (request: PendingConversationCreate) => {
+    if (!operatorReady || busy || createJournalStatus !== "READY") return;
+    const requestSelection = conversationWorkspaceSelections.capture(request.workspaceId);
+    if (!requestSelection) return;
+    const isCurrentCreateRequest = () => mounted.current
+      && activeWorkspace.current === request.workspaceId
+      && conversationWorkspaceSelections.isCurrent(requestSelection);
+    const clearCreateReceiptError = () => setCreateReceiptError(current => current?.workspaceId === request.workspaceId && current.requestId === request.requestId ? null : current);
+    clearCreateReceiptError();
     setBusy(true); setError(null);
     try {
       const response = await invoke<unknown>("create_conversation", {
-        workspaceId: requestWorkspaceId, title: normalizedTitle, requestId: request.requestId,
+        workspaceId: request.workspaceId, title: request.title, requestId: request.requestId,
       });
-      if (!mounted.current || activeWorkspace.current !== requestWorkspaceId) return;
-      const created = parseConversationList({ items: [response] }, requestWorkspaceId)[0];
+      if (!isCurrentCreateRequest()) return;
+      // A create receipt is one summary, not a paginated list response. Wrap it as
+      // a terminal one-item page so the strict bridge parser still sees its required
+      // next_cursor field without accepting malformed list pages elsewhere.
+      const created = parseConversationList({ items: [response], next_cursor: null }, request.workspaceId)[0];
       if (!created) throw new Error("Local Runtime returned an invalid Conversation.");
-      pendingCreates.complete(request);
+      let cleanupError: string | null = null;
+      try {
+        await invoke<void>("acknowledge_conversation_create", {
+          workspaceId: request.workspaceId,
+          requestId: request.requestId,
+        });
+        clearCreateReceiptError();
+        pendingCreates.completeExact(request.workspaceId, request.requestId);
+        if (mounted.current) {
+          setPendingCreateRequests(current => current.filter(item =>
+            item.workspaceId !== request.workspaceId || item.requestId !== request.requestId));
+        }
+      } catch (cause) {
+        cleanupError = cause instanceof Error ? cause.message : String(cause);
+        pendingCreates.remember(request);
+        if (isCurrentCreateRequest()) {
+          setCreateReceiptError({
+            workspaceId: request.workspaceId,
+            requestId: request.requestId,
+            message: `Conversation created, but its retry receipt could not be cleared: ${cleanupError}. Retrying this pending request is safe.`,
+          });
+          setPendingCreateRequests(current => current.some(item =>
+            item.workspaceId === request.workspaceId && item.requestId === request.requestId)
+            ? current
+            : [...current, request]);
+        }
+      }
+      if (!isCurrentCreateRequest()) return;
       setTitle("");
       setItems(current => [created, ...current.filter(item => item.conversation_id !== created.conversation_id)]);
       setSelectedId(created.conversation_id);
-      setSnapshot({ workspace_id: requestWorkspaceId, conversation_id: created.conversation_id, messages: [], next_cursor: null, active_turn: null });
-      setSnapshotLoadedKey(`${requestWorkspaceId}\u0000${created.conversation_id}`);
+      setSnapshot({ workspace_id: request.workspaceId, conversation_id: created.conversation_id, messages: [], next_cursor: null, active_turn: null });
+      setSnapshotLoadedKey(`${request.workspaceId}\u0000${created.conversation_id}`);
     } catch (cause) {
-      if (mounted.current && activeWorkspace.current === requestWorkspaceId) setError(cause instanceof Error ? cause.message : String(cause));
+      if (!isCurrentCreateRequest()) return;
+      const createError = cause instanceof Error ? cause.message : String(cause);
+      setError(createError);
+      try {
+        const journal = await invoke<unknown>("list_pending_conversation_creates", {});
+        if (!isCurrentCreateRequest()) return;
+        setPendingCreateRequests(pendingCreates.replace(journal));
+        setCreateJournalStatus("READY");
+      } catch (journalCause) {
+        if (!isCurrentCreateRequest()) return;
+        pendingCreates.remember(request);
+        setPendingCreateRequests(current => current.some(item =>
+          item.workspaceId === request.workspaceId && item.requestId === request.requestId)
+          ? current
+          : [...current, request]);
+        setCreateJournalStatus("FAILED");
+        const journalError = journalCause instanceof Error ? journalCause.message : String(journalCause);
+        setError(`${createError} Pending retry state could not be refreshed: ${journalError}`);
+      }
     } finally {
-      if (mounted.current && activeWorkspace.current === requestWorkspaceId) setBusy(false);
+      if (isCurrentCreateRequest()) setBusy(false);
     }
   };
 
+  const create = async () => {
+    if (!operatorReady || busy || createJournalStatus !== "READY") return;
+    const normalizedTitle = title.trim() || null;
+    try {
+      const request = pendingCreates.get(workspaceId, normalizedTitle, () => crypto.randomUUID());
+      void submitCreate(request);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const workspacePendingCreates = pendingCreateRequests.filter(request => request.workspaceId === workspaceId);
+
   const selected = items.find(item => item.conversation_id === selectedId) ?? null;
-  const automaticRichIds = new Set((snapshot?.messages ?? []).filter(message => message.role === "AGENT" && message.rich_presentation?.availability === "AVAILABLE").slice(-6).map(message => message.message_id));
-  const activeStatus = snapshot?.active_turn?.status;
+  const currentSnapshot = snapshotLoadedKey === selectionKey && snapshot?.workspace_id === workspaceId && snapshot?.conversation_id === selectedId ? snapshot : null;
+  const automaticRichIds = new Set((currentSnapshot?.messages ?? []).filter(message => message.role === "AGENT" && message.rich_presentation?.availability === "AVAILABLE").slice(-6).map(message => message.message_id));
+  const activeStatus = currentSnapshot?.active_turn?.status;
   const statusLabel = activeStatus === "RUNNING" ? "A conversation turn is running"
     : activeStatus === "WAITING_USER" ? "Waiting for your response"
       : activeStatus === "WAITING_DEPENDENCY" ? "Waiting for a service"
@@ -292,37 +450,81 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady }:
     : streamStatus === "RECONNECTING" ? "Reconnecting saved-history updates…"
       : streamStatus === "CONNECTING" ? "Connecting saved-history updates…"
         : null;
+  const firstUseGuidance = firstUseConversationGuidance({ workspaceAvailable: Boolean(workspaceId), operatorReady });
+  const firstUseUnavailable = firstUseGuidance.state !== "SENDING_NOT_AVAILABLE";
+  const firstUseView = <section className={firstUseUnavailable ? "conversation-unavailable" : "conversation-first-use"} aria-labelledby="conversation-first-use-title">
+    <h2 id="conversation-first-use-title">{firstUseGuidance.heading}</h2>
+    <p>{firstUseGuidance.message}</p>
+    <label htmlFor="conversation-first-use-draft">Question draft</label>
+    <textarea
+      id="conversation-first-use-draft"
+      aria-label="Question draft"
+      placeholder="Write a question to keep in this window…"
+      value={draft}
+      onChange={event => onDraftChange(event.target.value)}
+      rows={4}
+    />
+    <p className="conversation-first-use-status" role="status" aria-live="polite">
+      {draft.trim() ? "Draft only. It has not been sent or saved. Opening Settings will not send it." : "No message has been sent. Any text you add stays only in this window."}
+    </p>
+    {firstUseGuidance.actionLabel && <button className="primary-button" type="button" onClick={onOpenAgentSettings}>{firstUseGuidance.actionLabel}</button>}
+  </section>;
 
   return <div className="page-content conversations-page">
-    <div className="eyebrow">SAVED WORKSPACE CONVERSATIONS</div>
+    <div className="eyebrow">WORKSPACE CONVERSATIONS</div>
     <h1>Conversations</h1>
-    <p className="conversation-intro">Review messages saved in {workspaceName}. Messages are stored locally in this Workspace.</p>
-    {!workspaceId ? <section className="conversation-empty"><h2>Select a Workspace</h2><p>Choose a Workspace in Settings before opening its saved conversations.</p></section>
-      : !operatorReady ? <section className="conversation-empty"><h2>Local Runtime unavailable</h2><p>Start the local Runtime to load saved conversations.</p></section> : <div className="conversation-layout">
+    <p className="conversation-intro">{workspaceId ? `Conversations are saved locally in ${workspaceName}.` : "Select a Workspace to view its locally saved conversations."}</p>
+    {!workspaceId || (!operatorReady && items.length === 0) ? firstUseView : <div className="conversation-layout">
       <aside className="conversation-list" aria-label="Saved conversations">
-        <form className="conversation-create" onSubmit={event => { event.preventDefault(); void create(); }}>
-          <label htmlFor="conversation-title">Create a conversation</label>
-          <input id="conversation-title" value={title} onChange={event => setTitle(event.target.value)} maxLength={160} placeholder="Add a title (optional)" disabled={busy} />
-          <button className="primary-button" type="submit" disabled={busy}>{busy ? "Saving…" : "Create"}</button>
-        </form>
-        <div className="conversation-list-heading"><strong>Recent</strong><button type="button" className="text-button" onClick={() => void refresh()} disabled={busy}>Refresh</button></div>
+        {createJournalStatus === "LOADING" && <p className="conversation-create-recovery" role="status">Checking pending Conversation requests…</p>}
+        {createJournalStatus === "FAILED" && <section className="conversation-create-recovery" role="alert">
+          <p>Pending Conversation retry state is unavailable. Creating a Conversation is disabled until the local journal can be read.</p>
+          <button type="button" disabled={busy} onClick={() => {
+            setError(null);
+            setCreateJournalStatus("LOADING");
+            setCreateJournalAttempt(value => value + 1);
+          }}>Retry checking pending Conversation requests</button>
+        </section>}
+        {workspacePendingCreates.length > 0 && <section className="conversation-create-recovery" aria-label="Pending Conversation creations">
+          <p>A previous create may have completed. Retry uses the same request identity and will not create a duplicate.</p>
+          <ul>{workspacePendingCreates.map(request => <li key={request.requestId}>
+            <span>{request.title ?? "Untitled conversation"}</span>
+            <button type="button" disabled={!operatorReady || busy} onClick={() => void submitCreate(request)}>Retry pending create</button>
+          </li>)}</ul>
+        </section>}
+        <details id="conversation-create-details" className="conversation-create-details">
+          <summary>Create a blank conversation</summary>
+          <form className="conversation-create" onSubmit={event => { event.preventDefault(); void create(); }}>
+            <label htmlFor="conversation-title">Optional title</label>
+            <input id="conversation-title" value={title} onChange={event => setTitle(event.target.value)} maxLength={160} placeholder="Name this conversation" disabled={!operatorReady || busy || createJournalStatus !== "READY"} />
+            <p>This saves an empty conversation. It does not start an agent.</p>
+            <button className="primary-button" type="submit" disabled={!operatorReady || busy || createJournalStatus !== "READY"}>{busy ? "Saving…" : "Create blank conversation"}</button>
+          </form>
+        </details>
+        <div className="conversation-list-heading"><strong>Recent</strong><button type="button" className="text-button" onClick={() => void refresh()} disabled={!operatorReady || busy}>Refresh</button></div>
         {items.length === 0 && !busy ? <p className="conversation-list-empty">No saved conversations yet.</p> : <ul>
-          {items.map(item => <li key={item.conversation_id}><button className={`conversation-list-item ${selectedId === item.conversation_id ? "selected" : ""}`} type="button" onClick={() => setSelectedId(item.conversation_id)}>
+          {items.map(item => <li key={item.conversation_id}><button className={`conversation-list-item ${selectedId === item.conversation_id ? "selected" : ""}`} type="button" disabled={!operatorReady && item.conversation_id !== selectedId} onClick={() => setSelectedId(item.conversation_id)}>
             <strong>{item.title ?? "New conversation"}</strong><small>{timeLabel(item.created_at)}</small>
           </button></li>)}
         </ul>}
-        {listCursor && <button type="button" className="conversation-load-more" onClick={() => void loadMoreConversations()} disabled={loadingMoreConversations}>{loadingMoreConversations ? "Loading conversations…" : "Load more conversations"}</button>}
+        {listCursor && <button type="button" className="conversation-load-more" onClick={() => void loadMoreConversations()} disabled={!operatorReady || loadingMoreConversations}>{loadingMoreConversations ? "Loading conversations…" : "Load more conversations"}</button>}
       </aside>
       <section className="conversation-reader" aria-label="Conversation history">
-        {error && <div className="conversation-error" role="alert">{error}</div>}
+        {!operatorReady && items.length > 0 && <p className="conversation-offline-notice" role="status">The local Runtime is unavailable. Showing the last loaded conversation list and messages already loaded in this window. Read-only until the Runtime reconnects.</p>}
+        {operatorReady && listStatus === "LOADING" && items.length > 0 && <p className="conversation-refresh-notice" role="status">Reconnecting. Showing the last loaded conversations and messages until refresh finishes.</p>}
+        {(error || createReceiptError?.workspaceId === workspaceId) && <div className="conversation-error" role="alert">{[error, createReceiptError?.workspaceId === workspaceId ? createReceiptError.message : null].filter(Boolean).join(" ")}</div>}
         {selected && <div className="conversation-reader-heading"><div><div className="eyebrow">SAVED CONVERSATION</div><h2>{selected.title ?? "New conversation"}</h2></div><div className="conversation-statuses">{statusLabel && <span className="conversation-status">{statusLabel}</span>}{streamStatusLabel && <span className="conversation-status" role="status" aria-live="polite">{streamStatusLabel}</span>}</div></div>}
-        {!selected ? <div className="conversation-empty"><h2>Choose a conversation</h2><p>Create one or select a saved conversation to read its messages.</p></div>
-          : busy && !snapshot ? <div className="conversation-empty" role="status">Loading saved messages…</div>
-            : snapshot?.messages.length ? <div className="conversation-messages">
-              {snapshot.next_cursor && <button type="button" className="conversation-load-more" onClick={() => void loadMoreMessages()} disabled={loadingMore}>{loadingMore ? "Loading messages…" : "Load more messages"}</button>}
-              {snapshot.messages.map(message => <article className={`conversation-message ${message.role.toLowerCase()}`} key={message.message_id}>
+        {!selected ? listStatus === "LOADING" ? <div className="conversation-empty" role="status">Loading saved conversations…</div>
+          : listStatus === "FAILED" ? <div className="conversation-empty conversation-list-error" role="alert"><h2>Could not load saved conversations</h2><p>Try again to check this Workspace’s history.</p><button type="button" className="conversation-load-more" onClick={() => void refresh()} disabled={!operatorReady || busy}>Retry loading conversations</button></div>
+            : items.length === 0 ? firstUseView
+              : <div className="conversation-empty"><h2>Choose a conversation</h2><p>Create one or select a saved conversation to read its messages.</p></div>
+          : busy && !currentSnapshot ? <div className="conversation-empty" role="status">Loading saved messages…</div>
+            : !operatorReady && !currentSnapshot ? <div className="conversation-empty"><h2>Saved messages are unavailable</h2><p>These messages were not loaded before the Runtime disconnected. Reconnect to read them.</p></div>
+              : currentSnapshot?.messages.length ? <div className="conversation-messages">
+              {currentSnapshot.next_cursor && <button type="button" className="conversation-load-more" onClick={() => void loadMoreMessages()} disabled={!operatorReady || busy || loadingMore}>{loadingMore ? "Loading messages…" : "Load more messages"}</button>}
+              {currentSnapshot.messages.map(message => <article className={`conversation-message ${message.role.toLowerCase()}`} key={message.message_id}>
               <div className="conversation-message-author">{message.role === "USER" ? "You" : message.role === "AGENT" ? "Assistant" : message.role === "SYSTEM_NOTICE" ? "LiteCowork" : "Connected channel"}</div>
-              <ConversationMessageContent workspaceId={workspaceId} conversationId={selected.conversation_id} message={message} autoLoadRich={automaticRichIds.has(message.message_id)} />
+              <ConversationMessageContent workspaceId={workspaceId} conversationId={selected.conversation_id} message={message} autoLoadRich={automaticRichIds.has(message.message_id)} presentationEpoch={richPresentationEpochs.get(message.message_id) ?? 0} />
               <time>{timeLabel(message.created_at)}</time>
             </article>)}</div>
               : <div className="conversation-empty"><h2>This conversation is ready</h2><p>Conversation records and messages are durable. Sending messages is not available yet because native agent turn execution is not connected.</p></div>}

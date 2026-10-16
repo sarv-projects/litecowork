@@ -562,6 +562,10 @@
       "sha256": "581d015eb7b30fbe974059aa73259d90b6c4d54043d33ce4decef125b10227e8"
     },
     {
+      "name": "resource_context_document_purge_acknowledged_v2",
+      "sha256": "31a0cf8da838fc8cc13b2daa75c2b49e0c30d24e223a6dd31397085bc50c6b77"
+    },
+    {
       "name": "resource_context_document_status_changed",
       "sha256": "ed9dfcd35a6e58c2b407b63d4f5d570dfea50a5076651d868acd67f425d72e3a"
     },
@@ -809,7 +813,7 @@
     },
     {
       "name": "payloads",
-      "sha256": "c432fe0c89079f898f2f10fd7c29e9133c3d4cc103418c21a2ff2b9a3231ad3e"
+      "sha256": "85080509acef5e94d21b369b466757b8dff6e94c85480bc8b5e96dfd59327ee1"
     },
     {
       "name": "pinned_resource_ref",
@@ -971,6 +975,7 @@
     "notification_preference_changed",
     "provider_circuit_changed",
     "resource_context_document_purge_acknowledged",
+    "resource_context_document_purge_acknowledged_v2",
     "resource_context_document_status_changed",
     "resource_created",
     "resource_created_v2",
@@ -1115,6 +1120,7 @@
     "notification.preference.changed.v1",
     "provider.circuit.changed.v1",
     "resource.context_document.purge.acknowledged.v1",
+    "resource.context_document.purge.acknowledged.v2",
     "resource.context_document.status.changed.v1",
     "resource.created.v1",
     "resource.created.v2",
@@ -1196,13 +1202,13 @@
       "method": "POST",
       "operationId": "disableAgentBinding",
       "path": "/agent-bindings/{agentBindingId}/disable",
-      "sha256": "76c595595828f4f5571903baa839a7fa52c6e63929d764d2c042545bb8051608"
+      "sha256": "9ff1aeb62edcf6a2b9870d88b0163772caaa9536610eee1b508f0384fa44d6de"
     },
     {
       "method": "POST",
       "operationId": "enableAgentBinding",
       "path": "/agent-bindings/{agentBindingId}/enable",
-      "sha256": "4600a2cf1e5378434e96fdc1479d3f6ba1eb923307e5242616257d1108906da6"
+      "sha256": "02ccd2a9255b20898670788e220e541ef0b3658351a14648ea1cb665cb0751a1"
     },
     {
       "method": "GET",
@@ -1238,7 +1244,7 @@
       "method": "POST",
       "operationId": "probeLocalAgentProfile",
       "path": "/agent-profiles/probe",
-      "sha256": "89113f238093731d270dcff68174a3dece2b0a7b2fbafd8474f1756cb06ca394"
+      "sha256": "ab8c169b35526977e89f612606bc00a7e08d29d893841c86322c96d38bbfa3ea"
     },
     {
       "method": "POST",
@@ -1796,13 +1802,13 @@
       "method": "PUT",
       "operationId": "uploadResourceChunk",
       "path": "/resources/uploads/{uploadId}/chunks/{chunkIndex}",
-      "sha256": "f756e56df990caedc01c6c8e64d4effcd88feda0949e5561d8bea6d6b57cc223"
+      "sha256": "b8104150cf3de6a858aebb336efc015acaf77b49915b0c5928018c4fad455e23"
     },
     {
       "method": "POST",
       "operationId": "commitResourceUpload",
       "path": "/resources/uploads/{uploadId}/commit",
-      "sha256": "e091465e09a385f2b6d3d874dad22dd1c433582c2718ebbd518debf8031e7eda"
+      "sha256": "f9845e799be94387499dec3b8e8d34fb5876d1cfeb2973543ec93eec8b4c5898"
     },
     {
       "method": "GET",
@@ -1820,7 +1826,13 @@
       "method": "GET",
       "operationId": "getContextDocumentDeletionStatus",
       "path": "/resources/{resourceId}/context-document/deletion",
-      "sha256": "23d16f3c482b6a5c430ed67f455c2688a8f2299fb4a8ae0c5c3a6936616d8f4f"
+      "sha256": "78c02615b70b735ecb9130258b02481c93a240fd68fe88eab981d2ac4b434990"
+    },
+    {
+      "method": "POST",
+      "operationId": "requestContextDocumentDeletion",
+      "path": "/resources/{resourceId}/context-document/deletion",
+      "sha256": "35cd3ab28d4ca30577e02da880d8655db56080a172535d6c0967d37cebfbb39f"
     },
     {
       "method": "PATCH",
@@ -2192,7 +2204,7 @@
       "method": "GET",
       "operationId": "getUserRequest",
       "path": "/user-requests/{requestId}",
-      "sha256": "519045ca192706a8e884ff0ce3fd16ed00e49fbf9fd753f28245e54a6ccbb449"
+      "sha256": "2ab78aac4d157f0f16cad39e9b21b57d3de380716f0716312843982f413c9abd"
     },
     {
       "method": "POST",
@@ -2216,37 +2228,43 @@
       "method": "GET",
       "operationId": "listWorkspaceRoots",
       "path": "/workspace-roots",
-      "sha256": "0e2f99e2b8383139a60bc709b4e630eed72933498c607219503bdaf6a0d464ea"
+      "sha256": "9d60792e06a9a0e8785473119388043967f7deca219a9438b19fb989342dc3c3"
     },
     {
       "method": "POST",
       "operationId": "addWorkspaceRoot",
       "path": "/workspace-roots",
-      "sha256": "ec8a97efbab6c5e4e2b0731d379661df95c8df7be5801e119aea2f185b7363d5"
+      "sha256": "6f7033fd982b287cf05b44f534f172d6223e49b28258d72c9d9046e96013f44b"
     },
     {
       "method": "PATCH",
       "operationId": "updateWorkspaceRoot",
       "path": "/workspace-roots/{rootId}",
-      "sha256": "b891fce94e2b44d20b21e1fe353a96d153e7779bee3894f0bb013733a2135aa3"
+      "sha256": "ecae5d8c70f1c97632d884a4a93aea84303c39d8c96e3d4cc8281ee07a41d424"
     },
     {
       "method": "POST",
       "operationId": "pauseWorkspaceRoot",
       "path": "/workspace-roots/{rootId}/pause",
-      "sha256": "0b6e0fb9b2ec85b3e0dbc5a00c7f26b405ac5888879819194d023ef4f3788ac4"
+      "sha256": "660e23b918ddfcb8b436bf839899242f7d78625eb038c8937ac97dd8e363344d"
     },
     {
       "method": "POST",
       "operationId": "resumeWorkspaceRoot",
       "path": "/workspace-roots/{rootId}/resume",
-      "sha256": "91191e1568d9e7bdac354ded122d72a68d16de7a135c541f94518255138f5cf4"
+      "sha256": "2e3c6de45c924038198a3edc50a65683dd4c7c817fc679ae85ed87608fb22800"
     },
     {
       "method": "POST",
       "operationId": "revokeWorkspaceRoot",
       "path": "/workspace-roots/{rootId}/revoke",
-      "sha256": "f39ae8fb172cce217f51d4ad1aa39b3bc9a8c6ba0530c204cac11c2567f26e2f"
+      "sha256": "52b9e973914a33bf3196e3f2596e6450fedcb6b250f1f662a6834479b803f682"
+    },
+    {
+      "method": "POST",
+      "operationId": "scanWorkspaceRoot",
+      "path": "/workspace-roots/{rootId}/scan",
+      "sha256": "b860596f124254f2d784b38e5173b2e1cd8c2d6b1127c946a5d5136955648586"
     },
     {
       "method": "GET",
@@ -2402,7 +2420,7 @@
       "method": "PUT",
       "operationId": "setSuggestionPreference",
       "path": "/workspaces/{workspaceId}/suggestion-preferences/{kind}",
-      "sha256": "5e49ed1214c99398bc9f31f3e9ceab30ec2e2bbf7458a35f1302ae028ec5cad8"
+      "sha256": "9c22465e5ed2b5feae9c6724cf342fd8667ae44bb6cf842eb43b9777384af5cd"
     }
   ],
   "operator_operation_unreachable_schemas": [],
@@ -2953,6 +2971,11 @@
       "path": "/resources/{resourceId}/context-document/deletion"
     },
     {
+      "method": "POST",
+      "operationId": "requestContextDocumentDeletion",
+      "path": "/resources/{resourceId}/context-document/deletion"
+    },
+    {
       "method": "PATCH",
       "operationId": "setContextDocumentStatus",
       "path": "/resources/{resourceId}/context-document/status"
@@ -3306,6 +3329,11 @@
       "method": "POST",
       "operationId": "revokeWorkspaceRoot",
       "path": "/workspace-roots/{rootId}/revoke"
+    },
+    {
+      "method": "POST",
+      "operationId": "scanWorkspaceRoot",
+      "path": "/workspace-roots/{rootId}/scan"
     },
     {
       "method": "GET",
@@ -3804,8 +3832,12 @@
       "sha256": "fc92a5235177084d585fb8b2450d9cb2bd8f992bdf3af475347569e961a80b0b"
     },
     {
+      "name": "ContextDocumentDeletionRequest",
+      "sha256": "396919636269597e566e7c8b199c3d07a71e8b5f15669f93ad5e63f42f3434b0"
+    },
+    {
       "name": "ContextDocumentDeletionStatus",
-      "sha256": "dcb6598a34756a9dfbdca86c9c364d0fb492e4676e266993eb5cc2faca977f43"
+      "sha256": "55d12bf0fae720225f917134586baa84f9984bb69cb110bfc1f18bffcb1c7d76"
     },
     {
       "name": "ContextDocumentMetadata",
@@ -4233,7 +4265,7 @@
     },
     {
       "name": "OpenCodeProfileProbeConstraints",
-      "sha256": "9ed307e69e094c75eab804ed1148520e440017a861163b080ef12f1b1806fc8c"
+      "sha256": "a4a834e3f07eec1524db499b436e5b8dfa0cc71735bc6babea9fcf967649429a"
     },
     {
       "name": "OpenCodeProviderOption",
@@ -4401,7 +4433,7 @@
     },
     {
       "name": "ResourceSearchPage",
-      "sha256": "84351daf5fe1b1220526269f4dad2bd8a3dc010269522863e7f94eea580c0ff9"
+      "sha256": "62593cd4ccbdaa1f7ad0cdd12d576423e44489061b4c41ae08b348ed32e9e2a9"
     },
     {
       "name": "ResourceSearchResult",
@@ -4549,7 +4581,7 @@
     },
     {
       "name": "SetContextDocumentStatusRequest",
-      "sha256": "92bd6e56ff156948169f3cd1e3e02ad755f45de3f873137bb6096f6743b0c0f2"
+      "sha256": "17aad22ce03ab0f6552f7fff7198fd8a48c82022efe089eb4241cb6ccc4d3bd1"
     },
     {
       "name": "SetPrimaryCoworkerRequest",
@@ -4736,6 +4768,18 @@
       "sha256": "10c9967acb25a1097ac3f03a9dc786acffc9861e3b91711c57529d0de6601fed"
     },
     {
+      "name": "UserRequestDetail",
+      "sha256": "543e14179fe9dbc47fc6366437e15efbdea2ebf677752db6998a02b393989f3e"
+    },
+    {
+      "name": "UserRequestDetailChoice",
+      "sha256": "30b90d0848650a2e1de7458c1088a49994331bf967d7216f0c1f58036fa37831"
+    },
+    {
+      "name": "UserRequestDetailScope",
+      "sha256": "bb9293b1bc6e39c37786665c14b75270f5d8ce220dc82199f4030caf0af67fd6"
+    },
+    {
       "name": "UserRequestPage",
       "sha256": "22ea626ea43f6ad876472100cfdca68bc8f22f0aa60886a238eb8238addf803a"
     },
@@ -4796,12 +4840,20 @@
       "sha256": "dc22fa21eddcc5417e2c360e85a4cbe21c50c8dbbf858557bc1435f6a552e728"
     },
     {
-      "name": "WorkspaceRootListItem",
-      "sha256": "d9adb48e9e9a665ded38c85934e878d628d8ebe2b6134a5650a58e3aa783d1c4"
+      "name": "WorkspaceRootPage",
+      "sha256": "9d43a7c9d644757735e37bfe3417c7d8ae7e2425ed97c27aca1474fa28245b93"
     },
     {
-      "name": "WorkspaceRootPage",
-      "sha256": "1e256bbc3128f7783fefa77379ef92c0a3faebd5914e9bdac023e8d93dca53e6"
+      "name": "WorkspaceRootScanRequest",
+      "sha256": "88e513723e51ac2bce0e9872fccc39feee6dcc3702a0a4762279eb5744db7fe6"
+    },
+    {
+      "name": "WorkspaceRootScanSummary",
+      "sha256": "c7cf33bce7fff1c4f6cf7d78c04cbe9c0f9941d79415e67e0d5a088686e79222"
+    },
+    {
+      "name": "WorkspaceRootView",
+      "sha256": "d9adb48e9e9a665ded38c85934e878d628d8ebe2b6134a5650a58e3aa783d1c4"
     },
     {
       "name": "ZipIntakeReadiness",
@@ -4900,6 +4952,7 @@
     "ConnectionPage",
     "ConnectorEventTrigger",
     "ContextDocumentCreateMetadata",
+    "ContextDocumentDeletionRequest",
     "ContextDocumentDeletionStatus",
     "ContextDocumentMetadata",
     "ContextOwnerRef",
@@ -5133,6 +5186,9 @@
     "UsageObservation",
     "UsageQuantity",
     "UserRequest",
+    "UserRequestDetail",
+    "UserRequestDetailChoice",
+    "UserRequestDetailScope",
     "UserRequestPage",
     "UserRequestResponse",
     "UserRequestResponseInput",
@@ -5148,8 +5204,10 @@
     "WorkspaceInstructionRevisionPage",
     "WorkspacePage",
     "WorkspaceRoot",
-    "WorkspaceRootListItem",
     "WorkspaceRootPage",
+    "WorkspaceRootScanRequest",
+    "WorkspaceRootScanSummary",
+    "WorkspaceRootView",
     "ZipIntakeReadiness"
   ],
   "shared_schema_definitions": [

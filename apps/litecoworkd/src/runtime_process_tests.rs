@@ -15,6 +15,7 @@ use std::{
 };
 
 const CHILD_DATA_DIRECTORY: &str = "LITECOWORK_TEST_RUNTIME_DATA_DIRECTORY";
+const CHILD_OPERATOR_FAILURE_MARKER: &str = "LITECOWORK_TEST_OPERATOR_FAILURE_MARKER";
 const CHILD_ENTRY_TEST: &str =
     "runtime::runtime_process_tests::spawned_runtime_lifecycle_process_probe";
 const CHILD_START_DEADLINE: Duration = Duration::from_secs(10);
@@ -24,13 +25,24 @@ struct RuntimeChild(Child);
 
 impl RuntimeChild {
     fn spawn(data_directory: &Path) -> Self {
-        let child = Command::new(std::env::current_exe().expect("current test executable"))
+        Self::spawn_with_operator_failure_marker(data_directory, None)
+    }
+
+    fn spawn_with_operator_failure_marker(
+        data_directory: &Path,
+        failure_marker: Option<&Path>,
+    ) -> Self {
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
             .args(["--exact", CHILD_ENTRY_TEST, "--nocapture"])
             .env(CHILD_DATA_DIRECTORY, data_directory)
+            .env_remove(CHILD_OPERATOR_FAILURE_MARKER)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn Runtime process test child");
+            .stderr(Stdio::piped());
+        if let Some(failure_marker) = failure_marker {
+            command.env(CHILD_OPERATOR_FAILURE_MARKER, failure_marker);
+        }
+        let child = command.spawn().expect("spawn Runtime process test child");
         Self(child)
     }
 
@@ -141,6 +153,80 @@ fn spawned_runtime_lifecycle_restarts_with_current_incarnation() {
     assert_eq!(stopped_state.local_incarnation_id, restarted_incarnation);
     assert_eq!(stopped_state.recovery_state, RuntimeState::Stopped);
     assert!(stopped_state.last_shutdown_clean);
+}
+
+#[test]
+fn spawned_runtime_exits_uncleanly_after_operator_endpoint_failure_and_restarts() {
+    let directory = tempfile::tempdir().expect("private Runtime directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("restrict Runtime directory");
+    let failure_marker = directory.path().join("operator-test-failure-marker");
+
+    let mut failed_child =
+        RuntimeChild::spawn_with_operator_failure_marker(directory.path(), Some(&failure_marker));
+    let first_lifecycle = wait_for_lifecycle(failed_child.child(), directory.path());
+    let runtime_id = first_lifecycle["runtime_id"]
+        .as_str()
+        .expect("RuntimeId is exposed")
+        .to_owned();
+    let failed_incarnation = first_lifecycle["incarnation"]["runtime_incarnation_id"]
+        .as_str()
+        .expect("current incarnation is exposed")
+        .to_owned();
+
+    fs::write(&failure_marker, b"fail endpoint after ready")
+        .expect("request test-only endpoint failure");
+    let (failure_status, failure_stdout, failure_stderr) =
+        wait_for_exit(failed_child.child(), CHILD_STOP_DEADLINE);
+    assert!(
+        !failure_status.success(),
+        "unexpected Operator failure must exit nonzero: stdout={failure_stdout} stderr={failure_stderr}"
+    );
+    assert!(
+        failure_stderr.contains("local Operator listener stopped unexpectedly"),
+        "child must report the endpoint failure rather than a timeout: {failure_stderr}"
+    );
+
+    let failed_state = read_state(&directory.path().join(STATE_FILE))
+        .expect("read failed Runtime state")
+        .expect("Runtime state persists");
+    assert_eq!(failed_state.runtime_id, runtime_id);
+    assert_eq!(failed_state.local_incarnation_id, failed_incarnation);
+    assert_eq!(failed_state.recovery_state, RuntimeState::Degraded);
+    assert!(!failed_state.last_shutdown_clean);
+    assert_durable_current_incarnation(
+        directory.path(),
+        &runtime_id,
+        &failed_incarnation,
+        "DEGRADED",
+        "DEGRADED",
+    );
+
+    let mut restarted_child = RuntimeChild::spawn(directory.path());
+    let restarted_lifecycle = wait_for_lifecycle(restarted_child.child(), directory.path());
+    let restarted_incarnation = restarted_lifecycle["incarnation"]["runtime_incarnation_id"]
+        .as_str()
+        .expect("restarted incarnation is exposed")
+        .to_owned();
+    assert_ne!(restarted_incarnation, failed_incarnation);
+    assert!(
+        restarted_lifecycle["incarnation"]["recovered_from_unclean_shutdown"]
+            .as_bool()
+            .expect("restart reports unclean recovery"),
+        "restart must observe the prior unclean endpoint failure"
+    );
+    assert_durable_current_incarnation(
+        directory.path(),
+        &runtime_id,
+        &restarted_incarnation,
+        "DEGRADED",
+        "DEGRADED",
+    );
+    let (restart_status, restart_stdout, restart_stderr) = restarted_child.terminate_and_wait();
+    assert!(
+        restart_status.success(),
+        "restarted Runtime shutdown failed: stdout={restart_stdout} stderr={restart_stderr}"
+    );
 }
 
 fn wait_for_lifecycle(child: &mut Child, data_directory: &Path) -> Value {

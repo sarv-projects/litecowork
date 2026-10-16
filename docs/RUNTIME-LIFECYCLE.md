@@ -200,6 +200,15 @@ the returned startup error includes that persistence failure; the catalog still 
 the prior degraded state but does not contain the specific local blocker. This recovery
 does not claim the endpoint failure is transient or that repeated retries will succeed.
 
+After readiness, Runtime observes endpoint-thread completion as well. An unexpected
+listener/thread exit signals active streams, settles the bounded request drain, and returns
+an error so the daemon exits nonzero and releases its singleton lock. Before a supervisor
+shutdown signal, both the private projection and durable catalog remain `DEGRADED` and
+unclean; the next incarnation reports recovery from its unclean predecessor. If the failure
+races with a graceful signal, failed endpoint settlement still prevents `STOPPING` and
+`STOPPED`. This is CODE behavior; live listener, packaged service-manager restart, and OS
+qualification remain separate evidence gates.
+
 ## Runtime incarnation
 
 `runtime-state.json` is private installation bootstrap/lifecycle state. Its stable

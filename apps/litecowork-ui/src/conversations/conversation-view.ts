@@ -49,6 +49,31 @@ export type ConversationSnapshotView = {
   active_turn: { status: string } | null;
 };
 
+export type ConversationWorkspaceSelection = {
+  workspaceId: string;
+  epoch: number;
+};
+
+/** Fence async UI projections to the current Workspace selection, including A→B→A. */
+export class ConversationWorkspaceSelectionEpochs {
+  private workspaceId: string | null = null;
+  private epoch = 0;
+
+  select(workspaceId: string): void {
+    if (workspaceId === this.workspaceId) return;
+    this.workspaceId = workspaceId;
+    this.epoch += 1;
+  }
+
+  capture(workspaceId: string): ConversationWorkspaceSelection | null {
+    return this.workspaceId === workspaceId ? { workspaceId, epoch: this.epoch } : null;
+  }
+
+  isCurrent(selection: ConversationWorkspaceSelection): boolean {
+    return selection.workspaceId === this.workspaceId && selection.epoch === this.epoch;
+  }
+}
+
 /** Separate latest-request fences for independently loaded Conversation views. */
 export class ConversationRequestEpochs {
   private listEpoch = 0;
@@ -67,6 +92,32 @@ export class ConversationRequestEpochs {
 export class ConversationCreateRequestCache {
   private readonly pending = new Map<string, PendingConversationCreate>();
 
+  replace(value: unknown): PendingConversationCreate[] {
+    if (!Array.isArray(value) || value.length > 64) {
+      throw new Error("Local Runtime returned an invalid pending Conversation journal.");
+    }
+    const next = new Map<string, PendingConversationCreate>();
+    for (const item of value) {
+      if (!record(item)
+        || Object.keys(item).sort().join(",") !== "requestId,title,workspaceId"
+        || !boundedText(item.workspaceId)
+        || !(item.title === null || (boundedText(item.title, 160)
+          && item.title.trim() === item.title
+          && Array.from(item.title).length <= 160))
+        || typeof item.requestId !== "string"
+        || !/^[!-~]{1,200}$/.test(item.requestId)) {
+        throw new Error("Local Runtime returned an invalid pending Conversation request.");
+      }
+      const request = item as unknown as PendingConversationCreate;
+      const key = this.key(request.workspaceId, request.title);
+      if (next.has(key)) throw new Error("Local Runtime returned duplicate pending Conversation requests.");
+      next.set(key, request);
+    }
+    this.pending.clear();
+    for (const [key, request] of next) this.pending.set(key, request);
+    return [...next.values()];
+  }
+
   get(workspaceId: string, title: string | null, newRequestId: () => string): PendingConversationCreate {
     const key = this.key(workspaceId, title);
     const existing = this.pending.get(key);
@@ -77,9 +128,23 @@ export class ConversationCreateRequestCache {
     return request;
   }
 
+  remember(request: PendingConversationCreate): void {
+    this.pending.set(this.key(request.workspaceId, request.title), request);
+  }
+
   complete(request: PendingConversationCreate): void {
     const key = this.key(request.workspaceId, request.title);
     if (this.pending.get(key) === request) this.pending.delete(key);
+  }
+
+  completeExact(workspaceId: string, requestId: string): boolean {
+    for (const [key, request] of this.pending) {
+      if (request.workspaceId === workspaceId && request.requestId === requestId) {
+        this.pending.delete(key);
+        return true;
+      }
+    }
+    return false;
   }
 
   private key(workspaceId: string, title: string | null): string {
@@ -121,8 +186,8 @@ function parseConversationSummary(item: unknown, workspaceId: string): Conversat
 export function parseConversationListPage(value: unknown, workspaceId: string): ConversationListPage {
   if (!record(value) || !Array.isArray(value.items) || value.items.length > 100) throw new Error("Conversation list is invalid.");
   const nextCursor = value.next_cursor;
-  if (nextCursor !== undefined && nextCursor !== null
-    && !(boundedText(nextCursor, 2048) && /^[A-Za-z0-9_-]+$/.test(nextCursor))) {
+  if (!Object.hasOwn(value, "next_cursor")
+    || !(nextCursor === null || (boundedText(nextCursor, 2048) && /^[A-Za-z0-9_-]+$/.test(nextCursor)))) {
     throw new Error("Conversation list cursor is invalid.");
   }
   return {
@@ -162,6 +227,17 @@ export function appendConversationPage(
   return { ...current, ...page, messages: [...current.messages, ...additional] };
 }
 
+function sameCommittedMessage(left: ConversationMessageView, right: ConversationMessageView): boolean {
+  if (left.role !== right.role || left.created_at !== right.created_at || left.content.length !== right.content.length) {
+    return false;
+  }
+  return left.content.every((block, index) => {
+    const next = right.content[index];
+    return next !== undefined && block.kind === next.kind
+      && (block.kind !== "TEXT" || (next.kind === "TEXT" && block.text === next.text));
+  });
+}
+
 /**
  * Apply a fresh live-window snapshot without discarding pages the user already loaded.
  * Conversation messages are append-only, so unseen committed messages can be merged by
@@ -176,6 +252,18 @@ export function mergeConversationStreamSnapshot(
   if (live.workspace_id !== workspaceId || live.conversation_id !== conversationId
     || (current && (current.workspace_id !== workspaceId || current.conversation_id !== conversationId))) {
     throw new Error("Live Conversation snapshot does not match the selected Conversation.");
+  }
+  if (current) {
+    const committedById = new Map(current.messages.map(message => [message.message_id, message]));
+    for (const message of live.messages) {
+      const committed = committedById.get(message.message_id);
+      if (committed && !sameCommittedMessage(committed, message)) {
+        // Message IDs are immutable. Reject the entire inconsistent projection so
+        // its cursor cannot replace the last accepted snapshot or cancel a fetch
+        // bound to the committed semantic content.
+        return current;
+      }
+    }
   }
   const byId = new Map((current?.messages ?? []).map(message => [message.message_id, message]));
   for (const message of live.messages) byId.set(message.message_id, message);
@@ -239,8 +327,8 @@ export function parseConversationSnapshot(value: unknown, workspaceId: string, c
     || typeof value.origin_sequence !== "string" || !/^(0|[1-9][0-9]{0,18})$/.test(value.origin_sequence)) {
     throw new Error("Conversation history or source frontier is invalid.");
   }
-  if (value.next_cursor !== undefined && value.next_cursor !== null
-    && !(boundedText(value.next_cursor) && /^[A-Za-z0-9_-]+$/.test(value.next_cursor))) {
+  if (!Object.hasOwn(value, "next_cursor")
+    || !(value.next_cursor === null || (boundedText(value.next_cursor) && /^[A-Za-z0-9_-]+$/.test(value.next_cursor)))) {
     throw new Error("Conversation pagination cursor is invalid.");
   }
   const messages: ConversationMessageView[] = value.items.map((entry) => {

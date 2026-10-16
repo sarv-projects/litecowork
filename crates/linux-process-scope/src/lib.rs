@@ -1936,7 +1936,10 @@ mod linux {
             else {
                 panic!("unobservable Attempt slice must retain retry ownership");
             };
-            assert!(matches!(*cleanup_error, ScopeError::QuiescenceUnobservable));
+            assert!(
+                matches!(cleanup_error.as_ref(), ScopeError::QuiescenceUnobservable),
+                "expected missing cgroup evidence to block cleanup, got {cleanup_error:?}"
+            );
             assert_eq!(
                 pending.unit_name(),
                 "litecowork-attempt-01010101010101010101010101010101.slice"

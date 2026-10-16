@@ -1,6 +1,7 @@
 use super::{
     RuntimeState, STATE_FILE, read_state, runtime_process_tests::assert_degraded_lifecycle,
 };
+use base64::Engine;
 use operator_ipc::{
     DEFAULT_MAX_IN_FLIGHT_BODY_BYTES, InFlightBodyBudget, LogicalHeader, PROTOCOL_VERSION,
     RequestFrame, RequestHeader, ResponseFrame, unix::UnixEndpoint,
@@ -11,7 +12,10 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Read,
-    os::unix::fs::{MetadataExt, PermissionsExt},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{FileTypeExt, MetadataExt, PermissionsExt},
+    },
     path::Path,
     process::{Child, Command, ExitStatus, Stdio},
     sync::Arc,
@@ -25,12 +29,19 @@ use storage_sqlite::{
 };
 use zeroize::Zeroizing;
 
+#[path = "../../litecowork-ui/src-tauri/src/conversation_create_journal.rs"]
+mod production_conversation_create_journal;
+
 const CHILD_DATA_DIRECTORY: &str = "LITECOWORK_TEST_WORKSPACE_REPLAY_DATA_DIRECTORY";
 const CHILD_ENTRY_TEST: &str =
     "runtime::runtime_workspace_replay_process_tests::spawned_workspace_replay_process_probe";
 const WORKSPACE_CREATE_KEY: &str = "spawned-runtime-workspace-create-lost-ack-v1";
+const CONVERSATION_CREATE_KEY: &str = "spawned-runtime-conversation-create-lost-ack-v1";
 const CHILD_START_DEADLINE: Duration = Duration::from_secs(10);
 const RECEIPT_DEADLINE: Duration = Duration::from_secs(15);
+// A real 4 MiB encrypted chunk put/readback can contend with the rest of the
+// parallel daemon test binary; keep this recovery assertion bounded but load-tolerant.
+const UPLOAD_CHUNK_COMMIT_DEADLINE: Duration = Duration::from_secs(60);
 const CHILD_STOP_DEADLINE: Duration = Duration::from_secs(10);
 
 struct ReplayTestBlobKeys;
@@ -146,6 +157,19 @@ struct DurableInstructionRevision {
     event_count: i64,
     request_receipt_count: i64,
     event_payload_json: String,
+}
+
+#[derive(Debug, PartialEq)]
+struct DurableConversationCreate {
+    principal_id: String,
+    request_digest: String,
+    response_digest: String,
+    response: Value,
+    conversation_count: i64,
+    created_event_count: i64,
+    conversation_event_count: i64,
+    aggregate_state_event_count: i64,
+    request_receipt_count: i64,
 }
 
 struct LostAckInstructionRevision {
@@ -341,6 +365,525 @@ fn spawned_daemon_replays_workspace_create_after_lost_ack_and_restart() {
             .expect("committed Workspace receipt remains present after retries");
     assert_eq!(after_retry, committed_before_restart);
     assert_single_workspace_commit(&after_retry, &local_principal_id, WORKSPACE_CREATE_KEY);
+
+    let (restart_status, restart_stdout, restart_stderr) = restarted_child.terminate_and_wait();
+    assert!(
+        restart_status.success(),
+        "restarted Runtime shutdown failed: stdout={restart_stdout} stderr={restart_stderr}"
+    );
+}
+
+#[test]
+fn spawned_daemon_replays_conversation_create_after_lost_ack_and_journal_reopen() {
+    use production_conversation_create_journal::{
+        ConversationCreateJournal, PendingConversationCreate,
+    };
+
+    const TITLE: &str = "Conversation survives Runtime restart";
+
+    let directory = tempfile::tempdir().expect("private Runtime data directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("restrict Runtime directory");
+    let app_data_directory = directory.path().join("desktop-app-data");
+    fs::create_dir(&app_data_directory).expect("create desktop app-data fixture");
+    fs::set_permissions(&app_data_directory, fs::Permissions::from_mode(0o700))
+        .expect("restrict desktop app-data fixture");
+
+    let mut first_child = RuntimeChild::spawn(directory.path());
+    let first_readiness = wait_for_operator_readiness(first_child.child(), directory.path());
+    assert_operator_readiness(&first_readiness);
+    let local_principal_id = read_state(&directory.path().join(STATE_FILE))
+        .expect("read first Runtime state")
+        .expect("first Runtime state exists")
+        .local_principal_id
+        .expect("test Runtime has a local principal");
+    let workspace_response = send_workspace_create(
+        directory.path(),
+        "conversation-replay-workspace-create-frame",
+        WORKSPACE_CREATE_KEY,
+        br#"{"name":"Conversation restart fixture"}"#,
+    );
+    assert_eq!(workspace_response.header.status, 201);
+    let workspace: Value =
+        serde_json::from_slice(workspace_response.body()).expect("Workspace response is JSON");
+    let workspace_id = workspace["workspace_id"]
+        .as_str()
+        .expect("created Workspace ID is returned")
+        .to_owned();
+
+    let normalized_title =
+        production_conversation_create_journal::normalize_title(Some(TITLE.to_owned()))
+            .expect("same production title normalization succeeds");
+    let pending_create = PendingConversationCreate {
+        workspace_id: workspace_id.clone(),
+        title: normalized_title,
+        request_id: CONVERSATION_CREATE_KEY.to_owned(),
+    };
+    let first_journal = ConversationCreateJournal::new(&app_data_directory);
+    first_journal
+        .record(pending_create.clone())
+        .expect("persist retry identity before POST");
+    let conversation_body = serde_json::to_vec(&serde_json::json!({
+        "workspace_id": workspace_id,
+        "title": TITLE,
+    }))
+    .expect("Conversation create request serializes");
+
+    // Send through authenticated daemon IPC and leave the successful response unread.
+    let lost_ack = submit_operator_request_without_reading_response(
+        directory.path(),
+        "conversation-create-before-lost-ack",
+        "POST",
+        "/v1/conversations",
+        vec![
+            ("content-type", "application/json"),
+            ("x-workspace-id", pending_create.workspace_id.as_str()),
+            ("idempotency-key", pending_create.request_id.as_str()),
+        ],
+        &conversation_body,
+    );
+    let committed_before_restart = wait_for_durable_conversation_create(
+        directory.path(),
+        &pending_create.request_id,
+        &local_principal_id,
+    )
+    .unwrap_or_else(|error| {
+        let (status, stdout, stderr) = first_child.terminate_and_wait();
+        panic!("{error}; Runtime status={status}; stdout={stdout}; stderr={stderr}");
+    });
+    assert_single_conversation_commit(
+        &committed_before_restart,
+        &pending_create.workspace_id,
+        &local_principal_id,
+        &pending_create.request_id,
+    );
+
+    let (first_status, first_stdout, first_stderr) = first_child.terminate_and_wait();
+    assert!(
+        first_status.success(),
+        "first Runtime shutdown failed: stdout={first_stdout} stderr={first_stderr}"
+    );
+    drop(lost_ack);
+
+    let mut restarted_child = RuntimeChild::spawn(directory.path());
+    let restart_deadline = Instant::now() + CHILD_START_DEADLINE;
+    let restarted_readiness = loop {
+        if let Some(status) = restarted_child
+            .child()
+            .try_wait()
+            .expect("check restarted Runtime startup")
+        {
+            let (stdout, stderr) = capture_output(restarted_child.child());
+            panic!(
+                "restarted Runtime exited before Operator readiness ({status}): stdout={stdout} stderr={stderr}"
+            );
+        }
+        match operator_get_request(
+            directory.path(),
+            "/v1/operator/readiness",
+            "workspace-root-scan-restart-readiness-probe",
+        ) {
+            Ok(readiness) => break readiness,
+            Err(error) if Instant::now() >= restart_deadline => {
+                let state = read_state(&directory.path().join(STATE_FILE))
+                    .map(|state| format!("{state:?}"))
+                    .unwrap_or_else(|state_error| format!("state read failed: {state_error}"));
+                let endpoint = UnixEndpoint::derive(directory.path())
+                    .map(|endpoint| {
+                        fs::symlink_metadata(endpoint.socket_path())
+                            .map(|metadata| {
+                                format!(
+                                    "socket={}, uid={}, mode={:o}, is_socket={}",
+                                    endpoint.socket_path().display(),
+                                    metadata.uid(),
+                                    metadata.mode() & 0o777,
+                                    metadata.file_type().is_socket()
+                                )
+                            })
+                            .unwrap_or_else(|metadata_error| {
+                                format!("socket metadata unavailable: {metadata_error}")
+                            })
+                    })
+                    .unwrap_or_else(|endpoint_error| {
+                        format!("endpoint derivation failed: {endpoint_error}")
+                    });
+                let _ = restarted_child.child().kill();
+                let status = restarted_child
+                    .child()
+                    .wait()
+                    .expect("reap restarted Runtime after readiness failure");
+                let (stdout, stderr) = capture_output(restarted_child.child());
+                panic!(
+                    "restarted Runtime missed Operator readiness ({error}); persisted_state={state}; endpoint={endpoint}; status={status}; stdout={stdout}; stderr={stderr}"
+                );
+            }
+            Err(_) => thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    assert_operator_readiness(&restarted_readiness);
+    assert_eq!(
+        restarted_readiness["runtime_id"],
+        first_readiness["runtime_id"]
+    );
+    assert_ne!(
+        restarted_readiness["local_incarnation_id"],
+        first_readiness["local_incarnation_id"]
+    );
+
+    // Reopen the production Tauri journal module as the desktop recovery path does.
+    let restarted_journal = ConversationCreateJournal::new(&app_data_directory);
+    assert_eq!(
+        restarted_journal
+            .list()
+            .expect("pending identity survives restart"),
+        vec![pending_create.clone()]
+    );
+    restarted_journal
+        .record(pending_create.clone())
+        .expect("re-enqueue preserves the same RequestId and normalized title");
+
+    let replay = send_operator_request(
+        directory.path(),
+        "conversation-create-after-restart-retry",
+        "POST",
+        "/v1/conversations",
+        vec![
+            ("content-type", "application/json"),
+            ("x-workspace-id", pending_create.workspace_id.as_str()),
+            ("idempotency-key", pending_create.request_id.as_str()),
+        ],
+        &conversation_body,
+    );
+    assert_eq!(replay.header.status, 201, "exact retry returns CREATED");
+    assert_eq!(
+        replay.header.request_id, "conversation-create-after-restart-retry",
+        "the new transport frame ID carries response correlation"
+    );
+    let replay_body: Value =
+        serde_json::from_slice(replay.body()).expect("replayed Conversation body is JSON");
+    assert_eq!(
+        replay_body, committed_before_restart.response["conversation"],
+        "replay returns the original committed Conversation projection"
+    );
+    assert_eq!(
+        replay
+            .header
+            .headers
+            .iter()
+            .find(|header| header.name.eq_ignore_ascii_case("x-correlation-id"))
+            .map(|header| header.value.as_str()),
+        committed_before_restart.response["event"]["correlation_id"].as_str(),
+        "replay retains the original event correlation ID"
+    );
+    restarted_journal
+        .acknowledge(&pending_create.workspace_id, &pending_create.request_id)
+        .expect("acknowledge only after validating the replay response");
+    assert!(
+        restarted_journal
+            .list()
+            .expect("read journal after acknowledgement")
+            .is_empty()
+    );
+
+    let changed_body = serde_json::to_vec(&serde_json::json!({
+        "workspace_id": pending_create.workspace_id,
+        "title": "Changed title conflicts",
+    }))
+    .expect("changed Conversation create request serializes");
+    let changed_payload = send_operator_request(
+        directory.path(),
+        "conversation-create-after-restart-conflict",
+        "POST",
+        "/v1/conversations",
+        vec![
+            ("content-type", "application/json"),
+            ("x-workspace-id", pending_create.workspace_id.as_str()),
+            ("idempotency-key", pending_create.request_id.as_str()),
+        ],
+        &changed_body,
+    );
+    assert_eq!(changed_payload.header.status, 409);
+    let conflict: Value =
+        serde_json::from_slice(changed_payload.body()).expect("conflict response is JSON");
+    assert_eq!(conflict["code"], "CONFLICT");
+    let after_retry = read_durable_conversation_create(
+        directory.path(),
+        &pending_create.request_id,
+        &local_principal_id,
+    )
+    .expect("Conversation receipt can be inspected after replay")
+    .expect("Conversation receipt remains durable");
+    assert_eq!(after_retry, committed_before_restart);
+    assert_single_conversation_commit(
+        &after_retry,
+        &pending_create.workspace_id,
+        &local_principal_id,
+        &pending_create.request_id,
+    );
+
+    let (restart_status, restart_stdout, restart_stderr) = restarted_child.terminate_and_wait();
+    assert!(
+        restart_status.success(),
+        "restarted Runtime shutdown failed: stdout={restart_stdout} stderr={restart_stderr}"
+    );
+}
+
+#[test]
+fn spawned_daemon_replays_workspace_root_scan_after_lost_ack_and_restart() {
+    const WORKSPACE_KEY: &str = "workspace-root-scan-replay-workspace-v1";
+    const ENROLLMENT_KEY: &str = "workspace-root-scan-replay-enrollment-v1";
+    const ROOT_KEY: &str = "workspace-root-scan-replay-selection-v1";
+    const SCAN_KEY: &str = "workspace-root-scan-lost-ack-v1";
+
+    let directory = tempfile::tempdir().expect("private Runtime data directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("restrict Runtime directory");
+
+    let mut first_child = RuntimeChild::spawn(directory.path());
+    let first_readiness = wait_for_operator_readiness(first_child.child(), directory.path());
+    assert_operator_readiness(&first_readiness);
+    let local_principal_id = read_state(&directory.path().join(STATE_FILE))
+        .expect("read first Runtime state")
+        .expect("first Runtime state exists")
+        .local_principal_id
+        .expect("test Runtime has a local principal");
+
+    let workspace_response = send_workspace_create(
+        directory.path(),
+        "workspace-root-scan-replay-workspace-frame",
+        WORKSPACE_KEY,
+        br#"{"name":"WorkspaceRoot scan restart fixture"}"#,
+    );
+    assert_eq!(workspace_response.header.status, 201);
+    let workspace: Value =
+        serde_json::from_slice(workspace_response.body()).expect("Workspace response is JSON");
+    let workspace_id = workspace["workspace_id"]
+        .as_str()
+        .expect("created Workspace ID is returned")
+        .to_owned();
+    assert_eq!(workspace["owner_principal_id"], local_principal_id);
+
+    let enrollment_path =
+        format!("/v1/workspaces/{workspace_id}/runtime-bindings/local-enrollment");
+    let enrollment = send_operator_request(
+        directory.path(),
+        "workspace-root-scan-replay-enrollment-frame",
+        "POST",
+        &enrollment_path,
+        vec![("if-match", "1"), ("idempotency-key", ENROLLMENT_KEY)],
+        &[],
+    );
+    assert_eq!(
+        enrollment.header.status, 201,
+        "local owner enrollment succeeds"
+    );
+    let enrollment_body: Value =
+        serde_json::from_slice(enrollment.body()).expect("Runtime binding response is JSON");
+    assert_eq!(enrollment_body["runtime_id"], first_readiness["runtime_id"]);
+    assert_eq!(enrollment_body["status"], "ACTIVE");
+
+    let selected_directory = directory.path().join("selected-project");
+    fs::create_dir(&selected_directory).expect("selected folder fixture creates");
+    fs::set_permissions(&selected_directory, fs::Permissions::from_mode(0o700))
+        .expect("restrict selected folder");
+    fs::write(
+        selected_directory.join("private-name.txt"),
+        b"private content remains outside the summary",
+    )
+    .expect("metadata-only scan fixture creates");
+    let selection_body = serde_json::to_vec(&serde_json::json!({
+        "workspace_id": workspace_id,
+        "expected_workspace_version": 1,
+        "selected_path_base64": base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(selected_directory.as_os_str().as_bytes()),
+        "watch_policy": "METADATA",
+        "replication_policy": "NONE",
+    }))
+    .expect("native folder-selection request serializes");
+    let selected = send_operator_request(
+        directory.path(),
+        "workspace-root-scan-replay-selection-frame",
+        "POST",
+        operator_ipc::PRIVATE_LOCAL_ROOT_SELECTION_PATH,
+        vec![
+            ("content-type", "application/json"),
+            ("idempotency-key", ROOT_KEY),
+        ],
+        &selection_body,
+    );
+    assert_eq!(
+        selected.header.status, 200,
+        "owner-selected folder is committed"
+    );
+    let selected_body: Value =
+        serde_json::from_slice(selected.body()).expect("WorkspaceRoot selection is JSON");
+    assert_eq!(selected_body["workspace_id"], workspace_id);
+    assert_eq!(selected_body["display_name"], "selected-project");
+    assert_eq!(selected_body["status"], "ACTIVE");
+    assert_eq!(selected_body["location_availability"], "AVAILABLE");
+    let workspace_root_id = selected_body["workspace_root_id"]
+        .as_str()
+        .expect("selection returns a WorkspaceRoot ID")
+        .to_owned();
+
+    let scan_path = format!("/v1/workspace-roots/{workspace_root_id}/scan");
+    let scan_headers = vec![
+        ("content-type", "application/json"),
+        ("x-workspace-id", workspace_id.as_str()),
+        ("if-match", "1"),
+        ("idempotency-key", SCAN_KEY),
+    ];
+    let lost_ack = submit_operator_request_without_reading_response(
+        directory.path(),
+        "workspace-root-scan-before-lost-ack",
+        "POST",
+        &scan_path,
+        scan_headers.clone(),
+        b"{}",
+    );
+
+    let deadline = Instant::now() + RECEIPT_DEADLINE;
+    let (receipt_principal, request_digest, response_json, response_digest) = loop {
+        let connection = Connection::open(directory.path().join("litecowork.sqlite3"))
+            .expect("open Runtime database for scan receipt inspection");
+        connection
+            .busy_timeout(Duration::from_secs(1))
+            .expect("configure scan receipt inspection timeout");
+        let receipt = connection
+            .query_row(
+                "SELECT principal_id, request_digest, response_json, response_digest
+                 FROM request_dedup WHERE principal_id=?1 AND request_id=?2",
+                rusqlite::params![local_principal_id, SCAN_KEY],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .expect("inspect committed scan receipt");
+        if let Some(receipt) = receipt {
+            break receipt;
+        }
+        if Instant::now() >= deadline {
+            let (status, stdout, stderr) = first_child.terminate_and_wait();
+            panic!(
+                "WorkspaceRoot scan receipt was not durable before the deadline; Runtime status={status}; stdout={stdout}; stderr={stderr}"
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(
+        receipt_principal, local_principal_id,
+        "scan receipt belongs to the local owner"
+    );
+    assert!(request_digest.starts_with("sha256:"));
+    assert_eq!(
+        response_digest,
+        format!("sha256:{:x}", Sha256::digest(response_json.as_bytes())),
+        "the durable response digest verifies"
+    );
+    let durable_summary: storage_core::WorkspaceRootScanResult =
+        serde_json::from_str(&response_json).expect("durable scan response is valid");
+    assert_eq!(durable_summary.workspace_id, workspace_id);
+    assert_eq!(durable_summary.workspace_root_id, workspace_root_id);
+    assert_eq!(durable_summary.request_id, SCAN_KEY);
+    assert_eq!(durable_summary.root_version, 1);
+    assert_eq!(
+        durable_summary.status,
+        storage_core::WorkspaceRootScanStatus::Complete
+    );
+    assert_eq!(durable_summary.entries_examined, 1);
+    assert_eq!(durable_summary.files_observed, 1);
+    assert_eq!(durable_summary.partial_reason, None);
+    assert!(!response_json.contains("private-name.txt"));
+    assert!(!response_json.contains("private content"));
+    assert!(!response_json.contains(&selected_directory.to_string_lossy().to_string()));
+    let connection = Connection::open(directory.path().join("litecowork.sqlite3"))
+        .expect("open Runtime database to count durable scan receipts");
+    let receipt_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id=?1 AND request_id=?2",
+            rusqlite::params![local_principal_id, SCAN_KEY],
+            |row| row.get(0),
+        )
+        .expect("count durable scan receipts");
+    assert_eq!(
+        receipt_count, 1,
+        "one durable owner-scoped scan receipt exists"
+    );
+
+    // Keep the selected folder through Runtime startup so its current-incarnation
+    // binding is revalidated normally. The committed scan response remains unread.
+    let (first_status, first_stdout, first_stderr) = first_child.terminate_and_wait();
+    assert!(
+        first_status.success(),
+        "first Runtime shutdown failed: stdout={first_stdout} stderr={first_stderr}"
+    );
+    drop(lost_ack);
+
+    let mut restarted_child = RuntimeChild::spawn(directory.path());
+    let restarted_readiness =
+        wait_for_operator_readiness(restarted_child.child(), directory.path());
+    assert_operator_readiness(&restarted_readiness);
+    assert_eq!(
+        restarted_readiness["runtime_id"],
+        first_readiness["runtime_id"]
+    );
+    assert_ne!(
+        restarted_readiness["local_incarnation_id"], first_readiness["local_incarnation_id"],
+        "the retry crosses a fresh Runtime incarnation"
+    );
+    fs::remove_dir_all(&selected_directory)
+        .expect("remove selected folder after restart and before exact replay");
+    assert!(
+        !selected_directory.exists(),
+        "the selected directory stays absent so replay cannot depend on filesystem access"
+    );
+
+    let replay = send_operator_request(
+        directory.path(),
+        "workspace-root-scan-after-restart-retry",
+        "POST",
+        &scan_path,
+        scan_headers,
+        b"{}",
+    );
+    assert_eq!(
+        replay.header.status, 200,
+        "exact scan retry replays the receipt"
+    );
+    assert_eq!(
+        replay.header.request_id,
+        "workspace-root-scan-after-restart-retry"
+    );
+    assert_eq!(
+        replay
+            .header
+            .headers
+            .iter()
+            .find(|header| header.name.eq_ignore_ascii_case("cache-control"))
+            .map(|header| header.value.as_str()),
+        Some("no-store")
+    );
+    let expected_wire_body = serde_json::to_vec(&durable_summary)
+        .expect("the durable receipt has the Operator's stable response encoding");
+    assert_eq!(
+        replay.body(),
+        expected_wire_body.as_slice(),
+        "the retry returns the byte-identical receipt body"
+    );
+    let after_retry_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id=?1 AND request_id=?2",
+            rusqlite::params![local_principal_id, SCAN_KEY],
+            |row| row.get(0),
+        )
+        .expect("recount durable scan receipts after retry");
+    assert_eq!(after_retry_count, 1, "replay does not add another receipt");
 
     let (restart_status, restart_stdout, restart_stderr) = restarted_child.terminate_and_wait();
     assert!(
@@ -888,7 +1431,7 @@ fn wait_for_durable_upload_chunk(
     request_id: &str,
     expected_chunk_count: i64,
 ) -> Result<(), String> {
-    let deadline = Instant::now() + RECEIPT_DEADLINE;
+    let deadline = Instant::now() + UPLOAD_CHUNK_COMMIT_DEADLINE;
     loop {
         let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
             .map_err(|error| error.to_string())?;
@@ -2352,6 +2895,15 @@ fn seed_instruction_resource(
         .expect("insert instruction fixture revision");
     transaction
         .execute(
+            "INSERT INTO resource_content_blob_registry(workspace_id,digest,size_bytes,media_type,created_at,expires_at,state,claimed_at)
+             SELECT resource.workspace_id,revision.content_digest,revision.size_bytes,COALESCE(revision.media_type,'application/octet-stream'),revision.observed_at,NULL,'TRACKED',NULL
+             FROM resources resource JOIN resource_revisions revision ON revision.resource_id=resource.resource_id
+             WHERE resource.resource_id=?1 AND revision.resource_revision_id=?2",
+            rusqlite::params![resource_id, revision_id],
+        )
+        .expect("track instruction fixture Resource content");
+    transaction
+        .execute(
             "INSERT INTO resource_locations(location_id,resource_id,provider_ref,locator_ref_id,availability,writable,observed_revision_id,observed_digest,observed_at,last_checked_at)
              VALUES (?1,?2,'litecowork.encrypted_blob',?3,'AVAILABLE',0,?4,?3,'2026-10-14T14:00:00Z','2026-10-14T14:00:00Z')",
             rusqlite::params![
@@ -2832,6 +3384,142 @@ fn assert_single_workspace_commit(
     assert_eq!(snapshot.workspace_event_count, 1);
     assert_eq!(
         snapshot.request_receipt_count, 1,
+        "receipt for {idempotency_key}"
+    );
+}
+
+fn wait_for_durable_conversation_create(
+    data_directory: &Path,
+    idempotency_key: &str,
+    principal_id: &str,
+) -> Result<DurableConversationCreate, String> {
+    let deadline = Instant::now() + RECEIPT_DEADLINE;
+    loop {
+        match read_durable_conversation_create(data_directory, idempotency_key, principal_id) {
+            Ok(Some(receipt)) => return Ok(receipt),
+            Ok(None) => {}
+            Err(error) if Instant::now() < deadline => {
+                let _ = error;
+            }
+            Err(error) => return Err(error),
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                "Conversation create receipt was not durable before the deadline".to_owned(),
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn read_durable_conversation_create(
+    data_directory: &Path,
+    idempotency_key: &str,
+    principal_id: &str,
+) -> Result<Option<DurableConversationCreate>, String> {
+    let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+        .map_err(|error| error.to_string())?;
+    connection
+        .busy_timeout(Duration::from_secs(1))
+        .map_err(|error| error.to_string())?;
+    let receipt_row: Option<(String, String, String, String)> = connection
+        .query_row(
+            "SELECT principal_id, request_digest, response_json, response_digest
+             FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            rusqlite::params![principal_id, idempotency_key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((receipt_principal, request_digest, response_json, response_digest)) = receipt_row
+    else {
+        return Ok(None);
+    };
+    if receipt_principal != principal_id {
+        return Err("Conversation receipt belongs to a different Principal".to_owned());
+    }
+    if response_digest != format!("sha256:{:x}", Sha256::digest(response_json.as_bytes())) {
+        return Err("Conversation receipt response digest is invalid".to_owned());
+    }
+    let response: Value =
+        serde_json::from_str(&response_json).map_err(|error| error.to_string())?;
+    let conversation_id = response["conversation"]["conversation_id"]
+        .as_str()
+        .ok_or_else(|| "committed receipt has no Conversation ID".to_owned())?;
+    let conversation_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM conversations WHERE workspace_id = ?1 AND conversation_id = ?2",
+            rusqlite::params![
+                response["conversation"]["workspace_id"].as_str(),
+                conversation_id
+            ],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let created_event_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE workspace_id = ?1 AND type = 'conversation.created.v1'",
+            [response["conversation"]["workspace_id"].as_str().unwrap_or_default()],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let conversation_event_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE entity_id = ?1 AND type = 'conversation.created.v1'",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let aggregate_state_event_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events
+             WHERE entity_id = ?1 AND type = 'conversation.created.v1'
+               AND aggregate_state_ref_json IS NOT NULL",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let request_receipt_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            rusqlite::params![principal_id, idempotency_key],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(Some(DurableConversationCreate {
+        principal_id: receipt_principal,
+        request_digest,
+        response_digest,
+        response,
+        conversation_count,
+        created_event_count,
+        conversation_event_count,
+        aggregate_state_event_count,
+        request_receipt_count,
+    }))
+}
+
+fn assert_single_conversation_commit(
+    receipt: &DurableConversationCreate,
+    workspace_id: &str,
+    principal_id: &str,
+    idempotency_key: &str,
+) {
+    assert_eq!(receipt.principal_id, principal_id);
+    assert!(receipt.request_digest.starts_with("sha256:"));
+    assert!(receipt.response_digest.starts_with("sha256:"));
+    assert_eq!(
+        receipt.response["conversation"]["workspace_id"],
+        workspace_id
+    );
+    assert_eq!(receipt.response["conversation"]["version"], 1);
+    assert_eq!(receipt.response["event"]["type"], "conversation.created.v1");
+    assert_eq!(receipt.conversation_count, 1);
+    assert_eq!(receipt.created_event_count, 1);
+    assert_eq!(receipt.conversation_event_count, 1);
+    assert_eq!(receipt.aggregate_state_event_count, 1);
+    assert_eq!(
+        receipt.request_receipt_count, 1,
         "receipt for {idempotency_key}"
     );
 }

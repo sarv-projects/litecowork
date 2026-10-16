@@ -467,6 +467,17 @@ is REVOKED.
 
 ## F28 — Persistent WorkspaceRoot and deterministic search
 
+**Served first slice (partial):** `POST /v1/workspace-roots/{id}/scan` performs an
+explicit, owner-authenticated Linux metadata census with exact request replay and final
+Workspace/root/Runtime binding fences. It reports the requested Workspace/root/version,
+bounded entry/file counts, COMPLETE/PARTIAL status, safe partial reason, and completion
+time. It returns no path, file name, or filesystem identity. It does not create the
+Resource/Revision/Location observations,
+membership projection, root-aware search, watcher, or deletion reconciliation described
+in this target flow. At most two Linux scan jobs run at once; an occupied-capacity response
+does no filesystem work and creates no receipt, so the same request identity can be retried.
+The endpoint therefore does not complete F28 or E02-S03.
+
 Actors: User, Operator UI, ResourceService, WorldIndexer, local Runtime.
 
 Precondition: Workspace is ACTIVE; the user explicitly selects one folder Resource and
@@ -2152,8 +2163,10 @@ within the 100-file / 100-MiB selection limit; each file is at most 100 MiB.
    exact matches. A v1 session without a whole-file digest, or with an old size/chunk limit
    outside the current contract, is not resumed; the desktop starts a new verified upload.
    A COMMITTED session is recovered only after the selected bytes match its pinned digest;
-   the deterministic commit receipt returns the original Resource, which is inserted into
-   the visible catalog by its exact ID. A digest-less legacy COMMITTED session cannot prove
+   the caller's persisted commit RequestId first resolves its principal-scoped receipt, and
+   the per-upload deterministic receipt recovers the original Resource if that caller key
+   was lost. The returned Resource is inserted into the visible catalog by its exact ID. A
+   digest-less legacy COMMITTED session cannot prove
    that it represents the selected bytes, so the desktop stops and asks the owner to review
    the Library. A migrated committed row without a deterministic receipt returns a typed
    conflict instead of creating a duplicate. The browser stores upload ID, request IDs, and
@@ -2169,9 +2182,9 @@ within the 100-file / 100-MiB selection limit; each file is at most 100 MiB.
    changed content for an accepted index conflicts.
 4. The desktop commits only after all bytes are accepted. Storage loads chunks in index
    order, decrypts and verifies each digest/size, checks contiguous total coverage and the
-   required whole-file digest, then creates the Resource, revision, location, event and
-   replay receipt, the session `COMMITTED` state, and CONTENT_RECEIVED -> COMMITTED event
-   in the same SQLite transaction.
+   required whole-file digest, then creates the Resource, revision, location, event,
+   caller-key receipt, and deterministic per-upload recovery receipt, the session
+   `COMMITTED` state, and CONTENT_RECEIVED -> COMMITTED event in the same SQLite transaction.
 5. Tauri appends the returned Resource to the visible catalog only after commit succeeds.
    If the process stops mid-upload, the user reselects the file; matching acknowledged
    chunks are skipped and missing chunks resume. Ordinary TTL-expired sessions start over;
@@ -2185,8 +2198,10 @@ within the 100-file / 100-MiB selection limit; each file is at most 100 MiB.
    paused. No new upload state or domain event is created by the pause control.
 
 **Failure/UI/postcondition:** Wrong Workspace, invalid size/range, expired session, or
-conflicting replay is rejected without changing the Resource. Commit retries for one upload
-ID resolve to the same Resource. Definite stored-content integrity failure durably
+conflicting replay is rejected without changing the Resource. Commit retries with the same
+caller key and upload resolve to the exact original response; reusing that key for another
+upload under the same principal conflicts. A new key can recover the same committed upload
+through its deterministic receipt, without another Resource or event. Definite stored-content integrity failure durably
 transitions CONTENT_RECEIVED -> FAILED with an aggregate-state-backed event before returning
 `INTEGRITY_FAILURE`; the user must start a new upload. Transient blob/database failures leave
 the session retryable and do not show a committed Resource. A chunk retry for a revision
@@ -2484,19 +2499,27 @@ AgentCatalogStore, bounded native adapter.
    to `CODEX` or `OPENCODE`. The Operator requires the active local enrollment and
    resolves the Runtime-local executable. Codex uses a bounded App Server process and
    performs initialize, account/read without refresh, and one bounded model/list page.
-   OpenCode launches its owned Server process with an allowlisted environment and reads
-   only `GET /provider` and `GET /config/providers`, each under the existing bounded
-   response limit. Both probes stop their owned direct process. Neither creates a
+   OpenCode first checks for an exactly qualified CLI version (`2.0.26` or `2.0.28`),
+   then launches its owned Server process with an allowlisted environment. For 2.0.26 it
+   requires `GET /api/health` to report healthy and uses the `litecowork` server username;
+   for 2.0.28 it requires `GET /api/info` to match the exact version and owned child PID,
+   and uses the `opencode` username. Both read only `GET /api/provider` and
+   `GET /api/model` for catalog projection, each under the existing bounded response
+   limit. Both probes stop their owned direct process. Neither creates a
    Conversation turn, Task, AgentSession, Environment, model inference request, grant,
    or Effect.
 4. The Operator persists the stable AgentProfile/AgentEndpoint identity, private
    Runtime-incarnation-bound executable locator, and sanitized expiring offer. The UI
-   distinguishes installation, reported provider readiness, option catalog, endpoint
-   compatibility/readiness, and the still-unverified session/inference lifecycle. For
+   distinguishes installation, probe result, provider/model catalog, provider connection
+   and authentication observations, offer compatibility, and the still-unverified
+   session/inference lifecycle. For
    Codex, expandable probe details expose only allowlisted protocol/account/model-list
-   observations. For OpenCode, they expose only bounded provider/model IDs and display
-   names, plus the provider IDs OpenCode reported as connected. This is not an
-   authentication or entitlement claim. OpenCode model entries are display-only;
+   observations. For OpenCode, they expose only bounded provider/model catalog IDs and
+   display names. `reported_provider_status=OBSERVED` means the provider catalog route
+   returned a valid catalog array; the transitional connected-provider ID fields are
+   always empty and do not report connection state. Connection, authentication,
+   entitlement, and inference remain unknown/unqualified. OpenCode model entries are
+   display-only;
    session model selection remains `NOT_QUALIFIED`, its offer is always incompatible,
    and no AgentBinding can be created or enabled from it. Neither probe exposes raw
    native payloads, configuration, credentials, or endpoint locators. Both report that
@@ -2527,8 +2550,8 @@ local Runtime installations without sharing authority; profile probe executes on
 allowlisted bounded methods, never refreshes auth or performs inference, rejects server
 requests, limits model options/catalog counts/response bytes, reaps its direct child, and
 preserves unproven writer quiescence; OpenCode output contains only sanitized provider/
-model IDs and display names plus reported connected IDs; catalog entries and reported
-connection state never enable OpenCode binding admission; private executable locator/
+model catalog IDs and display names; the transitional connected-provider ID fields remain
+empty; catalog entries never enable OpenCode binding admission; private executable locator/
 account data/native protocol payloads never appear
 in Operator responses, domain events, backups, or logs; offers expire and stale offers
 cannot create/enable a binding; binding creation is disabled at version 1; enable is

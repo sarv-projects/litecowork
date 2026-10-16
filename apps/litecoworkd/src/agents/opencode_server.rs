@@ -36,7 +36,6 @@ const MAX_HEADER_BYTES: usize = 32 * 1024;
 const MAX_SSE_LINE_BYTES: usize = 64 * 1024;
 const MAX_SSE_EVENT_BYTES: usize = 256 * 1024;
 const MAX_SESSION_ID_BYTES: usize = 128;
-const SERVER_USERNAME: &str = "litecowork";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OpenCodeError {
@@ -80,6 +79,52 @@ pub(crate) enum OpenCodeProcessState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OpenCodeServerProtocol {
     V2_0_26,
+    V2_0_28,
+}
+
+impl OpenCodeServerProtocol {
+    fn server_username(self) -> &'static str {
+        match self {
+            Self::V2_0_26 => "litecowork",
+            Self::V2_0_28 => "opencode",
+        }
+    }
+
+    fn readiness_path(self) -> &'static str {
+        match self {
+            Self::V2_0_26 => "/api/health",
+            Self::V2_0_28 => "/api/info",
+        }
+    }
+
+    fn readiness_response_matches(
+        self,
+        expected_process_id: u32,
+        status: u16,
+        body: &[u8],
+    ) -> bool {
+        if status != 200 {
+            return false;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(body) else {
+            return false;
+        };
+        match self {
+            Self::V2_0_26 => {
+                value
+                    .get("data")
+                    .unwrap_or(&value)
+                    .get("healthy")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            }
+            Self::V2_0_28 => {
+                value.get("version").and_then(Value::as_str) == Some("2.0.28")
+                    && value.get("pid").and_then(Value::as_u64)
+                        == Some(u64::from(expected_process_id))
+            }
+        }
+    }
 }
 
 /// Safe transport configuration. The executable and working directory must be
@@ -261,7 +306,10 @@ impl OpenCodeServer {
             .args(["serve", "--hostname", "127.0.0.1", "--port"])
             .arg(port.to_string())
             .current_dir(&config.working_directory)
-            .env("OPENCODE_SERVER_USERNAME", SERVER_USERNAME)
+            .env(
+                "OPENCODE_SERVER_USERNAME",
+                config.protocol.server_username(),
+            )
             .env(
                 "OPENCODE_SERVER_PASSWORD",
                 std::str::from_utf8(&password).expect("hex is UTF-8"),
@@ -317,22 +365,17 @@ impl OpenCodeServer {
             server.request_timeout = config.request_timeout.min(remaining);
             match server.request_with_response_limit(
                 "GET",
-                "/api/health",
+                server.protocol.readiness_path(),
                 None,
                 "application/json",
                 MAX_HEALTH_RESPONSE_BYTES,
             ) {
                 Ok(response)
-                    if response.status == 200
-                        && serde_json::from_slice::<Value>(&response.body)
-                            .ok()
-                            .and_then(|body| {
-                                body.get("data")
-                                    .unwrap_or(&body)
-                                    .get("healthy")
-                                    .and_then(Value::as_bool)
-                            })
-                            == Some(true) =>
+                    if server.protocol.readiness_response_matches(
+                        server.child.id(),
+                        response.status,
+                        &response.body,
+                    ) =>
                 {
                     server.request_timeout = config.request_timeout;
                     return Ok(server);
@@ -368,7 +411,7 @@ impl OpenCodeServer {
     /// fields before exposing any observation outside this module.
     pub(super) fn read_provider_status(&mut self) -> Result<Value, OpenCodeError> {
         let path = match self.protocol {
-            OpenCodeServerProtocol::V2_0_26 => "/api/provider",
+            OpenCodeServerProtocol::V2_0_26 | OpenCodeServerProtocol::V2_0_28 => "/api/provider",
         };
         let response = self.request_with_response_limit(
             "GET",
@@ -384,7 +427,7 @@ impl OpenCodeServer {
     /// a model or changing OpenCode configuration.
     pub(super) fn read_configured_provider_catalog(&mut self) -> Result<Value, OpenCodeError> {
         let path = match self.protocol {
-            OpenCodeServerProtocol::V2_0_26 => "/api/model",
+            OpenCodeServerProtocol::V2_0_26 | OpenCodeServerProtocol::V2_0_28 => "/api/model",
         };
         let response = self.request_with_response_limit(
             "GET",
@@ -624,8 +667,9 @@ impl OpenCodeServer {
     }
 
     fn authorization(&self) -> String {
-        let mut credentials = Vec::with_capacity(SERVER_USERNAME.len() + 1 + self.password.len());
-        credentials.extend_from_slice(SERVER_USERNAME.as_bytes());
+        let username = self.protocol.server_username();
+        let mut credentials = Vec::with_capacity(username.len() + 1 + self.password.len());
+        credentials.extend_from_slice(username.as_bytes());
         credentials.push(b':');
         credentials.extend_from_slice(&self.password);
         format!("Basic {}", BASE64.encode(credentials))
@@ -1250,6 +1294,33 @@ fn map_read_error(error: std::io::Error) -> OpenCodeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qualified_protocols_use_their_exact_server_auth_and_readiness_contracts() {
+        assert_eq!(
+            OpenCodeServerProtocol::V2_0_26.server_username(),
+            "litecowork"
+        );
+        assert_eq!(
+            OpenCodeServerProtocol::V2_0_26.readiness_path(),
+            "/api/health"
+        );
+        assert!(OpenCodeServerProtocol::V2_0_26.readiness_response_matches(
+            41,
+            200,
+            br#"{"data":{"healthy":true}}"#
+        ));
+
+        let current = OpenCodeServerProtocol::V2_0_28;
+        assert_eq!(current.server_username(), "opencode");
+        assert_eq!(current.readiness_path(), "/api/info");
+        let server_info = br#"{"version":"2.0.28","pid":41,"paths":{"directory":"private"}}"#;
+        assert!(current.readiness_response_matches(41, 200, server_info));
+        assert!(!current.readiness_response_matches(42, 200, server_info));
+        assert!(!current.readiness_response_matches(41, 200, br#"{"version":"2.0.29","pid":41}"#));
+        assert!(!current.readiness_response_matches(41, 401, server_info));
+        assert!(!current.readiness_response_matches(41, 200, b"not json"));
+    }
 
     #[test]
     fn accepts_documented_native_server_listening_markers() {

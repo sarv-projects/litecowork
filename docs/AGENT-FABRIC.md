@@ -86,8 +86,13 @@ authentication readiness, lead eligibility and session readiness remain separate
 ### Local installation inventory
 
 The authenticated local Operator may expose a runtime-local installation inventory
-before protocol negotiation. An inventory row proves only that a known executable
-returned a bounded, recognized version string to its `--version` invocation. It is
+before protocol negotiation. An `INSTALLED` inventory row means a known executable has a
+bounded, recognized version from its `--version` response or, for Cline's local npm CLI on
+Linux/macOS, from the first `package.json` found above the resolved executable. That
+manifest must identify the `cline` package and contain a plain numeric release triplet;
+an invalid or different nearest manifest cannot be bypassed by a higher ancestor. If
+metadata cannot establish that observation, Cline falls back to a bounded `--version`
+invocation with inherited daemon environment cleared. The row is
 not an `AgentProfile`, `AgentEndpoint`, or `AgentBinding` and does not prove auth,
 provider/model access, session support, or lead/delegation eligibility. The inventory
 does not persist executable paths or raw command output. Its readiness fields remain
@@ -104,14 +109,25 @@ incarnation through an ACTIVE `LOCAL_ENROLLMENT` RuntimeWorkspaceBinding carryin
 `EXECUTOR` and `OPERATOR_ENDPOINT`; serving the authenticated Operator does not imply this
 enrollment. The Codex probe performs bounded App Server initialization, account-state
 read without refresh, and one bounded model-catalog page. The OpenCode probe runs a
-bounded `--version` check and currently accepts only the specifically qualified
-`opencode 2.0.26` Server protocol. It reads `/api/provider` and `/api/model`; these V2
-routes return location-bearing `data` envelopes, so the adapter projects only bounded
-provider/model IDs and safe display names. Provider IDs from `/api/provider` are labeled
-as catalog IDs, never as connected/authenticated providers. Native provider/model objects,
-location paths, options, headers, keys, URLs, and raw responses are discarded. A mismatched
-or unsupported CLI version fails closed without probing legacy routes. Neither catalog
-route proves authentication, entitlement, or inference success.
+bounded `--version` check and accepts only the specifically qualified `opencode 2.0.26`
+and `2.0.28` Server protocols. Both read `/api/provider` and `/api/model`; these V2 routes
+return location-bearing `data` envelopes, so the adapter projects only bounded
+provider/model IDs and safe display names. Readiness is version specific: 2.0.26 requires
+`/api/health` to report `healthy: true` and uses its qualified `litecowork` server
+username; 2.0.28 requires `/api/info` to report the exact version and the PID of the owned
+child process, and uses the qualified `opencode` username. Provider IDs from
+`/api/provider` are labeled as catalog IDs, never as connected/authenticated providers.
+Native provider/model objects, location paths, options, headers, keys, URLs, and raw
+responses are discarded. A mismatched or unsupported CLI version fails closed without
+probing legacy routes. Neither catalog route proves authentication, entitlement, or
+inference success.
+For Codex, `RuntimeOffer.compatible` currently means only that the bounded App Server
+`initialize` handshake returned a structurally valid response. Authentication, complete
+catalog observation, direct-process stop, and Conversation safety remain separate facts.
+A compatible Codex offer with `NEEDS_AUTH` or `UNAVAILABLE` readiness is not usable for
+binding creation or enablement; storage requires a fresh compatible offer whose readiness
+is `AVAILABLE`, `STARTABLE`, or `READY`. This handshake observation is not a version-pinned
+provider qualification or evidence of native session support.
 OpenCode's catalog is display-only: session model selection is `NOT_QUALIFIED`, and its
 RuntimeOffer is always incompatible until session-option semantics, Task admission,
 Environment isolation, native capability mediation, process-tree containment, Effect
@@ -411,4 +427,11 @@ Native subagents remain agent-owned. LiteCowork may record reported lifecycle if
 
 ## V1 detailed design integration — 2026-10-12
 
-Native per-harness session startup, version fencing, auth and native input adaptation are implemented against NATIVE-COMPOSER-LLD.md and the function list in V1-FUNCTION-FILE-CATALOG.md. Switching selected AgentBinding does not migrate private provider session state or silently modify a running Attempt. Separate UI option switching from persisted session/Task transition receipts.
+Native per-harness session startup, version fencing, authentication, and native input
+adaptation are target design in [NATIVE-COMPOSER-LLD.md](NATIVE-COMPOSER-LLD.md) and
+[`V1-FUNCTION-FILE-CATALOG.md`](V1-FUNCTION-FILE-CATALOG.md). Current source provides
+bounded Codex/OpenCode discovery and profile observations, Cline installation inventory,
+and Workspace AgentBinding setup; it does not yet serve native Conversation session startup or native composer
+adaptation. Switching selected AgentBinding must not migrate private provider session
+state or silently modify a running Attempt. UI option switching remains separate from
+persisted session/Task transition receipts.

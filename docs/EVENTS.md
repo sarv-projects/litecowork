@@ -595,6 +595,33 @@ the provider cannot prove a more specific route; the UI must not infer one from 
 | `resource.context_document.purge.acknowledged.v2` | Resource / ContextDocumentPurgeReconciler | Membership-array-free digest acknowledgement emitted after physical removal and durable registry clear; future Mesh replication carries no content or locator |
 | `environment.sharing_scope.changed.v1` | Environment / EnvironmentManager | Scope change requires expected-version and current-use check; provider locators remain local |
 
+For a local purge target, the acknowledgement event is emitted only after the exact local
+BlobStore object has been physically removed and its v19 ResourceIndex, v17 Resource-content,
+or v18 upload-chunk registry row and deletion fence have been durably cleared. A failed or
+ambiguous removal leaves the target receipt pending and the durable `DELETING` fence in place
+for retry. The receipt
+digest is `sha256:` plus lowercase hexadecimal SHA-256 of RFC 8785 JCS bytes for the v2
+acknowledgement payload fields excluding `receipt_digest` and `aggregate_version`: `resource_id`,
+`purge_manifest_digest`, `replica_ref`, `replica_kind`, the explicit
+`runtime_id`/`runtime_incarnation_id` null pair for local targets, `target_digest`, and
+`acknowledged_at`. `target_digest` hashes the canonical serialized target entry from the sealed
+manifest, including its exact revision or upload/chunk membership. The manifest and receipt
+rows retain those full arrays; the event payload avoids growth with target membership count.
+This is not a strict serialized-event byte cap: Resource and envelope identifiers keep the
+current string contract. The local Runtime pair is explicitly null, `acknowledged_at` is at
+most 30 characters, and `aggregate_version` is bounded by the canonical JSON safe-integer
+limit. No content bytes, storage locators, or provider results are emitted.
+
+Desktop V1 Workspaces are `LOCAL_ONLY`; this journal does not currently replicate ContextDocument
+purges across Runtimes. The status event carries only the plan digest and target count, and
+acknowledgement events identify targets only after they have been removed. Those events alone
+cannot reconstruct a sealed plan while any target is still pending. The local purge-plan and
+receipt records are the recovery authority and must be retained by the planned V1 backup
+serialization. Cross-Runtime replication is a future requirement: before enabling it, the
+transfer contract must deliver the exact immutable target manifest and per-target receipt
+state, or an equivalent reconstructible record, under Workspace policy. Local SQL recovery
+rows are not themselves replicated.
+
 Accepting a `TASK` Suggestion appends the ordinary `task.created.v1` event and
 `suggestion.resolved.v1` (`to=ACCEPTED`, `resolution_reason=ACCEPTED_BY_OWNER`,
 `result_task_id=<created Task>`) with both aggregate snapshots in the same SQLite

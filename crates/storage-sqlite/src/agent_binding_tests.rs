@@ -8,18 +8,18 @@ use sha2::{Digest, Sha256};
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex, mpsc},
     time::Duration,
 };
 use storage_core::{
     ActivateTaskPlanningSession, AgentBindingCreateRequest, AgentBindingDisableRequest,
     AgentBindingEnableRequest, AgentBindingRecord, AgentCatalogStore, AgentEndpointRecord,
-    AgentProfileRecord, AggregateStateRef, BlobPurpose, BlobRef, DeviceIdentityRecord, EventDraft,
-    LocalAgentEndpointBindingInput, LocalRuntimeWorkspaceEnrollmentRequest, PlanAcceptanceCommit,
-    PlanRevisionRecord, PlannedStepRecord, RuntimeIncarnationLocalObservationRecord,
-    RuntimeIncarnationRecord, RuntimeIncarnationStateUpdate, RuntimeLifecycleStore,
-    RuntimeOfferRecord, RuntimeRecord, RuntimeWorkspaceBindingStore, StepRecord,
-    WorkspaceCreateRequest,
+    AgentProfileRecord, AggregateStateRef, BlobPurpose, BlobRef, BlobStore, DeviceIdentityRecord,
+    EventDraft, LocalAgentEndpointBindingInput, LocalRuntimeWorkspaceEnrollmentRequest,
+    PlanAcceptanceCommit, PlanRevisionRecord, PlannedStepRecord,
+    RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
+    RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeOfferRecord, RuntimeRecord,
+    RuntimeWorkspaceBindingStore, StepRecord, WorkspaceCreateRequest,
 };
 
 const WORKSPACE_ID: &str = "workspace-agent-binding-tests";
@@ -63,6 +63,42 @@ impl WorkspaceBlobKeyProvider for TestKeys {
             return Err(StoreError::Blob("unknown test key version".to_owned()));
         }
         self.current_key(workspace_id, purpose)
+    }
+}
+
+struct PausingAgentBindingBlobStore {
+    inner: FileBlobStore<TestKeys>,
+    published: mpsc::Sender<()>,
+    resume_put: Mutex<mpsc::Receiver<()>>,
+}
+
+impl BlobStore for PausingAgentBindingBlobStore {
+    fn put(
+        &self,
+        workspace_id: &str,
+        purpose: BlobPurpose,
+        bytes: &[u8],
+        media_type: &str,
+    ) -> Result<BlobRef, StoreError> {
+        let blob = self.inner.put(workspace_id, purpose, bytes, media_type)?;
+        self.published
+            .send(())
+            .map_err(|error| StoreError::Io(error.to_string()))?;
+        self.resume_put
+            .lock()
+            .map_err(|_| StoreError::Io("AgentBinding test gate is unavailable".to_owned()))?
+            .recv()
+            .map_err(|error| StoreError::Io(error.to_string()))?;
+        Ok(blob)
+    }
+
+    fn get(
+        &self,
+        workspace_id: &str,
+        purpose: BlobPurpose,
+        blob: &BlobRef,
+    ) -> Result<Vec<u8>, StoreError> {
+        self.inner.get(workspace_id, purpose, blob)
     }
 }
 
@@ -461,6 +497,100 @@ fn agent_binding_audit_count(directory: &tempfile::TempDir, action: &str) -> i64
         .expect("count AgentBinding AuditRecords")
 }
 
+fn publish_test_offer(fixture: &Fixture, endpoint_id: &str, readiness: &str) {
+    fixture
+        .store
+        .publish_runtime_offer(RuntimeOfferRecord {
+            runtime_id: RUNTIME_ID.to_owned(),
+            runtime_incarnation_id: INCARNATION_ID.to_owned(),
+            offer_kind: "AGENT_ENDPOINT".to_owned(),
+            offer_ref: endpoint_id.to_owned(),
+            compatible: true,
+            readiness: readiness.to_owned(),
+            constraints: serde_json::json!({"test":true}),
+            observed_at: NOW.to_owned(),
+            expires_at: FUTURE.to_owned(),
+        })
+        .expect("Runtime endpoint offer is stored");
+}
+
+fn enable_request(
+    binding: &AgentBindingRecord,
+    expected_version: u64,
+    request_id: &str,
+) -> AgentBindingEnableRequest {
+    let next_version = expected_version + 1;
+    AgentBindingEnableRequest {
+        request: WorkspaceCreateRequest {
+            principal_id: OWNER_ID.to_owned(),
+            request_id: request_id.to_owned(),
+            request_payload: serde_json::json!({
+                "operation":"agent.binding.enable.v1",
+                "workspace_id":binding.workspace_id,
+                "agent_binding_id":binding.agent_binding_id,
+                "expected_version":expected_version
+            }),
+        },
+        workspace_id: binding.workspace_id.clone(),
+        agent_binding_id: binding.agent_binding_id.clone(),
+        expected_version,
+        now: NOW.to_owned(),
+        event: draft(
+            &format!("event-{request_id}"),
+            &binding.workspace_id,
+            "AgentBinding",
+            &binding.agent_binding_id,
+            next_version,
+            "agent.binding.changed.v1",
+            serde_json::json!({
+                "agent_binding_id":binding.agent_binding_id,
+                "workspace_id":binding.workspace_id,
+                "agent_profile_id":binding.agent_profile_id,
+                "from_enabled":false,
+                "to_enabled":true,
+                "aggregate_version":next_version,
+                "requested_by":{"principal_id":OWNER_ID,"kind":"USER"}
+            }),
+        ),
+    }
+}
+
+fn register_candidate_endpoint(fixture: &Fixture, suffix: &str) -> (String, String) {
+    let profile_id = format!("profile-agent-binding-{suffix}");
+    let endpoint_id = format!("endpoint-agent-binding-{suffix}");
+    fixture
+        .store
+        .put_agent_profile(
+            AgentProfileRecord {
+                agent_profile_id: profile_id.clone(),
+                provider_key: "test-provider".to_owned(),
+                display_name: "Test Agent Candidate".to_owned(),
+                discovered_at: NOW.to_owned(),
+            },
+            vec![AgentEndpointRecord {
+                endpoint_id: endpoint_id.clone(),
+                agent_profile_id: profile_id.clone(),
+                protocol: "ACP".to_owned(),
+                topology: "PROCESS_ADAPTER".to_owned(),
+                protocol_version: Some("1".to_owned()),
+                capabilities: serde_json::json!({"streaming":true}),
+            }],
+        )
+        .expect("candidate AgentProfile and endpoint are stored");
+    fixture
+        .store
+        .register_local_endpoint_binding(LocalAgentEndpointBindingInput {
+            endpoint_id: endpoint_id.clone(),
+            runtime_id: RUNTIME_ID.to_owned(),
+            runtime_incarnation_id: INCARNATION_ID.to_owned(),
+            endpoint_ref: format!("ipc:///private/{endpoint_id}"),
+            observed_at: NOW.to_owned(),
+            expires_at: Some(FUTURE.to_owned()),
+        })
+        .expect("candidate Runtime-local endpoint binding is stored");
+    (profile_id, endpoint_id)
+}
+
 #[test]
 fn enable_transition_records_an_append_only_owner_audit() {
     let fixture = setup();
@@ -629,8 +759,14 @@ fn failed_event_insert_rolls_back_the_binding_change_audit_and_receipt() {
     let request_id = "request-disable-event-conflict";
     let mut request = disable_request(&fixture.binding, 2, request_id);
     request.event.event_id = "event-agent-binding-create".to_owned();
+    let before = durable_counts(&fixture.directory);
 
     assert!(fixture.store.disable_agent_binding(request).is_err());
+    assert_eq!(
+        durable_counts(&fixture.directory),
+        before,
+        "a rejected AgentBinding transition must not leave an unreferenced state blob"
+    );
     let stored = fixture
         .store
         .get_agent_binding(OWNER_ID, WORKSPACE_ID, BINDING_ID)
@@ -660,6 +796,183 @@ fn failed_event_insert_rolls_back_the_binding_change_audit_and_receipt() {
     assert_eq!(
         receipts, 0,
         "the failed event insert also rolls back the receipt"
+    );
+}
+
+#[test]
+fn duplicate_agent_binding_id_rejection_does_not_write_aggregate_state() {
+    let fixture = setup();
+    let mut binding = AgentBindingRecord {
+        enabled: false,
+        version: 1,
+        lead_eligible: false,
+        ..fixture.binding.clone()
+    };
+    binding.created_at = "2026-10-15T10:03:00Z".to_owned();
+    let request_id = "request-duplicate-agent-binding-id";
+    let request = AgentBindingCreateRequest {
+        request: WorkspaceCreateRequest {
+            principal_id: OWNER_ID.to_owned(),
+            request_id: request_id.to_owned(),
+            request_payload: serde_json::json!({
+                "operation":"agent.binding.create.v1",
+                "workspace_id":WORKSPACE_ID,
+                "agent_profile_id":PROFILE_ID,
+                "lead_eligible":false
+            }),
+        },
+        binding: binding.clone(),
+        now: NOW.to_owned(),
+        event: draft(
+            "event-duplicate-agent-binding-id",
+            WORKSPACE_ID,
+            "AgentBinding",
+            BINDING_ID,
+            1,
+            "agent.binding.created.v1",
+            agent_binding_created_payload(&binding, OWNER_ID),
+        ),
+    };
+    let before = durable_counts(&fixture.directory);
+
+    assert!(fixture.store.create_agent_binding(request).is_err());
+
+    assert_eq!(
+        durable_counts(&fixture.directory),
+        before,
+        "a duplicate binding identity must fail before publishing aggregate state"
+    );
+}
+
+#[test]
+fn agent_binding_create_rejects_auth_refs_without_writing_any_state() {
+    let fixture = setup();
+    assert_eq!(fixture.binding.auth_ref, None);
+    assert_eq!(
+        fixture
+            .store
+            .get_agent_binding(OWNER_ID, WORKSPACE_ID, BINDING_ID)
+            .expect("read existing auth-free binding")
+            .expect("None auth_ref creation remains supported")
+            .auth_ref,
+        None
+    );
+
+    let rejected_refs = [
+        (
+            "well-shaped",
+            serde_json::json!({
+                "secret_ref_id":"secret-ref-foreign-caller",
+                "provider_ref":"opaque-foreign-store-key",
+                "placement":"LOCAL_ONLY"
+            }),
+        ),
+        ("malformed", serde_json::json!({"provider_ref":"unowned"})),
+    ];
+
+    for (suffix, auth_ref) in rejected_refs {
+        let mut binding = AgentBindingRecord {
+            agent_binding_id: format!("binding-auth-ref-{suffix}"),
+            auth_ref: Some(auth_ref),
+            enabled: false,
+            version: 1,
+            ..fixture.binding.clone()
+        };
+        binding.created_at = NOW.to_owned();
+        let request_id = format!("request-auth-ref-{suffix}");
+        let event_id = format!("event-auth-ref-{suffix}");
+        let request = AgentBindingCreateRequest {
+            request: WorkspaceCreateRequest {
+                principal_id: OWNER_ID.to_owned(),
+                request_id: request_id.clone(),
+                request_payload: serde_json::json!({
+                    "operation":"agent.binding.create.v1",
+                    "workspace_id":WORKSPACE_ID,
+                    "agent_profile_id":PROFILE_ID,
+                    "agent_binding_id":binding.agent_binding_id
+                }),
+            },
+            binding: binding.clone(),
+            now: NOW.to_owned(),
+            event: draft(
+                &event_id,
+                WORKSPACE_ID,
+                "AgentBinding",
+                &binding.agent_binding_id,
+                1,
+                "agent.binding.created.v1",
+                serde_json::json!({
+                    "agent_binding_id":binding.agent_binding_id,
+                    "workspace_id":WORKSPACE_ID,
+                    "agent_profile_id":PROFILE_ID,
+                    "from_enabled":false,
+                    "to_enabled":false,
+                    "aggregate_version":1,
+                    "requested_by":{"principal_id":OWNER_ID,"kind":"USER"}
+                }),
+            ),
+        };
+        let before_counts = durable_counts(&fixture.directory);
+        let before_audit = agent_binding_audit_count(&fixture.directory, "agent.binding.create");
+
+        assert!(matches!(
+            fixture.store.create_agent_binding(request),
+            Err(StoreError::Invalid(_))
+        ));
+
+        assert_eq!(durable_counts(&fixture.directory), before_counts);
+        assert_eq!(
+            agent_binding_audit_count(&fixture.directory, "agent.binding.create"),
+            before_audit
+        );
+        assert_eq!(
+            fixture
+                .store
+                .get_agent_binding(OWNER_ID, WORKSPACE_ID, &binding.agent_binding_id)
+                .expect("read rejected binding"),
+            None
+        );
+        let connection = Connection::open(database_path(&fixture.directory))
+            .expect("open SQLite DB to inspect rejected request");
+        let receipt_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2)",
+                params![OWNER_ID, request_id],
+                |row| row.get(0),
+            )
+            .expect("inspect rejected request receipt");
+        let event_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM domain_events WHERE event_id = ?1)",
+                [&event_id],
+                |row| row.get(0),
+            )
+            .expect("inspect rejected event");
+        assert!(!receipt_exists, "rejected create must not leave a receipt");
+        assert!(!event_exists, "rejected create must not append an event");
+    }
+}
+
+#[test]
+fn invalid_agent_binding_event_schema_does_not_write_aggregate_state() {
+    let fixture = setup();
+    let mut request = disable_request(
+        &fixture.binding,
+        fixture.binding.version,
+        "request-disable-invalid-event-schema",
+    );
+    request.event.schema_version = 2;
+    let before = durable_counts(&fixture.directory);
+
+    assert!(matches!(
+        fixture.store.disable_agent_binding(request),
+        Err(StoreError::Invalid(_))
+    ));
+
+    assert_eq!(
+        durable_counts(&fixture.directory),
+        before,
+        "an unsupported event schema must be rejected before publishing aggregate state"
     );
 }
 
@@ -984,5 +1297,226 @@ fn durable_starting_planner_can_activate_after_its_binding_is_disabled() {
     assert!(
         !current_binding.enabled,
         "activation does not re-enable the binding"
+    );
+}
+
+#[test]
+fn nonusable_compatible_offer_cannot_create_an_agent_binding() {
+    let fixture = setup();
+
+    for readiness in ["NEEDS_AUTH", "UNAVAILABLE"] {
+        let suffix = readiness.to_ascii_lowercase();
+        let (profile_id, endpoint_id) = register_candidate_endpoint(&fixture, &suffix);
+        publish_test_offer(&fixture, &endpoint_id, readiness);
+
+        let binding = AgentBindingRecord {
+            agent_binding_id: format!("binding-agent-binding-{suffix}"),
+            workspace_id: WORKSPACE_ID.to_owned(),
+            agent_profile_id: profile_id.clone(),
+            runtime_id: None,
+            endpoint_selection_policy: serde_json::json!({
+                "mode":"AUTO_COMPATIBLE",
+                "required_features":[],
+                "preferred_topologies":["PROCESS_ADAPTER"]
+            }),
+            auth_ref: None,
+            configuration: serde_json::json!({}),
+            enabled: false,
+            lead_eligible: true,
+            created_at: NOW.to_owned(),
+            version: 1,
+        };
+        let before = durable_counts(&fixture.directory);
+        let audit_before = agent_binding_audit_count(&fixture.directory, "agent.binding.create");
+        let request_id = format!("request-create-nonusable-{suffix}");
+
+        let result = fixture
+            .store
+            .create_agent_binding(AgentBindingCreateRequest {
+                request: WorkspaceCreateRequest {
+                    principal_id: OWNER_ID.to_owned(),
+                    request_id: request_id.clone(),
+                    request_payload: serde_json::json!({
+                        "operation":"agent.binding.create.v1",
+                        "workspace_id":WORKSPACE_ID,
+                        "agent_profile_id":profile_id
+                    }),
+                },
+                binding: binding.clone(),
+                now: NOW.to_owned(),
+                event: draft(
+                    &format!("event-{request_id}"),
+                    WORKSPACE_ID,
+                    "AgentBinding",
+                    &binding.agent_binding_id,
+                    1,
+                    "agent.binding.created.v1",
+                    serde_json::json!({
+                        "agent_binding_id":binding.agent_binding_id,
+                        "workspace_id":WORKSPACE_ID,
+                        "agent_profile_id":binding.agent_profile_id,
+                        "from_enabled":false,
+                        "to_enabled":false,
+                        "aggregate_version":1,
+                        "requested_by":{"principal_id":OWNER_ID,"kind":"USER"}
+                    }),
+                ),
+            });
+
+        assert!(matches!(
+            result,
+            Err(StoreError::Invalid(message))
+                if message.contains("no fresh compatible endpoint offer")
+        ));
+        assert_eq!(durable_counts(&fixture.directory), before);
+        assert_eq!(
+            agent_binding_audit_count(&fixture.directory, "agent.binding.create"),
+            audit_before
+        );
+        assert_eq!(
+            fixture
+                .store
+                .get_agent_binding(OWNER_ID, WORKSPACE_ID, &binding.agent_binding_id)
+                .expect("check rejected binding"),
+            None
+        );
+    }
+}
+
+#[test]
+fn nonusable_compatible_offer_cannot_enable_an_agent_binding() {
+    let fixture = setup();
+    let disabled = fixture
+        .store
+        .disable_agent_binding(disable_request(
+            &fixture.binding,
+            fixture.binding.version,
+            "request-disable-before-nonusable-offer",
+        ))
+        .expect("clear the current enablement state")
+        .binding;
+
+    for readiness in ["NEEDS_AUTH", "UNAVAILABLE"] {
+        publish_test_offer(&fixture, ENDPOINT_ID, readiness);
+        let before = durable_counts(&fixture.directory);
+        let audit_before = agent_binding_audit_count(&fixture.directory, "agent.binding.enable");
+        let request_id = format!(
+            "request-enable-nonusable-{}",
+            readiness.to_ascii_lowercase()
+        );
+
+        let result = fixture.store.enable_agent_binding(enable_request(
+            &disabled,
+            disabled.version,
+            &request_id,
+        ));
+
+        assert!(matches!(
+            result,
+            Err(StoreError::Invalid(message))
+                if message.contains("no fresh compatible endpoint offer")
+        ));
+        assert_eq!(durable_counts(&fixture.directory), before);
+        assert_eq!(
+            agent_binding_audit_count(&fixture.directory, "agent.binding.enable"),
+            audit_before
+        );
+        assert_eq!(
+            fixture
+                .store
+                .get_agent_binding(OWNER_ID, WORKSPACE_ID, BINDING_ID)
+                .expect("read unchanged binding"),
+            Some(disabled.clone())
+        );
+    }
+}
+
+#[test]
+fn enable_rechecks_offer_after_blob_publication_before_sql_commit() {
+    let fixture = setup();
+    let disabled = fixture
+        .store
+        .disable_agent_binding(disable_request(
+            &fixture.binding,
+            fixture.binding.version,
+            "request-disable-before-offer-race",
+        ))
+        .expect("binding is disabled before the race")
+        .binding;
+    let before = durable_counts(&fixture.directory);
+    let audit_before = agent_binding_audit_count(&fixture.directory, "agent.binding.enable");
+    let (published_tx, published_rx) = mpsc::channel();
+    let (resume_tx, resume_rx) = mpsc::channel();
+    let gated_store = SqliteWorkspaceStore::open(
+        database_path(&fixture.directory),
+        Arc::new(PausingAgentBindingBlobStore {
+            inner: FileBlobStore::new(
+                fixture.directory.path().join("blobs"),
+                TestKeys([19_u8; 32]),
+            ),
+            published: published_tx,
+            resume_put: Mutex::new(resume_rx),
+        }),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("gated SQLite store opens");
+
+    let request = enable_request(&disabled, disabled.version, "request-enable-offer-race");
+    let writer = gated_store.clone();
+    let result = std::thread::spawn(move || writer.enable_agent_binding(request));
+
+    published_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("state blob is published before the SQL transaction starts");
+    let readiness_update = Connection::open(database_path(&fixture.directory))
+        .map_err(|error| error.to_string())
+        .and_then(|concurrent| {
+            concurrent
+                .busy_timeout(Duration::from_secs(2))
+                .map_err(|error| error.to_string())?;
+            concurrent
+                .execute(
+                    "UPDATE runtime_offers SET readiness = 'NEEDS_AUTH' WHERE runtime_id = ?1 AND runtime_incarnation_id = ?2 AND offer_kind = 'AGENT_ENDPOINT' AND offer_ref = ?3",
+                    params![RUNTIME_ID, INCARNATION_ID, ENDPOINT_ID],
+                )
+                .map_err(|error| error.to_string())
+        });
+    let release_result = resume_tx.send(());
+    assert!(release_result.is_ok(), "release the BlobStore writer");
+    let operation_result = result.join().expect("AgentBinding writer thread exits");
+    assert_eq!(
+        readiness_update.expect("offer update commits without a SQL writer lock"),
+        1
+    );
+
+    assert!(matches!(
+        operation_result,
+        Err(StoreError::Invalid(message))
+            if message.contains("no fresh compatible endpoint offer")
+    ));
+
+    let after = durable_counts(&fixture.directory);
+    assert_eq!(after.0, before.0, "the rejected enable emits no event");
+    assert_eq!(after.1, before.1, "the rejected enable stores no receipt");
+    assert_eq!(
+        after.2,
+        before.2 + 1,
+        "the already-published immutable candidate may await delayed garbage collection"
+    );
+    assert_eq!(
+        agent_binding_audit_count(&fixture.directory, "agent.binding.enable"),
+        audit_before,
+        "the rejected enable adds no security audit record"
+    );
+    assert_eq!(
+        fixture
+            .store
+            .get_agent_binding(OWNER_ID, WORKSPACE_ID, BINDING_ID)
+            .expect("read unchanged binding"),
+        Some(disabled),
+        "the authoritative transaction recheck preserves the disabled binding"
     );
 }

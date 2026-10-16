@@ -134,18 +134,22 @@ pub(crate) fn probe_opencode_profile(
         return result;
     }
 
-    let Some(version) = read_opencode_version(executable) else {
+    let Some(version) = read_opencode_version(
+        executable,
+        environment.path.as_deref(),
+        environment.system_root.as_deref(),
+    ) else {
         result.failure = Some(OpenCodeProbeFailure::UnsupportedVersion);
         return result;
     };
     result.protocol_version = Some(version.clone());
-    if !is_supported_opencode_version(&version) {
+    let Some(protocol) = qualified_opencode_protocol(&version) else {
         result.failure = Some(OpenCodeProbeFailure::UnsupportedVersion);
         return result;
-    }
+    };
 
     let mut config = OpenCodeServerConfig::bounded(executable, cwd).with_environment(environment);
-    config.protocol = super::OpenCodeServerProtocol::V2_0_26;
+    config.protocol = protocol;
     config.startup_timeout = Duration::from_secs(8);
     config.request_timeout = Duration::from_secs(5);
     let mut server = match OpenCodeServer::spawn(config) {
@@ -179,7 +183,11 @@ pub(crate) fn probe_opencode_profile(
     result
 }
 
-fn read_opencode_version(executable: &Path) -> Option<String> {
+fn read_opencode_version(
+    executable: &Path,
+    path: Option<&std::ffi::OsStr>,
+    system_root: Option<&std::ffi::OsStr>,
+) -> Option<String> {
     use std::{
         io::Read,
         process::{Command, Stdio},
@@ -187,12 +195,22 @@ fn read_opencode_version(executable: &Path) -> Option<String> {
         thread,
         time::Instant,
     };
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    command.env_clear();
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    #[cfg(windows)]
+    if let Some(system_root) = system_root {
+        command.env("SystemRoot", system_root);
+    }
+    #[cfg(not(windows))]
+    let _ = system_root;
+    let mut child = command
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .env_clear()
         .spawn()
         .ok()?;
     let mut stdout = child.stdout.take()?;
@@ -237,9 +255,18 @@ fn parse_opencode_version_output(output: &str) -> Option<String> {
 }
 
 fn is_supported_opencode_version(version: &str) -> bool {
-    // This is the exact version whose V2 route behavior was observed and
-    // qualified. Do not assume later releases preserve experimental routes.
-    version == "2.0.26"
+    qualified_opencode_protocol(version).is_some()
+}
+
+fn qualified_opencode_protocol(version: &str) -> Option<super::OpenCodeServerProtocol> {
+    // Each exact release is admitted only after its V2 route and startup
+    // behavior have been observed. Do not infer compatibility for intervening
+    // or later releases.
+    match version {
+        "2.0.26" => Some(super::OpenCodeServerProtocol::V2_0_26),
+        "2.0.28" => Some(super::OpenCodeServerProtocol::V2_0_28),
+        _ => None,
+    }
 }
 
 fn observe_v2_provider_catalog(
@@ -429,6 +456,35 @@ pub(crate) fn opencode_native_environment() -> OpenCodeEnvironment {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn version_probe_preserves_the_allowlisted_path_for_env_shims() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+
+        let temporary = tempfile::tempdir().expect("create isolated shim directory");
+        let bin = temporary.path().join("bin");
+        fs::create_dir_all(&bin).expect("create shim bin directory");
+        let node = bin.join("node");
+        fs::write(&node, "#!/bin/sh\nprintf '%s\\n' 'opencode v2.0.28'\n")
+            .expect("write fake node interpreter");
+        let mut permissions = fs::metadata(&node).expect("node metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&node, permissions).expect("make node interpreter executable");
+
+        let executable = bin.join("opencode");
+        fs::write(&executable, "#!/usr/bin/env node\n").expect("write CLI shim");
+        let mut permissions = fs::metadata(&executable)
+            .expect("OpenCode shim metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("make shim executable");
+
+        assert_eq!(
+            read_opencode_version(&executable, Some(bin.as_os_str()), None),
+            Some("2.0.28".to_owned())
+        );
+    }
+
     #[test]
     fn v2_provider_and_model_envelopes_project_only_bounded_display_fields() {
         let providers = serde_json::json!({
@@ -484,7 +540,8 @@ mod tests {
     #[test]
     fn exact_version_qualification_rejects_mismatch_without_inference() {
         assert!(is_supported_opencode_version("2.0.26"));
-        for unsupported in ["2.0.25", "2.0.27", "1.1.0", "unknown"] {
+        assert!(is_supported_opencode_version("2.0.28"));
+        for unsupported in ["2.0.25", "2.0.27", "2.0.29", "1.1.0", "unknown"] {
             assert!(!is_supported_opencode_version(unsupported));
         }
         let result = OpenCodeProfileProbe::initial();
@@ -492,6 +549,58 @@ mod tests {
         assert!(!result.inference_access_verified);
         assert!(!result.profile_admission_supported);
         assert_eq!(result.session_model_selection, "NOT_QUALIFIED");
+    }
+
+    #[test]
+    #[ignore = "manual isolated profile smoke; set LITECOWORK_OPENCODE_SMOKE_EXECUTABLE"]
+    fn installed_opencode_profile_smoke_is_bounded_and_does_not_admit_inference() {
+        use std::{fs, path::PathBuf};
+
+        let executable = std::env::var_os("LITECOWORK_OPENCODE_SMOKE_EXECUTABLE")
+            .expect("select the exact local OpenCode executable for this smoke");
+        let executable = PathBuf::from(executable);
+        assert!(executable.is_absolute(), "use an absolute executable path");
+        let temporary = tempfile::tempdir().expect("create isolated OpenCode profile home");
+        let home = temporary.path().join("home");
+        let config = temporary.path().join("config");
+        let data = temporary.path().join("data");
+        let cache = temporary.path().join("cache");
+        let state = temporary.path().join("state");
+        let workspace = temporary.path().join("workspace");
+        for directory in [&home, &config, &data, &cache, &state, &workspace] {
+            fs::create_dir_all(directory).expect("create isolated OpenCode directory");
+        }
+
+        let result = probe_opencode_profile(
+            &executable,
+            &workspace,
+            OpenCodeEnvironment {
+                home: Some(home.into_os_string()),
+                xdg_config_home: Some(config.into_os_string()),
+                xdg_data_home: Some(data.into_os_string()),
+                xdg_cache_home: Some(cache.into_os_string()),
+                xdg_state_home: Some(state.into_os_string()),
+                path: Some("/usr/bin:/bin".into()),
+                temporary_directory: Some(temporary.path().as_os_str().to_owned()),
+                ..OpenCodeEnvironment::default()
+            },
+        );
+
+        assert_eq!(result.protocol_version.as_deref(), Some("2.0.28"));
+        assert_eq!(
+            result.probe_readiness,
+            OpenCodeProbeReadiness::Complete,
+            "safe profile observation: {result:?}"
+        );
+        assert!(result.failure.is_none());
+        assert!(result.host_process_stopped);
+        assert!(!result.writer_quiescence_proven);
+        assert_eq!(result.authentication_observation, "UNKNOWN");
+        assert_eq!(result.session_model_selection, "NOT_QUALIFIED");
+        assert!(!result.inference_access_verified);
+        assert!(!result.profile_admission_supported);
+        let projection = serde_json::to_string(&result).expect("serialize safe profile projection");
+        assert!(!projection.contains(temporary.path().to_string_lossy().as_ref()));
     }
 
     #[test]

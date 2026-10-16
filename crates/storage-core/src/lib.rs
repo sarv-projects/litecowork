@@ -56,6 +56,12 @@ pub use needs_you::{
     NeedsYouCursor, NeedsYouFilter, NeedsYouItem, NeedsYouItemKind, NeedsYouPage,
     NeedsYouPageRequest, NeedsYouReadStore, NeedsYouStatus,
 };
+pub mod user_request_details;
+pub use user_request_details::{
+    USER_REQUEST_CHOICES_MAX_BYTES, USER_REQUEST_DETAIL_MAX_BYTES, USER_REQUEST_ID_MAX_BYTES,
+    USER_REQUEST_PROMPT_MAX_BYTES, UserRequestChoice, UserRequestDetail,
+    UserRequestDetailReadStore, UserRequestScope,
+};
 
 mod environment;
 pub use environment::{
@@ -1977,6 +1983,56 @@ pub struct WorkspaceRootRevalidationCandidate {
     pub bindings: WorkspaceRootRevalidationBindings,
 }
 
+/// Safe result of one bounded, owner-requested local metadata census. This projection
+/// intentionally contains counts and lifecycle only: no path, name, file identity,
+/// content, Resource membership, or deletion claim is represented here.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRootScanResult {
+    pub workspace_id: String,
+    pub workspace_root_id: String,
+    pub request_id: String,
+    pub root_version: u64,
+    pub status: WorkspaceRootScanStatus,
+    pub entries_examined: u32,
+    pub files_observed: u32,
+    pub partial_reason: Option<String>,
+    pub completed_at: String,
+}
+
+/// Maximum number of in-root entries examined by one durable WorkspaceRoot scan.
+/// Counts include directories and safely inspected non-regular entries; excluded names
+/// consume the traversal budget but do not contribute to the returned count.
+/// Keep domain and storage validation aligned with the Linux traversal budget.
+pub const MAX_WORKSPACE_ROOT_SCAN_ENTRIES: u32 = 1_000;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WorkspaceRootScanStatus {
+    Complete,
+    Partial,
+}
+
+/// Exact private authorization context for one root scan. This type is never serialized
+/// by the Operator and remains behind the authenticated Runtime boundary.
+pub struct WorkspaceRootScanCandidate {
+    pub root: WorkspaceRootRecord,
+    pub resource: ResourceRecord,
+    pub location: ResourceLocationRecord,
+    pub bindings: WorkspaceRootRevalidationBindings,
+}
+
+/// Fenced, idempotent receipt commit after filesystem traversal has completed.
+pub struct WorkspaceRootScanCommit {
+    pub request: WorkspaceCreateRequest,
+    pub workspace_id: String,
+    pub workspace_root_id: String,
+    pub expected_root_version: u64,
+    pub runtime_id: String,
+    pub runtime_incarnation_id: String,
+    pub result: WorkspaceRootScanResult,
+}
+
 /// One atomic startup decision for a root. The caller includes fresh private bindings
 /// only after exact no-follow identity verification; failure commits contain none.
 pub struct WorkspaceRootRevalidationCommit {
@@ -2061,6 +2117,31 @@ pub trait WorkspaceRootStore: Send + Sync {
         &self,
         commit: WorkspaceRootRevalidationCommit,
     ) -> Result<CommittedWorkspaceRootRevalidation, StoreError>;
+
+    /// Returns the exact private root authorization inputs only when the Workspace,
+    /// root, ResourceLocation, Runtime incarnation, runtime binding, and local identity
+    /// bindings are current and usable for a scan.
+    fn get_workspace_root_scan_candidate(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        workspace_root_id: &str,
+        runtime_id: &str,
+        runtime_incarnation_id: &str,
+    ) -> Result<Option<WorkspaceRootScanCandidate>, StoreError>;
+
+    /// Replays an exact committed scan response for a principal/request pair.
+    fn get_workspace_root_scan_receipt(
+        &self,
+        request: &WorkspaceCreateRequest,
+    ) -> Result<Option<WorkspaceRootScanResult>, StoreError>;
+
+    /// Commits the summary receipt only if the root/Workspace/Runtime authorization
+    /// still matches the scanned snapshot. No Resource or domain event is written.
+    fn commit_workspace_root_scan(
+        &self,
+        commit: WorkspaceRootScanCommit,
+    ) -> Result<WorkspaceRootScanResult, StoreError>;
 }
 
 /// Provenance for a file included through the browser's one-time folder picker.
@@ -2720,6 +2801,16 @@ pub trait IdempotentWorkspaceStore: WorkspaceStore {
         request_id: &str,
         request_payload: &Value,
     ) -> Result<Option<CommittedWorkspace>, StoreError>;
+
+    /// Resolve an instruction revision's original typed response before callers read
+    /// mutable Resource content or reject an archived Workspace. The final write
+    /// transaction must still recheck the same receipt for concurrent attempts.
+    fn get_workspace_instruction_revision_receipt(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        request_payload: &Value,
+    ) -> Result<Option<CommittedWorkspaceInstructionRevision>, StoreError>;
 
     fn create_workspace_idempotent(
         &self,

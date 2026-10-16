@@ -26,7 +26,10 @@ mod resource_index;
 mod routines;
 mod runtime_identity;
 mod suggestions;
+mod user_request_details;
 mod workspace_archive;
+#[cfg(all(test, unix))]
+mod workspace_root_scan_tests;
 
 pub use blob::{FileBlobStore, WorkspaceBlobKey, WorkspaceBlobKeyProvider};
 pub use conversations::SqliteConversationStore;
@@ -101,10 +104,12 @@ use storage_core::{
     WorkspaceInstructionRevisionRecord, WorkspaceRootCreateCommit, WorkspaceRootRecord,
     WorkspaceRootResumeCommit, WorkspaceRootRevalidationBindings,
     WorkspaceRootRevalidationCandidate, WorkspaceRootRevalidationCommit,
-    WorkspaceRootRevalidationFailure, WorkspaceRootStatusAction, WorkspaceRootStatusCommit,
-    WorkspaceRootStore,
+    WorkspaceRootRevalidationFailure, WorkspaceRootScanCandidate, WorkspaceRootScanCommit,
+    WorkspaceRootScanResult, WorkspaceRootScanStatus, WorkspaceRootStatusAction,
+    WorkspaceRootStatusCommit, WorkspaceRootStore,
 };
 
+#[cfg(unix)]
 const MAX_WORKSPACE_ROOT_PATH_BYTES: usize = 32 * 1024;
 const MAX_WORKSPACE_ROOT_ENCODED_LOCATOR_BYTES: usize = 44 * 1024;
 const MAX_SHARED_IDEMPOTENCY_KEY_BYTES: usize = 200;
@@ -625,7 +630,6 @@ enum Command {
     },
     CreateAgentBinding {
         request: AgentBindingCreateRequest,
-        state_ref: AggregateStateRef,
         reply: mpsc::Sender<Result<CommittedAgentBinding, StoreError>>,
     },
     GetAgentBinding {
@@ -641,12 +645,10 @@ enum Command {
     },
     EnableAgentBinding {
         request: AgentBindingEnableRequest,
-        state_ref: AggregateStateRef,
         reply: mpsc::Sender<Result<CommittedAgentBinding, StoreError>>,
     },
     DisableAgentBinding {
         request: AgentBindingDisableRequest,
-        state_ref: AggregateStateRef,
         reply: mpsc::Sender<Result<CommittedAgentBinding, StoreError>>,
     },
     GetAgentBindingReceipt {
@@ -859,6 +861,11 @@ enum Command {
         request: storage_core::NeedsYouPageRequest,
         reply: mpsc::Sender<Result<storage_core::NeedsYouPage, StoreError>>,
     },
+    GetUserRequestDetail {
+        workspace_id: String,
+        request_id: String,
+        reply: mpsc::Sender<Result<Option<storage_core::UserRequestDetail>, StoreError>>,
+    },
     CommitWorkspace {
         commit: Box<WorkspaceCommit>,
         reply: mpsc::Sender<Result<CommittedWorkspace, StoreError>>,
@@ -868,6 +875,12 @@ enum Command {
         request_id: String,
         request_digest: String,
         reply: mpsc::Sender<Result<Option<CommittedWorkspace>, StoreError>>,
+    },
+    GetWorkspaceInstructionRevisionReceipt {
+        principal_id: String,
+        request_id: String,
+        request_digest: String,
+        reply: mpsc::Sender<Result<Option<CommittedWorkspaceInstructionRevision>, StoreError>>,
     },
     ReadWorkspaceEvents {
         workspace_id: String,
@@ -941,6 +954,22 @@ enum Command {
         root_state_ref: Option<AggregateStateRef>,
         resource_state_ref: Option<AggregateStateRef>,
         reply: mpsc::Sender<Result<CommittedWorkspaceRootRevalidation, StoreError>>,
+    },
+    GetWorkspaceRootScanCandidate {
+        principal_id: String,
+        workspace_id: String,
+        workspace_root_id: String,
+        runtime_id: String,
+        runtime_incarnation_id: String,
+        reply: mpsc::Sender<Result<Option<WorkspaceRootScanCandidate>, StoreError>>,
+    },
+    GetWorkspaceRootScanReceipt {
+        request: WorkspaceCreateRequest,
+        reply: mpsc::Sender<Result<Option<WorkspaceRootScanResult>, StoreError>>,
+    },
+    CommitWorkspaceRootScan {
+        commit: WorkspaceRootScanCommit,
+        reply: mpsc::Sender<Result<WorkspaceRootScanResult, StoreError>>,
     },
     CreateResourceUpload {
         request: WorkspaceCreateRequest,
@@ -1110,9 +1139,18 @@ impl SqliteWorkspaceStore {
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
         let worker_path = database_path.clone();
         let worker_config = config.clone();
+        let worker_blobs = Arc::clone(&blobs);
         let join = thread::Builder::new()
             .name("litecowork-sqlite-writer".to_owned())
-            .spawn(move || writer_loop(worker_path, worker_config, receiver, ready_sender))
+            .spawn(move || {
+                writer_loop(
+                    worker_path,
+                    worker_config,
+                    worker_blobs,
+                    receiver,
+                    ready_sender,
+                )
+            })
             .map_err(|error| StoreError::Io(error.to_string()))?;
 
         match ready_receiver.recv() {
@@ -1759,6 +1797,26 @@ impl IdempotentWorkspaceStore for SqliteWorkspaceStore {
         )
     }
 
+    fn get_workspace_instruction_revision_receipt(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        request_payload: &Value,
+    ) -> Result<Option<CommittedWorkspaceInstructionRevision>, StoreError> {
+        validate_nonempty(&[principal_id, request_id])?;
+        let request_digest = digest(&canonical_json(request_payload)?);
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::GetWorkspaceInstructionRevisionReceipt {
+                principal_id: principal_id.to_owned(),
+                request_id: request_id.to_owned(),
+                request_digest,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
     fn create_workspace_idempotent(
         &self,
         request: WorkspaceCreateRequest,
@@ -2179,12 +2237,10 @@ impl AgentCatalogStore for SqliteWorkspaceStore {
         request: AgentBindingCreateRequest,
     ) -> Result<CommittedAgentBinding, StoreError> {
         validate_agent_binding_create(&request)?;
-        let state_ref = self.agent_binding_state_ref(&request.binding)?;
         let (reply_sender, reply_receiver) = mpsc::channel();
         self.execute_command(
             Command::CreateAgentBinding {
                 request,
-                state_ref,
                 reply: reply_sender,
             },
             reply_receiver,
@@ -2266,29 +2322,21 @@ impl AgentCatalogStore for SqliteWorkspaceStore {
                 &request.agent_binding_id,
             )?
             .ok_or(StoreError::NotFound)?;
-        let mut next = binding;
-        if next.version != request.expected_version {
+        if binding.version != request.expected_version {
             return Err(StoreError::Conflict {
                 expected: Some(request.expected_version),
-                actual: Some(next.version),
+                actual: Some(binding.version),
             });
         }
-        if next.enabled {
+        if binding.enabled {
             return Err(StoreError::Invalid(
                 "AgentBinding is already enabled".to_owned(),
             ));
         }
-        next.enabled = true;
-        next.version = next
-            .version
-            .checked_add(1)
-            .ok_or_else(|| StoreError::Integrity("AgentBinding version exhausted".to_owned()))?;
-        let state_ref = self.agent_binding_state_ref(&next)?;
         let (reply_sender, reply_receiver) = mpsc::channel();
         self.execute_command(
             Command::EnableAgentBinding {
                 request,
-                state_ref,
                 reply: reply_sender,
             },
             reply_receiver,
@@ -2337,53 +2385,14 @@ impl AgentCatalogStore for SqliteWorkspaceStore {
             });
         }
 
-        let mut next = current;
-        next.enabled = false;
-        next.version = next
-            .version
-            .checked_add(1)
-            .ok_or_else(|| StoreError::Integrity("AgentBinding version exhausted".to_owned()))?;
-        let state_ref = self.agent_binding_state_ref(&next)?;
         let (reply_sender, reply_receiver) = mpsc::channel();
         self.execute_command(
             Command::DisableAgentBinding {
                 request,
-                state_ref,
                 reply: reply_sender,
             },
             reply_receiver,
         )
-    }
-}
-
-impl SqliteWorkspaceStore {
-    fn agent_binding_state_ref(
-        &self,
-        binding: &AgentBindingRecord,
-    ) -> Result<AggregateStateRef, StoreError> {
-        let bytes = canonical_json(binding)?;
-        let blob = self.inner.blobs.put(
-            &binding.workspace_id,
-            BlobPurpose::AggregateState,
-            &bytes,
-            "application/vnd.litecowork.agent-binding+json",
-        )?;
-        if blob.size_bytes != bytes.len() as u64
-            || self
-                .inner
-                .blobs
-                .get(&binding.workspace_id, BlobPurpose::AggregateState, &blob)?
-                != bytes
-        {
-            return Err(StoreError::Integrity(
-                "BlobStore did not durably verify AgentBinding state".to_owned(),
-            ));
-        }
-        Ok(AggregateStateRef {
-            blob,
-            entity_revision: binding.version,
-            record_schema_version: 1,
-        })
     }
 }
 
@@ -4346,6 +4355,71 @@ impl WorkspaceRootStore for SqliteWorkspaceStore {
                 commit,
                 root_state_ref,
                 resource_state_ref,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn get_workspace_root_scan_candidate(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        workspace_root_id: &str,
+        runtime_id: &str,
+        runtime_incarnation_id: &str,
+    ) -> Result<Option<WorkspaceRootScanCandidate>, StoreError> {
+        for value in [
+            principal_id,
+            workspace_id,
+            workspace_root_id,
+            runtime_id,
+            runtime_incarnation_id,
+        ] {
+            if value.trim().is_empty() || value.contains('\0') {
+                return Err(StoreError::Invalid(
+                    "WorkspaceRoot scan candidate identity is invalid".to_owned(),
+                ));
+            }
+        }
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::GetWorkspaceRootScanCandidate {
+                principal_id: principal_id.to_owned(),
+                workspace_id: workspace_id.to_owned(),
+                workspace_root_id: workspace_root_id.to_owned(),
+                runtime_id: runtime_id.to_owned(),
+                runtime_incarnation_id: runtime_incarnation_id.to_owned(),
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn get_workspace_root_scan_receipt(
+        &self,
+        request: &WorkspaceCreateRequest,
+    ) -> Result<Option<WorkspaceRootScanResult>, StoreError> {
+        validate_workspace_root_scan_request(request)?;
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::GetWorkspaceRootScanReceipt {
+                request: request.clone(),
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn commit_workspace_root_scan(
+        &self,
+        commit: WorkspaceRootScanCommit,
+    ) -> Result<WorkspaceRootScanResult, StoreError> {
+        validate_workspace_root_scan_commit(&commit)?;
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::CommitWorkspaceRootScan {
+                commit,
                 reply: reply_sender,
             },
             reply_receiver,
@@ -8710,10 +8784,7 @@ fn get_workspace_root_status_receipt(
         return Ok(None);
     };
     if prior_digest != request_digest {
-        return Err(StoreError::Conflict {
-            expected: None,
-            actual: None,
-        });
+        return Err(StoreError::IdempotencyConflict);
     }
     let response_json = response_json.ok_or_else(|| {
         StoreError::Integrity("WorkspaceRoot status receipt is incomplete".to_owned())
@@ -9183,10 +9254,7 @@ fn update_workspace_root_status_transaction(
     ).optional().map_err(map_database_error)?;
     if let Some((prior_digest, response_json, response_digest)) = prior {
         if prior_digest != request_digest {
-            return Err(StoreError::Conflict {
-                expected: None,
-                actual: None,
-            });
+            return Err(StoreError::IdempotencyConflict);
         }
         let response_json = response_json.ok_or_else(|| {
             StoreError::Integrity("WorkspaceRoot status receipt is incomplete".to_owned())
@@ -9319,6 +9387,481 @@ fn update_workspace_root_status_transaction(
     ).map_err(map_database_error)?;
     tx.commit().map_err(map_database_error)?;
     Ok(result)
+}
+
+const WORKSPACE_ROOT_SCAN_OPERATION: &str = "workspace.root.scan.v1";
+
+fn validate_workspace_root_scan_request(
+    request: &WorkspaceCreateRequest,
+) -> Result<(), StoreError> {
+    let payload = &request.request_payload;
+    let object = payload.as_object();
+    let required_string = |field: &str| {
+        payload
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty() && !value.contains('\0'))
+    };
+    if request.principal_id.trim().is_empty()
+        || request.principal_id.contains('\0')
+        || !valid_shared_idempotency_key(&request.request_id)
+        || contains_private_path_field(payload)
+        || object.is_none_or(|object| object.len() != 4)
+        || required_string("operation") != Some(WORKSPACE_ROOT_SCAN_OPERATION)
+        || required_string("workspace_id").is_none()
+        || required_string("workspace_root_id").is_none()
+        || payload
+            .get("root_version")
+            .and_then(Value::as_u64)
+            .is_none_or(|version| version == 0)
+    {
+        return Err(StoreError::Invalid(
+            "WorkspaceRoot scan receipt request is invalid".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_workspace_root_scan_result(
+    result: &WorkspaceRootScanResult,
+    workspace_id: &str,
+    workspace_root_id: &str,
+    request_id: &str,
+    root_version: u64,
+) -> Result<(), StoreError> {
+    let partial_reason_valid = match (&result.status, result.partial_reason.as_deref()) {
+        (WorkspaceRootScanStatus::Complete, None) => true,
+        (
+            WorkspaceRootScanStatus::Partial,
+            Some(
+                "TIME_LIMIT_REACHED"
+                | "SCAN_BUDGET_REACHED"
+                | "ENTRY_CHANGED_OR_UNREADABLE"
+                | "MOUNT_BOUNDARY_REACHED",
+            ),
+        ) => true,
+        _ => false,
+    };
+    if result.workspace_id != workspace_id
+        || result.workspace_root_id != workspace_root_id
+        || result.request_id != request_id
+        || result.root_version != root_version
+        || root_version == 0
+        || result.entries_examined > storage_core::MAX_WORKSPACE_ROOT_SCAN_ENTRIES
+        || result.files_observed > result.entries_examined
+        || !partial_reason_valid
+        || result.completed_at.len() > 64
+        || OffsetDateTime::parse(&result.completed_at, &Rfc3339).is_err()
+    {
+        return Err(StoreError::Invalid(
+            "WorkspaceRoot scan result is invalid".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_workspace_root_scan_commit(commit: &WorkspaceRootScanCommit) -> Result<(), StoreError> {
+    validate_workspace_root_scan_request(&commit.request)?;
+    let payload = &commit.request.request_payload;
+    let payload_version = payload
+        .get("root_version")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| StoreError::Invalid("WorkspaceRoot scan version is invalid".to_owned()))?;
+    if commit.workspace_id.trim().is_empty()
+        || commit.workspace_root_id.trim().is_empty()
+        || commit.runtime_id.trim().is_empty()
+        || commit.runtime_incarnation_id.trim().is_empty()
+        || [
+            commit.workspace_id.as_str(),
+            commit.workspace_root_id.as_str(),
+            commit.runtime_id.as_str(),
+            commit.runtime_incarnation_id.as_str(),
+        ]
+        .iter()
+        .any(|value| value.contains('\0'))
+        || payload.get("workspace_id").and_then(Value::as_str) != Some(commit.workspace_id.as_str())
+        || payload.get("workspace_root_id").and_then(Value::as_str)
+            != Some(commit.workspace_root_id.as_str())
+        || payload_version != commit.expected_root_version
+    {
+        return Err(StoreError::Invalid(
+            "WorkspaceRoot scan commit does not match its receipt request".to_owned(),
+        ));
+    }
+    validate_workspace_root_scan_result(
+        &commit.result,
+        &commit.workspace_id,
+        &commit.workspace_root_id,
+        &commit.request.request_id,
+        commit.expected_root_version,
+    )
+}
+
+fn get_workspace_root_scan_candidate(
+    connection: &mut Connection,
+    principal_id: &str,
+    workspace_id: &str,
+    workspace_root_id: &str,
+    runtime_id: &str,
+    runtime_incarnation_id: &str,
+) -> Result<Option<WorkspaceRootScanCandidate>, StoreError> {
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .map_err(map_database_error)?;
+    let candidate = get_workspace_root_scan_candidate_snapshot(
+        &tx,
+        principal_id,
+        workspace_id,
+        workspace_root_id,
+        runtime_id,
+        runtime_incarnation_id,
+    )?;
+    tx.commit().map_err(map_database_error)?;
+    Ok(candidate)
+}
+
+fn get_workspace_root_scan_candidate_snapshot(
+    connection: &Connection,
+    principal_id: &str,
+    workspace_id: &str,
+    workspace_root_id: &str,
+    runtime_id: &str,
+    runtime_incarnation_id: &str,
+) -> Result<Option<WorkspaceRootScanCandidate>, StoreError> {
+    let workspace_owner_and_status: Option<(String, String)> = connection
+        .query_row(
+            "SELECT owner_principal_id, status FROM workspaces WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if !matches!(workspace_owner_and_status, Some((ref owner, ref status)) if owner == principal_id && status == "ACTIVE")
+    {
+        return Ok(None);
+    }
+
+    let Some(root) = load_workspace_root(connection, workspace_id, workspace_root_id)? else {
+        return Ok(None);
+    };
+    if root.status != "ACTIVE" {
+        return Ok(None);
+    }
+    let Some(resource) = load_resource_record(connection, workspace_id, &root.resource_id)? else {
+        return Err(StoreError::Integrity(
+            "WorkspaceRoot Resource projection is missing".to_owned(),
+        ));
+    };
+    let Some(location) =
+        load_resource_location_record(connection, &root.resource_id, &root.location_id)?
+    else {
+        return Err(StoreError::Integrity(
+            "WorkspaceRoot ResourceLocation projection is missing".to_owned(),
+        ));
+    };
+    if resource.workspace_id != workspace_id
+        || resource.kind != "FOLDER"
+        || resource
+            .provider_identity
+            .get("provider_instance_id")
+            .and_then(Value::as_str)
+            != Some("litecowork.local_filesystem")
+        || location.resource_id != root.resource_id
+        || location.location_id != root.location_id
+        || location.runtime_id != runtime_id
+        || location.provider_ref != "litecowork.local_filesystem"
+        || location.availability != "AVAILABLE"
+        || location.writable
+        || location.observed_revision_id.is_some()
+        || location.observed_digest.is_some()
+    {
+        return Ok(None);
+    }
+
+    let runtime_ready: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1
+               FROM runtimes r
+               JOIN runtime_incarnations i
+                 ON i.runtime_id = r.runtime_id
+                AND i.runtime_incarnation_id = r.current_incarnation_id
+               JOIN runtime_workspace_bindings b
+                 ON b.runtime_id = r.runtime_id
+                AND b.workspace_id = ?1
+                AND b.status = 'ACTIVE'
+                AND b.revoked_at IS NULL
+               WHERE r.runtime_id = ?2
+                 AND r.current_incarnation_id = ?3
+                 AND r.trust_zone = 'PERSONAL_DEVICE'
+                 AND ((r.availability = 'ONLINE' AND i.recovery_state = 'READY')
+                   OR (r.availability = 'DEGRADED' AND i.recovery_state = 'DEGRADED'))
+                 AND EXISTS (SELECT 1 FROM json_each(r.roles_json) role WHERE role.value = 'OPERATOR_ENDPOINT')
+                 AND EXISTS (SELECT 1 FROM json_each(b.roles_json) role WHERE role.value = 'EXECUTOR')
+             )",
+            params![workspace_id, runtime_id, runtime_incarnation_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if !runtime_ready {
+        return Ok(None);
+    }
+
+    let bindings = load_workspace_root_revalidation_bindings(
+        connection,
+        runtime_id,
+        runtime_incarnation_id,
+        &location,
+    )?;
+    let WorkspaceRootRevalidationBindings::CurrentIncarnation {
+        locator,
+        file_identity,
+    } = &bindings
+    else {
+        return Ok(None);
+    };
+    if locator.location_id != location.location_id
+        || locator.locator_ref_id != location.locator_ref_id
+        || locator.runtime_id != runtime_id
+        || locator.runtime_incarnation_id != runtime_incarnation_id
+        || locator.observed_at != location.observed_at
+        || file_identity.location_id != location.location_id
+        || file_identity.runtime_id != runtime_id
+        || file_identity.runtime_incarnation_id != runtime_incarnation_id
+        || file_identity.observed_at != location.observed_at
+    {
+        return Ok(None);
+    }
+    workspace_root_private_path(&locator.private_locator)?;
+    Ok(Some(WorkspaceRootScanCandidate {
+        root,
+        resource,
+        location,
+        bindings,
+    }))
+}
+
+fn get_workspace_root_scan_receipt(
+    connection: &Connection,
+    request: &WorkspaceCreateRequest,
+) -> Result<Option<WorkspaceRootScanResult>, StoreError> {
+    validate_workspace_root_scan_request(request)?;
+    let request_digest = digest(&canonical_json(&request.request_payload)?);
+    let receipt = verify_request_receipt::<WorkspaceRootScanResult>(
+        connection,
+        &request.principal_id,
+        &request.request_id,
+        &request_digest,
+    )
+    .map_err(|error| match error {
+        StoreError::Conflict {
+            expected: None,
+            actual: None,
+        } => StoreError::IdempotencyConflict,
+        other => other,
+    })?;
+    if let Some(result) = &receipt {
+        let payload = &request.request_payload;
+        validate_workspace_root_scan_result(
+            result,
+            payload["workspace_id"].as_str().unwrap_or_default(),
+            payload["workspace_root_id"].as_str().unwrap_or_default(),
+            &request.request_id,
+            payload["root_version"].as_u64().unwrap_or_default(),
+        )
+        .map_err(|_| StoreError::Integrity("WorkspaceRoot scan receipt is invalid".to_owned()))?;
+    }
+    Ok(receipt)
+}
+
+fn commit_workspace_root_scan_transaction(
+    connection: &mut Connection,
+    commit: WorkspaceRootScanCommit,
+) -> Result<WorkspaceRootScanResult, StoreError> {
+    validate_workspace_root_scan_commit(&commit)?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let request_digest = digest(&canonical_json(&commit.request.request_payload)?);
+    let prior: Option<(String, Option<String>, Option<String>)> = tx
+        .query_row(
+            "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            params![commit.request.principal_id, commit.request.request_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if let Some((prior_digest, response_json, response_digest)) = prior {
+        if prior_digest != request_digest {
+            return Err(StoreError::IdempotencyConflict);
+        }
+        let response_json = response_json.ok_or_else(|| {
+            StoreError::Integrity("WorkspaceRoot scan receipt is incomplete".to_owned())
+        })?;
+        if response_digest.as_deref() != Some(digest(response_json.as_bytes()).as_str()) {
+            return Err(StoreError::Integrity(
+                "WorkspaceRoot scan receipt digest does not match".to_owned(),
+            ));
+        }
+        let result: WorkspaceRootScanResult =
+            serde_json::from_str(&response_json).map_err(|_| {
+                StoreError::Integrity("WorkspaceRoot scan receipt is invalid".to_owned())
+            })?;
+        validate_workspace_root_scan_result(
+            &result,
+            &commit.workspace_id,
+            &commit.workspace_root_id,
+            &commit.request.request_id,
+            commit.expected_root_version,
+        )
+        .map_err(|_| StoreError::Integrity("WorkspaceRoot scan receipt is invalid".to_owned()))?;
+        return Ok(result);
+    }
+
+    let owner_and_status: Option<(String, String)> = tx
+        .query_row(
+            "SELECT owner_principal_id, status FROM workspaces WHERE workspace_id = ?1",
+            [&commit.workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if !matches!(owner_and_status, Some((ref owner, ref status)) if owner == &commit.request.principal_id && status == "ACTIVE")
+    {
+        return Err(StoreError::NotFound);
+    }
+
+    let root = load_workspace_root(&tx, &commit.workspace_id, &commit.workspace_root_id)?
+        .filter(|root| root.status != "REVOKED")
+        .ok_or(StoreError::NotFound)?;
+    if root.version != commit.expected_root_version {
+        return Err(StoreError::Conflict {
+            expected: Some(commit.expected_root_version),
+            actual: Some(root.version),
+        });
+    }
+    if root.status != "ACTIVE" {
+        return Err(StoreError::NotFound);
+    }
+
+    let current_incarnation: Option<Option<String>> = tx
+        .query_row(
+            "SELECT current_incarnation_id FROM runtimes WHERE runtime_id = ?1",
+            [&commit.runtime_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    match current_incarnation.flatten() {
+        Some(incarnation) if incarnation == commit.runtime_incarnation_id => {}
+        Some(_) => {
+            return Err(StoreError::Conflict {
+                expected: None,
+                actual: None,
+            });
+        }
+        None => return Err(StoreError::NotFound),
+    }
+
+    let Some(resource) = load_resource_record(&tx, &commit.workspace_id, &root.resource_id)? else {
+        return Err(StoreError::Integrity(
+            "WorkspaceRoot Resource projection is missing".to_owned(),
+        ));
+    };
+    let Some(location) = load_resource_location_record(&tx, &root.resource_id, &root.location_id)?
+    else {
+        return Err(StoreError::Integrity(
+            "WorkspaceRoot ResourceLocation projection is missing".to_owned(),
+        ));
+    };
+    if root.workspace_id != commit.workspace_id
+        || resource.workspace_id != commit.workspace_id
+        || resource.kind != "FOLDER"
+        || resource
+            .provider_identity
+            .get("provider_instance_id")
+            .and_then(Value::as_str)
+            != Some("litecowork.local_filesystem")
+        || location.runtime_id != commit.runtime_id
+        || location.provider_ref != "litecowork.local_filesystem"
+        || location.availability != "AVAILABLE"
+        || location.writable
+        || location.observed_revision_id.is_some()
+        || location.observed_digest.is_some()
+    {
+        return Err(StoreError::NotFound);
+    }
+    let runtime_and_workspace_binding_ready: bool = tx
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1
+               FROM runtimes r
+               JOIN runtime_incarnations i
+                 ON i.runtime_id = r.runtime_id
+                AND i.runtime_incarnation_id = r.current_incarnation_id
+               JOIN runtime_workspace_bindings b
+                 ON b.runtime_id = r.runtime_id
+                AND b.workspace_id = ?1
+                AND b.status = 'ACTIVE'
+                AND b.revoked_at IS NULL
+               WHERE r.runtime_id = ?2
+                 AND r.current_incarnation_id = ?3
+                 AND r.trust_zone = 'PERSONAL_DEVICE'
+                 AND ((r.availability = 'ONLINE' AND i.recovery_state = 'READY')
+                   OR (r.availability = 'DEGRADED' AND i.recovery_state = 'DEGRADED'))
+                 AND EXISTS (SELECT 1 FROM json_each(r.roles_json) role WHERE role.value = 'OPERATOR_ENDPOINT')
+                 AND EXISTS (SELECT 1 FROM json_each(b.roles_json) role WHERE role.value = 'EXECUTOR')
+             )",
+            params![commit.workspace_id, commit.runtime_id, commit.runtime_incarnation_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if !runtime_and_workspace_binding_ready {
+        return Err(StoreError::NotFound);
+    }
+    let bindings = load_workspace_root_revalidation_bindings(
+        &tx,
+        &commit.runtime_id,
+        &commit.runtime_incarnation_id,
+        &location,
+    )?;
+    let WorkspaceRootRevalidationBindings::CurrentIncarnation {
+        locator,
+        file_identity,
+    } = bindings
+    else {
+        return Err(StoreError::NotFound);
+    };
+    if locator.location_id != location.location_id
+        || locator.locator_ref_id != location.locator_ref_id
+        || locator.runtime_id != commit.runtime_id
+        || locator.runtime_incarnation_id != commit.runtime_incarnation_id
+        || locator.observed_at != location.observed_at
+        || file_identity.location_id != location.location_id
+        || file_identity.runtime_id != commit.runtime_id
+        || file_identity.runtime_incarnation_id != commit.runtime_incarnation_id
+        || file_identity.observed_at != location.observed_at
+    {
+        return Err(StoreError::NotFound);
+    }
+    workspace_root_private_path(&locator.private_locator).map_err(|_| StoreError::NotFound)?;
+
+    let response_json = String::from_utf8(canonical_json(&commit.result)?)
+        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    tx.execute(
+        "INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+        params![
+            commit.request.principal_id,
+            commit.request.request_id,
+            request_digest,
+            response_json,
+            digest(response_json.as_bytes()),
+            commit.result.completed_at,
+        ],
+    )
+    .map_err(map_database_error)?;
+    tx.commit().map_err(map_database_error)?;
+    Ok(commit.result)
 }
 
 const ROOT_REVALIDATOR_PRINCIPAL: &str = "service:workspace-root-revalidator";
@@ -15016,6 +15559,9 @@ fn validate_agent_binding_create(request: &AgentBindingCreateRequest) -> Result<
     validate_endpoint_selection_policy(&binding.endpoint_selection_policy)?;
     if let Some(reference) = &binding.auth_ref {
         validate_secret_ref(reference)?;
+        return Err(StoreError::Invalid(
+            "AgentBinding auth_ref is unavailable until descriptor-declared credential slots and SecretStore ownership are implemented".to_owned(),
+        ));
     }
     let payload = agent_binding_created_payload(binding, &request.request.principal_id);
     validate_binding_event(
@@ -15136,7 +15682,7 @@ fn validate_binding_event(
     }
     validate_timestamp(&event.hlc_timestamp)?;
     validate_timestamp(&event.recorded_at)?;
-    if event.schema_version == 0 {
+    if event.schema_version != 1 {
         return Err(StoreError::Invalid(
             "AgentBinding event schema version is invalid".to_owned(),
         ));
@@ -16256,17 +16802,117 @@ fn context_document_owner_status_str(status: ContextDocumentOwnerStatus) -> &'st
     }
 }
 
-fn create_agent_binding_transaction(
-    connection: &mut Connection,
-    request: AgentBindingCreateRequest,
-    state_ref: AggregateStateRef,
-) -> Result<CommittedAgentBinding, StoreError> {
-    if state_ref.entity_revision != 1 || state_ref.record_schema_version != 1 {
-        return Err(StoreError::Invalid(
-            "AgentBinding state reference is invalid".to_owned(),
+fn agent_binding_state_ref(
+    blobs: &dyn BlobStore,
+    binding: &AgentBindingRecord,
+) -> Result<AggregateStateRef, StoreError> {
+    let bytes = canonical_json(binding)?;
+    let blob = blobs.put(
+        &binding.workspace_id,
+        BlobPurpose::AggregateState,
+        &bytes,
+        "application/vnd.litecowork.agent-binding+json",
+    )?;
+    if blob.size_bytes != bytes.len() as u64
+        || blobs.get(&binding.workspace_id, BlobPurpose::AggregateState, &blob)? != bytes
+    {
+        return Err(StoreError::Integrity(
+            "BlobStore did not durably verify AgentBinding state".to_owned(),
         ));
     }
+    Ok(AggregateStateRef {
+        blob,
+        entity_revision: binding.version,
+        record_schema_version: 1,
+    })
+}
+
+fn ensure_agent_binding_event_id_available(
+    connection: &Connection,
+    event: &EventDraft,
+) -> Result<(), StoreError> {
+    let exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM domain_events WHERE event_id = ?1)",
+            [&event.event_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if exists {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    Ok(())
+}
+
+fn create_agent_binding_transaction(
+    connection: &mut Connection,
+    blobs: &dyn BlobStore,
+    request: AgentBindingCreateRequest,
+) -> Result<CommittedAgentBinding, StoreError> {
     let request_digest = digest(&canonical_json(&request.request.request_payload)?);
+    // This read-only preflight avoids publishing a known-rejected candidate snapshot.
+    // BlobStore I/O must stay outside SQLite transactions; the serialized commit below
+    // repeats these checks and remains authoritative if state changes after this read.
+    if let Some(replay) = verify_request_receipt::<CommittedAgentBinding>(
+        connection,
+        &request.request.principal_id,
+        &request.request.request_id,
+        &request_digest,
+    )? {
+        return Ok(replay);
+    }
+    workspace_owner_active(
+        connection,
+        &request.request.principal_id,
+        &request.binding.workspace_id,
+    )?;
+    let profile_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_profiles WHERE agent_profile_id = ?1)",
+            [&request.binding.agent_profile_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if !profile_exists {
+        return Err(StoreError::NotFound);
+    }
+    if !has_fresh_compatible_endpoint(connection, &request.binding, &request.now)? {
+        return Err(StoreError::Invalid(
+            "no fresh compatible endpoint offer is available for this AgentBinding".to_owned(),
+        ));
+    }
+    let binding_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_bindings WHERE workspace_id = ?1 AND agent_binding_id = ?2)",
+            params![request.binding.workspace_id, request.binding.agent_binding_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if binding_exists {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    ensure_agent_binding_event_id_available(connection, &request.event)?;
+    let policy_json =
+        String::from_utf8(canonical_json(&request.binding.endpoint_selection_policy)?)
+            .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    let configuration_json = String::from_utf8(canonical_json(&request.binding.configuration)?)
+        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    let auth_ref_json = request
+        .binding
+        .auth_ref
+        .as_ref()
+        .map(canonical_json)
+        .transpose()?
+        .map(String::from_utf8)
+        .transpose()
+        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    let state_ref = agent_binding_state_ref(blobs, &request.binding)?;
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_database_error)?;
@@ -16298,20 +16944,20 @@ fn create_agent_binding_transaction(
             "no fresh compatible endpoint offer is available for this AgentBinding".to_owned(),
         ));
     }
-    let policy_json =
-        String::from_utf8(canonical_json(&request.binding.endpoint_selection_policy)?)
-            .map_err(|error| StoreError::Invalid(error.to_string()))?;
-    let configuration_json = String::from_utf8(canonical_json(&request.binding.configuration)?)
-        .map_err(|error| StoreError::Invalid(error.to_string()))?;
-    let auth_ref_json = request
-        .binding
-        .auth_ref
-        .as_ref()
-        .map(canonical_json)
-        .transpose()?
-        .map(String::from_utf8)
-        .transpose()
-        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    let binding_exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agent_bindings WHERE workspace_id = ?1 AND agent_binding_id = ?2)",
+            params![request.binding.workspace_id, request.binding.agent_binding_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if binding_exists {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    ensure_agent_binding_event_id_available(&tx, &request.event)?;
     tx.execute("INSERT INTO agent_bindings(agent_binding_id, workspace_id, agent_profile_id, runtime_id, endpoint_selection_policy_json, auth_ref, configuration_json, enabled, lead_eligible, created_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8, ?9, 1)", params![request.binding.agent_binding_id, request.binding.workspace_id, request.binding.agent_profile_id, request.binding.runtime_id, policy_json, auth_ref_json, configuration_json, if request.binding.lead_eligible { 1_i64 } else { 0_i64 }, request.binding.created_at]).map_err(map_database_error)?;
     let event = insert_domain_event(&tx, request.event, state_ref)?;
     let committed = CommittedAgentBinding {
@@ -16327,26 +16973,29 @@ fn create_agent_binding_transaction(
 
 fn enable_agent_binding_transaction(
     connection: &mut Connection,
+    blobs: &dyn BlobStore,
     request: AgentBindingEnableRequest,
-    state_ref: AggregateStateRef,
 ) -> Result<CommittedAgentBinding, StoreError> {
     let request_digest = digest(&canonical_json(&request.request.request_payload)?);
-    let tx = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(map_database_error)?;
+    // Publish the snapshot only after a read-only admission preflight. The transaction
+    // below repeats the checks so an intervening change still fails closed.
     if let Some(replay) = verify_request_receipt::<CommittedAgentBinding>(
-        &tx,
+        connection,
         &request.request.principal_id,
         &request.request.request_id,
         &request_digest,
     )? {
         return Ok(replay);
     }
-    workspace_owner_active(&tx, &request.request.principal_id, &request.workspace_id)?;
+    workspace_owner_active(
+        connection,
+        &request.request.principal_id,
+        &request.workspace_id,
+    )?;
     let sql = format!(
         "SELECT {AGENT_BINDING_COLUMNS} FROM agent_bindings WHERE workspace_id = ?1 AND agent_binding_id = ?2"
     );
-    let current = tx
+    let current = connection
         .query_row(
             &sql,
             params![request.workspace_id, request.agent_binding_id],
@@ -16372,12 +17021,7 @@ fn enable_agent_binding_transaction(
         .version
         .checked_add(1)
         .ok_or_else(|| StoreError::Integrity("AgentBinding version exhausted".to_owned()))?;
-    if state_ref.entity_revision != next.version || state_ref.record_schema_version != 1 {
-        return Err(StoreError::Invalid(
-            "AgentBinding state reference is invalid".to_owned(),
-        ));
-    }
-    if !has_fresh_compatible_endpoint(&tx, &current, &request.now)? {
+    if !has_fresh_compatible_endpoint(connection, &current, &request.now)? {
         return Err(StoreError::Invalid(
             "no fresh compatible endpoint offer is available to enable this AgentBinding"
                 .to_owned(),
@@ -16391,6 +17035,7 @@ fn enable_agent_binding_transaction(
         "agent.binding.changed.v1",
         &payload,
     )?;
+    ensure_agent_binding_event_id_available(connection, &request.event)?;
     let policy_json = String::from_utf8(canonical_json(&next.endpoint_selection_policy)?)
         .map_err(|error| StoreError::Invalid(error.to_string()))?;
     let config_json = String::from_utf8(canonical_json(&next.configuration)?)
@@ -16403,6 +17048,60 @@ fn enable_agent_binding_transaction(
         .map(String::from_utf8)
         .transpose()
         .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    let state_ref = agent_binding_state_ref(blobs, &next)?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    if let Some(replay) = verify_request_receipt::<CommittedAgentBinding>(
+        &tx,
+        &request.request.principal_id,
+        &request.request.request_id,
+        &request_digest,
+    )? {
+        return Ok(replay);
+    }
+    workspace_owner_active(&tx, &request.request.principal_id, &request.workspace_id)?;
+    let current = tx
+        .query_row(
+            &sql,
+            params![request.workspace_id, request.agent_binding_id],
+            parse_agent_binding,
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(StoreError::NotFound)?;
+    if current.version != request.expected_version {
+        return Err(StoreError::Conflict {
+            expected: Some(request.expected_version),
+            actual: Some(current.version),
+        });
+    }
+    if current.enabled {
+        return Err(StoreError::Invalid(
+            "AgentBinding is already enabled".to_owned(),
+        ));
+    }
+    if !has_fresh_compatible_endpoint(&tx, &current, &request.now)? {
+        return Err(StoreError::Invalid(
+            "no fresh compatible endpoint offer is available to enable this AgentBinding"
+                .to_owned(),
+        ));
+    }
+    let mut next = current.clone();
+    next.enabled = true;
+    next.version = current
+        .version
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Integrity("AgentBinding version exhausted".to_owned()))?;
+    let payload = agent_binding_enabled_payload(&next, &request.request.principal_id);
+    validate_binding_event(
+        &request.event,
+        &next,
+        next.version,
+        "agent.binding.changed.v1",
+        &payload,
+    )?;
+    ensure_agent_binding_event_id_available(&tx, &request.event)?;
     let updated = tx.execute("UPDATE agent_bindings SET endpoint_selection_policy_json = ?1, auth_ref = ?2, configuration_json = ?3, enabled = 1, lead_eligible = ?4, created_at = ?5, version = ?6 WHERE workspace_id = ?7 AND agent_binding_id = ?8 AND version = ?9 AND enabled = 0", params![policy_json, auth_ref_json, config_json, if next.lead_eligible { 1_i64 } else { 0_i64 }, next.created_at, to_sql_i64(next.version, "AgentBinding version")?, next.workspace_id, next.agent_binding_id, to_sql_i64(request.expected_version, "expected AgentBinding version")?]).map_err(map_database_error)?;
     if updated != 1 {
         return Err(StoreError::Conflict {
@@ -16491,10 +17190,78 @@ fn insert_agent_binding_transition_audit_record(
 
 fn disable_agent_binding_transaction(
     connection: &mut Connection,
+    blobs: &dyn BlobStore,
     request: AgentBindingDisableRequest,
-    state_ref: AggregateStateRef,
 ) -> Result<CommittedAgentBinding, StoreError> {
     let request_digest = digest(&canonical_json(&request.request.request_payload)?);
+    // Publish the snapshot only after a read-only admission preflight. The transaction
+    // below repeats the checks so an intervening change still fails closed.
+    if let Some(replay) = verify_request_receipt::<CommittedAgentBinding>(
+        connection,
+        &request.request.principal_id,
+        &request.request.request_id,
+        &request_digest,
+    )? {
+        return Ok(replay);
+    }
+    workspace_owner_active(
+        connection,
+        &request.request.principal_id,
+        &request.workspace_id,
+    )?;
+    let sql = format!(
+        "SELECT {AGENT_BINDING_COLUMNS} FROM agent_bindings WHERE workspace_id = ?1 AND agent_binding_id = ?2"
+    );
+    let current = connection
+        .query_row(
+            &sql,
+            params![request.workspace_id, request.agent_binding_id],
+            parse_agent_binding,
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(StoreError::NotFound)?;
+    if current.version != request.expected_version {
+        return Err(StoreError::Conflict {
+            expected: Some(request.expected_version),
+            actual: Some(current.version),
+        });
+    }
+    if !current.enabled {
+        return Err(StoreError::Invalid(
+            "AgentBinding is already disabled".to_owned(),
+        ));
+    }
+    let current_default: Option<String> = connection
+        .query_row(
+            "SELECT default_agent_binding_id FROM workspaces WHERE workspace_id = ?1",
+            [&request.workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if current_default.as_deref() == Some(request.agent_binding_id.as_str()) {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+
+    let mut next = current.clone();
+    next.enabled = false;
+    next.version = current
+        .version
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Integrity("AgentBinding version exhausted".to_owned()))?;
+    let payload = agent_binding_disabled_payload(&next, &request.request.principal_id);
+    validate_binding_event(
+        &request.event,
+        &next,
+        next.version,
+        "agent.binding.changed.v1",
+        &payload,
+    )?;
+    ensure_agent_binding_event_id_available(connection, &request.event)?;
+    let state_ref = agent_binding_state_ref(blobs, &next)?;
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_database_error)?;
@@ -16507,9 +17274,6 @@ fn disable_agent_binding_transaction(
         return Ok(replay);
     }
     workspace_owner_active(&tx, &request.request.principal_id, &request.workspace_id)?;
-    let sql = format!(
-        "SELECT {AGENT_BINDING_COLUMNS} FROM agent_bindings WHERE workspace_id = ?1 AND agent_binding_id = ?2"
-    );
     let current = tx
         .query_row(
             &sql,
@@ -16543,18 +17307,12 @@ fn disable_agent_binding_transaction(
             actual: None,
         });
     }
-
     let mut next = current.clone();
     next.enabled = false;
     next.version = current
         .version
         .checked_add(1)
         .ok_or_else(|| StoreError::Integrity("AgentBinding version exhausted".to_owned()))?;
-    if state_ref.entity_revision != next.version || state_ref.record_schema_version != 1 {
-        return Err(StoreError::Invalid(
-            "AgentBinding state reference is invalid".to_owned(),
-        ));
-    }
     let payload = agent_binding_disabled_payload(&next, &request.request.principal_id);
     validate_binding_event(
         &request.event,
@@ -16563,6 +17321,7 @@ fn disable_agent_binding_transaction(
         "agent.binding.changed.v1",
         &payload,
     )?;
+    ensure_agent_binding_event_id_available(&tx, &request.event)?;
     let updated = tx
         .execute(
             "UPDATE agent_bindings SET enabled = 0, version = ?1
@@ -16899,6 +17658,7 @@ fn read_local_runtime_lifecycle_snapshot(
 fn writer_loop(
     path: PathBuf,
     config: SqliteConfig,
+    blobs: Arc<dyn BlobStore>,
     receiver: Receiver<Command>,
     ready: SyncSender<Result<(), StoreError>>,
 ) {
@@ -17115,15 +17875,11 @@ fn writer_loop(
                             &now,
                         ));
                     }
-                    Command::CreateAgentBinding {
-                        request,
-                        state_ref,
-                        reply,
-                    } => {
+                    Command::CreateAgentBinding { request, reply } => {
                         let _ = reply.send(create_agent_binding_transaction(
                             &mut connection,
+                            blobs.as_ref(),
                             request,
-                            state_ref,
                         ));
                     }
                     Command::GetAgentBinding {
@@ -17150,26 +17906,18 @@ fn writer_loop(
                             &workspace_id,
                         ));
                     }
-                    Command::EnableAgentBinding {
-                        request,
-                        state_ref,
-                        reply,
-                    } => {
+                    Command::EnableAgentBinding { request, reply } => {
                         let _ = reply.send(enable_agent_binding_transaction(
                             &mut connection,
+                            blobs.as_ref(),
                             request,
-                            state_ref,
                         ));
                     }
-                    Command::DisableAgentBinding {
-                        request,
-                        state_ref,
-                        reply,
-                    } => {
+                    Command::DisableAgentBinding { request, reply } => {
                         let _ = reply.send(disable_agent_binding_transaction(
                             &mut connection,
+                            blobs.as_ref(),
                             request,
-                            state_ref,
                         ));
                     }
                     Command::GetAgentBindingReceipt {
@@ -17808,6 +18556,13 @@ fn writer_loop(
                         let _ =
                             reply.send(needs_you::list_needs_you_page(&mut connection, request));
                     }
+                    Command::GetUserRequestDetail { workspace_id, request_id, reply } => {
+                        let _ = reply.send(user_request_details::get_user_request_detail(
+                            &connection,
+                            &workspace_id,
+                            &request_id,
+                        ));
+                    }
                     Command::CommitWorkspace { commit, reply } => {
                         let _ = reply.send(commit_workspace_transaction_with_dedup(
                             &mut connection,
@@ -17831,6 +18586,19 @@ fn writer_loop(
                             &request_id,
                             &request_digest,
                         ));
+                    }
+                    Command::GetWorkspaceInstructionRevisionReceipt {
+                        principal_id,
+                        request_id,
+                        request_digest,
+                        reply,
+                    } => {
+                        let _ =
+                            reply.send(verify_request_receipt::<
+                                CommittedWorkspaceInstructionRevision,
+                            >(
+                                &connection, &principal_id, &request_id, &request_digest
+                            ));
                     }
                     Command::ReadWorkspaceEvents {
                         workspace_id,
@@ -17984,6 +18752,32 @@ fn writer_loop(
                             commit,
                             root_state_ref,
                             resource_state_ref,
+                        ));
+                    }
+                    Command::GetWorkspaceRootScanCandidate {
+                        principal_id,
+                        workspace_id,
+                        workspace_root_id,
+                        runtime_id,
+                        runtime_incarnation_id,
+                        reply,
+                    } => {
+                        let _ = reply.send(get_workspace_root_scan_candidate(
+                            &mut connection,
+                            &principal_id,
+                            &workspace_id,
+                            &workspace_root_id,
+                            &runtime_id,
+                            &runtime_incarnation_id,
+                        ));
+                    }
+                    Command::GetWorkspaceRootScanReceipt { request, reply } => {
+                        let _ = reply.send(get_workspace_root_scan_receipt(&connection, &request));
+                    }
+                    Command::CommitWorkspaceRootScan { commit, reply } => {
+                        let _ = reply.send(commit_workspace_root_scan_transaction(
+                            &mut connection,
+                            commit,
                         ));
                     }
                     Command::CreateResourceUpload {
@@ -20184,7 +20978,8 @@ fn search_resources_page(
         ELSE 'STALE' END";
     let sql = format!(
         "SELECT r.resource_id, r.workspace_id, rev.resource_revision_id, r.display_name,
-                rev.media_type, rev.content_digest, rev.size_bytes, r.created_at, r.kind,
+                COALESCE(rev.media_type, 'application/octet-stream'),
+                rev.content_digest, rev.size_bytes, r.created_at, r.kind,
                 l.location_id, l.availability, l.writable, l.observed_revision_id,
                 l.observed_digest, l.observed_at, l.last_checked_at, {freshness_expr}
          FROM resources r

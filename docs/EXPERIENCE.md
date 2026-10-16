@@ -27,10 +27,11 @@ exists.
 Workspace-scoped `GET /v1/needs-you` projection through the native Tauri bridge. It lists
 persisted Approval and UserRequest sources with safe summaries, plus current blockers from
 `BLOCKED` and `NEEDS_USER` Tasks; linked blockers deduplicate to their source record. It
-supports OPEN/RESOLVED history and bounded cursor paging. The page is read-only: only an
-unlinked Task blocker opens current Task detail, and opening it does not resolve anything.
-Approval/UserRequest details and actions, blocker resolution, notifications, and deep links
-remain unconnected. The UI never infers an empty result from a failed or unavailable read.
+supports OPEN/RESOLVED history and bounded cursor paging. The page is read-only: an unlinked
+Task blocker opens current Task detail, and a UserRequest opens its exact selected-Workspace
+read-only detail. Neither action resolves anything. Approval details/actions, UserRequest
+response/dismissal, blocker resolution, notifications, and deep links remain unconnected.
+The UI never infers an empty result from a failed or unavailable read.
 
 ## V1 client scope
 
@@ -399,9 +400,12 @@ In ContextDocument revision history, the owner can inspect the current status an
 `ACTIVE -> REVOKED` or `REVOKED -> ACTIVE` with the displayed Resource version. Confirmation
 states that revocation blocks future LiteCowork reads and index updates while retaining
 stored bytes, and cannot recall content already delivered to an agent. Ambiguous failures
-offer a retry using the same idempotency key; a version conflict reloads metadata. This
-control does not edit ordinary Resource metadata, delete or purge bytes, or invalidate
-existing native sessions. Deletion controls remain unavailable. If a replacement file is
+offer a retry using the same idempotency key; a version conflict reloads metadata. A
+separate **Delete local content…** action requires confirmation and an exact Resource
+version. It seals a local-only purge plan, blocks new reads immediately, and shows pending
+replica acknowledgements until the registered local bytes and indexes are removed. External
+or provider-backed locations fail closed before deletion is admitted. The action does not
+invalidate existing native sessions, and already-delivered content cannot be recalled. If a replacement file is
 selected or the text draft differs from its loaded baseline, closing the revision editor
 first asks whether to keep editing or discard and close. An unchanged text preview closes
 without a prompt. Closing is unavailable while a revision upload is in progress; upload

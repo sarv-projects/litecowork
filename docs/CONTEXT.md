@@ -122,12 +122,15 @@ conversation checkpoints and verified completed work. Proposed records, gating,
 and the future implementation contract are in [Coworker target](COWORKERS-TARGET.md).
 This is NOT permission to mine every connected account or a claim the learning
 pipeline is currently operational. Until the corresponding verified implementation
-exists, owner-authored ContextDocuments may be
-revised, revoked, or deleted through ResourceService. Revocation removes a document from
-future context retrieval while retaining its bytes. Deletion blocks reads immediately,
-then purges content and derived indexes from Core-managed replicas; the tombstone and
-revision digests remain so historical Task provenance does not disappear. A provider-backed
-source is reported as deletion-incomplete until its provider confirms revocation/removal.
+exists, owner-authored ContextDocuments may be revised, revoked, or deleted through
+ResourceService. Revocation removes a document from future context retrieval while
+retaining its bytes. The current local deletion command accepts only Resources with local
+managed content and fails closed before writing a tombstone if any exact revision has an
+external/provider-backed location. For accepted local content, deletion blocks reads at
+commit and purges content and derived indexes from Core-managed replicas; the tombstone and
+revision digests remain so historical Task provenance does not disappear. A future,
+qualified provider-backed deletion path may include registered owned replicas and remain
+pending until their adapter confirms removal; the local command does not start that saga.
 
 Resource edits use the authenticated owner route `POST /v1/resources/{resource_id}/revision-uploads`, an immutable parent
 revision set, digest-verified chunk upload, and atomic commit. `If-Match` pins the current
@@ -151,24 +154,49 @@ that publishes derived state from those bytes must recheck status in its final t
 and discard the result if the document is no longer `ACTIVE`. `REVOKED` retains bytes but
 blocks new reads until restored; `DELETION_PENDING` and `DELETED` also block reads while
 purge proceeds or after completion. Owner metadata remains available so status and the
-appropriate restore/deletion outcome can be shown. Active sessions that were given the
-document are stopped at the next safe boundary and cannot resume with the stale attachment;
-native history already observed by an external agent cannot be recalled, so the old session
-is never reused. Existing Task/Evidence provenance retains the Resource ID, revision IDs,
-and digests without restoring revoked/deleted bytes.
+appropriate restore/deletion outcome can be shown. Local ContextDocument purge does not
+automatically stop or replace an active native session that already received the document.
+Native history already observed by an external agent cannot be recalled. Any future
+session-stop/replacement behavior requires a separately qualified session-lifecycle path;
+it is not implied by the Resource tombstone. Existing Task/Evidence provenance retains the
+Resource ID, revision IDs, and digests without restoring revoked/deleted bytes.
 
 Deletion is a recoverable purge saga. Before `ACTIVE|REVOKED -> DELETION_PENDING`,
-ResourceService seals an immutable `ContextDocumentPurgePlan` over every registered,
-Core-owned blob/index replica and exact ResourceRevision set. It commits the plan, one
-pending receipt per target, and the Workspace-replicated tombstone atomically; a verified
-empty plan is explicit. The tombstone immediately blocks content reads. A Runtime receipt
-is accepted only for the current Runtime incarnation and exact plan target. `DELETED` is
-committed only when the receipt set exactly equals the sealed target set and every receipt
-is acknowledged; retryable purge failures keep the tombstone pending and never restore
-content. Receipts contain no bytes, locators, credentials, or provider continuation handles
-and remain available for recovery and backup audit. External semantic indexes are purge
-targets only when their provider adapter is registered as an owned replica; arbitrary
-retrieval providers cannot extend or override Resource deletion truth.
+ResourceService seals an immutable `ContextDocumentPurgePlan` over the exact revision set
+and each registered Core-owned blob/index replica selected by the applicable deletion
+path. The current local command fails closed before the tombstone if any exact revision
+uses an external/provider-backed location; its plan contains only local managed targets.
+It also groups accepted `ResourceUploadChunk` objects and outstanding durable blob
+reservations from linked revision-upload sessions in `OPEN` or `CONTENT_RECEIVED` as
+`UPLOAD_CHUNK` targets by temporary blob digest, retaining each exact `(upload_id,
+chunk_index)` in the sorted `target_upload_chunk_refs` array; their `target_revision_ids` is
+empty. In the same SQLite transaction, each linked session becomes
+`EXPIRED` with `reason_code=CONTEXT_DOCUMENT_DELETION`, while its session, chunk, and request
+ledger metadata remains as non-resumable history. The plan, pending receipts, and durable
+local tombstone commit atomically; a verified empty plan is explicit. The tombstone
+immediately blocks content reads. A local target is acknowledged only after exact physical
+removal and durable local reference/fence cleanup. A future qualified provider path may add
+registered owned replicas; a Runtime receipt there is accepted only for the current Runtime
+incarnation and exact plan target. `DELETED` is committed only when the receipt set exactly
+equals the sealed target set and every Resource, derived-index, and upload-chunk target is
+acknowledged; an empty plan is admitted only after a SQL preflight verifies that the Resource
+has no local or external locations, ResourceIndex rows, registered Resource objects, or
+linked upload-chunk objects. Since completed Resource-content GC removes its registry row
+while immutable revisions retain their digests, purge also reads each such exact revision
+`BlobRef` outside the SQL transaction while holding its digest lock. Only BlobStore
+`NotFound` proves the bytes are absent; a present object or any other read failure fails
+closed. The admission transaction rechecks the SQL inventory before committing. Empty-plan
+completion repeats the fresh SQL checks and exact reads before setting `DELETED`. Retryable
+purge failures keep the tombstone
+pending and never restore content. Receipts contain no bytes, locators, credentials, or
+provider continuation handles and remain available for recovery and backup audit. Desktop
+V1 is `LOCAL_ONLY`; the planned E13-S01 backup contract must preserve the tombstone, exact
+plan, receipt states, and non-resumable upload ledger metadata, but backup is not yet claimed
+as implemented. Cross-Runtime replication is post-V1: current event payloads do not
+reconstruct an unacknowledged plan, and future Mesh transfer must carry the exact plan and
+per-target receipt state or an equivalent reconstructible record. External semantic indexes
+are purge targets only when their provider adapter is registered as an owned replica;
+arbitrary retrieval providers cannot extend or override Resource deletion truth.
 
 For a human-facing Conversation response, optional Host Guidance is appended only as
 zero-authority presentation advice after the current Conversation/task context is assembled.

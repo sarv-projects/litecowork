@@ -41,6 +41,7 @@ import {
 } from "./agents/agent-binding-mutation.ts";
 import { ZipIntakeNotice } from "./resources/ZipIntakeNotice";
 import { isSensitiveOrGenerated, resourceDisplayName, resourceFolderRelativePath, resourceIndexAction, validateResourceFileSelection } from "./resources/resource-intake";
+import { isCurrentWorkspaceSearchRequest } from "./resources/resource-search-request";
 import {
   matchesResourceUploadIdentity,
   prepareResourceUploadCommitRequestId,
@@ -90,6 +91,15 @@ import {
   performWorkspaceRootStatusAction,
   resourceLocationAvailabilityLabel,
 } from "./workspaces/workspace-root-status.ts";
+import {
+  acceptWorkspaceRootScanResponse,
+  isCurrentWorkspaceRootScan,
+  isWorkspaceRootScannable,
+  workspaceRootScanFailure,
+  workspaceRootScanAnnouncement,
+  workspaceRootScanRequest,
+  type WorkspaceRootScanRequest,
+} from "./workspaces/workspace-root-scan.ts";
 import {
   clearWorkspaceRootMutationRequest,
   isWorkspaceRootAddResponse,
@@ -235,6 +245,7 @@ type WorkspaceRootView = {
   version: number;
 };
 type WorkspaceRootPageView = { items: WorkspaceRootView[]; nextCursor: string | null };
+type WorkspaceRootScanFeedback = { kind: "loading" | "result" | "error" | "stale" | "unsupported" | "rejected"; message: string; rootVersion: number };
 type PinnedResourceRefView = { workspaceId: string; resourceId: string; revisionId: string };
 type TaskInputSelection = PinnedResourceRefView & { displayName: string };
 type ResourcePageView = { items: ResourceView[]; nextCursor: string | null };
@@ -279,6 +290,13 @@ type LocalUploadResume = {
   uploadId?: string;
   commitRequestId?: string;
   chunkRequestIds?: Record<string, string>;
+};
+type ResourceUploadResumeForget = {
+  workspaceId: string;
+  resumeKey: string;
+  uploadId: string;
+  displayName: string;
+  terminalState: "FAILED" | "EXPIRED";
 };
 type PendingTaskSave = {
   workspaceId: string;
@@ -565,6 +583,7 @@ function App() {
   const resourcePauseRequested = useRef(false);
   const [resourcePausePending, setResourcePausePending] = useState(false);
   const [resourceMessage, setResourceMessage] = useState<string | null>(null);
+  const [resourceUploadResumeForget, setResourceUploadResumeForget] = useState<ResourceUploadResumeForget | null>(null);
   const [previewResourceId, setPreviewResourceId] = useState<string | null>(null);
   const [previewResourceName, setPreviewResourceName] = useState<string | null>(null);
   const [resourcePreview, setResourcePreview] = useState<string | null>(null);
@@ -579,6 +598,7 @@ function App() {
     try { return localStorage.getItem("litecowork.selectedWorkspaceId") ?? ""; }
     catch { return ""; }
   });
+  const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({});
   const artifactApi = useMemo(() => desktopArtifactApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const automationApi = useMemo(() => desktopAutomationApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const routineApi = useMemo(() => desktopRoutineApi(selectedWorkspaceId), [selectedWorkspaceId]);
@@ -591,7 +611,18 @@ function App() {
   selectedWorkspaceIdRef.current = selectedWorkspaceId;
   const workspaceSelectionEpoch = useRef(0);
   const selectWorkspace = useCallback((workspaceId: string) => {
-    if (selectedWorkspaceIdRef.current !== workspaceId) workspaceSelectionEpoch.current += 1;
+    const previousWorkspaceId = selectedWorkspaceIdRef.current;
+    if (previousWorkspaceId !== workspaceId) {
+      workspaceSelectionEpoch.current += 1;
+      setResourceMessage(null);
+    }
+    if (!previousWorkspaceId && workspaceId) {
+      setConversationDrafts(current => {
+        if (!Object.hasOwn(current, "")) return current;
+        const { "": unscopedDraft, ...workspaceDrafts } = current;
+        return { ...workspaceDrafts, [workspaceId]: unscopedDraft };
+      });
+    }
     selectedWorkspaceIdRef.current = workspaceId;
     setSelectedWorkspaceId(workspaceId);
   }, []);
@@ -1508,6 +1539,9 @@ function App() {
   const importFiles = async (files: FileList | File[] | null, contextDocument: ContextDocumentCreateMetadata | null = null) => {
     const workspaceId = selectedWorkspaceIdRef.current;
     if (!files || !workspaceId) return;
+    const selectionEpoch = workspaceSelectionEpoch.current;
+    const isCurrentImport = () => selectedWorkspaceIdRef.current === workspaceId
+      && workspaceSelectionEpoch.current === selectionEpoch;
     const requested = Array.from(files);
     const selected = requested.filter((file) => !isSensitiveOrGenerated(file));
     const skipped = requested.length - selected.length;
@@ -1524,10 +1558,12 @@ function App() {
     resourcePauseRequested.current = false;
     setResourcePausePending(false);
     setResourceMessage(null);
+    setResourceUploadResumeForget(null);
     let importedCount = 0;
     let recoveredCommitCount = 0;
     let activeFileName = "";
     let pausedFileName: string | null = null;
+    let resumeRequiresForget = false;
     try {
       for (const [index, file] of selected.entries()) {
         const displayName = resourceDisplayName(file);
@@ -1556,7 +1592,7 @@ function App() {
             };
         // Name, size, modification time, and hashes of received chunks cannot
         // identify the bytes in the chunks that have not been uploaded yet.
-        setResourceMessage(`Checking “${displayName}” (${formatBytes(file.size)}) before starting or resuming its upload…`);
+        if (isCurrentImport()) setResourceMessage(`Checking “${displayName}” (${formatBytes(file.size)}) before starting or resuming its upload…`);
         const expectedDigest = `sha256:${await digestHex(await file.arrayBuffer())}`;
         if (resourcePauseRequested.current) {
           pausedFileName = displayName;
@@ -1565,14 +1601,21 @@ function App() {
         let session: ResourceUploadView | null = null;
         if (resume.uploadId) {
           try {
-            session = await invoke<ResourceUploadView>("get_resource_upload", { workspaceId, uploadId: resume.uploadId });
+            const status: unknown = await invoke<unknown>("get_resource_upload", { workspaceId, uploadId: resume.uploadId });
+            if (!status || typeof status !== "object" || Array.isArray(status)) {
+              throw new Error("Saved upload progress response was invalid.");
+            }
+            session = status as ResourceUploadView;
           } catch {
-            // A missing/expired server session is replaced below using a fresh idempotency key.
+            throw new Error("Saved upload progress could not be verified. Recovery details were kept, and no replacement upload session was started. Retry the same unchanged file when the local Runtime is available.");
           }
         }
         if (resourcePauseRequested.current) {
           pausedFileName = displayName;
           break;
+        }
+        if (session && (session.workspaceId !== workspaceId || session.uploadId !== resume.uploadId)) {
+          throw new Error("Saved upload progress did not match this Workspace and upload. Recovery details were kept, and no replacement upload session was started.");
         }
         const expectedUploadIdentity: ResourceUploadIdentity = {
           workspaceId,
@@ -1582,6 +1625,37 @@ function App() {
           sizeBytes: file.size,
           contextDocument,
         };
+        if (session && !["OPEN", "CONTENT_RECEIVED", "COMMITTED", "FAILED", "EXPIRED"].includes(session.state)) {
+          throw new Error("The saved upload returned an unsupported status. Recovery details were kept, and no replacement upload session was started.");
+        }
+        if (session && (session.state === "FAILED" || session.state === "EXPIRED")) {
+          resumeRequiresForget = true;
+          if (isCurrentImport()) setResourceUploadResumeForget({
+            workspaceId,
+            resumeKey,
+            uploadId: session.uploadId,
+            displayName,
+            terminalState: session.state,
+          });
+          throw new Error(`This upload is ${session.state}. No replacement session was started. Review the Library, then use “Forget upload resume details” if you want to start another upload.`);
+        }
+        if (session && (session.state === "OPEN" || session.state === "CONTENT_RECEIVED")) {
+          const expiresAt = Date.parse(session.expiresAt);
+          if (!Number.isFinite(expiresAt)) {
+            throw new Error("The saved upload has an invalid expiry. Recovery details were kept, and no replacement upload session was started.");
+          }
+          if (expiresAt <= Date.now()) {
+            resumeRequiresForget = true;
+            if (isCurrentImport()) setResourceUploadResumeForget({
+              workspaceId,
+              resumeKey,
+              uploadId: session.uploadId,
+              displayName,
+              terminalState: "EXPIRED",
+            });
+            throw new Error("This upload has expired. No replacement session was started. Review the Library, then use “Forget upload resume details” if you want to start another upload.");
+          }
+        }
         const sessionIdentityMatches = Boolean(
           session && matchesResourceUploadIdentity(session, expectedUploadIdentity),
         );
@@ -1624,7 +1698,7 @@ function App() {
             if (recovered.resourceId !== session.committedResourceId) {
               throw new Error("The recovered commit does not match the Resource recorded by the upload session.");
             }
-            if (selectedWorkspaceIdRef.current === workspaceId) {
+            if (isCurrentImport()) {
               setResources((current) => [recovered, ...current.filter((item) => item.resourceId !== recovered.resourceId)]);
             }
             writeUploadResume(resumeKey, null);
@@ -1674,7 +1748,7 @@ function App() {
         }
         if (!session) throw new Error("Upload session could not be created.");
         const uploaded = session.receivedRanges.reduce((sum, range) => sum + range.endOffsetInclusive - range.startOffset + 1, 0);
-        setResourceMessage(`Adding file ${index + 1} of ${selected.length}: ${displayName} · ${formatBytes(uploaded)} of ${formatBytes(file.size)} uploaded`);
+        if (isCurrentImport()) setResourceMessage(`Adding file ${index + 1} of ${selected.length}: ${displayName} · ${formatBytes(uploaded)} of ${formatBytes(file.size)} uploaded`);
         const receivedIndexes = new Set(session.receivedRanges.map((range) => Math.floor(range.startOffset / session!.chunkSizeBytes)));
         const chunkSize = session.chunkSizeBytes;
         for (let offset = 0, chunkIndex = 0; offset < file.size; offset += chunkSize, chunkIndex += 1) {
@@ -1702,7 +1776,7 @@ function App() {
             contentBase64: bytesToBase64(chunk),
             requestId: resume.chunkRequestIds[String(chunkIndex)],
           });
-          setResourceMessage(`Adding file ${index + 1} of ${selected.length}: ${displayName} · ${formatBytes(endExclusive)} of ${formatBytes(file.size)} uploaded`);
+          if (isCurrentImport()) setResourceMessage(`Adding file ${index + 1} of ${selected.length}: ${displayName} · ${formatBytes(endExclusive)} of ${formatBytes(file.size)} uploaded`);
           if (resourcePauseRequested.current) {
             pausedFileName = displayName;
             break;
@@ -1723,7 +1797,7 @@ function App() {
           uploadId: session.uploadId,
           requestId: commitRequestId,
         });
-        if (selectedWorkspaceIdRef.current === workspaceId) {
+        if (isCurrentImport()) {
           setResources((current) => [imported, ...current.filter((item) => item.resourceId !== imported.resourceId)]);
         }
         writeUploadResume(resumeKey, null);
@@ -1732,9 +1806,9 @@ function App() {
       const completed = importedCount + recoveredCommitCount;
       if (pausedFileName) {
         const completedSummary = completed > 0 ? `${completed} ${completed === 1 ? "file was" : "files were"} saved. ` : "";
-        setResourceMessage(`${completedSummary}Upload paused before finishing “${pausedFileName}”. Any accepted chunks remain resumable until their session expires. Choose the same unchanged file again to continue.${skipped > 0 ? ` Excluded ${skipped} likely secret or generated ${skipped === 1 ? "file" : "files"}.` : ""}`);
+        if (isCurrentImport()) setResourceMessage(`${completedSummary}Upload paused before finishing “${pausedFileName}”. Any accepted chunks remain resumable until their session expires. Choose the same unchanged file again to continue.${skipped > 0 ? ` Excluded ${skipped} likely secret or generated ${skipped === 1 ? "file" : "files"}.` : ""}`);
       } else {
-        setResourceMessage(`${completed} ${completed === 1 ? "file" : "files"} added to this Workspace.${recoveredCommitCount > 0 ? ` Recovered ${recoveredCommitCount} earlier commit${recoveredCommitCount === 1 ? "" : "s"}.` : ""}${skipped > 0 ? ` Excluded ${skipped} likely secret or generated ${skipped === 1 ? "file" : "files"}.` : ""}`);
+        if (isCurrentImport()) setResourceMessage(`${completed} ${completed === 1 ? "file" : "files"} added to this Workspace.${recoveredCommitCount > 0 ? ` Recovered ${recoveredCommitCount} earlier commit${recoveredCommitCount === 1 ? "" : "s"}.` : ""}${skipped > 0 ? ` Excluded ${skipped} likely secret or generated ${skipped === 1 ? "file" : "files"}.` : ""}`);
       }
     } catch (error) {
       const detail = typeof error === "string" ? error : error instanceof Error ? error.message : "Resource intake failed.";
@@ -1744,10 +1818,12 @@ function App() {
         ? `${completedCount} of ${selected.length} selected ${completedNoun} saved before import stopped${recoveredCommitCount > 0 ? ` (including ${recoveredCommitCount} earlier committed upload${recoveredCommitCount === 1 ? "" : "s"} recovered)` : ""}. `
         : "No selected files were confirmed saved. ";
       const resumeHint = activeFileName
-        ? ` If an upload session was already created for “${activeFileName}”, choose the same unchanged file again to resume it while the session remains valid.`
+        ? resumeRequiresForget
+          ? " The saved upload identity remains until you explicitly forget it."
+          : ` If an upload session was already created for “${activeFileName}”, choose the same unchanged file again to resume it while the session remains valid.`
         : "";
       const excludedSummary = skipped > 0 ? ` ${skipped} likely secret or generated ${skipped === 1 ? "file was" : "files were"} excluded.` : "";
-      setResourceMessage(`${completedSummary}${detail}${resumeHint}${excludedSummary}`);
+      if (isCurrentImport()) setResourceMessage(`${completedSummary}${detail}${resumeHint}${excludedSummary}`);
     } finally {
       resourcePauseRequested.current = false;
       setResourcePausePending(false);
@@ -1760,6 +1836,23 @@ function App() {
     resourcePauseRequested.current = true;
     setResourcePausePending(true);
     setResourceMessage("Pause requested. Any in-flight request will finish; no later upload request or file will start.");
+  };
+
+  const forgetResourceUploadResume = () => {
+    const pending = resourceUploadResumeForget;
+    if (!pending || selectedWorkspaceIdRef.current !== pending.workspaceId) return;
+    const saved = readUploadResumes()[pending.resumeKey];
+    if (!saved || saved.uploadId !== pending.uploadId) {
+      setResourceUploadResumeForget(null);
+      setResourceMessage("The saved upload recovery record changed, so no local record was cleared. Review the Library and retry the same file to read its current status.");
+      return;
+    }
+    if (!writeUploadResume(pending.resumeKey, null)) {
+      setResourceMessage("LiteCowork could not clear the saved upload recovery record. The server session was not changed.");
+      return;
+    }
+    setResourceUploadResumeForget(null);
+    setResourceMessage(`Local upload recovery details for “${pending.displayName}” were forgotten. The server-side upload session was not deleted. Review the Library before selecting this file again.`);
   };
 
   const loadMoreResources = async () => {
@@ -1974,14 +2067,22 @@ function App() {
         {page === "Home" ? (
           <HomePage draft={draft} onDraftChange={(value) => { setDraft(value); setTaskSaveError(null); }} runtime={runtime} runtimeError={runtimeError} runtimeBusy={runtimeBusy} startRuntime={startRuntime} refreshRuntime={refreshRuntime} workspace={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId) ?? null} workspaceListState={workspaceListState} workspaceError={workspaceError} refreshWorkspaces={refreshWorkspaces} workspaceName={workspaceName} onWorkspaceNameChange={setWorkspaceName} workspaceCreateBusy={workspaceCreateBusy} pendingWorkspaceRequest={pendingWorkspaceRequest} createWorkspace={createWorkspace} workspacesCount={workspaces.length} coworkerApi={coworkerApi} coworkerSelection={homeCoworkerSelections[selectedWorkspaceId] ?? null} onCoworkerSelectionChange={updateHomeCoworkerSelection} taskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onRemoveTaskInput={removeTaskInput} onOpenLibrary={() => requestPageNavigation("Library")} operatorReady={runtime?.operatorReady === true} taskSaving={taskSaving} taskSaveError={taskSaveError} hasPendingTaskSave={pendingTaskSave !== null} pendingTaskRetryMatches={pendingTaskMatchesComposer} onOpenPendingTask={openPendingTaskWorkspace} onClearPendingTaskAfterReview={clearPendingTaskAfterReview} onSaveTask={saveTask} onSettings={() => requestPageNavigation("Settings")} onOpenCoworkers={() => requestPageNavigation("Coworkers")} onWorkspaceUpdated={(updated) => updateWorkspaceProjection(current => current.map(item => item.workspaceId === updated.workspace_id && item.version <= updated.version ? { ...item, primaryCoworkerId: updated.primary_coworker_id, version: updated.version } : item))} onOpenWork={() => { setOpenedTask(null); requestPageNavigation("Work"); }} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
         ) : page === "Conversations" ? (
-          <ConversationsPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} operatorReady={runtime?.operatorReady === true && Boolean(selectedWorkspaceId)} />
+          <ConversationsPage
+            key={selectedWorkspaceId}
+            workspaceId={selectedWorkspaceId}
+            workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"}
+            operatorReady={runtime?.operatorReady === true && Boolean(selectedWorkspaceId)}
+            draft={conversationDrafts[selectedWorkspaceId] ?? ""}
+            onDraftChange={value => setConversationDrafts(current => ({ ...current, [selectedWorkspaceId]: value }))}
+            onOpenAgentSettings={() => requestPageNavigation("Settings")}
+          />
         ) : page === "Work" ? (
           <WorkPage key={selectedWorkspaceId} selectedWorkspaceId={selectedWorkspaceId} workspaceName={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.name ?? "Workspace"} resourceNameCache={resourceNameCache} artifactApi={artifactApi} coworkerApi={coworkerApi} operatorReady={runtime?.operatorReady === true} initialTaskId={openedTask?.workspaceId === selectedWorkspaceId ? openedTask.taskId : null} />
         ) : page === "Library" ? (
           <LibraryPage selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} selectedWorkspaceIdRef={selectedWorkspaceIdRef} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => {
             setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item));
             onLibraryDraftCommitted();
-          }} onDraftSaveFailure={onLibraryDraftSaveFailed} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => requestPageNavigation("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
+          }} onDraftSaveFailure={onLibraryDraftSaveFailed} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => requestPageNavigation("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} uploadResumeForget={resourceUploadResumeForget} onForgetUploadResume={forgetResourceUploadResume} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
         ) : page === "Needs You" ? (
           <TaskAttentionPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} operatorReady={runtime?.operatorReady === true} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
         ) : page === "Coworkers" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
@@ -2849,6 +2950,34 @@ function profileHasFreshAdmissionOffer(profile: AgentProfileView): boolean {
     && (latest.readiness === "AVAILABLE" || latest.readiness === "STARTABLE" || latest.readiness === "READY");
 }
 
+function localServiceCopy(runtime: RuntimeStatus | null, runtimeError: string | null, canStart: boolean) {
+  if (runtimeError) return { status: "Connection issue", message: "LiteCowork could not check its local service. Refresh status to try again." };
+  if (runtime?.operatorReady) return { status: "Connected", message: "LiteCowork is connected on this computer. Task execution is not available yet." };
+  if (!runtime) return { status: "Checking…", message: "Checking LiteCowork’s local service." };
+  switch (runtime.state) {
+    case "STOPPED":
+    case "NOT_RUNNING":
+    case "NOT_STARTED":
+      return {
+        status: "Not running",
+        message: canStart
+          ? "LiteCowork is not running on this computer. Start it here to reconnect."
+          : "LiteCowork is not running on this computer. Refresh status to check again.",
+      };
+    case "UNAVAILABLE":
+      return { status: "Unavailable", message: "LiteCowork’s local service is unavailable. Refresh status to try again." };
+    case "DEGRADED":
+      return { status: "Limited availability", message: "LiteCowork is running with limited availability. Review Advanced details or refresh status." };
+    case "DRAINING":
+    case "STOPPING":
+      return { status: "Stopping", message: "LiteCowork is stopping. Refresh status to check again." };
+    case "FAILED":
+      return { status: "Needs attention", message: "LiteCowork needs attention. Refresh status to try again." };
+    default:
+      return { status: "Connecting", message: "LiteCowork is reconnecting on this computer." };
+  }
+}
+
 function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runtimeLifecycleError, runtimeError, runtimeBusy, startRuntime, refreshRuntime, agents, agentError, refreshAgents, agentProfiles, agentProfileError, runtimeInventoryStreamStatus, agentBindings, agentBindingError, agentActionMessage, agentActionError, agentActionBusy, onProbeCodex, onProbeOpenCode, onRefreshAgentProfiles, onRefreshAgentBindings, onCreateAgentBinding, onEnableAgentBinding, onDisableAgentBinding, runtimeBindings, runtimeBindingError, runtimeBindingsLoading, runtimeEnrollmentBusy, runtimeEnrollmentMessage, runtimeEnrollmentError, onEnrollLocalRuntime, onRefreshRuntimeBindings, workspaces, workspaceListState, workspaceError, refreshWorkspaces, workspaceName, setWorkspaceName, createWorkspace, workspaceCreateBusy, workspaceCreatePending, selectedWorkspaceId, onSelectWorkspace, onUpdatePolicy, policyBusy, policyRetryPending, onArchiveWorkspace, archiveBusy, onSetDefaultAgentBinding, defaultAgentBusy, instructions, onInstructionsChange, instructionHistory, instructionMessage, instructionBusy, onSaveInstructions, latestInstructionsAfterConflict, onUseLatestInstructions }: SettingsPageProps) {
   const [archiveConfirmationFor, setArchiveConfirmationFor] = useState<string | null>(null);
   useEffect(() => setArchiveConfirmationFor(null), [selectedWorkspaceId]);
@@ -2857,25 +2986,30 @@ function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runt
     ?? runtimeBindings.find((binding) => binding.workspaceId === selectedWorkspaceId && binding.runtimeId === runtime?.runtimeId);
   const currentRuntimeEnrolled = currentRuntimeBinding?.status === "ACTIVE";
   const runtimeEnrollmentStatus = runtimeBindingsLoading ? "Checking…" : runtimeBindingError ? "Could not check" : !runtime?.runtimeId ? "Runtime unavailable" : currentRuntimeEnrolled ? "Active on this computer" : currentRuntimeBinding?.status === "PENDING" ? "Enrollment pending" : "Not enrolled";
+  const canStartLocalRuntime = canOfferLocalRuntimeStart(runtime);
+  const localService = localServiceCopy(runtime, runtimeError, canStartLocalRuntime);
   return (
     <div className="page-content subpage-content">
       <div className="eyebrow">LOCAL DESKTOP</div>
       <h1>Settings</h1>
       <section className="runtime-card" aria-labelledby="runtime-title">
         <div className="section-heading">
-          <div><h2 id="runtime-title">LiteCowork Runtime</h2><p>Local daemon lifecycle and readiness.</p></div>
-          <span className={`status-pill ${runtime?.state === "READY" ? "success" : "muted"}`}>{runtime?.state ?? "Checking"}</span>
+          <div><h2 id="runtime-title">Local connection</h2><p className="runtime-status-copy">{localService.message}</p></div>
+          <span className={`status-pill ${runtime?.operatorReady && !runtimeError ? "success" : "muted"}`}>{localService.status}</span>
         </div>
         {runtimeError && <p className="inline-error" role="alert">{runtimeError}</p>}
-        {runtime?.runtimeId && <dl className="runtime-details"><div><dt>Runtime</dt><dd>{runtime.runtimeId}</dd></div><div><dt>Incarnation</dt><dd>{runtime.localIncarnationId}</dd></div></dl>}
-        {runtimeLifecycle && <dl className="runtime-details"><div><dt>Startup policy</dt><dd>{runtimeLifecycle.startupPolicy}</dd></div><div><dt>Persisted availability</dt><dd>{runtimeLifecycle.availability}</dd></div><div><dt>Recovery state</dt><dd>{runtimeLifecycle.incarnation.recoveryState}</dd></div></dl>}
-        {runtimeLifecycleLoading && runtime?.operatorReady && <p className="composer-hint" role="status">Loading persisted lifecycle details…</p>}
-        {runtimeLifecycleError && runtime?.operatorReady && <p className="inline-error" role="status">{runtimeLifecycleError}</p>}
         {!!(runtimeLifecycle?.blockers.length ?? runtime?.blockers.length) && <div className="blocker-list"><strong>Unavailable services</strong><ul>{runtimeLifecycle ? runtimeLifecycle.blockers.map((blocker) => <li key={blocker.blockerId}><span>{blocker.safeMessage}</span><small>{blocker.resolutionHint}</small></li>) : runtime?.blockers.map((blocker) => <li key={blocker}>{blocker.replaceAll("_", " ").toLowerCase()}</li>)}</ul></div>}
         <div className="button-row">
-          {canOfferLocalRuntimeStart(runtime) && <button className="primary-button" type="button" onClick={() => void startRuntime()} disabled={runtimeBusy}>{runtimeBusy ? "Starting…" : "Start local Runtime"}</button>}
+          {canStartLocalRuntime && <button className="primary-button" type="button" onClick={() => void startRuntime()} disabled={runtimeBusy}>{runtimeBusy ? "Starting…" : "Start local Runtime"}</button>}
           <button className="quiet-button" type="button" onClick={() => void refreshRuntime()}>Refresh status</button>
         </div>
+        <details className="runtime-advanced-details">
+          <summary>Advanced details</summary>
+          {runtime?.runtimeId && <dl className="runtime-details"><div><dt>Runtime ID</dt><dd>{runtime.runtimeId}</dd></div><div><dt>Incarnation ID</dt><dd>{runtime.localIncarnationId}</dd></div></dl>}
+          {runtimeLifecycle && <dl className="runtime-details"><div><dt>Startup policy</dt><dd>{runtimeLifecycle.startupPolicy}</dd></div><div><dt>Persisted availability</dt><dd>{runtimeLifecycle.availability}</dd></div><div><dt>Recovery state</dt><dd>{runtimeLifecycle.incarnation.recoveryState}</dd></div></dl>}
+          {runtimeLifecycleLoading && runtime?.operatorReady && <p className="composer-hint" role="status">Loading persisted lifecycle details…</p>}
+          {runtimeLifecycleError && runtime?.operatorReady && <p className="inline-error" role="status">{runtimeLifecycleError}</p>}
+        </details>
       </section>
       <section className="workspace-list-card" aria-labelledby="workspace-title">
         <div className="section-heading">
@@ -2965,7 +3099,7 @@ function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runt
             <span className={`status-pill ${currentRuntimeEnrolled ? "success" : currentRuntimeBinding?.status === "PENDING" ? "warning" : "muted"}`}>{runtimeEnrollmentStatus}</span>
             <span>{selectedWorkspace.name}</span>
           </div>
-          {currentRuntimeBinding && <dl className="agent-observation-details"><div><dt>Runtime</dt><dd>{currentRuntimeBinding.runtimeId}</dd></div><div><dt>Enrollment</dt><dd>{currentRuntimeBinding.enrollmentMode.replaceAll("_", " ").toLowerCase()}</dd></div><div><dt>Roles</dt><dd>{currentRuntimeBinding.roles.map((role) => role.replaceAll("_", " ").toLowerCase()).join(", ") || "None reported"}</dd></div></dl>}
+          {currentRuntimeBinding && <dl className="agent-observation-details runtime-enrollment-details"><div><dt>Enrollment</dt><dd>{currentRuntimeBinding.enrollmentMode.replaceAll("_", " ").toLowerCase()}</dd></div><div><dt>Roles</dt><dd>{currentRuntimeBinding.roles.map((role) => role.replaceAll("_", " ").toLowerCase()).join(", ") || "None reported"}</dd></div></dl>}
           <p className="runtime-enrollment-copy">This grants this installation its authorized local execution role in the Workspace. It does not pair another computer, start an agent, or execute a Task.</p>
           {runtimeBindingError && <p className="inline-error" role="status">{runtimeBindingError}</p>}
           {runtimeEnrollmentError && <p className="inline-error" role="alert">{runtimeEnrollmentError}</p>}
@@ -2997,7 +3131,6 @@ function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runt
         onDisableBinding={(binding) => { void onDisableAgentBinding(binding); }}
         onSetDefaultLead={(agentBindingId) => { void onSetDefaultAgentBinding(agentBindingId); }}
       />
-      <p className="settings-note">Operator API serving confirms the authenticated desktop connection only. The Runtime remains degraded until Task recovery and execution services are implemented; it does not yet accept work or start coding agents.</p>
     </div>
   );
 }
@@ -3031,7 +3164,7 @@ function PlaceholderPage({ page, onSettings }: { page: Page; onSettings: () => v
   );
 }
 
-function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspaceIdRef, artifactApi, onOpenArtifactSource, rootStatusRequestKeys, resourceIndexRequestKeys, workspaceVersion, operatorReady, resources, onRevisionCommitted, onDraftSaveFailure, onRefreshResources, selectedTaskInputs, onToggleTaskInput, onClearTaskInputs, onUseSelectedInTask, nextCursor, pageBusy, onLoadMore, busy, pausePending, onPauseImport, message, onFiles, onPreview, onClosePreview, previewResourceId, previewResourceName, preview, previewHighlights, previewError }: { selectedWorkspaceId: string; onSelectWorkspace: (workspaceId: string) => void; selectedWorkspaceIdRef: { current: string }; artifactApi: ReturnType<typeof desktopArtifactApi>; onOpenArtifactSource: (ref: PinnedResourceRef) => void; rootStatusRequestKeys: { current: Map<string, string> }; resourceIndexRequestKeys: { current: Map<string, string> }; workspaceVersion: number | null; operatorReady: boolean; resources: ResourceView[]; onRevisionCommitted: (resource: ResourceView) => void; onDraftSaveFailure: (message: string) => void; onRefreshResources: () => void; selectedTaskInputs: TaskInputSelection[]; onToggleTaskInput: (resource: { resourceId: string; resourceRevisionId: string; displayName: string }) => void; onClearTaskInputs: () => void; onUseSelectedInTask: () => void; nextCursor: string | null; pageBusy: boolean; onLoadMore: () => Promise<void>; busy: boolean; pausePending: boolean; onPauseImport: () => void; message: string | null; onFiles: (files: FileList | File[] | null, contextDocument?: ContextDocumentCreateMetadata | null) => Promise<void>; onPreview: (resourceId: string, displayName: string, revisionId: string, searchPin?: PreviewSearchPin) => Promise<void>; onClosePreview: () => void; previewResourceId: string | null; previewResourceName: string | null; preview: string | null; previewHighlights: SourceHighlightResult | null; previewError: string | null }) {
+function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspaceIdRef, artifactApi, onOpenArtifactSource, rootStatusRequestKeys, resourceIndexRequestKeys, workspaceVersion, operatorReady, resources, onRevisionCommitted, onDraftSaveFailure, onRefreshResources, selectedTaskInputs, onToggleTaskInput, onClearTaskInputs, onUseSelectedInTask, nextCursor, pageBusy, onLoadMore, busy, pausePending, onPauseImport, message, uploadResumeForget, onForgetUploadResume, onFiles, onPreview, onClosePreview, previewResourceId, previewResourceName, preview, previewHighlights, previewError }: { selectedWorkspaceId: string; onSelectWorkspace: (workspaceId: string) => void; selectedWorkspaceIdRef: { current: string }; artifactApi: ReturnType<typeof desktopArtifactApi>; onOpenArtifactSource: (ref: PinnedResourceRef) => void; rootStatusRequestKeys: { current: Map<string, string> }; resourceIndexRequestKeys: { current: Map<string, string> }; workspaceVersion: number | null; operatorReady: boolean; resources: ResourceView[]; onRevisionCommitted: (resource: ResourceView) => void; onDraftSaveFailure: (message: string) => void; onRefreshResources: () => void; selectedTaskInputs: TaskInputSelection[]; onToggleTaskInput: (resource: { resourceId: string; resourceRevisionId: string; displayName: string }) => void; onClearTaskInputs: () => void; onUseSelectedInTask: () => void; nextCursor: string | null; pageBusy: boolean; onLoadMore: () => Promise<void>; busy: boolean; pausePending: boolean; onPauseImport: () => void; message: string | null; uploadResumeForget: ResourceUploadResumeForget | null; onForgetUploadResume: () => void; onFiles: (files: FileList | File[] | null, contextDocument?: ContextDocumentCreateMetadata | null) => Promise<void>; onPreview: (resourceId: string, displayName: string, revisionId: string, searchPin?: PreviewSearchPin) => Promise<void>; onClosePreview: () => void; previewResourceId: string | null; previewResourceName: string | null; preview: string | null; previewHighlights: SourceHighlightResult | null; previewError: string | null }) {
   const folderInput = useRef<HTMLInputElement>(null);
   const rootListGeneration = useRef(0);
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRootView[]>([]);
@@ -3040,8 +3173,14 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
   const [rootAdding, setRootAdding] = useState(false);
   const [rootRevokingId, setRootRevokingId] = useState<string | null>(null);
   const [rootStatusAction, setRootStatusAction] = useState<{ workspaceRootId: string; action: "pause" | "resume" } | null>(null);
+  const rootScanRequests = useRef(new Map<string, string>());
+  const rootScanActionRef = useRef<{ request: WorkspaceRootScanRequest; feedbackKey: string } | null>(null);
+  const [rootScanAction, setRootScanAction] = useState<{ request: WorkspaceRootScanRequest; feedbackKey: string } | null>(null);
+  const [rootScanFeedback, setRootScanFeedback] = useState<Record<string, WorkspaceRootScanFeedback>>({});
   const [rootError, setRootError] = useState<string | null>(null);
   const [rootMessage, setRootMessage] = useState<string | null>(null);
+  const workspaceRootsRef = useRef(workspaceRoots);
+  workspaceRootsRef.current = workspaceRoots;
   const searchRequest = useRef(0);
   const [resourceIndexRefreshNonce, setResourceIndexRefreshNonce] = useState(0);
   const [query, setQuery] = useState("");
@@ -3101,6 +3240,9 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
     setRootError(null);
     setRootMessage(null);
     setRootStatusAction(null);
+    rootScanActionRef.current = null;
+    setRootScanAction(null);
+    setRootScanFeedback({});
     setRootBusy(false);
     if (!selectedWorkspaceId || !operatorReady) return;
     setRootBusy(true);
@@ -3149,20 +3291,20 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
         freshness: searchFreshness || null,
         cursor: null,
       }).then((page) => {
-        if (request === searchRequest.current) {
+        if (isCurrentWorkspaceSearchRequest(request, searchRequest.current, selectedWorkspaceId, selectedWorkspaceIdRef.current)) {
           setSearchResults(page.items);
           setSearchCursor(page.nextCursor);
           setContentScanInfo(page.contentScan);
         }
       }).catch((error) => {
-        if (request === searchRequest.current) {
+        if (isCurrentWorkspaceSearchRequest(request, searchRequest.current, selectedWorkspaceId, selectedWorkspaceIdRef.current)) {
           setSearchError(typeof error === "string" ? error : error instanceof Error ? error.message : "Workspace search is unavailable.");
           setSearchResults([]);
           setSearchCursor(null);
           setContentScanInfo(null);
         }
       }).finally(() => {
-        if (request === searchRequest.current) setSearchBusy(false);
+        if (isCurrentWorkspaceSearchRequest(request, searchRequest.current, selectedWorkspaceId, selectedWorkspaceIdRef.current)) setSearchBusy(false);
       });
     }, 220);
     return () => window.clearTimeout(timer);
@@ -3253,31 +3395,32 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
   };
   const loadMoreSearchResults = async () => {
     const normalizedQuery = query.trim();
+    const workspaceId = selectedWorkspaceId;
     const cursor = searchCursor;
     const request = searchRequest.current;
     const metadataFilterOnly = searchMode === "METADATA" && Boolean(searchKind || searchFreshness);
-    if ((!normalizedQuery && !metadataFilterOnly) || !selectedWorkspaceId || !cursor || searchBusy) return;
+    if ((!normalizedQuery && !metadataFilterOnly) || !workspaceId || selectedWorkspaceIdRef.current !== workspaceId || !cursor || searchBusy) return;
     setSearchBusy(true);
     setSearchError(null);
     try {
       const page = await invoke<ResourceSearchPageView>("search_resources", {
-        workspaceId: selectedWorkspaceId,
+        workspaceId,
         query: normalizedQuery,
         mode: searchMode,
         kind: searchKind || null,
         freshness: searchFreshness || null,
         cursor,
       });
-      if (request !== searchRequest.current) return;
+      if (!isCurrentWorkspaceSearchRequest(request, searchRequest.current, workspaceId, selectedWorkspaceIdRef.current)) return;
       const seen = new Set(searchResults.map((item) => item.resourceId));
       if (page.items.some((item) => seen.has(item.resourceId)) || page.nextCursor === cursor) throw new Error("Workspace search returned a repeated page or cursor.");
       setSearchResults((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.resourceId === item.resourceId))]);
       setSearchCursor(page.nextCursor);
       setContentScanInfo(page.contentScan);
     } catch (error) {
-      if (request === searchRequest.current) setSearchError(typeof error === "string" ? error : error instanceof Error ? error.message : "More search results could not be loaded.");
+      if (isCurrentWorkspaceSearchRequest(request, searchRequest.current, workspaceId, selectedWorkspaceIdRef.current)) setSearchError(typeof error === "string" ? error : error instanceof Error ? error.message : "More search results could not be loaded.");
     } finally {
-      if (request === searchRequest.current) setSearchBusy(false);
+      if (isCurrentWorkspaceSearchRequest(request, searchRequest.current, workspaceId, selectedWorkspaceIdRef.current)) setSearchBusy(false);
     }
   };
   const addPersistentFolder = async () => {
@@ -3374,7 +3517,7 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
   const updatePersistentFolderStatus = async (root: WorkspaceRootView, action: "pause" | "resume") => {
     const expectedStatus = action === "pause" ? "ACTIVE" : "PAUSED";
     if (!selectedWorkspaceId || root.workspaceId !== selectedWorkspaceId || root.status !== expectedStatus
-      || rootStatusAction || rootRevokingId) return;
+      || rootStatusAction || rootRevokingId || rootScanActionRef.current) return;
     if (!Number.isSafeInteger(root.version) || root.version < 1 || root.version >= Number.MAX_SAFE_INTEGER) {
       setRootError("This folder version cannot be safely updated. Reload the Library before trying again.");
       return;
@@ -3433,6 +3576,98 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
       if (isCurrentRequest()) setRootStatusAction(null);
     }
   };
+  const scanPersistentFolder = async (root: WorkspaceRootView) => {
+    const workspaceId = selectedWorkspaceIdRef.current;
+    if (!workspaceId || !operatorReady || rootBusy || rootStatusAction || rootRevokingId || rootScanActionRef.current || busy) return;
+    const currentRoot = () => workspaceRootsRef.current.find((item) =>
+      item.workspaceId === workspaceId && item.workspaceRootId === root.workspaceRootId,
+    ) ?? null;
+    const currentBeforeRequest = currentRoot();
+    if (!currentBeforeRequest || currentBeforeRequest.version !== root.version
+      || !isWorkspaceRootScannable(root, workspaceId)
+      || !isWorkspaceRootScannable(currentBeforeRequest, workspaceId)) return;
+
+    const requestGeneration = rootListGeneration.current;
+    const request = workspaceRootScanRequest(rootScanRequests.current, {
+      workspaceId,
+      workspaceRootId: root.workspaceRootId,
+      expectedVersion: root.version,
+    }, () => crypto.randomUUID());
+    const feedbackKey = JSON.stringify([workspaceId, root.workspaceRootId]);
+    const action = { request, feedbackKey };
+    const selectionStillCurrent = () => isCurrentWorkspaceRootRequest(
+      request.workspaceId,
+      requestGeneration,
+      selectedWorkspaceIdRef.current,
+      rootListGeneration.current,
+    );
+    rootScanActionRef.current = action;
+    setRootScanAction(action);
+    setRootScanFeedback((current) => ({
+      ...current,
+      [feedbackKey]: { kind: "loading", message: "Scanning folder metadata…", rootVersion: request.expectedVersion },
+    }));
+
+    try {
+      const response = await invoke<unknown>("scan_workspace_root", {
+        workspaceId: request.workspaceId,
+        workspaceRootId: request.workspaceRootId,
+        expectedVersion: request.expectedVersion,
+        requestId: request.requestId,
+      });
+      if (!acceptWorkspaceRootScanResponse(rootScanRequests.current, request, response)) {
+        throw new Error("The Runtime returned an invalid folder scan summary.");
+      }
+      if (!selectionStillCurrent()) return;
+      const latestRoot = currentRoot();
+      if (!isCurrentWorkspaceRootScan(
+        request,
+        requestGeneration,
+        selectedWorkspaceIdRef.current,
+        rootListGeneration.current,
+        latestRoot,
+      )) {
+        if (latestRoot) {
+          setRootScanFeedback((current) => ({
+            ...current,
+            [feedbackKey]: {
+              kind: "error",
+              message: "The folder changed while its scan was running. The scan result was not shown; review the folder status before scanning again.",
+              rootVersion: latestRoot.version,
+            },
+          }));
+        }
+        return;
+      }
+      setRootScanFeedback((current) => ({
+        ...current,
+        [feedbackKey]: { kind: "result", message: workspaceRootScanAnnouncement(response), rootVersion: request.expectedVersion },
+      }));
+    } catch (error) {
+      if (!selectionStillCurrent()) return;
+      const latestRoot = currentRoot();
+      const failure = workspaceRootScanFailure(error, request, latestRoot);
+      setRootScanFeedback((current) => ({
+        ...current,
+        [feedbackKey]: {
+          kind: failure.kind === "stale"
+            ? "stale"
+            : failure.kind === "unsupported"
+              ? "unsupported"
+              : failure.retrySameRequest
+                ? "error"
+                : "rejected",
+          message: failure.message,
+          rootVersion: latestRoot?.version ?? request.expectedVersion,
+        },
+      }));
+    } finally {
+      if (rootScanActionRef.current?.request.requestId === request.requestId) {
+        rootScanActionRef.current = null;
+        setRootScanAction(null);
+      }
+    }
+  };
   const hasSearchFilters = Boolean(searchKind || searchFreshness);
   const searching = query.trim().length > 0 || hasSearchFilters;
   const searchPageBusy = searchBusy;
@@ -3447,7 +3682,7 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
       </section>}
       {!selectedWorkspaceId && <p className="inline-error" role="status">Select or create a Workspace before adding files.</p>}
       <section className="persistent-folders" aria-label="Persistent folder scopes">
-        <div className="section-heading"><div><h2>Persistent folders</h2><p>Register a selected folder as a persistent scope. LiteCowork does not yet watch or index its contents in this build.</p></div><button className="quiet-button" type="button" disabled={!selectedWorkspaceId || !operatorReady || workspaceVersion === null || rootAdding || busy} onClick={() => void addPersistentFolder()}>{rootAdding ? "Opening folder picker…" : "Add persistent folder"}</button></div>
+        <div className="section-heading"><div><h2>Persistent folders</h2><p>Register a selected folder as a persistent scope. A manual scan counts folder metadata only: it does not add files to the Library, read file content, watch for changes, or infer deletions.</p></div><button className="quiet-button" type="button" disabled={!selectedWorkspaceId || !operatorReady || workspaceVersion === null || rootAdding || busy} onClick={() => void addPersistentFolder()}>{rootAdding ? "Opening folder picker…" : "Add persistent folder"}</button></div>
         {!operatorReady && selectedWorkspaceId && <p className="inline-status" role="status">Start the local Runtime to manage persistent folders.</p>}
         {rootBusy && workspaceRoots.length === 0 && <p className="inline-status" role="status">Loading persistent folders…</p>}
         {rootBusy && workspaceRoots.length > 0 && <p className="inline-status" role="status">Refreshing persistent folder status…</p>}
@@ -3455,12 +3690,39 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
         {rootMessage && <p className="inline-status" role="status" aria-live="polite">{rootMessage}</p>}
         {workspaceRoots.length > 0 && <ul className="resource-list persistent-folder-list">{workspaceRoots.map((root) => {
           const actionPending = rootStatusAction?.workspaceRootId === root.workspaceRootId;
-          const controlsDisabled = !operatorReady || rootBusy || rootStatusAction !== null || rootRevokingId !== null;
+          const scanFeedbackKey = JSON.stringify([root.workspaceId, root.workspaceRootId]);
+          const scanFeedback = rootScanFeedback[scanFeedbackKey];
+          const currentScanFeedback = scanFeedback?.rootVersion === root.version ? scanFeedback : null;
+          const scanPending = rootScanAction?.feedbackKey === scanFeedbackKey;
+          const scanRequiresRefresh = currentScanFeedback?.kind === "stale" || currentScanFeedback?.kind === "rejected";
+          const scanUnavailable = currentScanFeedback?.kind === "unsupported";
+          const feedbackIsAlert = currentScanFeedback?.kind === "error"
+            || currentScanFeedback?.kind === "stale"
+            || currentScanFeedback?.kind === "unsupported"
+            || currentScanFeedback?.kind === "rejected";
+          const canScanRoot = !scanUnavailable
+            && root.workspaceId === selectedWorkspaceId
+            && isWorkspaceRootScannable(root, selectedWorkspaceId);
+          const controlsDisabled = !operatorReady || rootBusy || rootStatusAction !== null || rootRevokingId !== null || rootScanAction !== null;
           return <li key={root.workspaceRootId}>
             <span className="resource-file-icon" aria-hidden="true">▱</span>
-            <span><strong>{root.displayName}</strong><small>{workspaceRootStatusLabel(root.status)}</small><small>{resourceLocationAvailabilityLabel(root.locationAvailability)}</small></span>
+            <span>
+              <strong>{root.displayName}</strong>
+              <small>{workspaceRootStatusLabel(root.status)}</small>
+              <small>{resourceLocationAvailabilityLabel(root.locationAvailability)}</small>
+              {currentScanFeedback && <small
+                className={feedbackIsAlert ? "inline-error" : "inline-status"}
+                role={feedbackIsAlert ? "alert" : "status"}
+                aria-live={feedbackIsAlert ? "assertive" : "polite"}
+              >{currentScanFeedback.message}</small>}
+            </span>
             <span className="resource-preview-unavailable">Metadata policy · inactive</span>
             <span className="persistent-folder-actions">
+              {canScanRoot && <button className="quiet-button" type="button"
+                aria-label={`Scan folder metadata in ${root.displayName}`}
+                disabled={controlsDisabled || busy || scanRequiresRefresh}
+                onClick={() => void scanPersistentFolder(root)}
+              >{scanPending ? "Scanning…" : "Scan folder"}</button>}
               {root.status === "ACTIVE" && <button className="quiet-button" type="button" aria-label={`Pause ${root.displayName}`} disabled={controlsDisabled} onClick={() => void updatePersistentFolderStatus(root, "pause")}>
                 {actionPending && rootStatusAction?.action === "pause" ? "Pausing…" : "Pause"}
               </button>}
@@ -3518,6 +3780,14 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
         </div>
       </section>
       {message && <p className="inline-status resource-intake-status" role="status" aria-live="polite">{message}</p>}
+      {uploadResumeForget?.workspaceId === selectedWorkspaceId && <section className="resource-upload-recovery" aria-label="Upload recovery needs your review">
+        <div>
+          <h3>Saved upload requires your review</h3>
+          <p>This upload is {uploadResumeForget.terminalState.toLowerCase()}. Review the Resource list before starting another upload.</p>
+          <small>Forgetting clears only this app’s saved retry identity. It does not delete or change the server-side upload session.</small>
+        </div>
+        <button className="quiet-button" type="button" disabled={busy} onClick={onForgetUploadResume}>Forget upload resume details</button>
+      </section>}
       {indexActionMessage && <p className="inline-status" role="status" aria-live="polite">{indexActionMessage}</p>}
       {indexActionError && <p className="inline-error" role="alert">{indexActionError}{indexRetryPin?.workspaceId === selectedWorkspaceId ? " Retry stays pinned to the same Resource revision in this desktop session." : ""}</p>}
       {saveAsMessage && <p className="inline-status" role="status" aria-live="polite">{saveAsMessage}</p>}

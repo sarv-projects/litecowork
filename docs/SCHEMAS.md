@@ -142,8 +142,14 @@ AgentInstallation = {
 ProbeLocalAgentProfileRequest = { provider_key: CODEX | OPENCODE }
 OpenCodeProfileProbeConstraints = {
   probe_readiness: COMPLETE | PARTIAL | FAILED,
+  # OBSERVED means the bounded provider-catalog route returned a valid array.
+  # It is not provider connection, authentication, entitlement, or inference evidence.
   reported_provider_status: OBSERVED | UNKNOWN | NOT_PROBED,
-  reported_connected_provider_ids: bounded string[],
+  # Transitional compatibility fields; the current adapter always returns []/false.
+  reported_connected_provider_ids: [],
+  reported_connected_provider_ids_truncated: false,
+  reported_provider_ids: bounded string[],
+  reported_provider_ids_truncated: boolean,
   reported_model_catalog: OBSERVED | UNKNOWN | NOT_PROBED,
   configured_providers: [{id, display_name?, models: [{id, display_name?}]}],
   authentication_observation: UNKNOWN,
@@ -154,7 +160,7 @@ OpenCodeProfileProbeConstraints = {
   profile_admission_supported: false
 }
 # Exact bounds and complete fields are defined by the OpenCodeProfileProbeConstraints
-# component in schemas/operator-api.openapi.yaml. This is display-only catalog metadata.
+# component in schemas/operator-api.openapi.yaml. Catalog fields are display-only metadata.
 RuntimeRole = WORKSPACE_HUB | EXECUTOR | RESOURCE_NODE | CHANNEL_HOST | TRIGGER_HOST | OPERATOR_ENDPOINT
 TrustZone = PERSONAL_DEVICE | USER_CLOUD | MANAGED_CLOUD
 SensitivityClass = PUBLIC | PERSONAL | CONFIDENTIAL | RESTRICTED
@@ -716,6 +722,32 @@ Choice {
   value: JsonValue
 }
 
+UserRequestDetail { # authenticated, read-only Needs You projection
+  request_id: UserRequestId
+  workspace_id: WorkspaceId
+  scope: UserRequestScope
+  kind: UserRequestKind
+  interaction_mode: UserRequestInteractionMode
+  prompt: string # at most 262144 UTF-8 bytes
+  choices: UserRequestDetailChoice[] # serialized array at most 524288 UTF-8 bytes
+  status: UserRequestStatus
+  version: u64
+  created_at: Timestamp
+  expires_at: Timestamp | null
+  resolved_at: Timestamp | null
+}
+
+UserRequestDetailChoice {
+  choice_id: string
+  label: string
+  description: string | null
+  # The persisted Choice.value is intentionally omitted from this projection.
+}
+
+The encoded `UserRequestDetail` response is capped at 921600 bytes. It never includes a
+response schema, response record, provider URL, native session handle, or
+`ProviderInputBinding`. Reading it does not answer or dismiss the UserRequest.
+
 QuietHours {
   timezone: string
   weekdays: Weekday[]
@@ -1199,9 +1231,10 @@ content store or version chain. New documents start `ACTIVE`. `REVOKED` document
 excluded from future context retrieval and new content reads while their content remains
 retained. A read admitted while `ACTIVE` may finish after a concurrent status transition;
 derived-state commits recheck status and cannot publish afterward. `DELETION_PENDING`
-blocks new reads and waits for all owned blob/index replicas to confirm purge. `DELETED`
-retains only Resource/revision identity, digests, provenance, and the tombstone needed by
-historical Task references; content bytes and derived provider indexes are unavailable.
+blocks new reads and waits for all owned Resource, derived-index, and upload-chunk objects
+to confirm purge. `DELETED` retains Resource/revision identity, digests, provenance, and the
+tombstone needed by historical Task references, plus non-resumable upload ledger metadata;
+content bytes and derived provider indexes are unavailable.
 `PERSONAL_PROFILE`, `COWORKER_NOTES`, `WORKSPACE_NOTES`,
 and `GOAL_NOTES` require USER, COWORKER, WORKSPACE, and GOAL owner refs respectively.
 Owner IDs must resolve in the Resource's Workspace (USER must be that Workspace's

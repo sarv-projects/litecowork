@@ -20,13 +20,16 @@ use tauri::{AppHandle, Manager};
 mod artifact_bridge;
 mod automation_bridge;
 mod conversation_bridge;
+mod conversation_create_journal;
 mod conversation_stream_bridge;
+mod context_document_deletion_bridge;
 mod coworker_bridge;
 mod delegation_profile_bridge;
 mod delegation_profile_write_bridge;
 mod goal_bridge;
-mod presentation_bridge;
 mod needs_you_bridge;
+mod user_request_bridge;
+mod presentation_bridge;
 mod resource_location_bridge;
 mod resource_save_bridge;
 mod routine_bridge;
@@ -34,9 +37,11 @@ mod runtime_lifecycle_bridge;
 mod suggestions_bridge;
 #[cfg(target_os = "linux")]
 mod systemd_user_service;
-mod zip_intake_bridge;
 #[cfg(all(test, unix))]
 mod workspace_instruction_bridge_tests;
+#[cfg(test)]
+mod workspace_root_scan_bridge_tests;
+mod zip_intake_bridge;
 
 #[cfg(unix)]
 use operator_ipc::unix::{AuthenticatedUnixConnection, PeerCredentials, UnixEndpoint};
@@ -192,6 +197,41 @@ struct WorkspaceRootPageView {
 struct WorkspaceRootPageWire {
     items: Vec<WorkspaceRootWire>,
     next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceRootScanView {
+    workspace_id: String,
+    workspace_root_id: String,
+    request_id: String,
+    root_version: u64,
+    status: WorkspaceRootScanStatus,
+    entries_examined: u32,
+    files_observed: u32,
+    partial_reason: Option<String>,
+    completed_at: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum WorkspaceRootScanStatus {
+    Complete,
+    Partial,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceRootScanWire {
+    workspace_id: String,
+    workspace_root_id: String,
+    request_id: String,
+    root_version: u64,
+    status: String,
+    entries_examined: u32,
+    files_observed: u32,
+    partial_reason: Option<String>,
+    completed_at: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -1529,6 +1569,235 @@ async fn list_workspace_roots(
     })
     .await
     .map_err(|_| "Persistent folder list request did not complete".to_owned())?
+}
+
+fn parse_workspace_root_scan_response(
+    body: &[u8],
+    workspace_id: &str,
+    workspace_root_id: &str,
+    request_id: &str,
+    expected_version: u64,
+) -> Result<WorkspaceRootScanView, String> {
+    let wire: WorkspaceRootScanWire = serde_json::from_slice(body)
+        .map_err(|_| "Local Runtime returned an unsupported folder scan summary".to_owned())?;
+    if wire.workspace_id != workspace_id
+        || wire.workspace_root_id != workspace_root_id
+        || wire.request_id != request_id
+        || wire.root_version != expected_version
+    {
+        return Err(
+            "Local Runtime returned a folder scan summary for a different request".to_owned(),
+        );
+    }
+    if wire.entries_examined > 1_000 || wire.files_observed > wire.entries_examined {
+        return Err("Local Runtime returned invalid folder scan counts".to_owned());
+    }
+    if !is_rfc3339_timestamp(&wire.completed_at) {
+        return Err("Local Runtime returned an invalid folder scan timestamp".to_owned());
+    }
+    let status = match (wire.status.as_str(), wire.partial_reason.as_deref()) {
+        ("COMPLETE", None) => WorkspaceRootScanStatus::Complete,
+        (
+            "PARTIAL",
+            Some(
+                "TIME_LIMIT_REACHED"
+                | "SCAN_BUDGET_REACHED"
+                | "ENTRY_CHANGED_OR_UNREADABLE"
+                | "MOUNT_BOUNDARY_REACHED",
+            ),
+        ) => WorkspaceRootScanStatus::Partial,
+        _ => return Err("Local Runtime returned an invalid folder scan status".to_owned()),
+    };
+    Ok(WorkspaceRootScanView {
+        workspace_id: wire.workspace_id,
+        workspace_root_id: wire.workspace_root_id,
+        request_id: wire.request_id,
+        root_version: wire.root_version,
+        status,
+        entries_examined: wire.entries_examined,
+        files_observed: wire.files_observed,
+        partial_reason: wire.partial_reason,
+        completed_at: wire.completed_at,
+    })
+}
+
+fn workspace_root_scan_operator_error(error: String) -> String {
+    let Some(code) = operator_error_code(&error) else {
+        return error;
+    };
+    if matches!(
+        code,
+        "STALE_WORKSPACE_VERSION"
+            | "SCAN_UNSUPPORTED_PLATFORM"
+            | "INVALID_ARGUMENT"
+            | "RESOURCE_IDENTITY_UNAVAILABLE"
+            | "NOT_FOUND"
+            | "CONFLICT"
+            | "SCAN_UNAVAILABLE"
+            | "INTERNAL"
+    ) {
+        code.to_owned()
+    } else {
+        error
+    }
+}
+
+fn valid_workspace_root_scan_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 200
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn is_rfc3339_timestamp(value: &str) -> bool {
+    fn two_digits(bytes: &[u8], start: usize) -> Option<u8> {
+        let tens = bytes.get(start)?.checked_sub(b'0')?;
+        let ones = bytes.get(start + 1)?.checked_sub(b'0')?;
+        if tens > 9 || ones > 9 {
+            return None;
+        }
+        Some(tens * 10 + ones)
+    }
+    fn digits(bytes: &[u8], range: std::ops::Range<usize>) -> bool {
+        bytes
+            .get(range)
+            .is_some_and(|part| part.iter().all(u8::is_ascii_digit))
+    }
+
+    let bytes = value.as_bytes();
+    if bytes.len() < 20
+        || !digits(bytes, 0..4)
+        || bytes.get(4) != Some(&b'-')
+        || !digits(bytes, 5..7)
+        || bytes.get(7) != Some(&b'-')
+        || !digits(bytes, 8..10)
+        || !matches!(bytes.get(10), Some(b'T' | b't'))
+        || !digits(bytes, 11..13)
+        || bytes.get(13) != Some(&b':')
+        || !digits(bytes, 14..16)
+        || bytes.get(16) != Some(&b':')
+        || !digits(bytes, 17..19)
+    {
+        return false;
+    }
+
+    let year = std::str::from_utf8(&bytes[0..4])
+        .ok()
+        .and_then(|part| part.parse::<u16>().ok());
+    let Some(year) = year else { return false };
+    let Some(month) = two_digits(bytes, 5) else {
+        return false;
+    };
+    let Some(day) = two_digits(bytes, 8) else {
+        return false;
+    };
+    let Some(hour) = two_digits(bytes, 11) else {
+        return false;
+    };
+    let Some(minute) = two_digits(bytes, 14) else {
+        return false;
+    };
+    let Some(second) = two_digits(bytes, 17) else {
+        return false;
+    };
+    if !(1..=12).contains(&month) || hour > 23 || minute > 59 || second > 60 {
+        return false;
+    }
+    let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month {
+        2 if leap_year => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    if day == 0 || day > days_in_month {
+        return false;
+    }
+
+    let mut index = 19;
+    if bytes.get(index) == Some(&b'.') {
+        index += 1;
+        let fraction_start = index;
+        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+            index += 1;
+        }
+        if index == fraction_start {
+            return false;
+        }
+    }
+    match bytes.get(index) {
+        Some(b'Z' | b'z') => index += 1,
+        Some(b'+' | b'-') => {
+            let Some(offset_hour) = two_digits(bytes, index + 1) else {
+                return false;
+            };
+            if bytes.get(index + 3) != Some(&b':') {
+                return false;
+            }
+            let Some(offset_minute) = two_digits(bytes, index + 4) else {
+                return false;
+            };
+            if offset_hour > 23 || offset_minute > 59 {
+                return false;
+            }
+            index += 6;
+        }
+        _ => return false,
+    }
+    index == bytes.len()
+}
+
+#[tauri::command]
+async fn scan_workspace_root(
+    app: AppHandle,
+    workspace_id: String,
+    workspace_root_id: String,
+    expected_version: u64,
+    request_id: String,
+) -> Result<WorkspaceRootScanView, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+        if !valid_workspace_root_scan_id(&workspace_id)
+            || !valid_workspace_root_scan_id(&workspace_root_id)
+            || expected_version == 0
+            || expected_version > MAX_SAFE_INTEGER
+            || !valid_idempotency_key(&request_id)
+        {
+            return Err("Persistent folder scan request is invalid".to_owned());
+        }
+        let (client, workspace_url) = operator_client(&app)?;
+        let base = format!(
+            "{}/workspace-roots",
+            workspace_url.trim_end_matches("/workspaces")
+        );
+        let response = client
+            .post(format!("{base}/{workspace_root_id}/scan"))
+            .header("X-Workspace-ID", &workspace_id)
+            .header("If-Match", expected_version.to_string())
+            .header("Idempotency-Key", &request_id)
+            .json(&serde_json::json!({}))
+            .send()
+            .map_err(|_| "Persistent folder scan could not be completed".to_owned())?;
+        if response.status() != 200 {
+            return match read_bounded_response(response) {
+                Err(error) => Err(workspace_root_scan_operator_error(error)),
+                Ok(_) => {
+                    Err("Local Runtime returned an unexpected folder scan response".to_owned())
+                }
+            };
+        }
+        let body = read_bounded_response(response)?;
+        parse_workspace_root_scan_response(
+            &body,
+            &workspace_id,
+            &workspace_root_id,
+            &request_id,
+            expected_version,
+        )
+    })
+    .await
+    .map_err(|_| "Persistent folder scan request did not complete".to_owned())?
 }
 
 fn derive_workspace_root_add_idempotency_key(
@@ -5098,13 +5367,15 @@ pub fn run() {
             enroll_local_runtime,
             list_workspaces,
             list_workspace_roots,
+            scan_workspace_root,
             add_workspace_root,
             revoke_workspace_root,
             pause_workspace_root,
             resume_workspace_root,
             list_tasks,
-            create_task,
             needs_you_bridge::list_needs_you,
+            user_request_bridge::get_user_request_detail,
+            create_task,
             get_task,
             list_task_spec_revisions,
             get_task_planning_readiness,
@@ -5117,6 +5388,8 @@ pub fn run() {
             create_workspace_instruction_revision,
             get_resource_detail,
             set_context_document_status,
+            context_document_deletion_bridge::begin_context_document_deletion,
+            context_document_deletion_bridge::get_context_document_deletion_status,
             list_resource_revisions,
             resource_location_bridge::list_resource_locations,
             create_resource_revision_upload,
@@ -5134,7 +5407,9 @@ pub fn run() {
             artifact_bridge::artifact_read,
             artifact_bridge::artifact_library_command,
             conversation_bridge::list_conversations,
+            conversation_bridge::list_pending_conversation_creates,
             conversation_bridge::create_conversation,
+            conversation_bridge::acknowledge_conversation_create,
             conversation_bridge::get_conversation_presentation,
             conversation_bridge::get_rich_presentation,
             conversation_stream_bridge::subscribe_conversation_stream,

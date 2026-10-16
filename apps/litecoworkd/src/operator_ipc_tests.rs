@@ -8,8 +8,16 @@ mod agent_binding_disable_operator_tests;
 mod needs_you_operator_tests;
 #[path = "resource_dependencies_operator_tests.rs"]
 mod resource_dependencies_operator_tests;
+#[path = "resource_index_operator_tests.rs"]
+mod resource_index_operator_tests;
+#[path = "resource_quick_import_operator_tests.rs"]
+mod resource_quick_import_operator_tests;
+#[path = "resource_upload_archive_operator_tests.rs"]
+mod resource_upload_archive_operator_tests;
 #[path = "runtime_capability_hosts_tests.rs"]
 mod runtime_capability_hosts_tests;
+#[path = "workspace_idempotency_key_bounds_operator_tests.rs"]
+mod workspace_idempotency_key_bounds_operator_tests;
 use super::runtime_offers_operator::{RuntimeOffersApiState, runtime_offers_router};
 use super::{
     AuthenticatedLocalPeer, OperatorIpcConnection, OperatorRequestSettlement,
@@ -47,7 +55,8 @@ use std::{
 };
 use storage_core::{
     AgentCatalogStore, BlobPurpose, BlobStore, ConversationRecord, DeviceIdentityRecord,
-    EventStore, LocalAgentEndpointBindingInput, LocalRuntimeWorkspaceEnrollmentRequest,
+    EventDraft, EventStore, LocalAgentEndpointBindingInput, LocalRuntimeWorkspaceEnrollmentRequest,
+    ResourceRecord, ResourceRevisionRecord, ResourceStore,
     RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
     RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeOfferRecord, RuntimeRecord,
     RuntimeWorkspaceBindingStore, StateStore, StoreError, TaskStore, WorkspaceCreateRequest,
@@ -70,6 +79,308 @@ fn runtime_inventory_revision_stops_at_json_safe_integer_limit() {
     assert_eq!(
         revision.load(std::sync::atomic::Ordering::Acquire),
         super::MAX_SAFE_JSON_INTEGER
+    );
+}
+
+#[tokio::test]
+async fn authenticated_context_document_deletion_route_enforces_owner_admission_replay_and_polling()
+{
+    const WORKSPACE: &str = "purge-route-workspace";
+    const OWNER: &str = "purge-route-owner";
+    const RUNTIME: &str = "purge-route-runtime";
+    let directory = tempfile::tempdir().expect("temporary purge route directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("private purge route directory");
+    let store = SqliteWorkspaceStore::open(
+        directory.path().join("state.sqlite3"),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            IpcReplayTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real SQLite store opens");
+    WorkspaceService::new(store.clone())
+        .create(CreateWorkspace {
+            workspace_id: WORKSPACE.to_owned(),
+            name: "Purge route Workspace".to_owned(),
+            owner_principal_id: OWNER.to_owned(),
+            event: EventContext {
+                event_id: "event-purge-route-workspace".to_owned(),
+                origin_runtime_id: RUNTIME.to_owned(),
+                hlc_timestamp: "2026-10-14T10:00:00Z".to_owned(),
+                correlation_id: "correlation-purge-route-workspace".to_owned(),
+                causation_id: None,
+                recorded_at: "2026-10-14T10:00:00Z".to_owned(),
+            },
+        })
+        .expect("owner Workspace commits");
+    const RESOURCE: &str = "purge-route-resource";
+    const REVISION: &str = "purge-route-revision";
+    let content = b"route fixture content stays private";
+    let content_digest = format!("sha256:{}", hex::encode(sha2::Sha256::digest(content)));
+    store.create_resource(
+        WorkspaceCreateRequest {
+            principal_id: OWNER.to_owned(),
+            request_id: "purge-route-create-resource".to_owned(),
+            request_payload: json!({"operation":"resource.create.v1","workspace_id":WORKSPACE,"resource_id":RESOURCE,"upload_id":"purge-route-upload"}),
+        },
+        ResourceRecord {
+            resource_id: RESOURCE.to_owned(), workspace_id: WORKSPACE.to_owned(), kind: "FILE".to_owned(),
+            provider_identity: json!({}), identity_digest: None, display_name: "private.txt".to_owned(),
+            current_revision_id: Some(REVISION.to_owned()), sensitivity: "PERSONAL".to_owned(),
+            provenance: json!({"source_inputs":[],"transformations":[],"tool_reports":[]}),
+            created_at: "2026-10-14T10:00:00Z".to_owned(), updated_at: "2026-10-14T10:00:00Z".to_owned(), version: 1,
+        },
+        ResourceRevisionRecord {
+            resource_revision_id: REVISION.to_owned(), resource_id: RESOURCE.to_owned(), parent_revision_ids: vec![],
+            provider_revision: None, content_digest: Some(content_digest), size_bytes: Some(content.len() as u64),
+            media_type: Some("text/plain".to_owned()), observed_at: "2026-10-14T10:00:00Z".to_owned(),
+            created_by: json!({"kind":"USER","principal_id":OWNER}),
+        },
+        EventDraft {
+            event_id: "event-purge-route-resource".to_owned(), workspace_id: WORKSPACE.to_owned(),
+            entity_type: "Resource".to_owned(), entity_id: RESOURCE.to_owned(), origin_runtime_id: RUNTIME.to_owned(),
+            entity_revision: 1, hlc_timestamp: "2026-10-14T10:00:00Z".to_owned(),
+            correlation_id: "correlation-purge-route-resource".to_owned(), causation_id: None, schema_version: 1,
+            event_type: "resource.created.v1".to_owned(),
+            payload: json!({"resource_id":RESOURCE,"workspace_id":WORKSPACE,"kind":"FILE","provenance":{"source_inputs":[],"transformations":[],"tool_reports":[]},"aggregate_version":1}),
+            recorded_at: "2026-10-14T10:00:00Z".to_owned(),
+        },
+        content.to_vec(),
+    ).expect("managed Resource content commits");
+    rusqlite::Connection::open(directory.path().join("state.sqlite3"))
+        .expect("open purge route database")
+        .execute(
+            "UPDATE resources SET context_document_json=?1, version=2 WHERE resource_id=?2",
+            rusqlite::params![json!({"kind":"WORKSPACE_NOTES","owner_ref":{"kind":"WORKSPACE","workspace_id":WORKSPACE},"status":"ACTIVE"}).to_string(), RESOURCE],
+        ).expect("attach active ContextDocument metadata");
+    let (_, stream_shutdown) = tokio::sync::watch::channel(false);
+    let router = super::build_operator_router(super::ApiState {
+        store,
+        principal_id: OWNER.to_owned(),
+        runtime_id: RUNTIME.to_owned(),
+        local_incarnation_id: "purge-route-incarnation".to_owned(),
+        lifecycle_blockers: vec![],
+        runtime_identity: Arc::new(
+            storage_sqlite::RuntimeOsPrincipalIdentity::test_support(RUNTIME)
+                .expect("test identity"),
+        ),
+        stream_admission: Arc::new(tokio::sync::Semaphore::new(2)),
+        runtime_inventory_revision: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        stream_shutdown,
+    });
+    let mut request = Request::post(format!(
+        "/v1/resources/{RESOURCE}/context-document/deletion"
+    ))
+    .header("x-workspace-id", WORKSPACE)
+    .header("if-match", "1")
+    .header("idempotency-key", "purge-route-invalid-body")
+    .header(header::CONTENT_TYPE, "application/json")
+    .body(Body::from(r#"{"unexpected":true}"#))
+    .expect("purge request is valid HTTP");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    let response = router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("router responds");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let unauthenticated = Request::post(format!(
+        "/v1/resources/{RESOURCE}/context-document/deletion"
+    ))
+    .header("x-workspace-id", WORKSPACE)
+    .header("if-match", "2")
+    .header("idempotency-key", "purge-route-unauthenticated")
+    .header(header::CONTENT_TYPE, "application/json")
+    .body(Body::from("{}"))
+    .expect("unauthenticated request is valid HTTP");
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(unauthenticated)
+            .await
+            .expect("authentication responds")
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let mut foreign = Request::post(format!(
+        "/v1/resources/{RESOURCE}/context-document/deletion"
+    ))
+    .header("x-workspace-id", "another-workspace")
+    .header("if-match", "2")
+    .header("idempotency-key", "purge-route-foreign")
+    .header(header::CONTENT_TYPE, "application/json")
+    .body(Body::from("{}"))
+    .expect("foreign request is valid HTTP");
+    foreign.extensions_mut().insert(AuthenticatedLocalPeer);
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(foreign)
+            .await
+            .expect("owner check responds")
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let unauthenticated_poll = Request::get(format!(
+        "/v1/resources/{RESOURCE}/context-document/deletion"
+    ))
+    .header("x-workspace-id", WORKSPACE)
+    .body(Body::empty())
+    .expect("unauthenticated status request is valid HTTP");
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(unauthenticated_poll)
+            .await
+            .expect("status authentication responds")
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let mut foreign_poll = Request::get(format!(
+        "/v1/resources/{RESOURCE}/context-document/deletion"
+    ))
+    .header("x-workspace-id", "another-workspace")
+    .body(Body::empty())
+    .expect("foreign status request is valid HTTP");
+    foreign_poll.extensions_mut().insert(AuthenticatedLocalPeer);
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(foreign_poll)
+            .await
+            .expect("status owner check responds")
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    let mut missing_version = Request::post(format!(
+        "/v1/resources/{RESOURCE}/context-document/deletion"
+    ))
+    .header("x-workspace-id", WORKSPACE)
+    .header("idempotency-key", "purge-route-no-version")
+    .header(header::CONTENT_TYPE, "application/json")
+    .body(Body::from("{}"))
+    .expect("missing-version request is valid HTTP");
+    missing_version
+        .extensions_mut()
+        .insert(AuthenticatedLocalPeer);
+    assert_eq!(
+        router
+            .clone()
+            .oneshot(missing_version)
+            .await
+            .expect("version guard responds")
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    let mut begin = Request::post(format!(
+        "/v1/resources/{RESOURCE}/context-document/deletion"
+    ))
+    .header("x-workspace-id", WORKSPACE)
+    .header("if-match", "2")
+    .header("idempotency-key", "purge-route-begin")
+    .header(header::CONTENT_TYPE, "application/json")
+    .body(Body::from("{}"))
+    .expect("valid purge request is valid HTTP");
+    begin.extensions_mut().insert(AuthenticatedLocalPeer);
+    let accepted = router
+        .clone()
+        .oneshot(begin)
+        .await
+        .expect("purge admission responds");
+    assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        accepted.headers().get(header::CACHE_CONTROL).unwrap(),
+        "no-store"
+    );
+    let accepted_body = to_bytes(accepted.into_body(), 4096)
+        .await
+        .expect("bounded deletion status");
+    let status: Value = serde_json::from_slice(&accepted_body).expect("typed deletion status");
+    assert_eq!(status["resource_id"], RESOURCE);
+    assert_eq!(status["status"], "DELETION_PENDING");
+    assert!(status["required_replica_count"].as_u64().unwrap() > 0);
+    let serialized = String::from_utf8(accepted_body.to_vec()).expect("JSON is UTF-8");
+    for private in [
+        "route fixture content",
+        "provider_ref",
+        "locator_ref_id",
+        "resource-content-gc",
+    ] {
+        assert!(!serialized.contains(private), "status exposed private data");
+    }
+
+    let mut replay = Request::post(format!(
+        "/v1/resources/{RESOURCE}/context-document/deletion"
+    ))
+    .header("x-workspace-id", WORKSPACE)
+    .header("if-match", "2")
+    .header("idempotency-key", "purge-route-begin")
+    .header(header::CONTENT_TYPE, "application/json")
+    .body(Body::from("{}"))
+    .expect("replay request is valid HTTP");
+    replay.extensions_mut().insert(AuthenticatedLocalPeer);
+    let replayed = router
+        .clone()
+        .oneshot(replay)
+        .await
+        .expect("replay responds");
+    assert_eq!(replayed.status(), StatusCode::ACCEPTED);
+    assert_eq!(
+        to_bytes(replayed.into_body(), 4096)
+            .await
+            .expect("bounded replay body"),
+        accepted_body
+    );
+
+    let mut poll = Request::get(format!(
+        "/v1/resources/{RESOURCE}/context-document/deletion"
+    ))
+    .header("x-workspace-id", WORKSPACE)
+    .body(Body::empty())
+    .expect("status request is valid HTTP");
+    poll.extensions_mut().insert(AuthenticatedLocalPeer);
+    let polled = router.clone().oneshot(poll).await.expect("status responds");
+    assert_eq!(polled.status(), StatusCode::OK);
+    assert_eq!(
+        polled.headers().get(header::CACHE_CONTROL).unwrap(),
+        "no-store"
+    );
+    let polled_body: Value = serde_json::from_slice(
+        &to_bytes(polled.into_body(), 4096)
+            .await
+            .expect("bounded poll body"),
+    )
+    .expect("typed poll body");
+    assert_eq!(polled_body["manifest_digest"], status["manifest_digest"]);
+
+    let mut stale = Request::post(format!(
+        "/v1/resources/{RESOURCE}/context-document/deletion"
+    ))
+    .header("x-workspace-id", WORKSPACE)
+    .header("if-match", "2")
+    .header("idempotency-key", "purge-route-stale")
+    .header(header::CONTENT_TYPE, "application/json")
+    .body(Body::from("{}"))
+    .expect("stale request is valid HTTP");
+    stale.extensions_mut().insert(AuthenticatedLocalPeer);
+    assert_eq!(
+        router
+            .oneshot(stale)
+            .await
+            .expect("stale request responds")
+            .status(),
+        StatusCode::CONFLICT
     );
 }
 
@@ -1245,6 +1556,15 @@ fn seed_route_instruction_resource(
         .expect("seed candidate instruction revision");
     transaction
         .execute(
+            "INSERT INTO resource_content_blob_registry(workspace_id,digest,size_bytes,media_type,created_at,expires_at,state,claimed_at)
+             SELECT resource.workspace_id,revision.content_digest,revision.size_bytes,COALESCE(revision.media_type,'application/octet-stream'),revision.observed_at,NULL,'TRACKED',NULL
+             FROM resources resource JOIN resource_revisions revision ON revision.resource_id=resource.resource_id
+             WHERE resource.resource_id=?1 AND revision.resource_revision_id=?2",
+            rusqlite::params![resource_id, revision_id],
+        )
+        .expect("track candidate instruction Resource content");
+    transaction
+        .execute(
             "INSERT INTO resource_locations(location_id,resource_id,provider_ref,locator_ref_id,availability,writable,observed_revision_id,observed_digest,observed_at,last_checked_at)
              VALUES (?1,?2,'litecowork.encrypted_blob',?3,'AVAILABLE',0,?4,?3,'2026-10-11T13:30:00Z','2026-10-11T13:30:00Z')",
             rusqlite::params![
@@ -1337,6 +1657,16 @@ fn seed_route_instruction_resource_with_history(
             rusqlite::params![resource_id, head_revision_id, old_revision_id],
         )
         .expect("seed current Resource ancestry");
+    transaction
+        .execute(
+            "INSERT INTO resource_content_blob_registry(workspace_id,digest,size_bytes,media_type,created_at,expires_at,state,claimed_at)
+             SELECT resource.workspace_id,revision.content_digest,revision.size_bytes,COALESCE(revision.media_type,'application/octet-stream'),MIN(revision.observed_at),NULL,'TRACKED',NULL
+             FROM resources resource JOIN resource_revisions revision ON revision.resource_id=resource.resource_id
+             WHERE resource.resource_id=?1
+             GROUP BY resource.workspace_id,revision.content_digest,revision.size_bytes,COALESCE(revision.media_type,'application/octet-stream')",
+            [resource_id],
+        )
+        .expect("track current and historical instruction Resource content");
     transaction
         .execute(
             "INSERT INTO resource_locations(location_id,resource_id,provider_ref,locator_ref_id,availability,writable,observed_revision_id,observed_digest,observed_at,last_checked_at)
@@ -1502,6 +1832,14 @@ async fn workspace_policy_route_is_owner_scoped_versioned_and_idempotent() {
     )
     .await;
     assert_eq!(changed_version_replay.status(), StatusCode::CONFLICT);
+    let changed_version_replay_body = to_bytes(changed_version_replay.into_body(), 4096)
+        .await
+        .expect("bounded changed-version receipt conflict");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&changed_version_replay_body).expect("error JSON")["code"],
+        "CONFLICT",
+        "reusing the policy receipt with a different If-Match is an idempotency conflict, not a stale Workspace version"
+    );
 
     let cross_workspace_replay = patch_workspace_policy(
         router.clone(),
@@ -1611,6 +1949,346 @@ async fn workspace_policy_route_is_owner_scoped_versioned_and_idempotent() {
         )
         .expect("count policy receipts");
     assert_eq!(receipt_count, 1);
+}
+
+#[tokio::test]
+async fn workspace_policy_exact_receipt_replays_after_workspace_archive() {
+    const WORKSPACE_ID: &str = "policy-archive-replay-workspace";
+    const OWNER: &str = "policy-archive-replay-owner";
+    const RUNTIME: &str = "policy-archive-replay-runtime";
+    const NOW: &str = "2026-10-15T12:00:00Z";
+    const REQUEST_ID: &str = "policy-archive-replay-request";
+
+    let directory = tempfile::tempdir().expect("temporary policy replay directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("private policy replay directory");
+    let store = SqliteWorkspaceStore::open(
+        directory.path().join("state.sqlite3"),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            IpcReplayTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real SQLite store opens");
+    WorkspaceService::new(store.clone())
+        .create(CreateWorkspace {
+            workspace_id: WORKSPACE_ID.to_owned(),
+            name: "Policy archive replay Workspace".to_owned(),
+            owner_principal_id: OWNER.to_owned(),
+            event: EventContext {
+                event_id: "policy-archive-replay-created".to_owned(),
+                origin_runtime_id: RUNTIME.to_owned(),
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: "policy-archive-replay-created".to_owned(),
+                causation_id: None,
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("owner Workspace commits");
+
+    let policy_router = workspace_policy_routes()
+        .route_layer(middleware::from_fn(authenticate))
+        .with_state(WorkspacePolicyApiState {
+            store: store.clone(),
+            principal_id: OWNER.to_owned(),
+            runtime_id: RUNTIME.to_owned(),
+        });
+    let first = patch_workspace_policy(
+        policy_router.clone(),
+        WORKSPACE_ID,
+        "1",
+        REQUEST_ID,
+        "METADATA_ONLY",
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let original_correlation = first
+        .headers()
+        .get("x-correlation-id")
+        .expect("first policy response has correlation id")
+        .clone();
+    let first_body = to_bytes(first.into_body(), 4096)
+        .await
+        .expect("bounded policy response");
+
+    let archive_router = workspace_archive_routes()
+        .route_layer(middleware::from_fn(authenticate))
+        .with_state(WorkspaceArchiveApiState {
+            store: store.clone(),
+            principal_id: OWNER.to_owned(),
+            runtime_id: RUNTIME.to_owned(),
+        });
+    let mut archive = Request::post(format!("/v1/workspaces/{WORKSPACE_ID}/archive"))
+        .header("x-workspace-id", WORKSPACE_ID)
+        .header("if-match", "2")
+        .header("idempotency-key", "policy-archive-replay-archive")
+        .body(Body::empty())
+        .expect("archive request is valid");
+    archive.extensions_mut().insert(AuthenticatedLocalPeer);
+    let archived = archive_router
+        .oneshot(archive)
+        .await
+        .expect("archive route responds");
+    assert_eq!(archived.status(), StatusCode::OK);
+    assert_eq!(
+        store
+            .get_workspace(WORKSPACE_ID)
+            .expect("read archived Workspace")
+            .expect("Workspace remains available")
+            .status,
+        "ARCHIVED"
+    );
+
+    let replay = patch_workspace_policy(
+        policy_router.clone(),
+        WORKSPACE_ID,
+        "1",
+        REQUEST_ID,
+        "METADATA_ONLY",
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(
+        replay.headers().get("x-correlation-id"),
+        Some(&original_correlation),
+        "receipt replay preserves the original correlation id"
+    );
+    let replay_body = to_bytes(replay.into_body(), 4096)
+        .await
+        .expect("bounded policy replay response");
+    assert_eq!(replay_body, first_body);
+
+    let changed = patch_workspace_policy(
+        policy_router.clone(),
+        WORKSPACE_ID,
+        "1",
+        REQUEST_ID,
+        "FULL_WORKSPACE",
+    )
+    .await;
+    assert_eq!(changed.status(), StatusCode::CONFLICT);
+    let changed_body = to_bytes(changed.into_body(), 4096)
+        .await
+        .expect("bounded changed-receipt error");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&changed_body).expect("conflict JSON")["code"],
+        "CONFLICT"
+    );
+
+    let fresh = patch_workspace_policy(
+        policy_router,
+        WORKSPACE_ID,
+        "3",
+        "policy-archive-replay-fresh",
+        "LOCAL_ONLY",
+    )
+    .await;
+    assert_eq!(fresh.status(), StatusCode::CONFLICT);
+    let fresh_body = to_bytes(fresh.into_body(), 4096)
+        .await
+        .expect("bounded archived policy rejection");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fresh_body).expect("archived policy error JSON")["code"],
+        "WORKSPACE_ARCHIVED"
+    );
+
+    let connection = rusqlite::Connection::open(directory.path().join("state.sqlite3"))
+        .expect("inspect policy replay ledger");
+    let policy_events: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE workspace_id = ?1 AND type = 'workspace.replication_policy.changed.v1'",
+            [WORKSPACE_ID],
+            |row| row.get(0),
+        )
+        .expect("count policy events");
+    let policy_receipts: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            rusqlite::params![OWNER, REQUEST_ID],
+            |row| row.get(0),
+        )
+        .expect("count policy receipts");
+    assert_eq!(policy_events, 1, "policy retry adds no duplicate event");
+    assert_eq!(policy_receipts, 1, "policy retry adds no duplicate receipt");
+    let fresh_receipts: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            rusqlite::params![OWNER, "policy-archive-replay-fresh"],
+            |row| row.get(0),
+        )
+        .expect("count denied policy receipts");
+    assert_eq!(
+        fresh_receipts, 0,
+        "archived policy mutation commits no receipt"
+    );
+}
+
+#[tokio::test]
+async fn workspace_instruction_exact_receipt_replays_after_archive_and_resource_revocation() {
+    const WORKSPACE_ID: &str = "instruction-archive-replay-workspace";
+    const OWNER: &str = "instruction-archive-replay-owner";
+    const RUNTIME: &str = "instruction-archive-replay-runtime";
+    const REQUEST_ID: &str = "instruction-archive-replay-request";
+    const RESOURCE_ID: &str = "instruction-archive-resource";
+    const RESOURCE_REVISION_ID: &str = "instruction-archive-resource-revision";
+    const OTHER_RESOURCE_ID: &str = "instruction-archive-other-resource";
+    const OTHER_RESOURCE_REVISION_ID: &str = "instruction-archive-other-resource-revision";
+    const ORIGINAL_CONTENT: &[u8] = b"Keep this instruction revision immutable after commit.\n";
+    const OTHER_CONTENT: &[u8] = b"A different valid instruction source.\n";
+
+    let directory = tempfile::tempdir().expect("temporary instruction replay directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("private instruction replay directory");
+    let store = workspace_instruction_ipc_store(&directory);
+    create_workspace_for_instruction_ipc(&store, WORKSPACE_ID, OWNER, RUNTIME);
+    let blobs = Arc::new(FileBlobStore::new(
+        directory.path().join("blobs"),
+        IpcReplayTestKeys,
+    ));
+    let original_digest = seed_route_instruction_resource(
+        &directory,
+        &blobs,
+        WORKSPACE_ID,
+        RESOURCE_ID,
+        RESOURCE_REVISION_ID,
+        "text/plain",
+        ORIGINAL_CONTENT,
+    );
+    let other_digest = seed_route_instruction_resource(
+        &directory,
+        &blobs,
+        WORKSPACE_ID,
+        OTHER_RESOURCE_ID,
+        OTHER_RESOURCE_REVISION_ID,
+        "text/plain",
+        OTHER_CONTENT,
+    );
+    let instruction_router = workspace_instruction_ipc_router(store.clone(), OWNER, RUNTIME);
+
+    let first = post_instruction_revision(
+        instruction_router.clone(),
+        InstructionRouteWrite {
+            workspace_id: WORKSPACE_ID,
+            expected_version: 1,
+            request_id: REQUEST_ID,
+            parent_revisions: vec![],
+            resource_id: RESOURCE_ID,
+            resource_revision_id: RESOURCE_REVISION_ID,
+            content_digest: &original_digest,
+            content_ref: None,
+        },
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::CREATED);
+    let original_correlation = first
+        .headers()
+        .get("x-correlation-id")
+        .expect("first instruction response has its event correlation")
+        .clone();
+    let original_body = to_bytes(first.into_body(), 4096)
+        .await
+        .expect("bounded instruction response");
+
+    let changed_request = post_instruction_revision(
+        instruction_router.clone(),
+        InstructionRouteWrite {
+            workspace_id: WORKSPACE_ID,
+            expected_version: 1,
+            request_id: REQUEST_ID,
+            parent_revisions: vec![],
+            resource_id: OTHER_RESOURCE_ID,
+            resource_revision_id: OTHER_RESOURCE_REVISION_ID,
+            content_digest: &other_digest,
+            content_ref: None,
+        },
+    )
+    .await;
+    assert_eq!(changed_request.status(), StatusCode::CONFLICT);
+    let changed_body = to_bytes(changed_request.into_body(), 4096)
+        .await
+        .expect("bounded changed-request conflict");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&changed_body).expect("conflict JSON")["code"],
+        "CONFLICT",
+        "a valid changed ResourceRef and digest cannot reuse the committed key"
+    );
+
+    let archive = workspace_archive_ipc_router(store.clone(), OWNER, RUNTIME);
+    let mut archive_request = Request::post(format!("/v1/workspaces/{WORKSPACE_ID}/archive"))
+        .header("x-workspace-id", WORKSPACE_ID)
+        .header("if-match", "2")
+        .header("idempotency-key", "instruction-archive-replay-archive")
+        .body(Body::empty())
+        .expect("Workspace archive request is valid");
+    archive_request
+        .extensions_mut()
+        .insert(AuthenticatedLocalPeer);
+    let archived = archive
+        .oneshot(archive_request)
+        .await
+        .expect("authenticated Workspace archive route responds");
+    assert_eq!(archived.status(), StatusCode::OK);
+    assert_eq!(
+        store
+            .get_workspace(WORKSPACE_ID)
+            .expect("read archived Workspace")
+            .expect("Workspace remains persisted")
+            .status,
+        "ARCHIVED"
+    );
+
+    let connection = rusqlite::Connection::open(directory.path().join("state.sqlite3"))
+        .expect("open Resource availability fixture");
+    connection
+        .execute(
+            "UPDATE resource_locations SET availability='REVOKED' WHERE resource_id=?1 AND location_id=?2",
+            rusqlite::params![RESOURCE_ID, format!("location-{RESOURCE_ID}")],
+        )
+        .expect("revoke the original Resource location after the instruction commit");
+    drop(connection);
+
+    let replay = post_instruction_revision(
+        instruction_router,
+        InstructionRouteWrite {
+            workspace_id: WORKSPACE_ID,
+            expected_version: 1,
+            request_id: REQUEST_ID,
+            parent_revisions: vec![],
+            resource_id: RESOURCE_ID,
+            resource_revision_id: RESOURCE_REVISION_ID,
+            content_digest: &original_digest,
+            content_ref: None,
+        },
+    )
+    .await;
+    assert_eq!(replay.status(), StatusCode::CREATED);
+    assert_eq!(
+        replay.headers().get("x-correlation-id"),
+        Some(&original_correlation),
+        "receipt replay retains the original instruction event correlation"
+    );
+    let replay_body = to_bytes(replay.into_body(), 4096)
+        .await
+        .expect("bounded instruction replay response");
+    assert_eq!(replay_body, original_body);
+
+    let connection = rusqlite::Connection::open(directory.path().join("state.sqlite3"))
+        .expect("inspect instruction replay ledger");
+    let counts: (i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM domain_events WHERE workspace_id = ?1 AND type = 'workspace.instructions.revision.created.v1'),
+                (SELECT COUNT(*) FROM workspace_instruction_revisions WHERE workspace_id = ?1),
+                (SELECT COUNT(*) FROM request_dedup WHERE principal_id = ?2 AND request_id = ?3)",
+            rusqlite::params![WORKSPACE_ID, OWNER, REQUEST_ID],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("count instruction events, revisions, and exact-key receipts");
+    assert_eq!(counts, (1, 1, 1), "retry cannot duplicate durable writes");
 }
 
 #[tokio::test]
@@ -1890,6 +2568,213 @@ async fn workspace_default_agent_route_distinguishes_receipt_conflict_from_stale
 }
 
 #[tokio::test]
+async fn workspace_root_status_routes_distinguish_receipt_conflicts_from_stale_versions() {
+    const WORKSPACE_ID: &str = "workspace-root-status-route";
+    const OWNER: &str = "workspace-root-status-owner";
+    const RUNTIME: &str = "workspace-root-status-runtime";
+    const ROOT_ID: &str = "workspace-root-status-root";
+    const NOW: &str = "2026-10-15T10:00:00Z";
+
+    fn payload_digest(payload: &Value) -> String {
+        let canonical = serde_json::to_vec(payload).expect("serialize canonical JSON fixture");
+        format!("sha256:{}", hex::encode(sha2::Sha256::digest(canonical)))
+    }
+
+    fn request_payload(operation: &str, expected_version: u64) -> Value {
+        json!({
+            "operation": operation,
+            "workspace_id": WORKSPACE_ID,
+            "workspace_root_id": ROOT_ID,
+            "expected_version": expected_version,
+        })
+    }
+
+    let directory = tempfile::tempdir().expect("temporary WorkspaceRoot route directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("private route fixture directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        &database,
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            IpcReplayTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real SQLite store opens");
+    WorkspaceService::new(store.clone())
+        .create(CreateWorkspace {
+            workspace_id: WORKSPACE_ID.to_owned(),
+            name: "WorkspaceRoot status route fixture".to_owned(),
+            owner_principal_id: OWNER.to_owned(),
+            event: EventContext {
+                event_id: "workspace-root-status-workspace-created".to_owned(),
+                origin_runtime_id: RUNTIME.to_owned(),
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: "workspace-root-status-workspace-created".to_owned(),
+                causation_id: None,
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("owner Workspace commits");
+
+    let connection = rusqlite::Connection::open(&database).expect("open route fixture database");
+    connection
+        .execute(
+            "INSERT INTO resources(
+               resource_id, workspace_id, kind, provider_identity_json,
+               identity_digest, display_name, current_revision_id, sensitivity,
+               provenance_json, created_at, updated_at, version
+             ) VALUES (?1, ?2, 'FOLDER', '{}', NULL, 'folder', NULL, 'PERSONAL', ?3, ?4, ?4, 1)",
+            rusqlite::params![
+                "workspace-root-status-resource",
+                WORKSPACE_ID,
+                json!({"source_inputs":[],"transformations":[],"tool_reports":[]}).to_string(),
+                NOW,
+            ],
+        )
+        .expect("seed folder Resource projection");
+    connection
+        .execute(
+            "INSERT INTO resource_locations(
+               location_id, resource_id, runtime_id, provider_ref, locator_ref_id,
+               availability, writable, observed_at
+             ) VALUES (?1, ?2, NULL, 'litecowork.local_filesystem', ?3, 'AVAILABLE', 0, ?4)",
+            rusqlite::params![
+                "workspace-root-status-location",
+                "workspace-root-status-resource",
+                "workspace-root-status-locator",
+                NOW,
+            ],
+        )
+        .expect("seed folder location projection");
+    connection
+        .execute(
+            "INSERT INTO workspace_roots(
+               workspace_root_id, workspace_id, resource_id, location_id,
+               display_name, watch_policy, replication_policy, status,
+               added_by_json, created_at, updated_at, version
+             ) VALUES (?1, ?2, ?3, ?4, 'folder', 'METADATA', 'NONE', 'ACTIVE', ?5, ?6, ?6, 2)",
+            rusqlite::params![
+                ROOT_ID,
+                WORKSPACE_ID,
+                "workspace-root-status-resource",
+                "workspace-root-status-location",
+                json!({"kind":"USER","principal_id":OWNER}).to_string(),
+                NOW,
+            ],
+        )
+        .expect("seed WorkspaceRoot projection at version 2");
+
+    for (request_id, prior_payload) in [
+        (
+            "root-status-pause-conflict",
+            request_payload("workspace.root.pause.v1", 1),
+        ),
+        (
+            "root-status-revoke-conflict",
+            request_payload("workspace.root.pause.v1", 2),
+        ),
+        (
+            "root-status-resume-conflict",
+            request_payload("workspace.root.resume.v2", 1),
+        ),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO request_dedup(
+                   principal_id, request_id, request_digest, response_json,
+                   response_digest, created_at, expires_at
+                 ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, NULL)",
+                rusqlite::params![OWNER, request_id, payload_digest(&prior_payload), NOW],
+            )
+            .expect("seed a prior idempotency receipt");
+    }
+    drop(connection);
+
+    let (_, stream_shutdown) = tokio::sync::watch::channel(false);
+    let router = Router::new()
+        .route(
+            "/v1/workspace-roots/{workspace_root_id}/pause",
+            post(super::pause_workspace_root),
+        )
+        .route(
+            "/v1/workspace-roots/{workspace_root_id}/resume",
+            post(super::resume_workspace_root),
+        )
+        .route(
+            "/v1/workspace-roots/{workspace_root_id}/revoke",
+            post(super::revoke_workspace_root),
+        )
+        .route_layer(middleware::from_fn(authenticate))
+        .with_state(super::ApiState {
+            store,
+            principal_id: OWNER.to_owned(),
+            runtime_id: RUNTIME.to_owned(),
+            local_incarnation_id: "workspace-root-status-incarnation".to_owned(),
+            lifecycle_blockers: vec![],
+            runtime_identity: Arc::new(
+                storage_sqlite::RuntimeOsPrincipalIdentity::test_support(RUNTIME)
+                    .expect("test Runtime identity"),
+            ),
+            stream_admission: Arc::new(tokio::sync::Semaphore::new(2)),
+            runtime_inventory_revision: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            stream_shutdown,
+        });
+
+    async fn send_status(
+        router: &Router,
+        action: &str,
+        version: u64,
+        key: &str,
+    ) -> (StatusCode, Value) {
+        let mut request = Request::post(format!("/v1/workspace-roots/{ROOT_ID}/{action}"))
+            .header("x-workspace-id", WORKSPACE_ID)
+            .header("if-match", version.to_string())
+            .header("idempotency-key", key)
+            .body(Body::empty())
+            .expect("WorkspaceRoot status request is valid");
+        request.extensions_mut().insert(AuthenticatedLocalPeer);
+        let response = router
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("WorkspaceRoot status route responds");
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 4096)
+            .await
+            .expect("bounded WorkspaceRoot status response");
+        (
+            status,
+            serde_json::from_slice(&body).expect("WorkspaceRoot status response is JSON"),
+        )
+    }
+
+    for (action, version, key) in [
+        ("pause", 2, "root-status-pause-conflict"),
+        ("revoke", 2, "root-status-revoke-conflict"),
+        ("resume", 2, "root-status-resume-conflict"),
+    ] {
+        let (status, body) = send_status(&router, action, version, key).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{action} receipt conflict");
+        assert_eq!(body["code"], "CONFLICT", "{action} receipt conflict");
+    }
+
+    for action in ["pause", "revoke", "resume"] {
+        let (status, body) =
+            send_status(&router, action, 1, &format!("root-status-stale-{action}")).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{action} stale version");
+        assert_eq!(
+            body["code"], "STALE_WORKSPACE_VERSION",
+            "{action} stale version remains distinct from receipt conflict"
+        );
+    }
+}
+
+#[tokio::test]
 async fn instruction_create_route_commits_first_revision_and_replays_after_advance() {
     const WORKSPACE_ID: &str = "instruction-route-replay-workspace";
     const RESOURCE_ID: &str = "route-instruction-resource";
@@ -1982,6 +2867,15 @@ async fn instruction_create_route_commits_first_revision_and_replays_after_advan
             ],
         )
         .expect("seed pinned instruction revision");
+    transaction
+        .execute(
+            "INSERT INTO resource_content_blob_registry(workspace_id,digest,size_bytes,media_type,created_at,expires_at,state,claimed_at)
+             SELECT resource.workspace_id,revision.content_digest,revision.size_bytes,COALESCE(revision.media_type,'application/octet-stream'),revision.observed_at,NULL,'TRACKED',NULL
+             FROM resources resource JOIN resource_revisions revision ON revision.resource_id=resource.resource_id
+             WHERE resource.resource_id=?1 AND revision.resource_revision_id=?2",
+            rusqlite::params![RESOURCE_ID, RESOURCE_REVISION_ID],
+        )
+        .expect("track pinned instruction Resource content");
     transaction
         .execute(
             "INSERT INTO resource_locations(location_id,resource_id,provider_ref,locator_ref_id,availability,writable,observed_revision_id,observed_digest,observed_at,last_checked_at)
@@ -2254,6 +3148,18 @@ async fn instruction_create_route_commits_first_revision_and_replays_after_advan
     let transaction = connection
         .unchecked_transaction()
         .expect("start Resource head advance transaction");
+    transaction
+        .execute(
+            "INSERT INTO resource_content_blob_registry(workspace_id,digest,size_bytes,media_type,created_at,expires_at,state,claimed_at)
+             VALUES (?1,?2,?3,'text/plain',?4,NULL,'TRACKED',NULL)",
+            rusqlite::params![
+                WORKSPACE_ID,
+                advanced_resource_blob.digest,
+                i64::try_from(advanced_resource_content.len()).expect("advanced Resource size"),
+                now,
+            ],
+        )
+        .expect("track advanced instruction Resource content");
     transaction
         .execute(
             "INSERT INTO resource_revisions(resource_revision_id,resource_id,content_digest,size_bytes,media_type,observed_at,created_by_json)

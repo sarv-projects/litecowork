@@ -1,3 +1,184 @@
+## 2026-10-16 — E02-S04 UserRequest detail and serial UI verification
+
+The read-only detail path now has CODE evidence across the real SQLite projection,
+authenticated daemon route, Tauri bridge, and selected-Workspace UI. The daemon binary
+suite passed **262 tests**, with one manual OpenCode smoke ignored. The Tauri UserRequest
+bridge passed **6/6**, SQLite projection **7/7**, authenticated route **4/4**, and the
+read-only detail interactions passed in Chrome **3/3**. The full UI helper suite passed
+**305/305** with pinned Node.js `24.21.0` and serial test-file execution. Test files share
+Vite cache directories, so the package default is now `--test-concurrency=1`; prior
+concurrent runs had Vite restart/CDP setup failures. TypeScript no-emit, generated API
+freshness, Rust formatting for changed UserRequest modules, and `git diff --check` passed.
+The production Vite build passed (123 modules; 871.99 kB minified JS / 240.30 kB gzip,
+with the existing >500 kB chunk advisory).
+
+Architecture, implementation-plan, strict contract, strict design-depth, Markdown, and
+design-owner-consistency validators passed. These are consistency checks, not packaged
+desktop or USER evidence. E02-S04 remains `IN_PROGRESS`; Approval detail/actions, source
+blocker resolution, notifications/deep links, packaged Tauri+daemon behavior, supported
+OS qualification, and owner USER acceptance remain open. The read-only adversarial review
+found no confirmed identity/privacy/scope defect in this detail path. The next E02-S03
+membership implementation still needs contract promotion: current WorkspaceRoot scanning
+is a bounded metadata census, and contracts do not yet settle durable file identity,
+rename/replacement behavior, partial-scan reconciliation, or membership event/storage
+semantics. Do not treat census evidence as Resource membership.
+
+At this checkpoint `main` is aligned with `origin/main` and one worktree remains. Start
+measurements for this resumed slice: root `target/` 8.1 GiB, UI `dist/` 996 KiB,
+`node_modules/` 108 MiB, and 838 GiB free. End-of-slice measurements and cleanup are
+recorded after final inspection. No existing owner worktree files or caches were removed.
+
+## 2026-10-16 — A05 Conversation-create journal verification and Windows icon prerequisite
+
+The full Tauri Rust library suite passes **105/105**, including all 11 durable
+Conversation-create journal cases and 6 UserRequest bridge cases. The focused journal
+reopen/replay suite passes **11/11**. `cargo check --locked --tests -p
+windows-local-security --target x86_64-pc-windows-gnu` passes, so the Windows replacement
+helper and its cfg-gated tests type-check for the installed GNU target. This does not run
+the Windows filesystem replacement tests or qualify ACL, process restart, or power-loss
+behavior.
+
+Attempting a Tauri library cross-check exposed that Windows packaging lacked the default
+`src-tauri/icons/icon.ico` expected by Tauri. A six-resolution ICO (256, 128, 64, 48, 32,
+16 px) was added from the existing 512×512 PNG product icon. The repeat cross-check now
+passes the icon step and stops because the host lacks `x86_64-w64-mingw32-windres`; the
+`package.metadata does not exist` message is informational from `tauri-winres`, not the
+failure. `file`/ImageMagick inspection confirms the new source asset is a valid
+multi-resolution ICO. A Windows-host or provisioned MinGW build remains necessary for the
+Tauri caller and replacement tests. A05 is code-complete only; packaged restart and USER
+evidence remain pending.
+
+## 2026-10-16 — ContextDocument deletion UI, owner scope, and status integrity
+
+The Resource editor now exposes permanent local deletion only for `WORKSPACE_NOTES`
+owned by the selected Workspace. The deletion-state reducer rejects reversible-state
+regressions, changes to the sealed manifest digest or target count, decreasing
+acknowledgement counts, and any transition out of `DELETED`. A rendered test in Chrome
+`149.0.7827.200` verifies supported and unsupported owner scopes, accessible confirmation
+and focus management, cancel-without-IPC, same-RequestId ambiguous retry, durable polling,
+and stale Resource detail recovery.
+
+The Library search response fence also checks the synchronously selected Workspace ID, not
+only the request generation updated by a later React effect. This closes the interval where
+a late Workspace A page could apply just after selecting B but before B's search effect ran.
+The mounted A-to-B Resource search race test passes; a focused identity/generation test
+passes **1/1**.
+
+The route review confirmed that both authenticated deletion routes enforce Workspace owner
+access, use durable receipt replay, set `Cache-Control: no-store`, and return only the safe
+status projection. API contract follow-up now declares that header, the Rust `u32` count
+bounds, and GET denial tests for unauthenticated and foreign Workspace callers.
+
+On Linux WSL2 x86_64 with Node.js `24.21.0`, pnpm `12.10.1`, and Vite `6.4.4`, the focused
+deletion tests passed **11/11**, the full UI helper suite **285/285**, TypeScript, generated
+API freshness, and a production Vite build passed. The full rendered Chrome suite passed
+**61 checks**, including A01–A06, A12, the deletion interactions and stale Workspace search.
+Vite reports the existing 852.50 kB minified JavaScript chunk advisory. The full serial
+daemon binary suite passed **231 tests**, with one manual OpenCode smoke ignored; it includes
+deletion route auth/replay, Conversation create recovery, Task replay, Workspace conflict
+classification, and 129/200/201-byte key-boundary cases. One unused OpenCode helper warning
+remains. The focused Resource editor race file passed **7/7** after one earlier harness
+startup timeout before assertions. One initial full UI test attempt used shell Node `22.23.1`
+and failed the package engine check; the pinned Node 24 rerun passed.
+
+This is CODE and rendered UI-harness evidence, not packaged Tauri/live-provider SYSTEM or
+owner USER acceptance. The route review found no authorization/replay blocker. The exact
+review and test details are in the [E02-S03 review packet](reviews/E02-S03.md#contextdocument-deletion-editor-state-and-interaction-code--2026-10-16).
+E02-S03 remains `IN_PROGRESS`.
+
+## 2026-10-16 — E02-S03 purge integrity recheck and daemon restart evidence
+
+Purge now probes exact retained Resource revision digests that no longer have registry
+rows, with the corresponding digest lock held and BlobStore reads outside SQLite
+transactions. A present object blocks empty-plan admission/completion; only exact-object
+`NotFound` allows that probe to count as absent. SQL inventory is rechecked before commit.
+Focused real-SQLite tests cover an unregistered object before admission and an object that
+reappears before empty-plan completion, while preserving the already-collected empty-plan
+path. The authenticated daemon test verifies unread-response receipt persistence, graceful
+restart, exact replay, scheduled physical removal, registry cleanup and acknowledgement
+event/receipt correspondence.
+
+Linux WSL2 x86_64, Rust/Cargo `1.98.1`: purge module **19/19** after final hardening; full
+`storage-sqlite` suite **297/297** before the final small media-validation/probe-observation
+refinement; focused module rerun after it **19/19**. The daemon restart test passed **1/1**;
+the first attempt exposed only a misspelled fixture database filename and was rerun after
+correction. One later isolated rerun timed out at the 10-second authenticated-endpoint
+readiness bound and reported the endpoint as unsafe/missing; the child was killed by the
+harness. The immediate exact-command rerun passed **1/1** in 1.90s. The full serialized
+`litecoworkd` binary suite also passed **228/228**, one manual OpenCode smoke ignored. No
+child process or worktree remained after the rerun. The transient startup failure has no
+confirmed root cause and should be watched in subsequent process-suite runs. This is Unix
+daemon restart evidence with a test identity and test
+encryption key, not abrupt-crash/power-loss, packaged desktop or production key-provider
+qualification. ContextDocument metadata is seeded directly in the test database.
+
+The final read-only purge review found no code blocker and corrected two documentation
+overstatements: exact `NotFound` proves only absence of that BlobRef, and purge cannot
+discover an object with neither a registry row nor a surviving revision digest because
+BlobStore has no inventory operation.
+
+Documentation gates: architecture passed (142 typed events); strict contract audit passed
+with 0 errors (207 OpenAPI operations, 158 UI cases, 67 stories); Markdown audit found 0
+broken links across 176 files. Coverage regenerated to 103 documents / 6,530 rows, and the
+implementation plan validator passed for 67 stories / 6,530 traceability rows. These are
+contract consistency checks, not full V1 evidence. Targeted storage/daemon Clippy passed
+with the existing `too_many_arguments` and unused OpenCode helper lints allowed. E02-S03
+remains `IN_PROGRESS`; production
+key-provider, packaged Tauri, supported non-Linux OS, abrupt-crash and owner USER acceptance
+remain pending.
+
+At the start of this checkpoint, `main` had one worktree, root `target/` measured
+6,257,103,071 bytes, and 905,773,715,456 bytes were free. End measurements and process,
+branch, and artifact cleanup are recorded after the final verification below. Existing
+unrelated owner changes remain untouched and unstaged.
+
+## 2026-10-16 — Owner-directed 15-agent portfolio research and ACP Registry boundary
+
+Added a source-backed roster of 15 local-agent candidates at
+[`AGENT-PORTFOLIO-2026-10-16.md`](AGENT-PORTFOLIO-2026-10-16.md). It records exact
+vendor/registry launch evidence, native configuration and authentication ownership,
+platform/version caveats, and the distinct states for discovery, profile observation,
+module implementation, handshake, and qualified support. The roster is an owner-directed
+target, not a measured popularity ranking or a claim that LiteCowork has 15 adapters.
+Current source has limited Codex/OpenCode probes and no complete multi-agent session
+adapter. E03-S06 remains planned and depends on E03-S01.
+
+Pinned ACP Registry research at commit
+[`4d1729af836732b46840080920912dac7d5a2935`](../docs/REFERENCE-IMPLEMENTATIONS.md#acp-registry-exact-files-and-boundary)
+now records exact source files, Apache-2.0 license, and an untrusted metadata boundary in
+`docs/REFERENCE-IMPLEMENTATIONS.md` and `implementation/SOURCES.md`. Independent review
+corrected source links for Junie project trust, Auggie workspace indexing, and the archived
+Kimi predecessor; it also records manifest/matrix version drift for Claude ACP, Cline,
+OpenCode, and Qwen. Registry presence and initialize handshakes do not establish LiteCowork
+support or safe cancellation.
+
+Verification on Linux WSL2 x86_64: `.venv/bin/python scripts/audit_v1_contracts.py
+--strict --write-report` passed with 0 errors (207 OpenAPI operations, 158 UI cases, 67
+stories); `.venv/bin/python scripts/audit_v1_markdown.py` found 0 broken links across 176
+files; regenerated coverage is 103 documents / 6,529 rows; plan and architecture
+validation passed (142 typed events); `git diff --check` passed. These are source-map and
+contract-consistency checks, not adapter or provider evidence.
+
+## 2026-10-16 — Parallel daemon upload-recovery test deadline
+
+An initial default-parallel `cargo test --locked -p litecoworkd --bin litecoworkd` run
+failed only `spawned_daemon_recovers_resource_upload_create_chunk_and_commit_after_lost_ack`:
+its 4 MiB encrypted chunk had no committed chunk/request rows after the test's shared
+15-second deadline (226 passed, 1 failed, 1 ignored). The exact isolated process test
+passed, and the full serialized daemon suite passed. The production request, encryption,
+and durable commit path are unchanged; source review found that the failure branch had
+discarded the only response and therefore did not distinguish overload from an operation
+error. The chunk-recovery poll now has a separate bounded 60-second budget for concurrent
+daemon-test load.
+
+After that test-only change, the isolated process test passed and both the full default
+parallel and serialized daemon suites passed **227/227**, with one manual OpenCode smoke
+ignored; the parallel run took `155.12s`. `rustfmt --edition 2024 --check
+apps/litecoworkd/src/runtime_workspace_replay_process_tests.rs` passed. The repository-wide
+`cargo fmt --all -- --check` remains blocked by unrelated formatting differences in the
+already-modified `crates/storage-sqlite/src/lib.rs` Workspace-binding code; those owner
+changes were preserved. This deadline adjustment does not claim SYSTEM/provider evidence.
+
 ## 2026-10-16 — E03-S01 Agent Catalog truthful status CODE slice
 
 The Agent Catalog now separates Runtime offer compatibility, process readiness, and Codex
@@ -36,6 +217,168 @@ build output or temporary worktree was found. No owner cache or unrelated output
 removed.
 
 # Current run and agent handoff
+
+## 2026-10-16 — Indexed Resource search pagination recovery CODE slice
+
+Indexed Resource search now returns a typed bounded storage page. It rechecks each
+materialized candidate against its exact current revision and active ContextDocument, so a
+stale match no longer consumes the requested page size. Storage examines at most 200
+candidates and 64 MiB of verified snapshots per request; an underfilled page advances its
+existing Workspace/query/mode/filter-bound cursor only after another candidate is known to
+remain. Short and empty pages with an advancing cursor are valid. Cross-request snapshot
+consistency is not promised.
+
+The real-SQLite regressions cover a stale-head race, progress beyond the 200-candidate
+bound, and the production Operator returning three pinned Resources exactly once across
+`limit=1` pages while rejecting changed query/filter cursor reuse. A rendered Chrome test
+proves the UI follows an empty advancing page, displays the later result once, and removes
+Load more after the terminal null cursor. The storage suite passed **286/286** before the
+new 64 MiB budget case was added; that case is being run separately after its first fixture
+attempt revealed a tokenization mistake (`needle` was joined to the padding). Its corrected
+rerun passed **1/1** in **117.85s**, exercising the verified-byte bound and final
+continuation. The full UI suite passed **271/271**; the focused rendered test passed
+**1/1** in Chrome `149.0.7827.200`. Environment: Linux WSL2 x86_64, Rust/Cargo `1.98.1`,
+Node `24.21.0`, pnpm `12.10.1`.
+
+Exact commands, the initial fixture failure, the corrected-run result, and the earlier Vite
+harness 404/recovery are recorded in the [E02-S03 review packet](reviews/E02-S03.md#indexed-resource-search-stale-candidate-pagination-code--2026-10-16).
+This is local CODE evidence only; production keyring/provider, packaged Tauri+daemon,
+supported non-Linux OS, SYSTEM and owner USER acceptance remain open. E02-S03 remains
+`IN_PROGRESS`.
+
+At the start of this slice the branch was `main`, one worktree was present, root `target/`
+measured 5,588,253,618 bytes, Tauri `target/` 4,173,253,860 bytes, UI `dist/` 990,242
+bytes, UI `node_modules/` 97,159,500 bytes, and free space was 906,533,863,424 bytes.
+End-of-slice sizes and process/worktree cleanup are recorded after the final rerun. Cargo
+targets and shared `node_modules` are pre-existing reusable caches and will be retained.
+
+## 2026-10-16 — WorkspaceRoot list cache and privacy CODE slice
+
+The authenticated `GET /v1/workspace-roots` route now returns its existing JSON
+projection with `Cache-Control: no-store`, matching `docs/API.md`. A production-router
+regression uses real SQLite and an encrypted FileBlobStore after native folder selection.
+It checks the header, committed `location_availability`, final-page cursor, omission of the
+selected absolute path and private locator/identity fields, and nondisclosing `404` for a
+foreign principal. No response fields or storage contracts changed.
+
+On Linux WSL2 x86_64 with Rust/Cargo `1.98.1` and SQLite through the real local store, the
+new assertion first failed because `cache-control` was absent, then the focused test passed
+**1/1** after the handler change. The full serial daemon suite passed **221/221**, with one
+manual smoke ignored, in `136.61s`. `cargo fmt --all -- --check` passed. Strict Clippy
+without allowances stops on the pre-existing `clippy::too_many_arguments` at
+`crates/storage-sqlite/src/lib.rs:16402`; daemon Clippy passes with that lint and the
+already-observed unused OpenCode helper warning allowed. No package, migration, event, or
+OpenAPI change was needed. This is CODE evidence only; packaged IPC, supported-OS, SYSTEM,
+and owner USER acceptance remain pending. E02-S03 remains `IN_PROGRESS`; see the
+[review packet](reviews/E02-S03.md#authenticated-workspaceroot-list-cache-and-privacy-code--2026-10-16).
+One worktree remained in use at the start and end; no branches, temporary worktrees, or
+agent scratch files were created. The recorded start sizes were root `target/` 981,500,903
+bytes, Tauri `target/` 4,173,253,860 bytes, UI `dist/` 990,242 bytes, and `node_modules/`
+97,159,500 bytes, with 911,186,771,968 bytes available. End sizes were root `target/`
+4,129,282,123 bytes, Tauri `target/` 4,173,253,860 bytes, UI `dist/` 990,242 bytes, and
+`node_modules/` 97,159,500 bytes, with 908,025,212,928 bytes available. The root Cargo
+target grew by 3,147,781,220 bytes during the serial daemon suite and Clippy rebuild; both
+Cargo targets remain useful for the next local V1 slices, so no build cache was pruned.
+
+## 2026-10-16 — Windows Conversation-create journal replacement CODE slice
+
+The Conversation-create recovery journal now replaces its same-directory temporary file on
+Windows through the existing `windows-local-security` boundary. The temporary file is
+flushed with `sync_all()` before `MoveFileExW` requests
+`MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH`; `MOVEFILE_COPY_ALLOWED` is omitted.
+If replacement fails, the journal returns an error before the Tauri bridge initializes the
+Operator client or sends the Conversation-create POST. Windows does not use the Unix
+parent-directory sync path. This is the documented write-through move request, not proof of
+same-volume rename survival under sudden power loss. The journal also relies on inherited
+Windows app-data ACLs; this permission boundary has not been verified on a Windows host.
+
+On Linux WSL2 x86_64 with Rust/Cargo `1.98.1`, `cargo test --locked -p windows-local-security`
+passed **5/5**; the Windows-target `cargo check --locked --target x86_64-pc-windows-gnu
+-p windows-local-security --tests` and strict targeted Clippy passed. The Windows-only
+replacement and existing-destination-preservation tests are cross-compiled but not executed
+here. `cargo test --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --lib
+conversation_create_journal -- --nocapture --test-threads=1` passed **11/11** on Linux,
+including persistence/reopen and fail-closed journal cases. The full Tauri Windows target
+check remains blocked by the unavailable `x86_64-w64-mingw32-windres` tool after a temporary
+ICO made from the tracked PNG satisfied Tauri's icon lookup; that temporary file was removed.
+No architecture, API, event, or storage contract changed. Windows host restart/failure,
+app-data ACL, packaged SYSTEM, power-loss, and owner USER evidence remain pending; E03-S02
+remains incomplete. See the [E03-S02 review packet](reviews/E03-S02.md).
+
+## 2026-10-16 — First-use guidance and keyboard focus CODE follow-up
+
+Conversation recovery buttons now name the missing setup step: users without a selected
+Workspace are directed to choose one in Settings, and users with an unavailable local
+Runtime are directed to its Settings controls. The already-ready-but-unavailable Send
+state still offers no setup button because setup cannot enable native Conversation turns.
+The Home Task composer also retains a visible 2 px keyboard focus ring when reached by
+keyboard. These changes clarify navigation and keyboard access only; they do not save or
+send a Conversation draft or enable execution.
+
+On Linux x86_64/WSL2 with Node `24.21.0`, pnpm `12.10.1`, and Chrome `149.0.7827.200`,
+`corepack pnpm@12.10.1 test` passed **270/270** UI helper tests and
+`LITECOWORK_RENDERED_CHECK_GROUP=conversation corepack pnpm@12.10.1 run test:browser`
+passed **12/12** Conversation rendered checks, including both Settings recovery actions,
+the absent ineffective Send setup action, unsent-draft truth, and the keyboard focus ring.
+The prior full rendered Chrome harness passed before the CTA label follow-up. The new
+guidance assertion first failed against the generic label and passed after the source
+change. E03-S02 remains incomplete: no native Conversation turn or provider-backed Send
+was executed; packaged desktop, supported-OS, and owner USER evidence remain pending.
+See the [E03-S02 review packet](reviews/E03-S02.md).
+
+## 2026-10-15 — OpenCode exact catalog probes and launcher PATH correction
+
+The bounded OpenCode profile probe now accepts exact CLI versions `2.0.26` and `2.0.28`.
+The 2.0.26 handshake uses username `litecowork` and `/api/health` (`healthy: true`). The
+2.0.28 handshake uses username `opencode` and `/api/info`, requiring the exact version and
+owned child PID. Both versions read only bounded `/api/provider` and `/api/model` catalogs;
+both remain incompatible for binding and execution. Unsupported adjacent versions fail
+closed. The version subprocess clears inherited daemon variables but retains only the
+explicitly supplied `PATH` (and Windows `SystemRoot`) so `#!/usr/bin/env node` launchers
+work without exposing unrelated daemon settings.
+
+An independent source review found that clearing the environment also removed `PATH` from
+OpenCode's bounded `--version` process. The Unix shim regression first failed; fixing the
+command builder's clear/allowlist ordering made it pass. Focused OpenCode CODE tests passed
+**15/15**, with one ignored manual smoke; the same command with the ignored smoke against
+the installed `/home/sarvesh/.opencode/bin/opencode` `2.0.28` passed **1/1** using fresh
+temporary HOME/XDG/workspace state. The smoke verified `/api/info` version/PID, observed
+bounded catalogs, stopped the direct process, omitted its temporary path from projection,
+and performed no session or inference request. It does not prove configured-profile auth,
+entitlement, descendant quiescence, packaged operation, cross-OS behavior, or owner
+acceptance. Rust/Cargo `1.98.1`; Linux WSL2 x86_64.
+
+The rendered Conversation Chrome group passed **11/11** after its test harness reset the
+conversation-list fixture from deferred to a successful empty list before first-use mount.
+The full UI helper suite passed **270/270**; API freshness, TypeScript, and Vite build
+passed with Node `24.21.0`, pnpm `12.10.1`, Vite `6.4.4`, Chrome `149.0.7827.200`. Vite's
+existing large-chunk advisory remains. This is CODE and local harness evidence, not
+packaged Tauri or OWNER USER acceptance. E03-S01 remains `IN_PROGRESS`; no story status was
+promoted.
+
+After the OpenAPI probe description changed, the first UI build correctly rejected stale
+generated Operator API types. `pnpm run api:generate` regenerated them from the canonical
+schema, including other already-present Resource and Workspace contract updates in the
+working tree; the subsequent full production build passed API freshness, TypeScript, and
+Vite. That build produced the existing 848.19 kB minified / 234.01 kB gzip main chunk
+advisory.
+
+The attributable source changes are the OpenCode discovery/probe/server files, the
+Conversation browser harness fixture, regenerated OpenAPI client types, and their exact
+contract/review/current-run text. One shared worktree is in use; no branches or temporary
+worktrees were created. The shared Cargo and Tauri targets, `node_modules`, and pre-existing
+`dist` output remain in use for verification; no duplicate build output was created or
+pruned. See the earlier checkpoint for measured sizes and owner-change inventory.
+
+After regeneration, `cargo test --locked -p litecoworkd --bin litecoworkd --
+--test-threads=1` passed **220**, failed **0**, with one ignored manual smoke, in 118.80s.
+The focused real 2.0.28 smoke passed separately. The updated generated API freshness,
+TypeScript, Vite build, and UI helper suite all passed. Strict V1 contract audit reported
+0 errors (207 OpenAPI operations, 158 UI cases, 67 stories); Markdown audit reported 174
+files and 0 broken links; coverage regenerated to 103 documents/6,511 rows; implementation
+plan, architecture, strict design-depth (0 blockers), design-owner consistency (0 issues),
+and `git diff --check` passed. These consistency/code results do not satisfy the pending
+packaged SYSTEM or owner USER gates.
 
 ## 2026-10-15 — E03-S01 binding refresh/version race and truthful state copy
 
@@ -87,6 +430,576 @@ transaction directly; the global `TASK_PLANNING_ISOLATION_UNAVAILABLE` gate rema
 Conversation admission route is served, and no native/provider path is qualified. Keep
 E03-S01 `IN_PROGRESS`; SYSTEM, supported-OS/provider, and owner USER gates remain open.
 
+Competitor/first-use review of all 20 local Manus screenshots and current navigation found
+that the primary product gap is still the unavailable real first native answer: Home saves
+a Task, while the Conversation Send action remains disabled. It also found that Add inputs
+detours to Library, Discover is absent, and too many management surfaces remain top-level.
+These findings align with the accepted composer IA in [`UI`](UI.md) and are not permission
+to fake native execution or bypass Resource/Trust contracts. The real first-turn path must
+remain fail-closed until E03 provider and native-tool containment qualification is complete;
+Discover remains dependency-gated E10 work. Details and competitor sources are in
+[`COMPETITIVE-RESEARCH`](../docs/COMPETITIVE-RESEARCH.md).
+
+## 2026-10-15 — E03-S01 AgentBinding disable CODE slice
+
+Added the existing canonical disable command end to end: authenticated Operator handler,
+atomic SQLite transition/receipt/event, Tauri bridge, Settings action, and exact retry
+identity. A current Workspace default must first be explicitly changed or cleared;
+disabling blocks new Conversation and Task admissions while previously admitted sessions
+continue. The active Task planning session regression confirms its plan can still settle
+after disable. No route/event/migration was invented; OpenAPI and Agent Control/Fabric/
+State Machine wording now agrees that both Conversation and Task admission use the enabled
+gate.
+
+Linux WSL2 x86_64 / Rust-Cargo `1.98.1`: `cargo test --locked -p storage-sqlite --lib
+agent_binding_tests:: -- --nocapture --test-threads=1` passed **3/3** and
+`cargo test --locked -p litecoworkd agent_binding_disable_operator_tests -- --nocapture
+--test-threads=1` passed **3/3**. With Node `24.21.0`, pnpm `12.10.1`, Vite `6.4.4`, and
+Chrome `149.0.7827.200`, focused UI tests passed **8/8**, the production UI build passed,
+and the adjacent E02 rendered `workspace-app` Chrome group passed **6/6**. Formatting and
+`git diff --check` passed. The build reports its existing large JavaScript chunk advisory.
+This is partial CODE evidence: no supported native provider or packaged Tauri route has
+been qualified, and E03-S01 remains `IN_PROGRESS` with SYSTEM/OWNER USER gates pending.
+
+The competitor review confirms the highest-value first-use gap is a real answer to an
+ordinary question, followed by truthful steerable Task progress and inspectable results;
+the shell itself has not been shown inferior by a timed or packaged UI study. Keep native
+Conversation turns (E03-S02) behind E03-S01's real provider qualification and keep
+connectors, schedules, Discover, and visual restyling behind their existing contracts.
+Research and source links are recorded in [`COMPETITIVE-RESEARCH.md`](../docs/COMPETITIVE-RESEARCH.md#2026-10-15-competitor-recheck-and-litecowork-priorities).
+
+## 2026-10-15 — ResourceUpload commit RequestId binding and recovery
+
+The upload commit route now uses the required caller `Idempotency-Key` as its
+principal-scoped RequestId. A caller key reused for another upload by the same principal
+returns `409 CONFLICT` without changing that upload; another principal can use the same key
+in a separate owned Workspace in the same SQLite store. The atomic commit writes the
+caller-key receipt and the deterministic `resource-upload-commit:{upload_id}` recovery
+receipt. After the caller key is lost, a fresh key resolves the exact original response
+through the deterministic receipt and is durably aliased to it. Both caller-key and
+deterministic recovery replay work after Workspace archival.
+
+On Linux WSL2 x86_64 with rustc/Cargo `1.98.1`, the caller-key routes passed **2/2**:
+
+```sh
+cargo test --locked -p litecoworkd upload_commit_idempotency_key_ -- --nocapture --test-threads=1
+cargo test --locked -p litecoworkd committed_upload_exact_retry_replays_after_workspace_archive -- --nocapture --test-threads=1
+cargo test --locked -p storage-sqlite -p litecoworkd upload -- --nocapture --test-threads=1
+```
+
+The tests use authenticated in-process Operator routers, real SQLite, and the test
+FileBlobStore. They verify byte-identical response/correlation replay, same-principal
+cross-upload conflict with no Resource/event/receipt writes, independent use by another
+principal, and fresh-key recovery after archival without a second Resource or event.
+Strict contract audit passed with 0 errors (207 OpenAPI operations, 158 UI cases, 67
+stories); Markdown audit passed (174 files, 0 broken links); regenerated coverage passed
+(103 documents, 6,491 rows); plan, architecture, strict design-depth, design-owner
+consistency, and `git diff --check` passed. These checks establish local CODE and contract
+consistency only. The full upload-filtered regression command passed: `litecoworkd` **7/7**
+and `storage-sqlite` **65/65**. It includes a purge-specific retry regression that first
+failed because an expired ContextDocument revision upload returned a successful exact replay
+after purge; the retry now conflicts while the Resource is `DELETION_PENDING` or `DELETED`,
+without recreating a chunk object. Exact ordinary-TTL and archived-Workspace retries retain
+their replay behavior. A separate terminal-state regression passed **1/1**, proving exact
+final-chunk replay returns CONTENT_RECEIVED before commit and COMMITTED afterward without
+another lifecycle event or blob write. Strict formatting passed. A first strict Clippy pass found two lint
+issues in the touched test helper and conversation journal; both were corrected. The strict
+Clippy rerun passed with `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings`.
+Fresh post-documentation gates also passed: contract audit (0 errors), Markdown audit (174
+files, 62,169 lines, 0 broken links), coverage (103 documents / 6,491 rows), implementation
+plan, architecture (142 typed events), design depth (20 domains / 226 functions / 0 blockers),
+design-owner consistency (183 documents / 34 assertions / 0 issues), and `git diff --check`.
+E02-S03 remains `IN_PROGRESS`; durable WorkspaceRoot scan/membership and search are still
+unimplemented. Packaged SYSTEM, supported-OS/provider, and owner USER acceptance remain open.
+
+## 2026-10-15 — E03-S02 Conversation lost-ack Runtime restart CODE
+
+The process integration harness now imports the production Tauri
+`ConversationCreateJournal`, writes its normalized pending identity to a private test
+app-data directory, and creates a Conversation over authenticated Unix IPC while leaving
+the response unread. After the durable SQLite receipt appears, it stops and restarts the
+Runtime, reopens the journal, and retries the same Workspace/title/RequestId using a new
+frame ID. The test verifies the original response and correlation, one Conversation/event/
+receipt, successful journal acknowledgment, and changed-title key conflict.
+
+On Linux WSL2 x86_64 with rustc/Cargo `1.98.1`,
+`cargo test --locked -p litecoworkd --bin litecoworkd runtime::runtime_workspace_replay_process_tests::spawned_daemon_replays_conversation_create_after_lost_ack_and_journal_reopen -- --exact --nocapture --test-threads=1`
+passed **1/1**. This proves a clean Runtime restart and journal-file reopen in a test
+process. It does not prove WebView/Tauri process restart, packaged desktop behavior,
+abrupt power-loss or in-transaction crash recovery, Windows IPC/journal durability, or
+native-agent USER acceptance. E03-S02 remains incomplete and retains its E03-S01
+dependency. The detailed evidence and limits are in
+[`implementation/reviews/E03-S02.md`](reviews/E03-S02.md).
+
+## 2026-10-15 — ContextDocument purge evidence and documentation gate repair
+
+The E08-S03 epic, backlog, and review packet now distinguish the implemented local
+ContextDocument purge saga from still-open native-session invalidation, automatic private
+learning, provider-backed deletion, backup recovery, packaged SYSTEM, and owner USER gates.
+E08-S03 remains `IN_PROGRESS`. The route test names now describe their actual behavior: the
+daemon test covers owner admission/replay/status polling as well as rejection cases, and the
+reversible status parser keeps purge transitions separate from revoke/restore.
+
+Focused CODE checks on Linux x86_64/WSL2, Rust/Cargo `1.98.1`, Node `24.21.0`, pnpm
+`12.10.1`, Chrome `149.0.7827.200`, and bundled SQLite:
+
+- `cargo test --locked -p storage-sqlite context_document_purge_tests -- --nocapture --test-threads=1` — **14/14**.
+- `cargo test --locked -p litecoworkd authenticated_context_document_deletion_route_enforces_owner_admission_replay_and_polling -- --nocapture --test-threads=1` — **1/1**. In-process authenticated marker and real SQLite; no OS peer-mapping or packaged IPC claim.
+- `cargo test --locked -p litecoworkd owner_status_parser_keeps_purge_transitions_separate_from_revoke_restore -- --nocapture --test-threads=1` — **1/1**.
+- From `apps/litecowork-ui`: `cargo test --locked --manifest-path src-tauri/Cargo.toml context_document_deletion_bridge::tests -- --test-threads=1` — **2/2**; `node --experimental-transform-types --test tests/context-document-deletion.test.ts` — **9/9**.
+- `.venv/bin/python -m unittest tests.test_context_document_purge_schema tests.test_markdown_audit_excludes_archives` — **7/7**.
+- From `apps/litecowork-ui`, pinned `corepack pnpm@12.10.1 test` — **241/241**; `LITECOWORK_RENDERED_CHECK_GROUP=context-document-deletion corepack pnpm@12.10.1 test:browser` — **5/5** on Chrome `149.0.7827.200`; `corepack pnpm@12.10.1 build` passed API type freshness, TypeScript, and Vite, with the existing 834.78 kB minified / 230.09 kB gzip chunk advisory. The rendered harness uses a mock bridge and is not packaged SYSTEM evidence.
+
+The Markdown inventory now prunes `.superpowers` and `superpowers` before traversal, in
+addition to the four archive directories. This avoids hashing owner-local planning
+artifacts; the directories remain intact. A test-first regression for root-check freshness
+failed against the old script sequence, then passed after `scripts/check.sh` gained a second
+Markdown freshness check following coverage generation, which regenerates
+`ARCHITECTURE-COVERAGE.md`. The focused ordering test passed **1/1**. The prior full root
+script had passed workspace formatting, Clippy, tests/build, and 28 Python tests before
+exiting on stale generated Markdown. After the order fix, `bash scripts/check.sh` passed end
+to end: format, strict workspace Clippy, workspace tests/build (`litecoworkd` **187/187**,
+CLI **4/4**, `storage-sqlite` **278/278**, and all remaining crate/doc tests), Python
+discovery (**29/29**), strict contract audit (0 errors), Markdown audit (**174 files /
+61,969 lines / 0 broken links**), regenerated architecture coverage (**103 docs / 6,488
+rows**), strict design depth (**20 domains / 226 functions / 0 blockers**), design-owner
+consistency (**183 docs / 34 assertions / 0 issues**), plan (**67 stories**), architecture
+(**142 typed events**), and CRLF-aware diff check. This is local code and contract
+verification; packaged desktop, cross-OS/provider, SYSTEM, hosted CI for this exact commit,
+and owner USER evidence remain open.
+
+The separate A01–A11 source review found each listed correction present with regression-test
+definitions. A05 now has a local daemon-process restart/lost-ack CODE regression using the
+production Tauri journal source. Packaged desktop, Windows, provider, SYSTEM, and owner USER
+gates remain open; source/test presence alone does not close them.
+
+## 2026-10-15 — WorkspaceRoot selection and truthful Task progress CODE follow-up
+
+The native WorkspaceRoot-selection route now has an authenticated Unix IPC integration test
+using a real temporary SQLite store, a registered serving Runtime, and an active Workspace
+binding. It verifies owner creation, byte-identical exact receipt replay, foreign-principal
+denial, one committed root, and that generic public `POST /v1/workspace-roots` is not mounted
+on the Operator router. The foreign-principal test supplies a different daemon principal
+under the same test OS UID; it does not qualify OS-principal mapping or packaged transport.
+Existing Operator IPC tests separately cover rejection without the authenticated peer marker.
+
+Direct Resource creation now has a cross-open-store concurrency regression: separate handles
+assert a shared request-lock identity, overlap an exact retry attempt with a first request
+paused at AggregateState publication, and verify the same durable receipt with one snapshot.
+Its 250 ms scheduling window is not deterministic proof that the second call reached the
+lock wait; the receipt and single-write outcomes are the durable assertions. `direct_resource_create`
+passed **3/3** (including changed metadata and missing-media fallback), the authenticated
+quick-import route passed **1/1**, and the root-selection IPC test passed **1/1**.
+
+The E02-S04 Task progress summary has two rendered CODE cases against the production React
+components. A RUNNING attempt with recent activity and no saved Evidence stays “Working” and
+shows no-evidence text; a saved Evidence timestamp is labeled separately. The focused test
+passed **2/2**, and the pinned full UI helper suite passed **241/241** on Node `24.21.0` /
+pnpm `12.10.1`. These tests add evidence only; they do not implement Approval/UserRequest
+actions, notifications, or owner resolution.
+
+Formatting and strict `storage-sqlite`/`litecoworkd` Clippy passed after these test additions.
+The latest `bash scripts/check.sh` run passed formatting, strict workspace Clippy, workspace
+tests/build, and Python unittest discovery (**28/28**), then exited **1** because the
+generated Markdown audit inventory was stale after documentation edits. The report itself
+found **0 broken links**; its generated inventory must be refreshed and the full gate rerun
+before claiming a green repository check. E02-S03 and E02-S04 remain `IN_PROGRESS`; durable
+WorkspaceRoot scanning has no promoted scan-run/membership contract, and packaged SYSTEM,
+supported-OS/provider, and owner USER gates remain open.
+
+## 2026-10-15 — E02-S03 WorkspaceRoot reader and quick-import CODE slices
+
+The Linux WorkspaceRoot reader retains `O_PATH|O_NOFOLLOW` handles while enumerating,
+reopens content through a verified procfs descriptor directory, and rechecks file identity,
+parent/name, and selected-root identity. `scan_regular_files` is a compatibility collector
+limited to 64 retained file handles. The production-shaped `visit_regular_files` streams
+entries, releases each file handle before continuing, and accepts explicit entry/path-byte
+budgets with a maximum traversal depth of 64. It checks cancellation during traversal and
+content reads, prunes sensitive/generated names before opening them, and fails closed when
+the Linux mount boundary cannot be verified. The observed device/inode pair is not a durable
+generation identity; mount IDs are only an ephemeral boundary check.
+
+Reads remain best-effort observations, not atomic filesystem snapshots. Pre/post metadata
+detects some mutations, but coarse-timestamp filesystems may permit undetected in-place
+writes. The streaming visitor has no total content-byte budget and is not connected to a
+durable scan run, Resource publication, root membership, search filtering, or desktop UI.
+Linux procfs is required; other platforms fail closed.
+
+On Linux WSL2 x86_64 with Rust/Cargo `1.98.1`,
+`cargo test --locked -p litecoworkd local_filesystem::tests -- --nocapture --test-threads=1`
+passed **19/19** (the macOS-only case is cfg-excluded). Coverage includes sensitive/generated
+exclusions, caller budgets, streaming beyond 64 files, cancellation, mount-boundary failure,
+bounded reads, symlink/FIFO replacement, rename identity, and selected-root replacement.
+This is CODE evidence for the reader primitive only; E02-S03 remains `IN_PROGRESS`.
+
+The authenticated quick-import route now persists the submitted bytes and metadata without
+an upload-session identity. Its real-SQLite/FileBlobStore route test verifies readback,
+exact idempotent replay, conflicts for changed bytes/name/media type under the same key, and
+one resulting Resource. The regression initially returned `500` for the same bytes with a
+changed media type and left an extra AggregateState blob on exact replay. Resource creation
+now checks the durable receipt before index/blob preparation and serializes same-key creates
+across local store handles; the final transaction receipt check remains authoritative.
+Focused tests passed:
+
+```sh
+cargo test --locked -p litecoworkd authenticated_quick_import_persists_route_payload_without_upload_session -- --nocapture --test-threads=1
+cargo test --locked -p storage-sqlite direct_resource_create_replay_and_metadata_conflict_skip_blob_preparation -- --nocapture --test-threads=1
+```
+
+Each passed **1/1**. This does not implement folder scanning, durable root membership,
+packaged behavior, or owner acceptance. E02-S03 remains `IN_PROGRESS`.
+
+The fresh combined regression command
+`cargo test --locked -p storage-sqlite -p litecoworkd -- --test-threads=1` passed: storage
+**277/277**, daemon **186 unit + 4 CLI**, with no failures. This includes the scanner and
+quick-import cases alongside existing storage/Operator regressions. Formatting and strict
+Clippy for `storage-sqlite` and `litecoworkd` passed after three scanner lint corrections;
+the focused Linux scanner run passed **19/19** after those corrections. `cargo fmt --all --
+--check` and `git diff --check` passed.
+
+Documentation gates on this tree passed: strict contract audit (**0 errors, 207 OpenAPI
+operations, 158 supplemental UI cases, 67 stories**); Markdown audit (**181 files,
+62,055 lines, 0 broken links**); architecture coverage (**103 documents, 6,482 rows**);
+implementation-plan and architecture validation (**67 stories, 142 typed events**); strict
+ design-depth audit (**20 domains, 226 functions, 0 blockers**); and design-owner consistency
+(**183 documents, 34 assertions, 0 issues**). These validate consistency, not runtime or
+packaged behavior. At that checkpoint the bounded root-scan summary had not yet been wired;
+current implementation and evidence are recorded below. Durable root membership/search remains
+the next E02-S03 gap and requires contract promotion before persistence work.
+
+## 2026-10-15 — Full-check freshness failure and recovered documentation gates
+
+On Linux WSL2 x86_64 with rustc/Cargo `1.98.1`, uv `0.12.23`, and Python `3.13.12`,
+`bash scripts/check.sh` passed formatting, strict workspace Clippy, all workspace tests,
+the workspace build, and Python unittest discovery (**28/28**). Rust results included
+`storage-sqlite` **276/276**, `litecoworkd` **175 unit + 4 CLI**, and `operator-ipc`
+**20 unit + 4 integration**; all other workspace tests passed. The script then exited 1
+because its generated-output freshness check found
+`implementation/V1-DESIGN-DEPTH-AUDIT.md` stale and restored the prior report. This was a
+generated-document freshness failure, not a runtime/test failure; the full script was not
+rerun after refreshing the report.
+
+After that exit, `uv run --locked python scripts/audit_v1_design_depth.py --strict --write`
+regenerated the report: **181 Markdown files / 61,914 lines, 20 domains, 226 functions,
+0 blockers**. The remaining manual gates passed: strict design-depth audit; design-owner
+consistency (**183 documents / 62,351 lines, 34 assertions, 0 issues**);
+implementation-coverage validation (**103 documents / 6,480 rows**); implementation-plan
+validation (**67 stories / 6,480 rows**); architecture validation (**142 events**); and
+`git diff --check`. The contract/Markdown checks reached before the freshness failure also
+reported no errors or broken links. E02-S03 remains `IN_PROGRESS`; packaged desktop,
+provider/OS, SYSTEM, and owner USER gates remain open. Exact commands and results are in the
+[E02-S03 review packet](reviews/E02-S03.md).
+
+## 2026-10-15 — E02-S03 v18 purge and receipt-conflict verification
+
+The local ContextDocument purge path now has 14/14 focused SQLite tests, including
+reservation-only upload recovery before/after physical BlobStore put, exact manifest and
+receipt behavior, failure rollback, shared references, and completion fencing. The v11-to-v18
+atomic migration rollback/retry test passed 1/1 after the final test cleanup. The integrated
+storage suite passed 272/272 at the production-source checkpoint; a later transaction
+receipt-boundary regression passed separately 1/1. The full `litecoworkd` suite passed 170
+unit tests plus 4 CLI tests, the Tauri suite passed 89/89, and the pinned UI suite passed
+239/239. Rendered Chrome checks passed 16/16 for upload pause/recovery and 5/5 for
+ContextDocument deletion. The production build passed API freshness, TypeScript, and Vite;
+its bundle advisory is 834.78 kB minified / 230.09 kB gzip. Formatting, focused migration,
+strict Clippy at the preceding test-only checkpoint, and documentation validators passed.
+See [`reviews/E02-S03.md`](reviews/E02-S03.md) for exact commands and the distinction
+between one full suite run and later focused regressions.
+
+This is local CODE evidence. No packaged Tauri-to-daemon restart/reconnect, production
+key-provider, supported Windows/macOS, current hosted CI, or owner USER acceptance is
+claimed. E02-S03 remains `IN_PROGRESS`; E02-S04 remains dependent on it. The source fix for
+three WorkspaceRoot same-key/different-payload receipt classifications is covered by the
+authenticated route cases and the SQLite commit-boundary regression; exact stale versions
+remain `STALE_WORKSPACE_VERSION` while receipt digest mismatch is `CONFLICT`.
+
+Resource audit: one main worktree remains; no worktree or build/test/browser process was
+created by this follow-up. The 23 existing `codex/*` branch refs have no worktrees and each
+contains commits not reachable from `main`; they were preserved because their changes have
+not been verified as integrated. Existing Chrome DevTools/Playwright MCP processes also
+predate this work and were left running. Current sizes: root Cargo `target` 17,450,104,873
+bytes (start baseline 16,718,241,283 bytes; +731,863,590), UI `dist` 974,576 bytes (same
+as start), UI `node_modules` 100,066,382 bytes, and owner `.playwright-mcp` 133,783 bytes.
+Free disk is 895,198,531,584 bytes. Shared Cargo/UI caches and owner data remain in place;
+no confirmed agent-created regenerable output was safe to remove.
+
+## 2026-10-15 — Full local gate, A02/A06 evidence, and Resource GC race correction
+
+The complete root gate now passes on Linux WSL2 x86_64 with Rust/Cargo `1.98.1`, uv
+`0.12.23`, and Python `3.13.12`: `bash scripts/check.sh` passed formatting, strict
+workspace Clippy, `cargo test --workspace --locked`, workspace build, 24 Python tests,
+strict contract/Markdown/coverage/design-depth/owner-consistency audits, plan and
+architecture validation, and CRLF-aware diff validation. The current Cargo suite includes
+**167 litecoworkd unit tests plus 4 CLI tests** and **251 storage-sqlite tests**. A first
+run correctly rejected stale generated Markdown inventory after documentation edits; the
+inventory and dependent coverage were regenerated in order. A subsequent parallel daemon
+run exposed a test-only ordering race: the Resource GC restart case saw the durable
+`DELETING` fence before the provider completed removal. The test now waits, with a bounded
+timeout, for the provider result after observing that fence and captures child stderr only
+for failure diagnosis. The default parallel daemon suite and the final full root gate pass.
+
+The final strict contract audit reports 0 errors, 206 specified OpenAPI operations, 158
+supplemental UI cases, and 67 stories. Markdown validation reports 0 broken links across
+174 files; architecture coverage has 103 documents / 6,473 rows; strict design depth found
+0 unmapped functions, duplicate signatures, or blockers; owner
+consistency reported 34 assertions / 0 issues. The architecture validator checks 142 typed
+events. These are source and contract checks, not packaged desktop or owner acceptance.
+
+A02 now has rendered Chrome evidence for all three invalidations (`POLICY_OMITTED`,
+`UNAVAILABLE`, `INTEGRITY_FAILED`): the cached presentation is evicted while semantic text
+remains. The pinned UI helper suite passed **227/227**, the full rendered suite passed
+**37/37** on Chrome `149.0.7827.200`, and the production UI build passed with Node
+`24.21.0` / pnpm `12.10.1`. A06's authenticated Operator CODE test pages **51 real SQLite
+Conversations** across a tied-timestamp boundary, checks stable cursor replay and order,
+Workspace/cursor fencing, and foreign-owner denial; it passes in the full daemon suite.
+Packaged Tauri/daemon, supported OS, reconnect, provider, and owner USER evidence remain
+pending for the affected stories.
+
+The Linux WSL2 environment reported about 900 GB free before the gate. One root worktree
+remains; no worktrees were created by this slice. `target` is a shared Cargo cache and is
+retained; the existing UI `dist`, `node_modules`, `.venv`, and owner `manusui/` assets are
+preserved. Existing `chrome-devtools-mcp` processes predate this work and were not stopped.
+The old hosted root-check failure is still from commit `942089d`; a hosted run containing
+the working-tree freshness-order fix is pending. D02 handoff work remains explicitly
+deferred by the owner.
+
+## 2026-10-15 — E02-S03 Resource content reservation and recovery slice
+
+SQLite migration v17 adds a local Resource-content registry keyed by Workspace/digest and
+stores exact size/media metadata used by encrypted BlobStore authentication. Direct Resource
+creation and resumable-upload commit persist a 24-hour reservation before publishing the
+`RESOURCE` object, then track it in the same transaction as the immutable revision and
+receipt. The v17 backfill covers current and historical revisions reachable through local
+managed locations and excludes external-only Resources. A bounded daemon collector fences
+expired/unreferenced records as `DELETING`, removes only the exact `RESOURCE` object, and
+retains failed/ambiguous deletion for retry. Purge remains a separate owning workflow.
+
+An initial focused run exposed two integration gaps: the v17 backfill excluded legacy NULL
+media despite its `application/octet-stream` fallback, and an older historical-read SQL
+fixture inserted a managed location without its now-required registry entries. The
+migration now tracks NULL-media local revisions using the exact fallback, and the fixture
+registers both historical and current content before inserting the local location.
+
+Focused evidence on Linux x86_64 with rustc/Cargo `1.98.1`, rusqlite `0.40.2`, and bundled
+SQLite: `cargo fmt --all -- --check` passed; `cargo test --locked -p storage-sqlite
+resource_content -- --nocapture --test-threads=1` passed **9/9**; v11-to-v17 atomic
+migration rollback/retry passed **1/1**; and failed Resource projection recovery after
+reopen passed **1/1**. The combined full storage/daemon suite, strict Clippy and required
+documentation validators are running/pending. Packaged USER/SYSTEM/provider/OS gates remain
+open; E02-S03 stays `IN_PROGRESS`.
+
+## 2026-10-14 — E02-S03 ResourceIndex orphan reservation and fenced GC CODE slice
+
+Every served ResourceIndex writer now registers its exact Workspace/digest/size before
+publishing the encrypted snapshot. The v16 SQLite migration backfills all existing index
+references, and projection rows transition the reservation to `TRACKED` in the same
+transaction. A bounded daemon sweep claims expired reservations and snapshots no longer
+referenced by any Resource revision, fences new use with durable `DELETING`, removes only
+the exact `RESOURCE_INDEX` object, then clears the registry row. A failed or interrupted
+remove remains fenced for an idempotent retry. The migration rejects inconsistent sizes
+for a shared digest and keeps the active v16 schema fingerprint strict while validating
+historical migration identity/checksum separately.
+
+Search now acquires sorted per-snapshot operation locks while still holding the
+Workspace ResourceIndex lock, then keeps them through bounded encrypted blob materialization.
+The collector takes the same locks before removal. This closes the race where GC could
+remove a selected snapshot between candidate selection and materialization; the final
+Resource/revision/status recheck still suppresses a result if its projection is removed
+after materialization. SQLite references remain authoritative across every revision.
+
+On Linux WSL2 x86_64, Rust/Cargo `1.98.1`, the full `cargo test --locked -p storage-sqlite`
+suite passed **235/235**, including reservation-before-publication, v15-to-v16 shared-ref
+backfill, rollback/retry, expired paused-writer fencing, historical-only/shared references,
+remove failure/restart, physical removal with ambiguous acknowledgement, and
+search/materialization versus GC. The full `cargo test --locked -p litecoworkd` run passed
+**165 unit tests plus 4 CLI tests**. `cargo fmt --all -- --check` and the CRLF-aware
+`git -c core.whitespace=cr-at-eol diff --check` passed. Strict Clippy remains to run.
+The strict contract audit passed with 0 errors (206 operations, 158 UI cases, 67 stories);
+Markdown validation passed for 174 files / 60,836 lines; coverage validation passed for
+103 documents / 6,469 rows; the implementation plan and architecture validators passed.
+
+This is CODE evidence using real SQLite and the test FileBlobStore. It does not establish
+packaged Tauri/daemon process recovery, production keyring/BlobStore behavior, cross-OS
+qualification, or owner USER acceptance. Pre-v16 orphan blobs without a surviving registry
+or index reference remain undiscoverable because BlobStore has no inventory API. The
+collector does not perform ContextDocument/Resource purge. E02-S03 remains `IN_PROGRESS`;
+packaged SYSTEM/provider/OS and owner USER gates remain open.
+
+**Migration-lineage correction (2026-10-16):** The preceding 2026-10-14 ResourceIndex
+entry records an unpromoted worktree implementation. Committed SQLite v16 is the Agent
+Registry migration; its DDL remains unchanged. Resource-content recovery is v17,
+upload-chunk recovery is v18, and ResourceIndex registry/backfill is v19. The 235/235
+storage and daemon counts above are historical evidence for the then-current source, not
+verification of the v19 migration. The v19 migration has separate v18-to-v19 backfill and
+atomic rollback/retry evidence in the later E02-S03 checkpoint. Pre-v19 orphan ResourceIndex
+objects without a surviving index reference remain undiscoverable because BlobStore has no
+inventory API.
+
+## 2026-10-14 — E02-S03 resumable upload recovery UI race correction
+
+The Library now keeps an existing upload session when a saved progress read fails,
+refuses to replace a session whose returned Workspace/upload identity does not match the
+saved request, and requires an explicit local forget action for FAILED, EXPIRED, or elapsed
+open sessions. Forgetting clears only the local retry metadata and tells the owner that the
+server session is unchanged. Upload progress, errors, and Resource projections are fenced
+by Workspace selection epoch, including A→B→A switches. The rendered tests also exposed
+that Conversation-create acknowledgement warnings shared a transient reader error slot;
+the receipt warning now survives snapshot loading and remains Workspace/request scoped.
+
+On Linux x86_64, Node `24.21.0`, pnpm `12.10.1`, and Chrome `149.0.7827.200`:
+
+- `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 test` — **218/218 passed**.
+- `LITECOWORK_RENDERED_CHECK_GROUP=resource-upload PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 run test:browser` — **7/7 checks passed**.
+- `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 run test:browser` — **37/37 rendered checks passed**, including Conversation acknowledgement retry and seven upload-recovery cases.
+- `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 build` — API type freshness, TypeScript, and Vite passed; Vite reports 818.57 kB minified JS / 226.49 kB gzip and its existing large-chunk advisory.
+
+The browser suite uses the test bridge and does not establish packaged Tauri/daemon,
+provider, crash/restart, cross-OS, or owner USER acceptance. No API/event/schema or storage
+contract changed. E02-S03 remains `IN_PROGRESS`; those SYSTEM/USER gates remain open.
+
+## 2026-10-14 — A05 durable Conversation-create journal and A07 race coverage
+
+A05 now persists unresolved Conversation-create identities in a private, bounded Tauri
+app-data journal before POST. The UI reloads the exact `(Workspace, RequestId)` on mount,
+keeps ambiguous transport/5xx/malformed-success outcomes retryable, clears confirmed 4xx
+and pre-POST operator-client failures, and retains the exact identity when journal
+acknowledgement fails. Workspace and mounted-instance checks fence late UI writes. Rust
+tests cover journal reopen/replay and exact acknowledgement; the UI helper tests cover
+identity and retry behavior. Current source evidence is **26/26** focused Tauri
+Conversation tests and **18/18** `conversation-view.test.ts` tests; formatting and scoped
+diff checks passed. `corepack pnpm@12.10.1 test` passed **218/218** on Node `24.21.0`;
+`node scripts/check-rendered-ui.mjs` passed **31/31 named checks** on Chrome
+`149.0.7827.200`. Its A05 case confirms failed durable acknowledgement leaves the same A
+RequestId pending across remount, keeps B untouched, and replays one committed
+Conversation. The UI/browser bridge still uses a test journal, and the helper's
+JSON-reopen case is not a WebView/Runtime process restart. A packaged process-restart test,
+Windows directory-fsync qualification, and owner USER acceptance remain pending.
+
+A07 source and rendered-harness definitions now independently defer detail, history, and
+head-preview responses and cover success/error selection races. TypeScript, Node syntax,
+and the three affected UI helper suites passed **45/45** after the title-check fix. The
+31-check Chrome run above passed the deferred Resource detail, history, and head-preview
+interleavings.
+
+## 2026-10-14 — E02-S03 revision-upload/rebuild serialization
+
+An unindexable Resource revision upload can advance the Resource head while a concurrent
+ResourceIndex rebuild is preparing its encrypted candidate. Revision uploads now acquire
+the same per-database/Workspace process-local lock as rebuilds even when the uploaded type
+is not indexable. This prevents a stale rebuild candidate from being left unreferenced in
+the served LiteCowork Runtime path; its existing exclusive database-instance lock remains
+the cross-process boundary.
+
+The race test exposed a second defect in the Resource upload transaction: the SQL
+revision guard requires the pinned Resource version to remain current when the upload
+transitions to COMMITTED. The transaction now marks revision uploads COMMITTED before
+advancing the Resource head. First-time uploads perform the same transition only after
+inserting the Resource row, satisfying `committed_resource_id`'s foreign key. All writes
+remain in the same atomic SQLite transaction. The race test asserts the paused rebuild
+commits a referenced historical index and the new ZIP head has no index. The test-only
+contention observer reports only when the actual shared mutex `try_lock` returns
+`WouldBlock`; the test requires that observation and an empty result channel before release,
+removing the prior scheduling-window false pass.
+
+`cargo test --locked -p storage-sqlite unindexable_revision_upload_waits_for_rebuild_blob_preparation -- --nocapture --test-threads=1` passed **1/1**;
+`cargo test --locked -p storage-sqlite resource_ -- --nocapture --test-threads=1` passed
+**36/36** on Rust/Cargo `1.98.1` at that earlier source checkpoint. After the key-version
+regressions were added, `cargo test --locked -p storage-sqlite key_version -- --nocapture
+--test-threads=1` passed **5/5**, `cargo test --locked -p storage-sqlite
+resource_upload_gc_tests:: -- --nocapture --test-threads=1` passed **21/21**, and the
+contention race passed **1/1** on Linux WSL2 x86_64. The latest complete storage result at
+this point is the earlier **214/214** run; a full current-source rerun is pending. The
+race uses real SQLite/FileBlobStore and deterministic thread/blob barriers; it does not
+cover independent processes outside the Runtime database lock, packaged restart,
+non-Linux systems, or owner USER acceptance. E02-S03 remains `IN_PROGRESS`.
+
+## 2026-10-14 — E02-S03 indexed search and concurrent reindex
+
+Indexed Resource search could read the current-head key-version list and derive tokens,
+then race with reindex before querying current-head candidates. If a Resource moved from v1
+to v2 in that window, the search used v1 tokens against the v2 projection and silently
+missed the match. Search now holds the per-database/Workspace ResourceIndex mutex from
+before listing key versions through token derivation and candidate selection, then releases
+it before decrypting/materializing pinned revision blobs. Its existing final head check
+still discards a candidate if the Resource changes afterward. The mutex is process-local;
+the Runtime's exclusive database-instance lock remains the cross-process owner boundary.
+
+`indexed_search_serializes_key_snapshot_with_reindex` uses real SQLite and FileBlobStore,
+sets the active key to v2, pauses search after it reads the v1 snapshot, and starts a pinned
+rebuild. The test observes actual mutex contention and verifies the v1-backed candidate
+remains searchable while rebuild also succeeds. It proves serialization through candidate
+selection, not whether reindex commits before the later blob materialization/recheck. The
+regression failed before the lock change and passed afterward. On Linux WSL2 x86_64,
+Rust/Cargo `1.98.1`, the focused test passed **1/1**
+and `cargo test --locked -p storage-sqlite resource_upload_gc_tests:: -- --nocapture
+--test-threads=1` passed **22/22**. Strict storage Clippy passed; workspace formatting and
+the full storage/workspace gates are being rerun. No migration, event, API, or lock owner
+changed. E02-S03 remains `IN_PROGRESS`.
+
+## 2026-10-14 — E01-S04 A09 Task-create replay after default removal
+
+The production Operator route regression creates a Task using the Workspace default
+AgentBinding, clears the default, and retries the same idempotency request. It verifies
+exact receipt replay, foreign-owner denial, and one Task/event. With Rust/Cargo `1.98.1` on
+Linux WSL2 x86_64, `cargo test --locked -p litecoworkd
+instruction_create_route_commits_first_revision_and_replays_after_advance -- --nocapture
+--test-threads=1` passed **1/1**. The test uses real SQLite and an authenticated-peer route
+seam; packaged IPC, restart/lost-ACK, supported OS, and owner USER evidence remain open.
+
+## 2026-10-14 — E02-S03 ResourceIndex key rotation bound and full local rerun
+
+ResourceIndex eligibility is now covered with a provider that fails only ResourceIndex
+key lookups while using real SQLite and FileBlobStore. Ineligible ZIP content can be
+created and committed without index-key access or index rows; exact explicit rebuild
+replay returns `NotIndexable`/`UnsupportedType`. Eligible text fails closed without
+committing partial aggregate, event, receipt, or index state; upload commit remains
+retryable and succeeds with the original key provider restored. The pre-existing indexed
+Resource remains available.
+
+The key preflight verifies every retained current-head key and reads the current version,
+then pins snapshot token creation to that version. Historical index rows whose Resource
+revision is no longer current do not consume the searchable-version bound. An exact-Resource
+rebuild excludes its old projection while checking whether replacement with the active key
+fits. Direct tests cover a missing key on the later snapshot-encryption lookup, a ninth
+version before writes, historical rows at the bound, one Resource per old key version during
+rebuild, and a deterministic concurrent v8/v9 race. The shared-key case remains unresolved:
+when multiple current Resources use each of eight old versions, a ninth-version rotation
+leaves no single-Resource rebuild that can reduce the distinct-version set. Existing search
+continues over the eight indexed versions, but new index writes and rebuilds fail closed.
+The current contract has no Workspace-wide rekey operation or rotation gate, so rotation and
+recovery are not qualified.
+
+A per-database/Workspace process-local lock serializes all three ResourceIndex writers from
+key-history preflight through candidate preparation and SQL commit, including separately
+opened store handles. Indexed search uses that lock through current-head version lookup,
+token derivation, and candidate selection, then releases it before materializing encrypted
+blobs; see the new deterministic search/reindex race result above. The LiteCowork Runtime's
+exclusive database-instance lock remains the cross-process owner boundary; the
+transaction-time eight-version guard is an additional defense. A ResourceIndex snapshot can
+still be orphaned if the process stops or its SQL
+commit fails after BlobStore preparation; the existing collector only handles upload-chunk
+objects and cannot reclaim these snapshots. The deterministic contention-observer update
+to the unindexable revision/rebuild race and the indexed-search/reindex race each pass
+1/1; the current focused Resource upload/index module passes 22/22. Prior source checkpoints passed
+the focused upload module **18/18** and full storage suite **214/214** on Linux WSL2 x86_64,
+Rust/Cargo `1.98.1`; these results do not include the current test-only observer change.
+That checkpoint's UI suite passed
+**215/215** on Node `24.21.0` and pnpm `12.10.1`; its rendered Chrome harness passed
+**27/27** on Chrome `149.0.7827.200`; the later A07 31/31 history/head-preview result is
+recorded at the top of this handoff. That checkpoint's pinned UI build passed API
+freshness, TypeScript, and Vite; Vite reports 811.38 kB minified JS / 224.55 kB gzip.
+`cargo clippy --workspace --all-targets --locked -- -D warnings`,
+`cargo fmt --all -- --check`, and `cargo build --workspace --locked` passed. The full
+`scripts/check.sh` run passed Rust tests/build and 24 Python checks, then exposed stale
+generated coverage because the script refreshed Markdown inventories after coverage.
+Moving the Markdown freshness check before coverage is now test-backed; the focused CI
+order test passed **14/14**, and the manual contract/depth/Markdown/coverage/plan/architecture
+gates passed on the regenerated 6,455-row inventory. The full script has not yet been
+rerun with that ordering fix. This is CODE evidence:
+the rendered harness uses a test bridge, and packaged Tauri/daemon, production keyring and
+rotation, non-Linux OS, SYSTEM, and owner USER gates remain pending. E02-S03 remains
+`IN_PROGRESS`.
+
 ## 2026-10-14 — E02-S03 upload replay and orphan AggregateState CODE slice
 
 Added a real child-process `litecoworkd` regression that creates a Resource upload through
@@ -98,16 +1011,19 @@ restart to compare all Resource bytes. Changed payload reuse of the create key r
 conflict without extra durable records.
 
 The storage fix checks the create receipt before writing a new AggregateState blob and uses
-a request lock shared by store clones across preflight, blob persistence, and the existing
-final transactional receipt check. Replay/conflict tests count blob puts; a barrier-controlled
-case proves same-key concurrency across clones produces one aggregate-state write. The lock
-does not coordinate separately opened stores pointing to the same database.
+a process-local request-lock registry keyed by canonical database path and request identity
+across preflight, blob persistence, and the existing final transactional receipt check. The
+Runtime instance lock remains the cross-process owner boundary. Replay/conflict tests count
+blob puts; the independently opened-store regression verifies both handles resolve to the
+same lock and exercises the overlapping retry path.
 
 Linux WSL2 x86_64 / Ubuntu 24.04.4 LTS, rustc `1.98.1`, Cargo `1.98.1`, Node `24.21.0`,
 pnpm `12.10.1`, Chrome `149.0.7827.200`:
 
 - `cargo test --locked -p litecoworkd spawned_daemon_recovers_resource_upload_create_chunk_and_commit_after_lost_ack -- --nocapture --test-threads=1` — **1/1 passed**.
 - `cargo test --locked -p storage-sqlite -p litecoworkd` — **205 storage tests + 157 daemon unit tests + 4 CLI tests passed**.
+- After review found the separate revision-upload path had the same preflight gap, the final focused Resource upload module passed **11/11** with `cargo test --locked -p storage-sqlite resource_upload_gc_tests:: -- --nocapture --test-threads=1`; this current focused run supersedes the earlier 9/9 count below, while the combined package counts above predate this follow-up.
+- Final-source combined rerun after the revision-upload and deterministic dispatcher follow-up: `cargo test --locked -p storage-sqlite -p litecoworkd` — **207 storage tests + 160 daemon unit tests + 4 CLI tests passed**. The dispatcher error-classification regression was then strengthened with timed-out I/O and invalid-frame negatives; that focused test passed 1/1.
 - After the test-helper argument cleanup, `cargo test --locked -p storage-sqlite resource_upload_gc_tests:: -- --nocapture --test-threads=1` — **9/9 passed**.
 - `cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets -- -D warnings` — passed.
 - `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH corepack pnpm@12.10.1 test` — **210/210 passed**.
@@ -7556,3 +8472,272 @@ pnpm `12.10.1`, Chrome `149.0.7827.200`; the full pinned UI suite passed **229/2
 The guard mismatch was verified against committed Markdown and must be regenerated from
 the committed tree after intended documentation changes are committed. No hosted run after
 these fixes or the current A10 correction is yet recorded.
+
+## Source-audit integration verification checkpoint — 2026-10-15
+
+The fresh pinned UI helper suite passed **242/242** on Node `24.21.0` and pnpm `12.10.1`,
+including the Resource draft/editor races, Conversation Workspace fencing, and the new
+same-ID RichPresentation semantic-content guard. The UI production build passed after
+regenerating the Operator API TypeScript client; API freshness, TypeScript, and Vite all
+passed. A rendered Chrome `149.0.7827.200` run passed 54 checks before the same-ID guard was
+added, so that run does not claim mounted-browser coverage for that final regression.
+
+The fresh daemon binary test command
+`cargo test --locked -p litecoworkd --bin litecoworkd` passed **211/211** on Linux WSL2
+x86_64 with Rust/Cargo `1.98.1`. It includes the A09 Task receipt retry after clearing the
+default AgentBinding, A11 Workspace receipt/CAS error classification, and four new real-
+SQLite authenticated route cases proving archive, replication-policy, default-AgentBinding,
+and private native root-selection routes accept and replay 129- and 200-byte keys while
+rejecting 201-byte keys without durable writes. `cargo fmt --all -- --check` and strict
+package Clippy (`cargo clippy --locked -p storage-sqlite -p litecoworkd --all-targets --
+-D warnings`) pass. Fresh documentation gates pass: strict contract audit (0 errors, 207
+operations, 158 UIV1 cases, 67 stories), Markdown audit (174 files, 0 broken links),
+coverage (103 documents / 1,669 sections / 6,492 rows), implementation plan (67 stories),
+architecture (142 typed events), strict design depth (20 domains, 226 functions, 0 blockers),
+design-owner consistency (34 checks, 0 issues), and `git diff --check`. Hosted CI, packaged
+transport, supported-OS, SYSTEM, and owner USER evidence remain pending.
+
+Independent read-only UI review found no concrete remaining A01/A03/A04/A07 race in the
+inspected source. It did not run tests. Durable WorkspaceRoot scan/membership, root-aware
+search, and watcher freshness are still absent; the current Linux scanner remains an
+unintegrated primitive and must not be described as a completed Resource index.
+
+
+## Workspace policy UI recovery and first-use product priority — 2026-10-15
+
+Completed a bounded E02-S02 Settings recovery slice. It reuses the original idempotency
+identity after ambiguous responses, preserves newer Workspace versions when older list
+responses arrive, confirms a lost acknowledgement from an accepted current projection, and
+keeps errors scoped to the originating selected Workspace. Focused tests passed 8/8; the
+rendered production-App Chrome harness passed its policy retry/confirmation/race checks;
+the pinned UI suite passed 250/250; the production build and Tauri library suite passed.
+Exact commands, versions, warnings, mock boundary, and remaining evidence are in the
+[E02-S02 review packet](reviews/E02-S02.md). E02-S02 remains `IN_PROGRESS`.
+
+The dated vendor comparison in [COMPETITIVE-RESEARCH.md](../docs/COMPETITIVE-RESEARCH.md)
+and independent source review agree on the highest-value product outcome: one ordinary
+question should produce one real native answer in a Conversation. The current shell saves
+Tasks without starting an agent, and Conversation Send remains disabled. A shell redesign
+or imitation of Manus's always-visible split pane would not close that product gap; the
+accepted desktop shell keeps the shared Workbench closed until the user opens it. Continue
+E03-S01 native profile/configuration/session-control qualification first, then E03-S02 real
+Conversation admission/streaming/recovery; expose New session prominently only with the real
+turn path. Next priority after chat is trustworthy progress/Needs You state and inspectable
+Workbench deliverables, followed by qualified browser/computer/terminal, connectors/Skills,
+and recurring automation breadth. Vendor materials are claims about product behavior, not
+independent reliability or speed measurements.
+## 2026-10-16 — Codex initialize admission and UI pagination harness CODE checks
+
+The Codex App Server now rejects malformed/partial initialize results before writing
+`initialized` or admitting account/model RPCs. The bounded probe marks explicit protocol
+rejection as `Rejected` and transport/timeout uncertainty as `Unknown`; the fake process
+test verifies no later RPC and no sentinel `codexHome`/`userAgent` in serialized probe or
+Debug output. `cargo test --locked -p litecoworkd --bin litecoworkd agents::codex_ --
+--nocapture --test-threads=1` passed **11/11**. Targeted rustfmt and path-limited diff
+checks passed. This is initialization admission/privacy evidence, not a Codex session
+adapter or Conversation/Task qualification; E03-S01 remains `IN_PROGRESS` and its E02-S01
+dependency is not closed.
+
+The UI pagination helper's Vite test server now disables dependency discovery, removing the
+shutdown error without changing product code. Under Node `24.21.0`, pnpm `12.10.1`, and
+Chrome `149.0.7827.200`, the focused helper test passed **5/5** with no shutdown error.
+The broader UI verification lane passed **54/54** focused Conversation, Resource, Needs You,
+and Task checks; `api:check`, `tsc --noEmit`, and an in-memory production Vite build also
+passed. These UI checks do not exercise a mounted end-to-end Resource deletion flow or
+connected Conversation messaging. No build output or browser process was left by the
+in-memory build/focused rerun.
+
+## 2026-10-16 — integrated workspace CODE rerun for E01-S02
+
+`cargo test --locked --workspace` completed successfully on the current integrated
+worktree after the SQLite v19/purge updates. The storage-sqlite executable reported
+**301 passed, 0 failed, 0 ignored** in 508.75 seconds; Windows local security reported
+**5 passed**. All remaining workspace test and doc-test executables completed with exit
+code 0. This is a dirty worktree run, not clean-HEAD or hosted CI evidence. E01-S02 remains
+`IN_PROGRESS`; E01-S01 remains `IN_REVIEW`, and owner USER acceptance, packaged SYSTEM,
+live provider/cross-OS credential qualification, physical capacity exhaustion, SP02, and
+cryptographic review remain pending.
+
+Resource check: one `main` worktree and 26 local branches at start/end; no temporary
+subagent worktree or agent-started test process remained. Free space moved from
+905,329,930,240 to 904,247,431,168 bytes. Shared Rust `target` grew from 6,523,184,602 to
+7,538,209,667 bytes (+1,015,025,065); Tauri `target` stayed 4,173,253,860 bytes, UI
+`dist` 993,835, `node_modules` 97,159,500, and `.pytest_cache` 9,360. The shared Cargo
+cache is retained for ongoing verification; no safe duplicate or temporary output was found.
+
+## 2026-10-16 — E02-S03 ACK v2 and SQLite v19 purge integrity CODE slice
+
+Kept the committed v16 Agent Registry DDL byte-for-byte unchanged. The ResourceIndex
+reservation registry/backfill is forward-only SQLite v19, after v17 Resource-content and
+v18 upload-chunk recovery. The v19 migration backfills shared existing snapshots and has
+atomic rollback/retry coverage. Purge ACK events now use
+`resource.context_document.purge.acknowledged.v2`: they carry the exact manifest/target
+digests and receipt identity without membership arrays, while complete revision and upload
+chunk membership remains in the sealed local plan and receipt. Historical v1 ACK payloads
+remain registered. Local Runtime identity fields are explicitly null and the ACK timestamp
+uses the fixed nanosecond UTC representation required by the event schema. This makes ACK
+payload membership-count-independent; the current contracts still define no maximum purge
+manifest cardinality or total reconciliation work, and there is no strict whole-event byte
+cap while Resource/envelope IDs retain their existing string contract.
+
+On Linux WSL2 x86_64 with Rust/Cargo `1.98.1`, the first post-v19 full storage run exposed
+one stale fixture expecting schema 18. The migration matrix and fixture now assert the
+actual v19 head. Focused v19 and upload-chunk migration cases passed, then the fresh complete
+storage suite passed **300/300** in `553.82s`. The complete serialized daemon binary suite
+passed **228/228**, with one manual OpenCode smoke ignored, in `153.95s`; the authenticated
+daemon purge test passed after formatting **1/1** and verifies graceful restart, exact
+unread-response replay, scheduled physical collection, registry cleanup, receipt and ACK
+event. The Rust ACK v2 tests passed **2/2**. `python3 -m pytest -q
+tests/test_context_document_purge_schema.py tests/test_coverage_sqlite_v19_mapping.py`
+passed **7/7**. Focused `rustfmt --check` passed for the isolated purge source and tests.
+
+Targeted strict Clippy passed with existing `too_many_arguments` and `dead_code` lints
+allowed. The first architecture validator run caught an invalid generated v2 sample time;
+the fixture now uses the schema's fixed timestamp shape and the rerun passed with **143
+typed events**. Final docs gates passed: contract audit **0 errors** (207 OpenAPI
+operations, 158 UI cases, 67 stories); Markdown audit **0 broken links** across 176 files;
+coverage **103 documents / 6,534 rows**; implementation plan passed; strict design-depth
+audit **0 blockers**; design-owner consistency **34 assertions / 0 issues**; and
+`git diff --check` passed.
+
+These are CODE and Unix daemon restart/replay results with real SQLite and the encrypted
+test FileBlobStore. They do not qualify abrupt power loss, packaged Tauri, production key
+provider, non-Linux OS, external Resource deletion, or owner USER acceptance. ResourceIndex
+objects with neither a v19 registry row nor a surviving index reference remain
+undiscoverable because BlobStore has no inventory API. E02-S03 remains `IN_PROGRESS`.
+
+## 2026-10-16 — E02-S03 purge integrity recheck and daemon restart evidence
+
+
+## 2026-10-16 — bounded WorkspaceRoot scan CODE slice and security hardening
+
+The Library now exposes an explicit metadata-only Scan folder action, wired through Tauri,
+the authenticated local Operator, SQLite and the Linux local filesystem adapter. The route
+rechecks Workspace ownership/status, active root/version, Runtime incarnation and current
+private local bindings before committing a count/status receipt. It is bounded to 1,000
+eligible entries, depth 32, 1 MiB aggregate relative locators and a cooperative 8-second
+deadline. Its response contains only scope IDs, version, counts, COMPLETE/PARTIAL, a fixed
+safe partial reason and completion time. It creates no membership, Resource, revision,
+freshness, index, event, watcher or deletion inference. macOS and Windows return unsupported.
+
+Two adversarial findings were fixed with regressions. The receipt idempotency payload now uses
+only caller-stable operation/Workspace/root/version fields, so exact retries resolve after a
+daemon process restart; Runtime identity remains a fence for a new commit. Candidate paths
+are resolved from the selected root with Linux `openat2` containment/no-symlink/no-magic-link/
+no-cross-mount flags. A deterministic descendant rename between parent verification and
+candidate open is rejected before the outside entry changes visible progress or is visited.
+
+On Linux 6.18.54.1 WSL2 x86_64, Rust/Cargo 1.98.1, Node 24.21.0, pnpm 12.10.1 and Chrome
+149.0.7827.200, focused CODE results are: scanner **23/23**, SQLite scan tests **5/5**,
+authenticated local route/IPC integration **1/1**, Tauri bridge **9/9**, UI helper **9/9**,
+and rendered Chrome scan scenarios **3/3**. TypeScript passed. The full commands and
+limitations are recorded in the [E02-S03 review packet](reviews/E02-S03.md#bounded-linux-workspaceroot-scan-summary-code--2026-10-16).
+These checks use in-process Operator routing, test IPC and fixture identity/key material;
+packaged Tauri plus spawned daemon, production key provider, non-Linux traversal, abrupt
+crash/power loss and owner USER acceptance remain pending.
+
+E02-S03 stays `IN_PROGRESS`; F28 is not complete. Durable root membership, root-aware search,
+content indexing, freshness reconciliation and watching are still absent. The next slice is
+contract promotion for bounded root observations/membership before implementing its storage or
+search behavior. No files, branches, worktrees or processes were created by agents for this
+slice. Checkpoint measurement: one `main` worktree, 26 local branches, 900,596,641,792 bytes
+free; root `target/` 8,074,393,803 bytes; Tauri `target/` 6,536,417,997 bytes; UI `dist/`
+1,000,914 bytes; UI `node_modules/` 100,066,382 bytes; `.pytest_cache` 9,360 bytes. Shared
+Cargo targets and owner caches are retained; there was no safe agent-created build duplicate
+to prune. Existing chrome-devtools MCP processes predate this slice and were left untouched.
+
+## 2026-10-16 — WorkspaceRoot scan worker and receipt-budget hardening
+
+The scan route now keeps directory reopen, raw/keyed identity checks, traversal, and final
+directory revalidation off the async Operator executor. A shared two-permit process-wide
+bound admits filesystem scan work; a full bound returns `503 SCAN_UNAVAILABLE` before
+filesystem I/O or receipt creation. The cooperative eight-second deadline starts before
+the blocking worker is scheduled. Individual kernel calls cannot be preempted; an active
+worker retains its permit until the call returns. The committed summary limit is now
+enforced by both domain and SQLite validation, aligned with the Linux scanner's 1,000-entry
+budget.
+
+Verification on Linux WSL2 x86_64, Rust/Cargo `1.98.1`, Node `24.21.0`, pnpm `12.10.1`,
+Chrome `149.0.7827.200`: daemon WorkspaceRoot-focused tests **8/8**; SQLite scan tests
+**6/6**; scanner tests **23/23**; Tauri bridge **9/9**; UI helpers **9/9**; TypeScript
+passed; rendered Chrome scan group **6/6**. The over-budget storage regression failed
+before the guard and then passed, with no receipt left behind. Strict documentation,
+architecture, design-depth, ownership and whitespace gates passed after the full contract
+update; exact outcomes are recorded in the verification checkpoint below.
+
+This remains CODE and test-IPC evidence. The executor unit test exercises the same blocking
+worker wrapper used by the route, not packaged Operator concurrency. The spawned-daemon
+scan restart/lost-ack subcase now passes; its limits are recorded below. Root membership and root-aware
+search still need contract promotion; no membership/search behavior was added. E02-S03 and
+F28 remain incomplete. The read-only audit of the 11 defects listed in the October 13
+reaudit found corresponding source regressions for all 11; their packaged/provider/OS and
+owner USER evidence remains pending, as do the broader E02-S03 acceptance gates.
+
+At the start of this follow-up, one `main` worktree and 26 local branches were present;
+900,854,628,352 bytes were free. Root `target/` measured 7,885,893,834 bytes, Tauri
+`target/` 6,536,417,997 bytes, UI `dist/` 1,000,914 bytes, UI `node_modules/` 100,066,382
+bytes, and `.pytest_cache` 9,360 bytes. End-of-slice measurements, process/worktree
+cleanup, and contract-gate results are recorded in the final verification checkpoint below.
+
+## 2026-10-16 — WorkspaceRoot scan restart replay and error mapping CODE follow-up
+
+The bounded scan receipt now has spawned-daemon replay evidence over authenticated framed
+Unix IPC. The test starts the real debug daemon child, creates an owner-scoped Workspace
+root through the private selection route, submits the scan while intentionally leaving the
+successful response unread, and observes one durable SQLite receipt. It gracefully stops
+the first process, starts the same Runtime with a fresh incarnation, then removes the
+selected directory before retry. The exact retry returns the byte-identical no-store
+summary without a second receipt or access to the unavailable selected path. This tests a
+clean daemon restart; it does not test abrupt process death, power loss, packaged Tauri,
+production identity/encryption providers, non-Linux behavior, or owner USER acceptance.
+
+Adversarial review found and corrected two error-classification failures: a Runtime
+incarnation fence conflict had been reported as a stale WorkspaceRoot version, and SQLite
+busy/locked had been reported as HTTP 500. Versioned conflicts remain `409
+STALE_WORKSPACE_VERSION`; an unversioned incarnation conflict is `503 RUNTIME_UNAVAILABLE`;
+transient storage busy is retryable `503 SCAN_UNAVAILABLE`. Required directory/mount
+identity verification failure and admission saturation also return `503 SCAN_UNAVAILABLE`
+without a durable scan receipt, with the docs distinguishing whether filesystem work began.
+The focused mapping regressions first reproduced the wrong codes and then passed.
+
+On Linux WSL2 x86_64, kernel `6.18.54.1-microsoft-standard-WSL2`, Rust/Cargo `1.98.1`,
+Node.js `24.21.0`, pnpm `12.10.1`, and Chrome `149.0.7827.200`:
+
+- `cargo test --locked -p litecoworkd --bin litecoworkd runtime::runtime_workspace_replay_process_tests::spawned_daemon_replays_workspace_root_scan_after_lost_ack_and_restart -- --exact --nocapture --test-threads=1` — **1/1 passed** on an independent lead rerun.
+- `cargo test --locked -p litecoworkd workspace_root_scan -- --nocapture --test-threads=1` — **5/5 passed**, including executor schedulability, Runtime-fence and version conflict mapping, database-busy mapping, and spawned-daemon receipt replay.
+- Scanner **23/23**, SQLite scan receipt **6/6**, Tauri bridge **9/9**, rendered Chrome scan group **6/6**, Node scan helpers **9/9**, and the complete UI helper suite **300/300** passed. `tsc --noEmit`, generated Operator API freshness, and scan-related whitespace checks passed.
+- The strict V1 contract audit passed with **0 errors** (208 OpenAPI operations, 158 UI cases, 67 stories); Markdown audit found **0 broken links** across 176 files; coverage regenerated to **103 documents / 6,542 rows**; plan validation passed; architecture validation passed with **143 typed events**; strict design-depth audit found **0 blockers**; design-owner consistency passed **34 assertions / 0 issues**; `git diff --check` passed.
+
+The process test initially exposed fixture defects: the local-enrollment response does not
+contain the Runtime incarnation, and deleting the selected folder before restart interfered
+with startup revalidation. The test now reads incarnation from readiness and removes the
+folder after the restarted Runtime is ready. A root-level `api:check` invocation failed
+because the script belongs to `apps/litecowork-ui`; the first UI-directory attempt used
+shell Node `22.23.1` and correctly failed the package engine check. Generation and
+freshness passed from the UI package with Node `24.21.0`.
+
+This closes the scan restart/replay CODE subcase only. F28, E02-S03, packaged SYSTEM,
+production key/provider and supported-OS qualification, and owner USER acceptance remain
+open. Root membership/search/freshness/watching remain unimplemented. End-of-slice disk,
+worktree, branch, process, and regenerable-output measurements are recorded after cleanup.
+
+## 2026-10-16 — truthful empty WorkspaceRoot scan announcement
+
+The scan summary now says “No files were observed in the scanned entries” when a completed
+bounded census observes zero files. “No files found” could be read as an exhaustive
+filesystem claim even though this operation is explicitly not an atomic snapshot. The
+announcement retains the number of folder entries examined and makes no indexing,
+deletion, or completeness claim beyond the receipt.
+
+Test-first verification from `apps/litecowork-ui`: the new wording assertion failed before
+the implementation change; `node --experimental-transform-types --test
+tests/workspace-root-scan.test.ts` then passed **9/9** under Node.js `24.21.0`. No packaged
+or browser test was needed for this helper-level copy correction. E02-S03 remains
+`IN_PROGRESS`.
+
+Resource/cleanup checkpoint after the slice: one `main` worktree, 26 local branches,
+`target/` 8,549,307,684 bytes, UI `dist/` 1,018,299 bytes, UI `node_modules/` 97,159,500
+bytes, and 899,697,438,720 bytes free. No slice worktree or branch was created. No
+test/browser/Vite/daemon process remains; three pre-existing `chrome-devtools-mcp` process
+trees were observed and left intact. The shared Cargo target and existing UI outputs/cache
+were retained; no duplicate regenerable output was found to remove.

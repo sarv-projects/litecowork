@@ -189,6 +189,38 @@ pub(crate) struct CodexProfileProbe {
     pub conversation_eligibility: ConversationEligibility,
 }
 
+/// Runtime offer axes: protocol compatibility describes the accepted
+/// App Server initialize handshake; readiness describes whether a new session
+/// could be admitted from the remaining bounded profile observations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RuntimeOfferAssessment {
+    pub compatible: bool,
+    pub readiness: &'static str,
+}
+
+pub(crate) fn codex_runtime_offer_assessment(probe: &CodexProfileProbe) -> RuntimeOfferAssessment {
+    let readiness = if !probe.host_process_stopped || probe.readiness == ProbeReadiness::Failed {
+        "UNAVAILABLE"
+    } else if probe.authentication == AuthenticationObservation::NeedsAuth {
+        "NEEDS_AUTH"
+    } else if probe.readiness == ProbeReadiness::Complete
+        && probe.authentication == AuthenticationObservation::Configured
+    {
+        "STARTABLE"
+    } else {
+        "UNAVAILABLE"
+    };
+
+    RuntimeOfferAssessment {
+        // The transport only reports Supported after validating the complete
+        // initialize response. It is protocol-compatibility evidence, not
+        // authentication, session, Conversation-safety, or process-readiness
+        // evidence. Admission separately requires a usable fresh readiness.
+        compatible: probe.protocol_initialize == Observation::Supported,
+        readiness,
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ListedModelOption {
     pub id: String,
@@ -279,10 +311,23 @@ pub(crate) fn probe_codex_profile(
                 result.protocol_initialize = Observation::Rejected;
                 fatal = Some(ProbeFailure::ProtocolRejected);
             }
-            Ok(_) => fatal = Some(ProbeFailure::ProtocolRejected),
-            Err(failure) => fatal = Some(failure),
+            Ok(_) => {
+                result.protocol_initialize = Observation::Rejected;
+                fatal = Some(ProbeFailure::ProtocolRejected);
+            }
+            Err(failure) => {
+                result.protocol_initialize = if failure == ProbeFailure::ProtocolRejected {
+                    Observation::Rejected
+                } else {
+                    Observation::Unknown
+                };
+                fatal = Some(failure);
+            }
         },
-        Err(_) => fatal = Some(ProbeFailure::ProtocolRejected),
+        Err(error) => {
+            result.protocol_initialize = Observation::Unknown;
+            fatal = Some(map_transport_failure(error));
+        }
     }
 
     if fatal.is_none() && Instant::now() < total_deadline {
@@ -601,5 +646,158 @@ mod conversation_safety_tests {
                 .contains(&"RESTRICTED_READ_ROOTS_NOT_QUALIFIED")
         );
         assert!(result.blockers.contains(&"NATIVE_MCP_TOOLS_NOT_DISABLED"));
+    }
+}
+
+#[cfg(test)]
+mod runtime_offer_assessment_tests {
+    use super::*;
+
+    fn complete_probe(authentication: AuthenticationObservation) -> CodexProfileProbe {
+        let mut probe = CodexProfileProbe::initial();
+        probe.readiness = ProbeReadiness::Complete;
+        probe.protocol_initialize = Observation::Supported;
+        probe.account_read = Observation::Supported;
+        probe.model_list = Observation::Supported;
+        probe.authentication = authentication;
+        probe.model_catalog = ModelCatalogObservation::Observed;
+        probe.host_process_stopped = true;
+        probe
+    }
+
+    #[test]
+    fn protocol_compatibility_is_independent_of_authentication_readiness() {
+        let probe = complete_probe(AuthenticationObservation::NeedsAuth);
+
+        let assessment = codex_runtime_offer_assessment(&probe);
+
+        assert!(assessment.compatible);
+        assert_eq!(assessment.readiness, "NEEDS_AUTH");
+        assert_eq!(probe.conversation_eligibility.status, "NOT_ELIGIBLE");
+    }
+
+    #[test]
+    fn general_offer_compatibility_does_not_imply_conversation_safety() {
+        let probe = complete_probe(AuthenticationObservation::Configured);
+
+        let assessment = codex_runtime_offer_assessment(&probe);
+
+        assert!(assessment.compatible);
+        assert_eq!(assessment.readiness, "STARTABLE");
+        assert_eq!(probe.conversation_eligibility.status, "NOT_ELIGIBLE");
+    }
+
+    #[test]
+    fn a_supported_protocol_with_unobserved_host_exit_stays_compatible_but_unavailable() {
+        let mut probe = complete_probe(AuthenticationObservation::Configured);
+        probe.host_process_stopped = false;
+        probe.readiness = ProbeReadiness::Partial;
+        probe.failure = Some(ProbeFailure::HostStopUnobserved);
+
+        let assessment = codex_runtime_offer_assessment(&probe);
+
+        assert!(assessment.compatible);
+        assert_eq!(assessment.readiness, "UNAVAILABLE");
+    }
+
+    #[test]
+    fn a_successful_handshake_does_not_make_an_incomplete_profile_ready() {
+        let mut probe = CodexProfileProbe::initial();
+        probe.protocol_initialize = Observation::Supported;
+        probe.readiness = ProbeReadiness::Partial;
+        probe.authentication = AuthenticationObservation::Configured;
+        probe.host_process_stopped = true;
+
+        let assessment = codex_runtime_offer_assessment(&probe);
+
+        assert!(assessment.compatible);
+        assert_eq!(assessment.readiness, "UNAVAILABLE");
+    }
+
+    #[test]
+    fn unproven_or_rejected_protocol_remains_incompatible_and_unavailable() {
+        for protocol_initialize in [
+            Observation::NotProbed,
+            Observation::Unknown,
+            Observation::Rejected,
+        ] {
+            let mut probe = complete_probe(AuthenticationObservation::Configured);
+            probe.protocol_initialize = protocol_initialize;
+            probe.readiness = ProbeReadiness::Failed;
+
+            let assessment = codex_runtime_offer_assessment(&probe);
+
+            assert!(!assessment.compatible, "{protocol_initialize:?}");
+            assert_eq!(
+                assessment.readiness, "UNAVAILABLE",
+                "{protocol_initialize:?}"
+            );
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod malformed_initialize_process_tests {
+    use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    #[test]
+    fn malformed_initialize_is_rejected_and_machine_local_values_stay_private() {
+        let directory = tempfile::tempdir().expect("create isolated Codex probe directory");
+        let codex_home = directory.path().join("private-codex-home");
+        fs::create_dir(&codex_home).expect("create isolated CODEX_HOME");
+        let requests = codex_home.join("requests.jsonl");
+        let executable = directory.path().join("codex");
+        fs::write(
+            &executable,
+            r##"#!/bin/sh
+IFS= read -r request || exit 2
+printf '%s\n' "$request" >> "$CODEX_HOME/requests.jsonl"
+printf '%s\n' '{"id":1,"result":{"codexHome":"/SENTINEL_LOCAL_CODEX_HOME","platformFamily":"unix","userAgent":"SENTINEL_LOCAL_USER_AGENT"}}'
+if IFS= read -r next; then printf '%s\n' "$next" >> "$CODEX_HOME/requests.jsonl"; fi
+"##,
+        )
+        .expect("write fake Codex App Server");
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+            .expect("make fake Codex App Server executable");
+
+        let probe = probe_codex_profile(
+            &executable,
+            directory.path(),
+            NativeEnvironment {
+                codex_home: Some(codex_home.into_os_string()),
+                path: std::env::var_os("PATH"),
+                ..NativeEnvironment::default()
+            },
+        );
+
+        assert_eq!(probe.protocol_initialize, Observation::Rejected);
+        assert_eq!(probe.failure, Some(ProbeFailure::ProtocolRejected));
+        assert_eq!(probe.readiness, ProbeReadiness::Failed);
+        assert!(probe.host_process_stopped);
+        assert_eq!(probe.account_read, Observation::NotProbed);
+        assert_eq!(probe.model_list, Observation::NotProbed);
+        assert_eq!(probe.session_start, Observation::NotProbed);
+        assert_eq!(probe.session_resume, Observation::NotProbed);
+        assert_eq!(probe.turn_control, Observation::NotProbed);
+        assert!(!probe.inference_access_verified);
+
+        let constraints = serde_json::to_value(&probe).expect("serialize sanitized constraints");
+        let constraints_json = constraints.to_string();
+        assert!(!constraints_json.contains("SENTINEL_LOCAL_CODEX_HOME"));
+        assert!(!constraints_json.contains("SENTINEL_LOCAL_USER_AGENT"));
+        assert!(!format!("{probe:?}").contains("SENTINEL_LOCAL_CODEX_HOME"));
+        assert!(!format!("{probe:?}").contains("SENTINEL_LOCAL_USER_AGENT"));
+
+        let requests = fs::read_to_string(requests).expect("read captured JSONL requests");
+        let requests = requests.lines().collect::<Vec<_>>();
+        assert_eq!(requests.len(), 1, "failed initialize admits no later RPC");
+        let initialize: Value = serde_json::from_str(requests[0]).expect("decode initialize");
+        assert_eq!(initialize["method"], "initialize");
+        assert!(!codex_runtime_offer_assessment(&probe).compatible);
+        assert_eq!(
+            codex_runtime_offer_assessment(&probe).readiness,
+            "UNAVAILABLE"
+        );
     }
 }

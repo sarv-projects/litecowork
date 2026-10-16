@@ -123,12 +123,28 @@ cursor is rejected. `resolved_at` is copied from its source when present and rem
 when the source did not record one.
 
 The desktop/local Operator serves this projection over authenticated local IPC, and the
-Needs You page reads it through the native Tauri bridge. The page is read-only: Task blockers
-open current Task detail, while Approval/UserRequest actions and details remain on their
-owning routes and are not connected in this desktop surface; the documented Approval and
-UserRequest action routes are not served by the local Operator yet. The projection does not
-create or resolve source records. Approval and UserRequest rows appear only when their
-canonical source records already exist in the local store.
+Needs You page reads it through the native Tauri bridge. The projection does not create or
+resolve source records. Approval and UserRequest rows appear only when their canonical
+source records already exist in the local store. Task blockers open current Task detail.
+UserRequest rows can open the exact read-only detail below. Approval details/actions and
+UserRequest response/dismissal actions remain on their owning surfaces; the documented
+action routes are not served by the local Operator yet.
+
+```text
+GET /v1/user-requests/{requestId}
+```
+
+This authenticated local read requires the selected Workspace owner. It returns the current
+persisted request status and a bounded, inert detail for the exact request in that
+Workspace. A missing request and a request in another Workspace both return the same
+`NOT_FOUND`; responses use `Cache-Control: no-store`. The response is bounded to 256 KiB
+of UTF-8 prompt bytes, 512 KiB of serialized choices, and 900 KiB encoded overall. It
+includes the safe prompt, choice IDs/labels/descriptions, scope, and lifecycle timestamps.
+It omits choice values, response schemas, resolved response data, native session/invocation
+handles, provider URLs, and Runtime-local `ProviderInputBinding` data. External authorization
+details state that the provider address is private. Opening the detail performs no answer,
+dismissal, Approval, Task, or Conversation mutation. The Needs You list remains a generic
+safe projection and does not return prompts, choices, or response schemas.
 
 ## Workspace-persistent Environments
 
@@ -260,7 +276,10 @@ create, list, and read persisted semantic messages; it does not expose message s
 as available until E03-S01 native session admission and E03-S02 turn execution are
 connected. An exact owner-scoped receipt replay is resolved before the active-Workspace
 check, so a lost-response retry still returns the committed Conversation after archival;
-a fresh create in an archived Workspace remains rejected.
+a fresh create in an archived Workspace remains rejected. A rejected create response in the
+4xx range has no committed Conversation, creation event, or receipt for that request; this
+lets a client clear only the rejected request identity while keeping transport and server
+errors retryable as ambiguous outcomes.
 
 `POST /v1/conversations/{id}/turns` accepts optional
 `presentation_preference: AUTO | SIMPLE | RICH`, default `AUTO`. The preference is pinned
@@ -1227,7 +1246,9 @@ with neither a registry row nor a surviving revision digest cannot be discovered
 purge path. This local command does not invalidate
 an already-fed native AgentSession or claim that its history can be recalled. The existing
 `GET /v1/resources/{resource_id}/context-document/deletion` route returns the current
-status/count projection without content or provider locators.
+status/count projection without content or provider locators. Successful deletion
+admission and status responses require `Cache-Control: no-store`; the desktop bridge
+rejects either response when that header is absent or has another value.
 
 The desktop Library offers **Save original…** only for catalog entries at or below the
 same 10 MiB bound. This is a native Tauri command, not a new logical Operator route: it
@@ -1274,7 +1295,16 @@ current revision/location and encrypted-blob digest before returning bytes as
 `application/octet-stream` with `no-store` and `nosniff`. The desktop text preview accepts
 only text-like media types and limits the response to 1 MiB; it does not render active HTML
 or execute imported content. The resumable upload contract is the normal desktop file
-intake path.
+intake path. For `POST /v1/resources/uploads/{id}/commit`, the required `Idempotency-Key`
+is the principal-scoped RequestId and the primary replay identity. Reusing that key for a
+different upload under the same principal returns `409 CONFLICT`; another principal may
+use the same key. The commit transaction stores the caller-key receipt with the
+deterministic `resource-upload-commit:{upload_id}` recovery receipt. If the caller key was
+lost, a new key can resolve the already committed session through that recovery receipt;
+the new key is stored as an alias and the original Resource response and correlation are
+returned without creating another Resource or event. Exact committed replay is checked
+before the archived-Workspace mutation gate. Both caller-key replay and deterministic
+receipt recovery remain available after archival; a fresh commit is still blocked.
 The current local catalog is keyset-paginated in descending `(created_at, resource_id)`
 order. `limit` defaults to 100 and must be between 1 and 100. `next_cursor` is opaque,
 Workspace-bound, and resumes strictly after the last returned row; a cursor from another
@@ -1356,6 +1386,7 @@ GET    /v1/workspace-roots?status=&cursor=&limit=  # limit 1..100, default 100
 POST   /v1/workspace-roots/{id}/pause
 POST   /v1/workspace-roots/{id}/resume
 POST   /v1/workspace-roots/{id}/revoke
+POST   /v1/workspace-roots/{id}/scan
 ```
 
 `POST /v1/resources/{resource_id}/text-index/rebuild` is an owner-triggered local
@@ -1449,11 +1480,70 @@ location availability are separate fields (for example, a `PAUSED` root may have
 Runtime-local locator binding. Pagination, Workspace-owner authorization, and the
 Operator's `no-store` response policy are unchanged.
 
+The list accepts optional `status`, opaque `cursor`, and `limit` values; `limit` ranges
+from 1 to 100 and defaults to 100. The response always includes `nextCursor`, set to `null`
+on the final page. Pause, resume, and revoke return a flattened WorkspaceRoot record with
+its last committed `location_availability`. Generic public root creation and policy update
+remain target contracts only; the desktop creates a root through the authenticated native
+folder-selection operation described below.
+
+`POST /v1/workspace-roots/{id}/scan` is an explicit, owner-triggered metadata census. It
+requires `X-Workspace-ID`, the current WorkspaceRoot version in `If-Match`, an
+`Idempotency-Key`, and exactly `{}` as its JSON body. The local Runtime reopens the saved
+private locator without following symlinks, verifies the current-incarnation raw binding
+and the Resource's keyed identity projection, then resolves each candidate from the
+selected root with Linux `openat2` flags `BENEATH`, `NO_SYMLINKS`, `NO_MAGICLINKS`, and
+`NO_XDEV`. This bounded operation considers at most 1,000 directory entries internally,
+including known private/generated names in its budget; those names are neither opened nor
+reported. `entries_examined` counts non-excluded in-root entries successfully opened with
+`O_PATH` and inspected, including directories, final-component symlink objects, regular
+files, and special entries such as FIFOs; it excludes the selected root. Final-component
+symlinks are inspected with `O_PATH | O_NOFOLLOW` and are never followed. `files_observed`
+counts only regular files, and only regular files reach the file visitor. Each excluded
+private/generated directory entry consumes one internal budget unit but adds nothing to
+either returned count. The limits are depth 32 and 1 MiB of aggregate relative locator
+bytes. A cooperative 8-second total deadline begins before scheduling filesystem work;
+traversal stops at 7 seconds to reserve the final second for the mandatory saved-root
+identity fence. At most two filesystem scan jobs
+run at a time. If both slots are occupied, the route returns `503 SCAN_UNAVAILABLE` before
+filesystem I/O and creates no receipt. It also returns `503 SCAN_UNAVAILABLE` without a
+receipt if required local directory or mount identity metadata cannot be safely verified
+during traversal. A Runtime-incarnation fence change returns `503 RUNTIME_UNAVAILABLE`
+without creating a receipt. Transient SQLite busy/locked errors also return
+`503 SCAN_UNAVAILABLE`; retry with the same key so an already committed receipt is replayed.
+If no receipt exists, current request preconditions are checked and a new bounded scan runs
+only if the root remains eligible. Filesystem work runs on a bounded blocking worker so a slow
+path does not block the async Operator executor; an individual kernel call cannot be
+preempted by the cooperative deadline. Its response is a durable,
+replayable summary containing
+Workspace/root/request IDs, the root version, counts, status, a safe partial reason, and
+completion time. It is returned with `Cache-Control: no-store`. No path, file name,
+identity, content, hash, Resource membership, search result, watcher state, or deletion
+inference is returned or persisted. Exact retries replay before filesystem I/O, including after a Runtime
+process restart; the idempotency payload contains only the operation, Workspace, root,
+and requested root version. Runtime identity remains a commit-time fence for new receipts.
+Key reuse with changed caller inputs conflicts. A PARTIAL result is retained as that
+request's result; a new key starts another bounded census. The scan is not an atomic
+filesystem snapshot, and its completion does not prove that no files were missed or
+removed. The local Runtime revalidates the selected directory after traversal; the final
+SQLite transaction rechecks Workspace ownership/status, root version/status, Runtime
+incarnation, and current local bindings. No Resource or domain event is written. A new
+scan attempt returns `SCAN_UNSUPPORTED_PLATFORM` on macOS and Windows until their
+metadata-only handle traversal is qualified; exact committed receipt replay is resolved
+before platform support is checked. This narrow route is a
+served summary only; the full F28 membership/index/search flow remains incomplete.
+
 The Operator API above is the logical root-management contract. The current desktop source
 implements owner-scoped listing, pause/resume/revoke on the authenticated local Operator;
 native folder creation uses a reserved Tauri-only IPC operation because a public request
 must not accept an absolute path or caller-asserted filesystem identity. General
 ResourceRef-based root creation and root-policy `PATCH` remain unimplemented.
+
+The native selection request carries the current Workspace version. SQLite checks an exact
+owner/request/payload receipt before checking that version or testing root overlap, so an
+exact retry can return its committed receipt after an unrelated Workspace edit. A fresh
+request with a stale version returns `409 STALE_WORKSPACE_VERSION`; the version compare and
+root commit remain serialized in one transaction.
 
 Root creation requires an explicit user grant naming one selected folder Resource and
 location. A one-time attachment does not create a WorkspaceRoot. `PATCH` is reserved for
@@ -1499,8 +1589,14 @@ ContextDocument state are rechecked after decryption. A bounded snippet may be r
 with `CONTENT_ON_DEMAND` or `CONTENT_INDEXED`, respectively. Content mode also retains
 explicit name/type matches and labels match reasons separately. The response's
 `content_scan` reports limits only for `ON_DEMAND_CONTENT`; it is null for indexed search.
-The cursor is bound to Workspace, query, mode and filters. A result is never an implicit
-Task/Agent context attachment. This is deterministic lexical retrieval, not semantic RAG.
+`INDEXED_CONTENT` reads at most 200 candidate snapshots and 64 MiB of verified snapshot
+bytes per request. If stale candidates or that budget prevent filling the page, the route
+may return fewer results, including an empty `items` array, with a progressing
+`next_cursor`. Every verified match through that internal scan frontier is returned in the
+same page; stale candidates are omitted. The cursor remains bound to Workspace, query,
+mode and filters. Pagination does not promise a cross-request snapshot while Resources
+change. A result is never an implicit Task/Agent context attachment. This is deterministic
+lexical retrieval, not semantic RAG.
 
 Every `ResourceSearchResult` carries a `PinnedResourceRef` and the exact
 `source_content_digest` of that revision. Its required `source_matches` array is empty
@@ -1532,9 +1628,12 @@ deletion writes a sealed, immutable local purge plan and tombstone in one transa
 blocks reads immediately. The deletion-status response exposes the manifest digest and
 required/acknowledged target counts, not provider locators. A registered Core-owned
 replica receipt must match its exact plan target and Runtime incarnation. An explicit empty
-manifest proves there were no content/index replicas to purge. The Resource becomes
-`DELETED` only after the acknowledged receipt set exactly equals the manifest. Historical
-Task/Evidence IDs and digests remain without content bytes.
+manifest proves there were no Resource, derived-index, or upload-chunk objects to purge. The
+Resource becomes `DELETED` only after the acknowledged receipt set exactly equals the
+manifest. Historical Task/Evidence IDs and digests remain without content bytes. The
+planned E13-S01 V1 backup contract must preserve pending purge plans/receipts; backup is
+not yet claimed as implemented. Cross-Runtime replication is post-V1, and current purge
+event payloads alone cannot reconstruct a plan with unacknowledged targets.
 
 An unknown, cross-Resource, or duplicated parent revision is malformed input and returns
 `RESOURCE_REVISION_PARENT_MISMATCH`; a valid but stale parent-head set or Resource version

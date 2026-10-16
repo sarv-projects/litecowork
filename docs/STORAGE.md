@@ -522,24 +522,36 @@ Resource upload chunks are stored as authenticated encrypted BlobStore objects u
 separate `RESOURCE_UPLOAD_CHUNK` purpose. SQLite stores only their digest, byte range,
 index, and opaque content-addressed reference. A durable blob reservation is committed
 before each BlobStore put, then consumed atomically with its chunk receipt. This makes a
-crash between blob write and receipt discoverable after the upload session expires. The
-bounded collector claims only expired reservations with no accepted chunk reference and
-no live reservation for the same `(WorkspaceId, digest)`. A durable GC fence blocks new
-reservations while the exact encrypted object is removed; only then are reservation and
-fence rows cleared. A crash after claiming leaves a `DELETING` reservation/fence for the
-next daemon incarnation to retry. The collector is serialized by the single-instance local
-daemon lifecycle and processes at most 100 objects per 30-second sweep. Within that daemon,
-a weakly registered per-`(WorkspaceId, digest)` mutex spans each chunk's reservation, blob
-write/readback, and receipt transaction, and spans each collector's blob removal and fence
-release. If a collector claims an expired reservation while its writer is already in flight,
-the durable fence makes receipt commit fail; the writer releases the mutex before the collector
-removes the object and clears the fence. The lock registry is shared by store clones and drops
-idle digest entries. Shared digests with any accepted chunk reference are retained. A Resource
-commit transaction inserts the
+crash between blob write and receipt discoverable after recovery. The bounded collector
+claims expired reservations only when no accepted chunk reference or `RESERVED` reference
+belongs to an `OPEN` or `CONTENT_RECEIVED` session. It also retries `DELETING` rows and
+reclaims unreferenced `TRACKED` objects once every owning session is terminal. A reservation
+timestamp alone never makes an active session safe to collect: the Runtime first commits the
+session's expiry transition, and a failed transition leaves active references protected. A
+durable GC fence blocks new reservations and chunk acceptance while the exact encrypted
+object is removed; only then are reservation, registry, and fence rows cleared. A crash after
+claiming leaves the `DELETING` registry row and fence for the next daemon incarnation to
+retry. The collector processes at most 100 objects per 30-second sweep. Within one process,
+weakly registered per-`(canonical database path, WorkspaceId, digest)` mutexes span each
+chunk's reservation, blob write/readback, and receipt transaction, and each collector's blob
+removal and fence release; an upload-session read/write lease coordinates PUT, commit, and
+expiry while digest locks are discovered. The lock registries are shared by store clones and
+separately opened handles for the same database, and drop idle entries. `litecoworkd` remains
+the cross-process database owner. If a collector claims an expired reservation while its
+writer is already in flight, the durable fence makes receipt commit fail; the writer releases
+the locks before the collector removes the object and clears the fence. Concurrent sweep
+retries are idempotent. Shared digests with any accepted chunk reference remain rooted while
+its owning session is active. A Resource commit transaction inserts the
 Resource/revision/location/event and commit receipt while transitioning its upload session
 to `COMMITTED`; it never exposes temporary chunk bytes through catalog or Task APIs. This
-collector only reclaims unreferenced upload-chunk objects; it does not garbage-collect
-committed chunk data or general Resource/Artifact blobs.
+transaction stores both the caller's principal-scoped RequestId receipt and a deterministic
+`resource-upload-commit:{upload_id}` receipt. The caller receipt is the primary idempotency
+identity; the deterministic receipt lets a fresh caller key recover the exact committed
+response after the original key is lost. A caller key reused for another upload under that
+principal conflicts, and a recovery alias is committed atomically with its receipt. This
+upload collector only reclaims unreferenced upload-chunk objects; the separate
+ResourceIndex and Resource-content collectors are described above. None of these collectors
+removes Resource or ResourceIndex projections or Artifact content.
 routines
 routine_revisions
 automations
@@ -726,7 +738,9 @@ belong to its Workspace; it records semantic trace ResourceRefs, never raw crede
 values or unbounded screen recordings in relational rows
 AgentHarnessDescriptor and QuotaObservation are time-bounded observations; only non-secret descriptor digests may be pinned to AgentSession/event history, and provider-private handles are excluded from backup/replication
 WorkerPerformance, GoalProgress, TaskProgress, RoutineHealth, and Coworker presence are rebuildable projections, not canonical backup aggregates
-ContextDocuments are versioned Resources and follow the Workspace Resource backup/replication policy; provider embeddings/indexes are rebuildable and never authoritative
+ContextDocuments are versioned Resources and follow the Workspace Resource backup policy;
+desktop V1 is `LOCAL_ONLY`, and cross-Runtime replication is post-V1. Provider
+embeddings/indexes are rebuildable and never authoritative
 Coworker revisions may name only same-Workspace enabled worker profiles and an enabled,
 lead-eligible default binding at revision creation; future disablement is rechecked at
 admission
@@ -901,8 +915,10 @@ This prevents Rust `u64` precision from silently changing in JSON digests.
 Before each domain-event transaction, the writer serializes and commits the canonical
 post-transition aggregate record as an `AggregateStateRef` blob. The database transaction
 then writes the event, state reference, and aggregate projection together. If the database
-transaction fails, the unreferenced state blob is eligible for garbage collection after
-the normal safety window. Replication authenticates and persists the event envelope before
+transaction fails, the immutable state blob can remain unreferenced. BlobStore currently has
+no inventory operation and there is no AggregateState registry-backed collector, so automatic
+reclamation is not guaranteed; bytes must be retained unless a future collector proves their
+references under a durable deletion fence. Replication authenticates and persists the event envelope before
 advancing the Workspace-scoped receipt cursor. A missing allowed state blob keeps aggregate
 application pending but does not block receipt of unrelated later events. A
 policy-disallowed event is represented only by an authenticated, payload-free omission
@@ -936,18 +952,31 @@ SQLite database. It excludes pairing challenges, Environment provision previews,
 observations, AgentEndpoint bindings, Agent/Capability host instances and bindings,
 CapabilityInvocation provider bindings, ProviderInputBindings, AutomationTriggerBindings,
 Environment provider bindings, Environment checkpoint provider bindings,
-ResourceLocation/FileIdentity bindings, transient
-upload chunks, active leases, and
-other Runtime-local process/provider handles. It includes durable Environment and
-checkpoint metadata only. Portable checkpoint blobs are selected only if both the
+ResourceLocation/FileIdentity bindings, transient upload chunk bytes, active resumable
+uploads, active leases, and other Runtime-local process/provider handles. It includes
+durable Environment and checkpoint metadata only. Portable checkpoint blobs are selected only if both the
 Environment's `INCLUDE_CHECKPOINTS` policy and Workspace replication policy permit them.
-ContextDocument tombstones, sealed purge target manifests, and acknowledgement receipts
-are durable Resource recovery state and remain in backups. Content blobs whose purge was
-acknowledged are not reintroduced by restore; their Resource/revision identities and
-digests remain for historical Task/Evidence provenance.
+For desktop V1, E13-S01's required backup/restore contract includes ContextDocument
+tombstones, the exact sealed purge target manifests, and per-target acknowledgement states
+as durable Resource recovery state. When deletion expired a linked revision upload, retain
+its session/chunk identity, range/digest, and request-ledger metadata as non-resumable audit
+state so the `UPLOAD_CHUNK` targets can be reconciled; do not restore temporary chunk bytes
+as resumable content. A restored Runtime resumes reconciliation and may acknowledge a target
+only after proving that the exact object is absent and the corresponding local registry
+state is safely resolved. Content blobs whose purge was acknowledged are never reintroduced
+by restore; their Resource/revision identities and digests remain for historical Task/Evidence
+provenance. This is a required contract, not evidence that backup/restore is implemented;
+E13-S01 owns its implementation and qualification.
 Restore registers a new Runtime identity and incarnation, drops all old local bindings,
 and requires provider reattachment before an Environment can be used.
-Backups are separate from Runtime Mesh replication and are not a substitute for it.
+Desktop V1 Workspaces are `LOCAL_ONLY`; cross-Runtime Mesh replication is a future
+requirement and is not enabled by this backup contract. Current purge status events carry
+the manifest digest/count and acknowledgement events carry only completed targets, so the
+event stream alone cannot reconstruct a plan with unacknowledged targets. Before a future
+Mesh path is enabled, its transfer contract must carry the exact purge manifest and
+per-target receipt state (or an equivalent reconstructible record); local SQL recovery rows
+are not themselves replicated. Backups are separate from Runtime Mesh replication and are
+not a substitute for it.
 Backup manifests are control-plane recovery metadata stored with their backup target; they
 are not replicated Workspace DomainEvents. Create/restore request deduplication and the
 corresponding AuditRecord are retained. The database snapshot excludes the manifest row
@@ -992,8 +1021,13 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
 
 - monotonically numbered schema migrations.
 - each applied migration records a SHA-256 checksum of its exact embedded SQL bytes and
-  a fingerprint of all non-internal `sqlite_master` schema objects; reopening refuses a
-  changed migration checksum or missing/changed schema object.
+  the schema-object fingerprint at that migration boundary. Reopening verifies every
+  recorded migration name/source checksum and compares the active schema version's
+  fingerprint with the current non-internal `sqlite_master` objects; historical
+  fingerprints are retained because later migrations intentionally add schema objects.
+  The current schema version is 19, so the v19 fingerprint is checked against the full
+  current schema. Missing migration records, changed source checksums, or changed current
+  schema fail closed.
 - a clean install applies migration 1, writes its migration row, and advances
   `PRAGMA user_version` in one transaction. A crash leaves either the old schema/version
   or the complete new schema/version.
@@ -1059,6 +1093,22 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   only; creation and dispatch remain closed until a
   single admission transaction can recheck the live owner/lease and grant, record the Trust
   decision and any required ApprovalUse, transition the Invocation, and start/link its Effect.
+- migration 16 adds the local Agent Registry/control projection tables specified by
+  `AGENT-CONTROL.md`. They remain installation-local operational state and do not establish
+  provider discovery, installation, authentication, or session support.
+- migration 17 registers managed Resource content write intents before BlobStore
+  publication, backfills every immutable revision reachable from a local managed location,
+  and guards managed locations and Resource revision/head writes against unregistered
+  content. Its registry is local recovery metadata; the bounded daemon collector fences and
+  removes only an exact object with no local revision roots.
+- migration 18 registers accepted and in-flight ResourceUpload chunk objects, including the
+  BlobStore publication to receipt-acceptance crash window. Its bounded collector retains a
+  durable deletion fence through exact object removal and preserves upload ledger history.
+- migration 19 adds the ResourceIndex snapshot registry and atomically backfills references
+  still present in `resource_text_indexes`. It guards projection writes against missing,
+  size-mismatched, and `DELETING` snapshots; pre-v19 objects without a surviving index
+  reference remain undiscoverable. Reopening verifies the v19 migration source checksum and
+  compares its stored schema fingerprint with the full current schema.
 
 ### Routine and trigger Workspace integrity
 

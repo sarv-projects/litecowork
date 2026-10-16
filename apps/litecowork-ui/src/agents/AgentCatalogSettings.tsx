@@ -5,6 +5,7 @@ import {
 } from "../coworkers/delegation-profile-api";
 import { desktopDelegationProfileCatalogApi } from "../coworkers/desktop-delegation-profile-api";
 import { scheduleOfferExpiryRefresh } from "./agent-offer-expiry";
+import { AGENT_CANDIDATES } from "./agent-candidate-catalog";
 import "./agent-catalog-settings.css";
 
 export type AgentInstallation = {
@@ -397,6 +398,16 @@ function capabilitySummary(profile: AgentProfile): string[] {
   return [...values];
 }
 
+function candidateInstallationStatus(candidate: typeof AGENT_CANDIDATES[number], installations: AgentInstallation[]): string {
+  if (!candidate.installationAgentId) return "Not checked by the current inventory";
+  const installation = installations.find((entry) => entry.agentId === candidate.installationAgentId);
+  if (!installation) return "Not checked by the current inventory";
+  if (installation.installation === "INSTALLED") {
+    return installation.version ? `Installed · ${installation.version}` : "Installed · version unavailable";
+  }
+  return humanize(installation.installation);
+}
+
 export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
   const {
     workspaceId, workspaceName, workspaceActive, runtimeReady, runtimeEnrolled,
@@ -569,13 +580,52 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
       <div className="agent-catalog__explanation" role="note">
         <strong>Three separate states</strong>
         <ol>
-          <li><b>Installed</b> means a local executable returned a recognized version.</li>
+          <li><b>Installed</b> means a local executable has a recognized version from bounded inventory evidence.</li>
           <li><b>Profile observed</b> means an adapter reported protocol and expiring Runtime readiness.</li>
           <li><b>Workspace binding</b> records whether LiteCowork may use it and whether it is lead-eligible.</li>
         </ol>
+        <p>Cline inventory may use its matching nearest npm package manifest or a bounded CLI version response. Neither source proves sign-in, session readiness, or agent support.</p>
         <p>None of these starts a Task. Lead eligibility is not worker-profile enablement, and enabling a binding only permits future admission.</p>
         <p className="agent-catalog__authoring-status"><strong>Worker profiles can be saved, but cannot be enabled for execution.</strong> Create a disabled profile for an enabled Workspace binding and revise its instructions. Model/session options stay empty until an adapter negotiates and validates them. Trust admission, isolated execution, Task delegation, and worker runs remain unavailable.</p>
       </div>
+
+      <section className="agent-catalog__section" aria-labelledby="agent-candidates-title">
+        <div className="agent-catalog__section-heading">
+          <div><h3 id="agent-candidates-title">Agent candidates</h3><p>15 curated local-agent candidates for planned support. This list is built into LiteCowork, not loaded from the ACP Registry.</p></div>
+          <span className="agent-catalog__count" aria-label="15 curated candidates">{AGENT_CANDIDATES.length}</span>
+        </div>
+        <div className="agent-catalog__registry-state" role="note">
+          <strong>ACP Registry data is not connected</strong>
+          <span>No live or cached Registry results are loaded. Candidate presence does not mean the agent is installed, configured, or supported.</span>
+        </div>
+        <p className="agent-catalog__footnote">Codex and OpenCode have bounded profile-probe implementations. A profile is marked observed only when this Workspace has a recorded probe observation; that history is separate from the latest offer’s readiness and expiry. The other candidates have no LiteCowork profile probe yet. No candidate has an implemented, qualified session module.</p>
+        <ul className="agent-catalog__candidates" aria-label="Curated agent candidates">
+          {AGENT_CANDIDATES.map((candidate) => {
+            const observed = candidate.profileProviderKey !== null
+              && profiles.some((profile) => profile.providerKey === candidate.profileProviderKey
+                && profile.observations.length > 0);
+            const profileStatus = candidate.profileProviderKey === null
+              ? "Profile probe not implemented"
+              : observed ? "Observation history recorded in this Workspace" : "No observation recorded in this Workspace";
+            return <li key={candidate.id} data-agent-candidate-id={candidate.id} data-catalog-stage={candidate.catalogStage}>
+              <div className="agent-catalog__candidate-heading">
+                <strong>{candidate.displayName}</strong>
+                <span className={`agent-catalog__badge ${candidate.catalogStage === "PROFILE_PROBE_IMPLEMENTED" ? "is-caution" : "is-muted"}`}>
+                  {candidate.catalogStage === "PROFILE_PROBE_IMPLEMENTED" ? "Profile probe implemented" : "Candidate only"}
+                </span>
+              </div>
+              <span className="agent-catalog__candidate-path">{candidate.candidatePath}</span>
+              <dl className="agent-catalog__candidate-states">
+                <div><dt>Installation</dt><dd>{candidateInstallationStatus(candidate, installations)}</dd></div>
+                <div><dt>Workspace profile</dt><dd>{profileStatus}</dd></div>
+                <div><dt>Session module</dt><dd>Not implemented</dd></div>
+                <div><dt>Session handshake</dt><dd>Not tested</dd></div>
+                <div><dt>Qualified support</dt><dd>Not qualified</dd></div>
+              </dl>
+            </li>;
+          })}
+        </ul>
+      </section>
 
       {!hasWorkspace && <p className="agent-catalog__notice">Select a Workspace to inspect its profiles and bindings.</p>}
       {hasWorkspace && (!runtimeEnrolled || !runtimeReady) && <p className="agent-catalog__notice" role="status">
@@ -591,10 +641,10 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
 
       <section className="agent-catalog__section" aria-labelledby="agent-installed-title">
         <div className="agent-catalog__section-heading">
-          <div><h3 id="agent-installed-title">Installed on this computer</h3><p>Inventory is local and does not prove sign-in, model access, or a usable session.</p></div>
+          <div><h3 id="agent-installed-title">Local installation inventory</h3><p>Rows may be missing or have unavailable versions. Inventory does not prove sign-in, model access, a usable session, or qualified support.</p></div>
           <span className="agent-catalog__count">{installations.length}</span>
         </div>
-        {installations.length === 0 ? <p className="agent-catalog__empty">No supported coding-agent executable was detected by the current inventory provider.</p> : (
+        {installations.length === 0 ? <p className="agent-catalog__empty">No known executable was detected by the current inventory provider.</p> : (
           <ul className="agent-catalog__installations">
             {installations.map((installation) => (
               <li key={installation.agentId}>

@@ -104,8 +104,10 @@ their availability must be revalidated after restore. There is exactly one curso
 origin Runtime. `integrity_digest` is SHA-256 over the RFC 8785 canonical manifest fields
 excluding `integrity_digest` and `manifest_authentication`; the provider-generated
 `manifest_authentication` authenticates those fields, including the digest, under the
-referenced key. Stored BlobRef digests cover the encrypted bytes; `blob_manifest_digest`
-covers the canonical decrypted blob-list bytes.
+referenced key. The `BlobRef` digests and sizes follow the storage provider's content
+identity contract; for LiteCowork's managed BlobStore they describe verified plaintext
+bytes while encryption metadata remains provider-side. `blob_manifest_digest` covers the
+canonical decrypted blob-list bytes.
 
 ## Conversation
 
@@ -608,10 +610,12 @@ Runtime advertised inventory is maintained separately as offers so it can expire
 
 For `OPENCODE_SERVER`, the expiring offer constraints may contain only the bounded
 `OpenCodeProfileProbeConstraints` projection defined in `SCHEMAS.md`: provider/model IDs
-and display names plus OpenCode-reported connected-provider IDs. These are display-only
-observations. The offer remains `compatible=false` and cannot admit an AgentBinding while
-session-model selection and execution lifecycle remain unqualified. Native provider/model
-objects and credentials are never persisted in offer constraints.
+and display names. `reported_provider_status=OBSERVED` means the catalog route returned a
+valid response; it does not report provider connection or authentication. The transitional
+`reported_connected_provider_ids` fields are always empty/false in the current adapter.
+These are display-only observations. The offer remains `compatible=false` and cannot admit
+an AgentBinding while session-model selection and execution lifecycle remain unqualified.
+Native provider/model objects and credentials are never persisted in offer constraints.
 
 ```text
 RuntimeOffer {

@@ -13,7 +13,9 @@ from pathlib import Path
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parent.parent
+# Local owner/agent planning artifacts are not first-party product documentation.
 SKIP = {".git", "node_modules", "target", ".venv", ".pytest_cache", ".agent-worktrees",
+        ".superpowers", "superpowers",
         "archive_code", "archives_docs", "ARCHIVE", "archives",
         ".code-intelligence", ".playwright-mcp", "dist", "build", "coverage", ".next"}
 EXCLUDED = {
@@ -80,8 +82,12 @@ def emit(records, broken):
     target.mkdir(exist_ok=True)
     csv_path = target / "V1-MARKDOWN-INVENTORY.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as output:
-        writer = csv.DictWriter(output, fieldnames=list(records[0]) if records else
-                                ["file", "lines", "bytes", "sha256", "categories", "has_heading"])
+        writer = csv.DictWriter(
+            output,
+            fieldnames=list(records[0]) if records else
+            ["file", "lines", "bytes", "sha256", "categories", "has_heading"],
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(records)
     total_lines = sum(row["lines"] for row in records)

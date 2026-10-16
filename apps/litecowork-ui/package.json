@@ -15,7 +15,7 @@
     "build:daemon-sidecar": "node scripts/build-daemon-sidecar.mjs",
     "api:generate": "pnpm run check:node && node scripts/generate-operator-api-types.mjs",
     "api:check": "pnpm run check:node && node scripts/generate-operator-api-types.mjs --check",
-    "test": "pnpm run check:node && node --experimental-transform-types --test \"tests/*.test.ts\" \"tests/*.test.mjs\"",
+    "test": "pnpm run check:node && node --experimental-transform-types --test --test-concurrency=1 \"tests/*.test.ts\" \"tests/*.test.mjs\"",
     "test:browser": "pnpm run check:node && node scripts/check-rendered-ui.mjs",
     "preview": "pnpm run check:node && vite preview --host 127.0.0.1",
     "tauri": "pnpm run check:node && node scripts/run-tauri.mjs"

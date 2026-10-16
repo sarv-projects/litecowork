@@ -1,5 +1,5 @@
 use super::*;
-use operator_ipc::{ResponseFrame, ResponseHeader, unix::UnixEndpoint};
+use operator_ipc::{unix::UnixEndpoint, ResponseFrame, ResponseHeader};
 use std::{
     os::unix::fs::{DirBuilderExt, MetadataExt},
     sync::{Arc, Mutex},

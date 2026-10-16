@@ -2282,7 +2282,7 @@ export type paths = {
             cookie?: never;
         };
         get?: never;
-        /** @description Content-Range uses inclusive HTTP byte offsets. For fixed chunk_size_bytes, chunkIndex n covers [n*chunk_size_bytes, min((n+1)*chunk_size_bytes, size)-1]. Overlap or a different replay for an accepted chunk index is rejected. */
+        /** @description Content-Range uses inclusive HTTP byte offsets. For fixed chunk_size_bytes, chunkIndex n covers [n*chunk_size_bytes, min((n+1)*chunk_size_bytes, size)-1]. Overlap or a different replay for an accepted chunk index is rejected. Exact retries remain idempotent after ordinary TTL expiry or Workspace archival, but are rejected for a revision upload expired by ContextDocument deletion while that Resource is DELETION_PENDING or DELETED. */
         put: operations["uploadResourceChunk"];
         post?: never;
         delete?: never;
@@ -2300,6 +2300,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
+        /** @description Requires the caller Idempotency-Key as the principal-scoped primary RequestId. Exact replay of the same upload returns the original response; reuse for a different upload under the same principal returns CONFLICT. The commit transaction also stores a deterministic resource-upload-commit:{upload_id} recovery receipt. If the caller key is lost, a new key resolves that committed receipt, is persisted as an alias, and returns the original response without another Resource or event. Caller-key replay and deterministic-receipt recovery are resolved before the archived-Workspace mutation gate; fresh commits remain blocked after archival. */
         post: operations["commitResourceUpload"];
         delete?: never;
         options?: never;
@@ -2455,6 +2456,7 @@ export type paths = {
         };
         get: operations["listWorkspaceRoots"];
         put?: never;
+        /** @description Target-only generic create operation. The served desktop flow creates a persistent folder root through authenticated local folder selection; no public Operator POST handler is mounted at this path. */
         post: operations["addWorkspaceRoot"];
         delete?: never;
         options?: never;
@@ -2475,6 +2477,7 @@ export type paths = {
         delete?: never;
         options?: never;
         head?: never;
+        /** @description Target-only generic policy-update operation. No public Operator PATCH handler is mounted at this path. */
         patch: operations["updateWorkspaceRoot"];
         trace?: never;
     };
@@ -2528,6 +2531,26 @@ export type paths = {
         get?: never;
         put?: never;
         post: operations["revokeWorkspaceRoot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workspace-roots/{rootId}/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan a persistent Workspace folder for a bounded metadata summary
+         * @description Served authenticated local Operator operation for the selected Workspace owner. If-Match supplies the expected WorkspaceRoot version as a plain decimal integer; the current parser also accepts a quoted decimal. This Linux-only summary slice revalidates Workspace ownership/status, WorkspaceRoot status/version, current Runtime incarnation, and local binding records in the final SQLite transaction. The local Runtime revalidates the selected directory after traversal. A request scans metadata only, with maximum traversal depth 32, 1,000 internally budgeted directory entries (known private/generated names consume budget but are neither opened nor reported), and 1 MiB aggregate relative locators. Its cooperative 8-second total deadline starts before the blocking worker is scheduled; traversal stops at 7 seconds to reserve the final second for the mandatory saved-root identity fence. At most two filesystem scan jobs run concurrently. Admission saturation returns 503 SCAN_UNAVAILABLE before filesystem I/O and creates no receipt. Failure to verify required local directory or mount identity metadata returns the same status/code after filesystem work starts and creates no receipt. A Runtime-incarnation fence change returns 503 RUNTIME_UNAVAILABLE without creating a receipt. Transient SQLite busy/locked errors return 503 SCAN_UNAVAILABLE; retry with the same idempotency key so an already committed receipt is replayed. If no receipt exists, current request preconditions are checked and a new bounded scan runs only if the root remains eligible. Filesystem operations run on a bounded blocking worker; an individual kernel call cannot be preempted by the cooperative deadline. Linux candidate paths are opened relative to the selected directory with beneath-root, no-symlink, no-magic-link, and no-cross-mount resolution. The returned entries_examined count includes each non-excluded in-root entry opened with O_PATH and inspected, including directories, final-component symlink objects, regular files, and special entries such as FIFOs; it excludes the selected root and excluded private/generated names. Final-component symlink objects are inspected with O_PATH | O_NOFOLLOW and are never followed. files_observed counts only regular files, and only regular files reach the file visitor. Excluded private/generated names are not opened or reported, but each name consumes one internal directory-entry budget unit. The scan does not read file contents, compute hashes, create index or membership records, search, watch for changes, or infer deletion from missing entries or an incomplete traversal. The response contains Workspace/root/request IDs, requested root version, status, counts, safe partial reason, and completion time; it never contains filesystem paths, file or directory names, filesystem identities, file contents, or membership. Successful responses use Cache-Control: no-store. Exact replay returns the same committed safe summary before filesystem I/O, including after a daemon process restart. The idempotency payload is operation, Workspace ID, root ID, and requested root version; current Runtime identity is a commit-time fence for a new receipt and is not part of caller idempotency identity. Reuse of an Idempotency-Key with changed caller inputs conflicts. A PARTIAL result is final for that key; an explicit retry must use a new key. A new scan attempt on macOS or Windows returns 501 until qualified; an exact committed receipt is replayed before platform support is checked.
+         */
+        post: operations["scanWorkspaceRoot"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2767,6 +2790,7 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
+        /** @description Authenticated read-only detail for an exact UserRequest in the selected owned Workspace. Missing and foreign-Workspace requests are indistinguishable. The response is no-store and excludes response schemas, provider URLs, ProviderInputBindings, native session handles, and response records. Prompt UTF-8 bytes are capped at 262144, serialized choices at 524288 UTF-8 bytes, and the encoded response at 921600 bytes. Opening this route never answers or dismisses the request. */
         get: operations["getUserRequest"];
         put?: never;
         post?: never;
@@ -4423,7 +4447,6 @@ export type components = {
             manifest_digest: string | null;
             required_replica_count: number;
             acknowledged_replica_count: number;
-            pending_provider_sources: string[];
             /** Format: date-time */
             updated_at: string;
         };
@@ -5515,16 +5538,37 @@ export type components = {
             replication_policy?: "NONE" | "ACTIVE_TASKS" | "SELECTED_WORKSPACE_POLICY";
         };
         WorkspaceRootPage: {
-            items: components["schemas"]["WorkspaceRootListItem"][];
-            next_cursor?: string | null;
+            items: components["schemas"]["WorkspaceRootView"][];
+            nextCursor: string | null;
         };
-        WorkspaceRootListItem: components["schemas"]["WorkspaceRoot"] & {
+        WorkspaceRootView: components["schemas"]["WorkspaceRoot"] & {
             /**
              * @description Last committed ResourceLocation observation; not a live Runtime probe.
              * @enum {string}
              */
             location_availability: "AVAILABLE" | "OFFLINE" | "PLACEHOLDER" | "REVOKED" | "UNKNOWN" | "UNAVAILABLE";
         };
+        /** @description Exactly an empty JSON object; scan inputs are carried only by the path and required headers. */
+        WorkspaceRootScanRequest: Record<string, never>;
+        WorkspaceRootScanSummary: {
+            workspace_id: string;
+            workspace_root_id: string;
+            request_id: string;
+            root_version: number;
+            /** @enum {string} */
+            status: "COMPLETE" | "PARTIAL";
+            /** @description Non-excluded in-root entries opened with O_PATH and inspected, including directories, final-component symlink objects, regular files, and special entries such as FIFOs. Excludes the selected root. Excluded private/generated names are omitted from this count but consume one internal budget unit each. */
+            entries_examined: number;
+            /** @description Count of regular files only; directories, symlink objects, and special entries do not contribute. */
+            files_observed: number;
+            /**
+             * @description Null for COMPLETE; PARTIAL requires one of the bounded scanner reason codes.
+             * @enum {string|null}
+             */
+            partial_reason: null | "TIME_LIMIT_REACHED" | "SCAN_BUDGET_REACHED" | "ENTRY_CHANGED_OR_UNREADABLE" | "MOUNT_BOUNDARY_REACHED";
+            /** Format: date-time */
+            completed_at: string;
+        } & (unknown & unknown);
         ResourceSearchResult: {
             resource_ref: components["schemas"]["PinnedResourceRef"];
             /** @description Digest of the exact immutable ResourceRevision named by resource_ref.revision_id; source_matches offsets are valid only against these bytes. */
@@ -5545,6 +5589,7 @@ export type components = {
             start_utf8_byte: number;
             end_utf8_byte_exclusive: number;
         };
+        /** @description A keyset page of Workspace-scoped Resource matches. Indexed search is bounded to 200 candidate snapshots and 64 MiB of verified snapshot bytes per request; stale candidates or this budget may produce a short or empty items array with a progressing filter-bound next_cursor. Pagination does not promise a cross-request snapshot while Resources change. */
         ResourceSearchPage: {
             items: components["schemas"]["ResourceSearchResult"][];
             next_cursor?: string | null;
@@ -5636,6 +5681,48 @@ export type components = {
             task_id: string;
             attempt_id: string;
         });
+        UserRequestDetailScope: {
+            /** @constant */
+            kind: "CONVERSATION";
+            conversation_id: string;
+            conversation_turn_id: string;
+        } | {
+            /** @constant */
+            kind: "TASK_PLANNING";
+            task_id: string;
+        } | {
+            /** @constant */
+            kind: "ATTEMPT_EXECUTION";
+            task_id: string;
+            attempt_id: string;
+        };
+        UserRequestDetailChoice: {
+            choice_id: string;
+            label: string;
+            description: string | null;
+        };
+        UserRequestDetail: {
+            request_id: string;
+            workspace_id: string;
+            scope: components["schemas"]["UserRequestDetailScope"];
+            /** @enum {string} */
+            kind: "QUESTION" | "DECISION" | "RESOURCE_SELECTION" | "EXTERNAL_AUTHORIZATION";
+            /** @enum {string} */
+            interaction_mode: "FORM" | "EXTERNAL_URL";
+            /** @description UTF-8 prompt budget is at most 262144 bytes. */
+            prompt: string;
+            /** @description Serialized choices JSON is bounded to 524288 UTF-8 bytes. */
+            choices: components["schemas"]["UserRequestDetailChoice"][];
+            /** @enum {string} */
+            status: "PENDING" | "ANSWERED" | "DISMISSED" | "EXPIRED" | "CANCELLED";
+            version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string | null;
+            /** Format: date-time */
+            resolved_at: string | null;
+        };
         UserRequestPage: {
             items: components["schemas"]["UserRequest"][];
             next_cursor?: string | null;
@@ -6471,8 +6558,10 @@ export type components = {
     };
     parameters: {
         WorkspaceId: string;
+        /** @description Selected Workspace scope for this authenticated operation. */
+        WorkspaceContextHeader: string;
         IdempotencyKey: string;
-        /** @description Expected aggregate version for optimistic concurrency. */
+        /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
         IfMatch: string;
         Cursor: string;
         Limit: number;
@@ -6711,7 +6800,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -6846,7 +6935,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -6877,7 +6966,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -6953,7 +7042,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -6980,7 +7069,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7243,7 +7332,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7271,7 +7360,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7374,7 +7463,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7473,7 +7562,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7504,7 +7593,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7535,7 +7624,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7562,7 +7651,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7593,7 +7682,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7620,7 +7709,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7675,7 +7764,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7729,7 +7818,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -7936,7 +8025,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -8040,7 +8129,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -8144,7 +8233,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -8171,7 +8260,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -8322,7 +8411,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -8405,7 +8494,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -8506,7 +8595,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -8546,7 +8635,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -8637,7 +8726,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -8664,7 +8753,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -8691,7 +8780,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -8739,7 +8828,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path?: never;
@@ -8867,7 +8956,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9001,7 +9090,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Explicit owner-triggered, bounded local adapter observation. Each request performs a new probe and records a refreshed expiring Runtime offer; it is not an idempotent domain mutation. Requires the selected Workspace owner and an active local RuntimeWorkspaceBinding. Codex and OpenCode are accepted. OpenCode currently accepts only qualified CLI 2.0.26 and reads /api/provider plus /api/model; it returns bounded sanitized catalog IDs and display names, never native provider/model objects, options, headers, keys, URLs, raw responses, or location paths. Catalog provider IDs are not connected-provider or authentication evidence. Unsupported versions fail closed without route fallback. OpenCode session-model selection is NOT_QUALIFIED and its offer is always incompatible, so the profile cannot be bound or enabled. Raw native messages, endpoint locators, account identifiers, and private configuration are omitted. */
+            /** @description Explicit owner-triggered, bounded local adapter observation. Each request performs a new probe and records a refreshed expiring Runtime offer; it is not an idempotent domain mutation. Requires the selected Workspace owner and an active local RuntimeWorkspaceBinding. Codex and OpenCode are accepted. OpenCode accepts only the exactly qualified CLI versions 2.0.26 and 2.0.28 and reads /api/provider plus /api/model. Version 2.0.26 readiness uses /api/health with healthy=true and username litecowork; version 2.0.28 uses /api/info with exact version and owned child PID matching, and username opencode. It returns bounded sanitized catalog IDs and display names, never native provider/model objects, options, headers, keys, URLs, raw responses, or location paths. Catalog provider IDs are not connected-provider or authentication evidence. Unsupported versions fail closed without route fallback. OpenCode session-model selection is NOT_QUALIFIED and its offer is always incompatible, so the profile cannot be bound or enabled. Raw native messages, endpoint locators, account identifiers, and private configuration are omitted. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9213,7 +9302,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9244,7 +9333,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9271,7 +9360,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9443,7 +9532,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9525,7 +9614,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9556,7 +9645,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9709,7 +9798,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9740,7 +9829,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9771,7 +9860,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9878,7 +9967,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9909,7 +9998,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9967,7 +10056,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -9998,7 +10087,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10038,7 +10127,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10092,7 +10181,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10151,7 +10240,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10178,7 +10267,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10205,7 +10294,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10232,7 +10321,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10307,7 +10396,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10382,7 +10471,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10413,7 +10502,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10440,7 +10529,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10841,7 +10930,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -10871,7 +10960,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -10909,9 +10998,10 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Current deletion/tombstone projection with manifest digest and target counts only; content, storage locators, and provider results are never included. */
+            /** @description Current deletion/tombstone projection with manifest digest and target counts only; content, storage locators, and provider results are never included. The response is no-store. */
             200: {
                 headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
@@ -10925,7 +11015,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -10943,6 +11033,7 @@ export interface operations {
             /** @description The local purge plan and DELETION_PENDING tombstone are committed; poll the status projection until every target is acknowledged. */
             202: {
                 headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
@@ -11089,8 +11180,10 @@ export interface operations {
     listWorkspaceRoots: {
         parameters: {
             query?: {
-                status?: string;
+                status?: "ACTIVE" | "PAUSED" | "REVOKED" | "UNAVAILABLE";
                 cursor?: components["parameters"]["Cursor"];
+                /** @description Page size from 1 to 100; defaults to 100. */
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -11098,7 +11191,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Owner-scoped persistent roots with last committed ResourceLocation availability (not a live Runtime probe); response is no-store and includes no private locator or identity binding. */
+            /** @description Owner-scoped persistent roots with last committed ResourceLocation availability (not a live Runtime probe); response is no-store and includes no private locator or identity binding. The cursor is scoped to this Workspace and status filter and is returned as nextCursor. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -11141,7 +11234,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -11172,7 +11265,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -11183,13 +11276,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description WorkspaceRoot paused */
+            /** @description WorkspaceRoot paused. The response flattens the WorkspaceRoot record together with its last committed location_availability. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkspaceRoot"];
+                    "application/json": components["schemas"]["WorkspaceRootView"];
                 };
             };
             default: components["responses"]["Error"];
@@ -11199,7 +11292,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -11210,13 +11303,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description WorkspaceRoot resumed after fresh directory identity validation and current-incarnation binding refresh */
+            /** @description WorkspaceRoot resumed after fresh directory identity validation and current-incarnation binding refresh. The response flattens the WorkspaceRoot record together with its last committed location_availability. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkspaceRoot"];
+                    "application/json": components["schemas"]["WorkspaceRootView"];
                 };
             };
             default: components["responses"]["Error"];
@@ -11226,7 +11319,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
             };
@@ -11237,13 +11330,65 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description WorkspaceRoot permanently revoked */
+            /** @description WorkspaceRoot permanently revoked. The response flattens the WorkspaceRoot record together with its last committed location_availability. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkspaceRoot"];
+                    "application/json": components["schemas"]["WorkspaceRootView"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    scanWorkspaceRoot: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Selected Workspace scope for this authenticated operation. */
+                "X-Workspace-ID": components["parameters"]["WorkspaceContextHeader"];
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
+                "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                rootId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceRootScanRequest"];
+            };
+        };
+        responses: {
+            /** @description Committed bounded scan summary for this WorkspaceRoot version. COMPLETE has a null partial_reason; PARTIAL has one of TIME_LIMIT_REACHED, SCAN_BUDGET_REACHED, ENTRY_CHANGED_OR_UNREADABLE, or MOUNT_BOUNDARY_REACHED. */
+            200: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRootScanSummary"];
+                };
+            };
+            /** @description A new scan attempt is unsupported on this platform until qualified. Exact committed receipt replay is resolved before platform support is checked. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            /** @description Admission saturation returns before filesystem I/O and creates no receipt; required directory/mount identity verification failure returns after filesystem work starts but creates no receipt; a Runtime-incarnation fence change returns RUNTIME_UNAVAILABLE without creating a receipt; transient SQLite busy/locked errors are retryable with the same key, which replays an existing committed receipt or rechecks current preconditions before scanning if none exists. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
                 };
             };
             default: components["responses"]["Error"];
@@ -11279,7 +11424,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -11309,7 +11454,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -11423,7 +11568,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -11560,7 +11705,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -11588,7 +11733,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -11616,7 +11761,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -11648,7 +11793,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -11710,7 +11855,10 @@ export interface operations {
     getUserRequest: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Selected Workspace scope for this authenticated operation. */
+                "X-Workspace-ID": components["parameters"]["WorkspaceContextHeader"];
+            };
             path: {
                 requestId: string;
             };
@@ -11718,13 +11866,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Structured request and current status */
+            /** @description Safe structured request detail and current status */
             200: {
                 headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UserRequest"];
+                    "application/json": components["schemas"]["UserRequestDetail"];
                 };
             };
             default: components["responses"]["Error"];
@@ -11735,7 +11884,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -11808,7 +11957,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -11891,7 +12040,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {
@@ -11918,7 +12067,7 @@ export interface operations {
             query?: never;
             header: {
                 "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-                /** @description Expected aggregate version for optimistic concurrency. */
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
                 "If-Match": components["parameters"]["IfMatch"];
             };
             path: {

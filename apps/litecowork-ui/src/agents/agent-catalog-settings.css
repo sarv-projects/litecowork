@@ -13,6 +13,18 @@
 .agent-catalog__explanation ol { display: grid; gap: 5px; margin: 9px 0; padding-left: 20px; }
 .agent-catalog__explanation p { margin: 0; color: var(--color-text-subtle); }
 .agent-catalog__installations, .agent-catalog__bindings { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.agent-catalog__registry-state { display: grid; gap: 3px; padding: 10px 12px; border-left: 3px solid var(--color-border-strong, #c8ccd4); background: var(--color-surface-muted, #f7f8fa); font-size: 11px; line-height: 1.45; }
+.agent-catalog__registry-state > span { color: var(--color-text-subtle); }
+.agent-catalog__candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin: 0; padding: 0; list-style: none; }
+.agent-catalog__candidates > li { display: grid; align-content: start; gap: 5px; min-width: 0; padding: 12px 2px; border-bottom: 1px solid var(--color-border); }
+.agent-catalog__candidate-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.agent-catalog__candidate-heading > strong { font-size: 12px; }
+.agent-catalog__candidate-heading .agent-catalog__badge { min-height: 20px; padding: 2px 7px; font-size: 9px; }
+.agent-catalog__candidate-path { color: var(--color-text-subtle); font-size: 10px; line-height: 1.4; }
+.agent-catalog__candidate-states { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 12px; margin: 3px 0 0; }
+.agent-catalog__candidate-states > div { min-width: 0; }
+.agent-catalog__candidate-states dt { color: var(--color-text-subtle); font-size: 9px; }
+.agent-catalog__candidate-states dd { overflow-wrap: anywhere; margin: 1px 0 0; font-size: 10px; }
 .agent-catalog__installations > li, .agent-catalog__bindings > li { align-items: flex-start; padding: 12px; border: 1px solid var(--color-border); border-radius: 8px; }
 .agent-catalog__installations > li > div:first-child, .agent-catalog__inventory-state, .agent-catalog__binding-copy { display: grid; gap: 4px; }
 .agent-catalog__installations span, .agent-catalog__binding-copy span, .agent-catalog__binding-copy small, .agent-catalog__inventory-state small { color: var(--color-text-subtle); font-size: 11px; }
@@ -105,6 +117,7 @@
 .agent-catalog__safety span { color: var(--color-text-subtle); }
 @media (max-width: 700px) {
   .agent-catalog__header, .agent-catalog__probe-row, .agent-catalog__installations > li, .agent-catalog__bindings > li, .agent-catalog__worker-profiles > li, .agent-catalog__worker-create { align-items: flex-start; flex-direction: column; }
+  .agent-catalog__candidates { grid-template-columns: 1fr; }
   .agent-catalog__profile-top { flex-direction: column; }
   .agent-catalog__profile-status { justify-content: flex-start; max-width: 100%; }
   .agent-catalog__inventory-state { justify-items: start; }

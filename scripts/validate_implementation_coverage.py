@@ -42,19 +42,18 @@ def canonical_digest(value: object) -> str:
 
 
 def api_documented_routes(api_text: str) -> set[tuple[str, str]]:
-    """Return served routes and explicitly labeled target-only OpenAPI operations."""
+    """Return served routes plus explicitly labeled target-only OpenAPI operations."""
     route_pattern = r"(GET|POST|PUT|PATCH|DELETE)\s+(/v1/[^\s]+)"
-    route_key = lambda method, route: (
-        method.upper(),
-        re.sub(r"\{[^}]+\}", "{}", route.split("?", 1)[0].removeprefix("/v1")),
-    )
     routes = {
-        route_key(method, route)
+        (method.upper(), re.sub(r"\{[^}]+\}", "{}", route.split("?", 1)[0].removeprefix("/v1")))
         for method, route in re.findall(rf"^\s*{route_pattern}", api_text, re.M)
     }
     target_only_pattern = rf"^\s*#\s*Target only operation:\s*{route_pattern}"
     routes.update(
-        route_key(method, route)
+        (
+            method.upper(),
+            re.sub(r"\{[^}]+\}", "{}", route.split("?", 1)[0].removeprefix("/v1")),
+        )
         for method, route in re.findall(target_only_pattern, api_text, re.M)
     )
     return routes
@@ -143,7 +142,14 @@ def schema_docs() -> list[str]:
         path
         for path in tracked
         if not path.startswith(
-            ("implementation/", "archive_code/", "archives_docs/", "ARCHIVE/", "archives/")
+            (
+                "implementation/",
+                "docs/superpowers/plans/",
+                "archive_code/",
+                "archives_docs/",
+                "ARCHIVE/",
+                "archives/",
+            )
         )
     )
 

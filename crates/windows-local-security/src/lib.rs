@@ -45,6 +45,17 @@ pub fn connect_operator_pipe(
     win32::connect_operator_pipe(name)
 }
 
+/// Atomically replaces `destination` with a source file using Windows
+/// write-through move semantics. The caller must flush the source file first.
+/// Source and destination must be on the same volume.
+#[cfg(windows)]
+pub fn replace_file_write_through(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> io::Result<()> {
+    win32::replace_file_write_through(source, destination)
+}
+
 #[cfg(any(windows, test))]
 fn parse_canonical_sid(value: &str) -> Option<(u64, Vec<u32>)> {
     let mut parts = value.split('-');
@@ -115,6 +126,8 @@ mod win32 {
     use std::{
         io,
         mem::{offset_of, size_of},
+        os::windows::ffi::OsStrExt,
+        path::Path,
         ptr, slice,
     };
 
@@ -133,6 +146,7 @@ mod win32 {
             GetTokenInformation, SECURITY_ATTRIBUTES, SID_AND_ATTRIBUTES, TOKEN_GROUPS,
             TOKEN_QUERY, TokenLogonSid,
         },
+        Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW},
         System::Threading::{GetCurrentProcess, OpenProcessToken},
     };
 
@@ -166,6 +180,38 @@ mod win32 {
 
     fn redacted_error() -> io::Error {
         io::Error::other("Windows local operator security operation failed")
+    }
+
+    pub(super) fn replace_file_write_through(source: &Path, destination: &Path) -> io::Result<()> {
+        let source = path_to_windows_string(source)?;
+        let destination = path_to_windows_string(destination)?;
+        // SAFETY: Both input buffers are owned, NUL-terminated UTF-16 strings
+        // that remain alive for the synchronous MoveFileExW call. The flags
+        // request same-volume replacement with write-through; COPY_ALLOWED is
+        // deliberately omitted so a non-atomic copy/delete fallback cannot run.
+        let result = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if result == 0 {
+            return Err(redacted_error());
+        }
+        Ok(())
+    }
+
+    fn path_to_windows_string(path: &Path) -> io::Result<Vec<u16>> {
+        let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+        if wide.contains(&0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Windows filesystem path is invalid",
+            ));
+        }
+        wide.push(0);
+        Ok(wide)
     }
 
     pub(super) fn current_logon_sid() -> io::Result<LogonSid> {
@@ -420,5 +466,69 @@ mod tests {
     #[test]
     fn operator_pipe_instance_limit_matches_shared_admission_contract() {
         assert_eq!(super::OPERATOR_PIPE_MAX_INSTANCES, 8);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_through_file_replace_creates_and_replaces_with_the_exact_bytes() {
+        use std::{
+            fs,
+            sync::atomic::{AtomicU64, Ordering},
+        };
+
+        static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+        let directory = std::env::temp_dir().join(format!(
+            "litecowork-durable-replace-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).expect("create unique temporary directory");
+        let destination = directory.join("pending.json");
+        let first_source = directory.join("first.tmp");
+        fs::write(&first_source, b"first generation").expect("write first source");
+        super::replace_file_write_through(&first_source, &destination)
+            .expect("publish first generation");
+        assert_eq!(
+            fs::read(&destination).expect("read first generation"),
+            b"first generation"
+        );
+
+        let second_source = directory.join("second.tmp");
+        fs::write(&second_source, b"second generation").expect("write second source");
+        super::replace_file_write_through(&second_source, &destination)
+            .expect("replace generation");
+        assert_eq!(
+            fs::read(&destination).expect("read replacement"),
+            b"second generation"
+        );
+        fs::remove_dir_all(directory).expect("remove temporary directory");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn write_through_file_replace_failure_preserves_the_existing_destination() {
+        use std::{
+            fs,
+            sync::atomic::{AtomicU64, Ordering},
+        };
+
+        static SEQUENCE: AtomicU64 = AtomicU64::new(1);
+        let directory = std::env::temp_dir().join(format!(
+            "litecowork-durable-replace-failure-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&directory).expect("create unique temporary directory");
+        let destination = directory.join("pending.json");
+        let missing_source = directory.join("missing.tmp");
+        fs::write(&destination, b"previous generation").expect("write existing generation");
+
+        assert!(super::replace_file_write_through(&missing_source, &destination).is_err());
+        assert_eq!(
+            fs::read(&destination).expect("existing generation remains readable"),
+            b"previous generation"
+        );
+
+        fs::remove_dir_all(directory).expect("remove temporary directory");
     }
 }
