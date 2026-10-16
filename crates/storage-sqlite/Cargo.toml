@@ -33,7 +33,7 @@ serde_json_canonicalizer = "0.3.2"
 sha2 = "0.10"
 storage-core = { path = "../storage-core" }
 tempfile = "3.20"
-time = { version = "0.3", default-features = false, features = ["std", "parsing"] }
+time = { version = "0.3", default-features = false, features = ["std", "parsing", "formatting"] }
 zeroize = "1.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]

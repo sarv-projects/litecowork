@@ -293,6 +293,15 @@ def check_event_contract() -> None:
         if not payload:
             continue
         payload_value = sample(payload)
+        if event == "resource.context_document.purge.acknowledged.v1":
+            # The historical v1 contract covers only BLOB/DERIVED_INDEX targets.
+            payload_value["replica_kind"] = "BLOB"
+            payload_value["target_revision_ids"] = ["revision-sample"]
+        if event == "resource.context_document.purge.acknowledged.v2":
+            payload_value["replica_kind"] = "BLOB"
+            payload_value["runtime_id"] = None
+            payload_value["runtime_incarnation_id"] = None
+            payload_value["acknowledged_at"] = "2026-01-01T00:00:00.000000000Z"
         if event.startswith("agent.session."):
             if payload_value.get("scope", {}).get("kind") == "CONVERSATION":
                 payload_value["scope"]["conversation_turn_id"] = "turn-sample"
@@ -3224,8 +3233,13 @@ def check_vnext_responsibility_contract() -> None:
             fail(f"SQLite missing ContextDocument deletion guard {guard}")
     if "context_document_purge_plan_shape_guard" not in sql:
         fail("SQLite ContextDocument purge plans must reject duplicate/malformed targets")
-    if "resource_context_document_purge_acknowledged" not in payloads or "resource.context_document.purge.acknowledged.v1" not in registry:
-        fail("ContextDocument purge acknowledgement must be a typed event")
+    if (
+        "resource_context_document_purge_acknowledged" not in payloads
+        or "resource.context_document.purge.acknowledged.v1" not in registry
+        or "resource_context_document_purge_acknowledged_v2" not in payloads
+        or "resource.context_document.purge.acknowledged.v2" not in registry
+    ):
+        fail("ContextDocument purge v1 and v2 acknowledgement events must be typed")
 
     capture_props = api_schemas.get("DemonstrationCapturePolicy", {}).get("properties", {})
     if not {"max_duration_ms", "max_actions", "max_trace_bytes", "allowed_environment_class", "sensitive_region_policy"} <= set(capture_props):

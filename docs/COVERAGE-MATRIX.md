@@ -79,7 +79,7 @@ decision.
 | Durable event envelope, registry, evolution | [`EVENTS.md`](EVENTS.md), `schemas/domain-event.schema.json` |
 | Operator, Mesh, Agent, Capability, Environment boundaries | [`PROTOCOLS.md`](PROTOCOLS.md) |
 | User-facing request/response API | [`API.md`](API.md), `schemas/operator-api.openapi.yaml` |
-| Transactions, tables, migrations, blobs | [`STORAGE.md`](STORAGE.md), consolidated `schemas/sqlite-v1.sql`, and ordered migrations through `schemas/sqlite-v16.sql` |
+| Transactions, tables, migrations, blobs | [`STORAGE.md`](STORAGE.md), consolidated `schemas/sqlite-v1.sql`, and ordered migrations through `schemas/sqlite-v19.sql` |
 | Workspace backup manifests, encryption references, and restore behavior | [`DATA-MODEL.md`](DATA-MODEL.md), [`STORAGE.md`](STORAGE.md), [`RUNTIME-MESH.md`](RUNTIME-MESH.md), [`FLOWS.md`](FLOWS.md), [`API.md`](API.md) |
 | Actor-by-actor end-to-end sequences | [`FLOWS.md`](FLOWS.md) |
 | Failure matrix, retry, reconcile, failover | [`FAILURE-RECOVERY.md`](FAILURE-RECOVERY.md) |

@@ -11,7 +11,7 @@ The index lets placement and agents answer deterministic questions without askin
 to rediscover local facts or spending tokens. Web research, embeddings, semantic RAG,
 OCR-heavy interpretation, and domain-specific search remain capabilities. `DATA-MODEL.md`
 owns the canonical record fields; `API.md`, `STATE-MACHINES.md`, `EVENTS.md`, and
-`schemas/sqlite-v1.sql` carry their transport and persistence forms.
+`schemas/sqlite-v19.sql` carries the current persistence form.
 
 ## Identity and location
 
@@ -269,14 +269,48 @@ the verified bytes for that revision. The shared Resource content-read admission
 rejects non-`ACTIVE` ContextDocuments before BlobStore access. A read admitted while
 `ACTIVE` may finish after a concurrent status change, but the rebuild's final transaction
 rechecks status and the exact source pin and will not publish that prepared projection.
-Old revision projections are excluded from current-resource search and are
-removed with their ResourceRevision or through the registered derived-index purge target.
-Root revocation removes the root from future observation/search; it does not silently
-purge separately uploaded Resource content. ContextDocument revocation immediately
-excludes its rows from indexed search. Physical deletion of the encrypted index snapshot
-is not yet wired to the Resource/ContextDocument purge worker; until that integration
-exists, the purge plan must account for `RESOURCE_INDEX` blobs and term rows before
-claiming `DELETED`.
+Old revision projections are excluded from current-resource search. The local
+ContextDocument purge flow removes that Resource's term/projection rows and records exact
+replica targets before those references can release an encrypted snapshot. Root revocation removes the root from future
+observation/search; it does not silently purge separately uploaded Resource content.
+ContextDocument revocation immediately excludes its rows from indexed search. Migration
+v19's local registry and bounded collector recover ResourceIndex snapshots left after a
+failed projection commit and remove registered snapshots after all revision references are
+gone. Migration v17 separately registers managed Resource content before publication and
+recovers failed or interrupted Resource writes; its bounded collector removes registered
+content only after every immutable revision reference through a local managed location is
+gone. Migration v18 registers accepted and in-flight ResourceUpload chunk objects, including
+the crash window between BlobStore publication and receipt acceptance, and adds exact chunk
+targets to the ContextDocument purge manifest. The v18 collector removes those targets only
+behind its durable deletion fence. All three registries are local recovery metadata, excluded
+from backup and replication. The collectors do not purge Resource/ContextDocument rows or
+decide when `DELETED` is valid;
+the owning purge flow must remove its SQL references before the corresponding objects
+become collectible. Pre-v19 ResourceIndex objects without a surviving
+`resource_text_indexes` reference and pre-v17 Resource content objects without a surviving
+Resource revision remain undiscoverable because BlobStore has no inventory operation.
+
+ContextDocument deletion owns the SQL-reference removal that makes those snapshots
+collectible. Before creating a tombstone, the local owner command verifies every exact
+revision has only local managed content locations; an external/provider-backed location
+fails closed until a qualified adapter exists. For an accepted Resource, the sealed plan
+has one target per unique content digest and kind (`BLOB`, `DERIVED_INDEX`, or `UPLOAD_CHUNK`),
+covering the exact revisions or upload-chunk ledger rows that use it. Upload-chunk targets
+include every still-registered object linked to the Resource, including accepted chunks and
+outstanding reservations; a linked `OPEN` or `CONTENT_RECEIVED` session is expired in the
+same transaction. Terminal linked sessions remain terminal and unchanged, while any chunk
+object still present in the v18 registry remains a purge target. The same SQLite transaction
+commits the plan, pending receipts,
+`DELETION_PENDING` event/snapshot, idempotency replay response, and removal of this
+Resource's managed content location and all ResourceIndex projection/term rows. If another
+Resource in the Workspace still roots a digest, its target stays pending. The v19 ResourceIndex,
+v17 Resource-content, or v18 upload-chunk collector's durable `DELETING` fence remains through
+exact physical removal; only after the object is gone and its registry row durably cleared
+does the reconciler record the target receipt/event. Failed or ambiguous removal remains
+pending for restart retry. A
+verified empty plan can complete only after local inventory verification. This purge does
+not invalidate a native AgentSession that already received the document or claim its
+history can be recalled.
 
 The earlier `ON_DEMAND_CONTENT` mode remains a bounded compatibility path, not the
 persistent index. It scans at most 20 candidates, 1 MiB per Resource and 8 MiB total per

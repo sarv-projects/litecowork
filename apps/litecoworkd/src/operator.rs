@@ -27,11 +27,11 @@ use domain_task::{CreateStandaloneTask, PreparePlanningAssignment, ReviseTaskSpe
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use domain_workspace::AddWorkspaceRoot;
 use domain_workspace::{
-    ArchiveWorkspace, ChangeReplicationPolicy, ChangeWorkspaceRootStatus,
-    CreateResourceRevisionUploadSession, CreateResourceUploadSession, CreateWorkspace,
-    CreateWorkspaceInstructionRevision, EventContext, ResourceService, ResourceUploadService,
-    SetContextDocumentStatus as SetContextDocumentStatusCommand, SetWorkspaceDefaultAgentBinding,
-    WorkspaceRootService, WorkspaceService,
+    ArchiveWorkspace, BeginContextDocumentPurge, ChangeReplicationPolicy,
+    ChangeWorkspaceRootStatus, CreateResourceRevisionUploadSession, CreateResourceUploadSession,
+    CreateWorkspace, CreateWorkspaceInstructionRevision, EventContext, ResourceService,
+    ResourceUploadService, SetContextDocumentStatus as SetContextDocumentStatusCommand,
+    SetWorkspaceDefaultAgentBinding, WorkspaceRootService, WorkspaceService,
 };
 use http_body::Body as HttpBody;
 #[cfg(unix)]
@@ -66,7 +66,7 @@ use std::{
 use storage_core::{
     AgentBindingCreateRequest, AgentBindingDisableRequest, AgentBindingEnableRequest,
     AgentBindingRecord, AgentCatalogStore, AgentEndpointRecord, AgentProfileRecord,
-    AgentProfileViewRecord, ContextDocumentOwnerStatus,
+    AgentProfileViewRecord, ContextDocumentOwnerStatus, ContextDocumentStatusEventContext,
     FolderImportMetadata, IdempotentWorkspaceStore, LocalAgentEndpointBindingInput,
     LocalRuntimeWorkspaceBindingLookup, LocalRuntimeWorkspaceEnrollmentRequest, ReplicationPolicy,
     ResourceRecord, ResourceRevisionRecord, ResourceSearchRecord, ResourceStore, ResourceSummary,
@@ -1532,6 +1532,12 @@ fn build_operator_router(state: ApiState) -> Router {
             "/v1/resources/{resource_id}/context-document/status",
             axum::routing::patch(set_context_document_status),
         )
+        .route(
+            "/v1/resources/{resource_id}/context-document/deletion",
+            post(begin_context_document_deletion)
+                .get(get_context_document_deletion)
+                .layer(DefaultBodyLimit::max(1024)),
+        )
         .route("/v1/resources/{resource_id}", get(get_resource_detail))
         .route("/v1/resources/search", get(search_resources))
         .route("/v1/resources", get(list_resources))
@@ -2918,6 +2924,158 @@ async fn set_context_document_status(
     Ok(response)
 }
 
+/// Owner admission seals the local target manifest and stores its exact replay response.
+async fn begin_context_document_deletion(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(resource_id): Path<String>,
+    body: Bytes,
+) -> Result<Response, Response> {
+    let workspace_id = selected_workspace(&headers)?;
+    ensure_workspace_owner(&state, &workspace_id)?;
+    let expected_version = parse_if_match(&headers)?;
+    let request_id = idempotency_key(&headers)?;
+    if headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        != Some("application/json")
+    {
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "ContextDocument deletion requires application/json",
+        ));
+    }
+    let request: Value = serde_json::from_slice(&body).map_err(|_| {
+        operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "ContextDocument deletion request must be an empty JSON object",
+        )
+    })?;
+    if !request.as_object().is_some_and(serde_json::Map::is_empty) {
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "ContextDocument deletion request must be an empty JSON object",
+        ));
+    }
+    let correlation_id = new_id("cor").map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "ContextDocument deletion could not be initialized",
+        )
+    })?;
+    let event = event_context(&state.runtime_id, &correlation_id).map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "ContextDocument deletion could not be initialized",
+        )
+    })?;
+    let command = BeginContextDocumentPurge {
+        workspace_id,
+        resource_id,
+        principal_id: state.principal_id.clone(),
+        request_id,
+        expected_version,
+        event,
+    };
+    let store = state.store.clone();
+    let committed = tokio::task::spawn_blocking(move || {
+        ResourceService::new(store).begin_context_document_purge(command)
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "ContextDocument deletion did not complete",
+        )
+    })?
+    .map_err(context_document_deletion_store_error)?;
+    let mut response = (StatusCode::ACCEPTED, Json(committed.status)).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+async fn get_context_document_deletion(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(resource_id): Path<String>,
+) -> Result<Response, Response> {
+    let workspace_id = selected_workspace(&headers)?;
+    ensure_workspace_owner(&state, &workspace_id)?;
+    let principal_id = state.principal_id.clone();
+    let store = state.store.clone();
+    let status = tokio::task::spawn_blocking(move || {
+        ResourceService::new(store).get_context_document_deletion_status(
+            &workspace_id,
+            &resource_id,
+            &principal_id,
+        )
+    })
+    .await
+    .map_err(|_| {
+        operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "ContextDocument deletion status could not be read",
+        )
+    })?
+    .map_err(context_document_deletion_store_error)?
+    .ok_or_else(|| {
+        operator_error(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "ContextDocument is unavailable",
+        )
+    })?;
+    let mut response = Json(status).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+fn context_document_deletion_store_error(error: StoreError) -> Response {
+    match error {
+        StoreError::NotFound => operator_error(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "ContextDocument is unavailable",
+        ),
+        StoreError::Conflict { .. } => operator_error(
+            StatusCode::CONFLICT,
+            "RESOURCE_CONFLICT",
+            "ContextDocument deletion or Resource version changed; reload and retry",
+        ),
+        StoreError::Invalid(message) if message.contains("archived Workspace") => operator_error(
+            StatusCode::CONFLICT,
+            "WORKSPACE_ARCHIVED",
+            "Archived Workspaces are read-only",
+        ),
+        StoreError::Invalid(_) => operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "ContextDocument deletion request is invalid",
+        ),
+        StoreError::Integrity(_) => operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "ContextDocument deletion could not be verified",
+        ),
+        _ => operator_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "DEPENDENCY_UNAVAILABLE",
+            "ContextDocument deletion storage is unavailable",
+        ),
+    }
+}
+
 fn parse_context_document_owner_status(value: &str) -> Option<ContextDocumentOwnerStatus> {
     match value {
         "ACTIVE" => Some(ContextDocumentOwnerStatus::Active),
@@ -2987,6 +3145,47 @@ async fn expire_due_upload_sessions(state: &ApiState) {
         // Keep cleanup failure non-fatal. Any claimed object stays fenced and is retried
         // by the next bounded sweep; uploads and other Operator requests continue.
         eprintln!("litecoworkd: encrypted upload-chunk cleanup deferred; it will retry");
+    }
+
+    // The domain reconciler invokes both collectors once, then conditionally records
+    // exact target receipts. Each potential event gets its own fresh identity.
+    let store = state.store.clone();
+    let runtime_id = state.runtime_id.clone();
+    let reconciled = tokio::task::spawn_blocking(move || {
+        ResourceService::new(store).reconcile_context_document_purges(&now, 100, || {
+            let correlation_id = new_id("cor").map_err(|_| {
+                StoreError::Invalid("could not create purge event identity".to_owned())
+            })?;
+            let event = event_context(&runtime_id, &correlation_id).map_err(|_| {
+                StoreError::Invalid("could not create purge event context".to_owned())
+            })?;
+            Ok(ContextDocumentStatusEventContext {
+                event_id: event.event_id,
+                origin_runtime_id: event.origin_runtime_id,
+                hlc_timestamp: event.hlc_timestamp,
+                correlation_id: event.correlation_id,
+                causation_id: event.causation_id,
+                recorded_at: event.recorded_at,
+            })
+        })
+    })
+    .await;
+    match reconciled {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            let category = match error {
+                StoreError::Integrity(_) | StoreError::CorruptSchema(_) => "integrity failure",
+                StoreError::Invalid(_) => "invalid reconciliation state",
+                StoreError::Conflict { .. } => "concurrent state change",
+                _ => "storage or provider failure",
+            };
+            eprintln!(
+                "litecoworkd: ContextDocument purge reconciliation deferred ({category}); it will retry"
+            );
+        }
+        Err(_) => eprintln!(
+            "litecoworkd: ContextDocument purge reconciliation task failed; it will retry"
+        ),
     }
 }
 
@@ -5154,7 +5353,7 @@ async fn search_resources(
         })
         .transpose()?;
     if indexed_content {
-        let rows = state
+        let search_page = state
             .store
             .search_indexed_resource_text(
                 &workspace_id,
@@ -5182,8 +5381,12 @@ async fn search_resources(
                     "Indexed Resource search could not verify its source",
                 ),
             })?;
-        let has_more = rows.len() > limit;
-        let rows = rows.into_iter().take(limit).collect::<Vec<_>>();
+        let has_more = search_page.items.len() > limit;
+        let rows = search_page
+            .items
+            .into_iter()
+            .take(limit)
+            .collect::<Vec<_>>();
         let next_cursor = if has_more {
             rows.last()
                 .map(|row| {
@@ -5197,6 +5400,16 @@ async fn search_resources(
                     )
                 })
                 .transpose()?
+        } else if let Some(position) = search_page.continuation {
+            Some(encode_resource_search_cursor_position(
+                &workspace_id,
+                query.q.as_deref(),
+                mode,
+                query.kind.as_deref(),
+                query.freshness.as_deref(),
+                &position.created_at,
+                &position.resource_id,
+            )?)
         } else {
             None
         };
@@ -8420,7 +8633,7 @@ mod context_document_status_tests {
     use super::{ContextDocumentOwnerStatus, parse_context_document_owner_status};
 
     #[test]
-    fn owner_route_rejects_purge_states_until_purge_is_implemented() {
+    fn owner_status_parser_keeps_purge_transitions_separate_from_revoke_restore() {
         assert_eq!(
             parse_context_document_owner_status("ACTIVE"),
             Some(ContextDocumentOwnerStatus::Active)

@@ -1,15 +1,17 @@
 use serde_json::json;
 use storage_core::{
+    AcknowledgeContextDocumentPurgeTargetCommand, CommittedContextDocumentPurge,
     CommittedContextDocumentStatus, CommittedWorkspace, CommittedWorkspaceInstructionRevision,
-    CommittedWorkspaceRoot, ContextDocumentOwnerStatus, ContextDocumentStatusCommand,
+    CommittedWorkspaceRoot, ContextDocumentDeletionStatus, ContextDocumentOwnerStatus,
+    ContextDocumentPurgeStartCommand, ContextDocumentPurgeStore, ContextDocumentStatusCommand,
     ContextDocumentStatusEventContext, ContextDocumentStatusStore, EventDraft,
     FolderImportMetadata, IdempotentWorkspaceStore, LocalFileIdentityBindingRecord,
     LocalResourceLocationBindingRecord, ReplicationPolicy, ResourceLocationRecord, ResourceRecord,
-    ResourceUploadSessionRecord, ResourceUploadState, ResourceUploadStore, StoreError, Workspace,
-    WorkspaceCreateRequest, WorkspaceInstructionRevisionRecord, WorkspaceRootCreateCommit,
-    WorkspaceRootListRecord, WorkspaceRootRecord, WorkspaceRootResumeCommit,
-    WorkspaceRootStatusAction, WorkspaceRootStatusCommit, WorkspaceRootStore, WorkspaceStore,
-    is_sha256_digest,
+    ResourceStore, ResourceUploadSessionRecord, ResourceUploadState, ResourceUploadStore,
+    StoreError, Workspace, WorkspaceCreateRequest, WorkspaceInstructionRevisionRecord,
+    WorkspaceRootCreateCommit, WorkspaceRootListRecord, WorkspaceRootRecord,
+    WorkspaceRootResumeCommit, WorkspaceRootStatusAction, WorkspaceRootStatusCommit,
+    WorkspaceRootStore, WorkspaceStore, is_sha256_digest,
 };
 
 #[cfg(test)]
@@ -135,6 +137,29 @@ pub struct SetContextDocumentStatus {
     pub event: EventContext,
 }
 
+/// Owner-authorized request to start the durable ContextDocument purge saga.
+#[derive(Clone, Debug)]
+pub struct BeginContextDocumentPurge {
+    pub workspace_id: String,
+    pub resource_id: String,
+    pub principal_id: String,
+    pub request_id: String,
+    pub expected_version: u64,
+    pub event: EventContext,
+}
+
+/// Counts observed during one bounded purge reconciliation pass. The storage adapter
+/// remains authoritative for exact target receipts and empty-inventory proof.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ContextDocumentPurgeReconcileResult {
+    pub collected_index_objects: usize,
+    pub collected_content_objects: usize,
+    pub targets_considered: usize,
+    pub targets_acknowledged: usize,
+    pub empty_plans_considered: usize,
+    pub empty_plans_completed: usize,
+}
+
 /// ResourceService owns ContextDocument owner status transitions. Storage performs the
 /// final owner/version/status checks and commits the status, snapshot, event and replay
 /// receipt as one transaction.
@@ -200,6 +225,165 @@ where
                     recorded_at: command.event.recorded_at,
                 },
             })
+    }
+}
+
+impl<S> ResourceService<S>
+where
+    S: ContextDocumentPurgeStore,
+{
+    /// Seal a provider-inventory-derived immutable purge manifest and begin deletion.
+    /// Target discovery and its transaction belong to storage; the domain constructs the
+    /// stable replay payload and validated event context.
+    pub fn begin_context_document_purge(
+        &self,
+        command: BeginContextDocumentPurge,
+    ) -> Result<CommittedContextDocumentPurge, StoreError> {
+        for (name, value) in [
+            ("workspace_id", command.workspace_id.as_str()),
+            ("resource_id", command.resource_id.as_str()),
+            ("principal_id", command.principal_id.as_str()),
+            ("request_id", command.request_id.as_str()),
+        ] {
+            require_non_empty(name, value)?;
+            if value.contains('\0') {
+                return Err(StoreError::Invalid(format!("{name} contains a NUL byte")));
+            }
+        }
+        if command.expected_version == 0 {
+            return Err(StoreError::Invalid(
+                "expected Resource version must be positive".to_owned(),
+            ));
+        }
+        validate_event_context(&command.event)?;
+
+        let request_payload = json!({
+            "workspace_id": &command.workspace_id,
+            "resource_id": &command.resource_id,
+            "status": "DELETION_PENDING",
+            "expected_version": command.expected_version,
+        });
+        self.store
+            .begin_context_document_purge(ContextDocumentPurgeStartCommand {
+                workspace_id: command.workspace_id,
+                resource_id: command.resource_id,
+                principal_id: command.principal_id,
+                request_id: command.request_id,
+                expected_version: command.expected_version,
+                request_payload,
+                event: ContextDocumentStatusEventContext {
+                    event_id: command.event.event_id,
+                    origin_runtime_id: command.event.origin_runtime_id,
+                    hlc_timestamp: command.event.hlc_timestamp,
+                    correlation_id: command.event.correlation_id,
+                    causation_id: command.event.causation_id,
+                    recorded_at: command.event.recorded_at,
+                },
+            })
+    }
+
+    /// Owner-scoped deletion progress. Storage enforces the Workspace owner check in
+    /// the same read boundary as the Resource projection.
+    pub fn get_context_document_deletion_status(
+        &self,
+        workspace_id: &str,
+        resource_id: &str,
+        principal_id: &str,
+    ) -> Result<Option<ContextDocumentDeletionStatus>, StoreError> {
+        for (name, value) in [
+            ("workspace_id", workspace_id),
+            ("resource_id", resource_id),
+            ("principal_id", principal_id),
+        ] {
+            require_non_empty(name, value)?;
+            if value.contains('\0') {
+                return Err(StoreError::Invalid(format!("{name} contains a NUL byte")));
+            }
+        }
+        self.store
+            .get_context_document_deletion_status(workspace_id, resource_id, principal_id)
+    }
+}
+
+impl<S> ResourceService<S>
+where
+    S: ContextDocumentPurgeStore + ResourceStore,
+{
+    /// Reconcile at most `limit` non-empty targets and `limit` empty plans per pass;
+    /// each fenced object collector also receives that per-queue cap. Collection happens
+    /// before conditional acknowledgement, so only the storage adapter's exact durable
+    /// target plus absent-registry proof can create a receipt.
+    pub fn reconcile_context_document_purges<F>(
+        &self,
+        now: &str,
+        limit: usize,
+        mut event_context: F,
+    ) -> Result<ContextDocumentPurgeReconcileResult, StoreError>
+    where
+        F: FnMut() -> Result<ContextDocumentStatusEventContext, StoreError>,
+    {
+        require_non_empty("now", now)?;
+        if !(1..=100).contains(&limit) {
+            return Err(StoreError::Invalid(
+                "purge reconciliation limit must be between 1 and 100".to_owned(),
+            ));
+        }
+
+        let pending_targets = self
+            .store
+            .list_pending_context_document_purge_targets(limit)?;
+        let empty_plans = self
+            .store
+            .list_pending_empty_context_document_purge_plans(limit)?;
+
+        let mut result = ContextDocumentPurgeReconcileResult {
+            targets_considered: pending_targets.len(),
+            empty_plans_considered: empty_plans.len(),
+            ..ContextDocumentPurgeReconcileResult::default()
+        };
+
+        result.collected_index_objects =
+            self.store.collect_orphan_resource_index_blobs(now, limit)?;
+        result.collected_content_objects = self
+            .store
+            .collect_orphan_resource_content_blobs(now, limit)?;
+
+        for pending in pending_targets {
+            let event = event_context()?;
+            validate_status_event_context(&event)?;
+            let completion_event = event_context()?;
+            validate_status_event_context(&completion_event)?;
+            let acknowledged = self
+                .store
+                .acknowledge_context_document_purge_target_if_object_physically_removed(
+                    AcknowledgeContextDocumentPurgeTargetCommand {
+                        workspace_id: pending.workspace_id,
+                        resource_id: pending.resource_id,
+                        manifest_digest: pending.manifest_digest,
+                        target: pending.target,
+                        acknowledged_at: now.to_owned(),
+                        completion_event,
+                        event,
+                    },
+                )?;
+            result.targets_acknowledged += usize::from(acknowledged);
+        }
+
+        for plan in empty_plans {
+            let event = event_context()?;
+            validate_status_event_context(&event)?;
+            let completed = self
+                .store
+                .complete_empty_context_document_purge_plan_if_verified_empty(
+                    &plan.workspace_id,
+                    &plan.resource_id,
+                    &plan.manifest_digest,
+                    event,
+                )?;
+            result.empty_plans_completed += usize::from(completed);
+        }
+
+        Ok(result)
     }
 }
 
@@ -937,6 +1121,27 @@ where
         require_non_empty("expires_at", &command.expires_at)?;
         validate_event_context(&command.event)?;
 
+        let mut payload = json!({
+            "operation": "resource.upload.create.v1",
+            "workspace_id": command.workspace_id,
+            "display_name": command.display_name,
+            "media_type": command.media_type,
+            "size_bytes": command.size_bytes,
+            "expected_digest": command.expected_digest,
+            "context_document": command.context_document,
+        });
+        if let Some(folder_import) = &command.folder_import {
+            payload["folder_import"] = json!(folder_import);
+        }
+        let request = WorkspaceCreateRequest {
+            principal_id: command.principal_id.clone(),
+            request_id: command.request_id.clone(),
+            request_payload: payload,
+        };
+        if let Some(receipt) = self.store.get_create_receipt(&request)? {
+            return Ok(receipt);
+        }
+
         let workspace = self
             .store
             .get_workspace(&command.workspace_id)?
@@ -987,23 +1192,6 @@ where
             ));
         }
 
-        let mut payload = json!({
-            "operation": "resource.upload.create.v1",
-            "workspace_id": session.workspace_id,
-            "display_name": session.display_name,
-            "media_type": session.media_type,
-            "size_bytes": session.expected_size_bytes,
-            "expected_digest": session.expected_digest,
-            "context_document": session.context_document,
-        });
-        if let Some(folder_import) = &session.folder_import {
-            payload["folder_import"] = json!(folder_import);
-        }
-        let request = WorkspaceCreateRequest {
-            principal_id: command.principal_id,
-            request_id: command.request_id,
-            request_payload: payload,
-        };
         let event = EventDraft {
             event_id: command.event.event_id,
             workspace_id: session.workspace_id.clone(),
@@ -1056,6 +1244,24 @@ where
                 "Resource revision upload metadata is invalid".to_owned(),
             ));
         }
+        let payload = json!({
+            "operation": "resource.revision.upload.create.v1",
+            "workspace_id": command.workspace_id,
+            "resource_id": command.resource_id,
+            "expected_resource_version": command.expected_resource_version,
+            "parent_revision_ids": command.parent_revision_ids,
+            "media_type": command.media_type,
+            "size_bytes": command.size_bytes,
+            "expected_digest": command.expected_digest,
+        });
+        let request = WorkspaceCreateRequest {
+            principal_id: command.principal_id.clone(),
+            request_id: command.request_id.clone(),
+            request_payload: payload,
+        };
+        if let Some(receipt) = self.store.get_create_receipt(&request)? {
+            return Ok(receipt);
+        }
         let workspace = self
             .store
             .get_workspace(&command.workspace_id)?
@@ -1092,21 +1298,6 @@ where
             created_at: command.event.recorded_at.clone(),
             version: 1,
             progress_version: 1,
-        };
-        let payload = json!({
-            "operation": "resource.revision.upload.create.v1",
-            "workspace_id": command.workspace_id,
-            "resource_id": command.resource_id,
-            "expected_resource_version": command.expected_resource_version,
-            "parent_revision_ids": command.parent_revision_ids,
-            "media_type": session.media_type,
-            "size_bytes": session.expected_size_bytes,
-            "expected_digest": session.expected_digest,
-        });
-        let request = WorkspaceCreateRequest {
-            principal_id: command.principal_id,
-            request_id: command.request_id,
-            request_payload: payload,
         };
         let event = EventDraft {
             event_id: command.event.event_id,
@@ -1752,6 +1943,24 @@ fn validate_event_context(context: &EventContext) -> Result<(), StoreError> {
     Ok(())
 }
 
+fn validate_status_event_context(
+    context: &ContextDocumentStatusEventContext,
+) -> Result<(), StoreError> {
+    for (name, value) in [
+        ("event_id", context.event_id.as_str()),
+        ("origin_runtime_id", context.origin_runtime_id.as_str()),
+        ("hlc_timestamp", context.hlc_timestamp.as_str()),
+        ("correlation_id", context.correlation_id.as_str()),
+        ("recorded_at", context.recorded_at.as_str()),
+    ] {
+        require_non_empty(name, value)?;
+        if value.contains('\0') {
+            return Err(StoreError::Invalid(format!("{name} contains a NUL byte")));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1992,5 +2201,411 @@ mod tests {
         });
 
         assert!(matches!(result, Err(StoreError::Invalid(_))));
+    }
+}
+
+#[cfg(test)]
+mod context_document_purge_domain_tests {
+    use super::*;
+    use std::sync::Mutex;
+    use storage_core::{
+        ContextDocumentPurgeReplicaKind, ContextDocumentPurgeTarget,
+        PendingContextDocumentPurgeTarget, PendingEmptyContextDocumentPurge,
+    };
+
+    #[derive(Default)]
+    struct RecordingPurgeStore {
+        begin: Mutex<Option<ContextDocumentPurgeStartCommand>>,
+        deletion_status: Mutex<Option<ContextDocumentDeletionStatus>>,
+    }
+
+    impl ContextDocumentStatusStore for RecordingPurgeStore {
+        fn set_context_document_status(
+            &self,
+            _command: ContextDocumentStatusCommand,
+        ) -> Result<CommittedContextDocumentStatus, StoreError> {
+            Err(StoreError::Busy)
+        }
+    }
+
+    impl ContextDocumentPurgeStore for RecordingPurgeStore {
+        fn begin_context_document_purge(
+            &self,
+            command: ContextDocumentPurgeStartCommand,
+        ) -> Result<CommittedContextDocumentPurge, StoreError> {
+            *self.begin.lock().expect("begin lock") = Some(command);
+            Err(StoreError::Busy)
+        }
+
+        fn get_context_document_deletion_status(
+            &self,
+            _workspace_id: &str,
+            _resource_id: &str,
+            _principal_id: &str,
+        ) -> Result<Option<ContextDocumentDeletionStatus>, StoreError> {
+            Ok(self.deletion_status.lock().expect("status lock").clone())
+        }
+
+        fn list_pending_context_document_purge_targets(
+            &self,
+            _limit: usize,
+        ) -> Result<Vec<PendingContextDocumentPurgeTarget>, StoreError> {
+            Ok(Vec::new())
+        }
+
+        fn list_pending_empty_context_document_purge_plans(
+            &self,
+            _limit: usize,
+        ) -> Result<Vec<PendingEmptyContextDocumentPurge>, StoreError> {
+            Ok(Vec::new())
+        }
+
+        fn acknowledge_context_document_purge_target_if_object_physically_removed(
+            &self,
+            _command: AcknowledgeContextDocumentPurgeTargetCommand,
+        ) -> Result<bool, StoreError> {
+            Ok(false)
+        }
+
+        fn complete_empty_context_document_purge_plan_if_verified_empty(
+            &self,
+            _workspace_id: &str,
+            _resource_id: &str,
+            _manifest_digest: &str,
+            _event: ContextDocumentStatusEventContext,
+        ) -> Result<bool, StoreError> {
+            Ok(false)
+        }
+    }
+
+    fn purge_event_context() -> EventContext {
+        EventContext {
+            event_id: "event-purge-1".to_owned(),
+            origin_runtime_id: "runtime-1".to_owned(),
+            hlc_timestamp: "2026-10-15T10:00:00Z".to_owned(),
+            correlation_id: "correlation-1".to_owned(),
+            causation_id: None,
+            recorded_at: "2026-10-15T10:00:00Z".to_owned(),
+        }
+    }
+
+    fn begin_command(workspace_id: &str) -> BeginContextDocumentPurge {
+        BeginContextDocumentPurge {
+            workspace_id: workspace_id.to_owned(),
+            resource_id: "resource-1".to_owned(),
+            principal_id: "owner-1".to_owned(),
+            request_id: "request-1".to_owned(),
+            expected_version: 4,
+            event: purge_event_context(),
+        }
+    }
+
+    #[test]
+    fn begin_builds_canonical_deletion_pending_replay_payload() {
+        let store = RecordingPurgeStore::default();
+        let service = ResourceService::new(store);
+
+        assert!(matches!(
+            service.begin_context_document_purge(begin_command("workspace-1")),
+            Err(StoreError::Busy)
+        ));
+        let recorded = service
+            .store
+            .begin
+            .lock()
+            .expect("begin lock")
+            .clone()
+            .expect("storage begin called");
+
+        assert_eq!(
+            recorded.request_payload,
+            json!({
+                "workspace_id": "workspace-1",
+                "resource_id": "resource-1",
+                "status": "DELETION_PENDING",
+                "expected_version": 4,
+            })
+        );
+        assert_eq!(recorded.event.event_id, "event-purge-1");
+    }
+
+    #[test]
+    fn begin_rejects_nul_identity_before_calling_storage() {
+        let store = RecordingPurgeStore::default();
+        let service = ResourceService::new(store);
+
+        assert!(matches!(
+            service.begin_context_document_purge(begin_command("workspace\0-1")),
+            Err(StoreError::Invalid(_))
+        ));
+        assert!(service.store.begin.lock().expect("begin lock").is_none());
+    }
+
+    #[test]
+    fn deletion_status_get_delegates_owner_scope_to_storage() {
+        let store = RecordingPurgeStore::default();
+        *store.deletion_status.lock().expect("status lock") = Some(ContextDocumentDeletionStatus {
+            resource_id: "resource-1".to_owned(),
+            status: storage_core::ContextDocumentPurgeStatus::DeletionPending,
+            manifest_digest: Some(format!("sha256:{}", "a".repeat(64))),
+            required_replica_count: 1,
+            acknowledged_replica_count: 0,
+            updated_at: "2026-10-15T10:00:00Z".to_owned(),
+        });
+        let service = ResourceService::new(store);
+
+        let status = service
+            .get_context_document_deletion_status("workspace-1", "resource-1", "owner-1")
+            .expect("status lookup")
+            .expect("owner-visible status");
+
+        assert_eq!(
+            status.status,
+            storage_core::ContextDocumentPurgeStatus::DeletionPending
+        );
+        assert_eq!(status.required_replica_count, 1);
+    }
+
+    #[derive(Default)]
+    struct ReconcilePurgeStore {
+        calls: Mutex<Vec<&'static str>>,
+        targets: Vec<PendingContextDocumentPurgeTarget>,
+        empty_plans: Vec<PendingEmptyContextDocumentPurge>,
+        acknowledgements: Mutex<Vec<AcknowledgeContextDocumentPurgeTargetCommand>>,
+    }
+
+    impl ContextDocumentStatusStore for ReconcilePurgeStore {
+        fn set_context_document_status(
+            &self,
+            _command: ContextDocumentStatusCommand,
+        ) -> Result<CommittedContextDocumentStatus, StoreError> {
+            Err(StoreError::Busy)
+        }
+    }
+
+    impl ContextDocumentPurgeStore for ReconcilePurgeStore {
+        fn begin_context_document_purge(
+            &self,
+            _command: ContextDocumentPurgeStartCommand,
+        ) -> Result<CommittedContextDocumentPurge, StoreError> {
+            Err(StoreError::Busy)
+        }
+
+        fn get_context_document_deletion_status(
+            &self,
+            _workspace_id: &str,
+            _resource_id: &str,
+            _principal_id: &str,
+        ) -> Result<Option<ContextDocumentDeletionStatus>, StoreError> {
+            Ok(None)
+        }
+
+        fn list_pending_context_document_purge_targets(
+            &self,
+            _limit: usize,
+        ) -> Result<Vec<PendingContextDocumentPurgeTarget>, StoreError> {
+            self.calls.lock().expect("calls lock").push("list_targets");
+            Ok(self.targets.clone())
+        }
+
+        fn list_pending_empty_context_document_purge_plans(
+            &self,
+            _limit: usize,
+        ) -> Result<Vec<PendingEmptyContextDocumentPurge>, StoreError> {
+            self.calls.lock().expect("calls lock").push("list_empty");
+            Ok(self.empty_plans.clone())
+        }
+
+        fn acknowledge_context_document_purge_target_if_object_physically_removed(
+            &self,
+            command: AcknowledgeContextDocumentPurgeTargetCommand,
+        ) -> Result<bool, StoreError> {
+            self.calls.lock().expect("calls lock").push("acknowledge");
+            self.acknowledgements
+                .lock()
+                .expect("ack lock")
+                .push(command);
+            Ok(true)
+        }
+
+        fn complete_empty_context_document_purge_plan_if_verified_empty(
+            &self,
+            _workspace_id: &str,
+            _resource_id: &str,
+            _manifest_digest: &str,
+            _event: ContextDocumentStatusEventContext,
+        ) -> Result<bool, StoreError> {
+            self.calls
+                .lock()
+                .expect("calls lock")
+                .push("complete_empty");
+            Ok(true)
+        }
+    }
+
+    impl ResourceStore for ReconcilePurgeStore {
+        fn create_resource(
+            &self,
+            _request: WorkspaceCreateRequest,
+            _resource: ResourceRecord,
+            _revision: storage_core::ResourceRevisionRecord,
+            _event: EventDraft,
+            _content: Vec<u8>,
+        ) -> Result<storage_core::CommittedResource, StoreError> {
+            unreachable!("not used by purge reconciliation")
+        }
+
+        fn read_resource_content(
+            &self,
+            _workspace_id: &str,
+            _resource_id: &str,
+        ) -> Result<Option<storage_core::StoredResourceContent>, StoreError> {
+            unreachable!("not used by purge reconciliation")
+        }
+
+        fn get_resource_record(
+            &self,
+            _workspace_id: &str,
+            _resource_id: &str,
+        ) -> Result<Option<ResourceRecord>, StoreError> {
+            unreachable!("not used by purge reconciliation")
+        }
+
+        fn get_resource_detail(
+            &self,
+            _workspace_id: &str,
+            _resource_id: &str,
+        ) -> Result<Option<storage_core::ResourceDetailRecord>, StoreError> {
+            unreachable!("not used by purge reconciliation")
+        }
+
+        fn list_resource_locations(
+            &self,
+            _workspace_id: &str,
+            _resource_id: &str,
+        ) -> Result<Option<Vec<storage_core::ResourceLocationViewRecord>>, StoreError> {
+            unreachable!("not used by purge reconciliation")
+        }
+
+        fn list_resource_revisions_page(
+            &self,
+            _workspace_id: &str,
+            _resource_id: &str,
+            _after_revision_id: Option<&str>,
+            _limit: usize,
+        ) -> Result<Vec<storage_core::ResourceRevisionViewRecord>, StoreError> {
+            unreachable!("not used by purge reconciliation")
+        }
+
+        fn read_resource_content_bounded(
+            &self,
+            _workspace_id: &str,
+            _resource_id: &str,
+            _revision_id: Option<&str>,
+            _maximum_bytes: u64,
+        ) -> Result<Option<storage_core::StoredResourceContent>, StoreError> {
+            unreachable!("not used by purge reconciliation")
+        }
+
+        fn search_resources_page(
+            &self,
+            _workspace_id: &str,
+            _query: Option<&str>,
+            _kind: Option<&str>,
+            _freshness: Option<&str>,
+            _after_created_at: Option<&str>,
+            _after_resource_id: Option<&str>,
+            _limit: usize,
+        ) -> Result<Vec<storage_core::ResourceSearchRecord>, StoreError> {
+            unreachable!("not used by purge reconciliation")
+        }
+
+        fn collect_orphan_resource_index_blobs(
+            &self,
+            _now: &str,
+            _limit: usize,
+        ) -> Result<usize, StoreError> {
+            self.calls.lock().expect("calls lock").push("collect_index");
+            Ok(2)
+        }
+
+        fn collect_orphan_resource_content_blobs(
+            &self,
+            _now: &str,
+            _limit: usize,
+        ) -> Result<usize, StoreError> {
+            self.calls
+                .lock()
+                .expect("calls lock")
+                .push("collect_content");
+            Ok(3)
+        }
+    }
+
+    fn status_event_context(event_id: String) -> ContextDocumentStatusEventContext {
+        ContextDocumentStatusEventContext {
+            event_id,
+            origin_runtime_id: "runtime-1".to_owned(),
+            hlc_timestamp: "2026-10-15T10:00:00Z".to_owned(),
+            correlation_id: "correlation-1".to_owned(),
+            causation_id: None,
+            recorded_at: "2026-10-15T10:00:00Z".to_owned(),
+        }
+    }
+
+    #[test]
+    fn reconciliation_collects_before_ack_and_supplies_completion_event_context() {
+        let store = ReconcilePurgeStore {
+            targets: vec![PendingContextDocumentPurgeTarget {
+                workspace_id: "workspace-1".to_owned(),
+                resource_id: "resource-1".to_owned(),
+                manifest_digest: format!("sha256:{}", "a".repeat(64)),
+                target: ContextDocumentPurgeTarget {
+                    replica_ref: "blob-ref-1".to_owned(),
+                    replica_kind: ContextDocumentPurgeReplicaKind::Blob,
+                    runtime_id: None,
+                    runtime_incarnation_id: None,
+                    target_revision_ids: vec!["revision-1".to_owned()],
+                    target_upload_chunk_refs: Vec::new(),
+                },
+            }],
+            empty_plans: vec![PendingEmptyContextDocumentPurge {
+                workspace_id: "workspace-1".to_owned(),
+                resource_id: "resource-empty".to_owned(),
+                manifest_digest: format!("sha256:{}", "b".repeat(64)),
+            }],
+            ..ReconcilePurgeStore::default()
+        };
+        let service = ResourceService::new(store);
+        let mut event_number = 0;
+
+        let result = service
+            .reconcile_context_document_purges("2026-10-15T10:00:00Z", 10, || {
+                event_number += 1;
+                Ok(status_event_context(format!("event-{event_number}")))
+            })
+            .expect("reconcile");
+
+        assert_eq!(result.collected_index_objects, 2);
+        assert_eq!(result.collected_content_objects, 3);
+        assert_eq!(result.targets_considered, 1);
+        assert_eq!(result.targets_acknowledged, 1);
+        assert_eq!(result.empty_plans_considered, 1);
+        assert_eq!(result.empty_plans_completed, 1);
+        assert_eq!(event_number, 3);
+        assert_eq!(
+            service.store.calls.lock().expect("calls lock").as_slice(),
+            [
+                "list_targets",
+                "list_empty",
+                "collect_index",
+                "collect_content",
+                "acknowledge",
+                "complete_empty",
+            ]
+        );
+        let acknowledgements = service.store.acknowledgements.lock().expect("ack lock");
+        assert_eq!(acknowledgements[0].event.event_id, "event-1");
+        assert_eq!(acknowledgements[0].completion_event.event_id, "event-2");
     }
 }

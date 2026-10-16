@@ -159,6 +159,31 @@ struct LostAckOperatorRequest {
     _runtime: tokio::runtime::Runtime,
 }
 
+#[derive(Debug, PartialEq)]
+struct DurableContextDocumentPurge {
+    principal_id: String,
+    request_digest: String,
+    response_json: String,
+    response_digest: String,
+    manifest_digest: String,
+    target_count: i64,
+    targets_json: String,
+    receipts: Vec<DurableContextDocumentPurgeReceipt>,
+}
+
+#[derive(Debug, PartialEq)]
+struct DurableContextDocumentPurgeReceipt {
+    replica_ref: String,
+    replica_kind: String,
+    status: String,
+    runtime_id: Option<String>,
+    runtime_incarnation_id: Option<String>,
+    target_revision_ids_json: String,
+    target_upload_chunk_refs_json: String,
+    receipt_digest: Option<String>,
+    acknowledged_at: Option<String>,
+}
+
 #[test]
 fn spawned_workspace_replay_process_probe() {
     let Some(directory) = std::env::var_os(CHILD_DATA_DIRECTORY) else {
@@ -1287,6 +1312,382 @@ fn spawned_daemon_replays_workspace_instruction_revision_after_lost_ack_and_rest
 }
 
 #[test]
+fn spawned_daemon_reconciles_context_document_purge_after_restart_and_exact_replay() {
+    const WORKSPACE_CREATE_KEY: &str = "spawned-purge-workspace-create-v1";
+    const RESOURCE_ID: &str = "spawned-purge-context-document-resource";
+    const RESOURCE_REVISION_ID: &str = "spawned-purge-context-document-revision-1";
+    const DELETE_KEY: &str = "spawned-context-document-delete-lost-ack-v1";
+    const CONTENT: &[u8] = b"Managed local ContextDocument content for daemon restart purge.\n";
+
+    let directory = tempfile::tempdir().expect("private Runtime data directory");
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))
+        .expect("restrict Runtime directory");
+    let mut first_child = RuntimeChild::spawn(directory.path());
+    let first_readiness = wait_for_operator_readiness(first_child.child(), directory.path());
+    assert_operator_readiness(&first_readiness);
+    let runtime_id = first_readiness["runtime_id"]
+        .as_str()
+        .expect("first readiness exposes RuntimeId")
+        .to_owned();
+    let local_principal_id = read_state(&directory.path().join(STATE_FILE))
+        .expect("read first Runtime state")
+        .expect("first Runtime state exists")
+        .local_principal_id
+        .expect("test Runtime has a local principal");
+
+    let workspace_response = send_workspace_create(
+        directory.path(),
+        "spawned-purge-workspace-create-frame",
+        WORKSPACE_CREATE_KEY,
+        br#"{"name":"ContextDocument purge restart fixture"}"#,
+    );
+    assert_eq!(workspace_response.header.status, 201);
+    let workspace: Value =
+        serde_json::from_slice(workspace_response.body()).expect("Workspace response is JSON");
+    let workspace_id = workspace["workspace_id"]
+        .as_str()
+        .expect("created Workspace ID is returned")
+        .to_owned();
+
+    let content_digest = seed_instruction_resource(
+        directory.path(),
+        &workspace_id,
+        RESOURCE_ID,
+        RESOURCE_REVISION_ID,
+        CONTENT,
+    );
+    Connection::open(directory.path().join("litecowork.sqlite3"))
+        .expect("open Runtime database for ContextDocument fixture")
+        .execute(
+            "UPDATE resources SET context_document_json=?1, updated_at='2026-10-14T14:00:01Z', version=2 WHERE resource_id=?2 AND workspace_id=?3 AND version=1",
+            rusqlite::params![
+                serde_json::json!({
+                    "kind": "WORKSPACE_NOTES",
+                    "owner_ref": {"kind": "WORKSPACE", "workspace_id": workspace_id},
+                    "status": "ACTIVE"
+                })
+                .to_string(),
+                RESOURCE_ID,
+                workspace_id,
+            ],
+        )
+        .expect("attach active ContextDocument metadata to managed local Resource");
+
+    let blobs = FileBlobStore::new(directory.path().join("blobs"), ReplayTestBlobKeys);
+    let content_ref = storage_core::BlobRef {
+        digest: content_digest.clone(),
+        size_bytes: CONTENT.len() as u64,
+        media_type: "text/plain".to_owned(),
+    };
+    let content_before_deletion = blobs
+        .get(&workspace_id, BlobPurpose::Resource, &content_ref)
+        .expect("managed local content exists before deletion");
+    assert_eq!(content_before_deletion.as_slice(), CONTENT);
+
+    let deletion_path = format!("/v1/resources/{RESOURCE_ID}/context-document/deletion");
+    let lost_ack = submit_operator_request_without_reading_response(
+        directory.path(),
+        "spawned-context-document-delete-before-restart",
+        "POST",
+        &deletion_path,
+        vec![
+            ("content-type", "application/json"),
+            ("x-workspace-id", workspace_id.as_str()),
+            ("if-match", "2"),
+            ("idempotency-key", DELETE_KEY),
+        ],
+        b"{}",
+    );
+    let committed_before_restart = wait_for_durable_context_document_purge(
+        directory.path(),
+        DELETE_KEY,
+        &local_principal_id,
+        RESOURCE_ID,
+    )
+    .unwrap_or_else(|error| {
+        let (status, stdout, stderr) = first_child.terminate_and_wait();
+        panic!("{error}; Runtime status={status}; stdout={stdout}; stderr={stderr}");
+    });
+    assert!(
+        committed_before_restart
+            .request_digest
+            .starts_with("sha256:")
+    );
+    assert_eq!(
+        committed_before_restart.response_digest,
+        format!(
+            "sha256:{:x}",
+            Sha256::digest(committed_before_restart.response_json.as_bytes())
+        ),
+        "the durable lost-ack response is integrity checked"
+    );
+    let initial_response: Value = serde_json::from_str(&committed_before_restart.response_json)
+        .expect("durable purge response is valid JSON");
+    let initial_status = &initial_response["status"];
+    assert_eq!(initial_status["resource_id"], RESOURCE_ID);
+    assert_eq!(initial_status["status"], "DELETION_PENDING");
+    assert_eq!(initial_status["required_replica_count"], 1);
+    assert_eq!(initial_status["acknowledged_replica_count"], 0);
+    assert_eq!(
+        initial_status["manifest_digest"],
+        committed_before_restart.manifest_digest
+    );
+    assert_eq!(committed_before_restart.target_count, 1);
+    let targets: Value =
+        serde_json::from_str(&committed_before_restart.targets_json).expect("sealed targets JSON");
+    assert_eq!(targets.as_array().map(Vec::len), Some(1));
+    assert_eq!(targets[0]["replica_ref"], content_digest);
+    assert_eq!(targets[0]["replica_kind"], "BLOB");
+    assert_eq!(
+        targets[0]["target_revision_ids"],
+        serde_json::json!([RESOURCE_REVISION_ID])
+    );
+    assert_eq!(committed_before_restart.receipts.len(), 1);
+    let pending_receipt = &committed_before_restart.receipts[0];
+    assert_eq!(pending_receipt.replica_ref, content_digest);
+    assert_eq!(pending_receipt.replica_kind, "BLOB");
+    assert_eq!(pending_receipt.status, "PENDING");
+    assert_eq!(pending_receipt.runtime_id, None);
+    assert_eq!(pending_receipt.runtime_incarnation_id, None);
+    assert_eq!(
+        serde_json::from_str::<Value>(&pending_receipt.target_revision_ids_json)
+            .expect("pending receipt target revisions are valid JSON"),
+        serde_json::json!([RESOURCE_REVISION_ID])
+    );
+    assert_eq!(pending_receipt.target_upload_chunk_refs_json, "[]");
+    assert_eq!(pending_receipt.receipt_digest, None);
+    assert_eq!(pending_receipt.acknowledged_at, None);
+    assert!(
+        registry_row_exists(
+            directory.path(),
+            "resource_content_blob_registry",
+            &workspace_id,
+            &content_digest
+        ),
+        "the local object remains registered until the restarted reconciler removes it"
+    );
+
+    let (first_status, first_stdout, first_stderr) = first_child.terminate_and_wait();
+    assert!(
+        first_status.success(),
+        "first Runtime shutdown failed: stdout={first_stdout} stderr={first_stderr}"
+    );
+    drop(lost_ack);
+
+    let mut restarted_child = RuntimeChild::spawn(directory.path());
+    let restarted_readiness =
+        wait_for_operator_readiness(restarted_child.child(), directory.path());
+    assert_operator_readiness(&restarted_readiness);
+    assert_eq!(restarted_readiness["runtime_id"], runtime_id);
+    assert_ne!(
+        restarted_readiness["local_incarnation_id"], first_readiness["local_incarnation_id"],
+        "the purge resumes under a new daemon incarnation"
+    );
+
+    let replay = send_operator_request(
+        directory.path(),
+        "spawned-context-document-delete-after-restart-replay",
+        "POST",
+        &deletion_path,
+        vec![
+            ("content-type", "application/json"),
+            ("x-workspace-id", workspace_id.as_str()),
+            ("if-match", "2"),
+            ("idempotency-key", DELETE_KEY),
+        ],
+        b"{}",
+    );
+    assert_eq!(
+        replay.header.status, 202,
+        "exact retry replays the admission"
+    );
+    assert_eq!(
+        replay.header.request_id,
+        "spawned-context-document-delete-after-restart-replay"
+    );
+    let replay_status: Value = serde_json::from_slice(replay.body()).expect("replay is JSON");
+    assert_eq!(
+        &replay_status, initial_status,
+        "restart retry returns the original admission response and manifest identity"
+    );
+
+    let status_path = deletion_path;
+    let status_deadline = Instant::now() + Duration::from_secs(45);
+    let final_status = loop {
+        let response = send_operator_request(
+            directory.path(),
+            "spawned-context-document-delete-status-after-restart",
+            "GET",
+            &status_path,
+            vec![("x-workspace-id", workspace_id.as_str())],
+            &[],
+        );
+        assert_eq!(
+            response.header.status, 200,
+            "authenticated status is available"
+        );
+        let status: Value = serde_json::from_slice(response.body()).expect("status is JSON");
+        if status["status"] == "DELETED" {
+            break status;
+        }
+        assert_eq!(status["status"], "DELETION_PENDING");
+        assert!(
+            Instant::now() < status_deadline,
+            "daemon reconciler did not finish the durable purge after restart: {status}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(final_status["resource_id"], RESOURCE_ID);
+    assert_eq!(
+        final_status["manifest_digest"],
+        committed_before_restart.manifest_digest
+    );
+    assert_eq!(final_status["required_replica_count"], 1);
+    assert_eq!(final_status["acknowledged_replica_count"], 1);
+
+    let after_restart = read_durable_context_document_purge(
+        directory.path(),
+        DELETE_KEY,
+        &local_principal_id,
+        RESOURCE_ID,
+    )
+    .expect("inspect final durable purge receipt")
+    .expect("original owner request receipt remains durable");
+    assert_eq!(
+        after_restart.principal_id,
+        committed_before_restart.principal_id
+    );
+    assert_eq!(
+        after_restart.request_digest,
+        committed_before_restart.request_digest
+    );
+    assert_eq!(
+        after_restart.response_json,
+        committed_before_restart.response_json
+    );
+    assert_eq!(
+        after_restart.response_digest,
+        committed_before_restart.response_digest
+    );
+    assert_eq!(
+        after_restart.manifest_digest,
+        committed_before_restart.manifest_digest
+    );
+    assert_eq!(
+        after_restart.target_count,
+        committed_before_restart.target_count
+    );
+    assert_eq!(
+        after_restart.targets_json,
+        committed_before_restart.targets_json
+    );
+    assert_eq!(after_restart.receipts.len(), 1);
+    let acknowledged_receipt = &after_restart.receipts[0];
+    assert_eq!(
+        acknowledged_receipt.replica_ref, content_digest,
+        "the acknowledged receipt covers the exact original blob digest"
+    );
+    assert_eq!(acknowledged_receipt.replica_kind, "BLOB");
+    assert_eq!(acknowledged_receipt.status, "ACKNOWLEDGED");
+    assert_eq!(acknowledged_receipt.runtime_id, None);
+    assert_eq!(acknowledged_receipt.runtime_incarnation_id, None);
+    assert_eq!(
+        serde_json::from_str::<Value>(&acknowledged_receipt.target_revision_ids_json)
+            .expect("acknowledged receipt target revisions are valid JSON"),
+        serde_json::json!([RESOURCE_REVISION_ID])
+    );
+    assert_eq!(acknowledged_receipt.target_upload_chunk_refs_json, "[]");
+    assert!(
+        acknowledged_receipt
+            .receipt_digest
+            .as_deref()
+            .is_some_and(|digest| digest.starts_with("sha256:"))
+    );
+    assert!(
+        !registry_row_exists(
+            directory.path(),
+            "resource_content_blob_registry",
+            &workspace_id,
+            &acknowledged_receipt.replica_ref
+        ),
+        "physical removal and registry cleanup precede durable acknowledgement"
+    );
+    assert!(
+        matches!(
+            blobs.get(&workspace_id, BlobPurpose::Resource, &content_ref),
+            Err(StoreError::NotFound)
+        ),
+        "the exact encrypted local object is physically gone"
+    );
+    let connection = Connection::open(directory.path().join("litecowork.sqlite3"))
+        .expect("open Runtime database for final purge event inspection");
+    let acknowledged_events: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE workspace_id=?1 AND entity_id=?2 AND type='resource.context_document.purge.acknowledged.v2'",
+            rusqlite::params![workspace_id, RESOURCE_ID],
+            |row| row.get(0),
+        )
+        .expect("read exact target acknowledgement event count");
+    assert_eq!(acknowledged_events, 1);
+    let acknowledged_event_payload: String = connection
+        .query_row(
+            "SELECT payload_json FROM domain_events WHERE workspace_id=?1 AND entity_id=?2 AND type='resource.context_document.purge.acknowledged.v2'",
+            rusqlite::params![workspace_id, RESOURCE_ID],
+            |row| row.get(0),
+        )
+        .expect("read exact target acknowledgement payload");
+    let acknowledged_event: Value =
+        serde_json::from_str(&acknowledged_event_payload).expect("acknowledgement event is JSON");
+    assert_eq!(acknowledged_event["resource_id"], RESOURCE_ID);
+    assert_eq!(
+        acknowledged_event["purge_manifest_digest"],
+        after_restart.manifest_digest
+    );
+    assert_eq!(
+        acknowledged_event["replica_ref"],
+        acknowledged_receipt.replica_ref
+    );
+    assert_eq!(
+        acknowledged_event["replica_kind"],
+        acknowledged_receipt.replica_kind
+    );
+    assert_eq!(acknowledged_event["runtime_id"], Value::Null);
+    assert_eq!(acknowledged_event["runtime_incarnation_id"], Value::Null);
+    assert!(
+        acknowledged_event["target_digest"]
+            .as_str()
+            .is_some_and(|digest| digest.starts_with("sha256:"))
+    );
+    assert!(acknowledged_event.get("target_revision_ids").is_none());
+    assert!(acknowledged_event.get("target_upload_chunk_refs").is_none());
+    assert_eq!(
+        acknowledged_event["receipt_digest"],
+        acknowledged_receipt.receipt_digest.as_deref().unwrap()
+    );
+    assert_eq!(
+        acknowledged_event["acknowledged_at"],
+        acknowledged_receipt.acknowledged_at.as_deref().unwrap()
+    );
+    let status_events: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM domain_events WHERE workspace_id=?1 AND entity_id=?2 AND type='resource.context_document.status.changed.v1'",
+            rusqlite::params![workspace_id, RESOURCE_ID],
+            |row| row.get(0),
+        )
+        .expect("read ContextDocument status transition event count");
+    assert_eq!(
+        status_events, 2,
+        "admission and final deletion are both audited"
+    );
+
+    let (restart_status, restart_stdout, restart_stderr) = restarted_child.terminate_and_wait();
+    assert!(
+        restart_status.success(),
+        "restarted Runtime shutdown failed: stdout={restart_stdout} stderr={restart_stderr}"
+    );
+}
+
+#[test]
 fn spawned_daemon_task_stream_resumes_across_restart_and_delivers_live_update() {
     use domain_task::{CreateStandaloneTask, ReviseTaskSpec, TaskService};
 
@@ -1749,6 +2150,130 @@ fn submit_create_without_reading_response(
         _connection: connection,
         _runtime: runtime,
     })
+}
+
+fn wait_for_durable_context_document_purge(
+    data_directory: &Path,
+    idempotency_key: &str,
+    principal_id: &str,
+    resource_id: &str,
+) -> Result<DurableContextDocumentPurge, String> {
+    let deadline = Instant::now() + RECEIPT_DEADLINE;
+    loop {
+        match read_durable_context_document_purge(
+            data_directory,
+            idempotency_key,
+            principal_id,
+            resource_id,
+        ) {
+            Ok(Some(receipt)) => return Ok(receipt),
+            Ok(None) => {}
+            Err(error) if Instant::now() < deadline => {
+                let _ = error;
+            }
+            Err(error) => return Err(error),
+        }
+        if Instant::now() >= deadline {
+            return Err(
+                "ContextDocument purge admission receipt was not durable before the deadline"
+                    .to_owned(),
+            );
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn read_durable_context_document_purge(
+    data_directory: &Path,
+    idempotency_key: &str,
+    principal_id: &str,
+    resource_id: &str,
+) -> Result<Option<DurableContextDocumentPurge>, String> {
+    let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+        .map_err(|error| error.to_string())?;
+    connection
+        .busy_timeout(Duration::from_secs(1))
+        .map_err(|error| error.to_string())?;
+    let receipt: Option<(String, String, String, String)> = connection
+        .query_row(
+            "SELECT principal_id, request_digest, response_json, response_digest
+             FROM request_dedup WHERE principal_id=?1 AND request_id=?2",
+            rusqlite::params![principal_id, idempotency_key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((principal_id, request_digest, response_json, response_digest)) = receipt else {
+        return Ok(None);
+    };
+    let plan: Option<(String, i64, String)> = connection
+        .query_row(
+            "SELECT manifest_digest, target_count, targets_json
+             FROM context_document_purge_plans WHERE workspace_id=(
+                 SELECT workspace_id FROM resources WHERE resource_id=?1
+             ) AND resource_id=?1",
+            [resource_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    let Some((manifest_digest, target_count, targets_json)) = plan else {
+        return Err("owner receipt exists without its immutable purge plan".to_owned());
+    };
+    let mut statement = connection
+        .prepare(
+            "SELECT replica_ref, replica_kind, status, runtime_id, runtime_incarnation_id,
+                    target_revision_ids_json, target_upload_chunk_refs_json, receipt_digest,
+                    acknowledged_at
+             FROM context_document_purge_receipts
+             WHERE resource_id=?1 ORDER BY replica_ref, replica_kind",
+        )
+        .map_err(|error| error.to_string())?;
+    let receipts = statement
+        .query_map([resource_id], |row| {
+            Ok(DurableContextDocumentPurgeReceipt {
+                replica_ref: row.get(0)?,
+                replica_kind: row.get(1)?,
+                status: row.get(2)?,
+                runtime_id: row.get(3)?,
+                runtime_incarnation_id: row.get(4)?,
+                target_revision_ids_json: row.get(5)?,
+                target_upload_chunk_refs_json: row.get(6)?,
+                receipt_digest: row.get(7)?,
+                acknowledged_at: row.get(8)?,
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<DurableContextDocumentPurgeReceipt>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(Some(DurableContextDocumentPurge {
+        principal_id,
+        request_digest,
+        response_json,
+        response_digest,
+        manifest_digest,
+        target_count,
+        targets_json,
+        receipts,
+    }))
+}
+
+fn registry_row_exists(
+    data_directory: &Path,
+    registry_table: &str,
+    workspace_id: &str,
+    digest: &str,
+) -> bool {
+    let connection = Connection::open(data_directory.join("litecowork.sqlite3"))
+        .expect("open Runtime database for registry inspection");
+    let sql = format!(
+        "SELECT EXISTS(SELECT 1 FROM {registry_table} WHERE workspace_id=?1 AND digest=?2)"
+    );
+    connection
+        .query_row(&sql, rusqlite::params![workspace_id, digest], |row| {
+            row.get(0)
+        })
+        .expect("inspect exact registry identity")
 }
 
 fn send_workspace_create(

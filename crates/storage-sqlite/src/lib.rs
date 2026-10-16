@@ -1,6 +1,7 @@
 mod artifacts;
 mod automation_admission;
 mod blob;
+mod context_document_purge;
 mod conversations;
 mod coworkers;
 mod delegation_profiles;
@@ -13,6 +14,10 @@ mod rich_presentations;
 pub use rich_presentations::SqliteRichPresentationStore;
 #[cfg(test)]
 mod agent_binding_tests;
+#[cfg(test)]
+mod context_document_migration_tests;
+#[cfg(test)]
+mod context_document_purge_tests;
 mod execution;
 mod goals;
 mod os_key_provider;
@@ -56,7 +61,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, Weak,
+        Arc, Mutex, OnceLock, RwLock, Weak,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
@@ -83,15 +88,16 @@ use storage_core::{
     ResourceLocationViewRecord, ResourceRecord, ResourceRevisionRecord, ResourceSearchRecord,
     ResourceStore, ResourceSummary, ResourceTextIndexRebuildOutcome,
     ResourceTextIndexRebuildRequest, ResourceTextIndexRebuildResult, ResourceTextIndexSkipReason,
-    ResourceTextSearchRecord, ResourceUploadChunkInput, ResourceUploadSessionRecord,
-    ResourceUploadState, ResourceUploadStore, RuntimeCapabilityHostPageRequest,
-    RuntimeCapabilityHostRecord, RuntimeCapabilityRef, RuntimeIncarnationLocalObservationRecord,
-    RuntimeIncarnationRecord, RuntimeIncarnationStateUpdate, RuntimeLifecycleStore,
-    RuntimeOfferPageRequest, RuntimeOfferRecord, RuntimeRecord, RuntimeWorkspaceBindingRecord,
-    RuntimeWorkspaceBindingStore, StateStore, StepRecord, StoreError, StoredResourceContent,
-    TaskAggregateSnapshot, TaskCreateCommit, TaskPlanningSessionStart, TaskRecord,
-    TaskSpecRevisionCommit, TaskSpecRevisionRecord, TaskStore, TaskSummaryRecord, TaskView,
-    Workspace, WorkspaceCreateRequest, WorkspaceEventReplayEntry, WorkspaceEventReplayPage,
+    ResourceTextSearchPage, ResourceTextSearchPosition, ResourceUploadChunkInput,
+    ResourceUploadChunkReceiptRequest, ResourceUploadSessionRecord, ResourceUploadState,
+    ResourceUploadStore, RuntimeCapabilityHostPageRequest, RuntimeCapabilityHostRecord,
+    RuntimeCapabilityRef, RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
+    RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeOfferPageRequest,
+    RuntimeOfferRecord, RuntimeRecord, RuntimeWorkspaceBindingRecord, RuntimeWorkspaceBindingStore,
+    StateStore, StepRecord, StoreError, StoredResourceContent, TaskAggregateSnapshot,
+    TaskCreateCommit, TaskPlanningSessionStart, TaskRecord, TaskSpecRevisionCommit,
+    TaskSpecRevisionRecord, TaskStore, TaskSummaryRecord, TaskView, Workspace,
+    WorkspaceCreateRequest, WorkspaceEventReplayEntry, WorkspaceEventReplayPage,
     WorkspaceInstructionRevisionRecord, WorkspaceRootCreateCommit, WorkspaceRootRecord,
     WorkspaceRootResumeCommit, WorkspaceRootRevalidationBindings,
     WorkspaceRootRevalidationCandidate, WorkspaceRootRevalidationCommit,
@@ -127,7 +133,11 @@ const SQLITE_V12_DDL: &str = include_str!("../../../docs/schemas/sqlite-v12.sql"
 const SQLITE_V13_DDL: &str = include_str!("../../../docs/schemas/sqlite-v13.sql");
 const SQLITE_V14_DDL: &str = include_str!("../../../docs/schemas/sqlite-v14.sql");
 const SQLITE_V15_DDL: &str = include_str!("../../../docs/schemas/sqlite-v15.sql");
-const SCHEMA_VERSION: i64 = 15;
+const SQLITE_V16_DDL: &str = include_str!("../../../docs/schemas/sqlite-v16.sql");
+const SQLITE_V17_DDL: &str = include_str!("../../../docs/schemas/sqlite-v17.sql");
+const SQLITE_V18_DDL: &str = include_str!("../../../docs/schemas/sqlite-v18.sql");
+const SQLITE_V19_DDL: &str = include_str!("../../../docs/schemas/sqlite-v19.sql");
+const SCHEMA_VERSION: i64 = 19;
 const V3_SCHEMA_VERSION: i64 = 3;
 const V4_SCHEMA_VERSION: i64 = 4;
 const V5_SCHEMA_VERSION: i64 = 5;
@@ -141,6 +151,10 @@ const V12_SCHEMA_VERSION: i64 = 12;
 const V13_SCHEMA_VERSION: i64 = 13;
 const V14_SCHEMA_VERSION: i64 = 14;
 const V15_SCHEMA_VERSION: i64 = 15;
+const V16_SCHEMA_VERSION: i64 = 16;
+const V17_SCHEMA_VERSION: i64 = 17;
+const V18_SCHEMA_VERSION: i64 = 18;
+const V19_SCHEMA_VERSION: i64 = 19;
 
 fn require_task_planning_isolation_admission() -> Result<(), StoreError> {
     // No qualified Runtime-owned admission proof producer is connected in this
@@ -164,6 +178,10 @@ const V12_MIGRATION_NAME: &str = "rich_presentation_optional_v12";
 const V13_MIGRATION_NAME: &str = "environment_identity_immutable_v13";
 const V14_MIGRATION_NAME: &str = "trust_policy_decision_audit_v14";
 const V15_MIGRATION_NAME: &str = "invocation_transition_guards_v15";
+const V16_MIGRATION_NAME: &str = "agent_registry_v16";
+const V17_MIGRATION_NAME: &str = "resource_content_blob_registry_v17";
+const V18_MIGRATION_NAME: &str = "resource_upload_chunk_purge_registry_v18";
+const V19_MIGRATION_NAME: &str = "resource_index_blob_registry_v19";
 #[cfg(test)]
 const MIGRATION_NAME: &str = V1_MIGRATION_NAME; // version-one compatibility for schema baseline assertions
 const STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.aggregate-state+json";
@@ -327,16 +345,86 @@ struct Inner {
     sender: SyncSender<Command>,
     join: Mutex<Option<JoinHandle<()>>>,
     blobs: Arc<dyn BlobStore>,
-    blob_operation_locks: Mutex<BlobOperationLockRegistry>,
-    upload_create_request_locks: Mutex<BlobOperationLockRegistry>,
+    database_path: PathBuf,
     writer_metrics: SqliteWriterMetrics,
 }
 
-type BlobOperationLockRegistry = HashMap<(String, String), Weak<Mutex<()>>>;
+type ResourceUploadBlobOperationLockKey = (PathBuf, String, String);
+type ResourceUploadBlobOperationLockRegistry =
+    HashMap<ResourceUploadBlobOperationLockKey, Weak<Mutex<()>>>;
+type ResourceUploadSessionLockKey = (PathBuf, String, String);
+type ResourceUploadSessionLockRegistry = HashMap<ResourceUploadSessionLockKey, Weak<RwLock<()>>>;
+type CreateRequestLockKey = (PathBuf, String, String);
+type CreateRequestLockRegistry = HashMap<CreateRequestLockKey, Weak<Mutex<()>>>;
+type ResourceIndexWriteLockKey = (PathBuf, String);
+type ResourceIndexWriteLockRegistry = HashMap<ResourceIndexWriteLockKey, Weak<Mutex<()>>>;
+type ResourceIndexSnapshotOperationLockKey = (PathBuf, String, String);
+type ResourceIndexSnapshotOperationLockRegistry =
+    HashMap<ResourceIndexSnapshotOperationLockKey, Weak<Mutex<()>>>;
+type ResourceContentBlobOperationLockKey = (PathBuf, String, String);
+type ResourceContentBlobOperationLockRegistry =
+    HashMap<ResourceContentBlobOperationLockKey, Weak<Mutex<()>>>;
+#[cfg(test)]
+type ResourceIndexWriteContentionObserverRegistry =
+    HashMap<ResourceIndexWriteLockKey, SyncSender<()>>;
+
+static CREATE_REQUEST_LOCKS: OnceLock<Mutex<CreateRequestLockRegistry>> = OnceLock::new();
+static RESOURCE_INDEX_WRITE_LOCKS: OnceLock<Mutex<ResourceIndexWriteLockRegistry>> =
+    OnceLock::new();
+static RESOURCE_INDEX_SNAPSHOT_OPERATION_LOCKS: OnceLock<
+    Mutex<ResourceIndexSnapshotOperationLockRegistry>,
+> = OnceLock::new();
+static RESOURCE_CONTENT_BLOB_OPERATION_LOCKS: OnceLock<
+    Mutex<ResourceContentBlobOperationLockRegistry>,
+> = OnceLock::new();
+static RESOURCE_UPLOAD_BLOB_OPERATION_LOCKS: OnceLock<
+    Mutex<ResourceUploadBlobOperationLockRegistry>,
+> = OnceLock::new();
+static RESOURCE_UPLOAD_SESSION_LOCKS: OnceLock<Mutex<ResourceUploadSessionLockRegistry>> =
+    OnceLock::new();
+#[cfg(test)]
+static RESOURCE_INDEX_WRITE_CONTENTION_OBSERVERS: OnceLock<
+    Mutex<ResourceIndexWriteContentionObserverRegistry>,
+> = OnceLock::new();
 
 enum Command {
+    ReserveResourceIndexBlob {
+        workspace_id: String,
+        blob: BlobRef,
+        created_at: String,
+        expires_at: String,
+        reply: mpsc::Sender<Result<(), StoreError>>,
+    },
+    ClaimOrphanResourceIndexBlobs {
+        now: String,
+        limit: usize,
+        reply: mpsc::Sender<Result<Vec<(String, BlobRef)>, StoreError>>,
+    },
+    FinishOrphanResourceIndexBlob {
+        workspace_id: String,
+        digest: String,
+        reply: mpsc::Sender<Result<(), StoreError>>,
+    },
+    ReserveResourceContentBlob {
+        workspace_id: String,
+        blob: BlobRef,
+        created_at: String,
+        expires_at: String,
+        reply: mpsc::Sender<Result<(), StoreError>>,
+    },
+    ClaimOrphanResourceContentBlobs {
+        now: String,
+        limit: usize,
+        reply: mpsc::Sender<Result<Vec<(String, BlobRef)>, StoreError>>,
+    },
+    FinishOrphanResourceContentBlob {
+        workspace_id: String,
+        digest: String,
+        reply: mpsc::Sender<Result<(), StoreError>>,
+    },
     ListResourceIndexKeyVersions {
         workspace_id: String,
+        exclude_resource_id: Option<String>,
         reply: mpsc::Sender<Result<Vec<u32>, StoreError>>,
     },
     SearchResourceIndexCandidates {
@@ -382,6 +470,12 @@ enum Command {
         request_id: String,
         request_digest: String,
         reply: mpsc::Sender<Result<Option<ResourceUploadSessionRecord>, StoreError>>,
+    },
+    CheckResourceCreateReceipt {
+        principal_id: String,
+        request_id: String,
+        request_digest: String,
+        reply: mpsc::Sender<Result<Option<CommittedResource>, StoreError>>,
     },
     CommitResourceTextIndexRebuild {
         request: ResourceTextIndexRebuildRequest,
@@ -639,6 +733,9 @@ enum Command {
         blobs: Arc<dyn BlobStore>,
         reply: mpsc::Sender<Result<CommittedContextDocumentStatus, StoreError>>,
     },
+    ContextDocumentPurgeOperation {
+        operation: context_document_purge::WriterOperation,
+    },
     ListWorkspaceInstructionRevisions {
         workspace_id: String,
         after_revision: u64,
@@ -857,9 +954,19 @@ enum Command {
         upload_id: String,
         reply: mpsc::Sender<Result<Option<ResourceUploadSessionRecord>, StoreError>>,
     },
+    GetResourceUploadChunkReceipt {
+        request: ResourceUploadChunkReceiptRequest,
+        reply: mpsc::Sender<Result<bool, StoreError>>,
+    },
     GetCommittedResourceUpload {
         principal_id: String,
         upload_id: String,
+        reply: mpsc::Sender<Result<Option<CommittedResource>, StoreError>>,
+    },
+    ResolveResourceUploadCommitReceipt {
+        principal_id: String,
+        request_id: String,
+        session: ResourceUploadSessionRecord,
         reply: mpsc::Sender<Result<Option<CommittedResource>, StoreError>>,
     },
     ListExpiredResourceUploads {
@@ -891,7 +998,7 @@ enum Command {
         size_bytes: u64,
         created_at: String,
         expires_at: String,
-        reply: mpsc::Sender<Result<(), StoreError>>,
+        reply: mpsc::Sender<Result<ResourceUploadBlobReservationOutcome, StoreError>>,
     },
     ClaimOrphanResourceUploadBlobs {
         now: String,
@@ -901,12 +1008,17 @@ enum Command {
     FinishOrphanResourceUploadBlob {
         workspace_id: String,
         digest: String,
-        reply: mpsc::Sender<Result<(), StoreError>>,
+        reply: mpsc::Sender<Result<bool, StoreError>>,
     },
     GetResourceUploadChunks {
         workspace_id: String,
         upload_id: String,
         reply: mpsc::Sender<Result<Vec<ResourceUploadChunkRow>, StoreError>>,
+    },
+    GetResourceUploadBlobDigests {
+        workspace_id: String,
+        upload_id: String,
+        reply: mpsc::Sender<Result<Vec<String>, StoreError>>,
     },
     PutResourceUploadChunk {
         chunk: ResourceUploadChunkInput,
@@ -918,6 +1030,7 @@ enum Command {
     },
     CommitResourceUpload {
         request: WorkspaceCreateRequest,
+        request_alias: Option<WorkspaceCreateRequest>,
         resource: ResourceRecord,
         revision: ResourceRevisionRecord,
         draft: EventDraft,
@@ -986,6 +1099,12 @@ impl SqliteWorkspaceStore {
                 )
             })?;
         ensure_private_directory(parent)?;
+        let file_name = database_path.file_name().ok_or_else(|| {
+            StoreError::Invalid("SQLite database path must name a file".to_owned())
+        })?;
+        let lock_database_path = fs::canonicalize(parent)
+            .map_err(map_io_error)?
+            .join(file_name);
 
         let (sender, receiver) = mpsc::sync_channel(config.writer_queue_capacity);
         let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
@@ -1002,8 +1121,7 @@ impl SqliteWorkspaceStore {
                     sender,
                     join: Mutex::new(Some(join)),
                     blobs,
-                    blob_operation_locks: Mutex::new(HashMap::new()),
-                    upload_create_request_locks: Mutex::new(HashMap::new()),
+                    database_path: lock_database_path,
                     writer_metrics: SqliteWriterMetrics::default(),
                 }),
             }),
@@ -1374,6 +1492,92 @@ impl SqliteWorkspaceStore {
         }
     }
 
+    fn reserve_resource_index_snapshot(
+        &self,
+        workspace_id: &str,
+        blob: &BlobRef,
+    ) -> Result<(), StoreError> {
+        if workspace_id.trim().is_empty()
+            || blob.media_type != resource_index::INDEX_MEDIA_TYPE
+            || blob.size_bytes > resource_index::MAX_INDEXABLE_RESOURCE_BYTES
+            || !blob.digest.starts_with("sha256:")
+            || blob.digest.len() != 71
+            || !blob.digest[7..]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(StoreError::Invalid(
+                "ResourceIndex blob reservation is invalid".to_owned(),
+            ));
+        }
+        let created_at = OffsetDateTime::now_utc();
+        let expires_at = created_at
+            .checked_add(time::Duration::hours(24))
+            .ok_or_else(|| {
+                StoreError::Invalid("ResourceIndex reservation expiry overflow".to_owned())
+            })?;
+        let created_at = created_at.format(&Rfc3339).map_err(|_| {
+            StoreError::Invalid("ResourceIndex reservation time is invalid".to_owned())
+        })?;
+        let expires_at = expires_at.format(&Rfc3339).map_err(|_| {
+            StoreError::Invalid("ResourceIndex reservation expiry is invalid".to_owned())
+        })?;
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::ReserveResourceIndexBlob {
+                workspace_id: workspace_id.to_owned(),
+                blob: blob.clone(),
+                created_at,
+                expires_at,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn reserve_resource_content_blob(
+        &self,
+        workspace_id: &str,
+        blob: &BlobRef,
+    ) -> Result<(), StoreError> {
+        if workspace_id.trim().is_empty()
+            || blob.media_type.trim().is_empty()
+            || blob.size_bytes > i64::MAX as u64
+            || blob.digest.len() != 71
+            || !blob.digest.starts_with("sha256:")
+            || !blob.digest[7..]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(StoreError::Invalid(
+                "Resource content blob reservation is invalid".to_owned(),
+            ));
+        }
+        let created_at = OffsetDateTime::now_utc();
+        let expires_at = created_at
+            .checked_add(time::Duration::hours(24))
+            .ok_or_else(|| {
+                StoreError::Invalid("Resource content reservation expiry overflow".to_owned())
+            })?;
+        let created_at = created_at.format(&Rfc3339).map_err(|_| {
+            StoreError::Invalid("Resource content reservation time is invalid".to_owned())
+        })?;
+        let expires_at = expires_at.format(&Rfc3339).map_err(|_| {
+            StoreError::Invalid("Resource content reservation expiry is invalid".to_owned())
+        })?;
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::ReserveResourceContentBlob {
+                workspace_id: workspace_id.to_owned(),
+                blob: blob.clone(),
+                created_at,
+                expires_at,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
     /// Refuse to create new tokens when any key version already referenced by this
     /// Workspace's index is unavailable. Otherwise an OS credential-store reset could
     /// silently provision a fresh key under the old version number and make old index
@@ -1382,11 +1586,13 @@ impl SqliteWorkspaceStore {
     fn ensure_resource_index_key_history_available(
         &self,
         workspace_id: &str,
-    ) -> Result<(), StoreError> {
+        exclude_resource_id: Option<&str>,
+    ) -> Result<u32, StoreError> {
         let (reply_sender, reply_receiver) = mpsc::channel();
         let versions = self.execute_command(
             Command::ListResourceIndexKeyVersions {
                 workspace_id: workspace_id.to_owned(),
+                exclude_resource_id: exclude_resource_id.map(str::to_owned),
                 reply: reply_sender,
             },
             reply_receiver,
@@ -1397,14 +1603,26 @@ impl SqliteWorkspaceStore {
                     .to_owned(),
             ));
         }
-        for version in versions {
+        for version in &versions {
             self.inner.blobs.resource_index_token(
                 workspace_id,
-                Some(version),
+                Some(*version),
                 "__lc_key_availability_check_v1",
             )?;
         }
-        Ok(())
+        let (current_version, _) = self.inner.blobs.resource_index_token(
+            workspace_id,
+            None,
+            "__lc_current_key_availability_check_v1",
+        )?;
+        let projected_versions = versions.len() + usize::from(!versions.contains(&current_version));
+        if projected_versions > resource_index::MAX_SEARCHABLE_KEY_VERSIONS {
+            return Err(StoreError::Blob(
+                "Resource index would exceed retained key-version limit; reindex before writing"
+                    .to_owned(),
+            ));
+        }
+        Ok(current_version)
     }
 
     fn execute_command<T>(
@@ -3043,12 +3261,91 @@ impl TaskStore for SqliteWorkspaceStore {
     }
 }
 
+impl SqliteWorkspaceStore {
+    fn read_resource_content_with_limit(
+        &self,
+        workspace_id: &str,
+        resource_id: &str,
+        revision_id: Option<&str>,
+        maximum_bytes: Option<u64>,
+    ) -> Result<Option<StoredResourceContent>, StoreError> {
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        let resolved = self.execute_command(
+            Command::ReadResourceContent {
+                workspace_id: workspace_id.to_owned(),
+                resource_id: resource_id.to_owned(),
+                revision_id: revision_id.map(str::to_owned),
+                maximum_bytes,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )?;
+        let Some((summary, blob)) = resolved else {
+            return Ok(None);
+        };
+        let operation_lock = self.resource_content_blob_operation_lock(workspace_id, &blob.digest);
+        let _operation_guard = operation_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+        // The first lookup selects an immutable revision before acquiring its digest lock.
+        // Revalidate that exact revision while holding the lock so a concurrent purge or
+        // location removal cannot make GC win between selection and BlobStore::get.
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        let revalidated = self.execute_command(
+            Command::ReadResourceContent {
+                workspace_id: workspace_id.to_owned(),
+                resource_id: resource_id.to_owned(),
+                revision_id: Some(summary.resource_revision_id.clone()),
+                maximum_bytes,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )?;
+        let Some((revalidated_summary, revalidated_blob)) = revalidated else {
+            return Ok(None);
+        };
+        if revalidated_blob != blob
+            || revalidated_summary.resource_revision_id != summary.resource_revision_id
+        {
+            return Err(StoreError::Integrity(
+                "Resource revision content changed during read admission".to_owned(),
+            ));
+        }
+        let content = match self
+            .inner
+            .blobs
+            .get(workspace_id, BlobPurpose::Resource, &blob)
+        {
+            Ok(content) => content,
+            Err(error) => {
+                return Err(self.resource_read_error_after_blob_failure(
+                    workspace_id,
+                    resource_id,
+                    error,
+                ));
+            }
+        };
+        if content.len() as u64 != revalidated_summary.size_bytes
+            || digest(&content) != revalidated_summary.content_digest
+        {
+            return Err(StoreError::Integrity(
+                "Resource content does not match its immutable revision".to_owned(),
+            ));
+        }
+        Ok(Some(StoredResourceContent {
+            summary: revalidated_summary,
+            content,
+        }))
+    }
+}
+
 impl ResourceStore for SqliteWorkspaceStore {
     fn create_resource(
         &self,
         request: WorkspaceCreateRequest,
         resource: ResourceRecord,
-        revision: ResourceRevisionRecord,
+        mut revision: ResourceRevisionRecord,
         event: EventDraft,
         content: Vec<u8>,
     ) -> Result<CommittedResource, StoreError> {
@@ -3066,6 +3363,72 @@ impl ResourceStore for SqliteWorkspaceStore {
                 "Resource create payload is inconsistent".to_owned(),
             ));
         }
+        if request.principal_id.trim().is_empty() || request.request_id.trim().is_empty() {
+            return Err(StoreError::Invalid(
+                "Resource creation identity is invalid".to_owned(),
+            ));
+        }
+        // Resolve committed exact retries and changed-payload conflicts before any
+        // index preparation, content reservation, or aggregate BlobStore writes.
+        // The shared request lock also prevents two in-process store handles from
+        // both missing the receipt and publishing duplicate candidate blobs.
+        let request_lock = self.create_request_lock(&request.principal_id, &request.request_id);
+        let _request_guard = request_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(receipt) = self.check_resource_create_receipt(&request)? {
+            return Ok(receipt);
+        }
+        // A committed request remains replayable after Workspace archival. New
+        // requests still fail before any content/index/aggregate blob is prepared;
+        // the transaction repeats this state check as its final serialization fence.
+        match self.get_workspace(&resource.workspace_id)? {
+            Some(workspace) if workspace.status == "ACTIVE" => {}
+            Some(_) => {
+                return Err(StoreError::Invalid(
+                    "archived Workspace is read-only".to_owned(),
+                ));
+            }
+            None => return Err(StoreError::NotFound),
+        }
+        let media_type = revision
+            .media_type
+            .clone()
+            .unwrap_or_else(|| "application/octet-stream".to_owned());
+        // The encrypted BlobRef has always used this fallback for absent MIME metadata.
+        // Persist the same exact value on the immutable revision so v17's registry and
+        // location guards can match the bytes that were actually published.
+        revision.media_type = Some(media_type.clone());
+        let should_index =
+            resource_index::not_indexable_reason(&resource.display_name, &media_type, &content)
+                .is_none();
+        let index_write_lock =
+            should_index.then(|| self.resource_index_write_lock(&resource.workspace_id));
+        let _index_write_guard = index_write_lock
+            .as_ref()
+            .map(|lock| self.lock_resource_index_write(&resource.workspace_id, lock));
+        let index_key_version = if should_index {
+            Some(self.ensure_resource_index_key_history_available(&resource.workspace_id, None)?)
+        } else {
+            None
+        };
+        let text_index = if let Some(index_key_version) = index_key_version {
+            resource_index::prepare(
+                self.inner.blobs.as_ref(),
+                &resource.workspace_id,
+                &resource.resource_id,
+                &revision.resource_revision_id,
+                &resource.display_name,
+                &media_type,
+                revision.content_digest.as_deref().unwrap_or_default(),
+                &revision.observed_at,
+                &content,
+                index_key_version,
+                |blob| self.reserve_resource_index_snapshot(&resource.workspace_id, blob),
+            )?
+        } else {
+            None
+        };
         let state_bytes = canonical_json(&resource)?;
         let state_blob = self.inner.blobs.put(
             &resource.workspace_id,
@@ -3083,17 +3446,26 @@ impl ResourceStore for SqliteWorkspaceStore {
                 "Resource aggregate state failed blob verification".to_owned(),
             ));
         }
+        let expected_content_blob = BlobRef {
+            digest: content_digest.clone(),
+            size_bytes: content.len() as u64,
+            media_type: media_type.to_owned(),
+        };
+        let content_lock =
+            self.resource_content_blob_operation_lock(&resource.workspace_id, &content_digest);
+        let _content_guard = content_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.reserve_resource_content_blob(&resource.workspace_id, &expected_content_blob)?;
         let content_blob = self.inner.blobs.put(
             &resource.workspace_id,
             BlobPurpose::Resource,
             &content,
-            revision
-                .media_type
-                .as_deref()
-                .unwrap_or("application/octet-stream"),
+            &media_type,
         )?;
-        if content_blob.digest != revision.content_digest.clone().unwrap_or_default()
-            || content_blob.size_bytes != content.len() as u64
+        if content_blob.digest != expected_content_blob.digest
+            || content_blob.size_bytes != expected_content_blob.size_bytes
+            || content_blob.media_type != expected_content_blob.media_type
             || self
                 .inner
                 .blobs
@@ -3104,29 +3476,6 @@ impl ResourceStore for SqliteWorkspaceStore {
                 "Resource content failed blob verification".to_owned(),
             ));
         }
-        let media_type = revision
-            .media_type
-            .as_deref()
-            .unwrap_or("application/octet-stream");
-        let text_index =
-            if resource_index::not_indexable_reason(&resource.display_name, media_type, &content)
-                .is_some()
-            {
-                None
-            } else {
-                self.ensure_resource_index_key_history_available(&resource.workspace_id)?;
-                resource_index::prepare(
-                    self.inner.blobs.as_ref(),
-                    &resource.workspace_id,
-                    &resource.resource_id,
-                    &revision.resource_revision_id,
-                    &resource.display_name,
-                    media_type,
-                    revision.content_digest.as_deref().unwrap_or_default(),
-                    &revision.observed_at,
-                    &content,
-                )?
-            };
         let state_ref = AggregateStateRef {
             blob: state_blob,
             entity_revision: resource.version,
@@ -3155,41 +3504,7 @@ impl ResourceStore for SqliteWorkspaceStore {
         workspace_id: &str,
         resource_id: &str,
     ) -> Result<Option<StoredResourceContent>, StoreError> {
-        let (reply_sender, reply_receiver) = mpsc::channel();
-        let resolved = self.execute_command(
-            Command::ReadResourceContent {
-                workspace_id: workspace_id.to_owned(),
-                resource_id: resource_id.to_owned(),
-                revision_id: None,
-                maximum_bytes: None,
-                reply: reply_sender,
-            },
-            reply_receiver,
-        )?;
-        let Some((summary, blob)) = resolved else {
-            return Ok(None);
-        };
-        let content = match self
-            .inner
-            .blobs
-            .get(workspace_id, BlobPurpose::Resource, &blob)
-        {
-            Ok(content) => content,
-            Err(error) => {
-                return Err(self.resource_read_error_after_blob_failure(
-                    workspace_id,
-                    resource_id,
-                    error,
-                ));
-            }
-        };
-        if content.len() as u64 != summary.size_bytes || digest(&content) != summary.content_digest
-        {
-            return Err(StoreError::Integrity(
-                "Resource content does not match its immutable revision".to_owned(),
-            ));
-        }
-        Ok(Some(StoredResourceContent { summary, content }))
+        self.read_resource_content_with_limit(workspace_id, resource_id, None, None)
     }
 
     fn get_resource_record(
@@ -3239,41 +3554,12 @@ impl ResourceStore for SqliteWorkspaceStore {
         revision_id: Option<&str>,
         maximum_bytes: u64,
     ) -> Result<Option<StoredResourceContent>, StoreError> {
-        let (reply_sender, reply_receiver) = mpsc::channel();
-        let resolved = self.execute_command(
-            Command::ReadResourceContent {
-                workspace_id: workspace_id.to_owned(),
-                resource_id: resource_id.to_owned(),
-                revision_id: revision_id.map(str::to_owned),
-                maximum_bytes: Some(maximum_bytes),
-                reply: reply_sender,
-            },
-            reply_receiver,
-        )?;
-        let Some((summary, blob)) = resolved else {
-            return Ok(None);
-        };
-        let content = match self
-            .inner
-            .blobs
-            .get(workspace_id, BlobPurpose::Resource, &blob)
-        {
-            Ok(content) => content,
-            Err(error) => {
-                return Err(self.resource_read_error_after_blob_failure(
-                    workspace_id,
-                    resource_id,
-                    error,
-                ));
-            }
-        };
-        if content.len() as u64 != summary.size_bytes || digest(&content) != summary.content_digest
-        {
-            return Err(StoreError::Integrity(
-                "Resource content does not match its immutable revision".to_owned(),
-            ));
-        }
-        Ok(Some(StoredResourceContent { summary, content }))
+        self.read_resource_content_with_limit(
+            workspace_id,
+            resource_id,
+            revision_id,
+            Some(maximum_bytes),
+        )
     }
 
     fn search_resources_page(
@@ -3307,7 +3593,10 @@ impl ResourceStore for SqliteWorkspaceStore {
         after_created_at: Option<&str>,
         after_resource_id: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<ResourceTextSearchRecord>, StoreError> {
+    ) -> Result<ResourceTextSearchPage, StoreError> {
+        const MAX_SCAN_CANDIDATES: usize = 200;
+        const MAX_SCAN_BYTES: u64 = 64 * 1024 * 1024;
+
         if workspace_id.trim().is_empty()
             || !(1..=201).contains(&limit)
             || after_created_at.is_some() != after_resource_id.is_some()
@@ -3317,16 +3606,26 @@ impl ResourceStore for SqliteWorkspaceStore {
             ));
         }
         let terms = resource_index::query_terms(query)?;
+        // Keep the current-head key snapshot, token derivation, and candidate query
+        // consistent with local reindex/create/revision writers. Pin each candidate's
+        // exact snapshot lock before releasing the Workspace lock; GC uses the same
+        // lock and cannot remove a snapshot during bounded blob materialization.
+        let index_write_lock = self.resource_index_write_lock(workspace_id);
+        let index_write_guard = self.lock_resource_index_write(workspace_id, &index_write_lock);
         let (reply_sender, reply_receiver) = mpsc::channel();
         let versions = self.execute_command(
             Command::ListResourceIndexKeyVersions {
                 workspace_id: workspace_id.to_owned(),
+                exclude_resource_id: None,
                 reply: reply_sender,
             },
             reply_receiver,
         )?;
         if versions.is_empty() {
-            return Ok(Vec::new());
+            return Ok(ResourceTextSearchPage {
+                items: Vec::new(),
+                continuation: None,
+            });
         }
         if versions.len() > resource_index::MAX_SEARCHABLE_KEY_VERSIONS {
             return Err(StoreError::Blob(
@@ -3348,7 +3647,7 @@ impl ResourceStore for SqliteWorkspaceStore {
             tokens_by_version.push((version, tokens));
         }
         let (reply_sender, reply_receiver) = mpsc::channel();
-        let candidates = self.execute_command(
+        let mut candidates = self.execute_command(
             Command::SearchResourceIndexCandidates {
                 workspace_id: workspace_id.to_owned(),
                 tokens_by_version,
@@ -3356,19 +3655,70 @@ impl ResourceStore for SqliteWorkspaceStore {
                 freshness: freshness.map(str::to_owned),
                 after_created_at: after_created_at.map(str::to_owned),
                 after_resource_id: after_resource_id.map(str::to_owned),
-                limit,
+                // Keep one candidate beyond the scan budget so a bounded page can
+                // distinguish exhaustion from an unfinished frontier.
+                limit: MAX_SCAN_CANDIDATES + 1,
                 reply: reply_sender,
             },
             reply_receiver,
         )?;
-        let materialized = resource_index::materialize_matches(
-            self.inner.blobs.as_ref(),
-            workspace_id,
-            candidates,
-            &terms,
-        )?;
-        let mut current = Vec::with_capacity(materialized.len());
-        for match_record in materialized {
+        let has_candidate_after_scan_budget = candidates.len() > MAX_SCAN_CANDIDATES;
+        candidates.truncate(MAX_SCAN_CANDIDATES);
+        // Pin selected immutable snapshots before releasing the Workspace lock. GC
+        // claims candidates durably, then takes these exact-object locks before remove;
+        // bounded reads can therefore finish if a purge removes their SQL roots. The
+        // scan below reads no more than 200 snapshots and 64 MiB total per request.
+        let mut snapshot_digests = candidates
+            .iter()
+            .map(|candidate| candidate.extracted_blob.digest.clone())
+            .collect::<Vec<_>>();
+        snapshot_digests.sort_unstable();
+        snapshot_digests.dedup();
+        let snapshot_locks = snapshot_digests
+            .iter()
+            .map(|digest| self.resource_index_snapshot_operation_lock(workspace_id, digest))
+            .collect::<Vec<_>>();
+        let snapshot_guards = snapshot_locks
+            .iter()
+            .map(|lock| {
+                lock.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            })
+            .collect::<Vec<_>>();
+        drop(index_write_guard);
+        let mut candidates = candidates.into_iter().peekable();
+        let mut current = Vec::with_capacity(limit);
+        let mut scanned_bytes = 0u64;
+        let mut frontier = None;
+        let mut stopped_at_byte_budget = false;
+        for candidate in candidates.by_ref() {
+            let candidate_size = candidate.extracted_blob.size_bytes;
+            if candidate_size > MAX_SCAN_BYTES {
+                return Err(StoreError::Integrity(
+                    "Resource index snapshot exceeds the bounded search size".to_owned(),
+                ));
+            }
+            if scanned_bytes.saturating_add(candidate_size) > MAX_SCAN_BYTES {
+                stopped_at_byte_budget = true;
+                break;
+            }
+            let position = ResourceTextSearchPosition {
+                created_at: candidate.record.summary.created_at.clone(),
+                resource_id: candidate.record.summary.resource_id.clone(),
+            };
+            let mut materialized = resource_index::materialize_matches(
+                self.inner.blobs.as_ref(),
+                workspace_id,
+                vec![candidate],
+                &terms,
+            )?;
+            scanned_bytes = scanned_bytes.saturating_add(candidate_size);
+            frontier = Some(position);
+            let Some(match_record) = materialized.pop() else {
+                return Err(StoreError::Integrity(
+                    "Resource index candidate did not materialize".to_owned(),
+                ));
+            };
             let (reply_sender, reply_receiver) = mpsc::channel();
             let is_current = self.execute_command(
                 Command::RecheckResourceIndexCandidate {
@@ -3382,9 +3732,112 @@ impl ResourceStore for SqliteWorkspaceStore {
             )?;
             if is_current {
                 current.push(match_record);
+                if current.len() == limit {
+                    break;
+                }
             }
         }
-        Ok(current)
+        drop(snapshot_guards);
+        let has_unexamined_candidates = stopped_at_byte_budget
+            || candidates.peek().is_some()
+            || frontier.is_some() && has_candidate_after_scan_budget;
+        let continuation = if has_unexamined_candidates {
+            frontier
+        } else {
+            None
+        };
+        Ok(ResourceTextSearchPage {
+            items: current,
+            continuation,
+        })
+    }
+
+    fn collect_orphan_resource_index_blobs(
+        &self,
+        now: &str,
+        limit: usize,
+    ) -> Result<usize, StoreError> {
+        if limit == 0 || limit > 100 || OffsetDateTime::parse(now, &Rfc3339).is_err() {
+            return Err(StoreError::Invalid(
+                "ResourceIndex blob sweep request is invalid".to_owned(),
+            ));
+        }
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        let candidates = self.execute_command(
+            Command::ClaimOrphanResourceIndexBlobs {
+                now: now.to_owned(),
+                limit,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )?;
+        let mut removed = 0;
+        for (workspace_id, blob) in candidates {
+            let operation_lock = self.resource_index_write_lock(&workspace_id);
+            let _operation_guard = self.lock_resource_index_write(&workspace_id, &operation_lock);
+            let snapshot_lock =
+                self.resource_index_snapshot_operation_lock(&workspace_id, &blob.digest);
+            let _snapshot_guard = snapshot_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.inner
+                .blobs
+                .remove(&workspace_id, BlobPurpose::ResourceIndex, &blob)?;
+            let (reply_sender, reply_receiver) = mpsc::channel();
+            self.execute_command(
+                Command::FinishOrphanResourceIndexBlob {
+                    workspace_id,
+                    digest: blob.digest,
+                    reply: reply_sender,
+                },
+                reply_receiver,
+            )?;
+            removed += 1;
+        }
+        Ok(removed)
+    }
+
+    fn collect_orphan_resource_content_blobs(
+        &self,
+        now: &str,
+        limit: usize,
+    ) -> Result<usize, StoreError> {
+        if limit == 0 || limit > 100 || OffsetDateTime::parse(now, &Rfc3339).is_err() {
+            return Err(StoreError::Invalid(
+                "Resource content blob sweep request is invalid".to_owned(),
+            ));
+        }
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        let candidates = self.execute_command(
+            Command::ClaimOrphanResourceContentBlobs {
+                now: now.to_owned(),
+                limit,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )?;
+        let mut removed = 0;
+        for (workspace_id, blob) in candidates {
+            let operation_lock =
+                self.resource_content_blob_operation_lock(&workspace_id, &blob.digest);
+            let _operation_guard = operation_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.inner
+                .blobs
+                .remove(&workspace_id, BlobPurpose::Resource, &blob)?;
+            let (reply_sender, reply_receiver) = mpsc::channel();
+            self.execute_command(
+                Command::FinishOrphanResourceContentBlob {
+                    workspace_id,
+                    digest: blob.digest,
+                    reply: reply_sender,
+                },
+                reply_receiver,
+            )?;
+            removed += 1;
+        }
+        Ok(removed)
     }
 
     fn reindex_resource_text(
@@ -3432,6 +3885,13 @@ impl ResourceStore for SqliteWorkspaceStore {
         )? {
             return Ok(receipt);
         }
+
+        // Keep the key-version preflight, candidate blob preparation, and durable
+        // projection commit in one per-Workspace critical section. The SQL guard
+        // remains authoritative for any writer outside this process-local lock.
+        let _index_write_lock = self.resource_index_write_lock(&request.workspace_id);
+        let _index_write_guard =
+            self.lock_resource_index_write(&request.workspace_id, &_index_write_lock);
 
         let workspace = self
             .get_workspace(&request.workspace_id)?
@@ -3506,7 +3966,10 @@ impl ResourceStore for SqliteWorkspaceStore {
                     None,
                 )
             } else {
-                self.ensure_resource_index_key_history_available(&request.workspace_id)?;
+                let index_key_version = self.ensure_resource_index_key_history_available(
+                    &request.workspace_id,
+                    Some(&request.resource_id),
+                )?;
                 let index = resource_index::prepare(
                     self.inner.blobs.as_ref(),
                     &request.workspace_id,
@@ -3517,6 +3980,8 @@ impl ResourceStore for SqliteWorkspaceStore {
                     &request.content_digest,
                     &request.indexed_at,
                     &content.content,
+                    index_key_version,
+                    |blob| self.reserve_resource_index_snapshot(&request.workspace_id, blob),
                 )?
                 .ok_or_else(|| {
                     StoreError::Integrity(
@@ -3928,6 +4393,18 @@ impl ContextDocumentStatusStore for SqliteWorkspaceStore {
 }
 
 impl ResourceUploadStore for SqliteWorkspaceStore {
+    fn get_create_receipt(
+        &self,
+        request: &WorkspaceCreateRequest,
+    ) -> Result<Option<ResourceUploadSessionRecord>, StoreError> {
+        if request.principal_id.trim().is_empty() || request.request_id.trim().is_empty() {
+            return Err(StoreError::Invalid(
+                "principal and request IDs must not be empty".to_owned(),
+            ));
+        }
+        self.check_resource_upload_create_receipt(request)
+    }
+
     fn create(
         &self,
         request: WorkspaceCreateRequest,
@@ -3970,8 +4447,7 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
         // Serialize same-key retries across store clones through receipt lookup, blob
         // persistence, and the transactional create. Without this lock, concurrent
         // first attempts can both miss the receipt and leave one unreferenced state blob.
-        let request_lock =
-            self.upload_create_request_lock(&request.principal_id, &request.request_id);
+        let request_lock = self.create_request_lock(&request.principal_id, &request.request_id);
         let _request_guard = request_lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -4052,6 +4528,16 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
                 "Resource revision upload session is invalid".to_owned(),
             ));
         }
+        // Resolve the durable receipt before depending on the current Resource head.
+        // Exact retries and changed-payload conflicts remain authoritative even if
+        // mutable Resource state is now unavailable or has advanced.
+        let request_lock = self.create_request_lock(&request.principal_id, &request.request_id);
+        let _request_guard = request_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(receipt) = self.check_resource_upload_create_receipt(&request)? {
+            return Ok(receipt);
+        }
         let resource = self
             .get_resource_record(&session.workspace_id, resource_id)?
             .ok_or(StoreError::NotFound)?;
@@ -4102,6 +4588,20 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
         )
     }
 
+    fn get_chunk_receipt(
+        &self,
+        request: &ResourceUploadChunkReceiptRequest,
+    ) -> Result<bool, StoreError> {
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::GetResourceUploadChunkReceipt {
+                request: request.clone(),
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
     fn committed_resource_for_upload(
         &self,
         principal_id: &str,
@@ -4117,6 +4617,20 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
             },
             reply_receiver,
         )
+    }
+
+    fn resolve_commit_receipt(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        session: &ResourceUploadSessionRecord,
+    ) -> Result<Option<CommittedResource>, StoreError> {
+        validate_nonempty(&[principal_id, request_id, &session.upload_id])?;
+        let request_lock = self.create_request_lock(principal_id, request_id);
+        let _request_guard = request_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.resolve_commit_receipt_inner(principal_id, request_id, session)
     }
 
     fn list_expired(
@@ -4165,7 +4679,7 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
                 .blobs
                 .remove(&workspace_id, BlobPurpose::ResourceUploadChunk, &blob)?;
             let (reply_sender, reply_receiver) = mpsc::channel();
-            self.execute_command(
+            let finished = self.execute_command(
                 Command::FinishOrphanResourceUploadBlob {
                     workspace_id,
                     digest: blob.digest,
@@ -4173,7 +4687,9 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
                 },
                 reply_receiver,
             )?;
-            removed += 1;
+            if finished {
+                removed += 1;
+            }
         }
         Ok(removed)
     }
@@ -4184,6 +4700,52 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
         expired: ResourceUploadSessionRecord,
         event: EventDraft,
     ) -> Result<ResourceUploadSessionRecord, StoreError> {
+        let current = self
+            .get_for_chunk(&expired.upload_id)?
+            .ok_or(StoreError::NotFound)?;
+        if current.workspace_id != expired.workspace_id {
+            return Err(StoreError::NotFound);
+        }
+        let resource_lock = current
+            .resource_id
+            .as_ref()
+            .map(|_| self.resource_index_write_lock(&current.workspace_id));
+        let _resource_guard = resource_lock
+            .as_ref()
+            .map(|lock| self.lock_resource_index_write(&current.workspace_id, lock));
+        let session_lock = self.upload_session_lock(&current.workspace_id, &current.upload_id);
+        let _session_guard = session_lock
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let blob_digests = self.upload_blob_digests(&current.workspace_id, &current.upload_id)?;
+        let blob_locks = blob_digests
+            .iter()
+            .map(|digest| self.blob_operation_lock(&current.workspace_id, digest))
+            .collect::<Vec<_>>();
+        let _blob_guards = blob_locks
+            .iter()
+            .map(|lock| {
+                lock.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            })
+            .collect::<Vec<_>>();
+        let current = self
+            .get(&expired.workspace_id, &expired.upload_id)?
+            .ok_or(StoreError::NotFound)?;
+        if matches!(
+            current.state,
+            ResourceUploadState::Expired
+                | ResourceUploadState::Committed
+                | ResourceUploadState::Failed
+        ) {
+            return Ok(current);
+        }
+        if current.progress_version != expected_progress_version {
+            return Err(StoreError::Conflict {
+                expected: Some(expected_progress_version),
+                actual: Some(current.progress_version),
+            });
+        }
         if expired.state != ResourceUploadState::Expired
             || event.entity_type != "ResourceUpload"
             || event.entity_id != expired.upload_id
@@ -4234,13 +4796,24 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
                 "Resource upload chunk request or digest is invalid".to_owned(),
             ));
         }
-        validate_upload_chunk(&session, &chunk)?;
+        validate_upload_chunk_geometry(&session, &chunk)?;
+        let resource_lock = session
+            .resource_id
+            .as_ref()
+            .map(|_| self.resource_index_write_lock(&session.workspace_id));
+        let _resource_guard = resource_lock
+            .as_ref()
+            .map(|lock| self.lock_resource_index_write(&session.workspace_id, lock));
+        let session_lock = self.upload_session_lock(&session.workspace_id, &session.upload_id);
+        let _session_guard = session_lock
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let operation_lock = self.blob_operation_lock(&session.workspace_id, &chunk.sha256);
         let _operation_guard = operation_lock
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (reply_sender, reply_receiver) = mpsc::channel();
-        self.execute_command(
+        let reservation_outcome = self.execute_command(
             Command::ReserveResourceUploadBlob {
                 workspace_id: session.workspace_id.clone(),
                 upload_id: session.upload_id.clone(),
@@ -4254,23 +4827,41 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
             },
             reply_receiver,
         )?;
-        let blob = self.inner.blobs.put(
-            &session.workspace_id,
-            BlobPurpose::ResourceUploadChunk,
-            &chunk.content,
-            "application/octet-stream",
-        )?;
-        if blob.digest != chunk.sha256
-            || self.inner.blobs.get(
-                &session.workspace_id,
-                BlobPurpose::ResourceUploadChunk,
-                &blob,
-            )? != chunk.content
-        {
-            return Err(StoreError::Integrity(
-                "upload chunk blob verification failed".to_owned(),
-            ));
+        if reservation_outcome == ResourceUploadBlobReservationOutcome::ExistingRequest {
+            return self
+                .get_for_chunk(&chunk.upload_id)?
+                .ok_or(StoreError::NotFound);
         }
+        let blob = match reservation_outcome {
+            ResourceUploadBlobReservationOutcome::WriteObject => {
+                let blob = self.inner.blobs.put(
+                    &session.workspace_id,
+                    BlobPurpose::ResourceUploadChunk,
+                    &chunk.content,
+                    "application/octet-stream",
+                )?;
+                if blob.digest != chunk.sha256
+                    || self.inner.blobs.get(
+                        &session.workspace_id,
+                        BlobPurpose::ResourceUploadChunk,
+                        &blob,
+                    )? != chunk.content
+                {
+                    return Err(StoreError::Integrity(
+                        "upload chunk blob verification failed".to_owned(),
+                    ));
+                }
+                blob
+            }
+            ResourceUploadBlobReservationOutcome::ExistingChunk => BlobRef {
+                digest: chunk.sha256.clone(),
+                size_bytes: chunk.content.len() as u64,
+                media_type: "application/octet-stream".to_owned(),
+            },
+            ResourceUploadBlobReservationOutcome::ExistingRequest => {
+                unreachable!("an exact upload request returns before creating the next receipt")
+            }
+        };
         let mut completion_event = None;
         let mut completion_state_ref = None;
         if let Some(mut completed) = predict_content_received_session(&session, &chunk)? {
@@ -4332,12 +4923,22 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
         let session = self
             .get(&resource.workspace_id, upload_id)?
             .ok_or(StoreError::NotFound)?;
+        let caller_request_id = request.request_id.clone();
+        validate_nonempty(&[&request.principal_id, &caller_request_id])?;
+        let request_lock = self.create_request_lock(&request.principal_id, &caller_request_id);
+        let _request_guard = request_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        request.request_payload = resource_upload_commit_request_payload(&session)?;
+        let request_alias = (caller_request_id != format!("resource-upload-commit:{upload_id}"))
+            .then(|| request.clone());
+        request.request_id = format!("resource-upload-commit:{upload_id}");
+        if let Some(committed) =
+            self.resolve_commit_receipt_inner(&request.principal_id, &caller_request_id, &session)?
+        {
+            return self.finish_upload_result(session, committed);
+        }
         if session.state == ResourceUploadState::Committed {
-            if let Some(committed) =
-                self.committed_resource_for_upload(&request.principal_id, upload_id)?
-            {
-                return self.finish_upload_result(session, committed);
-            }
             return Err(StoreError::LegacyUploadCommitNeedsReview {
                 committed_resource_id: session.committed_resource_id,
             });
@@ -4348,6 +4949,50 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
             return Err(StoreError::Invalid(
                 "Resource upload is not complete".to_owned(),
             ));
+        }
+        let resource_lock = session
+            .resource_id
+            .as_ref()
+            .map(|_| self.resource_index_write_lock(&session.workspace_id));
+        let _resource_guard = resource_lock
+            .as_ref()
+            .map(|lock| self.lock_resource_index_write(&session.workspace_id, lock));
+        let session_lock = self.upload_session_lock(&session.workspace_id, &session.upload_id);
+        let _session_guard = session_lock
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let upload_digests = self.upload_blob_digests(&session.workspace_id, &session.upload_id)?;
+        let upload_locks = upload_digests
+            .iter()
+            .map(|digest| self.blob_operation_lock(&session.workspace_id, digest))
+            .collect::<Vec<_>>();
+        let _upload_guards = upload_locks
+            .iter()
+            .map(|lock| {
+                lock.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            })
+            .collect::<Vec<_>>();
+        let session = self
+            .get(&resource.workspace_id, upload_id)?
+            .ok_or(StoreError::NotFound)?;
+        if session.state == ResourceUploadState::Committed {
+            if let Some(committed) = self.resolve_commit_receipt_inner(
+                &request.principal_id,
+                &caller_request_id,
+                &session,
+            )? {
+                return self.finish_upload_result(session, committed);
+            }
+            return Err(StoreError::LegacyUploadCommitNeedsReview {
+                committed_resource_id: session.committed_resource_id,
+            });
+        }
+        if session.state != ResourceUploadState::ContentReceived {
+            return Err(StoreError::Conflict {
+                expected: None,
+                actual: Some(session.progress_version),
+            });
         }
         let mut content = Vec::with_capacity(session.expected_size_bytes as usize);
         if let Err(error) = self.append_upload_chunk_blobs(&session, &mut content) {
@@ -4441,6 +5086,46 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
                 "upload commit metadata is inconsistent".to_owned(),
             ));
         }
+        let media_type = revision
+            .media_type
+            .as_deref()
+            .unwrap_or("application/octet-stream");
+        let should_index =
+            resource_index::not_indexable_reason(&resource.display_name, media_type, &content)
+                .is_none();
+        // Any revision upload can advance the current head while a rebuild is preparing
+        // an index blob. Serialize that transition even when the new revision itself is
+        // not indexable; new-resource uploads have no existing rebuild head to race.
+        let index_write_lock = (should_index && !revision_upload)
+            .then(|| self.resource_index_write_lock(&resource.workspace_id));
+        let _index_write_guard = index_write_lock
+            .as_ref()
+            .map(|lock| self.lock_resource_index_write(&resource.workspace_id, lock));
+        let index_key_version = if should_index {
+            Some(self.ensure_resource_index_key_history_available(
+                &resource.workspace_id,
+                revision_upload.then_some(resource.resource_id.as_str()),
+            )?)
+        } else {
+            None
+        };
+        let text_index = if let Some(index_key_version) = index_key_version {
+            resource_index::prepare(
+                self.inner.blobs.as_ref(),
+                &resource.workspace_id,
+                &resource.resource_id,
+                &revision.resource_revision_id,
+                &resource.display_name,
+                media_type,
+                &content_digest,
+                &revision.observed_at,
+                &content,
+                index_key_version,
+                |blob| self.reserve_resource_index_snapshot(&resource.workspace_id, blob),
+            )?
+        } else {
+            None
+        };
         let upload_commit = if session.state == ResourceUploadState::ContentReceived {
             let status_event = upload_status_event.take().ok_or_else(|| {
                 StoreError::Invalid("Resource upload commit event is required".to_owned())
@@ -4507,13 +5192,6 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
             None
         };
         revision.content_digest = Some(content_digest.clone());
-
-        request.request_id = format!("resource-upload-commit:{}", upload_id);
-        request.request_payload = if revision_upload {
-            json!({"operation":"resource.revision.upload.commit.v1", "upload_id":upload_id, "resource_id":resource.resource_id, "expected_resource_version":session.expected_resource_version, "parent_revision_ids":session.parent_revision_ids})
-        } else {
-            json!({"operation":"resource.upload.commit.v1", "upload_id":upload_id})
-        };
         let state_bytes = canonical_json(&resource)?;
         let state_blob = self.inner.blobs.put(
             &resource.workspace_id,
@@ -4521,13 +5199,26 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
             &state_bytes,
             "application/vnd.litecow.resource+json",
         )?;
+        let expected_content_blob = BlobRef {
+            digest: content_digest.clone(),
+            size_bytes: content.len() as u64,
+            media_type: session.media_type.clone(),
+        };
+        let content_lock =
+            self.resource_content_blob_operation_lock(&resource.workspace_id, &content_digest);
+        let _content_guard = content_lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.reserve_resource_content_blob(&resource.workspace_id, &expected_content_blob)?;
         let content_blob = self.inner.blobs.put(
             &resource.workspace_id,
             BlobPurpose::Resource,
             &content,
             &session.media_type,
         )?;
-        if content_blob.digest != content_digest
+        if content_blob.digest != expected_content_blob.digest
+            || content_blob.size_bytes != expected_content_blob.size_bytes
+            || content_blob.media_type != expected_content_blob.media_type
             || self
                 .inner
                 .blobs
@@ -4538,29 +5229,6 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
                 "Resource content failed blob verification".to_owned(),
             ));
         }
-        let media_type = revision
-            .media_type
-            .as_deref()
-            .unwrap_or("application/octet-stream");
-        let text_index =
-            if resource_index::not_indexable_reason(&resource.display_name, media_type, &content)
-                .is_some()
-            {
-                None
-            } else {
-                self.ensure_resource_index_key_history_available(&resource.workspace_id)?;
-                resource_index::prepare(
-                    self.inner.blobs.as_ref(),
-                    &resource.workspace_id,
-                    &resource.resource_id,
-                    &revision.resource_revision_id,
-                    &resource.display_name,
-                    media_type,
-                    &content_digest,
-                    &revision.observed_at,
-                    &content,
-                )?
-            };
         let state_ref = AggregateStateRef {
             blob: state_blob,
             entity_revision: resource.version,
@@ -4571,6 +5239,7 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
         let committed = self.execute_command(
             Command::CommitResourceUpload {
                 request,
+                request_alias,
                 resource,
                 revision,
                 draft: event,
@@ -4592,11 +5261,50 @@ impl ResourceUploadStore for SqliteWorkspaceStore {
 }
 
 impl SqliteWorkspaceStore {
-    fn blob_operation_lock(&self, workspace_id: &str, digest: &str) -> Arc<Mutex<()>> {
-        let key = (workspace_id.to_owned(), digest.to_owned());
-        let mut locks = self
-            .inner
-            .blob_operation_locks
+    fn lock_resource_index_write<'a>(
+        &self,
+        workspace_id: &str,
+        lock: &'a Mutex<()>,
+    ) -> std::sync::MutexGuard<'a, ()> {
+        let _ = workspace_id;
+        #[cfg(test)]
+        if matches!(lock.try_lock(), Err(std::sync::TryLockError::WouldBlock)) {
+            let key = (self.inner.database_path.clone(), workspace_id.to_owned());
+            if let Some(observer) = RESOURCE_INDEX_WRITE_CONTENTION_OBSERVERS
+                .get_or_init(|| Mutex::new(HashMap::new()))
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&key)
+            {
+                let _ = observer.send(());
+            }
+        }
+
+        lock.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[cfg(test)]
+    fn observe_next_resource_index_write_contention(
+        &self,
+        workspace_id: &str,
+        observer: SyncSender<()>,
+    ) {
+        let key = (self.inner.database_path.clone(), workspace_id.to_owned());
+        RESOURCE_INDEX_WRITE_CONTENTION_OBSERVERS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key, observer);
+    }
+
+    fn resource_index_write_lock(&self, workspace_id: &str) -> Arc<Mutex<()>> {
+        // Separate handles in this process must share the preflight/preparation
+        // critical section. litecoworkd's database instance lock remains the
+        // cross-process owner boundary; the transaction guard is the final defense.
+        let key = (self.inner.database_path.clone(), workspace_id.to_owned());
+        let mut locks = RESOURCE_INDEX_WRITE_LOCKS
+            .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         locks.retain(|_, lock| lock.strong_count() > 0);
@@ -4608,11 +5316,110 @@ impl SqliteWorkspaceStore {
         lock
     }
 
-    fn upload_create_request_lock(&self, principal_id: &str, request_id: &str) -> Arc<Mutex<()>> {
-        let key = (principal_id.to_owned(), request_id.to_owned());
-        let mut locks = self
-            .inner
-            .upload_create_request_locks
+    fn resource_index_snapshot_operation_lock(
+        &self,
+        workspace_id: &str,
+        digest: &str,
+    ) -> Arc<Mutex<()>> {
+        // Search materialization and exact-object GC share this lock across separately
+        // opened handles for the same canonical database path.
+        let key = (
+            self.inner.database_path.clone(),
+            workspace_id.to_owned(),
+            digest.to_owned(),
+        );
+        let mut locks = RESOURCE_INDEX_SNAPSHOT_OPERATION_LOCKS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+
+    fn resource_content_blob_operation_lock(
+        &self,
+        workspace_id: &str,
+        digest: &str,
+    ) -> Arc<Mutex<()>> {
+        // Writers and the bounded Resource-content collector share this exact-object
+        // lock across separately opened store handles for the same canonical database.
+        let key = (
+            self.inner.database_path.clone(),
+            workspace_id.to_owned(),
+            digest.to_owned(),
+        );
+        let mut locks = RESOURCE_CONTENT_BLOB_OPERATION_LOCKS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+
+    fn blob_operation_lock(&self, workspace_id: &str, digest: &str) -> Arc<Mutex<()>> {
+        // Upload writers, expiry/purge, and the orphan collector coordinate across
+        // separately opened store handles for the same canonical database path. The
+        // litecoworkd instance lock remains the cross-process owner boundary.
+        let key = (
+            self.inner.database_path.clone(),
+            workspace_id.to_owned(),
+            digest.to_owned(),
+        );
+        let mut locks = RESOURCE_UPLOAD_BLOB_OPERATION_LOCKS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+
+    fn upload_session_lock(&self, workspace_id: &str, upload_id: &str) -> Arc<RwLock<()>> {
+        // Chunk puts take a shared lease; expiry takes the exclusive lease before it
+        // snapshots all accepted/reserved digests. This avoids serializing independent
+        // chunk publication while closing the reservation-discovery race.
+        let key = (
+            self.inner.database_path.clone(),
+            workspace_id.to_owned(),
+            upload_id.to_owned(),
+        );
+        let mut locks = RESOURCE_UPLOAD_SESSION_LOCKS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(RwLock::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        lock
+    }
+
+    fn create_request_lock(&self, principal_id: &str, request_id: &str) -> Arc<Mutex<()>> {
+        // Coordinate separately opened handles in this process; the Runtime's
+        // instance lock remains the cross-process owner boundary for this database.
+        let key = (
+            self.inner.database_path.clone(),
+            principal_id.to_owned(),
+            request_id.to_owned(),
+        );
+        let mut locks = CREATE_REQUEST_LOCKS
+            .get_or_init(|| Mutex::new(HashMap::new()))
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         locks.retain(|_, lock| lock.strong_count() > 0);
@@ -4635,6 +5442,41 @@ impl SqliteWorkspaceStore {
                 principal_id: request.principal_id.clone(),
                 request_id: request.request_id.clone(),
                 request_digest,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn check_resource_create_receipt(
+        &self,
+        request: &WorkspaceCreateRequest,
+    ) -> Result<Option<CommittedResource>, StoreError> {
+        let request_digest = digest(&canonical_json(&request.request_payload)?);
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::CheckResourceCreateReceipt {
+                principal_id: request.principal_id.clone(),
+                request_id: request.request_id.clone(),
+                request_digest,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn resolve_commit_receipt_inner(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        session: &ResourceUploadSessionRecord,
+    ) -> Result<Option<CommittedResource>, StoreError> {
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::ResolveResourceUploadCommitReceipt {
+                principal_id: principal_id.to_owned(),
+                request_id: request_id.to_owned(),
+                session: session.clone(),
                 reply: reply_sender,
             },
             reply_receiver,
@@ -4706,6 +5548,22 @@ impl SqliteWorkspaceStore {
         let (reply_sender, reply_receiver) = mpsc::channel();
         self.execute_command(
             Command::GetResourceUploadChunks {
+                workspace_id: workspace_id.to_owned(),
+                upload_id: upload_id.to_owned(),
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
+    fn upload_blob_digests(
+        &self,
+        workspace_id: &str,
+        upload_id: &str,
+    ) -> Result<Vec<String>, StoreError> {
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::GetResourceUploadBlobDigests {
                 workspace_id: workspace_id.to_owned(),
                 upload_id: upload_id.to_owned(),
                 reply: reply_sender,
@@ -4980,8 +5838,14 @@ fn create_resource_upload_transaction(
         )
         .optional()
         .map_err(map_database_error)?;
-    if active.as_deref() != Some("ACTIVE") {
-        return Err(StoreError::NotFound);
+    match active.as_deref() {
+        Some("ACTIVE") => {}
+        Some(_) => {
+            return Err(StoreError::Invalid(
+                "an archived Workspace is read-only".to_owned(),
+            ));
+        }
+        None => return Err(StoreError::NotFound),
     }
     if let (Some(resource_id), Some(expected_version)) = (
         session.resource_id.as_deref(),
@@ -5245,6 +6109,99 @@ fn load_resource_upload_commit_receipt(
         .map_err(|error| StoreError::Integrity(error.to_string()))
 }
 
+fn resource_upload_commit_request_payload(
+    session: &ResourceUploadSessionRecord,
+) -> Result<Value, StoreError> {
+    if let Some(resource_id) = session.resource_id.as_deref() {
+        let expected_resource_version = session.expected_resource_version.ok_or_else(|| {
+            StoreError::Integrity("revision upload has no pinned Resource version".to_owned())
+        })?;
+        Ok(json!({
+            "operation": "resource.revision.upload.commit.v1",
+            "upload_id": session.upload_id,
+            "resource_id": resource_id,
+            "expected_resource_version": expected_resource_version,
+            "parent_revision_ids": session.parent_revision_ids,
+        }))
+    } else {
+        Ok(json!({
+            "operation": "resource.upload.commit.v1",
+            "upload_id": session.upload_id,
+        }))
+    }
+}
+
+fn resolve_resource_upload_commit_receipt_transaction(
+    connection: &mut Connection,
+    principal_id: &str,
+    request_id: &str,
+    requested_session: &ResourceUploadSessionRecord,
+) -> Result<Option<CommittedResource>, StoreError> {
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let session = load_resource_upload(
+        &tx,
+        &requested_session.workspace_id,
+        &requested_session.upload_id,
+    )?
+    .ok_or(StoreError::NotFound)?;
+    let request_payload = resource_upload_commit_request_payload(&session)?;
+    let request_digest = digest(&canonical_json(&request_payload)?);
+    let caller_receipt =
+        verify_resource_upload_commit_receipt(&tx, principal_id, request_id, &request_digest)?;
+    let deterministic_request_id = format!("resource-upload-commit:{}", session.upload_id);
+    let committed = match caller_receipt {
+        Some(committed) => Some(committed),
+        None => verify_resource_upload_commit_receipt(
+            &tx,
+            principal_id,
+            &deterministic_request_id,
+            &request_digest,
+        )?,
+    };
+    let Some(committed) = committed else {
+        tx.commit().map_err(map_database_error)?;
+        return Ok(None);
+    };
+    if session.state != ResourceUploadState::Committed
+        || session.committed_resource_id.as_deref() != Some(committed.resource.resource_id.as_str())
+        || committed.resource.workspace_id != session.workspace_id
+    {
+        return Err(StoreError::Integrity(
+            "Resource upload commit receipt does not match its committed session".to_owned(),
+        ));
+    }
+    if request_id != deterministic_request_id
+        && caller_receipt_is_missing(&tx, principal_id, request_id)?
+    {
+        let response_json = String::from_utf8(canonical_json(&committed)?)
+            .map_err(|error| StoreError::Invalid(error.to_string()))?;
+        tx.execute(
+            "INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+            params![principal_id, request_id, request_digest, response_json, digest(response_json.as_bytes()), committed.event.recorded_at],
+        )
+        .map_err(map_database_error)?;
+    }
+    tx.commit().map_err(map_database_error)?;
+    Ok(Some(committed))
+}
+
+fn caller_receipt_is_missing(
+    connection: &Connection,
+    principal_id: &str,
+    request_id: &str,
+) -> Result<bool, StoreError> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2)",
+            params![principal_id, request_id],
+            |row| row.get(0),
+        )
+        .map(|exists: i64| exists == 0)
+        .map_err(map_database_error)
+}
+
 fn list_expired_resource_uploads(
     connection: &Connection,
     now: &str,
@@ -5392,6 +6349,14 @@ fn expire_resource_upload_transaction(
             actual: None,
         });
     }
+    transaction
+        .execute(
+            "UPDATE resource_upload_blob_reservations
+             SET state = 'DELETING'
+             WHERE workspace_id = ?1 AND upload_id = ?2 AND state = 'RESERVED'",
+            params![expired.workspace_id, expired.upload_id],
+        )
+        .map_err(map_database_error)?;
     insert_upload_domain_event(&transaction, draft, state_ref)?;
     transaction.commit().map_err(map_database_error)?;
     Ok(expired)
@@ -5471,17 +6436,645 @@ fn fail_resource_upload_transaction(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn reserve_resource_upload_blob_transaction(
+fn reserve_resource_index_blob_transaction(
     connection: &mut Connection,
     workspace_id: &str,
-    upload_id: &str,
-    request_id: &str,
-    chunk_index: u64,
-    chunk_digest: &str,
-    size_bytes: u64,
+    blob: &BlobRef,
     created_at: &str,
     expires_at: &str,
 ) -> Result<(), StoreError> {
+    if workspace_id.trim().is_empty()
+        || blob.media_type != resource_index::INDEX_MEDIA_TYPE
+        || blob.size_bytes > resource_index::MAX_INDEXABLE_RESOURCE_BYTES
+        || blob.digest.len() != 71
+        || !blob.digest.starts_with("sha256:")
+        || !blob.digest[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StoreError::Invalid(
+            "ResourceIndex blob reservation is invalid".to_owned(),
+        ));
+    }
+    let created = OffsetDateTime::parse(created_at, &Rfc3339)
+        .map_err(|_| StoreError::Invalid("ResourceIndex reservation time is invalid".to_owned()))?;
+    let expires = OffsetDateTime::parse(expires_at, &Rfc3339).map_err(|_| {
+        StoreError::Invalid("ResourceIndex reservation expiry is invalid".to_owned())
+    })?;
+    if expires <= created {
+        return Err(StoreError::Invalid(
+            "ResourceIndex reservation expiry must follow creation".to_owned(),
+        ));
+    }
+
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let existing: Option<(i64, String)> = transaction
+        .query_row(
+            "SELECT size_bytes, state FROM resource_index_blob_registry WHERE workspace_id = ?1 AND digest = ?2",
+            params![workspace_id, blob.digest],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if let Some((existing_size, state)) = existing {
+        if from_sql_i64(existing_size, "ResourceIndex blob size")? != blob.size_bytes {
+            return Err(StoreError::Integrity(
+                "ResourceIndex digest has conflicting registered sizes".to_owned(),
+            ));
+        }
+        if state == "DELETING" {
+            return Err(StoreError::Busy);
+        }
+        if state != "RESERVED" && state != "TRACKED" {
+            return Err(StoreError::Integrity(
+                "ResourceIndex blob registry state is invalid".to_owned(),
+            ));
+        }
+        transaction
+            .execute(
+                "UPDATE resource_index_blob_registry SET created_at = ?1, expires_at = ?2, state = 'RESERVED', claimed_at = NULL WHERE workspace_id = ?3 AND digest = ?4 AND state IN ('RESERVED', 'TRACKED')",
+                params![created_at, expires_at, workspace_id, blob.digest],
+            )
+            .map_err(map_database_error)?;
+    } else {
+        transaction
+            .execute(
+                "INSERT INTO resource_index_blob_registry(workspace_id, digest, size_bytes, created_at, expires_at, state, claimed_at) VALUES (?1, ?2, ?3, ?4, ?5, 'RESERVED', NULL)",
+                params![
+                    workspace_id,
+                    blob.digest,
+                    to_sql_i64(blob.size_bytes, "ResourceIndex blob size")?,
+                    created_at,
+                    expires_at,
+                ],
+            )
+            .map_err(map_database_error)?;
+    }
+    transaction.commit().map_err(map_database_error)
+}
+
+fn reserve_resource_content_blob_transaction(
+    connection: &mut Connection,
+    workspace_id: &str,
+    blob: &BlobRef,
+    created_at: &str,
+    expires_at: &str,
+) -> Result<(), StoreError> {
+    if workspace_id.trim().is_empty()
+        || blob.media_type.trim().is_empty()
+        || blob.size_bytes > i64::MAX as u64
+        || blob.digest.len() != 71
+        || !blob.digest.starts_with("sha256:")
+        || !blob.digest[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StoreError::Invalid(
+            "Resource content blob reservation is invalid".to_owned(),
+        ));
+    }
+    let created = OffsetDateTime::parse(created_at, &Rfc3339).map_err(|_| {
+        StoreError::Invalid("Resource content reservation time is invalid".to_owned())
+    })?;
+    let expires = OffsetDateTime::parse(expires_at, &Rfc3339).map_err(|_| {
+        StoreError::Invalid("Resource content reservation expiry is invalid".to_owned())
+    })?;
+    if expires <= created {
+        return Err(StoreError::Invalid(
+            "Resource content reservation expiry must follow creation".to_owned(),
+        ));
+    }
+
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let existing: Option<(i64, String, String)> = transaction
+        .query_row(
+            "SELECT size_bytes, media_type, state FROM resource_content_blob_registry WHERE workspace_id = ?1 AND digest = ?2",
+            params![workspace_id, blob.digest],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if let Some((existing_size, existing_media_type, state)) = existing {
+        if from_sql_i64(existing_size, "Resource content blob size")? != blob.size_bytes
+            || existing_media_type != blob.media_type
+        {
+            return Err(StoreError::Integrity(
+                "Resource digest has conflicting registered content metadata".to_owned(),
+            ));
+        }
+        if state == "DELETING" {
+            return Err(StoreError::Busy);
+        }
+        if state != "RESERVED" && state != "TRACKED" {
+            return Err(StoreError::Integrity(
+                "Resource content blob registry state is invalid".to_owned(),
+            ));
+        }
+        transaction
+            .execute(
+                "UPDATE resource_content_blob_registry
+                 SET created_at = ?1, expires_at = ?2, state = 'RESERVED', claimed_at = NULL
+                 WHERE workspace_id = ?3 AND digest = ?4 AND state IN ('RESERVED', 'TRACKED')",
+                params![created_at, expires_at, workspace_id, blob.digest],
+            )
+            .map_err(map_database_error)?;
+    } else {
+        transaction
+            .execute(
+                "INSERT INTO resource_content_blob_registry(workspace_id, digest, size_bytes, media_type, created_at, expires_at, state, claimed_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'RESERVED', NULL)",
+                params![
+                    workspace_id,
+                    blob.digest,
+                    to_sql_i64(blob.size_bytes, "Resource content blob size")?,
+                    blob.media_type,
+                    created_at,
+                    expires_at,
+                ],
+            )
+            .map_err(map_database_error)?;
+    }
+    transaction.commit().map_err(map_database_error)
+}
+
+fn track_resource_content_blob_transaction(
+    transaction: &Transaction<'_>,
+    workspace_id: &str,
+    blob: &BlobRef,
+) -> Result<(), StoreError> {
+    let registered: Option<(i64, String, String)> = transaction
+        .query_row(
+            "SELECT size_bytes, media_type, state FROM resource_content_blob_registry
+             WHERE workspace_id = ?1 AND digest = ?2",
+            params![workspace_id, blob.digest],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((size_bytes, media_type, state)) = registered else {
+        return Err(StoreError::Integrity(
+            "Resource content blob has no durable reservation".to_owned(),
+        ));
+    };
+    if from_sql_i64(size_bytes, "Resource content blob size")? != blob.size_bytes
+        || media_type != blob.media_type
+    {
+        return Err(StoreError::Integrity(
+            "Resource content blob reservation does not match the published object".to_owned(),
+        ));
+    }
+    match state.as_str() {
+        "TRACKED" => Ok(()),
+        "RESERVED" => {
+            let changed = transaction
+                .execute(
+                    "UPDATE resource_content_blob_registry
+                     SET state = 'TRACKED', expires_at = NULL, claimed_at = NULL
+                     WHERE workspace_id = ?1 AND digest = ?2 AND size_bytes = ?3
+                       AND media_type = ?4 AND state = 'RESERVED'",
+                    params![
+                        workspace_id,
+                        blob.digest,
+                        to_sql_i64(blob.size_bytes, "Resource content blob size")?,
+                        blob.media_type,
+                    ],
+                )
+                .map_err(map_database_error)?;
+            if changed != 1 {
+                return Err(StoreError::Busy);
+            }
+            Ok(())
+        }
+        "DELETING" => Err(StoreError::Busy),
+        _ => Err(StoreError::Integrity(
+            "Resource content blob registry state is invalid".to_owned(),
+        )),
+    }
+}
+
+fn claim_orphan_resource_index_blobs_transaction(
+    connection: &mut Connection,
+    now: &str,
+    limit: usize,
+) -> Result<Vec<(String, BlobRef)>, StoreError> {
+    if limit == 0 || limit > 100 || OffsetDateTime::parse(now, &Rfc3339).is_err() {
+        return Err(StoreError::Invalid(
+            "ResourceIndex blob sweep request is invalid".to_owned(),
+        ));
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let mut statement = transaction
+        .prepare(
+            "SELECT registry.workspace_id, registry.digest, registry.size_bytes
+             FROM resource_index_blob_registry registry
+             WHERE (registry.state = 'DELETING'
+                    OR registry.state = 'TRACKED'
+                    OR (registry.state = 'RESERVED' AND registry.expires_at <= ?1))
+               AND NOT EXISTS (
+                 SELECT 1 FROM resource_text_indexes idx
+                 WHERE idx.workspace_id = registry.workspace_id
+                   AND idx.extracted_blob_digest = registry.digest
+               )
+             ORDER BY COALESCE(registry.claimed_at, registry.created_at), registry.workspace_id, registry.digest
+             LIMIT ?2",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map(
+            params![
+                now,
+                to_sql_i64(limit as u64, "ResourceIndex blob sweep limit")?
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .map_err(map_database_error)?;
+    let mut candidates = Vec::new();
+    for row in rows {
+        let (workspace_id, digest, size_bytes) = row.map_err(map_database_error)?;
+        candidates.push((
+            workspace_id,
+            digest,
+            from_sql_i64(size_bytes, "ResourceIndex blob size")?,
+        ));
+    }
+    drop(statement);
+
+    let mut claimed = Vec::with_capacity(candidates.len());
+    for (workspace_id, digest, size_bytes) in candidates {
+        let updated = transaction
+            .execute(
+                "UPDATE resource_index_blob_registry
+                 SET state = 'DELETING', expires_at = NULL, claimed_at = ?1
+                 WHERE workspace_id = ?2 AND digest = ?3
+                   AND (state = 'DELETING' OR state = 'TRACKED' OR (state = 'RESERVED' AND expires_at <= ?1))
+                   AND NOT EXISTS (
+                     SELECT 1 FROM resource_text_indexes idx
+                     WHERE idx.workspace_id = ?2 AND idx.extracted_blob_digest = ?3
+                   )",
+                params![now, workspace_id, digest],
+            )
+            .map_err(map_database_error)?;
+        if updated == 1 {
+            claimed.push((
+                workspace_id,
+                BlobRef {
+                    digest,
+                    size_bytes,
+                    media_type: resource_index::INDEX_MEDIA_TYPE.to_owned(),
+                },
+            ));
+        }
+    }
+    transaction.commit().map_err(map_database_error)?;
+    Ok(claimed)
+}
+
+fn finish_orphan_resource_index_blob_transaction(
+    connection: &mut Connection,
+    workspace_id: &str,
+    digest: &str,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let state: Option<String> = transaction
+        .query_row(
+            "SELECT state FROM resource_index_blob_registry WHERE workspace_id = ?1 AND digest = ?2",
+            params![workspace_id, digest],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if state.as_deref() != Some("DELETING") {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    let referenced: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM resource_text_indexes WHERE workspace_id = ?1 AND extracted_blob_digest = ?2)",
+            params![workspace_id, digest],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if referenced {
+        return Err(StoreError::Integrity(
+            "refusing to clear a referenced ResourceIndex blob fence".to_owned(),
+        ));
+    }
+    let removed = transaction
+        .execute(
+            "DELETE FROM resource_index_blob_registry WHERE workspace_id = ?1 AND digest = ?2 AND state = 'DELETING'",
+            params![workspace_id, digest],
+        )
+        .map_err(map_database_error)?;
+    if removed != 1 {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    transaction.commit().map_err(map_database_error)
+}
+
+fn claim_orphan_resource_content_blobs_transaction(
+    connection: &mut Connection,
+    now: &str,
+    limit: usize,
+) -> Result<Vec<(String, BlobRef)>, StoreError> {
+    if limit == 0 || limit > 100 || OffsetDateTime::parse(now, &Rfc3339).is_err() {
+        return Err(StoreError::Invalid(
+            "Resource content blob sweep request is invalid".to_owned(),
+        ));
+    }
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let candidates: Vec<(String, String, u64, String)> = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT registry.workspace_id, registry.digest, registry.size_bytes, registry.media_type
+                 FROM resource_content_blob_registry registry
+                 WHERE (registry.state = 'DELETING'
+                        OR registry.state = 'TRACKED'
+                        OR (registry.state = 'RESERVED' AND registry.expires_at <= ?1))
+                   AND NOT EXISTS (
+                     SELECT 1 FROM resources resource
+                     JOIN resource_revisions revision ON revision.resource_id = resource.resource_id
+                     WHERE resource.workspace_id = registry.workspace_id
+                       AND revision.content_digest = registry.digest
+                       AND EXISTS (
+                         SELECT 1 FROM resource_locations location
+                         WHERE location.resource_id = resource.resource_id
+                           AND location.provider_ref = 'litecowork.encrypted_blob'
+                           AND location.runtime_id IS NULL
+                           AND location.environment_id IS NULL
+                           AND location.connection_id IS NULL
+                       )
+                   )
+                 ORDER BY COALESCE(registry.claimed_at, registry.created_at),
+                          registry.workspace_id, registry.digest
+                 LIMIT ?2",
+            )
+            .map_err(map_database_error)?;
+        let rows = statement
+            .query_map(
+                params![
+                    now,
+                    to_sql_i64(limit as u64, "Resource content sweep limit")?
+                ],
+                |row| {
+                    let size_bytes: i64 = row.get(2)?;
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        u64::try_from(size_bytes)
+                            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(2, size_bytes))?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .map_err(map_database_error)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(map_database_error)?
+    };
+    let mut claimed = Vec::with_capacity(candidates.len());
+    for (workspace_id, digest, size_bytes, media_type) in candidates {
+        let updated = transaction
+            .execute(
+                "UPDATE resource_content_blob_registry
+                 SET state = 'DELETING', expires_at = NULL, claimed_at = ?1
+                 WHERE workspace_id = ?2 AND digest = ?3
+                   AND (state = 'DELETING' OR state = 'TRACKED'
+                        OR (state = 'RESERVED' AND expires_at <= ?1))
+                   AND NOT EXISTS (
+                     SELECT 1 FROM resources resource
+                     JOIN resource_revisions revision ON revision.resource_id = resource.resource_id
+                     WHERE resource.workspace_id = ?2
+                       AND revision.content_digest = ?3
+                       AND EXISTS (
+                         SELECT 1 FROM resource_locations location
+                         WHERE location.resource_id = resource.resource_id
+                           AND location.provider_ref = 'litecowork.encrypted_blob'
+                           AND location.runtime_id IS NULL
+                           AND location.environment_id IS NULL
+                           AND location.connection_id IS NULL
+                       )
+                   )",
+                params![now, workspace_id, digest],
+            )
+            .map_err(map_database_error)?;
+        if updated == 1 {
+            claimed.push((
+                workspace_id,
+                BlobRef {
+                    digest,
+                    size_bytes,
+                    media_type,
+                },
+            ));
+        }
+    }
+    transaction.commit().map_err(map_database_error)?;
+    Ok(claimed)
+}
+
+fn finish_orphan_resource_content_blob_transaction(
+    connection: &mut Connection,
+    workspace_id: &str,
+    digest: &str,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let state: Option<String> = transaction
+        .query_row(
+            "SELECT state FROM resource_content_blob_registry
+             WHERE workspace_id = ?1 AND digest = ?2",
+            params![workspace_id, digest],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if state.as_deref() != Some("DELETING") {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    let referenced: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM resources resource
+               JOIN resource_revisions revision ON revision.resource_id = resource.resource_id
+               WHERE resource.workspace_id = ?1
+                 AND revision.content_digest = ?2
+                 AND EXISTS (
+                   SELECT 1 FROM resource_locations location
+                   WHERE location.resource_id = resource.resource_id
+                     AND location.provider_ref = 'litecowork.encrypted_blob'
+                     AND location.runtime_id IS NULL
+                     AND location.environment_id IS NULL
+                     AND location.connection_id IS NULL
+                 )
+             )",
+            params![workspace_id, digest],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if referenced {
+        return Err(StoreError::Integrity(
+            "refusing to clear a referenced Resource content blob fence".to_owned(),
+        ));
+    }
+    let removed = transaction
+        .execute(
+            "DELETE FROM resource_content_blob_registry
+             WHERE workspace_id = ?1 AND digest = ?2 AND state = 'DELETING'",
+            params![workspace_id, digest],
+        )
+        .map_err(map_database_error)?;
+    if removed != 1 {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    transaction.commit().map_err(map_database_error)
+}
+
+struct ResourceUploadBlobReservation<'a> {
+    workspace_id: &'a str,
+    upload_id: &'a str,
+    request_id: &'a str,
+    chunk_index: u64,
+    chunk_digest: &'a str,
+    size_bytes: u64,
+    created_at: &'a str,
+    expires_at: &'a str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ResourceUploadBlobReservationOutcome {
+    WriteObject,
+    ExistingRequest,
+    ExistingChunk,
+}
+
+fn get_resource_upload_chunk_receipt(
+    connection: &Connection,
+    request: &ResourceUploadChunkReceiptRequest,
+) -> Result<bool, StoreError> {
+    if !valid_shared_idempotency_key(&request.request_id)
+        || request.workspace_id.trim().is_empty()
+        || request.upload_id.trim().is_empty()
+        || request.sha256.len() != 71
+        || !request.sha256.starts_with("sha256:")
+        || !request.sha256[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StoreError::Invalid(
+            "upload chunk receipt request is invalid".to_owned(),
+        ));
+    }
+    let session = load_resource_upload(connection, &request.workspace_id, &request.upload_id)?
+        .ok_or(StoreError::NotFound)?;
+    let expected_start = request
+        .chunk_index
+        .checked_mul(session.chunk_size_bytes)
+        .ok_or_else(|| StoreError::Invalid("chunk index is out of range".to_owned()))?;
+    let expected_size = session
+        .expected_size_bytes
+        .saturating_sub(expected_start)
+        .min(session.chunk_size_bytes);
+    let expected_end = expected_start
+        .saturating_add(expected_size)
+        .saturating_sub(1);
+    if expected_size == 0
+        || request.content_range.start_offset != expected_start
+        || request.content_range.end_offset_inclusive != expected_end
+        || request.content_range.total_size_bytes != session.expected_size_bytes
+    {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    let request_payload_digest = digest(&canonical_json(&json!({
+        "upload_id": request.upload_id,
+        "chunk_index": request.chunk_index,
+        "start_offset": expected_start,
+        "end_offset_inclusive": expected_end,
+        "total_size_bytes": session.expected_size_bytes,
+        "sha256": request.sha256,
+    }))?);
+    let prior_digest: Option<String> = connection
+        .query_row(
+            "SELECT request_payload_digest FROM resource_upload_chunk_requests WHERE upload_id = ?1 AND request_id = ?2",
+            params![request.upload_id, request.request_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    match prior_digest {
+        Some(prior_digest) if prior_digest == request_payload_digest => Ok(true),
+        Some(_) => Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        }),
+        None => Ok(false),
+    }
+}
+
+fn validate_upload_workspace_active(
+    transaction: &Transaction<'_>,
+    workspace_id: &str,
+) -> Result<(), StoreError> {
+    let status: Option<String> = transaction
+        .query_row(
+            "SELECT status FROM workspaces WHERE workspace_id = ?1",
+            [workspace_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    match status.as_deref() {
+        Some("ACTIVE") => Ok(()),
+        Some(_) => Err(StoreError::Invalid(
+            "an archived Workspace is read-only".to_owned(),
+        )),
+        None => Err(StoreError::NotFound),
+    }
+}
+
+fn reserve_resource_upload_blob_transaction(
+    connection: &mut Connection,
+    reservation: ResourceUploadBlobReservation<'_>,
+) -> Result<ResourceUploadBlobReservationOutcome, StoreError> {
+    let ResourceUploadBlobReservation {
+        workspace_id,
+        upload_id,
+        request_id,
+        chunk_index,
+        chunk_digest,
+        size_bytes,
+        created_at,
+        expires_at,
+    } = reservation;
     if !valid_shared_idempotency_key(request_id)
         || chunk_digest.len() != 71
         || !chunk_digest.starts_with("sha256:")
@@ -5536,8 +7129,26 @@ fn reserve_resource_upload_blob_transaction(
                 actual: None,
             });
         }
+        reject_context_document_purge_chunk_replay(&transaction, &session)?;
         transaction.commit().map_err(map_database_error)?;
-        return Ok(());
+        return Ok(ResourceUploadBlobReservationOutcome::ExistingRequest);
+    }
+
+    // Exact accepted requests above remain replayable after TTL, Workspace archive,
+    // or a later Resource-state change. A new/different request still passes current
+    // admission checks before it can reserve a temporary blob or receipt.
+    if session.state == ResourceUploadState::Expired {
+        return Err(StoreError::Conflict {
+            expected: Some(session.progress_version),
+            actual: Some(session.progress_version),
+        });
+    }
+    validate_upload_workspace_active(&transaction, workspace_id)?;
+    if matches!(
+        session.state,
+        ResourceUploadState::Open | ResourceUploadState::ContentReceived
+    ) {
+        validate_revision_upload_resource_active(&transaction, &session)?;
     }
 
     let existing_chunk: Option<(i64, i64, String)> = transaction.query_row(
@@ -5558,7 +7169,7 @@ fn reserve_resource_upload_blob_transaction(
             && created_at < session.expires_at.as_str()
         {
             transaction.commit().map_err(map_database_error)?;
-            return Ok(());
+            return Ok(ResourceUploadBlobReservationOutcome::ExistingChunk);
         }
         return Err(StoreError::Conflict {
             expected: None,
@@ -5584,6 +7195,45 @@ fn reserve_resource_upload_blob_transaction(
     ).map_err(map_database_error)?;
     if gc_fenced {
         return Err(StoreError::Busy);
+    }
+    let registry: Option<(i64, String)> = transaction
+        .query_row(
+            "SELECT size_bytes, state FROM resource_upload_chunk_blob_registry
+             WHERE workspace_id = ?1 AND digest = ?2",
+            params![workspace_id, chunk_digest],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if let Some((registered_size, state)) = registry {
+        if from_sql_i64(registered_size, "registered upload chunk size")? != size_bytes {
+            return Err(StoreError::Integrity(
+                "upload chunk digest has conflicting registered sizes".to_owned(),
+            ));
+        }
+        if state == "DELETING" {
+            return Err(StoreError::Busy);
+        }
+        if !matches!(state.as_str(), "RESERVED" | "TRACKED") {
+            return Err(StoreError::Integrity(
+                "upload chunk blob registry state is invalid".to_owned(),
+            ));
+        }
+    } else {
+        transaction
+            .execute(
+                "INSERT INTO resource_upload_chunk_blob_registry(
+                   workspace_id, digest, size_bytes, created_at, expires_at, state, claimed_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'RESERVED', NULL)",
+                params![
+                    workspace_id,
+                    chunk_digest,
+                    to_sql_i64(size_bytes, "upload chunk size")?,
+                    created_at,
+                    expires_at,
+                ],
+            )
+            .map_err(map_database_error)?;
     }
     let existing: Option<(i64, String, i64, String)> = transaction.query_row(
         "SELECT chunk_index, digest, size_bytes, state FROM resource_upload_blob_reservations WHERE upload_id = ?1 AND request_id = ?2",
@@ -5611,7 +7261,78 @@ fn reserve_resource_upload_blob_transaction(
             params![upload_id, request_id, workspace_id, to_sql_i64(chunk_index, "reserved chunk index")?, chunk_digest, to_sql_i64(size_bytes, "reserved chunk size")?, created_at, expires_at],
         ).map_err(map_database_error)?;
     }
-    transaction.commit().map_err(map_database_error)
+    transaction.commit().map_err(map_database_error)?;
+    Ok(ResourceUploadBlobReservationOutcome::WriteObject)
+}
+
+fn validate_revision_upload_resource_active(
+    transaction: &Transaction<'_>,
+    session: &ResourceUploadSessionRecord,
+) -> Result<(), StoreError> {
+    let Some(resource_id) = session.resource_id.as_deref() else {
+        return Ok(());
+    };
+    let actual: Option<(i64, Option<String>)> = transaction
+        .query_row(
+            "SELECT version, json_extract(context_document_json, '$.status')
+             FROM resources WHERE workspace_id = ?1 AND resource_id = ?2",
+            params![session.workspace_id, resource_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((version, context_status)) = actual else {
+        return Err(StoreError::NotFound);
+    };
+    let expected = session.expected_resource_version.ok_or_else(|| {
+        StoreError::CorruptSchema("revision upload has no pinned Resource version".to_owned())
+    })?;
+    let actual_version = from_sql_i64(version, "Resource version")?;
+    if actual_version != expected
+        || context_status
+            .as_deref()
+            .is_some_and(|status| status != "ACTIVE")
+    {
+        return Err(StoreError::Conflict {
+            expected: Some(expected),
+            actual: Some(actual_version),
+        });
+    }
+    Ok(())
+}
+
+fn reject_context_document_purge_chunk_replay(
+    connection: &Connection,
+    session: &ResourceUploadSessionRecord,
+) -> Result<(), StoreError> {
+    if session.state != ResourceUploadState::Expired {
+        return Ok(());
+    }
+    let Some(resource_id) = session.resource_id.as_deref() else {
+        return Ok(());
+    };
+    let context_document_status: Option<Option<String>> = connection
+        .query_row(
+            "SELECT json_extract(context_document_json, '$.status')
+             FROM resources WHERE workspace_id = ?1 AND resource_id = ?2",
+            params![session.workspace_id, resource_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some(context_document_status) = context_document_status else {
+        return Err(StoreError::NotFound);
+    };
+    if matches!(
+        context_document_status.as_deref(),
+        Some("DELETION_PENDING" | "DELETED")
+    ) {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    Ok(())
 }
 
 fn claim_orphan_resource_upload_blobs_transaction(
@@ -5619,12 +7340,45 @@ fn claim_orphan_resource_upload_blobs_transaction(
     now: &str,
     limit: usize,
 ) -> Result<Vec<(String, BlobRef)>, StoreError> {
+    if OffsetDateTime::parse(now, &Rfc3339).is_err() {
+        return Err(StoreError::Invalid(
+            "orphan upload blob sweep time is invalid".to_owned(),
+        ));
+    }
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_database_error)?;
-    let mut statement = transaction.prepare(
-        "SELECT r.workspace_id, r.digest, MAX(r.size_bytes) FROM resource_upload_blob_reservations r WHERE (r.state = 'DELETING' OR (r.state = 'RESERVED' AND r.expires_at <= ?1)) AND NOT EXISTS (SELECT 1 FROM resource_upload_chunks c JOIN resource_upload_sessions s ON s.upload_id = c.upload_id WHERE s.workspace_id = r.workspace_id AND c.temporary_blob_ref = r.digest) AND NOT EXISTS (SELECT 1 FROM resource_upload_blob_reservations active WHERE active.workspace_id = r.workspace_id AND active.digest = r.digest AND active.state = 'RESERVED' AND active.expires_at > ?1) GROUP BY r.workspace_id, r.digest ORDER BY MIN(r.created_at), r.workspace_id, r.digest LIMIT ?2",
-    ).map_err(map_database_error)?;
+    let mut statement = transaction
+        .prepare(
+            "SELECT registry.workspace_id, registry.digest, registry.size_bytes
+         FROM resource_upload_chunk_blob_registry registry
+         WHERE (registry.state = 'DELETING'
+                OR registry.state = 'TRACKED'
+                OR (registry.state = 'RESERVED' AND registry.expires_at <= ?1)
+                OR EXISTS (
+                  SELECT 1 FROM resource_upload_blob_reservations deleting
+                  WHERE deleting.workspace_id = registry.workspace_id
+                    AND deleting.digest = registry.digest AND deleting.state = 'DELETING'
+                ))
+           AND NOT EXISTS (
+             SELECT 1 FROM resource_upload_chunks chunk
+             JOIN resource_upload_sessions session ON session.upload_id = chunk.upload_id
+             WHERE session.workspace_id = registry.workspace_id
+               AND chunk.temporary_blob_ref = registry.digest
+               AND session.state IN ('OPEN', 'CONTENT_RECEIVED')
+           )
+           AND NOT EXISTS (
+             SELECT 1 FROM resource_upload_blob_reservations active
+             JOIN resource_upload_sessions session ON session.upload_id = active.upload_id
+             WHERE active.workspace_id = registry.workspace_id
+               AND active.digest = registry.digest AND active.state = 'RESERVED'
+               AND session.state IN ('OPEN', 'CONTENT_RECEIVED')
+           )
+         ORDER BY COALESCE(registry.claimed_at, registry.created_at),
+                  registry.workspace_id, registry.digest
+         LIMIT ?2",
+        )
+        .map_err(map_database_error)?;
     let rows = statement
         .query_map(
             params![now, to_sql_i64(limit as u64, "orphan blob sweep limit")?],
@@ -5649,22 +7403,85 @@ fn claim_orphan_resource_upload_blobs_transaction(
     drop(statement);
     let mut claimed = Vec::with_capacity(candidates.len());
     for (workspace_id, digest, size_bytes) in candidates {
-        transaction.execute(
-            "INSERT INTO resource_upload_blob_gc_fences(workspace_id, digest, size_bytes, claimed_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(workspace_id, digest) DO NOTHING",
-            params![workspace_id, digest, to_sql_i64(size_bytes, "orphan blob size")?, now],
-        ).map_err(map_database_error)?;
-        transaction.execute(
-            "UPDATE resource_upload_blob_reservations SET state = 'DELETING' WHERE workspace_id = ?1 AND digest = ?2 AND (state = 'DELETING' OR expires_at <= ?3)",
-            params![workspace_id, digest, now],
-        ).map_err(map_database_error)?;
-        let still_referenced: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM resource_upload_chunks c JOIN resource_upload_sessions s ON s.upload_id = c.upload_id WHERE s.workspace_id = ?1 AND c.temporary_blob_ref = ?2)",
-            params![workspace_id, digest],
-            |row| row.get(0),
-        ).map_err(map_database_error)?;
+        let changed = transaction
+            .execute(
+                "UPDATE resource_upload_chunk_blob_registry
+                 SET state = 'DELETING', expires_at = NULL, claimed_at = ?1
+                 WHERE workspace_id = ?2 AND digest = ?3
+                   AND (state = 'DELETING' OR state = 'TRACKED'
+                        OR (state = 'RESERVED' AND expires_at <= ?1)
+                        OR EXISTS (
+                          SELECT 1 FROM resource_upload_blob_reservations deleting
+                          WHERE deleting.workspace_id = ?2 AND deleting.digest = ?3
+                            AND deleting.state = 'DELETING'
+                        ))
+                   AND NOT EXISTS (
+                     SELECT 1 FROM resource_upload_chunks chunk
+                     JOIN resource_upload_sessions session ON session.upload_id = chunk.upload_id
+                     WHERE session.workspace_id = ?2 AND chunk.temporary_blob_ref = ?3
+                       AND session.state IN ('OPEN', 'CONTENT_RECEIVED')
+                   )
+                   AND NOT EXISTS (
+                     SELECT 1 FROM resource_upload_blob_reservations active
+                     JOIN resource_upload_sessions session ON session.upload_id = active.upload_id
+                     WHERE active.workspace_id = ?2 AND active.digest = ?3
+                       AND active.state = 'RESERVED'
+                       AND session.state IN ('OPEN', 'CONTENT_RECEIVED')
+                   )",
+                params![now, workspace_id, digest],
+            )
+            .map_err(map_database_error)?;
+        if changed != 1 {
+            continue;
+        }
+        transaction
+            .execute(
+                "INSERT INTO resource_upload_blob_gc_fences(
+                   workspace_id, digest, size_bytes, claimed_at
+                 ) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(workspace_id, digest) DO UPDATE SET
+                   size_bytes = excluded.size_bytes, claimed_at = excluded.claimed_at",
+                params![
+                    workspace_id,
+                    digest,
+                    to_sql_i64(size_bytes, "orphan blob size")?,
+                    now,
+                ],
+            )
+            .map_err(map_database_error)?;
+        transaction
+            .execute(
+                "UPDATE resource_upload_blob_reservations SET state = 'DELETING'
+                 WHERE workspace_id = ?1 AND digest = ?2 AND state = 'RESERVED'
+                   AND NOT EXISTS (
+                     SELECT 1 FROM resource_upload_sessions session
+                     WHERE session.upload_id = resource_upload_blob_reservations.upload_id
+                       AND session.state IN ('OPEN', 'CONTENT_RECEIVED')
+                   )",
+                params![workspace_id, digest],
+            )
+            .map_err(map_database_error)?;
+        let still_referenced: bool = transaction
+            .query_row(
+                "SELECT EXISTS(
+                   SELECT 1 FROM resource_upload_chunks chunk
+                   JOIN resource_upload_sessions session ON session.upload_id = chunk.upload_id
+                   WHERE session.workspace_id = ?1 AND chunk.temporary_blob_ref = ?2
+                     AND session.state IN ('OPEN', 'CONTENT_RECEIVED')
+                 ) OR EXISTS(
+                   SELECT 1 FROM resource_upload_blob_reservations reservation
+                   JOIN resource_upload_sessions session ON session.upload_id = reservation.upload_id
+                   WHERE reservation.workspace_id = ?1 AND reservation.digest = ?2
+                     AND reservation.state = 'RESERVED'
+                     AND session.state IN ('OPEN', 'CONTENT_RECEIVED')
+                 )",
+                params![workspace_id, digest],
+                |row| row.get(0),
+            )
+            .map_err(map_database_error)?;
         if still_referenced {
             return Err(StoreError::Integrity(
-                "orphan blob acquired a chunk reference while being claimed".to_owned(),
+                "orphan upload chunk acquired a live reference while being claimed".to_owned(),
             ));
         }
         claimed.push((
@@ -5684,42 +7501,96 @@ fn finish_orphan_resource_upload_blob_transaction(
     connection: &mut Connection,
     workspace_id: &str,
     digest: &str,
-) -> Result<(), StoreError> {
+) -> Result<bool, StoreError> {
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_database_error)?;
-    let fenced: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM resource_upload_blob_gc_fences WHERE workspace_id = ?1 AND digest = ?2)",
-        params![workspace_id, digest],
-        |row| row.get(0),
-    ).map_err(map_database_error)?;
+    let fenced: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+           SELECT 1 FROM resource_upload_blob_gc_fences fence
+           JOIN resource_upload_chunk_blob_registry registry
+             ON registry.workspace_id = fence.workspace_id AND registry.digest = fence.digest
+           WHERE fence.workspace_id = ?1 AND fence.digest = ?2
+             AND registry.state = 'DELETING'
+         )",
+            params![workspace_id, digest],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
     if !fenced {
+        let registry_exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(
+                   SELECT 1 FROM resource_upload_chunk_blob_registry
+                   WHERE workspace_id = ?1 AND digest = ?2
+                 )",
+                params![workspace_id, digest],
+                |row| row.get(0),
+            )
+            .map_err(map_database_error)?;
+        if !registry_exists {
+            transaction.commit().map_err(map_database_error)?;
+            return Ok(false);
+        }
         return Err(StoreError::Conflict {
             expected: None,
             actual: None,
         });
     }
-    let referenced: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM resource_upload_chunks c JOIN resource_upload_sessions s ON s.upload_id = c.upload_id WHERE s.workspace_id = ?1 AND c.temporary_blob_ref = ?2)",
-        params![workspace_id, digest],
-        |row| row.get(0),
-    ).map_err(map_database_error)?;
+    let referenced: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+           SELECT 1 FROM resource_upload_chunks chunk
+           JOIN resource_upload_sessions session ON session.upload_id = chunk.upload_id
+           WHERE session.workspace_id = ?1 AND chunk.temporary_blob_ref = ?2
+             AND session.state IN ('OPEN', 'CONTENT_RECEIVED')
+         ) OR EXISTS(
+           SELECT 1 FROM resource_upload_blob_reservations reservation
+           JOIN resource_upload_sessions session ON session.upload_id = reservation.upload_id
+           WHERE reservation.workspace_id = ?1 AND reservation.digest = ?2
+             AND reservation.state = 'RESERVED'
+             AND session.state IN ('OPEN', 'CONTENT_RECEIVED')
+         )",
+            params![workspace_id, digest],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
     if referenced {
         return Err(StoreError::Integrity(
-            "refusing to release a referenced upload blob".to_owned(),
+            "refusing to release a live upload chunk blob".to_owned(),
         ));
     }
     transaction.execute(
         "DELETE FROM resource_upload_blob_reservations WHERE workspace_id = ?1 AND digest = ?2 AND state = 'DELETING'",
         params![workspace_id, digest],
     ).map_err(map_database_error)?;
-    transaction
+    let removed = transaction
+        .execute(
+            "DELETE FROM resource_upload_chunk_blob_registry
+             WHERE workspace_id = ?1 AND digest = ?2 AND state = 'DELETING'",
+            params![workspace_id, digest],
+        )
+        .map_err(map_database_error)?;
+    if removed != 1 {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    let removed_fence = transaction
         .execute(
             "DELETE FROM resource_upload_blob_gc_fences WHERE workspace_id = ?1 AND digest = ?2",
             params![workspace_id, digest],
         )
         .map_err(map_database_error)?;
-    transaction.commit().map_err(map_database_error)
+    if removed_fence != 1 {
+        return Err(StoreError::Integrity(
+            "upload chunk GC registry was removed without its fence".to_owned(),
+        ));
+    }
+    transaction.commit().map_err(map_database_error)?;
+    Ok(true)
 }
 
 fn load_resource_upload_ranges(
@@ -5792,6 +7663,46 @@ fn load_resource_upload_chunks(
     Ok(chunks)
 }
 
+fn load_resource_upload_blob_digests(
+    connection: &Connection,
+    workspace_id: &str,
+    upload_id: &str,
+) -> Result<Vec<String>, StoreError> {
+    let exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM resource_upload_sessions
+               WHERE workspace_id = ?1 AND upload_id = ?2
+             )",
+            params![workspace_id, upload_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if !exists {
+        return Err(StoreError::NotFound);
+    }
+    let mut statement = connection
+        .prepare(
+            "SELECT digest FROM (
+               SELECT chunk.temporary_blob_ref AS digest
+               FROM resource_upload_chunks chunk
+               JOIN resource_upload_sessions session ON session.upload_id = chunk.upload_id
+               WHERE chunk.upload_id = ?1 AND session.workspace_id = ?2
+               UNION
+               SELECT digest FROM resource_upload_blob_reservations
+               WHERE upload_id = ?1 AND workspace_id = ?2
+             ) ORDER BY digest",
+        )
+        .map_err(map_database_error)?;
+    statement
+        .query_map(params![upload_id, workspace_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)
+}
+
 fn consume_upload_blob_reservation(
     transaction: &Transaction<'_>,
     workspace_id: &str,
@@ -5850,9 +7761,11 @@ fn put_resource_upload_chunk_transaction(
                 actual: None,
             });
         }
+        reject_context_document_purge_chunk_replay(&tx, &session)?;
         tx.commit().map_err(map_database_error)?;
         return Ok(session);
     }
+    validate_upload_workspace_active(&tx, &session.workspace_id)?;
     validate_upload_chunk(&session, &chunk)?;
     let existing: Option<(i64, i64, String)> = tx.query_row("SELECT start_offset, end_offset_exclusive, sha256 FROM resource_upload_chunks WHERE upload_id = ?1 AND chunk_index = ?2", params![chunk.upload_id, to_sql_i64(chunk.chunk_index, "chunk index")?], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional().map_err(map_database_error)?;
     if let Some((start, end, sha256)) = existing {
@@ -5860,6 +7773,9 @@ fn put_resource_upload_chunk_transaction(
             && from_sql_i64(end - 1, "chunk end")? == chunk.content_range.end_offset_inclusive
             && sha256 == chunk.sha256
         {
+            if session.state != ResourceUploadState::Committed {
+                validate_revision_upload_resource_active(&tx, &session)?;
+            }
             let reservation: Option<(String, i64, String)> = tx.query_row(
                 "SELECT digest, size_bytes, state FROM resource_upload_blob_reservations WHERE upload_id = ?1 AND request_id = ?2 AND workspace_id = ?3 AND chunk_index = ?4",
                 params![chunk.upload_id, chunk.request_id, session.workspace_id, to_sql_i64(chunk.chunk_index, "chunk index")?],
@@ -5905,6 +7821,13 @@ fn put_resource_upload_chunk_transaction(
             actual: Some(session.progress_version),
         });
     }
+    if session.state != ResourceUploadState::Open {
+        return Err(StoreError::Conflict {
+            expected: Some(expected_progress_version),
+            actual: Some(session.progress_version),
+        });
+    }
+    validate_revision_upload_resource_active(&tx, &session)?;
     let reservation: Option<(String, i64, String)> = tx.query_row(
         "SELECT digest, size_bytes, state FROM resource_upload_blob_reservations WHERE upload_id = ?1 AND request_id = ?2 AND workspace_id = ?3 AND chunk_index = ?4",
         params![chunk.upload_id, chunk.request_id, session.workspace_id, to_sql_i64(chunk.chunk_index, "chunk index")?],
@@ -5920,6 +7843,27 @@ fn put_resource_upload_chunk_transaction(
         || reserved_digest != chunk.sha256
         || from_sql_i64(reserved_size, "reserved upload chunk size")? != chunk.content.len() as u64
     {
+        return Err(StoreError::Busy);
+    }
+    if blob.digest != chunk.sha256 || blob.size_bytes != chunk.content.len() as u64 {
+        return Err(StoreError::Integrity(
+            "upload chunk BlobRef does not match its reserved content".to_owned(),
+        ));
+    }
+    let tracked = tx
+        .execute(
+            "UPDATE resource_upload_chunk_blob_registry
+             SET state = 'TRACKED', expires_at = NULL, claimed_at = NULL
+             WHERE workspace_id = ?1 AND digest = ?2 AND size_bytes = ?3
+               AND state IN ('RESERVED', 'TRACKED')",
+            params![
+                session.workspace_id,
+                chunk.sha256,
+                to_sql_i64(chunk.content.len() as u64, "upload chunk size")?,
+            ],
+        )
+        .map_err(map_database_error)?;
+    if tracked != 1 {
         return Err(StoreError::Busy);
     }
     tx.execute(
@@ -8649,55 +10593,91 @@ fn create_resource_transaction(
     location_id: String,
     upload_commit: Option<UploadCommit>,
     context_document: Option<Value>,
+    request_alias: Option<WorkspaceCreateRequest>,
 ) -> Result<CommittedResource, StoreError> {
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_database_error)?;
     let request_digest = digest(&canonical_json(&request.request_payload)?);
-    let prior: Option<(String, Option<String>, Option<String>)> = tx.query_row(
-        "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
-        params![request.principal_id, request.request_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-    ).optional().map_err(map_database_error)?;
-    if let Some((prior_digest, response_json, response_digest)) = prior {
-        if prior_digest != request_digest {
-            return Err(StoreError::Conflict {
-                expected: None,
-                actual: None,
-            });
-        }
-        let response_json = response_json.ok_or_else(|| {
-            StoreError::Integrity("Resource idempotency receipt is incomplete".to_owned())
-        })?;
-        if response_digest.as_deref() != Some(digest(response_json.as_bytes()).as_str()) {
-            return Err(StoreError::Integrity(
-                "Resource idempotency response digest does not match".to_owned(),
+    if let Some(alias) = request_alias.as_ref() {
+        if alias.principal_id != request.principal_id
+            || alias.request_payload != request.request_payload
+            || alias.request_id == request.request_id
+        {
+            return Err(StoreError::Invalid(
+                "Resource upload commit alias is inconsistent".to_owned(),
             ));
         }
-        return serde_json::from_str(&response_json)
-            .map_err(|error| StoreError::Integrity(error.to_string()));
+        let alias_digest = digest(&canonical_json(&alias.request_payload)?);
+        if let Some(committed) = verify_resource_upload_commit_receipt(
+            &tx,
+            &alias.principal_id,
+            &alias.request_id,
+            &alias_digest,
+        )? {
+            tx.commit().map_err(map_database_error)?;
+            return Ok(committed);
+        }
     }
-    let upload_id = request
-        .request_payload
-        .get("upload_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            StoreError::Invalid("Resource upload commit identity is missing".to_owned())
-        })?;
-    let upload_state: Option<(String, Option<String>)> = tx
-        .query_row(
-            "SELECT state, committed_resource_id FROM resource_upload_sessions WHERE upload_id = ?1 AND workspace_id = ?2",
-            params![upload_id, resource.workspace_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(map_database_error)?;
-    if let Some((state, committed_resource_id)) = upload_state
-        && state == "COMMITTED"
-    {
-        return Err(StoreError::LegacyUploadCommitNeedsReview {
-            committed_resource_id,
-        });
+    let prior_commit = if upload_commit.is_some() {
+        verify_resource_upload_commit_receipt(
+            &tx,
+            &request.principal_id,
+            &request.request_id,
+            &request_digest,
+        )?
+    } else {
+        verify_request_receipt::<CommittedResource>(
+            &tx,
+            &request.principal_id,
+            &request.request_id,
+            &request_digest,
+        )?
+    };
+    if let Some(committed) = prior_commit {
+        if let Some(alias) = request_alias.as_ref() {
+            let response_json = String::from_utf8(canonical_json(&committed)?)
+                .map_err(|error| StoreError::Invalid(error.to_string()))?;
+            tx.execute(
+                "INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+                params![alias.principal_id, alias.request_id, request_digest, response_json, digest(response_json.as_bytes()), committed.event.recorded_at],
+            )
+            .map_err(map_database_error)?;
+        }
+        tx.commit().map_err(map_database_error)?;
+        return Ok(committed);
+    }
+    track_resource_content_blob_transaction(&tx, &resource.workspace_id, &content_blob)?;
+    let upload_id = match request.request_payload.get("upload_id") {
+        Some(Value::String(upload_id)) if !upload_id.trim().is_empty() => Some(upload_id.as_str()),
+        Some(_) => {
+            return Err(StoreError::Invalid(
+                "Resource upload commit identity is invalid".to_owned(),
+            ));
+        }
+        None if upload_commit.is_some() => {
+            return Err(StoreError::Invalid(
+                "Resource upload commit identity is missing".to_owned(),
+            ));
+        }
+        None => None,
+    };
+    if let Some(upload_id) = upload_id {
+        let upload_state: Option<(String, Option<String>)> = tx
+            .query_row(
+                "SELECT state, committed_resource_id FROM resource_upload_sessions WHERE upload_id = ?1 AND workspace_id = ?2",
+                params![upload_id, resource.workspace_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(map_database_error)?;
+        if let Some((state, committed_resource_id)) = upload_state
+            && state == "COMMITTED"
+        {
+            return Err(StoreError::LegacyUploadCommitNeedsReview {
+                committed_resource_id,
+            });
+        }
     }
     let workspace_status: Option<String> = tx
         .query_row(
@@ -8723,6 +10703,61 @@ fn create_resource_transaction(
             .as_ref()
             .map(|id| (commit, id))
     });
+    if let Some(upload_commit) = upload_commit.as_ref() {
+        let status_event = &upload_commit.status_event;
+        let committed_session = &upload_commit.committed_session;
+        let current =
+            load_resource_upload(&tx, &resource.workspace_id, &committed_session.upload_id)?
+                .ok_or(StoreError::NotFound)?;
+        if current.state != ResourceUploadState::ContentReceived
+            || current.version != upload_commit.expected_version
+            || current.progress_version != upload_commit.expected_progress_version
+            || current.workspace_id != resource.workspace_id
+            || committed_session.state != ResourceUploadState::Committed
+            || committed_session.version != current.version.saturating_add(1)
+            || committed_session.progress_version != current.progress_version
+            || committed_session.committed_resource_id.as_deref()
+                != Some(resource.resource_id.as_str())
+            || committed_session.expected_size_bytes != revision.size_bytes.unwrap_or_default()
+            || status_event.entity_revision != committed_session.version
+            || upload_commit.state_ref.entity_revision != committed_session.version
+            || status_event.workspace_id != resource.workspace_id
+            || status_event.entity_type != "ResourceUpload"
+            || status_event.entity_id != committed_session.upload_id
+            || status_event.event_type != "resource.upload.status.changed.v1"
+            || status_event
+                .payload
+                .get("upload_id")
+                .and_then(Value::as_str)
+                != Some(committed_session.upload_id.as_str())
+            || status_event.payload.get("from").and_then(Value::as_str) != Some("CONTENT_RECEIVED")
+            || status_event.payload.get("to").and_then(Value::as_str) != Some("COMMITTED")
+            || status_event
+                .payload
+                .get("resource_id")
+                .and_then(Value::as_str)
+                != Some(resource.resource_id.as_str())
+            || status_event
+                .payload
+                .get("aggregate_version")
+                .and_then(Value::as_u64)
+                != Some(committed_session.version)
+        {
+            return Err(StoreError::Conflict {
+                expected: Some(upload_commit.expected_progress_version),
+                actual: Some(current.progress_version),
+            });
+        }
+
+        if revision_session.is_some() {
+            // The revision-upload SQL guard checks that the pinned Resource version is
+            // still current when the upload changes to COMMITTED. Stage this projection
+            // first in the same transaction; the revision writes below finish with it
+            // or roll the whole transaction back. First-time uploads commit only after
+            // their Resource row exists so the committed-resource foreign key is valid.
+            mark_resource_upload_committed(&tx, &resource, &revision, upload_commit)?;
+        }
+    }
     if let Some((upload, revision_resource_id)) = revision_session {
         let session = &upload.committed_session;
         let expected_version = session.expected_resource_version.ok_or_else(|| {
@@ -8884,6 +10919,11 @@ fn create_resource_transaction(
             "INSERT INTO resource_revisions(resource_revision_id, resource_id, provider_revision, content_digest, size_bytes, media_type, observed_at, created_by_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![revision.resource_revision_id, revision.resource_id, revision.provider_revision, revision.content_digest, revision.size_bytes.map(|n| to_sql_i64(n, "Resource size")).transpose()?, revision.media_type, revision.observed_at, String::from_utf8(canonical_json(&revision.created_by)?).map_err(|e| StoreError::Invalid(e.to_string()))?],
         ).map_err(map_database_error)?;
+        if let Some(upload_commit) = upload_commit.as_ref()
+            && revision_session.is_none()
+        {
+            mark_resource_upload_committed(&tx, &resource, &revision, upload_commit)?;
+        }
     }
     if let Some(index) = text_index.as_ref() {
         if index.workspace_id != resource.workspace_id
@@ -8934,68 +10974,6 @@ fn create_resource_transaction(
         params![event.event_id, event.workspace_id, event.entity_type, event.entity_id, event.origin_runtime_id, to_sql_i64(event.origin_sequence, "origin sequence")?, to_sql_i64(event.entity_revision, "event revision")?, event.hlc_timestamp, event.correlation_id, event.causation_id, i64::from(event.schema_version), event.event_type, payload_json, String::from_utf8(canonical_json(&event.aggregate_state_ref)?).map_err(|e| StoreError::Invalid(e.to_string()))?, event.recorded_at, event.payload_digest],
     ).map_err(map_database_error)?;
     if let Some(upload_commit) = upload_commit {
-        let status_event = &upload_commit.status_event;
-        let committed_session = &upload_commit.committed_session;
-        let current =
-            load_resource_upload(&tx, &resource.workspace_id, &committed_session.upload_id)?
-                .ok_or(StoreError::NotFound)?;
-        if current.state != ResourceUploadState::ContentReceived
-            || current.version != upload_commit.expected_version
-            || current.progress_version != upload_commit.expected_progress_version
-            || current.workspace_id != resource.workspace_id
-            || committed_session.state != ResourceUploadState::Committed
-            || committed_session.version != current.version.saturating_add(1)
-            || committed_session.progress_version != current.progress_version
-            || committed_session.committed_resource_id.as_deref()
-                != Some(resource.resource_id.as_str())
-            || committed_session.expected_size_bytes != revision.size_bytes.unwrap_or_default()
-            || status_event.entity_revision != committed_session.version
-            || upload_commit.state_ref.entity_revision != committed_session.version
-            || status_event.workspace_id != resource.workspace_id
-            || status_event.entity_type != "ResourceUpload"
-            || status_event.entity_id != committed_session.upload_id
-            || status_event.event_type != "resource.upload.status.changed.v1"
-            || status_event
-                .payload
-                .get("upload_id")
-                .and_then(Value::as_str)
-                != Some(committed_session.upload_id.as_str())
-            || status_event.payload.get("from").and_then(Value::as_str) != Some("CONTENT_RECEIVED")
-            || status_event.payload.get("to").and_then(Value::as_str) != Some("COMMITTED")
-            || status_event
-                .payload
-                .get("resource_id")
-                .and_then(Value::as_str)
-                != Some(resource.resource_id.as_str())
-            || status_event
-                .payload
-                .get("aggregate_version")
-                .and_then(Value::as_u64)
-                != Some(committed_session.version)
-        {
-            return Err(StoreError::Conflict {
-                expected: Some(upload_commit.expected_progress_version),
-                actual: Some(current.progress_version),
-            });
-        }
-        let changed = tx.execute(
-            "UPDATE resource_upload_sessions SET state = 'COMMITTED', committed_resource_id = ?1, version = ?2 WHERE upload_id = ?3 AND workspace_id = ?4 AND state = 'CONTENT_RECEIVED' AND version = ?5 AND progress_version = ?6 AND expected_size_bytes = ?7",
-            params![resource.resource_id, to_sql_i64(committed_session.version, "upload lifecycle version")?, committed_session.upload_id, resource.workspace_id, to_sql_i64(upload_commit.expected_version, "expected upload lifecycle version")?, to_sql_i64(upload_commit.expected_progress_version, "expected upload progress version")?, to_sql_i64(revision.size_bytes.unwrap_or_default(), "Resource size")?],
-        ).map_err(map_database_error)?;
-        if changed != 1 {
-            return Err(StoreError::Conflict {
-                expected: None,
-                actual: None,
-            });
-        }
-        let persisted =
-            load_resource_upload(&tx, &resource.workspace_id, &committed_session.upload_id)?
-                .ok_or(StoreError::NotFound)?;
-        if persisted != *committed_session {
-            return Err(StoreError::Integrity(
-                "committed upload state does not match its aggregate snapshot".to_owned(),
-            ));
-        }
         insert_upload_domain_event(&tx, upload_commit.status_event, upload_commit.state_ref)?;
     }
     let committed = CommittedResource {
@@ -9010,8 +10988,44 @@ fn create_resource_transaction(
         "INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
         params![request.principal_id, request.request_id, request_digest, response_json, response_digest, committed.event.recorded_at],
     ).map_err(map_database_error)?;
+    if let Some(alias) = request_alias {
+        let alias_response_json = String::from_utf8(canonical_json(&committed)?)
+            .map_err(|error| StoreError::Invalid(error.to_string()))?;
+        tx.execute(
+            "INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+            params![alias.principal_id, alias.request_id, request_digest, alias_response_json, digest(alias_response_json.as_bytes()), committed.event.recorded_at],
+        )
+        .map_err(map_database_error)?;
+    }
     tx.commit().map_err(map_database_error)?;
     Ok(committed)
+}
+
+fn mark_resource_upload_committed(
+    tx: &rusqlite::Transaction<'_>,
+    resource: &ResourceRecord,
+    revision: &ResourceRevisionRecord,
+    upload_commit: &UploadCommit,
+) -> Result<(), StoreError> {
+    let committed_session = &upload_commit.committed_session;
+    let changed = tx.execute(
+        "UPDATE resource_upload_sessions SET state = 'COMMITTED', committed_resource_id = ?1, version = ?2 WHERE upload_id = ?3 AND workspace_id = ?4 AND state = 'CONTENT_RECEIVED' AND version = ?5 AND progress_version = ?6 AND expected_size_bytes = ?7",
+        params![resource.resource_id, to_sql_i64(committed_session.version, "upload lifecycle version")?, committed_session.upload_id, resource.workspace_id, to_sql_i64(upload_commit.expected_version, "expected upload lifecycle version")?, to_sql_i64(upload_commit.expected_progress_version, "expected upload progress version")?, to_sql_i64(revision.size_bytes.unwrap_or_default(), "Resource size")?],
+    ).map_err(map_database_error)?;
+    if changed != 1 {
+        return Err(StoreError::Conflict {
+            expected: None,
+            actual: None,
+        });
+    }
+    let persisted = load_resource_upload(tx, &resource.workspace_id, &committed_session.upload_id)?
+        .ok_or(StoreError::NotFound)?;
+    if persisted != *committed_session {
+        return Err(StoreError::Integrity(
+            "committed upload state does not match its aggregate snapshot".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreError> {
@@ -13869,6 +15883,22 @@ fn list_agent_bindings(
         .map_err(map_database_error)
 }
 
+fn verify_resource_upload_commit_receipt(
+    connection: &Connection,
+    principal: &str,
+    request_id: &str,
+    request_digest: &str,
+) -> Result<Option<CommittedResource>, StoreError> {
+    verify_request_receipt::<CommittedResource>(connection, principal, request_id, request_digest)
+        .map_err(|error| match error {
+            StoreError::Conflict {
+                expected: None,
+                actual: None,
+            } => StoreError::IdempotencyConflict,
+            other => other,
+        })
+}
+
 fn verify_request_receipt<T: serde::de::DeserializeOwned>(
     connection: &Connection,
     principal: &str,
@@ -13906,34 +15936,38 @@ fn load_current_resource_summary(
     workspace_id: &str,
     resource_id: &str,
 ) -> Result<Option<ResourceSummary>, StoreError> {
-    connection.query_row(
-        "SELECT r.resource_id, r.workspace_id, rev.resource_revision_id, r.display_name,
-                rev.media_type, rev.content_digest, rev.size_bytes, r.created_at,
+    connection
+        .query_row(
+            "SELECT r.resource_id, r.workspace_id, rev.resource_revision_id, r.display_name,
+                COALESCE(rev.media_type, 'application/octet-stream'),
+                rev.content_digest, rev.size_bytes, r.created_at,
                 r.context_document_json
          FROM resources r
          JOIN resource_revisions rev
            ON rev.resource_id = r.resource_id AND rev.resource_revision_id = r.current_revision_id
          WHERE r.workspace_id = ?1 AND r.resource_id = ?2
-           AND rev.media_type IS NOT NULL AND rev.content_digest IS NOT NULL AND rev.size_bytes IS NOT NULL",
-        params![workspace_id, resource_id],
-        |row| {
-            let size: i64 = row.get(6)?;
-            Ok((
-                ResourceSummary {
-                    resource_id: row.get(0)?,
-                    workspace_id: row.get(1)?,
-                    resource_revision_id: row.get(2)?,
-                    display_name: row.get(3)?,
-                    media_type: row.get(4)?,
-                    content_digest: row.get(5)?,
-                    size_bytes: u64::try_from(size)
-                        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(6, size))?,
-                    created_at: row.get(7)?,
-                },
-                row.get::<_, Option<String>>(8)?,
-            ))
-        },
-    ).optional().map_err(map_database_error)
+           AND rev.content_digest IS NOT NULL AND rev.size_bytes IS NOT NULL",
+            params![workspace_id, resource_id],
+            |row| {
+                let size: i64 = row.get(6)?;
+                Ok((
+                    ResourceSummary {
+                        resource_id: row.get(0)?,
+                        workspace_id: row.get(1)?,
+                        resource_revision_id: row.get(2)?,
+                        display_name: row.get(3)?,
+                        media_type: row.get(4)?,
+                        content_digest: row.get(5)?,
+                        size_bytes: u64::try_from(size)
+                            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(6, size))?,
+                        created_at: row.get(7)?,
+                    },
+                    row.get::<_, Option<String>>(8)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_database_error)
         .and_then(|row| {
             let Some((summary, context_document)) = row else {
                 return Ok(None);
@@ -15276,9 +17310,14 @@ fn writer_loop(
                     }
                     Command::ListResourceIndexKeyVersions {
                         workspace_id,
+                        exclude_resource_id,
                         reply,
                     } => {
-                        let result = resource_index::list_key_versions(&connection, &workspace_id);
+                        let result = resource_index::list_key_versions(
+                            &connection,
+                            &workspace_id,
+                            exclude_resource_id.as_deref(),
+                        );
                         let _ = reply.send(result);
                     }
                     Command::SearchResourceIndexCandidates {
@@ -15337,6 +17376,72 @@ fn writer_loop(
                         );
                         let _ = reply.send(result);
                     }
+                    Command::ReserveResourceIndexBlob {
+                        workspace_id,
+                        blob,
+                        created_at,
+                        expires_at,
+                        reply,
+                    } => {
+                        let _ = reply.send(reserve_resource_index_blob_transaction(
+                            &mut connection,
+                            &workspace_id,
+                            &blob,
+                            &created_at,
+                            &expires_at,
+                        ));
+                    }
+                    Command::ClaimOrphanResourceIndexBlobs { now, limit, reply } => {
+                        let _ = reply.send(claim_orphan_resource_index_blobs_transaction(
+                            &mut connection,
+                            &now,
+                            limit,
+                        ));
+                    }
+                    Command::FinishOrphanResourceIndexBlob {
+                        workspace_id,
+                        digest,
+                        reply,
+                    } => {
+                        let _ = reply.send(finish_orphan_resource_index_blob_transaction(
+                            &mut connection,
+                            &workspace_id,
+                            &digest,
+                        ));
+                    }
+                    Command::ReserveResourceContentBlob {
+                        workspace_id,
+                        blob,
+                        created_at,
+                        expires_at,
+                        reply,
+                    } => {
+                        let _ = reply.send(reserve_resource_content_blob_transaction(
+                            &mut connection,
+                            &workspace_id,
+                            &blob,
+                            &created_at,
+                            &expires_at,
+                        ));
+                    }
+                    Command::ClaimOrphanResourceContentBlobs { now, limit, reply } => {
+                        let _ = reply.send(claim_orphan_resource_content_blobs_transaction(
+                            &mut connection,
+                            &now,
+                            limit,
+                        ));
+                    }
+                    Command::FinishOrphanResourceContentBlob {
+                        workspace_id,
+                        digest,
+                        reply,
+                    } => {
+                        let _ = reply.send(finish_orphan_resource_content_blob_transaction(
+                            &mut connection,
+                            &workspace_id,
+                            &digest,
+                        ));
+                    }
                     Command::GetCurrentResourceSummary {
                         workspace_id,
                         resource_id,
@@ -15369,6 +17474,20 @@ fn writer_loop(
                         reply,
                     } => {
                         let result = verify_request_receipt::<ResourceUploadSessionRecord>(
+                            &connection,
+                            &principal_id,
+                            &request_id,
+                            &request_digest,
+                        );
+                        let _ = reply.send(result);
+                    }
+                    Command::CheckResourceCreateReceipt {
+                        principal_id,
+                        request_id,
+                        request_digest,
+                        reply,
+                    } => {
+                        let result = verify_request_receipt::<CommittedResource>(
                             &connection,
                             &principal_id,
                             &request_id,
@@ -15433,6 +17552,9 @@ fn writer_loop(
                             command,
                         );
                         let _ = reply.send(result);
+                    }
+                    Command::ContextDocumentPurgeOperation { operation } => {
+                        operation(&mut connection);
                     }
                     Command::ListWorkspaceInstructionRevisions {
                         workspace_id,
@@ -15760,6 +17882,7 @@ fn writer_loop(
                             location_id,
                             None,
                             None,
+                            None,
                         );
                         let _ = reply.send(result);
                     }
@@ -15889,6 +18012,10 @@ fn writer_loop(
                             &upload_id,
                         ));
                     }
+                    Command::GetResourceUploadChunkReceipt { request, reply } => {
+                        let _ =
+                            reply.send(get_resource_upload_chunk_receipt(&connection, &request));
+                    }
                     Command::GetCommittedResourceUpload {
                         principal_id,
                         upload_id,
@@ -15898,6 +18025,19 @@ fn writer_loop(
                             &connection,
                             &principal_id,
                             &upload_id,
+                        ));
+                    }
+                    Command::ResolveResourceUploadCommitReceipt {
+                        principal_id,
+                        request_id,
+                        session,
+                        reply,
+                    } => {
+                        let _ = reply.send(resolve_resource_upload_commit_receipt_transaction(
+                            &mut connection,
+                            &principal_id,
+                            &request_id,
+                            &session,
                         ));
                     }
                     Command::ListExpiredResourceUploads { now, limit, reply } => {
@@ -15948,14 +18088,16 @@ fn writer_loop(
                     } => {
                         let _ = reply.send(reserve_resource_upload_blob_transaction(
                             &mut connection,
-                            &workspace_id,
-                            &upload_id,
-                            &request_id,
-                            chunk_index,
-                            &digest,
-                            size_bytes,
-                            &created_at,
-                            &expires_at,
+                            ResourceUploadBlobReservation {
+                                workspace_id: &workspace_id,
+                                upload_id: &upload_id,
+                                request_id: &request_id,
+                                chunk_index,
+                                chunk_digest: &digest,
+                                size_bytes,
+                                created_at: &created_at,
+                                expires_at: &expires_at,
+                            },
                         ));
                     }
                     Command::ClaimOrphanResourceUploadBlobs { now, limit, reply } => {
@@ -15987,6 +18129,17 @@ fn writer_loop(
                             &upload_id,
                         ));
                     }
+                    Command::GetResourceUploadBlobDigests {
+                        workspace_id,
+                        upload_id,
+                        reply,
+                    } => {
+                        let _ = reply.send(load_resource_upload_blob_digests(
+                            &connection,
+                            &workspace_id,
+                            &upload_id,
+                        ));
+                    }
                     Command::PutResourceUploadChunk {
                         chunk,
                         blob,
@@ -16006,6 +18159,7 @@ fn writer_loop(
                     }
                     Command::CommitResourceUpload {
                         request,
+                        request_alias,
                         resource,
                         revision,
                         draft,
@@ -16029,6 +18183,7 @@ fn writer_loop(
                             location_id,
                             upload_commit,
                             context_document,
+                            request_alias,
                         );
                         let _ = reply.send(result);
                     }
@@ -16226,7 +18381,11 @@ fn migrate_with_failpoint(
         verify_migration_record(connection, 12, V12_MIGRATION_NAME, SQLITE_V12_DDL, false)?;
         verify_migration_record(connection, 13, V13_MIGRATION_NAME, SQLITE_V13_DDL, false)?;
         verify_migration_record(connection, 14, V14_MIGRATION_NAME, SQLITE_V14_DDL, false)?;
-        verify_migration_record(connection, 15, V15_MIGRATION_NAME, SQLITE_V15_DDL, true)?;
+        verify_migration_record(connection, 15, V15_MIGRATION_NAME, SQLITE_V15_DDL, false)?;
+        verify_migration_record(connection, 16, V16_MIGRATION_NAME, SQLITE_V16_DDL, false)?;
+        verify_migration_record(connection, 17, V17_MIGRATION_NAME, SQLITE_V17_DDL, false)?;
+        verify_migration_record(connection, 18, V18_MIGRATION_NAME, SQLITE_V18_DDL, false)?;
+        verify_migration_record(connection, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL, true)?;
         return Ok(());
     }
 
@@ -16378,7 +18537,43 @@ fn migrate_with_failpoint(
             )?;
         }
         if schema_version >= 15 {
-            verify_migration_record(connection, 15, V15_MIGRATION_NAME, SQLITE_V15_DDL, true)?;
+            verify_migration_record(
+                connection,
+                15,
+                V15_MIGRATION_NAME,
+                SQLITE_V15_DDL,
+                schema_version == 15,
+            )?;
+        }
+        if schema_version >= 16 {
+            verify_migration_record(
+                connection,
+                16,
+                V16_MIGRATION_NAME,
+                SQLITE_V16_DDL,
+                schema_version == 16,
+            )?;
+        }
+        if schema_version >= 17 {
+            verify_migration_record(connection, 17, V17_MIGRATION_NAME, SQLITE_V17_DDL, false)?;
+        }
+        if schema_version >= 18 {
+            verify_migration_record(
+                connection,
+                18,
+                V18_MIGRATION_NAME,
+                SQLITE_V18_DDL,
+                schema_version == V18_SCHEMA_VERSION,
+            )?;
+        }
+        if schema_version >= 19 {
+            verify_migration_record(
+                connection,
+                19,
+                V19_MIGRATION_NAME,
+                SQLITE_V19_DDL,
+                schema_version == 19,
+            )?;
         }
         if schema_version == 1 {
             let transaction = connection
@@ -16484,7 +18679,31 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V14_SCHEMA_VERSION {
         migrate_invocation_transition_guards(connection, failpoint)?;
-    } else if current_version != SCHEMA_VERSION {
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V15_SCHEMA_VERSION {
+        migrate_agent_registry(connection, failpoint)?;
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V16_SCHEMA_VERSION {
+        migrate_resource_content_blob_registry(connection, failpoint)?;
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V17_SCHEMA_VERSION {
+        migrate_resource_upload_chunk_purge_registry(connection, failpoint)?;
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V18_SCHEMA_VERSION {
+        migrate_resource_index_blob_registry(connection, failpoint)?;
+    } else if current_version != V19_SCHEMA_VERSION {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -16576,6 +18795,255 @@ fn migrate_invocation_transition_guards(
     record_migration(&transaction, 15, V15_MIGRATION_NAME, SQLITE_V15_DDL)?;
     transaction
         .pragma_update(None, "user_version", V15_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version sixteen creates the planned Agent Registry/control projections.
+fn migrate_agent_registry(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V16_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV16Migration)?;
+    record_migration(&transaction, 16, V16_MIGRATION_NAME, SQLITE_V16_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V16_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version seventeen tracks exact local Resource content objects across publication and
+/// immutable-revision commits, allowing only unreferenced registered objects to be swept.
+fn migrate_resource_content_blob_registry(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let incomplete_metadata: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM resources resource
+               JOIN resource_revisions revision ON revision.resource_id = resource.resource_id
+               WHERE EXISTS (
+                 SELECT 1 FROM resource_locations location
+                 WHERE location.resource_id = resource.resource_id
+                   AND location.provider_ref = 'litecowork.encrypted_blob'
+                   AND location.runtime_id IS NULL
+                   AND location.environment_id IS NULL
+                   AND location.connection_id IS NULL
+               )
+                 AND (revision.content_digest IS NULL OR revision.size_bytes IS NULL
+                      OR length(COALESCE(revision.media_type, 'application/octet-stream')) = 0)
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if incomplete_metadata {
+        return Err(StoreError::CorruptSchema(
+            "managed Resource revision is missing exact blob metadata".to_owned(),
+        ));
+    }
+    let inconsistent_metadata: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM (
+                 SELECT resource.workspace_id, revision.content_digest,
+                        MIN(revision.size_bytes) AS min_size,
+                        MAX(revision.size_bytes) AS max_size,
+                        MIN(COALESCE(revision.media_type, 'application/octet-stream')) AS min_media_type,
+                        MAX(COALESCE(revision.media_type, 'application/octet-stream')) AS max_media_type
+                 FROM resources resource
+                 JOIN resource_revisions revision ON revision.resource_id = resource.resource_id
+                 WHERE EXISTS (
+                   SELECT 1 FROM resource_locations location
+                   WHERE location.resource_id = resource.resource_id
+                     AND location.provider_ref = 'litecowork.encrypted_blob'
+                     AND location.runtime_id IS NULL
+                     AND location.environment_id IS NULL
+                     AND location.connection_id IS NULL
+                 )
+                 GROUP BY resource.workspace_id, revision.content_digest
+               ) grouped
+               WHERE grouped.min_size <> grouped.max_size
+                  OR grouped.min_media_type <> grouped.max_media_type
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if inconsistent_metadata {
+        return Err(StoreError::CorruptSchema(
+            "Resource digest is recorded with inconsistent content metadata".to_owned(),
+        ));
+    }
+    transaction
+        .execute_batch(SQLITE_V17_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV17Migration)?;
+    record_migration(&transaction, 17, V17_MIGRATION_NAME, SQLITE_V17_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V17_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version eighteen registers accepted and in-flight upload chunks, then extends the
+/// immutable ContextDocument purge target and receipt contract to cover those objects.
+fn migrate_resource_upload_chunk_purge_registry(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let inconsistent_sizes: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM (
+                 SELECT workspace_id, digest, MIN(size_bytes) AS min_size,
+                        MAX(size_bytes) AS max_size
+                 FROM (
+                   SELECT session.workspace_id, chunk.temporary_blob_ref AS digest,
+                          chunk.end_offset_exclusive - chunk.start_offset AS size_bytes
+                   FROM resource_upload_chunks chunk
+                   JOIN resource_upload_sessions session ON session.upload_id = chunk.upload_id
+                   UNION ALL
+                   SELECT workspace_id, digest, size_bytes
+                   FROM resource_upload_blob_reservations
+                   UNION ALL
+                   SELECT workspace_id, digest, size_bytes
+                   FROM resource_upload_blob_gc_fences
+                 ) objects
+                 GROUP BY workspace_id, digest
+               ) grouped
+               WHERE grouped.min_size <> grouped.max_size
+                  OR grouped.min_size NOT BETWEEN 1 AND 4194304
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let inconsistent_chunk_digests: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM resource_upload_chunks chunk
+               WHERE chunk.sha256 <> chunk.temporary_blob_ref
+                  OR chunk.end_offset_exclusive - chunk.start_offset NOT BETWEEN 1 AND 4194304
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let fenced_live_chunk: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM resource_upload_blob_gc_fences fence
+               JOIN resource_upload_chunks chunk
+                 ON chunk.temporary_blob_ref = fence.digest
+               JOIN resource_upload_sessions session ON session.upload_id = chunk.upload_id
+               WHERE fence.workspace_id = session.workspace_id
+                 AND session.state IN ('OPEN', 'CONTENT_RECEIVED')
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let inconsistent_reservation_owner: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM resource_upload_blob_reservations reservation
+               LEFT JOIN resource_upload_sessions session
+                 ON session.upload_id = reservation.upload_id
+               WHERE session.upload_id IS NULL
+                  OR session.workspace_id <> reservation.workspace_id
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let deleting_reservation_without_fence: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM resource_upload_blob_reservations reservation
+               WHERE reservation.state = 'DELETING'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM resource_upload_blob_gc_fences fence
+                   WHERE fence.workspace_id = reservation.workspace_id
+                     AND fence.digest = reservation.digest
+                     AND fence.size_bytes = reservation.size_bytes
+                 )
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if inconsistent_sizes
+        || inconsistent_chunk_digests
+        || fenced_live_chunk
+        || inconsistent_reservation_owner
+        || deleting_reservation_without_fence
+    {
+        return Err(StoreError::CorruptSchema(
+            "ResourceUpload chunk registry backfill found inconsistent object ownership, metadata, or deletion state".to_owned(),
+        ));
+    }
+    transaction
+        .execute_batch(SQLITE_V18_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV18Migration)?;
+    record_migration(&transaction, 18, V18_MIGRATION_NAME, SQLITE_V18_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V18_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version nineteen registers encrypted ResourceIndex snapshots after the Agent Registry,
+/// Resource content, and upload-purge schemas have been applied. The backfill is atomic with
+/// the migration receipt so a restart either observes the full registry or none of it.
+fn migrate_resource_index_blob_registry(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let inconsistent_sizes: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM resource_text_indexes GROUP BY workspace_id, extracted_blob_digest HAVING MIN(extracted_size_bytes) <> MAX(extracted_size_bytes))",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if inconsistent_sizes {
+        return Err(StoreError::CorruptSchema(
+            "ResourceIndex digest is recorded with inconsistent snapshot sizes".to_owned(),
+        ));
+    }
+    transaction
+        .execute_batch(SQLITE_V19_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV19Migration)?;
+    record_migration(&transaction, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V19_SCHEMA_VERSION)
         .map_err(map_database_error)?;
     validate_schema(&transaction)?;
     transaction.commit().map_err(map_database_error)?;
@@ -17175,6 +19643,10 @@ enum Failpoint {
     DuringV13Migration,
     DuringV14Migration,
     DuringV15Migration,
+    DuringV16Migration,
+    DuringV17Migration,
+    DuringV18Migration,
+    DuringV19Migration,
     AfterAggregate,
     AfterSequence,
     AfterEvent,
@@ -17632,17 +20104,20 @@ fn list_resources_page(
             "Resource page query is invalid".to_owned(),
         ));
     }
-    let mut statement = connection.prepare(
-        "SELECT r.resource_id, r.workspace_id, rev.resource_revision_id, r.display_name,
-                rev.media_type, rev.content_digest, rev.size_bytes, r.created_at
+    let mut statement = connection
+        .prepare(
+            "SELECT r.resource_id, r.workspace_id, rev.resource_revision_id, r.display_name,
+                COALESCE(rev.media_type, 'application/octet-stream'),
+                rev.content_digest, rev.size_bytes, r.created_at
          FROM resources r
          JOIN resource_revisions rev
            ON rev.resource_id = r.resource_id AND rev.resource_revision_id = r.current_revision_id
          WHERE r.workspace_id = ?1
-           AND rev.media_type IS NOT NULL AND rev.content_digest IS NOT NULL AND rev.size_bytes IS NOT NULL
+           AND rev.content_digest IS NOT NULL AND rev.size_bytes IS NOT NULL
            AND (?2 IS NULL OR r.created_at < ?2 OR (r.created_at = ?2 AND r.resource_id < ?3))
          ORDER BY r.created_at DESC, r.resource_id DESC LIMIT ?4",
-    ).map_err(map_database_error)?;
+        )
+        .map_err(map_database_error)?;
     statement
         .query_map(
             params![
@@ -17856,7 +20331,8 @@ fn read_resource_content_metadata(
     let row = connection
         .query_row(
             "SELECT r.resource_id, r.workspace_id, rev.resource_revision_id, r.display_name,
-                    rev.media_type, rev.content_digest, rev.size_bytes, r.created_at,
+                    COALESCE(rev.media_type, 'application/octet-stream'),
+                    rev.content_digest, rev.size_bytes, r.created_at,
                     l.availability, r.context_document_json,
                     EXISTS(SELECT 1 FROM resource_locations managed
                            WHERE managed.resource_id = r.resource_id

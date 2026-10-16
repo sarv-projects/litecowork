@@ -2349,7 +2349,8 @@ export type paths = {
         };
         get: operations["getContextDocumentDeletionStatus"];
         put?: never;
-        post?: never;
+        /** @description Authenticated local Workspace owner deletion command. The body is exactly an empty object. Requires the current Resource If-Match version and Idempotency-Key. Before mutation, the command fails closed if any exact Resource revision has an external/provider-backed location. For accepted local managed content, one SQLite transaction seals the ordered purge manifest, creates pending receipts, commits DELETION_PENDING metadata/event/snapshot and the replay response, and removes this Resource's managed content location plus all ResourceIndex projection/term rows. Linked OPEN or CONTENT_RECEIVED revision-upload sessions expire in that transaction; exact accepted chunk and outstanding reservation identities are sealed as UPLOAD_CHUNK targets. The v17/v18/v19 collectors retry physical removal; an ACK is emitted only after the exact BlobStore object is removed and its registry row is durably cleared. ACK v2 records the manifest and exact target digests while full target membership remains in the sealed local plan and receipt. A digest rooted by another Resource remains pending. No provider locator or content is returned. This operation does not invalidate an already-fed native AgentSession. */
+        post: operations["requestContextDocumentDeletion"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3738,8 +3739,13 @@ export type components = {
              * @enum {string}
              */
             reported_provider_status: "OBSERVED" | "UNKNOWN" | "NOT_PROBED";
+            /** @description Transitional compatibility field; the current OpenCode adapter always returns an empty list because its catalog probe does not observe provider connection state. */
             reported_connected_provider_ids: string[];
-            reported_connected_provider_ids_truncated: boolean;
+            /**
+             * @description Always false because connected-provider IDs are not observed by this catalog probe.
+             * @constant
+             */
+            reported_connected_provider_ids_truncated: false;
             reported_provider_ids: string[];
             reported_provider_ids_truncated: boolean;
             /** @enum {string} */
@@ -4403,11 +4409,13 @@ export type components = {
         };
         SetContextDocumentStatusRequest: {
             /**
-             * @description Owner may revoke or restore retained content. Purge transitions are unavailable in the local desktop V1 Operator.
+             * @description Reversible owner route only. Permanent deletion is a separate context-document/deletion command.
              * @enum {string}
              */
             status: "ACTIVE" | "REVOKED";
         };
+        /** @description Closed empty object; deletion semantics are selected by the Resource path. */
+        ContextDocumentDeletionRequest: Record<string, never>;
         ContextDocumentDeletionStatus: {
             resource_id: string;
             /** @enum {string} */
@@ -10901,8 +10909,39 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Current deletion/tombstone projection; content bytes and provider results are never included. */
+            /** @description Current deletion/tombstone projection with manifest digest and target counts only; content, storage locators, and provider results are never included. */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContextDocumentDeletionStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    requestContextDocumentDeletion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Expected aggregate version for optimistic concurrency. */
+                "If-Match": components["parameters"]["IfMatch"];
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                resourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContextDocumentDeletionRequest"];
+            };
+        };
+        responses: {
+            /** @description The local purge plan and DELETION_PENDING tombstone are committed; poll the status projection until every target is acknowledged. */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

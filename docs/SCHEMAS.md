@@ -1178,11 +1178,12 @@ ContextDocumentCreateMetadata {
 } # upload-session pin only; status/purge fields belong to committed Resource metadata
 
 ContextDocumentPurgeTarget {
-  replica_ref: string # stable, non-secret replica identity; never a locator
-  replica_kind: BLOB | DERIVED_INDEX
-  runtime_id?: RuntimeId
-  runtime_incarnation_id?: RuntimeIncarnationId
-  target_revision_ids: ResourceRevisionId[]
+  replica_ref: Sha256Digest # local content-addressed identity; never a path or locator
+  replica_kind: BLOB | DERIVED_INDEX | UPLOAD_CHUNK
+  runtime_id: RuntimeId | null # null for local v1 targets
+  runtime_incarnation_id: RuntimeIncarnationId | null # null for local v1 targets
+  target_revision_ids: ResourceRevisionId[] # non-empty for BLOB/DERIVED_INDEX; empty for UPLOAD_CHUNK
+  target_upload_chunk_refs: [{upload_id: ResourceUploadId, chunk_index: u64}] # non-empty only for UPLOAD_CHUNK; otherwise empty
 }
 
 ContextDocumentPurgePlan { # immutable Resource-owned subrecord, not a separate aggregate
@@ -1207,17 +1208,65 @@ Owner IDs must resolve in the Resource's Workspace (USER must be that Workspace'
 authenticated owner). Content edits create ordinary ResourceRevisions.
 
 Only Core ResourceService changes ContextDocument status. Revocation blocks future
-retrieval but retains content. Deletion first seals an immutable `ContextDocumentPurgePlan`
-over every Core-owned blob/index replica and exact revision set (including a verified empty
-set), then commits `DELETION_PENDING` with the manifest digest/count, replicates the
-tombstone, and blocks all content reads. Non-secret receipts are retained per plan target;
-an acknowledgement must match its exact replica, incarnation, and revisions. `DELETED` is
-committed only when receipt count equals the sealed target count and every receipt is
-acknowledged; provider-backed sources remain pending until their adapter confirms
-deletion. Tombstones, the sealed target manifest, and purge receipts replicate under
-Workspace policy. A `replica_ref` is a stable non-secret identity, never a storage locator.
-The tombstone retains Resource/revision identity, ancestry, digests, provenance, and
-historical Task references without retaining content bytes.
+retrieval but retains content. The separate owner deletion command accepts only a local
+managed Resource whose exact revisions have no external/provider-backed locations. It
+fails closed before writing a plan or tombstone when such a location exists. For accepted
+local content it seals an immutable `ContextDocumentPurgePlan` over each unique
+`(content_digest, replica_kind)` pair and the exact revisions using it. `UPLOAD_CHUNK`
+targets group one temporary blob digest and enumerate accepted chunk rows and outstanding
+durable reservations by their exact `(upload_id, chunk_index)`
+identities in `target_upload_chunk_refs`; for this kind, `target_revision_ids` is empty. In
+the same SQLite transaction, linked revision-upload sessions in `OPEN` or `CONTENT_RECEIVED`
+transition to `EXPIRED` with `reason_code=CONTEXT_DOCUMENT_DELETION`, and their session,
+chunk, and request ledger metadata remains as non-resumable history. A verified empty target
+array is explicit. In that same transaction, Core writes the plan, one pending receipt per
+target, `DELETION_PENDING` metadata/event/snapshot, the exact idempotency replay response,
+and removes this Resource's managed content-location and all ResourceIndex projection/term
+rows. New content reads are blocked when the transaction commits.
+If the exact registered inventory yields no target, admission is valid only when that same
+transaction proves the Resource has no remaining local or external locations,
+ResourceIndex rows, registered Resource objects, or linked upload-chunk objects.
+
+For reproducible manifest bytes, sort each target's `target_revision_ids` by UTF-8 byte
+order and each `target_upload_chunk_refs` by UTF-8 `upload_id` then numeric `chunk_index`,
+then sort the target array by `(replica_ref UTF-8 bytes, replica_kind ASCII)`. The manifest
+digest is `sha256:` plus lowercase hexadecimal SHA-256 of the RFC 8785 JCS bytes of that
+ordered target array. Each local target uses the content-addressed digest as
+`replica_ref` and explicit null `runtime_id` and `runtime_incarnation_id`; these values
+are identities, never storage locators. A physical target is acknowledged only after the
+exact local BlobStore object has been removed and its corresponding Resource,
+ResourceIndex, or upload-chunk storage reference/fence has been durably resolved. The
+v2 acknowledgement receipt digest is
+`sha256:` plus lowercase hexadecimal SHA-256 of the RFC 8785 JCS bytes of the
+`resource.context_document.purge.acknowledged.v2` payload fields excluding
+`receipt_digest` and `aggregate_version`; the local Runtime fields must both be null and
+remain included. Its scalar payload does not grow with membership count, but this is not a
+strict event byte cap because Resource and envelope identifiers retain the current string
+contract. `acknowledged_at` is limited to 30 characters and `aggregate_version` to the
+canonical JSON safe-integer maximum. The event
+contains the sealed `purge_manifest_digest` and `target_digest`, which is the JCS digest of the
+exact serialized target entry (including full membership). Full revision and upload/chunk arrays
+remain in the local immutable plan and receipt rows, not the event. Historical v1 acknowledgement
+payloads remain readable with their original array fields. The
+existing bounded collectors/reconciler retry failed or ambiguous removal while retaining
+the durable `DELETING` fence. If another Resource in the Workspace still roots the same
+digest, that target remains pending until every Workspace-local root is gone and the
+exact object is removed.
+
+`DELETED` is committed only when receipt count equals the sealed target count and every
+Resource, derived-index, and upload-chunk target receipt is acknowledged; an empty target
+array completes only after the reconciler verifies the local inventory is empty. Desktop
+V1 Workspaces are `LOCAL_ONLY`. The planned E13-S01 V1 backup contract must preserve local
+tombstones, exact sealed target manifests, receipt states, and non-resumable upload ledger
+metadata; this is not a claim that backup/restore is implemented. Cross-Runtime replication
+is post-V1. Current status events carry only the plan digest/count and acknowledgement
+events describe completed targets, so events alone cannot reconstruct a plan with pending
+targets. Future Mesh replication must transfer the exact manifest and per-target receipt
+state or an equivalent reconstructible record; local SQL recovery rows are not themselves
+replicated. The tombstone retains Resource/revision identity, ancestry, digests, provenance,
+and historical Task references without retaining content bytes. This local deletion command
+does not invalidate an already-fed native AgentSession or claim that native history can be
+recalled.
 
 `TaskCategory` is a bounded, owner/lead-proposed routing/evaluation label. If no explicit
 category is available, use `OTHER`; Core does not infer it from private Task text. It may

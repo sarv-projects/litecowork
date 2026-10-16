@@ -39,6 +39,7 @@ pub(crate) fn insert_prepared(
     index: &PreparedResourceTextIndex,
 ) -> Result<(), StoreError> {
     validate_prepared(index)?;
+    ensure_searchable_key_version_bound(connection, index)?;
     connection.execute(
         "DELETE FROM resource_text_indexes WHERE workspace_id = ?1 AND resource_id = ?2 AND resource_revision_id = ?3",
         params![index.workspace_id, index.resource_id, index.resource_revision_id],
@@ -52,6 +53,62 @@ pub(crate) fn insert_prepared(
             "INSERT INTO resource_text_index_terms(workspace_id, resource_id, resource_revision_id, token_key_version, term_token) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![index.workspace_id, index.resource_id, index.resource_revision_id, i64::from(index.token_key_version), token],
         ).map_err(map_index_database_error)?;
+    }
+    let tracked = connection
+        .execute(
+            "UPDATE resource_index_blob_registry SET state = 'TRACKED', expires_at = NULL, claimed_at = NULL WHERE workspace_id = ?1 AND digest = ?2 AND size_bytes = ?3 AND state = 'RESERVED'",
+            params![
+                index.workspace_id,
+                index.extracted_text.digest,
+                to_sql_i64(index.extracted_text.size_bytes)?,
+            ],
+        )
+        .map_err(map_index_database_error)?;
+    if tracked != 1 {
+        return Err(StoreError::Busy);
+    }
+    Ok(())
+}
+
+fn ensure_searchable_key_version_bound(
+    connection: &Connection,
+    index: &PreparedResourceTextIndex,
+) -> Result<(), StoreError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT DISTINCT i.token_key_version
+             FROM resource_text_indexes i
+             JOIN resources r
+               ON r.workspace_id = i.workspace_id
+              AND r.resource_id = i.resource_id
+              AND r.current_revision_id = i.resource_revision_id
+             WHERE i.workspace_id = ?1
+               AND NOT (i.resource_id = ?2 AND i.resource_revision_id = ?3)",
+        )
+        .map_err(map_index_database_error)?;
+    let rows = statement
+        .query_map(
+            params![
+                index.workspace_id,
+                index.resource_id,
+                index.resource_revision_id
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(map_index_database_error)?;
+    let mut versions = BTreeSet::new();
+    for row in rows {
+        let value = row.map_err(map_index_database_error)?;
+        versions.insert(u32::try_from(value).map_err(|_| {
+            StoreError::Integrity("Resource index key version is invalid".to_owned())
+        })?);
+    }
+    versions.insert(index.token_key_version);
+    if versions.len() > MAX_SEARCHABLE_KEY_VERSIONS {
+        return Err(StoreError::Blob(
+            "Resource index would exceed retained key-version limit; reindex before writing"
+                .to_owned(),
+        ));
     }
     Ok(())
 }
@@ -155,12 +212,25 @@ pub(crate) fn not_indexable_reason(
 pub(crate) fn list_key_versions(
     connection: &Connection,
     workspace_id: &str,
+    exclude_resource_id: Option<&str>,
 ) -> Result<Vec<u32>, StoreError> {
-    let mut statement = connection.prepare(
-        "SELECT DISTINCT token_key_version FROM resource_text_indexes WHERE workspace_id = ?1 ORDER BY token_key_version",
-    ).map_err(map_index_database_error)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT DISTINCT i.token_key_version
+         FROM resource_text_indexes i
+         JOIN resources r
+           ON r.workspace_id = i.workspace_id
+          AND r.resource_id = i.resource_id
+          AND r.current_revision_id = i.resource_revision_id
+         WHERE i.workspace_id = ?1
+           AND (?2 IS NULL OR i.resource_id != ?2)
+         ORDER BY i.token_key_version",
+        )
+        .map_err(map_index_database_error)?;
     let rows = statement
-        .query_map([workspace_id], |row| row.get::<_, i64>(0))
+        .query_map(params![workspace_id, exclude_resource_id], |row| {
+            row.get::<_, i64>(0)
+        })
         .map_err(map_index_database_error)?;
     rows.map(|row| {
         let value = row.map_err(map_index_database_error)?;
@@ -471,11 +541,14 @@ pub fn prepare(
     source_digest: &str,
     indexed_at: &str,
     bytes: &[u8],
+    expected_token_key_version: u32,
+    reserve_blob: impl FnOnce(&BlobRef) -> Result<(), StoreError>,
 ) -> Result<Option<PreparedResourceTextIndex>, StoreError> {
     if workspace_id.trim().is_empty()
         || resource_id.trim().is_empty()
         || revision_id.trim().is_empty()
         || indexed_at.trim().is_empty()
+        || expected_token_key_version == 0
     {
         return Err(StoreError::Invalid(
             "Resource index scope is invalid".to_owned(),
@@ -513,21 +586,40 @@ pub fn prepare(
     // Empty text has no terms but still gets an encrypted snapshot and a nonzero key
     // version. Use a domain-separated sentinel that cannot match a user query token.
     let (token_key_version, mut term_tokens) = if normalized_terms.is_empty() {
-        let (version, _) = blobs.resource_index_token(workspace_id, None, "__lc_empty_v1")?;
+        let (version, _) = blobs.resource_index_token(
+            workspace_id,
+            Some(expected_token_key_version),
+            "__lc_empty_v1",
+        )?;
         (version, Vec::new())
     } else {
-        blobs.resource_index_tokens(workspace_id, None, &normalized_terms)?
+        blobs.resource_index_tokens(
+            workspace_id,
+            Some(expected_token_key_version),
+            &normalized_terms,
+        )?
     };
+    if token_key_version == 0 || token_key_version != expected_token_key_version {
+        return Err(StoreError::Integrity(
+            "Resource index key version changed during preparation".to_owned(),
+        ));
+    }
     term_tokens.sort_unstable();
     term_tokens.dedup();
 
+    let expected_blob = BlobRef {
+        digest: actual_digest.clone(),
+        size_bytes: bytes.len() as u64,
+        media_type: INDEX_MEDIA_TYPE.to_owned(),
+    };
+    reserve_blob(&expected_blob)?;
     let extracted_text = blobs.put(
         workspace_id,
         BlobPurpose::ResourceIndex,
         bytes,
         INDEX_MEDIA_TYPE,
     )?;
-    if extracted_text.size_bytes != bytes.len() as u64
+    if extracted_text != expected_blob
         || blobs.get(workspace_id, BlobPurpose::ResourceIndex, &extracted_text)? != bytes
     {
         return Err(StoreError::Integrity(
@@ -1009,6 +1101,8 @@ mod tests {
             &content_digest,
             "2026-10-09T00:00:00Z",
             bytes,
+            1,
+            |_| Ok(()),
         )
         .expect("prepare index")
         .expect("supported text is indexed");
@@ -1102,6 +1196,8 @@ mod tests {
             &source_digest(bytes),
             "2026-10-09T00:00:00Z",
             bytes,
+            1,
+            |_| Ok(()),
         )
         .expect("supported input is prepared")
         .expect("supported text gets an index");
@@ -1151,6 +1247,8 @@ mod tests {
             &source_digest(bytes),
             "2026-10-09T00:00:00Z",
             bytes,
+            1,
+            |_| Ok(()),
         );
 
         assert!(matches!(result, Err(StoreError::Blob(_))));

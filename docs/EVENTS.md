@@ -171,6 +171,7 @@ resource.revision.created.v1 # owner-authored immutable Resource revision append
 resource.revision.observed.v1
 resource.context_document.status.changed.v1
 resource.context_document.purge.acknowledged.v1
+resource.context_document.purge.acknowledged.v2
 resource.location.changed.v1
 resource.edge.created.v1
 resource.invalidation.created.v1
@@ -352,13 +353,14 @@ store/forward unknown versions but cannot apply them to projections they do not 
 | `resource.created` | `resource_id`, `workspace_id`, `kind`, `identity_digest?`, `provenance`, `context_document?` (safe kind/owner/status metadata only; new ContextDocuments start ACTIVE), `aggregate_version` |
 | `resource.revision.created.v1` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `content_digest`, `size_bytes`, `media_type`, `created_by`, `aggregate_version` |
 | `resource.revision.observed` | `resource_id`, `resource_revision_id`, `parent_revision_ids[]`, `provider_revision?`, `content_digest?`, `observed_at` |
-| `resource.context_document.status.changed` | `resource_id`, `from`, `to`, `changed_by`, `purge_manifest_digest?`, `purge_target_count?`, `aggregate_version`; manifest fields are required when status changes to DELETION_PENDING or DELETED |
-| `resource.context_document.purge.acknowledged` | `resource_id`, `replica_ref` (stable non-secret identity, never a locator), `replica_kind`, `runtime_id?`, `runtime_incarnation_id?`, `target_revision_ids[]`, `receipt_digest`, `acknowledged_at`, `aggregate_version` |
+| `resource.context_document.status.changed` | `resource_id`, `from`, `to`, `changed_by`, `purge_manifest_digest?`, `purge_target_count?`, `aggregate_version`; manifest fields are required when status changes to DELETION_PENDING or DELETED. Desktop V1 carries a local-only purge plan; this event does not include its target array. |
+| `resource.context_document.purge.acknowledged.v1` | `resource_id`, `replica_ref`, `replica_kind`, `runtime_id?`, `runtime_incarnation_id?`, `target_revision_ids[]`, `receipt_digest`, `acknowledged_at`, `aggregate_version`; historical read contract |
+| `resource.context_document.purge.acknowledged.v2` | `resource_id`, `purge_manifest_digest`, `replica_ref`, `replica_kind`, explicit-null local `runtime_id`/`runtime_incarnation_id`, `target_digest`, `receipt_digest`, `acknowledged_at`, `aggregate_version`; no target-membership arrays, with full membership retained in the sealed local plan and receipt |
 | `resource.location.changed` | `location_id`, `resource_id`, `availability`, `observed_revision_id?`, `observed_at` |
 | `resource.edge.created` | `edge_id`, `from_resource_id`, `to_resource_id`, `relation`, `observed_at` |
 | `resource.invalidation.created` | `invalidation_record_id`, `dependency_edge_id`, `observed_revision_id`, `reason_code`, `created_at` |
 | `resource.upload.created` | `upload_id`, `workspace_id`, `expected_size_bytes`, `expected_digest`, `chunk_size_bytes`, `expires_at`, `resource_id?`, `expected_resource_version?`, `parent_revision_ids[]?`, `aggregate_version` |
-| `resource.upload.status.changed` | `upload_id`, `from`, `to`, `resource_id?`, `reason_code?`, `aggregate_version` |
+| `resource.upload.status.changed` | `upload_id`, `from`, `to`, `resource_id?`, `reason_code?`, `aggregate_version`; ContextDocument deletion expires a linked OPEN or CONTENT_RECEIVED revision upload with reason code CONTEXT_DOCUMENT_DELETION in the purge admission transaction |
 
 Runtime-start WorkspaceRoot revalidation reuses the canonical
 `workspace.root.status.changed.v1` and `resource.location.changed.v1` events. The root event
@@ -588,8 +590,9 @@ the provider cannot prove a more specific route; the UI must not infer one from 
 | `suggestion.*.v1` | Suggestion / SuggestionService owner actions; TaskService atomic admission for TASK acceptance | Proposal digest, provenance refs, status, and result Task ref replicate; source content remains in Resources |
 | `suggestion.visibility.changed.v1` | Suggestion / SuggestionService | Visibility timestamps and owner identity only; snooze cannot extend past expiry, null clears a snooze |
 | `demonstration.status.changed.v1` | DemonstrationSession / DemonstrationSessionService | Status and trace Resource ID only; semantic trace Resource follows normal replication policy |
-| `resource.context_document.status.changed.v1` | Resource / ResourceService | Status tombstone and owner identity replicate; never includes document content |
-| `resource.context_document.purge.acknowledged.v1` | Resource / ContextDocumentPurgeReconciler | Replica identity, target revisions, Runtime incarnation (when applicable), and receipt digest only; no content or locator |
+| `resource.context_document.status.changed.v1` | Resource / ResourceService | Local V1 status tombstone and owner identity; future Mesh replication carries no document content |
+| `resource.context_document.purge.acknowledged.v1` | Resource / ContextDocumentPurgeReconciler | Historical array-bearing acknowledgement retained for reads |
+| `resource.context_document.purge.acknowledged.v2` | Resource / ContextDocumentPurgeReconciler | Membership-array-free digest acknowledgement emitted after physical removal and durable registry clear; future Mesh replication carries no content or locator |
 | `environment.sharing_scope.changed.v1` | Environment / EnvironmentManager | Scope change requires expected-version and current-use check; provider locators remain local |
 
 Accepting a `TASK` Suggestion appends the ordinary `task.created.v1` event and

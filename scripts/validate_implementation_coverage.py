@@ -41,6 +41,25 @@ def canonical_digest(value: object) -> str:
     return sha256(json.dumps(value, sort_keys=True, separators=(",", ":")))
 
 
+def api_documented_routes(api_text: str) -> set[tuple[str, str]]:
+    """Return served routes and explicitly labeled target-only OpenAPI operations."""
+    route_pattern = r"(GET|POST|PUT|PATCH|DELETE)\s+(/v1/[^\s]+)"
+    route_key = lambda method, route: (
+        method.upper(),
+        re.sub(r"\{[^}]+\}", "{}", route.split("?", 1)[0].removeprefix("/v1")),
+    )
+    routes = {
+        route_key(method, route)
+        for method, route in re.findall(rf"^\s*{route_pattern}", api_text, re.M)
+    }
+    target_only_pattern = rf"^\s*#\s*Target only operation:\s*{route_pattern}"
+    routes.update(
+        route_key(method, route)
+        for method, route in re.findall(target_only_pattern, api_text, re.M)
+    )
+    return routes
+
+
 def schema_story(name: str) -> str:
     low = re.sub(r"([a-z])([A-Z])", r"\1_\2", name).lower()
     if any(x in low for x in ("agent_registry", "agent_distribution")):
@@ -188,14 +207,7 @@ def current_inventory() -> dict[str, object]:
                 operation_digests.append(
                     {**operation, "sha256": canonical_digest(spec)}
                 )
-    documented_routes = {
-        (method.upper(), re.sub(r"\{[^}]+\}", "{}", route.split("?", 1)[0].removeprefix("/v1")))
-        for method, route in re.findall(
-            r"^\s*(GET|POST|PUT|PATCH|DELETE)\s+(/v1/[^\s]+)",
-            (ROOT / "docs/API.md").read_text(),
-            re.M,
-        )
-    }
+    documented_routes = api_documented_routes((ROOT / "docs/API.md").read_text())
     openapi_routes = {
         (item["method"], re.sub(r"\{[^}]+\}", "{}", item["path"]))
         for item in operations
@@ -606,6 +618,12 @@ def event_story(event_type: str) -> str:
 def contract_file_story(path: str) -> str:
     if path.endswith("sqlite-v16.sql"):
         return "E03-S08"
+    if path.endswith("sqlite-v17.sql"):
+        return "E02-S03"
+    if path.endswith("sqlite-v18.sql"):
+        return "E02-S03"
+    if path.endswith("sqlite-v19.sql"):
+        return "E02-S03"
     if path.endswith("delegation.schema.json"):
         return "E05-S01"
     if path.endswith("operator-api.openapi.yaml"):

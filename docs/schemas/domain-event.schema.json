@@ -8438,6 +8438,70 @@
         ],
         "additionalProperties": false
       },
+      "resource_context_document_purge_acknowledged_v2": {
+        "type": "object",
+        "required": [
+          "resource_id",
+          "purge_manifest_digest",
+          "replica_ref",
+          "replica_kind",
+          "runtime_id",
+          "runtime_incarnation_id",
+          "target_digest",
+          "receipt_digest",
+          "acknowledged_at",
+          "aggregate_version"
+        ],
+        "properties": {
+          "resource_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "purge_manifest_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "replica_ref": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "replica_kind": {
+            "type": "string",
+            "enum": [
+              "BLOB",
+              "DERIVED_INDEX",
+              "UPLOAD_CHUNK"
+            ]
+          },
+          "runtime_id": {
+            "type": "null"
+          },
+          "runtime_incarnation_id": {
+            "type": "null"
+          },
+          "target_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "receipt_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "acknowledged_at": {
+            "type": "string",
+            "format": "date-time",
+            "minLength": 30,
+            "maxLength": 30,
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{9}Z$"
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "additionalProperties": false
+      },
       "rich_presentation_published": {
         "type": "object",
         "required": [
@@ -11573,6 +11637,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/resource_context_document_purge_acknowledged"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "resource.context_document.purge.acknowledged.v2"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/resource_context_document_purge_acknowledged_v2"
           }
         }
       }

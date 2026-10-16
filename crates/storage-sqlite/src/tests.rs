@@ -604,6 +604,11 @@ fn seed_workspace_notes_resource(directory: &tempfile::TempDir) {
         [DIGEST],
     ).expect("Resource revision fixture");
     transaction.execute(
+        "INSERT INTO resource_content_blob_registry(workspace_id,digest,size_bytes,media_type,created_at,expires_at,state,claimed_at)
+         VALUES ('workspace-context',?1,0,'text/plain','2026-10-06T10:00:00Z',NULL,'TRACKED',NULL)",
+        [DIGEST],
+    ).expect("Resource content registry fixture");
+    transaction.execute(
         "INSERT INTO resource_locations(location_id,resource_id,provider_ref,locator_ref_id,availability,writable,observed_revision_id,observed_digest,observed_at,last_checked_at)
          VALUES ('location-context','resource-context','litecowork.encrypted_blob',?1,'AVAILABLE',0,'revision-context',?1,'2026-10-06T10:00:00Z','2026-10-06T10:00:00Z')",
         [DIGEST],
@@ -696,6 +701,18 @@ fn pinned_resource_content_reads_exact_historical_revision_without_head_fallback
         "INSERT INTO resource_revision_parents(resource_id,child_revision_id,parent_revision_id) VALUES ('resource-history','revision-two','revision-one')",
         [],
     ).expect("revision ancestry fixture");
+    for blob in [&old_blob, &head_blob] {
+        transaction
+            .execute(
+                "INSERT INTO resource_content_blob_registry(
+                   workspace_id, digest, size_bytes, media_type, created_at,
+                   expires_at, state, claimed_at
+                 ) VALUES ('workspace-history', ?1, ?2, 'text/plain',
+                           '2026-10-08T00:00:00Z', NULL, 'TRACKED', NULL)",
+                rusqlite::params![blob.digest, blob.size_bytes as i64],
+            )
+            .expect("Resource content registry fixture");
+    }
     transaction.execute(
         "INSERT INTO resource_locations(location_id,resource_id,provider_ref,locator_ref_id,availability,writable,observed_revision_id,observed_digest,observed_at,last_checked_at)
          VALUES ('location-history','resource-history','litecowork.encrypted_blob',?1,'AVAILABLE',0,'revision-two',?1,'2026-10-08T00:01:00Z','2026-10-08T00:01:00Z')",
@@ -1305,6 +1322,24 @@ fn applies_full_contract_schema_and_reports_sqlite_runtime() {
         .expect("Invocation v15 migration receipt");
     assert_eq!(invocation_migration.0, V15_MIGRATION_NAME);
     assert!(invocation_migration.1.starts_with("sha256:") && invocation_migration.1.len() == 71);
+    let v16_migration: (String, String) = connection
+        .query_row(
+            "SELECT name, source_checksum FROM schema_migrations WHERE version = 16",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("Agent Registry migration receipt");
+    assert_eq!(v16_migration.0, V16_MIGRATION_NAME);
+    assert_eq!(v16_migration.1, digest(SQLITE_V16_DDL.as_bytes()));
+    let v19_migration: (String, String) = connection
+        .query_row(
+            "SELECT name, source_checksum FROM schema_migrations WHERE version = 19",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("ResourceIndex v19 migration receipt");
+    assert_eq!(v19_migration.0, V19_MIGRATION_NAME);
+    assert_eq!(v19_migration.1, digest(SQLITE_V19_DDL.as_bytes()));
     let policy_decision_column: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('audit_records') WHERE name='policy_decision_json')",
@@ -1320,6 +1355,14 @@ fn applies_full_contract_schema_and_reports_sqlite_runtime() {
         "workspace_origin_sequences",
         "resource_text_indexes",
         "resource_text_index_terms",
+        "agent_registry_cache",
+        "agent_installation_observations",
+        "agent_control_descriptors",
+        "agent_lifecycle_operations",
+        "agent_binding_configurations",
+        "resource_index_blob_registry",
+        "resource_content_blob_registry",
+        "resource_upload_chunk_blob_registry",
     ] {
         let exists: bool = connection
             .query_row(
@@ -1334,30 +1377,49 @@ fn applies_full_contract_schema_and_reports_sqlite_runtime() {
 }
 
 #[test]
-fn upgrades_schema_v13_through_trust_v14_before_invocation_v15() {
+fn upgrades_schema_v13_through_resource_index_registry_v19() {
     let directory = tempfile::tempdir().expect("temporary directory");
-    let store = test_store(&directory, Duration::from_secs(1));
-    drop(store);
-
-    let mut connection = Connection::open(state_database(&directory)).expect("open database");
+    let database = state_database(&directory);
+    std::fs::create_dir_all(database.parent().expect("database parent path"))
+        .expect("create the private state directory before opening the v13 boundary");
+    let mut connection = Connection::open(database).expect("open database");
     connection
-        .execute_batch(
-            "DROP TRIGGER capability_invocation_status_transition_guard;
-             DROP TRIGGER capability_invocation_creation_admission_closed;
-             DROP TRIGGER audit_records_immutable_update;
-             DROP TRIGGER audit_records_immutable_delete;
-             ALTER TABLE audit_records DROP COLUMN policy_decision_json;
-             DELETE FROM schema_migrations WHERE version IN (14, 15);
-             PRAGMA user_version = 13;",
-        )
-        .expect("restore the v13 migration boundary for upgrade coverage");
+        .pragma_update(None, "foreign_keys", true)
+        .expect("enable foreign keys");
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV14Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read the v13 migration boundary");
+    assert_eq!(version, 13);
 
-    migrate(&mut connection).expect("apply Trust v14 and Invocation v15 in order");
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV17Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read the Agent Registry v16 boundary");
+    assert_eq!(version, 16);
+    let agent_registry_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agent_registry_cache')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect Agent Registry v16 table");
+    let resource_index_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'resource_index_blob_registry')",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect ResourceIndex v19 table before its migration");
+    assert!(agent_registry_exists);
+    assert!(!resource_index_exists);
+
+    migrate(&mut connection).expect("apply migrations v14 through v19 in order");
 
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read migrated schema version");
-    assert_eq!(version, 15);
+    assert_eq!(version, SCHEMA_VERSION);
     let applied: Vec<i64> = connection
         .prepare("SELECT version FROM schema_migrations WHERE version >= 14 ORDER BY version")
         .expect("prepare migration query")
@@ -1365,7 +1427,218 @@ fn upgrades_schema_v13_through_trust_v14_before_invocation_v15() {
         .expect("query applied migrations")
         .collect::<Result<_, _>>()
         .expect("collect migration versions");
-    assert_eq!(applied, [14, 15]);
+    assert_eq!(applied, [14, 15, 16, 17, 18, 19]);
+}
+
+#[test]
+fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
+    const WORKSPACE_ID: &str = "workspace-v19-rollback";
+    const SHARED_INDEX_CONTENT: &[u8] = b"legacy ResourceIndex snapshot shared by two Resources";
+    const INDEXED_AT: &str = "2026-10-16T10:00:00Z";
+
+    type ResourceIndexMigrationRow = (
+        String,
+        String,
+        String,
+        String,
+        String,
+        i64,
+        String,
+        i64,
+        String,
+    );
+
+    fn resource_index_rows(connection: &Connection) -> Vec<ResourceIndexMigrationRow> {
+        let mut statement = connection
+            .prepare(
+                "SELECT workspace_id, resource_id, resource_revision_id,
+                        source_content_digest, extracted_blob_digest, extracted_size_bytes,
+                        parser_id, token_key_version, indexed_at
+                 FROM resource_text_indexes
+                 ORDER BY resource_id, resource_revision_id",
+            )
+            .expect("prepare ResourceTextIndex snapshot query");
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            })
+            .expect("query ResourceTextIndex snapshot")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect ResourceTextIndex rows")
+    }
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database = state_database(&directory);
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, WORKSPACE_ID);
+    drop(store);
+
+    let mut connection = Connection::open(database).expect("open migration test database");
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .expect("enable foreign keys");
+
+    let content_digest = digest(SHARED_INDEX_CONTENT);
+    let index_digest = digest(SHARED_INDEX_CONTENT);
+    connection
+        .execute(
+            "INSERT INTO resource_index_blob_registry(
+                 workspace_id, digest, size_bytes, created_at, expires_at, state, claimed_at
+             ) VALUES (?1, ?2, ?3, ?4, NULL, 'TRACKED', NULL)",
+            rusqlite::params![
+                WORKSPACE_ID,
+                index_digest,
+                SHARED_INDEX_CONTENT.len() as i64,
+                INDEXED_AT,
+            ],
+        )
+        .expect("register the existing v19 index snapshot before seeding legacy rows");
+
+    for (resource_id, revision_id, display_name) in [
+        (
+            "resource-v19-rollback-a",
+            "revision-v19-rollback-a",
+            "rollback-a.txt",
+        ),
+        (
+            "resource-v19-rollback-b",
+            "revision-v19-rollback-b",
+            "rollback-b.txt",
+        ),
+    ] {
+        connection
+            .execute(
+                "INSERT INTO resources(
+                     resource_id, workspace_id, kind, provider_identity_json, identity_digest,
+                     display_name, current_revision_id, sensitivity, provenance_json,
+                     created_at, updated_at, version
+                 ) VALUES (?1, ?2, 'FILE', '{}', NULL, ?3, NULL, 'PERSONAL', '{}', ?4, ?4, 1)",
+                rusqlite::params![resource_id, WORKSPACE_ID, display_name, INDEXED_AT],
+            )
+            .expect("insert a legacy Resource");
+        connection
+            .execute(
+                "INSERT INTO resource_revisions(
+                     resource_revision_id, resource_id, content_digest, size_bytes,
+                     media_type, observed_at, created_by_json
+                 ) VALUES (?1, ?2, ?3, ?4, 'text/plain', ?5, '{\"kind\":\"USER\",\"principal_id\":\"owner-local\"}')",
+                rusqlite::params![
+                    revision_id,
+                    resource_id,
+                    content_digest,
+                    SHARED_INDEX_CONTENT.len() as i64,
+                    INDEXED_AT,
+                ],
+            )
+            .expect("insert the matching immutable Resource revision");
+        connection
+            .execute(
+                "UPDATE resources SET current_revision_id = ?1 WHERE resource_id = ?2",
+                rusqlite::params![revision_id, resource_id],
+            )
+            .expect("select the Resource's current revision");
+        connection
+            .execute(
+                "INSERT INTO resource_text_indexes(
+                     workspace_id, resource_id, resource_revision_id, source_content_digest,
+                     extracted_blob_digest, extracted_size_bytes, parser_id, token_key_version,
+                     indexed_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'litecowork.plain-text.v1', 1, ?7)",
+                rusqlite::params![
+                    WORKSPACE_ID,
+                    resource_id,
+                    revision_id,
+                    content_digest,
+                    index_digest,
+                    SHARED_INDEX_CONTENT.len() as i64,
+                    INDEXED_AT,
+                ],
+            )
+            .expect("insert a valid current-revision ResourceTextIndex row");
+    }
+    let source_rows_before = resource_index_rows(&connection);
+    assert_eq!(source_rows_before.len(), 2);
+
+    connection
+        .execute_batch(
+            "DROP TRIGGER resource_index_blob_registry_reference_delete_guard;
+             DROP TRIGGER resource_text_index_blob_registry_update_guard;
+             DROP TRIGGER resource_text_index_blob_registry_insert_guard;
+             DROP INDEX resource_index_blob_registry_gc;
+             DROP TABLE resource_index_blob_registry;
+             DELETE FROM schema_migrations WHERE version = 19;
+             PRAGMA user_version = 18;",
+        )
+        .expect("restore a valid v18 migration boundary");
+
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV19Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read version after failed v19 migration");
+    assert_eq!(version, 18);
+    assert_eq!(
+        resource_index_rows(&connection),
+        source_rows_before,
+        "failed v19 backfill must preserve every source projection row"
+    );
+    let v19_objects: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name IN (
+               'resource_index_blob_registry',
+               'resource_index_blob_registry_gc',
+               'resource_text_index_blob_registry_insert_guard',
+               'resource_text_index_blob_registry_update_guard',
+               'resource_index_blob_registry_reference_delete_guard'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect rolled back ResourceIndex objects");
+    assert_eq!(v19_objects, 0);
+    let v19_receipts: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 19",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect rolled back v19 receipt");
+    assert_eq!(v19_receipts, 0);
+
+    migrate(&mut connection).expect("retry v19 migration after rollback");
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read replayed v19 version");
+    assert_eq!(version, 19);
+    verify_migration_record(&connection, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL, true)
+        .expect("verify replayed v19 receipt");
+
+    let (registry_count, size_bytes, state, reference_count): (i64, i64, String, i64) = connection
+        .query_row(
+            "SELECT COUNT(*), MAX(registry.size_bytes), MAX(registry.state),
+                    (SELECT COUNT(*) FROM resource_text_indexes idx
+                     WHERE idx.workspace_id = ?1
+                       AND idx.extracted_blob_digest = ?2)
+             FROM resource_index_blob_registry registry
+             WHERE registry.workspace_id = ?1 AND registry.digest = ?2",
+            rusqlite::params![WORKSPACE_ID, index_digest],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("read the backfilled shared ResourceIndex root");
+    assert_eq!(registry_count, 1);
+    assert_eq!(size_bytes, SHARED_INDEX_CONTENT.len() as i64);
+    assert_eq!(state, "TRACKED");
+    assert_eq!(reference_count, 2);
+    assert_eq!(resource_index_rows(&connection), source_rows_before);
 }
 
 #[cfg(unix)]

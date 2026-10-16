@@ -2858,6 +2858,30 @@ paths:
               schema: {$ref: '#/components/schemas/Resource'}
         default: {$ref: '#/components/responses/Error'}
   /resources/{resourceId}/context-document/deletion:
+    post:
+      tags: [resources]
+      operationId: requestContextDocumentDeletion
+      security: [{operatorAuth: [], workspaceContext: []}]
+      description: Authenticated local Workspace owner deletion command. The body is exactly an empty object. Requires the current Resource If-Match version and Idempotency-Key. Before mutation, the command fails closed if any exact Resource revision has an external/provider-backed location. For accepted local managed content, one SQLite transaction seals the ordered purge manifest, creates pending receipts, commits DELETION_PENDING metadata/event/snapshot and the replay response, and removes this Resource's managed content location plus all ResourceIndex projection/term rows. Linked OPEN or CONTENT_RECEIVED revision-upload sessions expire in that transaction; exact accepted chunk and outstanding reservation identities are sealed as UPLOAD_CHUNK targets. The v17/v18/v19 collectors retry physical removal; an ACK is emitted only after the exact BlobStore object is removed and its registry row is durably cleared. ACK v2 records the manifest and exact target digests while full target membership remains in the sealed local plan and receipt. A digest rooted by another Resource remains pending. No provider locator or content is returned. This operation does not invalidate an already-fed native AgentSession.
+      parameters:
+      - name: resourceId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1}
+      - {$ref: '#/components/parameters/IfMatch'}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ContextDocumentDeletionRequest'}
+      responses:
+        '202':
+          description: The local purge plan and DELETION_PENDING tombstone are committed; poll the status projection until every target is acknowledged.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ContextDocumentDeletionStatus'}
+        default: {$ref: '#/components/responses/Error'}
     get:
       tags: [resources]
       operationId: getContextDocumentDeletionStatus
@@ -2868,7 +2892,7 @@ paths:
         schema: {type: string, minLength: 1}
       responses:
         '200':
-          description: Current deletion/tombstone projection; content bytes and provider results are never included.
+          description: Current deletion/tombstone projection with manifest digest and target counts only; content, storage locators, and provider results are never included.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ContextDocumentDeletionStatus'}
@@ -5732,7 +5756,12 @@ components:
       additionalProperties: false
       required: [status]
       properties:
-        status: {type: string, enum: [ACTIVE, REVOKED], description: Owner may revoke or restore retained content. Purge transitions are unavailable in the local desktop V1 Operator.}
+        status: {type: string, enum: [ACTIVE, REVOKED], description: Reversible owner route only. Permanent deletion is a separate context-document/deletion command.}
+    ContextDocumentDeletionRequest:
+      type: object
+      additionalProperties: false
+      maxProperties: 0
+      description: Closed empty object; deletion semantics are selected by the Resource path.
     ContextDocumentDeletionStatus:
       type: object
       additionalProperties: false

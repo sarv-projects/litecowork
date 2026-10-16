@@ -109,11 +109,133 @@ or replicated history. The local key provider keeps versioned Workspace/purpose 
 the OS credential store; the database and blob tree hold no key material, and no key is
 exposed to an agent or Operator response. Key versions remain stable across daemon
 restarts. Rotation stages the next key version before switching the active pointer and
-retains older versions so indexed queries can search each version (up to eight retained
-indexed versions per Workspace); explicit reindexing from verified authorized Resource bytes moves a revision
-to the active version. If an index key version is unavailable or the searchable-version
-bound is exceeded, indexed search fails closed and never tries plaintext or silently
-omits that version. If the active-version pointer is absent while a version-1 credential
+retains older versions so indexed queries can search each version (up to eight distinct
+key versions referenced by current Resource heads per Workspace). Superseded historical
+index rows do not consume that bound. Explicit reindexing of one exact current Resource
+from verified authorized bytes moves that projection to the active key version. When
+multiple current Resources share each of eight older versions, activating a ninth version
+can leave no single-Resource reindex able to reduce the distinct-version set; there is no
+Workspace-wide rekey operation or rotation gate in the current contract. Existing indexed
+queries continue using their referenced versions, while new writes and rebuilds fail closed
+when the bound would be exceeded. If an index key version is unavailable or the
+searchable-version bound is exceeded, indexed search fails closed and never tries plaintext
+or silently omits that version. In one Runtime process, indexed search serializes its
+current-head key-version list, version-pinned token derivation, and candidate query with
+Resource create, revision-upload, and rebuild writers using the per-database/Workspace
+mutex. After candidate selection, search acquires process-wide exact-snapshot operation
+locks for the distinct selected digests before releasing the Workspace mutex. Those
+snapshot locks remain held through bounded blob materialization and are also used by GC
+before exact-object removal, so a selected snapshot cannot disappear during a read. The
+final current-head check drops a candidate whose Resource advanced meanwhile. This
+prevents a reindex from changing a projection between the version snapshot and candidate
+query without holding up unrelated workspaces during blob reads.
+Migration v19 adds `resource_index_blob_registry`, an operational recovery ledger for
+`RESOURCE_INDEX` snapshots. Before BlobStore publication, storage records a 24-hour
+`RESERVED` intent for the exact `(WorkspaceId, digest, plaintext size)`; committing any
+revision projection transitions it to `TRACKED` in the same SQLite transaction. The v19
+migration backfills every ResourceIndex reference that still has a `resource_text_indexes`
+row and rejects inconsistent sizes for a shared Workspace/digest. A process stop or SQL
+rollback after the reservation therefore leaves a discoverable candidate; a reservation
+with no published object is safe to collect because exact-object deletion is idempotent for
+a missing object. Migration v16 remains the local Agent Registry/control projection
+migration specified by `AGENT-CONTROL.md`; its presence does not establish provider
+discovery, installation, authentication, or session support.
+
+The bounded ResourceIndex collector processes at most 100 registry records per daemon
+sweep. It claims expired `RESERVED` rows and unreferenced `TRACKED` rows only after checking
+all `resource_text_indexes` references across every Resource revision in the Workspace. A
+durable `DELETING` state fences new reservations and projection inserts until exact
+`RESOURCE_INDEX` removal succeeds; failures and process stops retain that fence for the
+next sweep to retry. ResourceIndex writers and collection share a per-database/Workspace
+mutex, with SQLite guards as the final admission boundary. The registry is local recovery
+state and is excluded from Workspace backups and replication. This collector does not
+delete index rows or Resource/ContextDocument content; the owning purge flow must remove
+derived references before the snapshot becomes collectible. Pre-v19 ResourceIndex
+objects with no surviving `resource_text_indexes` reference cannot be discovered because
+BlobStore deliberately has no inventory operation.
+
+Migration v17 adds `resource_content_blob_registry`, a separate local recovery ledger for
+managed `RESOURCE` objects. Its identity is the exact `(WorkspaceId, digest, plaintext size,
+media type)`, because the encrypted BlobStore authenticates all of those fields. Direct
+Resource creation and resumable-upload commit persist a 24-hour `RESERVED` row before
+publishing the object, then atomically transition it to `TRACKED` with the immutable
+Resource revision, location, event, and receipt. A failed publication or projection leaves
+an expiring reservation; collection treats a missing object as already removed.
+
+The v17 migration backfills every immutable revision reachable through a local managed
+`litecowork.encrypted_blob` location, including historical revisions, and rejects missing
+digests/sizes or conflicting metadata for a shared Workspace/digest. Legacy revisions
+without a media type use the existing `application/octet-stream` BlobRef fallback.
+External-only locations do not retain a local object. The bounded daemon collector claims
+expired reservations and
+unreferenced tracked objects only after checking every immutable local revision reference,
+sets durable `DELETING` before BlobStore access, and clears the row only after exact
+`RESOURCE` removal succeeds. Failed or ambiguous removal remains fenced for retry after
+restart. Writers and collection coordinate on the per-database/Workspace/digest lock;
+SQLite fencing remains the admission boundary. This registry is local recovery state and
+is excluded from Workspace backup and replication. It does not perform Resource or
+ContextDocument purge, remove revision/index rows, or discover pre-v17 orphan objects that
+have no surviving revision reference; BlobStore has no inventory operation.
+
+ContextDocument purge handles the narrower case where an immutable Resource revision still
+names a content digest but its local recovery-registry row is already gone. While holding the
+per-database/Workspace/digest operation lock and outside any SQLite transaction, purge reads
+that exact `BlobRef` from `RESOURCE`. `NotFound` proves only that this exact object is absent;
+a present object or any other read failure blocks empty-plan admission or completion. SQL
+inventory is rechecked in the admission/completion transaction. This does not discover
+objects that have neither a registry row nor a surviving revision digest.
+
+Migration v18 adds `resource_upload_chunk_blob_registry` for exact
+`(WorkspaceId, digest, size)` identities, including both accepted upload chunks and
+reservations that may have been interrupted around BlobStore publication. The migration
+backfills shared accepted digests once, preserves reservation expiry and existing durable
+delete fences, and fails closed on mismatched chunk digests/sizes, reservation Workspace
+ownership, or a deleting reservation without its fence. A chunk becomes `TRACKED` in the
+same transaction that accepts its immutable range and request receipt. The reservation and
+registry identities are immutable; only `RESERVED -> TRACKED|DELETING` and `TRACKED ->
+DELETING` recovery transitions are permitted.
+
+The bounded upload-chunk collector checks accepted chunk and reservation references across
+the Workspace, claims exact objects behind a durable `DELETING` registry row and matching
+GC fence, then removes only `RESOURCE_UPLOAD_CHUNK`. It retains chunk ranges and request
+receipts as non-resumable history and clears the registry/fence only after removal succeeds.
+Concurrent sweep retries are idempotent. Chunk publication, session expiry, commit, and
+ContextDocument purge coordinate through database/Workspace/session/digest locks so a
+collector cannot race an admitted writer into publishing an untracked object. These locks
+supplement the `litecoworkd` database ownership boundary; SQLite triggers and the durable
+fence remain the admission/recovery authority. The registry and fences are local recovery
+state and are excluded from Workspace backup and replication.
+
+The ContextDocument deletion transaction is the owner of purge planning, not either
+collector. It rejects any Resource revision with an external/provider-backed location
+before writing the tombstone. For local managed content, it seals targets for exact Resource
+and derived-index objects plus every still-registered encrypted `ResourceUploadChunk` object
+linked to the Resource through its revision-upload sessions. This includes accepted chunks
+and outstanding durable reservations left by an interrupted BlobStore publication. Any linked
+`OPEN` or `CONTENT_RECEIVED` session is expired in the same transaction; terminal linked
+sessions remain unchanged, while their exact chunk objects are targets when the v18 registry
+proves those objects still exist.
+Each `UPLOAD_CHUNK` target groups one temporary blob digest and preserves every exact ledger identity in
+`target_upload_chunk_refs`, sorted by UTF-8 `upload_id` then numeric `chunk_index`; its
+`target_revision_ids` is empty. In the same SQLite transaction, each such active session becomes
+`EXPIRED` with `reason_code=CONTEXT_DOCUMENT_DELETION`, while its session, accepted-chunk,
+reservation, and request ledger metadata is preserved as non-resumable history. An exact
+request replay for one of these purge-expired sessions is rejected while the Resource remains
+`DELETION_PENDING` or `DELETED`; ordinary TTL-expired sessions retain their established
+exact-replay behavior. The transaction writes the exact
+plan and pending receipts, commits the `DELETION_PENDING` Resource projection/snapshot/event
+and idempotency replay response, and removes this Resource's managed content-location plus
+all ResourceIndex projection/term rows. A shared digest remains rooted while any other
+Resource in the Workspace refers to it. The v19 ResourceIndex, v17 Resource-content, or
+v18 upload-chunk collector keeps its durable `DELETING` fence through exact BlobStore removal
+and clears the registry row only after that removal succeeds. The purge reconciler then commits the matching
+receipt and acknowledgement event; it must not acknowledge a missing registry row while
+object removal is failed or ambiguous. `DELETED` requires every immutable-plan Resource,
+derived-index, and upload-chunk target receipt to be acknowledged. An empty plan is explicit
+and completes only after the local inventory is verified empty. The deletion command does
+not claim to invalidate an already-fed native AgentSession.
+
+If the active-version pointer is absent while a version-1 credential
 already exists, key initialization and rotation fail with a recovery-required error; they
 must not overwrite the existing version-1 credential. If a rotation leaves a staged next
 version while the prior active pointer remains valid, retry validates and activates that
@@ -352,8 +474,8 @@ approval_uses
 resources
 resource_revisions
 resource_revision_parents
-context_document_purge_plans             # Resource-owned immutable purge target manifest
-context_document_purge_receipts          # exact per-replica deletion acknowledgements
+context_document_purge_plans             # local immutable manifest; required in V1 backup
+context_document_purge_receipts          # exact acknowledgements; required in V1 backup
 resource_locations
 resource_location_bindings
 file_identity_bindings
@@ -374,8 +496,11 @@ environment_control_leases
 resource_upload_sessions
 resource_upload_chunks
 resource_upload_chunk_requests
+resource_upload_chunk_blob_registry   # local upload-chunk roots/delete fences; excluded from backup/replication
 resource_upload_blob_reservations        # operational write intents; local recovery state
 resource_upload_blob_gc_fences            # operational delete fences; local recovery state
+resource_index_blob_registry              # local ResourceIndex reservations/tracked roots/delete fences; excluded from backup/replication
+resource_content_blob_registry             # local Resource content reservations/tracked roots/delete fences; excluded from backup/replication
 aggregate_snapshots
 event_archive_segments
 workspace_backup_manifests

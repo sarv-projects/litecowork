@@ -2031,24 +2031,62 @@ Resource {
 ContextDocumentPurgePlan { # immutable Resource-owned subrecord
   workspace_id: WorkspaceId
   resource_id: ResourceId
-  manifest_digest: Sha256Digest
+  manifest_digest: Sha256Digest # SHA-256 of RFC 8785 JCS bytes of ordered targets
   target_count: u32
-  targets: ContextDocumentPurgeTarget[]
+  targets: ContextDocumentPurgeTarget[] # unique (replica_ref, replica_kind), canonical order
   sealed_at: Timestamp
+}
+
+ContextDocumentPurgeTarget {
+  replica_ref: Sha256Digest # local content-addressed digest; never a storage locator
+  replica_kind: BLOB | DERIVED_INDEX | UPLOAD_CHUNK
+  runtime_id: RuntimeId | null # explicit null for local v1 targets
+  runtime_incarnation_id: RuntimeIncarnationId | null # explicit null for local v1 targets
+  target_revision_ids: ResourceRevisionId[] # non-empty for BLOB/DERIVED_INDEX; empty for UPLOAD_CHUNK
+  target_upload_chunk_refs?: {upload_id: ResourceUploadId, chunk_index: u64}[] # exact refs only for UPLOAD_CHUNK
 }
 
 ContextDocumentPurgeReceipt { # append-only acknowledgement of one exact plan target
   workspace_id: WorkspaceId
   resource_id: ResourceId
-  replica_ref: string # stable non-secret identity, never a storage locator
-  replica_kind: BLOB | DERIVED_INDEX
-  runtime_id: RuntimeId?
-  runtime_incarnation_id: RuntimeIncarnationId?
+  replica_ref: Sha256Digest
+  replica_kind: BLOB | DERIVED_INDEX | UPLOAD_CHUNK
+  runtime_id: RuntimeId | null
+  runtime_incarnation_id: RuntimeIncarnationId | null
   target_revision_ids: ResourceRevisionId[]
+  target_upload_chunk_refs: {upload_id: ResourceUploadId, chunk_index: u64}[]
   status: PENDING | ACKNOWLEDGED
-  receipt_digest: Sha256Digest?
+  receipt_digest: Sha256Digest? # canonical acknowledgement payload, without receipt_digest/aggregate_version
   acknowledged_at: Timestamp?
 }
+
+Purge targets are one per unique `(content_digest, replica_kind)` for the exact revisions
+of this Resource that reference the local content or derived index. Sort the revision IDs
+inside each target by UTF-8 byte order and sort targets by `(replica_ref UTF-8 bytes,
+replica_kind ASCII)`. The manifest digest is `sha256:` plus lowercase hexadecimal
+SHA-256 of RFC 8785 JCS bytes for the ordered target array. A local target records explicit
+null Runtime identity fields. Historical v1 acknowledgement payloads remain readable. New
+writes use `resource.context_document.purge.acknowledged.v2`: its receipt digest is
+`sha256:` plus lowercase hexadecimal SHA-256 of RFC 8785 JCS bytes for its fixed set of scalar
+payload fields excluding `receipt_digest` and `aggregate_version`. The local Runtime pair is
+explicitly null, the timestamp is at most 30 characters, and the version is capped at the
+canonical JSON safe-integer maximum. This removes membership-count-dependent payload growth,
+not all event byte growth: Resource and envelope identifiers retain the current string
+contract. The event includes the sealed manifest digest and a target digest over the exact
+serialized target entry. Full revision and upload/chunk reference arrays remain in the local
+immutable plan and receipt, not the event.
+
+The local owner deletion operation rejects a Resource with any external/provider-backed
+location before creating its tombstone until a qualified adapter exists. For an accepted
+Resource, the plan, pending target receipts, `DELETION_PENDING` status event and aggregate
+snapshot, idempotency replay response, and removal of this Resource's managed content
+location and ResourceIndex projection/term rows commit atomically. The v17/v18/v19 collectors
+then remove exact unreferenced local objects. A target is acknowledged only after physical
+BlobStore removal succeeds and its registry row is durably cleared. A digest still rooted
+by another Resource in the Workspace stays pending. Failed or ambiguous removal retains
+the `DELETING` fence for retry. Empty plans are valid only after the local inventory is
+verified empty. This Resource deletion state does not assert that an already-fed native
+AgentSession is invalidated or that its history can be recalled.
 
 ProviderIdentity {
   provider_instance_id: string

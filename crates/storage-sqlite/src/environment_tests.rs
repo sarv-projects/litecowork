@@ -23,7 +23,7 @@ const AT: &str = "2026-10-09T12:00:00.000000000Z";
 const PROVIDER_OBSERVED_AT: &str = "2026-10-09T08:00:00.000000000Z";
 
 #[test]
-fn v11_to_v15_migrations_are_ordered_atomic_and_retryable() {
+fn v11_to_v19_migrations_are_ordered_atomic_and_retryable() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join("state")).unwrap();
     let mut connection = Connection::open(state_database(&directory)).unwrap();
@@ -124,13 +124,94 @@ fn v11_to_v15_migrations_are_ordered_atomic_and_retryable() {
         .unwrap();
     assert_eq!((version, v15_receipts), (14, 0));
 
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV16Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    let resource_index_registry_before_v19: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='resource_index_blob_registry'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let v16_agent_tables: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN (
+                'agent_registry_cache',
+                'agent_installation_observations',
+                'agent_control_descriptors',
+                'agent_lifecycle_operations',
+                'agent_binding_configurations'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let v16_receipts: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 16",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            version,
+            resource_index_registry_before_v19,
+            v16_agent_tables,
+            v16_receipts
+        ),
+        (15, 0, 0, 0)
+    );
+
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV17Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    let v17_registry: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='resource_content_blob_registry'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let v17_receipts: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 17",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!((version, v17_registry, v17_receipts), (16, 0, 0));
+
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV18Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    let v18_registry: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='resource_upload_chunk_blob_registry'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let v18_receipts: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 18",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!((version, v18_registry, v18_receipts), (17, 0, 0));
+
     migrate(&mut connection).unwrap();
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
     let migration_receipts: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15, 16, 17, 18, 19)",
             [],
             |row| row.get(0),
         )
@@ -142,9 +223,21 @@ fn v11_to_v15_migrations_are_ordered_atomic_and_retryable() {
             |row| row.get(0),
         )
         .unwrap();
+    let resource_index_registry: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='resource_index_blob_registry'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(
-        (version, migration_receipts, rich_table),
-        (SCHEMA_VERSION, 5, 1)
+        (
+            version,
+            migration_receipts,
+            rich_table,
+            resource_index_registry
+        ),
+        (SCHEMA_VERSION, 9, 1, 1)
     );
 }
 

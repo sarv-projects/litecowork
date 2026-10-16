@@ -1,9 +1,27 @@
 import unittest
 
-from scripts.validate_implementation_coverage import implementation_plan_docs
+from scripts.validate_implementation_coverage import api_documented_routes, implementation_plan_docs
 
 
 class CoverageGenerationExclusionTests(unittest.TestCase):
+    def test_api_inventory_includes_explicit_target_only_operations(self):
+        routes = api_documented_routes(
+            """```text
+GET /v1/workspace-roots?status=&cursor=&limit=
+# Target only operation: POST /v1/workspace-roots
+# Target only operation: PATCH /v1/workspace-roots/{id}
+```"""
+        )
+
+        self.assertEqual(
+            routes,
+            {
+                ("GET", "/workspace-roots"),
+                ("POST", "/workspace-roots"),
+                ("PATCH", "/workspace-roots/{}"),
+            },
+        )
+
     def test_generated_audit_reports_are_not_coverage_sources(self):
         documents = set(implementation_plan_docs())
 

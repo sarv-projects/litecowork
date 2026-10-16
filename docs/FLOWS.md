@@ -1711,36 +1711,64 @@ rebase, or explicit merge. A branch choice alone does not create a merge.
 
 ## F75 — ContextDocument revocation and deletion
 
-**Local V1 implementation status:** the authenticated owner route currently implements
-only `ACTIVE -> REVOKED` and `REVOKED -> ACTIVE`, with Resource-version compare-and-swap,
-idempotency receipt, snapshot, and status event committed atomically. Existing SQLite read
-admission denies new reads while revoked. The daemon does not yet wire Task-context
-attachment invalidation or stop/replace an already-fed native session. Deletion planning,
-`DELETION_PENDING`, replica receipts, and `DELETED` remain target behavior and are not
-available through the local Operator.
+**Local V1 contract and implementation status:** the reversible owner status route accepts
+only `ACTIVE` and `REVOKED`; it retains bytes and does not invalidate a native session.
+The separate deletion command is `POST /v1/resources/{resource_id}/context-document/deletion`
+with a closed `{}` body, Workspace-scoped owner authentication, current Resource `If-Match`,
+and `Idempotency-Key`. The API/OpenAPI contract defines its atomic tombstone/manifest and
+local cleanup behavior below. The authenticated local production handler and CODE tests are
+implemented under E02-S03; packaged SYSTEM/provider/OS qualification and owner USER
+acceptance remain open. Native-session attachment invalidation is outside this local purge
+command and does not claim to recall native history.
 
-**Actors/preconditions:** ResourceService, PersonalContextService, registered replica
-providers, purge reconciler; owner supplies expected Resource version.
+**Actors/preconditions:** ResourceService, the local ResourceStore, v17/v18/v19 content/index
+collectors, and the local purge reconciler; the authenticated Workspace owner supplies the
+expected Resource version.
 
 1. Revocation changes `ACTIVE -> REVOKED`, emits the status event, and immediately fences
    future ResourceResolver reads and new Task context attachment while retaining bytes.
-2. Deletion enumerates every registered Core-owned content/index replica and the exact
-   ResourceRevision IDs it stores, canonicalizes the ordered target list, computes the
-   manifest digest, and writes an immutable purge plan. In one Resource transaction it
-   creates one pending receipt per target, sets `DELETION_PENDING` with the digest/count,
-   appends the tombstone event, and makes all content reads fail.
-3. Each replica deletes the listed content and returns an idempotent acknowledgement bound
-   to its target identity, Runtime incarnation if applicable, and exact revision set.
-   Core records a receipt digest and `resource.context_document.purge.acknowledged.v1`.
-4. The reconciler sets `DELETED` only when acknowledged receipts exactly cover the sealed
-   plan. A zero-target plan is still sealed and verified. Provider-owned replicas remain
-   pending until their registered adapter confirms deletion.
+2. Before mutation, deletion rejects any external/provider-backed location because this
+   local command has no qualified adapter for it. It builds one target per unique local
+   `(content_digest, BLOB|DERIVED_INDEX|UPLOAD_CHUNK)` pair across the Resource's exact
+   revisions and linked upload ledger. `UPLOAD_CHUNK` targets carry exact
+   `(upload_id, chunk_index)` refs and no revision IDs; other target kinds carry the exact
+   sorted revision IDs and no upload refs. Sort revision and upload refs by their specified
+   UTF-8/numeric order, then targets by `(replica_ref UTF-8 bytes, replica_kind ASCII)`;
+   `replica_ref` is the content-addressed digest and both local Runtime identity fields are
+   explicit nulls. The manifest digest is `sha256:` plus lowercase SHA-256 hex of RFC 8785
+   JCS bytes for the ordered target array.
+3. One SQLite transaction stores the immutable plan and pending receipts, changes status
+   to `DELETION_PENDING`, commits the status event/snapshot and exact replayable response,
+   and removes this Resource's managed content location and every ResourceIndex
+   projection/term row. Linked upload sessions in `OPEN` or `CONTENT_RECEIVED` transition
+   to `EXPIRED` in that transaction; their ledger history remains. The tombstone blocks new
+   reads at commit. A verified empty target list is retained as an explicit plan.
+4. The v19 ResourceIndex, v17 Resource-content, and v18 upload-chunk collectors remove
+   exact objects only after every Workspace-local root for the digest is gone. The
+   reconciler acknowledges a target only after physical BlobStore removal succeeds and the
+   corresponding registry row is durably cleared. The v2 acknowledgement receipt digest is
+   `sha256:` plus
+   lowercase SHA-256 hex of RFC 8785 JCS bytes for its fixed scalar payload fields excluding
+   `receipt_digest` and `aggregate_version`; the explicit null Runtime pair, manifest digest,
+   and JCS digest of the exact sealed target are included. Full membership stays in the
+   immutable local plan and receipt. The payload does not grow with target membership count;
+   this does not impose a strict byte cap on the full event because Resource and envelope
+   identifiers retain the current string contract.
+   Failed or ambiguous removal leaves the durable `DELETING` fence and receipt pending for
+   retry. `DELETED` is committed only when the acknowledged receipts exactly cover the
+   sealed plan; an empty plan completes only after local inventory verification.
 
-**Failure/UI/postcondition:** Retryable failures leave the Resource tombstoned and unreadable;
-they never restore content. Active agent sessions that already received the content are
-stopped/replaced at a safe boundary; native history cannot be recalled. Historical
-Task/Evidence IDs and digests remain, while deleted content bytes do not enter backup
-restore.
+The acknowledgement event is independent of target membership count, but the current
+contract does not define a maximum purge-manifest cardinality or total reconciliation work.
+Resource and event-envelope identifiers retain their existing string bounds, so this is
+not a strict whole-event or end-to-end work cap.
+
+**Failure/UI/postcondition:** Retryable physical-removal failures leave the Resource
+tombstoned and unreadable; they never restore content. The owner sees deletion pending,
+manifest digest, and required/acknowledged counts without provider locators. This flow does
+not assert invalidation of an already-fed native session; native history cannot be recalled
+and session lifecycle is a separate contract. Historical Task/Evidence IDs and digests
+remain, while deleted content bytes do not enter backup restore.
 
 ## F76 — Suggestion producer admission and suppression
 
@@ -2146,8 +2174,9 @@ within the 100-file / 100-MiB selection limit; each file is at most 100 MiB.
    in the same SQLite transaction.
 5. Tauri appends the returned Resource to the visible catalog only after commit succeeds.
    If the process stops mid-upload, the user reselects the file; matching acknowledged
-   chunks are skipped and missing chunks resume. Expired sessions start over. ZIP input
-   remains an opaque Resource; this flow does not extract archives or add a persistent root.
+   chunks are skipped and missing chunks resume. Ordinary TTL-expired sessions start over;
+   a revision upload invalidated by ContextDocument deletion cannot resume. ZIP input remains
+   an opaque Resource; this flow does not extract archives or add a persistent root.
 6. The desktop may offer **Pause upload**. This is a client-side stop, not a server-side
    cancellation: it waits for the current create/chunk/commit request to settle, starts no
    further request or file, and retains the upload ID/request metadata so the same unchanged
@@ -2160,7 +2189,9 @@ conflicting replay is rejected without changing the Resource. Commit retries for
 ID resolve to the same Resource. Definite stored-content integrity failure durably
 transitions CONTENT_RECEIVED -> FAILED with an aggregate-state-backed event before returning
 `INTEGRITY_FAILURE`; the user must start a new upload. Transient blob/database failures leave
-the session retryable and do not show a committed Resource. A failed metadata transaction
+the session retryable and do not show a committed Resource. A chunk retry for a revision
+upload expired by ContextDocument deletion is rejected even when its original chunk receipt
+is retained; ordinary TTL and archived-Workspace exact retries remain idempotent. A failed metadata transaction
 may leave an encrypted object with an expired reservation. The daemon's bounded sweep
 claims expired reservations only when no accepted chunk references that Workspace/digest
 and no unexpired reservation exists. It writes a durable GC fence before removing the exact

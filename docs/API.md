@@ -1188,7 +1188,46 @@ are legal; same-state requests and stale versions conflict. Revocation blocks su
 content-read admissions and derived-index publication while retaining the bytes. It does
 not recall content already delivered to a native AgentSession, and this route does not
 claim to invalidate such sessions. `DELETION_PENDING`, purge receipts, and `DELETED` are
-not writable through the local desktop Operator yet.
+not writable through the reversible status route; deletion is a separate command.
+
+The local owner command
+`POST /v1/resources/{resource_id}/context-document/deletion` accepts only the closed
+empty JSON object `{}`. It requires Workspace-scoped owner authentication, the current
+Resource `If-Match` version, and an `Idempotency-Key`. Before writing any tombstone, it
+verifies that every exact Resource revision uses only local managed content; an external
+or provider-backed location fails closed without beginning deletion. The transaction derives
+targets from exact revision references and registered local content/index objects. If that
+produces an empty manifest, admission requires a SQL preflight proving that this Resource has
+no remaining local or external locations, ResourceIndex rows, registered Resource objects,
+or linked upload-chunk objects. Because completed content collection removes the registry
+row while immutable revisions retain their digest, purge also probes each such unregistered
+revision digest through an exact BlobStore read while holding its digest lock and outside the
+SQLite transaction. Only `NotFound` proves absence; an object or an unverifiable read fails
+closed. The SQL state is rechecked in the admission transaction. On admission, one SQLite
+transaction seals the canonical
+local purge manifest, creates one pending receipt
+per unique content digest and target kind, commits `DELETION_PENDING` metadata/event and
+aggregate snapshot, stores the replayable `202` response, and removes this Resource's
+managed content-location and all ResourceIndex projection/term rows. The response is a
+`ContextDocumentDeletionStatus` projection containing status, manifest digest, and required
+and acknowledged target counts; it never returns a provider locator. An exact retry returns
+the original response. A stale Resource version or same-key changed request conflicts.
+
+After admission, the v19 ResourceIndex, v17 Resource-content, and v18 upload-chunk
+collectors reconcile the sealed local targets. The exact object must be physically removed
+and its registry row and deletion fence durably cleared before its receipt/event can be
+acknowledged. An upload-chunk target carries the exact `(upload_id, chunk_index)` references
+covered by its digest. A digest still rooted by another Resource or active upload in the
+Workspace remains pending. Failed or ambiguous removal retains the
+`DELETING` fence for retry, and deletion never restores the ContextDocument to a readable
+status. A verified empty target list is explicit and reaches `DELETED` only after fresh SQL
+inventory checks and exact reads confirm that no registered local targets or bytes reachable
+through retained revision digests remain. BlobStore has no inventory operation, so objects
+with neither a registry row nor a surviving revision digest cannot be discovered by this
+purge path. This local command does not invalidate
+an already-fed native AgentSession or claim that its history can be recalled. The existing
+`GET /v1/resources/{resource_id}/context-document/deletion` route returns the current
+status/count projection without content or provider locators.
 
 The desktop Library offers **Save original…** only for catalog entries at or below the
 same 10 MiB bound. This is a native Tauri command, not a new logical Operator route: it
@@ -1305,10 +1344,15 @@ GET    /v1/resources/{resource_id}/revisions
 POST   /v1/resources/{resource_id}/text-index/rebuild
 POST   /v1/resources/{resource_id}/revision-uploads
 PATCH  /v1/resources/{resource_id}/context-document/status
+POST   /v1/resources/{resource_id}/context-document/deletion
 GET    /v1/resources/{resource_id}/context-document/deletion
-POST   /v1/workspace-roots
-GET    /v1/workspace-roots?status=&cursor=
-PATCH  /v1/workspace-roots/{id}
+# Target only: generic root creation is not mounted; the served desktop flow uses private
+# authenticated folder selection and never accepts an absolute path over the public API.
+# Target only operation: POST /v1/workspace-roots
+GET    /v1/workspace-roots?status=&cursor=&limit=  # limit 1..100, default 100
+# Target only: generic policy update is not mounted.
+# Target only operation: PATCH /v1/workspace-roots/{id}
+# GET response: {items: WorkspaceRootView[], nextCursor: string|null}
 POST   /v1/workspace-roots/{id}/pause
 POST   /v1/workspace-roots/{id}/resume
 POST   /v1/workspace-roots/{id}/revoke
@@ -1352,8 +1396,27 @@ type; the atomic commit appends `resource.revision.created.v1`, advances the Res
 with compare-and-swap, updates the managed location and derived index/invalidation state,
 and commits the upload status and idempotency receipt. If the version or head set changed,
 the commit returns `RESOURCE_CONFLICT` without publishing. A retry after a lost successful
-response returns the original committed receipt. This route does not provide a merge editor
-or ContextDocument revoke/delete/session-invalidation UI.
+response returns the original committed receipt. This route does not provide a merge editor;
+ContextDocument availability and local deletion use their separate owner routes below.
+
+ContextDocument deletion admission is serialized with revision-upload session creation,
+chunk acceptance, and commit. In the same transaction that seals the purge manifest and
+commits `DELETION_PENDING`, each linked revision-upload session still in `OPEN` or
+`CONTENT_RECEIVED` becomes `EXPIRED` with reason code
+`CONTEXT_DOCUMENT_DELETION`. Each manifest `UPLOAD_CHUNK` target groups one encrypted
+temporary blob digest and preserves every exact accepted chunk identity and outstanding
+durable reservation identity in
+`target_upload_chunk_refs` as `(upload_id, chunk_index)` pairs, sorted by UTF-8 `upload_id`
+then numeric `chunk_index`. Its `target_revision_ids` is empty. The session,
+chunk-range/digest ledger, and idempotency metadata remain as non-resumable history; the
+expired session cannot accept more chunks or commit a ResourceRevision. Every upload-chunk
+target must be physically absent and acknowledged before the ContextDocument can reach
+`DELETED`. A concurrently accepted chunk is either included in the serialized purge plan or
+rejected after the deletion transaction commits. An exact chunk retry for a linked session
+expired by this deletion is also rejected while the Resource is `DELETION_PENDING` or
+`DELETED`; its retained request ledger is non-resumable history, not a receipt that can
+revive the purged session. Ordinary TTL expiry and Workspace archival retain their exact
+replay behavior.
 
 `GET /v1/resources/{resource_id}/revisions` returns at most `limit` rows after a
 storage-side `limit + 1` keyset query (`limit` defaults to 50 and is capped at 200). The opaque cursor names the last revision ID
@@ -1464,8 +1527,8 @@ Revision upload creation pins `If-Match` and the exact current Resource head set
 accepting bytes. It also requires the whole-content SHA-256 to bind resumed chunks to the
 same selected content. Stale Resource versions/parents return `RESOURCE_CONFLICT`; commit
 verifies digest and atomically appends a ResourceRevision. ContextDocument creation always
-starts `ACTIVE`. Revocation fences future resolution and Task attachments; deletion writes
-a sealed, immutable purge target manifest and replicated tombstone in one transaction, then
+starts `ACTIVE`. Revocation fences future resolution and Task attachments; desktop V1
+deletion writes a sealed, immutable local purge plan and tombstone in one transaction, then
 blocks reads immediately. The deletion-status response exposes the manifest digest and
 required/acknowledged target counts, not provider locators. A registered Core-owned
 replica receipt must match its exact plan target and Runtime incarnation. An explicit empty

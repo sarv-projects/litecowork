@@ -1552,6 +1552,193 @@ pub trait ContextDocumentStatusStore: Send + Sync {
     ) -> Result<CommittedContextDocumentStatus, StoreError>;
 }
 
+/// Core-owned ContextDocument deletion lifecycle. Owner requests can enter
+/// `DELETION_PENDING`; only the purge reconciler may acknowledge exact targets and move
+/// the Resource to `DELETED` after every sealed replica target is verified absent.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ContextDocumentPurgeStatus {
+    Active,
+    Revoked,
+    DeletionPending,
+    Deleted,
+}
+
+impl ContextDocumentPurgeStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "ACTIVE",
+            Self::Revoked => "REVOKED",
+            Self::DeletionPending => "DELETION_PENDING",
+            Self::Deleted => "DELETED",
+        }
+    }
+}
+
+/// Core-owned replica type admitted into an immutable ContextDocument purge manifest.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ContextDocumentPurgeReplicaKind {
+    Blob,
+    DerivedIndex,
+    UploadChunk,
+}
+
+impl ContextDocumentPurgeReplicaKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Blob => "BLOB",
+            Self::DerivedIndex => "DERIVED_INDEX",
+            Self::UploadChunk => "UPLOAD_CHUNK",
+        }
+    }
+}
+
+/// Exact durable ledger identity for an accepted or in-flight Resource upload chunk.
+/// This contains no provider locator and remains useful after the encrypted object is
+/// reclaimed, so the upload range/request history can be retained as an audit ledger.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextDocumentPurgeUploadChunkRef {
+    pub upload_id: String,
+    pub chunk_index: u64,
+}
+
+/// Stable, non-secret identity for exactly one managed purge target. Provider locators
+/// and credentials must never cross this storage/domain contract.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextDocumentPurgeTarget {
+    pub replica_ref: String,
+    pub replica_kind: ContextDocumentPurgeReplicaKind,
+    pub runtime_id: Option<String>,
+    pub runtime_incarnation_id: Option<String>,
+    pub target_revision_ids: Vec<String>,
+    /// Present only for UPLOAD_CHUNK targets; omitted from older BLOB and
+    /// DERIVED_INDEX manifests so their canonical bytes and digests remain stable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_upload_chunk_refs: Vec<ContextDocumentPurgeUploadChunkRef>,
+}
+
+/// Owner-visible deletion progress. Provider source labels are safe classifications;
+/// this projection intentionally excludes object identities and locators.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextDocumentDeletionStatus {
+    pub resource_id: String,
+    pub status: ContextDocumentPurgeStatus,
+    pub manifest_digest: Option<String>,
+    pub required_replica_count: u32,
+    pub acknowledged_replica_count: u32,
+    pub updated_at: String,
+}
+
+/// One durable target whose physical deletion has not yet been acknowledged.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingContextDocumentPurgeTarget {
+    pub workspace_id: String,
+    pub resource_id: String,
+    pub manifest_digest: String,
+    pub target: ContextDocumentPurgeTarget,
+}
+
+/// A sealed plan with no targets. Storage still must verify its complete local and
+/// provider-owned inventory before committing `DELETED`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingEmptyContextDocumentPurge {
+    pub workspace_id: String,
+    pub resource_id: String,
+    pub manifest_digest: String,
+}
+
+/// Owner-authorized, versioned request to seal a purge manifest and publish the
+/// `DELETION_PENDING` tombstone atomically.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContextDocumentPurgeStartCommand {
+    pub workspace_id: String,
+    pub resource_id: String,
+    pub principal_id: String,
+    pub request_id: String,
+    pub expected_version: u64,
+    pub request_payload: Value,
+    pub event: ContextDocumentStatusEventContext,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommittedContextDocumentPurge {
+    pub status: ContextDocumentDeletionStatus,
+    pub event: DomainEvent,
+}
+
+/// Acknowledges the removal of one exact manifest target. The storage adapter must
+/// re-read the durable target and prove its corresponding v17/v18/v19 registry row is absent
+/// before it records an acknowledgement; a shared object remains pending.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AcknowledgeContextDocumentPurgeTargetCommand {
+    pub workspace_id: String,
+    pub resource_id: String,
+    pub manifest_digest: String,
+    pub target: ContextDocumentPurgeTarget,
+    pub acknowledged_at: String,
+    /// Separate status-event context, committed only if this acknowledgement completes
+    /// the sealed manifest and transitions the Resource to `DELETED`.
+    pub completion_event: ContextDocumentStatusEventContext,
+    /// Receipt event context for this exact replica acknowledgement.
+    pub event: ContextDocumentStatusEventContext,
+}
+
+/// Durable port for the ContextDocument deletion saga. Implementations serialize begin
+/// with Resource status/version and replica inventory, require an empty plan to have no
+/// remaining Resource locations, ResourceIndex rows, or registered Resource objects,
+/// retain the tombstone across failures, and never accept a receipt for a target outside
+/// the sealed manifest.
+pub trait ContextDocumentPurgeStore: Send + Sync {
+    fn begin_context_document_purge(
+        &self,
+        command: ContextDocumentPurgeStartCommand,
+    ) -> Result<CommittedContextDocumentPurge, StoreError>;
+
+    /// Reads deletion status only after proving that `principal_id` owns the Workspace.
+    fn get_context_document_deletion_status(
+        &self,
+        workspace_id: &str,
+        resource_id: &str,
+        principal_id: &str,
+    ) -> Result<Option<ContextDocumentDeletionStatus>, StoreError>;
+
+    fn list_pending_context_document_purge_targets(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PendingContextDocumentPurgeTarget>, StoreError>;
+
+    fn list_pending_empty_context_document_purge_plans(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PendingEmptyContextDocumentPurge>, StoreError>;
+
+    /// Returns true only when this exact target was acknowledged in durable storage.
+    /// False means it remains pending or its plan is no longer applicable.
+    fn acknowledge_context_document_purge_target_if_object_physically_removed(
+        &self,
+        command: AcknowledgeContextDocumentPurgeTargetCommand,
+    ) -> Result<bool, StoreError>;
+
+    /// Complete only an exact zero-target plan after verifying no local or external
+    /// owned replica inventory exists. Returns true if `DELETED` was committed.
+    fn complete_empty_context_document_purge_plan_if_verified_empty(
+        &self,
+        workspace_id: &str,
+        resource_id: &str,
+        manifest_digest: &str,
+        event: ContextDocumentStatusEventContext,
+    ) -> Result<bool, StoreError>;
+}
+
 /// One immutable revision and its derived head marker, returned in ancestry order.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -2070,6 +2257,26 @@ pub struct ResourceTextSearchRecord {
     pub parser_id: String,
 }
 
+/// Keyset position for continuing an indexed Resource search after a bounded scan
+/// discarded stale candidates. The Operator binds this position to the authenticated
+/// Workspace and the original query/mode/filters before exposing it as an opaque cursor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceTextSearchPosition {
+    pub created_at: String,
+    pub resource_id: String,
+}
+
+/// Verified indexed-search results plus an optional bounded-scan frontier. A continuation
+/// is present whenever more candidates remain after the frontier, including when the
+/// current page is full. All current matches examined through that position are included
+/// in `items`, while stale candidates are safely omitted. Empty pages with a continuation
+/// are valid and allow callers to make progress through long runs of stale candidates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResourceTextSearchPage {
+    pub items: Vec<ResourceTextSearchRecord>,
+    pub continuation: Option<ResourceTextSearchPosition>,
+}
+
 /// A source-grounded lexical match into the exact immutable UTF-8 Resource revision.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -2223,6 +2430,19 @@ pub struct ResourceUploadChunkInput {
     pub lifecycle_event: EventDraft,
 }
 
+/// Stable request identity used to resolve an accepted upload chunk before mutable
+/// session admission checks such as expiry or Workspace archival.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceUploadChunkReceiptRequest {
+    pub workspace_id: String,
+    pub upload_id: String,
+    pub request_id: String,
+    pub chunk_index: u64,
+    pub content_range: ResourceUploadContentRange,
+    pub sha256: String,
+}
+
 /// Result of atomically finalizing an upload into a Resource and its initial revision.
 /// `session` is the committed session projection; the Event and Resource records must
 /// become visible in the same transaction as its COMMITTED state.
@@ -2347,6 +2567,25 @@ pub trait ResourceStore: Send + Sync {
         ))
     }
 
+    /// Remove a bounded batch of registered encrypted ResourceIndex snapshots only
+    /// after their durable revision references are absent and a deletion fence is set.
+    /// Providers must persist reservations before publication and retain DELETING state
+    /// when exact-object removal fails so a later Runtime incarnation can retry.
+    fn collect_orphan_resource_index_blobs(
+        &self,
+        now: &str,
+        limit: usize,
+    ) -> Result<usize, StoreError>;
+
+    /// Remove a bounded batch of registered encrypted Resource content objects only
+    /// after every immutable local revision reference is absent and a durable deletion
+    /// fence is set. Failed exact-object removal must remain retryable after restart.
+    fn collect_orphan_resource_content_blobs(
+        &self,
+        now: &str,
+        limit: usize,
+    ) -> Result<usize, StoreError>;
+
     /// Search revision-scoped encrypted local text indexes. Implementations must enforce
     /// Workspace/current-revision/ContextDocument scope, derive terms using the current
     /// or retained ResourceIndex key version, verify/decrypt the exact indexed snapshot,
@@ -2361,7 +2600,7 @@ pub trait ResourceStore: Send + Sync {
         _after_created_at: Option<&str>,
         _after_resource_id: Option<&str>,
         _limit: usize,
-    ) -> Result<Vec<ResourceTextSearchRecord>, StoreError> {
+    ) -> Result<ResourceTextSearchPage, StoreError> {
         Err(StoreError::Blob(
             "encrypted local Resource text search is unsupported by this provider".to_owned(),
         ))
@@ -2373,6 +2612,14 @@ pub trait ResourceStore: Send + Sync {
 /// `commit` is responsible for atomically materializing the Resource, revision, event,
 /// and committed session state; upload chunks themselves are not domain events.
 pub trait ResourceUploadStore: ResourceStore {
+    /// Resolve an exact upload-session create before current Workspace/Resource
+    /// admission state is checked. Implementations must still recheck the receipt in
+    /// the create transaction.
+    fn get_create_receipt(
+        &self,
+        request: &WorkspaceCreateRequest,
+    ) -> Result<Option<ResourceUploadSessionRecord>, StoreError>;
+
     fn create(
         &self,
         request: WorkspaceCreateRequest,
@@ -2396,12 +2643,30 @@ pub trait ResourceUploadStore: ResourceStore {
         upload_id: &str,
     ) -> Result<Option<ResourceUploadSessionRecord>, StoreError>;
 
+    /// Returns whether this exact chunk request already committed. A mismatched reuse
+    /// of RequestId returns IdempotencyConflict. The write path must still recheck atomically.
+    fn get_chunk_receipt(
+        &self,
+        request: &ResourceUploadChunkReceiptRequest,
+    ) -> Result<bool, StoreError>;
+
     /// Loads the exact immutable Resource commit receipt for a committed upload so a
     /// lost response can be replayed even after the Resource head has advanced again.
     fn committed_resource_for_upload(
         &self,
         principal_id: &str,
         upload_id: &str,
+    ) -> Result<Option<CommittedResource>, StoreError>;
+
+    /// Resolve a commit retry by the caller's RequestId while retaining the
+    /// deterministic per-upload receipt as a recovery alias. If the upload is already
+    /// committed and this RequestId is new, the adapter records it against that exact
+    /// immutable response; reuse of the RequestId for another upload conflicts.
+    fn resolve_commit_receipt(
+        &self,
+        principal_id: &str,
+        request_id: &str,
+        session: &ResourceUploadSessionRecord,
     ) -> Result<Option<CommittedResource>, StoreError>;
 
     /// Return a bounded page of sessions whose TTL elapsed and that still need a
@@ -2485,6 +2750,8 @@ impl<T: StateStore + EventStore> WorkspaceStore for T {}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum StoreError {
+    /// A principal reused an idempotency key for a different canonical request payload.
+    IdempotencyConflict,
     Conflict {
         expected: Option<u64>,
         actual: Option<u64>,
@@ -2516,6 +2783,9 @@ pub enum StoreError {
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::IdempotencyConflict => {
+                f.write_str("idempotency key was reused with a different request payload")
+            }
             Self::Conflict { expected, actual } => {
                 write!(
                     f,
