@@ -178,6 +178,12 @@ Subagents are execution multipliers, not independent architects.
 - After integration, remove temporary worktrees/branches/processes created solely for the subagent unless intentionally retained and documented.
 - If a subagent fails, times out, or produces low-confidence work, recover/reassign it and continue; do not treat subagent failure as a reason to stop the whole implementation.
 
+### Throughput and quota
+
+- Set no self-imposed numeric ceiling on useful subagents, parallel assignments, tokens, or usage/quota. Spend the available quota needed to finish the authorized V1 work accurately before time expires; do not conserve usage by serializing independent work, stopping at a checkpoint, or asking the owner to say “continue”.
+- Use every concurrency slot exposed by the environment for independent, reviewable work. When all slots are occupied, queue or reuse agents as slots free; platform-enforced availability is the only agent-count limit. Each assignment must have a distinct useful output, explicit scope, and verification path.
+- Optimize elapsed time and accuracy together. The lead remains responsible for integration, review, security, verification, owner-data preservation, and cleanup; speed does not waive those requirements.
+
 ### Skills, MCP servers, plugins, and external tools
 
 Use available skills, MCP servers, plugins/connectors, and repository tools when the repository instructions, story, architecture, or installed environment identifies them as relevant.
