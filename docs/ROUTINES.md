@@ -109,8 +109,11 @@ same SQLite Task-creation transaction. A failure creates no Task. Success writes
 ordinary Task with status `READY`, TaskSpecRevision(1), exact `routine_id`/revision pins,
 Task inputs/outputs/criteria/approvals/constraints, event, and idempotency receipt in one
 commit. It creates no Plan, Step, AgentSession, Attempt, lease, Environment, Effect, or
-capability grant. A same-key retry by the same authorized owner returns the originally
-committed Task; reusing that key with changed inputs conflicts. The page calls it a
+capability grant. After authenticating the owner and selected Workspace, an exact same-key
+retry resolves the durable Task receipt before checking mutable Workspace/Routine status,
+revision head, lead eligibility, or Resource availability; it returns the originally
+committed Task even if those facts later change. Reusing that key with changed inputs
+conflicts. A new Run still passes every current admission check. The page calls it a
 “Saved Task · READY” and only opens details after validating returned Workspace, Task,
 Routine revision, TaskSpec identity, and READY status.
 

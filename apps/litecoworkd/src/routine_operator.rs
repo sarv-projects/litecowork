@@ -553,13 +553,6 @@ async fn run_routine(
     body: Bytes,
 ) -> Result<Response, Response> {
     let workspace = authorized_workspace(&state, &headers)?;
-    if workspace.status != "ACTIVE" {
-        return Err(operator_error(
-            StatusCode::CONFLICT,
-            "WORKSPACE_ARCHIVED",
-            "Archived Workspaces cannot accept new Tasks",
-        ));
-    }
     if !valid_id(&routine_id) {
         return Err(invalid());
     }
@@ -573,6 +566,46 @@ async fn run_routine(
     }
     let request_id = idempotency_key(&headers)?;
     let idempotency_scope = format!("routine.run.{}.{}", workspace.workspace_id, routine_id);
+    let receipt_payload = json!({
+        "workspace_id": workspace.workspace_id.clone(),
+        "routine_id": routine_id.clone(),
+        "routine_revision": body.routine_revision,
+        "inputs": body.inputs.clone(),
+        "conversation_id": null,
+    });
+    match state
+        .store
+        .get_task_create_receipt(&state.principal_id, &request_id, &receipt_payload)
+    {
+        Ok(Some(committed)) => {
+            return Ok(committed_task_create_response(
+                committed,
+                StatusCode::CREATED,
+            ));
+        }
+        Ok(None) => {}
+        Err(storage_core::StoreError::Conflict { .. }) => {
+            return Err(operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Idempotency key was already used for a different Routine run",
+            ));
+        }
+        Err(_) => {
+            return Err(operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Routine Task receipt could not be checked",
+            ));
+        }
+    }
+    if workspace.status != "ACTIVE" {
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "WORKSPACE_ARCHIVED",
+            "Archived Workspaces cannot accept new Tasks",
+        ));
+    }
     let task_id = idempotent_id("task", &state.principal_id, &request_id, &idempotency_scope);
     let correlation = idempotent_id(
         "cor",
@@ -674,13 +707,7 @@ async fn run_routine(
         })?;
     // Bind idempotency to the authenticated owner's exact RunRoutine command rather
     // than mutable defaults resolved while materializing the ordinary Task envelope.
-    commit.idempotency_payload = Some(json!({
-        "workspace_id": workspace.workspace_id,
-        "routine_id": routine_id,
-        "routine_revision": body.routine_revision,
-        "inputs": body.inputs.clone(),
-        "conversation_id": null,
-    }));
+    commit.idempotency_payload = Some(receipt_payload);
     commit.task.routine_id = Some(routine_id.clone());
     commit.task.routine_revision = Some(body.routine_revision);
     commit.routine_admission = Some(RoutineTaskAdmission {

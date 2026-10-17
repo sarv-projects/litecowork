@@ -604,8 +604,12 @@ For local manual Routine Run now, `POST /v1/routines/{id}/run` requires the sele
 `X-Workspace-ID`, `Idempotency-Key`, and body `{ "routine_revision": n, "inputs": {} }`.
 It returns `201 TaskView` only after atomically committing an ordinary `READY` Task pinned
 to that exact active/current revision and validating all supplied input/resource refs.
-The route rejects non-null `conversation_id`; no Plan or execution starts. Same-key,
-same-command retries return the original committed Task; changed command content conflicts.
+The route rejects non-null `conversation_id`; no Plan or execution starts. After caller and
+Workspace authorization, it resolves the exact owner-scoped Task receipt before checking
+mutable Workspace status, Routine status/head, lead eligibility, or Resource availability.
+Same-key, same-command retries therefore return the original committed Task after those
+mutable facts change; changed command content conflicts. A new run still requires an active
+Workspace and the exact active/current Routine revision.
 The desktop exposes schema-generated TEXT fields and disables Run when a required Resource
 input cannot be selected safely. Routine `required_capabilities` and `verification_policy`
 remain on the pinned RoutineRevision for future planner/Trust/verifier admission; this
