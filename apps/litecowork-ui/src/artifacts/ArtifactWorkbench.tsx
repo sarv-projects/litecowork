@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ArtifactApi, ArtifactApiError, artifactSaveAsStatusMessage, supportsTextPreview } from "./artifact-api";
 import { artifactDownloadFileName } from "./artifact-download-name";
+import { invalidatesVisibleArtifactContent } from "./artifact-access-state";
 import { focusArtifactEditorTarget } from "./artifact-editor-focus";
 import type { Artifact, ArtifactTextEditHead, ArtifactTextVersionInput, ArtifactTextVersionReceipt, ArtifactVersion, PinnedResourceRef } from "./artifact-api";
 import { StructuredTextPreview } from "./StructuredTextPreview";
@@ -26,10 +27,6 @@ type PendingTextSave = { requestId: string; input: ArtifactTextVersionInput; exp
 type PendingLibraryCommand = { snapshot: Artifact; action: "promote" | "archive"; requestId: string };
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "Artifact service is unavailable.";
-}
-
-function isAuthorizationFailure(error: unknown): boolean {
-  return error instanceof Error && "status" in error && (error.status === 401 || error.status === 403);
 }
 
 /** Artifact versions stay immutable; supported text edits publish a new version. */
@@ -93,6 +90,14 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
   const focusReturn = useRef<"EDIT" | "RESTORE" | "PUBLISHED_STATUS" | null>(null);
   const wasEditing = useRef(false);
 
+  function clearContentAfterAccessLoss(error: unknown): boolean {
+    if (!invalidatesVisibleArtifactContent(error)) return false;
+    setArtifact(null); setVersion(null); setPreview(null); setHistory([]); setComparisonVersion(null);
+    setEditHead(null); setEditBase(""); setEditDraft(""); setEditing(false); setPendingSave(null);
+    setLatestEdit(null); setRestoreSourceVersion(null); setPublishedReceipt(null);
+    return true;
+  }
+
   useLayoutEffect(() => {
     if (editing) {
       wasEditing.current = true;
@@ -146,7 +151,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
         if (generation !== libraryGeneration.current || !requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
         setLibraryFailure(`The Library command is confirmed, but its latest status could not be refreshed. ${message(refreshError)} Refresh before another action.`);
         setLibraryNeedsRefresh(true);
-        if (isAuthorizationFailure(refreshError)) { setArtifact(null); setVersion(null); setPreview(null); }
+        clearContentAfterAccessLoss(refreshError);
       }
     } catch (error) {
       if (generation !== libraryGeneration.current || !requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
@@ -154,7 +159,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       if (rejected) setPendingLibrary(null);
       if (rejected) setLibraryNeedsRefresh(true);
       setLibraryFailure(`${message(error)} ${rejected ? "Refresh and review its current status before trying again." : "The result is unconfirmed. Retry the same command to resolve it using its original request ID."}`);
-      if (isAuthorizationFailure(error)) { setArtifact(null); setVersion(null); setPreview(null); }
+      clearContentAfterAccessLoss(error);
     } finally {
       if (generation === libraryGeneration.current && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) {
         libraryInFlight.current = false; setLibraryBusy(false);
@@ -249,7 +254,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
           setFailure(message(error)); setLoading(false);
           // The selected version is the Workbench's primary authorized object.
           // A denied read invalidates its metadata; comparison denial does not.
-          if (isAuthorizationFailure(error)) { setArtifact(null); setVersion(null); setPreview(null); }
+          clearContentAfterAccessLoss(error);
         }
       }
     })();
@@ -273,7 +278,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
     } catch (error) {
       if (!controller.signal.aborted && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) {
         setDownloadFailure(message(error));
-        if (error instanceof Error && "status" in error && (error.status === 401 || error.status === 403)) { setArtifact(null); setVersion(null); setPreview(null); }
+        clearContentAfterAccessLoss(error);
       }
     } finally {
       if (!controller.signal.aborted && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setDownloading(false);
@@ -291,7 +296,10 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       if (!requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
       setSaveNotice(artifactSaveAsStatusMessage(result, version.version));
     } catch (error) {
-      if (requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setDownloadFailure(message(error));
+      if (requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) {
+        setDownloadFailure(message(error));
+        clearContentAfterAccessLoss(error);
+      }
     } finally { if (requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setDownloading(false); }
   }
 
@@ -328,7 +336,10 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       if (!requestEpoch.current.isCurrent(request) || activeScope.current !== request.scope) return;
       setEditHead(loaded.head); setEditBase(loaded.text); setEditDraft(loaded.text); setPendingSave(null); setEditing(true);
     } catch (error) {
-      if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditFailure(message(error));
+      if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) {
+        setEditFailure(message(error));
+        clearContentAfterAccessLoss(error);
+      }
     }
     finally { if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditLoading(false); }
   }
@@ -362,7 +373,10 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       setPendingSave(null);
       setEditing(true);
     } catch (error) {
-      if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditFailure(message(error));
+      if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) {
+        setEditFailure(message(error));
+        clearContentAfterAccessLoss(error);
+      }
     }
     finally { if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditLoading(false); }
   }
@@ -376,7 +390,10 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       const latest = await loadEditableHead();
       if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setLatestEdit(latest);
     } catch (error) {
-      if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditFailure(message(error));
+      if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) {
+        setEditFailure(message(error));
+        clearContentAfterAccessLoss(error);
+      }
     }
     finally { if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditLoading(false); }
   }
@@ -414,7 +431,9 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       setRefresh(value => value + 1);
     } catch (error) {
       if (!requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
-      if (error instanceof Error && "status" in error && error.status === 409) {
+      if (clearContentAfterAccessLoss(error)) {
+        setEditFailure("Access to this Artifact is no longer available. Its cached content and draft were cleared.");
+      } else if (error instanceof Error && "status" in error && error.status === 409) {
         setEditConflict(true);
         setEditFailure("The Artifact changed before this draft could be published. Your draft is preserved. Check the latest version, then explicitly rebase before saving again.");
       } else {
