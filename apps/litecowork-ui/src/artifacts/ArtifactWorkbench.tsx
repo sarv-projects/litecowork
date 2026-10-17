@@ -1,9 +1,11 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ArtifactApi, ArtifactApiError, artifactSaveAsStatusMessage, supportsTextPreview } from "./artifact-api";
 import { artifactDownloadFileName } from "./artifact-download-name";
+import { focusArtifactEditorTarget } from "./artifact-editor-focus";
 import type { Artifact, ArtifactTextEditHead, ArtifactTextVersionInput, ArtifactTextVersionReceipt, ArtifactVersion, PinnedResourceRef } from "./artifact-api";
 import { StructuredTextPreview } from "./StructuredTextPreview";
 import { TextVersionDiff } from "./TextVersionDiff";
+import { ArtifactRequestEpoch } from "./artifact-request-epoch";
 import "./artifact-workbench.css";
 
 const PREVIEW_LIMIT = 1024 * 1024;
@@ -73,6 +75,9 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
   const [publishedReceipt, setPublishedReceipt] = useState<ArtifactTextVersionReceipt | null>(null);
   const [publishedRestoreFromVersion, setPublishedRestoreFromVersion] = useState<number | null>(null);
   const downloadController = useRef<AbortController | null>(null);
+  const requestEpoch = useRef(new ArtifactRequestEpoch());
+  const activeScope = useRef(JSON.stringify([workspaceId, artifactId]));
+  activeScope.current = JSON.stringify([workspaceId, artifactId]);
   const libraryGeneration = useRef(0);
   const libraryInFlight = useRef(false);
   const [libraryBusy, setLibraryBusy] = useState(false);
@@ -80,6 +85,31 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
   const [libraryFailure, setLibraryFailure] = useState<string | null>(null);
   const [libraryNotice, setLibraryNotice] = useState<string | null>(null);
   const [libraryNeedsRefresh, setLibraryNeedsRefresh] = useState(false);
+  const heading = useRef<HTMLHeadingElement | null>(null);
+  const editorTextarea = useRef<HTMLTextAreaElement | null>(null);
+  const editTrigger = useRef<HTMLButtonElement | null>(null);
+  const restoreTrigger = useRef<HTMLButtonElement | null>(null);
+  const publishedStatus = useRef<HTMLParagraphElement | null>(null);
+  const focusReturn = useRef<"EDIT" | "RESTORE" | "PUBLISHED_STATUS" | null>(null);
+  const wasEditing = useRef(false);
+
+  useLayoutEffect(() => {
+    if (editing) {
+      wasEditing.current = true;
+      focusArtifactEditorTarget("EDITOR", {
+        editor: editorTextarea.current, edit: editTrigger.current, restore: restoreTrigger.current,
+        publishedStatus: publishedStatus.current, fallback: heading.current,
+      });
+      return;
+    }
+    if (!wasEditing.current) return;
+    wasEditing.current = false;
+    if (focusReturn.current) focusArtifactEditorTarget(focusReturn.current, {
+      editor: editorTextarea.current, edit: editTrigger.current, restore: restoreTrigger.current,
+      publishedStatus: publishedStatus.current, fallback: heading.current,
+    });
+    focusReturn.current = null;
+  }, [editing, publishedReceipt]);
 
   useEffect(() => {
     libraryGeneration.current += 1;
@@ -89,6 +119,8 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
 
   async function changeLibrary(action: "promote" | "archive") {
     if (!artifact || editing || editLoading || editSaving || libraryInFlight.current || libraryNeedsRefresh) return;
+    const requestScope = requestEpoch.current.capture();
+    if (!requestScope) return;
     const pending = pendingLibrary ?? { snapshot: artifact, action, requestId: crypto.randomUUID() };
     if (pending.action !== action) return;
     if (!pendingLibrary && !window.confirm(action === "promote"
@@ -98,7 +130,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
     libraryInFlight.current = true; setLibraryBusy(true); setLibraryFailure(null); setLibraryNotice(null); setPendingLibrary(pending);
     try {
       const committed = await api.libraryCommand(pending.snapshot, pending.action, pending.requestId);
-      if (generation !== libraryGeneration.current) return;
+      if (generation !== libraryGeneration.current || !requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
       setPendingLibrary(null); setArtifact(committed);
       setLibraryNotice(action === "promote" ? "Saved to the Library. Content history is unchanged." : "Archived. Content history remains readable while authorized.");
       onLibraryChanged?.(committed);
@@ -107,51 +139,56 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       // historical response the current Library status.
       try {
         const current = await api.get(artifactId);
-        if (generation !== libraryGeneration.current) return;
+        if (generation !== libraryGeneration.current || !requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
         if (current.workspace_id !== workspaceId || current.version < committed.version) throw new Error("Artifact current head does not match its confirmed receipt.");
         setArtifact(current); setLibraryNeedsRefresh(false); onLibraryChanged?.(current);
       } catch (refreshError) {
-        if (generation !== libraryGeneration.current) return;
+        if (generation !== libraryGeneration.current || !requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
         setLibraryFailure(`The Library command is confirmed, but its latest status could not be refreshed. ${message(refreshError)} Refresh before another action.`);
         setLibraryNeedsRefresh(true);
         if (isAuthorizationFailure(refreshError)) { setArtifact(null); setVersion(null); setPreview(null); }
       }
     } catch (error) {
-      if (generation !== libraryGeneration.current) return;
+      if (generation !== libraryGeneration.current || !requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
       const rejected = error instanceof ArtifactApiError && [400, 401, 403, 404, 409, 412, 422].includes(error.status);
       if (rejected) setPendingLibrary(null);
       if (rejected) setLibraryNeedsRefresh(true);
       setLibraryFailure(`${message(error)} ${rejected ? "Refresh and review its current status before trying again." : "The result is unconfirmed. Retry the same command to resolve it using its original request ID."}`);
       if (isAuthorizationFailure(error)) { setArtifact(null); setVersion(null); setPreview(null); }
     } finally {
-      if (generation === libraryGeneration.current) { libraryInFlight.current = false; setLibraryBusy(false); }
+      if (generation === libraryGeneration.current && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) {
+        libraryInFlight.current = false; setLibraryBusy(false);
+      }
     }
   }
 
   useEffect(() => {
+    const scopeRequest = requestEpoch.current.activate(workspaceId, artifactId);
     const controller = new AbortController();
     downloadController.current?.abort();
     setArtifact(null); setSelected(null); setVersionInput(""); setVersionSelectionError(null); setVersion(null); setPreview(null);
     setShowHistory(false); setHistory([]); setHistoryLoading(false); setHistoryFailure(null);
-    setFailure(null); setPreviewFailure(null); setDownloadFailure(null); setComparisonVersion(null); setComparisonInput(""); setComparisonMode("SIDE_BY_SIDE"); setComparisonError(null); setLoading(true); setDownloading(false);
+    setFailure(null); setPreviewFailure(null); setDownloadFailure(null); setComparisonVersion(null); setComparisonInput(""); setComparisonMode("SIDE_BY_SIDE"); setComparisonError(null); setLoading(true); setDownloading(false); setCopying(false);
     setSaveNotice(null);
     setEditing(false); setEditHead(null); setEditBase(""); setEditDraft(""); setEditFailure(null); setEditConflict(false);
     setLatestEdit(null); setEditRebased(false); setRestoreSourceVersion(null); setPendingSave(null); setEditLoading(false); setEditSaving(false);
     void api.get(artifactId, controller.signal).then(item => {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !requestEpoch.current.isCurrent(scopeRequest) || activeScope.current !== scopeRequest.scope) return;
       if (item.workspace_id !== workspaceId) throw new Error("Artifact belongs to another Workspace.");
       setArtifact(item); setSelected(item.current_version); setVersionInput(String(item.current_version));
       setLibraryNeedsRefresh(false); setLibraryFailure(null);
       setComparisonInput(String(item.current_version > 1 ? item.current_version - 1 : 1));
     }).catch(error => {
-      if (!controller.signal.aborted) { setFailure(message(error)); setLoading(false); }
+      if (!controller.signal.aborted && requestEpoch.current.isCurrent(scopeRequest) && activeScope.current === scopeRequest.scope) { setFailure(message(error)); setLoading(false); }
     });
-    return () => { controller.abort(); downloadController.current?.abort(); };
+    return () => { controller.abort(); downloadController.current?.abort(); requestEpoch.current.invalidate(); };
   }, [api, workspaceId, artifactId, refresh]);
 
   useEffect(() => {
     const controller = new AbortController();
     if (!showHistory || !artifact) return () => controller.abort();
+    const requestScope = requestEpoch.current.capture();
+    if (!requestScope) return () => controller.abort();
     const first = Math.max(1, artifact.current_version - RECENT_VERSION_LIMIT + 1);
     const versions = Array.from(
       { length: artifact.current_version - first + 1 },
@@ -160,12 +197,14 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
     setHistory([]); setHistoryFailure(null); setHistoryLoading(true);
     void Promise.all(versions.map(number => api.getVersion(artifact.artifact_id, number, controller.signal)))
       .then(items => {
-        if (!controller.signal.aborted) setHistory(items.sort((left, right) => right.version - left.version));
+        if (!controller.signal.aborted && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setHistory(items.sort((left, right) => right.version - left.version));
       })
       .catch(error => {
-        if (!controller.signal.aborted) setHistoryFailure(message(error));
+        if (!controller.signal.aborted && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setHistoryFailure(message(error));
       })
-      .finally(() => { if (!controller.signal.aborted) setHistoryLoading(false); });
+      .finally(() => {
+        if (!controller.signal.aborted && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setHistoryLoading(false);
+      });
     return () => controller.abort();
   }, [api, artifact, showHistory]);
 
@@ -173,6 +212,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
 
   useEffect(() => {
     const controller = new AbortController();
+    const requestScope = requestEpoch.current.capture();
     downloadController.current?.abort(); setDownloading(false); setDownloadFailure(null);
     setComparisonLoading(false);
     setVersion(null); setPreview(null); setPreviewFailure(null); setCopyFailure(null);
@@ -181,13 +221,13 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
     void (async () => {
       try {
         const item = await api.getVersion(artifactId, selected, controller.signal);
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || !requestScope || !requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
         if (item.artifact_id !== artifactId || item.version !== selected) throw new Error("Artifact version identity mismatch.");
         setVersion(item); setLoading(false);
         if (item.content.kind !== "MANAGED_BLOB" || !supportsTextPreview(item.content.media_type) || item.content.size_bytes > PREVIEW_LIMIT) return;
         const bytes = await api.content(item, PREVIEW_LIMIT, controller.signal);
         const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || !requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
         // Keep the selected authorized version readable even if the comparison
         // target is missing or no longer authorized.
         setPreview({ text, comparison: null });
@@ -196,16 +236,16 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
         setComparisonLoading(true);
         try {
           const target = await api.loadComparableTextVersion(artifactId, comparisonVersion, artifact.current_version, controller.signal);
-          if (!controller.signal.aborted) setPreview({ text, comparison: { text: target.text, version: target.version } });
+          if (!controller.signal.aborted && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setPreview({ text, comparison: { text: target.text, version: target.version } });
         } catch (error) {
-          if (!controller.signal.aborted) {
+          if (!controller.signal.aborted && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) {
             setComparisonError(`Could not compare version ${comparisonVersion}: ${message(error)}`);
           }
         } finally {
-          if (!controller.signal.aborted) setComparisonLoading(false);
+          if (!controller.signal.aborted && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setComparisonLoading(false);
         }
       } catch (error) {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && requestScope && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) {
           setFailure(message(error)); setLoading(false);
           // The selected version is the Workbench's primary authorized object.
           // A denied read invalidates its metadata; comparison denial does not.
@@ -218,44 +258,53 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
 
   async function download() {
     if (!version || !artifact || downloading) return;
+    const requestScope = requestEpoch.current.capture();
+    if (!requestScope) return;
     const controller = new AbortController(); downloadController.current = controller;
     setDownloading(true); setDownloadFailure(null);
     try {
       const bytes = await api.content(version, DOWNLOAD_LIMIT, controller.signal);
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
       const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer], { type: "application/octet-stream" }));
       const link = document.createElement("a");
       link.href = url; link.download = artifactDownloadFileName(artifact.display_name, version.version);
       document.body.append(link); link.click(); link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) {
         setDownloadFailure(message(error));
         if (error instanceof Error && "status" in error && (error.status === 401 || error.status === 403)) { setArtifact(null); setVersion(null); setPreview(null); }
       }
-    } finally { if (!controller.signal.aborted) setDownloading(false); }
+    } finally {
+      if (!controller.signal.aborted && requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setDownloading(false);
+    }
   }
 
   async function saveVersionAs() {
     if (!version || !artifact || downloading || version.content.kind !== "MANAGED_BLOB"
       || version.content.size_bytes > DOWNLOAD_LIMIT) return;
+    const requestScope = requestEpoch.current.capture();
+    if (!requestScope) return;
     setDownloading(true); setDownloadFailure(null); setSaveNotice(null);
     try {
       const result = await api.saveVersionAs(workspaceId, artifact, version);
+      if (!requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
       setSaveNotice(artifactSaveAsStatusMessage(result, version.version));
     } catch (error) {
-      setDownloadFailure(message(error));
-    } finally { setDownloading(false); }
+      if (requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setDownloadFailure(message(error));
+    } finally { if (requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setDownloading(false); }
   }
 
   async function copyText() {
     if (!preview || copying) return;
+    const requestScope = requestEpoch.current.capture();
+    if (!requestScope) return;
     setCopying(true); setCopyFailure(null);
     try {
       await navigator.clipboard.writeText(preview.text);
     } catch {
-      setCopyFailure("Could not copy this text. Check desktop clipboard access and try again.");
-    } finally { setCopying(false); }
+      if (requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setCopyFailure("Could not copy this text. Check desktop clipboard access and try again.");
+    } finally { if (requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setCopying(false); }
   }
 
   async function loadEditableHead(signal?: AbortSignal): Promise<LoadedEditHead> {
@@ -271,12 +320,17 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
 
   async function beginTextEdit() {
     if (editLoading || editing || libraryBusy || pendingLibrary || libraryNeedsRefresh) return;
+    const request = requestEpoch.current.capture();
+    if (!request) return;
     setEditLoading(true); setEditFailure(null); setEditConflict(false); setLatestEdit(null); setEditRebased(false); setRestoreSourceVersion(null);
     try {
       const loaded = await loadEditableHead();
+      if (!requestEpoch.current.isCurrent(request) || activeScope.current !== request.scope) return;
       setEditHead(loaded.head); setEditBase(loaded.text); setEditDraft(loaded.text); setPendingSave(null); setEditing(true);
-    } catch (error) { setEditFailure(message(error)); }
-    finally { setEditLoading(false); }
+    } catch (error) {
+      if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditFailure(message(error));
+    }
+    finally { if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditLoading(false); }
   }
 
   async function beginRestoreTextVersion() {
@@ -287,6 +341,8 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       || source.content.kind !== "MANAGED_BLOB"
       || source.content.media_type.trim().toLowerCase() !== "text/plain"
       || source.content.size_bytes > PREVIEW_LIMIT) return;
+    const request = requestEpoch.current.capture();
+    if (!request) return;
     const confirmed = window.confirm(
       `Copy the text from version ${source.version} into a draft based on the latest version? This will not overwrite history or publish anything until you choose Publish new version. The current Artifact contract records the result as a user text edit; it does not store a separate restored-from link.`,
     );
@@ -294,6 +350,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
     setEditLoading(true); setEditFailure(null); setEditConflict(false); setLatestEdit(null); setEditRebased(false);
     try {
       const loaded = await loadEditableHead();
+      if (!requestEpoch.current.isCurrent(request) || activeScope.current !== request.scope) return;
       if (source.version >= loaded.head.content_version) {
         setVersionSelectionError(`Version ${source.version} is now current. Refresh the Artifact and choose an older version.`);
         return;
@@ -304,16 +361,24 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       setRestoreSourceVersion(source.version);
       setPendingSave(null);
       setEditing(true);
-    } catch (error) { setEditFailure(message(error)); }
-    finally { setEditLoading(false); }
+    } catch (error) {
+      if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditFailure(message(error));
+    }
+    finally { if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditLoading(false); }
   }
 
   async function checkLatestEditHead() {
     if (editLoading) return;
+    const request = requestEpoch.current.capture();
+    if (!request) return;
     setEditLoading(true); setEditFailure(null); setLatestEdit(null);
-    try { setLatestEdit(await loadEditableHead()); }
-    catch (error) { setEditFailure(message(error)); }
-    finally { setEditLoading(false); }
+    try {
+      const latest = await loadEditableHead();
+      if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setLatestEdit(latest);
+    } catch (error) {
+      if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditFailure(message(error));
+    }
+    finally { if (requestEpoch.current.isCurrent(request) && activeScope.current === request.scope) setEditLoading(false); }
   }
 
   function rebaseDraft() {
@@ -327,6 +392,8 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
     const draftBytes = new TextEncoder().encode(editDraft).byteLength;
     if (draftBytes > PREVIEW_LIMIT) { setEditFailure("Text Artifact versions must not exceed 1 MiB."); return; }
     if (editDraft === editBase && restoreSourceVersion === null && !pendingSave) return;
+    const requestScope = requestEpoch.current.capture();
+    if (!requestScope) return;
     const pending = pendingSave && pendingSave.input.content === editDraft ? pendingSave : {
       requestId: crypto.randomUUID(),
       expectedArtifactVersion: editHead.aggregate_version,
@@ -340,21 +407,25 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
     setPendingSave(pending); setEditSaving(true); setEditFailure(null);
     try {
       const receipt = await api.appendTextVersion(artifactId, pending.input, pending.expectedArtifactVersion, pending.requestId);
+      if (!requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
+      focusReturn.current = "PUBLISHED_STATUS";
       setPublishedRestoreFromVersion(restoreSourceVersion);
       setPublishedReceipt(receipt); setEditing(false); setPendingSave(null); setEditConflict(false);
       setRefresh(value => value + 1);
     } catch (error) {
+      if (!requestEpoch.current.isCurrent(requestScope) || activeScope.current !== requestScope.scope) return;
       if (error instanceof Error && "status" in error && error.status === 409) {
         setEditConflict(true);
         setEditFailure("The Artifact changed before this draft could be published. Your draft is preserved. Check the latest version, then explicitly rebase before saving again.");
       } else {
         setEditFailure(`${message(error)} Your draft is preserved. Retrying unchanged will reuse the same request ID.`);
       }
-    } finally { setEditSaving(false); }
+    } finally { if (requestEpoch.current.isCurrent(requestScope) && activeScope.current === requestScope.scope) setEditSaving(false); }
   }
 
   function discardTextDraft() {
     if (editDraft !== editBase && !window.confirm("Discard this unpublished text draft?")) return;
+    focusReturn.current = restoreSourceVersion === null ? "EDIT" : "RESTORE";
     setEditing(false); setEditHead(null); setEditBase(""); setEditDraft(""); setPendingSave(null);
     setEditConflict(false); setLatestEdit(null); setEditFailure(null); setEditRebased(false); setRestoreSourceVersion(null);
   }
@@ -423,7 +494,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
   const draftBytes = new TextEncoder().encode(editDraft).byteLength;
   return <section className="artifact-workbench" aria-labelledby={headingId}>
     <header className="artifact-workbench-header">
-      <div><p className="artifact-workbench-eyebrow">Artifact Workbench</p><h2 id={headingId}>{artifact?.display_name ?? "Artifact"}</h2>
+      <div><p className="artifact-workbench-eyebrow">Artifact Workbench</p><h2 ref={heading} id={headingId} tabIndex={-1}>{artifact?.display_name ?? "Artifact"}</h2>
         {artifact && <p>Viewing version {selected} · Current version {artifact.current_version} · {artifact.library_status.toLowerCase()}</p>}
       </div>
       <div className="artifact-workbench-actions"><button type="button" disabled={editing || editLoading || editSaving || libraryBusy || pendingLibrary !== null} onClick={() => setRefresh(value => value + 1)}>Refresh</button>{onClose && <button type="button" disabled={editLoading || editSaving || pendingSave !== null || libraryBusy || pendingLibrary !== null} onClick={closeWorkbench}>Close</button>}</div>
@@ -443,7 +514,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
     </section>}
     {libraryFailure && <p role="alert">{libraryFailure}</p>}
     {saveNotice && <p className="artifact-workbench-published" role="status">{saveNotice}</p>}
-    {publishedReceipt && <p className="artifact-workbench-published" role="status">{publishedRestoreFromVersion === null ? "Published" : `Restored the text from version ${publishedRestoreFromVersion} as`} version {publishedReceipt.version.version}{publishedReceipt.replayed ? " (confirmed from the original save request)" : ""}. This is a new immutable version; the current Artifact contract records it as a user text edit without a separate restored-from link.</p>}
+    {publishedReceipt && <p ref={publishedStatus} className="artifact-workbench-published" role="status" tabIndex={-1}>{publishedRestoreFromVersion === null ? "Published" : `Restored the text from version ${publishedRestoreFromVersion} as`} version {publishedReceipt.version.version}{publishedReceipt.replayed ? " (confirmed from the original save request)" : ""}. This is a new immutable version; the current Artifact contract records it as a user text edit without a separate restored-from link.</p>}
     {artifact && <nav className="artifact-workbench-actions" aria-label="Version history">
       <form className="artifact-workbench-version-picker" onSubmit={openVersion}>
         <label htmlFor={`${headingId}-version`}>Version</label>
@@ -502,8 +573,8 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
       {api.supportsNativeSaveAs && version.content.kind === "MANAGED_BLOB" && version.content.size_bytes > DOWNLOAD_LIMIT && <p>This version exceeds the desktop Save As limit of 10 MiB.</p>}
       {copyFailure && <p role="alert">{copyFailure}</p>}
       {preview && !editing && <div className="artifact-workbench-actions"><button type="button" disabled={copying || editLoading} onClick={() => void copyText()}>{copying ? "Copying…" : "Copy selected text"}</button>
-        {canEditCurrentText && <button type="button" disabled={editLoading || libraryBusy || pendingLibrary !== null || libraryNeedsRefresh} onClick={() => void beginTextEdit()}>{editLoading ? "Opening editor…" : "Edit text"}</button>}
-        {canRestoreTextVersion && <button type="button" disabled={editLoading || libraryBusy || pendingLibrary !== null || libraryNeedsRefresh} onClick={() => void beginRestoreTextVersion()}>{editLoading ? "Preparing restore…" : "Restore as new version"}</button>}
+        {canEditCurrentText && <button ref={editTrigger} type="button" disabled={editLoading || libraryBusy || pendingLibrary !== null || libraryNeedsRefresh} onClick={() => { focusReturn.current = "EDIT"; void beginTextEdit(); }}>{editLoading ? "Opening editor…" : "Edit text"}</button>}
+        {canRestoreTextVersion && <button ref={restoreTrigger} type="button" disabled={editLoading || libraryBusy || pendingLibrary !== null || libraryNeedsRefresh} onClick={() => { focusReturn.current = "RESTORE"; void beginRestoreTextVersion(); }}>{editLoading ? "Preparing restore…" : "Restore as new version"}</button>}
       </div>}
       {editFailure && !editing && <p role="alert">Could not prepare the text draft: {editFailure}</p>}
       {editing && editHead && <section className="artifact-text-editor" aria-labelledby={`${headingId}-editor-title`}>
@@ -512,7 +583,7 @@ export function ArtifactWorkbench({ api, workspaceId, artifactId, onClose, onOpe
         </header>
         {editRebased && <p role="status">Draft rebased on version {editHead.content_version}. Review the updated base and draft before saving.</p>}
         <label htmlFor={`${headingId}-text-draft`}>Text content</label>
-        <textarea id={`${headingId}-text-draft`} spellCheck={false} value={editDraft} disabled={editSaving || pendingSave !== null}
+        <textarea ref={editorTextarea} id={`${headingId}-text-draft`} spellCheck={false} value={editDraft} disabled={editSaving || pendingSave !== null}
           aria-describedby={`${headingId}-editor-help`} onChange={event => { setEditDraft(event.target.value); setPendingSave(null); setEditFailure(null); }} />
         <p id={`${headingId}-editor-help`}>{pendingSave
           ? "The last publish result is unconfirmed. The draft and its original request are locked; retry unchanged to learn whether that immutable version was committed."

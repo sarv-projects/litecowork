@@ -1163,6 +1163,7 @@
     "user.request.created.v1",
     "user.request.resolved.v1",
     "verification.completed.v1",
+    "verification.completed.v2",
     "verification.started.v1",
     "workspace.archived.v1",
     "workspace.created.v1",

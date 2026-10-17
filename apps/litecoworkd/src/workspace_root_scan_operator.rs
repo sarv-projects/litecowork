@@ -1,13 +1,19 @@
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use domain_workspace::{ScanWorkspaceRoot, WorkspaceRootService};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
+#[cfg(target_os = "linux")]
+use storage_core::WorkspaceRootFileObservation;
+use storage_core::{
+    RootObservationFreshness, RootObservationSearchRequest, WorkspaceRootObservationStore,
+};
 use storage_core::{
     StateStore, WorkspaceRootRevalidationBindings, WorkspaceRootScanResult, WorkspaceRootScanStatus,
 };
@@ -33,10 +39,322 @@ const MAX_SCAN_TIME: Duration = Duration::from_secs(8);
 const MAX_FINAL_IDENTITY_FENCE_TIME: Duration = Duration::from_secs(1);
 
 pub(super) fn routes() -> Router<super::ApiState> {
-    Router::new().route(
-        "/v1/workspace-roots/{workspace_root_id}/scan",
-        post(scan_workspace_root),
+    Router::new()
+        .route(
+            "/v1/workspace-roots/{workspace_root_id}/scan",
+            post(scan_workspace_root),
+        )
+        .route(
+            "/v1/workspace-roots/{workspace_root_id}/observations",
+            get(search_workspace_root_observations),
+        )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RootObservationQuery {
+    q: Option<String>,
+    freshness: Option<String>,
+    cursor: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RootObservationCursor {
+    version: u32,
+    principal_id: String,
+    workspace_id: String,
+    workspace_root_id: String,
+    expected_root_version: u64,
+    runtime_id: String,
+    runtime_incarnation_id: String,
+    query: String,
+    freshness: Option<String>,
+    limit: usize,
+    after_display_name: String,
+    after_observation_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SignedRootObservationCursor {
+    cursor: RootObservationCursor,
+    integrity_tag: String,
+}
+
+#[derive(Serialize)]
+struct RootObservationItem {
+    observation_id: String,
+    display_name: String,
+    size_bytes: u64,
+    modified_at: Option<String>,
+    observed_at: String,
+    freshness: &'static str,
+    /// Null until canonical Resource aggregates are explicitly produced and linked.
+    resource_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RootObservationPage {
+    workspace_id: String,
+    workspace_root_id: String,
+    items: Vec<RootObservationItem>,
+    next_cursor: Option<String>,
+}
+
+async fn search_workspace_root_observations(
+    State(state): State<super::ApiState>,
+    headers: HeaderMap,
+    Path(workspace_root_id): Path<String>,
+    query: Result<Query<RootObservationQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<Response, Response> {
+    let workspace_id = super::selected_workspace(&headers)?;
+    let expected_root_version = super::parse_if_match(&headers)?;
+    let Query(query) = query.map_err(|_| observation_invalid())?;
+    let limit = query.limit.unwrap_or(50);
+    let search_text = query.q.unwrap_or_default();
+    let freshness = query
+        .freshness
+        .as_deref()
+        .map(parse_observation_freshness)
+        .transpose()?;
+    if workspace_root_id.trim().is_empty()
+        || workspace_root_id.len() > 160
+        || search_text.len() > 256
+        || search_text.contains('\0')
+        || !(1..=100).contains(&limit)
+    {
+        return Err(observation_invalid());
+    }
+    let after = query
+        .cursor
+        .as_deref()
+        .map(|cursor| {
+            decode_root_observation_cursor(
+                cursor,
+                &state,
+                &workspace_id,
+                &workspace_root_id,
+                expected_root_version,
+                &search_text,
+                freshness,
+                limit,
+            )
+        })
+        .transpose()?;
+    let request = RootObservationSearchRequest {
+        owner_principal_id: state.principal_id.clone(),
+        workspace_id: workspace_id.clone(),
+        workspace_root_id: workspace_root_id.clone(),
+        expected_root_version,
+        runtime_id: state.runtime_id.clone(),
+        runtime_incarnation_id: state.local_incarnation_id.clone(),
+        query: search_text.clone(),
+        freshness,
+        after_display_name: after
+            .as_ref()
+            .map(|cursor| cursor.after_display_name.clone()),
+        after_observation_id: after
+            .as_ref()
+            .map(|cursor| cursor.after_observation_id.clone()),
+        limit,
+    };
+    let mut records = state
+        .store
+        .search_workspace_root_observations(request)
+        .map_err(map_observation_store_error)?;
+    let has_more = records.len() > limit;
+    records.truncate(limit);
+    let next_cursor = if has_more {
+        records
+            .last()
+            .map(|record| {
+                encode_root_observation_cursor(
+                    &state,
+                    RootObservationCursor {
+                        version: 1,
+                        principal_id: state.principal_id.clone(),
+                        workspace_id: workspace_id.clone(),
+                        workspace_root_id: workspace_root_id.clone(),
+                        expected_root_version,
+                        runtime_id: state.runtime_id.clone(),
+                        runtime_incarnation_id: state.local_incarnation_id.clone(),
+                        query: search_text,
+                        freshness: freshness.map(|value| value.as_str().to_owned()),
+                        limit,
+                        after_display_name: record.display_name.clone(),
+                        after_observation_id: record.observation_id.clone(),
+                    },
+                )
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    let items = records
+        .into_iter()
+        .map(|record| RootObservationItem {
+            observation_id: record.observation_id,
+            display_name: record.display_name,
+            size_bytes: record.size_bytes,
+            modified_at: record.modified_at,
+            observed_at: record.observed_at,
+            freshness: record.freshness.as_str(),
+            resource_id: None,
+        })
+        .collect();
+    let mut response = Json(RootObservationPage {
+        workspace_id,
+        workspace_root_id,
+        items,
+        next_cursor,
+    })
+    .into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
+}
+
+fn parse_observation_freshness(value: &str) -> Result<RootObservationFreshness, Response> {
+    match value {
+        "CURRENT" => Ok(RootObservationFreshness::Current),
+        "STALE" => Ok(RootObservationFreshness::Stale),
+        "UNKNOWN" => Ok(RootObservationFreshness::Unknown),
+        _ => Err(observation_invalid()),
+    }
+}
+
+fn decode_root_observation_cursor(
+    encoded: &str,
+    state: &super::ApiState,
+    workspace_id: &str,
+    workspace_root_id: &str,
+    expected_root_version: u64,
+    query: &str,
+    freshness: Option<RootObservationFreshness>,
+    limit: usize,
+) -> Result<RootObservationCursor, Response> {
+    if encoded.is_empty() || encoded.len() > 4096 {
+        return Err(observation_invalid());
+    }
+    let bytes = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| observation_invalid())?;
+    let signed: SignedRootObservationCursor =
+        serde_json::from_slice(&bytes).map_err(|_| observation_invalid())?;
+    let expected_tag = root_observation_cursor_integrity_tag(state, &signed.cursor)?;
+    if !cursor_tags_equal(&signed.integrity_tag, &expected_tag) {
+        return Err(observation_invalid());
+    }
+    let cursor = signed.cursor;
+    if cursor.version != 1
+        || cursor.principal_id != state.principal_id
+        || cursor.workspace_id != workspace_id
+        || cursor.workspace_root_id != workspace_root_id
+        || cursor.expected_root_version != expected_root_version
+        || cursor.runtime_id != state.runtime_id
+        || cursor.runtime_incarnation_id != state.local_incarnation_id
+        || cursor.query != query
+        || cursor.freshness != freshness.map(|value| value.as_str().to_owned())
+        || cursor.limit != limit
+        || cursor.after_display_name.is_empty()
+        || cursor.after_display_name.len() > 1024
+        || cursor.after_observation_id.len() != 71
+        || !cursor.after_observation_id.starts_with("sha256:")
+        || cursor.after_observation_id[7..]
+            .bytes()
+            .any(|byte| !byte.is_ascii_hexdigit() || byte.is_ascii_uppercase())
+    {
+        return Err(observation_invalid());
+    }
+    Ok(cursor)
+}
+
+fn cursor_tags_equal(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        })
+        == 0
+}
+
+fn encode_root_observation_cursor(
+    state: &super::ApiState,
+    cursor: RootObservationCursor,
+) -> Result<String, Response> {
+    let signed = SignedRootObservationCursor {
+        integrity_tag: root_observation_cursor_integrity_tag(state, &cursor)?,
+        cursor,
+    };
+    serde_json::to_vec(&signed)
+        .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
+        .map_err(|_| {
+            super::operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Folder search could not be completed",
+            )
+        })
+}
+
+fn root_observation_cursor_integrity_tag(
+    state: &super::ApiState,
+    cursor: &RootObservationCursor,
+) -> Result<String, Response> {
+    let payload = serde_json::to_vec(cursor).map_err(|_| {
+        super::operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Folder search could not be completed",
+        )
+    })?;
+    Ok(state.runtime_identity.keyed_pseudonym(
+        "litecowork.operator.workspace-root-observation-cursor.v1",
+        &payload,
+    ))
+}
+
+fn observation_invalid() -> Response {
+    super::operator_error(
+        StatusCode::BAD_REQUEST,
+        "INVALID_ARGUMENT",
+        "Folder search request is invalid",
     )
+}
+
+fn map_observation_store_error(error: storage_core::StoreError) -> Response {
+    match error {
+        storage_core::StoreError::NotFound => super::operator_error(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "WorkspaceRoot is unavailable",
+        ),
+        storage_core::StoreError::Invalid(_) => observation_invalid(),
+        storage_core::StoreError::Conflict { .. } => super::operator_error(
+            StatusCode::CONFLICT,
+            "STALE_WORKSPACE_VERSION",
+            "Folder state changed; refresh before searching",
+        ),
+        storage_core::StoreError::Busy => super::operator_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "BUSY",
+            "Folder search is temporarily unavailable",
+        ),
+        _ => super::operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL",
+            "Folder search could not be completed",
+        ),
+    }
 }
 
 #[derive(Deserialize)]
@@ -108,7 +426,7 @@ async fn scan_linux_root(
 ) -> Result<Response, Response> {
     use crate::local_filesystem::{
         LocalDirectoryError, LocalFileScanError, LocalFileScanLimits, LocalFileScanSummary,
-        reopen_saved_directory_with_cancel, visit_regular_files_with_progress,
+        RuntimeIdentityKey, reopen_saved_directory_with_cancel, visit_regular_files_with_progress,
     };
     use std::time::Instant;
 
@@ -196,6 +514,15 @@ async fn scan_linux_root(
         .get("file_identity")
         .cloned();
     let runtime_identity = state.runtime_identity.clone();
+    let observed_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|_| {
+            super::operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Folder scan response could not be prepared",
+            )
+        })?;
     let blocking = run_blocking_filesystem_work(move || {
         let _scan_permit = scan_permit;
         ensure_before_scan_deadline(deadlines.final_identity_fence)?;
@@ -224,15 +551,46 @@ async fn scan_linux_root(
             Err(_) => return Err(ScanBlockingError::IdentityUnavailable),
         }
         let mut progress = LocalFileScanSummary::default();
+        let mut observations = Vec::new();
         let result = visit_regular_files_with_progress(
             &selection,
             limits,
             || Instant::now() >= deadlines.traversal,
-            |_| Ok(()),
+            |entry| {
+                let file_identity = entry.identity();
+                let mut file_identity_material = Vec::with_capacity(16);
+                file_identity_material.extend_from_slice(&file_identity.device_id().to_be_bytes());
+                file_identity_material.extend_from_slice(&file_identity.file_id().to_be_bytes());
+                let file_identity_digest = format!(
+                    "sha256:{}",
+                    runtime_identity.keyed_pseudonym(
+                        "litecowork.local-filesystem.workspace-root-file.v1",
+                        &file_identity_material,
+                    )
+                );
+                let observation_id = format!(
+                    "sha256:{}",
+                    runtime_identity.keyed_pseudonym(
+                        "litecowork.local-filesystem.workspace-root-path.v1",
+                        entry.relative_locator(),
+                    )
+                );
+                observations.push(WorkspaceRootFileObservation {
+                    observation_id,
+                    file_identity_digest,
+                    resource_id: None,
+                    display_name: entry.display_basename().to_owned(),
+                    size_bytes: entry.size_bytes(),
+                    modified_at: None,
+                    observed_at: observed_at.clone(),
+                    private_relative_locator: entry.relative_locator().to_vec(),
+                });
+                Ok(())
+            },
             |snapshot| progress = snapshot,
         );
         let result = finalize_scan_result(&selection, deadlines, result)?;
-        Ok((result, progress))
+        Ok((result, progress, observations))
     })
     .await
     .map_err(|_| {
@@ -242,7 +600,7 @@ async fn scan_linux_root(
             "Folder scan could not be completed",
         )
     })?;
-    let (scan_result, progress) = blocking.map_err(|error| match error {
+    let (scan_result, progress, observations) = blocking.map_err(|error| match error {
         ScanBlockingError::Directory(error) => map_local_directory_error(error),
         ScanBlockingError::DeadlineExceeded => super::operator_error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -326,7 +684,7 @@ async fn scan_linux_root(
         completed_at,
     };
     let committed = service
-        .commit_scan(&command, result)
+        .commit_scan(&command, result, observations)
         .map_err(map_store_error)?;
     Ok(no_store_json(committed))
 }

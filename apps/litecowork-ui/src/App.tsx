@@ -8,6 +8,7 @@ import { CoworkerSettings, type CoworkerLeadBindingOption } from "./coworkers/Co
 import { HomeCoworkerOnboarding } from "./coworkers/HomeCoworkerOnboarding";
 import { desktopCoworkerApi } from "./coworkers/desktop-coworker-api";
 import { WorkspaceFirstRun, type WorkspaceListState } from "./workspaces/WorkspaceFirstRun";
+import { WorkspaceRootObservations, type WorkspaceRootObservationPage, type WorkspaceRootObservationRequest } from "./workspaces/WorkspaceRootObservations";
 import { desktopDelegationProfileCatalogApi } from "./coworkers/desktop-delegation-profile-api";
 import type { DelegationProfileCatalogItem } from "./coworkers/delegation-profile-api";
 import type { Coworker, WorkspacePrimaryReceipt } from "./coworkers/coworker-api";
@@ -3715,6 +3716,19 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
                 role={feedbackIsAlert ? "alert" : "status"}
                 aria-live={feedbackIsAlert ? "assertive" : "polite"}
               >{currentScanFeedback.message}</small>}
+              {(root.status === "ACTIVE" || root.status === "PAUSED") && <WorkspaceRootObservations
+                root={root}
+                scanUnsupported={scanUnavailable}
+                loadPage={(request: WorkspaceRootObservationRequest) => invoke<WorkspaceRootObservationPage>("search_workspace_root_observations", {
+                  workspaceId: request.workspaceId,
+                  workspaceRootId: request.workspaceRootId,
+                  rootVersion: request.rootVersion,
+                  query: request.query,
+                  freshness: request.freshness || null,
+                  cursor: request.cursor,
+                  limit: request.limit,
+                })}
+              />}
             </span>
             <span className="resource-preview-unavailable">Metadata policy · inactive</span>
             <span className="persistent-folder-actions">

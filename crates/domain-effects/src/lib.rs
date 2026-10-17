@@ -262,6 +262,330 @@ impl EvidenceRecord {
     }
 }
 
+/// Exact immutable Resource revision identity consumed by a verifier.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationResourceRef {
+    pub workspace_id: String,
+    pub resource_id: String,
+    pub revision_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationInput {
+    pub resource_ref: VerificationResourceRef,
+    /// Digest of bytes actually supplied to the verifier, if bytes were read.
+    pub consumed_digest: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VerificationRunStatus {
+    Pending,
+    Running,
+    Passed,
+    Failed,
+    Inconclusive,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VerificationFailureCode {
+    Timeout,
+    IntegrityFailure,
+    VerifierUnavailable,
+    UnsupportedCriterion,
+    InputUnavailable,
+    TaskCancelled,
+}
+
+impl VerificationFailureCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Timeout => "TIMEOUT",
+            Self::IntegrityFailure => "INTEGRITY_FAILURE",
+            Self::VerifierUnavailable => "VERIFIER_UNAVAILABLE",
+            Self::UnsupportedCriterion => "UNSUPPORTED_CRITERION",
+            Self::InputUnavailable => "INPUT_UNAVAILABLE",
+            Self::TaskCancelled => "TASK_CANCELLED",
+        }
+    }
+}
+
+impl VerificationRunStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "PENDING",
+            Self::Running => "RUNNING",
+            Self::Passed => "PASSED",
+            Self::Failed => "FAILED",
+            Self::Inconclusive => "INCONCLUSIVE",
+        }
+    }
+
+    pub const fn terminal(self) -> bool {
+        matches!(self, Self::Passed | Self::Failed | Self::Inconclusive)
+    }
+}
+
+/// A verifier result permanently pinned to the exact criterion revision, input
+/// revisions and Evidence it consumed. Retries create a different run record.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct VerificationRunRecord {
+    pub verification_run_id: String,
+    pub task_id: String,
+    pub criterion_id: String,
+    pub task_spec_revision: u64,
+    pub criterion_digest: String,
+    pub verifier_kind: String,
+    pub verifier_version: String,
+    pub subject_refs: Vec<VerificationResourceRef>,
+    pub inputs: Vec<VerificationInput>,
+    pub status: VerificationRunStatus,
+    pub evidence_refs: Vec<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub version: u64,
+    pub failure_code: Option<VerificationFailureCode>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VerificationRunError {
+    InvalidRecord,
+    InvalidTransition,
+    TerminalImmutable,
+    VersionOverflow,
+}
+
+impl VerificationRunRecord {
+    pub fn validate(&self) -> Result<(), VerificationRunError> {
+        let valid = |value: &str, max: usize| !invalid_bounded(value, max);
+        if !valid(&self.verification_run_id, 256)
+            || !valid(&self.task_id, 256)
+            || !valid(&self.criterion_id, 512)
+            || self.task_spec_revision == 0
+            || self.version == 0
+            || !valid_digest(&self.criterion_digest)
+            || !valid(&self.verifier_kind, 256)
+            || !valid(&self.verifier_version, 256)
+            || self.evidence_refs.iter().any(|value| !valid(value, 256))
+            || has_duplicates(&self.evidence_refs)
+            || self
+                .subject_refs
+                .iter()
+                .any(|reference| !reference.validate())
+            || self.inputs.iter().any(|input| {
+                !input.resource_ref.validate()
+                    || input
+                        .consumed_digest
+                        .as_deref()
+                        .is_some_and(|digest| !valid_digest(digest))
+            })
+            || has_duplicate_inputs(&self.inputs)
+            || self
+                .started_at
+                .as_deref()
+                .is_some_and(|value| !valid(value, 128))
+            || self
+                .completed_at
+                .as_deref()
+                .is_some_and(|value| !valid(value, 128))
+        {
+            return Err(VerificationRunError::InvalidRecord);
+        }
+        match self.status {
+            VerificationRunStatus::Pending
+                if self.started_at.is_none()
+                    && self.completed_at.is_none()
+                    && self.evidence_refs.is_empty()
+                    && self.failure_code.is_none() => {}
+            VerificationRunStatus::Running
+                if self.started_at.is_some()
+                    && self.completed_at.is_none()
+                    && self.failure_code.is_none()
+                    && self.evidence_refs.is_empty() => {}
+            status if status.terminal() => {
+                if self.started_at.is_none() || self.completed_at.is_none() {
+                    return Err(VerificationRunError::InvalidRecord);
+                }
+                match status {
+                    VerificationRunStatus::Passed
+                        if self.evidence_refs.is_empty() || self.failure_code.is_some() =>
+                    {
+                        return Err(VerificationRunError::InvalidRecord);
+                    }
+                    VerificationRunStatus::Failed | VerificationRunStatus::Inconclusive
+                        if self.failure_code.is_none() =>
+                    {
+                        return Err(VerificationRunError::InvalidRecord);
+                    }
+                    _ => {}
+                }
+            }
+            _ => return Err(VerificationRunError::InvalidRecord),
+        }
+        Ok(())
+    }
+
+    pub fn start(&self, at: String) -> Result<Self, VerificationRunError> {
+        self.validate()?;
+        if self.status != VerificationRunStatus::Pending || !valid_timestamp(&at) {
+            return Err(VerificationRunError::InvalidTransition);
+        }
+        let mut next = self.clone();
+        next.status = VerificationRunStatus::Running;
+        next.started_at = Some(at);
+        next.version = self
+            .version
+            .checked_add(1)
+            .ok_or(VerificationRunError::VersionOverflow)?;
+        next.validate()?;
+        Ok(next)
+    }
+
+    pub fn finish(
+        &self,
+        status: VerificationRunStatus,
+        evidence_refs: Vec<String>,
+        failure_code: Option<VerificationFailureCode>,
+        at: String,
+    ) -> Result<Self, VerificationRunError> {
+        self.validate()?;
+        if self.status.terminal() {
+            return Err(VerificationRunError::TerminalImmutable);
+        }
+        if self.status != VerificationRunStatus::Running
+            || !status.terminal()
+            || !valid_timestamp(&at)
+        {
+            return Err(VerificationRunError::InvalidTransition);
+        }
+        let mut next = self.clone();
+        next.status = status;
+        next.evidence_refs = evidence_refs;
+        next.completed_at = Some(at);
+        next.failure_code = failure_code;
+        next.version = self
+            .version
+            .checked_add(1)
+            .ok_or(VerificationRunError::VersionOverflow)?;
+        next.validate()?;
+        Ok(next)
+    }
+}
+
+impl VerificationResourceRef {
+    fn validate(&self) -> bool {
+        !invalid_bounded(&self.workspace_id, 256)
+            && !invalid_bounded(&self.resource_id, 256)
+            && !invalid_bounded(&self.revision_id, 256)
+    }
+}
+
+fn valid_timestamp(value: &str) -> bool {
+    !invalid_bounded(value, 128)
+}
+
+fn has_duplicates(values: &[String]) -> bool {
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    sorted.windows(2).any(|pair| pair[0] == pair[1])
+}
+
+fn has_duplicate_inputs(inputs: &[VerificationInput]) -> bool {
+    let mut refs = inputs
+        .iter()
+        .map(|input| {
+            (
+                &input.resource_ref.workspace_id,
+                &input.resource_ref.resource_id,
+                &input.resource_ref.revision_id,
+            )
+        })
+        .collect::<Vec<_>>();
+    refs.sort_unstable();
+    refs.windows(2).any(|pair| pair[0] == pair[1])
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequiredVerificationCriterion {
+    pub criterion_id: String,
+    pub task_spec_revision: u64,
+    pub criterion_digest: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CompletionBlocker {
+    InvalidCriterion,
+    VerifierEvidenceBindingUnavailable,
+    CriterionUnverified(String),
+    UnresolvedEffects,
+    PendingApprovals,
+    IncompleteChildren,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompletionAssessment {
+    pub eligible: bool,
+    pub blockers: Vec<CompletionBlocker>,
+}
+
+/// Pure conservative gate. It recommends eligibility only; TaskService still owns
+/// the fenced aggregate transition and must recheck all source heads transactionally.
+pub fn assess_completion(
+    task_id: &str,
+    criteria: &[RequiredVerificationCriterion],
+    runs: &[VerificationRunRecord],
+    unresolved_effects: usize,
+    pending_approvals: usize,
+    incomplete_children: usize,
+) -> CompletionAssessment {
+    // No trusted store path can currently bind a verifier's identity and exact
+    // same-run Evidence. Keep Task completion closed even for a structurally valid
+    // caller-constructed PASSED record until that producer boundary exists.
+    let mut blockers = vec![CompletionBlocker::VerifierEvidenceBindingUnavailable];
+    for criterion in criteria {
+        if invalid_bounded(task_id, 256)
+            || invalid_bounded(&criterion.criterion_id, 512)
+            || criterion.task_spec_revision == 0
+            || !valid_digest(&criterion.criterion_digest)
+        {
+            blockers.push(CompletionBlocker::InvalidCriterion);
+            continue;
+        }
+        let satisfied = runs.iter().any(|run| {
+            run.validate().is_ok()
+                && run.task_id == task_id
+                && run.status == VerificationRunStatus::Passed
+                && run.criterion_id == criterion.criterion_id
+                && run.task_spec_revision == criterion.task_spec_revision
+                && run.criterion_digest == criterion.criterion_digest
+                && !run.evidence_refs.is_empty()
+        });
+        if !satisfied {
+            blockers.push(CompletionBlocker::CriterionUnverified(
+                criterion.criterion_id.clone(),
+            ));
+        }
+    }
+    if unresolved_effects > 0 {
+        blockers.push(CompletionBlocker::UnresolvedEffects);
+    }
+    if pending_approvals > 0 {
+        blockers.push(CompletionBlocker::PendingApprovals);
+    }
+    if incomplete_children > 0 {
+        blockers.push(CompletionBlocker::IncompleteChildren);
+    }
+    CompletionAssessment {
+        eligible: blockers.is_empty(),
+        blockers,
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EffectError {
     InvalidRecord,
@@ -430,5 +754,192 @@ mod tests {
             created_at: "2026-10-08T00:00:00Z".into(),
         };
         assert!(evidence.validate().is_ok());
+    }
+
+    #[test]
+    fn verification_run_pins_exact_criterion_inputs_and_evidence() {
+        let run = VerificationRunRecord {
+            verification_run_id: "verify-1".into(),
+            task_id: "task-1".into(),
+            criterion_id: "criterion-1".into(),
+            task_spec_revision: 4,
+            criterion_digest: format!("sha256:{}", "a".repeat(64)),
+            verifier_kind: "deterministic-test".into(),
+            verifier_version: "2.1".into(),
+            subject_refs: vec![VerificationResourceRef {
+                workspace_id: "ws-1".into(),
+                resource_id: "resource-1".into(),
+                revision_id: "rev-3".into(),
+            }],
+            inputs: vec![VerificationInput {
+                resource_ref: VerificationResourceRef {
+                    workspace_id: "ws-1".into(),
+                    resource_id: "resource-1".into(),
+                    revision_id: "rev-3".into(),
+                },
+                consumed_digest: Some(format!("sha256:{}", "b".repeat(64))),
+            }],
+            status: VerificationRunStatus::Running,
+            version: 2,
+            evidence_refs: vec![],
+            started_at: Some("2026-10-16T10:00:00Z".into()),
+            completed_at: None,
+            failure_code: None,
+        };
+        assert!(run.validate().is_ok());
+        let completed = run
+            .finish(
+                VerificationRunStatus::Passed,
+                vec!["evidence-1".into()],
+                None,
+                "2026-10-16T10:00:01Z".into(),
+            )
+            .unwrap();
+        assert_eq!(completed.status, VerificationRunStatus::Passed);
+        assert_eq!(completed.evidence_refs, vec!["evidence-1"]);
+        assert_eq!(completed.task_spec_revision, 4);
+    }
+
+    #[test]
+    fn verification_run_rejects_duplicate_evidence_and_invalid_consumed_digest() {
+        let mut run = VerificationRunRecord {
+            verification_run_id: "verify-1".into(),
+            task_id: "task-1".into(),
+            criterion_id: "criterion-1".into(),
+            task_spec_revision: 1,
+            criterion_digest: format!("sha256:{}", "a".repeat(64)),
+            verifier_kind: "test".into(),
+            verifier_version: "1".into(),
+            subject_refs: vec![],
+            inputs: vec![],
+            status: VerificationRunStatus::Passed,
+            version: 3,
+            evidence_refs: vec!["evidence-1".into(), "evidence-1".into()],
+            started_at: Some("2026-10-16T10:00:00Z".into()),
+            completed_at: Some("2026-10-16T10:00:01Z".into()),
+            failure_code: None,
+        };
+        assert_eq!(run.validate(), Err(VerificationRunError::InvalidRecord));
+        run.evidence_refs = vec!["evidence-1".into()];
+        run.inputs.push(VerificationInput {
+            resource_ref: VerificationResourceRef {
+                workspace_id: "ws-1".into(),
+                resource_id: "resource-1".into(),
+                revision_id: "rev-3".into(),
+            },
+            consumed_digest: Some("sha256:bad".into()),
+        });
+        assert_eq!(run.validate(), Err(VerificationRunError::InvalidRecord));
+    }
+
+    #[test]
+    fn passed_verification_run_requires_immutable_evidence_reference() {
+        let run = VerificationRunRecord {
+            verification_run_id: "verify-1".into(),
+            task_id: "task-1".into(),
+            criterion_id: "criterion-1".into(),
+            task_spec_revision: 1,
+            criterion_digest: format!("sha256:{}", "a".repeat(64)),
+            verifier_kind: "test".into(),
+            verifier_version: "1".into(),
+            subject_refs: vec![],
+            inputs: vec![],
+            status: VerificationRunStatus::Passed,
+            version: 2,
+            evidence_refs: vec![],
+            started_at: Some("2026-10-16T10:00:00Z".into()),
+            completed_at: Some("2026-10-16T10:00:01Z".into()),
+            failure_code: None,
+        };
+        assert_eq!(run.validate(), Err(VerificationRunError::InvalidRecord));
+    }
+
+    #[test]
+    fn verification_run_terminal_result_cannot_be_rewritten() {
+        let run = VerificationRunRecord {
+            verification_run_id: "verify-1".into(),
+            task_id: "task-1".into(),
+            criterion_id: "criterion-1".into(),
+            task_spec_revision: 1,
+            criterion_digest: format!("sha256:{}", "a".repeat(64)),
+            verifier_kind: "test".into(),
+            verifier_version: "1".into(),
+            subject_refs: vec![],
+            inputs: vec![],
+            status: VerificationRunStatus::Inconclusive,
+            version: 2,
+            evidence_refs: vec![],
+            started_at: Some("2026-10-16T10:00:00Z".into()),
+            completed_at: Some("2026-10-16T10:00:01Z".into()),
+            failure_code: Some(VerificationFailureCode::Timeout),
+        };
+        assert_eq!(
+            run.finish(
+                VerificationRunStatus::Passed,
+                vec!["evidence-1".into()],
+                None,
+                "2026-10-16T10:00:02Z".into(),
+            ),
+            Err(VerificationRunError::TerminalImmutable)
+        );
+    }
+
+    #[test]
+    fn completion_requires_exact_passed_run_and_no_open_authority_or_effect_work() {
+        let criterion = RequiredVerificationCriterion {
+            criterion_id: "criterion-1".into(),
+            task_spec_revision: 4,
+            criterion_digest: format!("sha256:{}", "a".repeat(64)),
+        };
+        let pending = VerificationRunRecord {
+            verification_run_id: "verify-1".into(),
+            task_id: "task-1".into(),
+            criterion_id: "criterion-1".into(),
+            task_spec_revision: 3,
+            criterion_digest: criterion.criterion_digest.clone(),
+            verifier_kind: "test".into(),
+            verifier_version: "1".into(),
+            subject_refs: vec![],
+            inputs: vec![],
+            status: VerificationRunStatus::Passed,
+            version: 2,
+            evidence_refs: vec!["evidence-1".into()],
+            started_at: Some("2026-10-16T10:00:00Z".into()),
+            completed_at: Some("2026-10-16T10:00:01Z".into()),
+            failure_code: None,
+        };
+        let blocked =
+            assess_completion("task-1", &[criterion.clone()], &[pending.clone()], 0, 0, 0);
+        assert!(!blocked.eligible);
+        assert_eq!(
+            blocked.blockers,
+            vec![
+                CompletionBlocker::VerifierEvidenceBindingUnavailable,
+                CompletionBlocker::CriterionUnverified("criterion-1".into())
+            ]
+        );
+
+        let mut exact = pending;
+        exact.task_spec_revision = 4;
+        let not_yet_trusted =
+            assess_completion("task-1", &[criterion.clone()], &[exact.clone()], 0, 0, 0);
+        assert!(!not_yet_trusted.eligible);
+        assert!(
+            not_yet_trusted
+                .blockers
+                .contains(&CompletionBlocker::VerifierEvidenceBindingUnavailable)
+        );
+        let cross_task = assess_completion("task-other", &[criterion], &[exact.clone()], 0, 0, 0);
+        assert!(!cross_task.eligible);
+        let blocked_by_live_state = assess_completion("task-1", &[], &[exact], 1, 1, 1);
+        assert_eq!(
+            blocked_by_live_state.blockers,
+            vec![
+                CompletionBlocker::VerifierEvidenceBindingUnavailable,
+                CompletionBlocker::UnresolvedEffects,
+                CompletionBlocker::PendingApprovals,
+                CompletionBlocker::IncompleteChildren,
+            ]
+        );
     }
 }

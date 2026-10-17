@@ -1,4 +1,4 @@
-export type AgentCandidateCatalogStage = "PROFILE_PROBE_IMPLEMENTED" | "CANDIDATE_ONLY";
+export type AgentCandidateCatalogStage = "PROFILE_PROBE_IMPLEMENTED" | "INSTALLATION_PROBE_IMPLEMENTED" | "CANDIDATE_ONLY";
 
 export type AgentCandidate = {
   id: string;
@@ -23,7 +23,9 @@ function candidate(
     id,
     displayName,
     candidatePath,
-    catalogStage: profileProviderKey ? "PROFILE_PROBE_IMPLEMENTED" : "CANDIDATE_ONLY",
+    catalogStage: profileProviderKey
+      ? "PROFILE_PROBE_IMPLEMENTED"
+      : installationAgentId ? "INSTALLATION_PROBE_IMPLEMENTED" : "CANDIDATE_ONLY",
     profileProviderKey,
     installationAgentId,
     sessionModuleStatus: "NOT_IMPLEMENTED",
@@ -37,19 +39,19 @@ function candidate(
  * local installation. These entries are not runnable adapters or support claims.
  */
 export const AGENT_CANDIDATES: readonly AgentCandidate[] = [
-  candidate("claude-code", "Claude Code", "Native CLI profile candidate; ACP module not established"),
+  candidate("claude-code", "Claude Code", "Bounded CLI installation probe; profile module not established", null, "claude-code"),
   candidate("codex-cli", "Codex CLI", "Codex App Server profile probe", "CODEX", "codex-cli"),
   candidate("opencode", "OpenCode", "OpenCode profile probe; session adapter not qualified", "OPENCODE", "opencode"),
   candidate("cline-cli", "Cline CLI", "Native ACP candidate", null, "cline-cli"),
-  candidate("gemini-cli", "Gemini CLI", "Native ACP candidate"),
-  candidate("github-copilot-cli", "GitHub Copilot CLI", "Native ACP candidate; public preview"),
-  candidate("qwen-code", "Qwen Code", "Native ACP candidate"),
-  candidate("kiro-cli", "Kiro CLI", "Native ACP candidate"),
-  candidate("goose", "Goose", "Native ACP candidate"),
-  candidate("mistral-vibe", "Mistral Vibe", "Native ACP candidate"),
-  candidate("cursor-cli", "Cursor CLI", "Native ACP candidate"),
-  candidate("kimi-code-cli", "Kimi Code CLI", "Native ACP candidate"),
-  candidate("jetbrains-junie-cli", "JetBrains Junie CLI", "Native ACP candidate"),
-  candidate("factory-droid", "Factory Droid", "Launch contract unresolved"),
-  candidate("auggie-cli", "Auggie CLI", "Native ACP candidate"),
+  candidate("gemini-cli", "Gemini CLI", "Bounded CLI installation probe; ACP profile module not established", null, "gemini-cli"),
+  candidate("github-copilot-cli", "GitHub Copilot CLI", "Bounded CLI installation probe; native session module not established", null, "github-copilot-cli"),
+  candidate("qwen-code", "Qwen Code", "Bounded CLI installation probe; ACP profile module not established", null, "qwen-code"),
+  candidate("kiro-cli", "Kiro CLI", "Bounded CLI installation probe; ACP profile module not established", null, "kiro-cli"),
+  candidate("goose", "Goose", "Bounded CLI installation probe; ACP profile module not established", null, "goose"),
+  candidate("mistral-vibe", "Mistral Vibe", "Bounded CLI installation probe; profile module not established", null, "mistral-vibe"),
+  candidate("cursor-cli", "Cursor CLI", "Bounded CLI installation probe; profile module not established", null, "cursor-cli"),
+  candidate("kimi-code-cli", "Kimi Code CLI", "Bounded CLI installation probe; native session module not established", null, "kimi-code-cli"),
+  candidate("jetbrains-junie-cli", "JetBrains Junie CLI", "Bounded CLI installation probe; ACP profile module not established", null, "jetbrains-junie-cli"),
+  candidate("factory-droid", "Factory Droid", "Bounded CLI installation probe; native session module not established", null, "factory-droid"),
+  candidate("auggie-cli", "Auggie CLI", "Bounded CLI installation probe; native session module not established", null, "auggie-cli"),
 ];

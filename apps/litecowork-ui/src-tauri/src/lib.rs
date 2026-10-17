@@ -41,6 +41,7 @@ mod systemd_user_service;
 mod workspace_instruction_bridge_tests;
 #[cfg(test)]
 mod workspace_root_scan_bridge_tests;
+mod workspace_root_observation_bridge;
 mod zip_intake_bridge;
 
 #[cfg(unix)]
@@ -5368,6 +5369,7 @@ pub fn run() {
             list_workspaces,
             list_workspace_roots,
             scan_workspace_root,
+            workspace_root_observation_bridge::search_workspace_root_observations,
             add_workspace_root,
             revoke_workspace_root,
             pause_workspace_root,
@@ -5424,6 +5426,7 @@ pub fn run() {
             automation_bridge::automation_request,
             coworker_bridge::coworker_request,
             delegation_profile_bridge::list_delegation_profiles,
+            delegation_profile_bridge::list_delegation_profile_revisions,
             delegation_profile_write_bridge::create_delegation_profile,
             delegation_profile_write_bridge::revise_delegation_profile,
             delegation_profile_write_bridge::duplicate_delegation_profile,

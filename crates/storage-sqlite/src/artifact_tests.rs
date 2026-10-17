@@ -623,9 +623,17 @@ fn resource_dependents_page_derives_freshness_from_revision_heads_and_paginates_
         [],
     ).expect("verification TaskSpecRevision");
     transaction.execute(
-        "INSERT INTO verification_runs(verification_run_id, task_id, criterion_id, task_spec_revision, criterion_digest, verifier_kind, verifier_version, subject_refs_json, inputs_json, status) VALUES ('verification-run-current', 'dependents-verification-task', 'criterion-1', 1, ?1, 'fixture', '1', '[]', ?2, 'PASSED')",
+        "INSERT INTO verification_runs(verification_run_id, task_id, criterion_id, task_spec_revision, criterion_digest, verifier_kind, verifier_version, subject_refs_json, inputs_json, status) VALUES ('verification-run-current', 'dependents-verification-task', 'criterion-1', 1, ?1, 'fixture', '1', '[]', ?2, 'PENDING')",
         rusqlite::params![format!("sha256:{}", "b".repeat(64)), serde_json::to_string(&[json!({"resource_ref":{"workspace_id":"workspace-artifact","resource_id":"source-current","revision_id":"current-r3"}})]).expect("verification input JSON")],
-    ).expect("immutable VerificationRun");
+    ).expect("new VerificationRun");
+    transaction.execute(
+        "UPDATE verification_runs SET status='RUNNING', started_at='2026-10-08T00:00:00Z', version=2 WHERE verification_run_id='verification-run-current'",
+        [],
+    ).expect("start VerificationRun");
+    transaction.execute(
+        "UPDATE verification_runs SET status='INCONCLUSIVE', completed_at='2026-10-08T00:00:01Z', version=3, failure_code='VERIFIER_UNAVAILABLE' WHERE verification_run_id='verification-run-current'",
+        [],
+    ).expect("settle VerificationRun without claiming success");
     transaction.execute(
         "INSERT INTO dependency_edges(dependency_edge_id, workspace_id, source_resource_id, source_revision_id, dependent_kind, dependent_ref, verification_run_id, created_at) VALUES ('edge-verification-current', 'workspace-artifact', 'source-current', 'current-r3', 'VERIFICATION_RUN', 'verification://verification-run-current', 'verification-run-current', '2026-10-08T00:00:00Z')",
         [],

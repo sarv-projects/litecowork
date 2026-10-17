@@ -7,8 +7,9 @@ use std::{sync::Arc, time::Duration};
 use storage_core::{
     DeviceIdentityRecord, LocalFileIdentityBindingRecord, RuntimeIncarnationLocalObservationRecord,
     RuntimeIncarnationRecord, RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeRecord,
-    RuntimeWorkspaceBindingStore, WorkspaceCreateRequest, WorkspaceRootScanCommit,
-    WorkspaceRootScanResult, WorkspaceRootScanStatus, WorkspaceRootStore,
+    RuntimeWorkspaceBindingStore, WorkspaceCreateRequest, WorkspaceRootFileObservation,
+    WorkspaceRootScanCommit, WorkspaceRootScanResult, WorkspaceRootScanStatus,
+    WorkspaceRootStore,
 };
 use zeroize::Zeroizing;
 
@@ -239,6 +240,28 @@ fn scan_commit(request_id: &str, runtime_id: &str) -> WorkspaceRootScanCommit {
             partial_reason: None,
             completed_at: NOW.to_owned(),
         },
+        observations: vec![
+            WorkspaceRootFileObservation {
+                observation_id: format!("sha256:{}", "b".repeat(64)),
+                file_identity_digest: format!("sha256:{}", "c".repeat(64)),
+                resource_id: None,
+                display_name: "one.txt".to_owned(),
+                size_bytes: 1,
+                modified_at: None,
+                observed_at: NOW.to_owned(),
+                private_relative_locator: b"one.txt".to_vec(),
+            },
+            WorkspaceRootFileObservation {
+                observation_id: format!("sha256:{}", "d".repeat(64)),
+                file_identity_digest: format!("sha256:{}", "e".repeat(64)),
+                resource_id: None,
+                display_name: "two.txt".to_owned(),
+                size_bytes: 2,
+                modified_at: None,
+                observed_at: NOW.to_owned(),
+                private_relative_locator: b"two.txt".to_vec(),
+            },
+        ],
     }
 }
 

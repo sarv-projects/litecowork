@@ -3,9 +3,16 @@ import assert from "node:assert/strict";
 import {
   TaskPresentationStreamController,
   emptyTaskStream,
+  isTaskSnapshotEpochCurrent,
   type TaskSnapshotStreamDriver,
   type TaskStreamEnvelope,
 } from "../src/tasks/task-stream.ts";
+
+test("an older unary snapshot cannot commit progress after a newer stream snapshot", () => {
+  assert.equal(isTaskSnapshotEpochCurrent(4, 4), true);
+  assert.equal(isTaskSnapshotEpochCurrent(4, 5), false);
+  assert.equal(isTaskSnapshotEpochCurrent(Number.NaN, 4), false);
+});
 
 const workspaceId = "workspace-1";
 const taskId = "task-1";

@@ -240,8 +240,8 @@ Task becomes `CANCELLED`.
 Events: `task.status.changed.v1`, Attempt and CapabilityInvocation status events,
 `agent.session.closed.v1` for the planning session, `user.request.resolved.v1` and
 `approval.resolved.v1` for owner-service closures, `verification.started.v1`/
-`verification.completed.v1` for already-active runs, lease and Effect events, and the
-final Task status event.
+`verification.completed.v1`/`verification.completed.v2` for already-active runs, lease and
+Effect events, and the final Task status event.
 
 ## F11 — Artifact production/revision
 
@@ -471,12 +471,17 @@ is REVOKED.
 explicit, owner-authenticated Linux metadata census with exact request replay and final
 Workspace/root/Runtime binding fences. It reports the requested Workspace/root/version,
 bounded entry/file counts, COMPLETE/PARTIAL status, safe partial reason, and completion
-time. It returns no path, file name, or filesystem identity. It does not create the
-Resource/Revision/Location observations,
-membership projection, root-aware search, watcher, or deletion reconciliation described
-in this target flow. At most two Linux scan jobs run at once; an occupied-capacity response
-does no filesystem work and creates no receipt, so the same request identity can be retried.
-The endpoint therefore does not complete F28 or E02-S03.
+time. It returns no path, file name, or filesystem identity. The scan atomically updates a
+Runtime-keyed derived observation projection, and the owner-only
+`GET /v1/workspace-roots/{id}/observations` route provides literal basename search with
+root-version-bound keyset pagination. These rows are observed-file metadata, not canonical
+Resource/Revision/Location aggregates or Resource membership. A complete scan may mark
+unseen observations stale; a partial scan preserves unseen observations without inferring
+deletion. Watchers, canonical Resource promotion, content search, and deletion
+reconciliation described in the full target flow remain unserved. At most two Linux scan
+jobs run at once; an occupied-capacity response does no filesystem work and creates no
+receipt, so the same request identity can be retried. These served slices therefore do not
+complete F28 or E02-S03.
 
 Actors: User, Operator UI, ResourceService, WorldIndexer, local Runtime.
 
@@ -605,7 +610,8 @@ Precondition: Task is nonterminal and user has authority to manage it.
    action.
 
 Events: `task.pause.requested.v1`, `agent.session.closed.v1`, `attempt.checkpointed.v1`,
-`capability.invocation.status.changed.v1`, `verification.completed.v1` for any run already
+`capability.invocation.status.changed.v1`, `verification.completed.v1`/`verification.completed.v2`
+for any run already
 in progress, lease/effect reconciliation events, `task.paused.v1`, and `task.resumed.v1`.
 
 Failure behavior: an unsafe checkpoint, unresolved Effect, unconfirmed provider

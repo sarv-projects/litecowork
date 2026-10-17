@@ -10,7 +10,7 @@ mod trust;
 
 use std::{path::PathBuf, process::ExitCode};
 
-const HELP: &str = "litecoworkd — LiteCowork local Runtime\n\nUSAGE:\n    litecoworkd [--help | --version]\n    litecoworkd run --data-dir <private-directory>\n    litecoworkd status --data-dir <private-directory>\n\n`run` starts the local daemon, acquires the single-instance lock, opens durable storage,\nand serves the local Operator API over OS-authenticated Unix IPC on supported platforms.\nWorkspace creation is idempotent per local Principal and request key. This build does not accept work: the Runtime remains DEGRADED until Task recovery and execution services are available, and it does not launch agents. SIGINT/SIGTERM are process-supervisor shutdown signals; there is no authenticated Operator stop command yet.\n";
+const HELP: &str = "litecoworkd — LiteCowork local Runtime\n\nUSAGE:\n    litecoworkd [--help | --version]\n    litecoworkd run --data-dir <private-directory>\n    litecoworkd status --data-dir <private-directory>\n\n`run` starts the local daemon, acquires the single-instance lock, opens durable storage,\nand serves the local Operator API over OS-authenticated local IPC on supported platforms.\nWorkspace creation is idempotent per local Principal and request key. This build does not accept work: the Runtime remains DEGRADED until Task recovery and execution services are available, and it does not launch agents. SIGINT/SIGTERM are process-supervisor shutdown signals; there is no authenticated Operator stop command yet.\n";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

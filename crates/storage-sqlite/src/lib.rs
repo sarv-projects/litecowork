@@ -27,6 +27,7 @@ mod routines;
 mod runtime_identity;
 mod suggestions;
 mod user_request_details;
+mod verification_runs;
 mod workspace_archive;
 #[cfg(all(test, unix))]
 mod workspace_root_scan_tests;
@@ -37,7 +38,8 @@ pub use coworkers::{
     AutomationPage, AutomationRevisionPage, CoworkerEventContext, CoworkerPage, SqliteCoworkerStore,
 };
 pub use delegation_profiles::{
-    DelegationProfileEventContext, DelegationProfilePage, SqliteDelegationProfileStore,
+    DelegationProfileEventContext, DelegationProfilePage, DelegationProfileRevisionPage,
+    SqliteDelegationProfileStore,
 };
 pub use effect_evidence::SqliteEffectEvidenceStore;
 pub use environments::SqliteEnvironmentStore;
@@ -85,6 +87,7 @@ use storage_core::{
     EventDraft, EventStore, IdempotentWorkspaceStore, LocalAgentEndpointBindingRecord,
     LocalRuntimeLifecycleSnapshot, LocalRuntimeWorkspaceBindingLookup,
     LocalRuntimeWorkspaceEnrollmentRequest, MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE,
+    MAX_WORKSPACE_ROOT_SCAN_ENTRIES,
     MarkStartingAgentSessionLost, PinnedResourceRef, PlanAcceptance, PlanAcceptanceCommit,
     PlanRevisionRecord, PreparedResourceTextIndex, ReplicationPolicy,
     ResourceDependencyPageRequest, ResourceDependencyViewRecord, ResourceLocationRecord,
@@ -106,7 +109,8 @@ use storage_core::{
     WorkspaceRootRevalidationCandidate, WorkspaceRootRevalidationCommit,
     WorkspaceRootRevalidationFailure, WorkspaceRootScanCandidate, WorkspaceRootScanCommit,
     WorkspaceRootScanResult, WorkspaceRootScanStatus, WorkspaceRootStatusAction,
-    WorkspaceRootStatusCommit, WorkspaceRootStore,
+    RootObservationScanStatus, WorkspaceRootObservationBatch, WorkspaceRootStatusCommit,
+    WorkspaceRootStore,
 };
 
 #[cfg(unix)]
@@ -142,7 +146,9 @@ const SQLITE_V16_DDL: &str = include_str!("../../../docs/schemas/sqlite-v16.sql"
 const SQLITE_V17_DDL: &str = include_str!("../../../docs/schemas/sqlite-v17.sql");
 const SQLITE_V18_DDL: &str = include_str!("../../../docs/schemas/sqlite-v18.sql");
 const SQLITE_V19_DDL: &str = include_str!("../../../docs/schemas/sqlite-v19.sql");
-const SCHEMA_VERSION: i64 = 19;
+const SQLITE_V20_DDL: &str = include_str!("../../../docs/schemas/sqlite-v20.sql");
+const SQLITE_V21_DDL: &str = include_str!("../../../docs/schemas/sqlite-v21.sql");
+const SCHEMA_VERSION: i64 = 21;
 const V3_SCHEMA_VERSION: i64 = 3;
 const V4_SCHEMA_VERSION: i64 = 4;
 const V5_SCHEMA_VERSION: i64 = 5;
@@ -160,6 +166,8 @@ const V16_SCHEMA_VERSION: i64 = 16;
 const V17_SCHEMA_VERSION: i64 = 17;
 const V18_SCHEMA_VERSION: i64 = 18;
 const V19_SCHEMA_VERSION: i64 = 19;
+const V20_SCHEMA_VERSION: i64 = 20;
+const V21_SCHEMA_VERSION: i64 = 21;
 
 fn require_task_planning_isolation_admission() -> Result<(), StoreError> {
     // No qualified Runtime-owned admission proof producer is connected in this
@@ -187,6 +195,8 @@ const V16_MIGRATION_NAME: &str = "agent_registry_v16";
 const V17_MIGRATION_NAME: &str = "resource_content_blob_registry_v17";
 const V18_MIGRATION_NAME: &str = "resource_upload_chunk_purge_registry_v18";
 const V19_MIGRATION_NAME: &str = "resource_index_blob_registry_v19";
+const V20_MIGRATION_NAME: &str = "verification_run_lifecycle_v20";
+const V21_MIGRATION_NAME: &str = "workspace_root_observations_v21";
 #[cfg(test)]
 const MIGRATION_NAME: &str = V1_MIGRATION_NAME; // version-one compatibility for schema baseline assertions
 const STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.aggregate-state+json";
@@ -509,6 +519,12 @@ enum Command {
     },
     EffectEvidenceOperation {
         operation: effect_evidence::WriterOperation,
+    },
+    VerificationRunOperation {
+        operation: verification_runs::WriterOperation,
+    },
+    WorkspaceRootObservationOperation {
+        operation: resource_index::WorkspaceRootObservationWriterOperation,
     },
     InvocationOperation {
         operation: invocations::WriterOperation,
@@ -9483,6 +9499,8 @@ fn validate_workspace_root_scan_commit(commit: &WorkspaceRootScanCommit) -> Resu
         || payload.get("workspace_root_id").and_then(Value::as_str)
             != Some(commit.workspace_root_id.as_str())
         || payload_version != commit.expected_root_version
+        || commit.observations.len() != commit.result.files_observed as usize
+        || commit.observations.len() > MAX_WORKSPACE_ROOT_SCAN_ENTRIES as usize
     {
         return Err(StoreError::Invalid(
             "WorkspaceRoot scan commit does not match its receipt request".to_owned(),
@@ -9845,6 +9863,25 @@ fn commit_workspace_root_scan_transaction(
         return Err(StoreError::NotFound);
     }
     workspace_root_private_path(&locator.private_locator).map_err(|_| StoreError::NotFound)?;
+
+    resource_index::workspace_root_observations::reconcile_workspace_root_observations_in_transaction(
+        &tx,
+        &WorkspaceRootObservationBatch {
+            workspace_id: commit.workspace_id.clone(),
+            workspace_root_id: commit.workspace_root_id.clone(),
+            expected_root_version: commit.expected_root_version,
+            runtime_id: commit.runtime_id.clone(),
+            runtime_incarnation_id: commit.runtime_incarnation_id.clone(),
+            request_id: commit.request.request_id.clone(),
+            request_digest: request_digest.clone(),
+            status: match commit.result.status {
+                WorkspaceRootScanStatus::Complete => RootObservationScanStatus::Complete,
+                WorkspaceRootScanStatus::Partial => RootObservationScanStatus::Partial,
+            },
+            observations: commit.observations,
+            completed_at: commit.result.completed_at.clone(),
+        },
+    )?;
 
     let response_json = String::from_utf8(canonical_json(&commit.result)?)
         .map_err(|error| StoreError::Invalid(error.to_string()))?;
@@ -17680,6 +17717,10 @@ fn writer_loop(
                     Command::RichPresentationOperation { operation } => operation(&mut connection),
                     Command::ConversationOperation { operation } => operation(&mut connection),
                     Command::EffectEvidenceOperation { operation } => operation(&mut connection),
+                    Command::VerificationRunOperation { operation } => operation(&mut connection),
+                    Command::WorkspaceRootObservationOperation { operation } => {
+                        operation(&mut connection)
+                    }
                     Command::InvocationOperation { operation } => operation(&mut connection),
                     Command::ArtifactOperation { operation } => operation(&mut connection),
                     Command::AuthorizeArtifactAppend {
@@ -19179,7 +19220,9 @@ fn migrate_with_failpoint(
         verify_migration_record(connection, 16, V16_MIGRATION_NAME, SQLITE_V16_DDL, false)?;
         verify_migration_record(connection, 17, V17_MIGRATION_NAME, SQLITE_V17_DDL, false)?;
         verify_migration_record(connection, 18, V18_MIGRATION_NAME, SQLITE_V18_DDL, false)?;
-        verify_migration_record(connection, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL, true)?;
+        verify_migration_record(connection, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL, false)?;
+        verify_migration_record(connection, 20, V20_MIGRATION_NAME, SQLITE_V20_DDL, false)?;
+        verify_migration_record(connection, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL, true)?;
         return Ok(());
     }
 
@@ -19366,7 +19409,25 @@ fn migrate_with_failpoint(
                 19,
                 V19_MIGRATION_NAME,
                 SQLITE_V19_DDL,
-                schema_version == 19,
+                schema_version == V19_SCHEMA_VERSION,
+            )?;
+        }
+        if schema_version >= 20 {
+            verify_migration_record(
+                connection,
+                20,
+                V20_MIGRATION_NAME,
+                SQLITE_V20_DDL,
+                schema_version == V20_SCHEMA_VERSION,
+            )?;
+        }
+        if schema_version >= 21 {
+            verify_migration_record(
+                connection,
+                21,
+                V21_MIGRATION_NAME,
+                SQLITE_V21_DDL,
+                schema_version == V21_SCHEMA_VERSION,
             )?;
         }
         if schema_version == 1 {
@@ -19497,7 +19558,19 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V18_SCHEMA_VERSION {
         migrate_resource_index_blob_registry(connection, failpoint)?;
-    } else if current_version != V19_SCHEMA_VERSION {
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V19_SCHEMA_VERSION {
+        migrate_verification_run_lifecycle(connection, failpoint)?;
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V20_SCHEMA_VERSION {
+        migrate_workspace_root_observations(connection, failpoint)?;
+    } else if current_version != V21_SCHEMA_VERSION {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -19838,6 +19911,48 @@ fn migrate_resource_index_blob_registry(
     record_migration(&transaction, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL)?;
     transaction
         .pragma_update(None, "user_version", V19_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version twenty adds immutable, versioned VerificationRun outcomes and typed failure codes.
+fn migrate_verification_run_lifecycle(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V20_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV20Migration)?;
+    record_migration(&transaction, 20, V20_MIGRATION_NAME, SQLITE_V20_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V20_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version twenty-one stores fenced local observations beneath selected WorkspaceRoots.
+fn migrate_workspace_root_observations(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V21_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV21Migration)?;
+    record_migration(&transaction, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V21_SCHEMA_VERSION)
         .map_err(map_database_error)?;
     validate_schema(&transaction)?;
     transaction.commit().map_err(map_database_error)?;
@@ -20441,6 +20556,8 @@ enum Failpoint {
     DuringV17Migration,
     DuringV18Migration,
     DuringV19Migration,
+    DuringV20Migration,
+    DuringV21Migration,
     AfterAggregate,
     AfterSequence,
     AfterEvent,

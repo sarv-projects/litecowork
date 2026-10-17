@@ -406,7 +406,7 @@ fn v18_context_document_purge_migration_rolls_back_exactly_and_backfills_on_retr
     let final_version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read schema version after migration retry");
-    assert_eq!(final_version, V19_SCHEMA_VERSION);
+    assert_eq!(final_version, SCHEMA_VERSION);
     verify_migration_record(&connection, 18, V18_MIGRATION_NAME, SQLITE_V18_DDL, false)
         .expect("verify successful v18 migration receipt");
 

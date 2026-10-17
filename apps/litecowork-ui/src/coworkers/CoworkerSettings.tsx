@@ -4,6 +4,7 @@ import type {
   CoworkerPresence, CoworkerRevisionInput, CoworkerSettingsApi, LeadFailoverPolicy,
   WorkspacePrimaryReceipt,
 } from "./coworker-api";
+import { appendCoworkerRosterPage, CoworkerRosterRequestEpoch, isCoworkerDetailRequestCurrent, validateQuickCoworkerIdentity } from "./coworker-roster-request-epoch";
 import "./coworker-settings.css";
 
 export type CoworkerLeadBindingOption = {
@@ -47,7 +48,7 @@ function newRevision(): CoworkerRevisionInput {
   return {
     name: "",
     avatar_ref: null,
-    role_description: "General-purpose assistant",
+    role_description: "",
     default_lead_agent_binding_id: null,
     delegation_strategy: "BALANCED",
     enabled_delegation_profile_ids: [],
@@ -116,8 +117,14 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
   const [archiveConfirm, setArchiveConfirm] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [workspaceVersionLocal, setWorkspaceVersionLocal] = useState(workspaceVersion);
-  const listGeneration = useRef(0);
+  const rosterRequests = useRef(new CoworkerRosterRequestEpoch());
+  const pageController = useRef<AbortController | null>(null);
+  const activeWorkspace = useRef(workspaceId);
+  activeWorkspace.current = workspaceId;
+  const activeCoworker = useRef(selectedId);
+  activeCoworker.current = selectedId;
   const requestKeys = useRef(new Map<string, { signature: string; requestId: string }>());
+  const detailGeneration = useRef(0);
 
   useEffect(() => setWorkspaceVersionLocal(workspaceVersion), [workspaceVersion]);
 
@@ -125,6 +132,7 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
     if (!workspaceId) {
       setItems([]);
       setCursor(null);
+      activeCoworker.current = null;
       setSelectedId(null);
       setSelected(null);
       setPresence(null);
@@ -133,28 +141,37 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
       return;
     }
     const controller = new AbortController();
-    const generation = ++listGeneration.current;
+    const rosterRequest = rosterRequests.current.begin(workspaceId);
     setListLoading(true);
     setListFailure(null);
+    setOperation(null);
     setItems([]);
     setCursor(null);
+    activeCoworker.current = null;
     setSelectedId(null);
     setSelected(null);
     setPresence(null);
     setMode("view");
     setForm(null);
     void api.list(undefined, controller.signal).then(page => {
-      if (controller.signal.aborted || generation !== listGeneration.current) return;
+      if (controller.signal.aborted || !rosterRequests.current.isCurrent(rosterRequest) || activeWorkspace.current !== workspaceId) return;
       if (page.items.some(item => item.workspace_id !== workspaceId)) throw new Error("Coworker list belongs to a different Workspace.");
       setItems(page.items);
       setCursor(page.next_cursor);
-      setSelectedId(page.items[0]?.coworker_id ?? null);
+      const initialCoworkerId = page.items[0]?.coworker_id ?? null;
+      activeCoworker.current = initialCoworkerId;
+      setSelectedId(initialCoworkerId);
     }).catch(error => {
-      if (!controller.signal.aborted && generation === listGeneration.current) setListFailure(displayError(error));
+      if (!controller.signal.aborted && rosterRequests.current.isCurrent(rosterRequest) && activeWorkspace.current === workspaceId) setListFailure(displayError(error));
     }).finally(() => {
-      if (!controller.signal.aborted && generation === listGeneration.current) setListLoading(false);
+      if (!controller.signal.aborted && rosterRequests.current.isCurrent(rosterRequest) && activeWorkspace.current === workspaceId) setListLoading(false);
     });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      pageController.current?.abort();
+      pageController.current = null;
+      rosterRequests.current.invalidate();
+    };
   }, [api, workspaceId, reloadKey]);
 
   useEffect(() => {
@@ -167,22 +184,30 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
       return;
     }
     const controller = new AbortController();
+    const requestWorkspaceId = workspaceId;
+    const requestCoworkerId = selectedId;
+    const requestGeneration = ++detailGeneration.current;
+    const isCurrent = () => requestGeneration === detailGeneration.current
+      && isCoworkerDetailRequestCurrent(requestWorkspaceId, activeWorkspace.current, requestCoworkerId, activeCoworker.current);
     setDetailLoading(true);
     setDetailFailure(null);
     setPresence(null);
     setPresenceMessage(null);
     void api.get(selectedId, controller.signal).then(item => {
-      if (controller.signal.aborted) return;
-      if (item.workspace_id !== workspaceId || item.coworker_id !== selectedId) throw new Error("Coworker response scope mismatch.");
+      if (controller.signal.aborted || !isCurrent()) return;
+      if (item.workspace_id !== requestWorkspaceId || item.coworker_id !== requestCoworkerId) throw new Error("Coworker response scope mismatch.");
       setSelected(item);
       setItems(current => current.map(row => row.coworker_id === item.coworker_id ? item : row));
     }).catch(error => {
-      if (!controller.signal.aborted) setDetailFailure(displayError(error));
-    }).finally(() => { if (!controller.signal.aborted) setDetailLoading(false); });
-    void api.getPresence(selectedId, controller.signal).then(value => {
-      if (!controller.signal.aborted) setPresence(value);
+      if (!controller.signal.aborted && isCurrent()) setDetailFailure(displayError(error));
+    }).finally(() => { if (!controller.signal.aborted && isCurrent()) setDetailLoading(false); });
+    void api.getPresence(requestCoworkerId!, controller.signal).then(value => {
+      if (!controller.signal.aborted && isCurrent()) {
+        if (value.coworker_id !== requestCoworkerId) throw new Error("Coworker presence response identity mismatch.");
+        setPresence(value);
+      }
     }).catch(() => {
-      if (!controller.signal.aborted) setPresenceMessage("Live availability could not be loaded. Coworker setup and history are still available.");
+      if (!controller.signal.aborted && isCurrent()) setPresenceMessage("Live availability could not be loaded. Coworker setup and history are still available.");
     });
     return () => controller.abort();
   }, [api, workspaceId, selectedId, mode, reloadKey]);
@@ -197,6 +222,7 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
   function clearRequest(key: string) { requestKeys.current.delete(key); }
 
   function startCreate() {
+    activeCoworker.current = null;
     setSelectedId(null);
     setSelected(null);
     setPresence(null);
@@ -244,27 +270,43 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
     event.preventDefault();
     if (!form || operation) return;
     const normalized = { ...form, name: form.name.trim(), role_description: form.role_description.trim() };
+    if (mode === "create") {
+      const identityError = validateQuickCoworkerIdentity(normalized.name, normalized.role_description);
+      if (identityError) { setFormMessage(identityError); return; }
+    }
     if (!normalized.name || normalized.name.length > 120) { setFormMessage("Enter a name between 1 and 120 characters."); return; }
     if (normalized.role_description.length > 2000) { setFormMessage("Keep the role description within 2,000 characters."); return; }
     const signature = JSON.stringify([workspaceId, mode, selected?.coworker_id ?? null, selected?.version ?? null, normalized]);
     const key = mode === "create" ? "create" : `revise:${selected?.coworker_id}`;
     const id = requestId(key, signature);
+    const rosterRequest = rosterRequests.current.current();
+    if (!rosterRequest || rosterRequest.workspaceId !== workspaceId) return;
+    const requestedCoworkerId = selected?.coworker_id ?? null;
+    const isCurrent = () => rosterRequests.current.isCurrent(rosterRequest)
+      && isCoworkerDetailRequestCurrent(workspaceId, activeWorkspace.current, requestedCoworkerId, activeCoworker.current);
     setOperation("save"); setFormMessage(null); setDetailFailure(null);
     try {
       const saved = mode === "create"
         ? await api.create(normalized, id)
         : selected ? await api.revise(selected.coworker_id, selected.version, normalized, id) : null;
       if (!saved) throw new Error("Select a Coworker before saving changes.");
-      if (saved.workspace_id !== workspaceId) throw new Error("Saved Coworker belongs to a different Workspace.");
+      if (saved.workspace_id !== workspaceId || (requestedCoworkerId && saved.coworker_id !== requestedCoworkerId)) {
+        throw new Error("Saved Coworker response identity does not match the request.");
+      }
       clearRequest(key);
+      if (!isCurrent()) return;
       setItems(current => mode === "create" ? [saved, ...current] : current.map(row => row.coworker_id === saved.coworker_id ? saved : row));
+      activeCoworker.current = saved.coworker_id;
       setSelectedId(saved.coworker_id);
       setSelected(saved);
       setMode("view"); setForm(null); setFormMessage(mode === "create" ? "Coworker created." : `Saved as revision ${saved.current_revision}.`);
     } catch (error) {
+      if (!isCurrent()) return;
       setDetailFailure(displayError(error));
       if (error instanceof Error && "status" in error && (error as { status?: number }).status === 409) setFormMessage("Your draft is preserved. Reload the current Coworker before retrying.");
-    } finally { setOperation(null); }
+    } finally {
+      if (isCurrent()) setOperation(null);
+    }
   }
 
   async function transition(status: "PAUSED" | "ACTIVE" | "ARCHIVED") {
@@ -276,17 +318,30 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
     const signature = JSON.stringify([workspaceId, selected.coworker_id, selected.version, status]);
     const key = `status:${selected.coworker_id}`;
     const id = requestId(key, signature);
+    const rosterRequest = rosterRequests.current.current();
+    if (!rosterRequest || rosterRequest.workspaceId !== workspaceId) return;
+    const requestedCoworkerId = selected.coworker_id;
+    const isCurrent = () => rosterRequests.current.isCurrent(rosterRequest)
+      && isCoworkerDetailRequestCurrent(workspaceId, activeWorkspace.current, requestedCoworkerId, activeCoworker.current);
     setOperation(status === "PAUSED" ? "pause" : status === "ACTIVE" ? "resume" : "archive");
     setDetailFailure(null); setFormMessage(null); setArchiveConfirm(false);
     try {
-      const updated = await api.changeStatus(selected.coworker_id, selected.version, status, id);
+      const updated = await api.changeStatus(requestedCoworkerId, selected.version, status, id);
+      if (updated.workspace_id !== workspaceId || updated.coworker_id !== requestedCoworkerId) {
+        throw new Error("Coworker status response identity does not match the request.");
+      }
       clearRequest(key);
+      if (!isCurrent()) return;
       setSelected(updated);
       setItems(current => current.map(row => row.coworker_id === updated.coworker_id ? updated : row));
       setFormMessage(status === "PAUSED" ? "Paused. Existing Tasks continue under their own policy." : status === "ACTIVE" ? "Resumed for future proactive work." : "Archived. Linked history is retained.");
       if (status === "ARCHIVED") setMode("view");
-    } catch (error) { setDetailFailure(displayError(error)); }
-    finally { setOperation(null); }
+    } catch (error) {
+      if (isCurrent()) setDetailFailure(displayError(error));
+    }
+    finally {
+      if (isCurrent()) setOperation(null);
+    }
   }
 
   async function setPrimary(targetId: string | null) {
@@ -294,47 +349,76 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
     const signature = JSON.stringify([workspaceId, workspaceVersionLocal, targetId]);
     const key = `primary:${workspaceId}`;
     const id = requestId(key, signature);
+    const rosterRequest = rosterRequests.current.current();
+    if (!rosterRequest || rosterRequest.workspaceId !== workspaceId) return;
     setOperation("primary"); setDetailFailure(null); setFormMessage(null);
     try {
       const updatedWorkspace = await api.setPrimary(targetId, workspaceVersionLocal, id);
+      if (updatedWorkspace.workspace_id !== workspaceId) throw new Error("Workspace primary response identity mismatch.");
       clearRequest(key);
+      if (!rosterRequests.current.isCurrent(rosterRequest) || activeWorkspace.current !== workspaceId) return;
       setWorkspaceVersionLocal(updatedWorkspace.version);
       onWorkspaceUpdated?.(updatedWorkspace);
       setItems(current => current.map(item => ({ ...item, is_primary: item.coworker_id === updatedWorkspace.primary_coworker_id })));
       setSelected(current => current ? { ...current, is_primary: current.coworker_id === updatedWorkspace.primary_coworker_id } : current);
       setFormMessage(targetId ? "Primary Coworker updated. New work can use this Coworker by default." : "Primary Coworker cleared. Existing Tasks are unchanged.");
-    } catch (error) { setDetailFailure(displayError(error)); }
-    finally { setOperation(null); }
+    } catch (error) {
+      if (rosterRequests.current.isCurrent(rosterRequest) && activeWorkspace.current === workspaceId) setDetailFailure(displayError(error));
+    }
+    finally {
+      if (rosterRequests.current.isCurrent(rosterRequest) && activeWorkspace.current === workspaceId) setOperation(null);
+    }
   }
 
   async function loadMore() {
     if (!cursor || listLoading) return;
+    const rosterRequest = rosterRequests.current.current();
+    if (!rosterRequest || rosterRequest.workspaceId !== workspaceId) return;
+    pageController.current?.abort();
     const controller = new AbortController();
+    pageController.current = controller;
     setListLoading(true); setListFailure(null);
     try {
       const page = await api.list(cursor, controller.signal);
-      if (page.items.some(item => item.workspace_id !== workspaceId)) throw new Error("Coworker page belongs to a different Workspace.");
-      setItems(current => {
-        const seen = new Set(current.map(item => item.coworker_id));
-        return [...current, ...page.items.filter(item => !seen.has(item.coworker_id))];
-      });
-      setCursor(page.next_cursor);
-    } catch (error) { setListFailure(displayError(error)); }
-    finally { setListLoading(false); }
+      if (controller.signal.aborted || !rosterRequests.current.isCurrent(rosterRequest) || activeWorkspace.current !== workspaceId) return;
+      const appended = appendCoworkerRosterPage([], page, workspaceId, cursor);
+      setItems(current => appendCoworkerRosterPage(current, page, workspaceId, cursor).items);
+      setCursor(appended.nextCursor);
+    } catch (error) {
+      if (!controller.signal.aborted && rosterRequests.current.isCurrent(rosterRequest) && activeWorkspace.current === workspaceId) setListFailure(displayError(error));
+    }
+    finally {
+      if (pageController.current === controller) pageController.current = null;
+      if (!controller.signal.aborted && rosterRequests.current.isCurrent(rosterRequest) && activeWorkspace.current === workspaceId) setListLoading(false);
+    }
   }
 
   async function reloadSelected() {
     if (!selectedId) { setReloadKey(value => value + 1); return; }
+    const rosterRequest = rosterRequests.current.current();
+    if (!rosterRequest || rosterRequest.workspaceId !== workspaceId) return;
+    const requestWorkspaceId = workspaceId;
+    const requestCoworkerId = selectedId;
+    const isCurrent = () => rosterRequests.current.isCurrent(rosterRequest)
+      && isCoworkerDetailRequestCurrent(requestWorkspaceId, activeWorkspace.current, requestCoworkerId, activeCoworker.current);
     setDetailLoading(true); setDetailFailure(null);
     try {
-      const latest = await api.get(selectedId);
+      const latest = await api.get(requestCoworkerId);
+      if (!isCurrent()) return;
       if (latest.workspace_id !== workspaceId || latest.coworker_id !== selectedId) throw new Error("Coworker response scope mismatch.");
       setSelected(latest);
       setItems(current => current.map(item => item.coworker_id === latest.coworker_id ? latest : item));
-      setPresence(await api.getPresence(selectedId));
+      const latestPresence = await api.getPresence(requestCoworkerId);
+      if (!isCurrent()) return;
+      if (latestPresence.coworker_id !== requestCoworkerId) throw new Error("Coworker presence response identity mismatch.");
+      setPresence(latestPresence);
       setMode("view"); setForm(null); setFormMessage("Showing the latest saved Coworker revision.");
-    } catch (error) { setDetailFailure(displayError(error)); }
-    finally { setDetailLoading(false); }
+    } catch (error) {
+      if (isCurrent()) setDetailFailure(displayError(error));
+    }
+    finally {
+      if (isCurrent()) setDetailLoading(false);
+    }
   }
 
   const eligibleLeadBindings = leadBindings?.filter(item => item.enabled && item.lead_eligible) ?? [];
@@ -353,7 +437,7 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
         {listFailure && <div className="coworker-error" role="alert"><p>{listFailure}</p><button type="button" onClick={() => setReloadKey(value => value + 1)}>Retry</button></div>}
         {!listLoading && !listFailure && items.length === 0 && <div className="coworker-roster-empty"><p>No Coworkers yet.</p><button type="button" onClick={startCreate}>Create the first one</button></div>}
         <ul>{items.map(item => <li key={item.coworker_id}>
-          <button type="button" className={`coworker-roster-item${selectedId === item.coworker_id && mode !== "create" ? " is-selected" : ""}`} aria-current={selectedId === item.coworker_id && mode !== "create" ? "page" : undefined} onClick={() => { setMode("view"); setForm(null); setFormMessage(null); setDetailFailure(null); setArchiveConfirm(false); setSelectedId(item.coworker_id); }}>
+          <button type="button" className={`coworker-roster-item${selectedId === item.coworker_id && mode !== "create" ? " is-selected" : ""}`} aria-current={selectedId === item.coworker_id && mode !== "create" ? "page" : undefined} onClick={() => { if (operation !== "primary") setOperation(null); setMode("view"); setForm(null); setFormMessage(null); setDetailFailure(null); setArchiveConfirm(false); activeCoworker.current = item.coworker_id; setSelectedId(item.coworker_id); }}>
             <span className="coworker-roster-avatar" aria-hidden="true">{initial(item.revision.name)}</span>
             <span className="coworker-roster-copy"><strong>{item.revision.name}</strong><small>{item.status === "ACTIVE" ? "Active" : item.status === "PAUSED" ? "Paused" : "Archived"}{item.is_primary ? " · Primary" : ""}</small></span>
             <span className={`coworker-status-dot status-${item.status.toLowerCase()}`} aria-hidden="true" />
@@ -440,6 +524,7 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
   const knownWorkerIds = new Set(workerProfiles?.map(item => item.delegation_profile_id) ?? []);
   const unavailableAssignedWorkers = currentWorkerIds.filter(id => !knownWorkerIds.has(id));
   const formValid = form.name.trim().length > 0 && form.name.trim().length <= 120 && form.role_description.length <= 2000
+    && (mode === "edit" || form.role_description.trim().length > 0)
     && (currentFailover.mode === "DISABLED" || currentFailover.triggers.length > 0)
     && (currentFailover.mode !== "ALLOW_LISTED" || (currentFailover.fallback_agent_binding_ids.length > 0 && currentFailover.max_lead_changes > 0));
 
@@ -448,7 +533,7 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
 
     <section className="coworker-form-section"><h3>Identity</h3>
       <label className="coworker-field">Name<input autoFocus={mode === "create"} maxLength={120} required value={form.name} onChange={event => onChange("name", event.currentTarget.value)} placeholder="Assistant" /></label>
-      <label className="coworker-field">Role description<textarea maxLength={2000} value={form.role_description} onChange={event => onChange("role_description", event.currentTarget.value)} placeholder="What should this Coworker focus on?" /></label>
+      <label className="coworker-field">What should this Coworker help with?<textarea maxLength={2000} required={mode === "create"} value={form.role_description} onChange={event => onChange("role_description", event.currentTarget.value)} placeholder="For example: compare reliable sources and summarize the key findings." /></label>
       {form.avatar_ref && <p className="coworker-helper">An avatar Resource revision is already pinned and will be preserved. Avatar selection is not available in this editor.</p>}
     </section>
 

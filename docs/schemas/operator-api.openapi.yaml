@@ -3176,6 +3176,49 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ApiError'}
         default: {$ref: '#/components/responses/Error'}
+  /workspace-roots/{rootId}/observations:
+    get:
+      tags: [resources]
+      operationId: searchWorkspaceRootObservations
+      summary: Search metadata observations beneath an explicitly selected WorkspaceRoot
+      description: >-
+        Owner-only, selected-Workspace metadata search over the current Runtime incarnation's
+        bounded WorkspaceRoot scan projection. Searches literal case-insensitive basenames;
+        it reads no file contents and does not create or imply canonical Resource,
+        ResourceRevision, or ResourceLocation aggregates. Results are observed files with
+        resource_id null until a separately authorized canonical Resource producer is wired.
+        The active root, Workspace owner, Runtime incarnation, and local identity bindings
+        are rechecked for each page. The URL-safe base64 cursor binds the authenticated
+        principal, Workspace, root version, Runtime/incarnation, query, freshness, page size,
+        and keyset position. A Runtime-private keyed integrity tag prevents cursor edits; the
+        cursor is readable and provides no confidentiality. Private locators and keyed
+        file-identity digests are never returned.
+      parameters:
+      - {name: rootId, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 160}}
+      - {$ref: '#/components/parameters/WorkspaceContextHeader'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      - name: q
+        in: query
+        description: Optional literal case-insensitive basename substring, at most 256 UTF-8 bytes.
+        schema: {type: string, maxLength: 256}
+      - name: freshness
+        in: query
+        description: Optional committed observation freshness filter.
+        schema: {type: string, enum: [CURRENT, STALE, UNKNOWN]}
+      - {$ref: '#/components/parameters/Cursor'}
+      - name: limit
+        in: query
+        description: Page size, from 1 through 100; defaults to 50.
+        schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+      responses:
+        '200':
+          description: Deterministic metadata-only observations for the selected root; never a ResourceRef or content-search result.
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/WorkspaceRootObservationPage'}
+        default: {$ref: '#/components/responses/Error'}
   /user-requests:
     get:
       tags: [conversations]
@@ -4843,7 +4886,7 @@ components:
       properties:
         agent_id: {type: string}
         display_name: {type: string}
-        protocol_candidate: {type: string, enum: [CODEX_APP_SERVER, ACP]}
+        protocol_candidate: {type: string, enum: [CODEX_APP_SERVER, ACP, CLI]}
         installation: {type: string, enum: [MISSING, INSTALLED, VERSION_UNAVAILABLE]}
         version: {type: [string, 'null']}
         authentication: {type: string, enum: [UNKNOWN]}
@@ -7294,6 +7337,30 @@ components:
           enum: [null, TIME_LIMIT_REACHED, SCAN_BUDGET_REACHED, ENTRY_CHANGED_OR_UNREADABLE, MOUNT_BOUNDARY_REACHED]
           description: Null for COMPLETE; PARTIAL requires one of the bounded scanner reason codes.
         completed_at: {type: string, format: date-time}
+    WorkspaceRootObservationPage:
+      type: object
+      additionalProperties: false
+      required: [workspace_id, workspace_root_id, items, next_cursor]
+      properties:
+        workspace_id: {type: string, minLength: 1}
+        workspace_root_id: {type: string, minLength: 1}
+        items:
+          type: array
+          maxItems: 100
+          items: {$ref: '#/components/schemas/WorkspaceRootObservationView'}
+        next_cursor: {type: [string, 'null'], maxLength: 4096}
+    WorkspaceRootObservationView:
+      type: object
+      additionalProperties: false
+      required: [observation_id, display_name, size_bytes, modified_at, observed_at, freshness, resource_id]
+      properties:
+        observation_id: {type: string, minLength: 1, maxLength: 128}
+        display_name: {type: string, minLength: 1, maxLength: 1024}
+        size_bytes: {type: integer, minimum: 0}
+        modified_at: {type: [string, 'null'], format: date-time}
+        observed_at: {type: string, format: date-time}
+        freshness: {type: string, enum: [CURRENT, STALE, UNKNOWN]}
+        resource_id: {type: 'null', description: Canonical Resource creation is not implied by a metadata observation.}
     ResourceSearchResult:
       type: object
       required: [resource_ref, source_content_digest, source_matches, display_name, locations, freshness, match_reasons]

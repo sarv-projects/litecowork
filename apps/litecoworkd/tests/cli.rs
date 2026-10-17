@@ -12,6 +12,8 @@ fn help_is_available_without_starting_runtime_services() {
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 help output");
     assert!(stdout.contains("USAGE:"));
     assert!(stdout.contains("does not accept work"));
+    assert!(stdout.contains("OS-authenticated local IPC"));
+    assert!(!stdout.contains("Unix IPC"));
     assert!(output.stderr.is_empty());
 }
 

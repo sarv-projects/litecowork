@@ -43,6 +43,17 @@ pub use capability_invocation::{
     CapabilityInvocationEventContext, CapabilityInvocationStore,
     CapabilityInvocationTransitionCommit, CommittedCapabilityInvocation,
 };
+mod verification_run;
+pub use verification_run::{
+    CommittedVerificationRun, SettleVerificationRunCommit, StartVerificationRunCommit,
+    VerificationRunActor, VerificationRunEventContext, VerificationRunStore,
+};
+mod workspace_root_observations;
+pub use workspace_root_observations::{
+    RootObservationCommitSummary, RootObservationFreshness, RootObservationScanStatus,
+    RootObservationSearchRecord, RootObservationSearchRequest, WorkspaceRootFileObservation,
+    WorkspaceRootObservationBatch, WorkspaceRootObservationStore,
+};
 mod task_presentation;
 pub use task_presentation::{
     MAX_TASK_PRESENTATION_ARTIFACTS, MAX_TASK_PRESENTATION_STEPS, TaskPresentationActivityEvent,
@@ -2031,6 +2042,8 @@ pub struct WorkspaceRootScanCommit {
     pub runtime_id: String,
     pub runtime_incarnation_id: String,
     pub result: WorkspaceRootScanResult,
+    /// Derived file observations are committed atomically with this scan receipt.
+    pub observations: Vec<WorkspaceRootFileObservation>,
 }
 
 /// One atomic startup decision for a root. The caller includes fresh private bindings

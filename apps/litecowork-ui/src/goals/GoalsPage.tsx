@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ArtifactVersionRef, Goal, GoalApi, GoalArtifactOption, GoalRevisionInput, GoalStatus, GoalTaskOption, RoutineRevisionRef } from "./goal-api";
+import { isGoalRequestCurrent, isGoalWorkspaceResponseCurrent } from "./goal-request-scope";
 import "./goals-page.css";
 
 type Props = {
@@ -152,6 +153,8 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
   const [discardingKey, setDiscardingKey] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const generation = useRef(0);
+  const activeWorkspace = useRef(workspaceId);
+  activeWorkspace.current = workspaceId;
   const visiblePendingMutations = pendingMutations.filter(item => item.workspaceId === workspaceId);
 
   useEffect(() => {
@@ -165,19 +168,25 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
     const activeGeneration = ++generation.current;
     setItems([]); setNextCursor(null); setSelected(null); setSelectedId(null); setDraft(null); setMode("view");
     setLoading(Boolean(workspaceId)); setListFailure(null); setFailure(null); setMessage(null); setConfirmArchive(false);
+    setBusy(false); setCatalogBusy(Boolean(workspaceId)); setPageBusy(false); setDiscardingKey(null);
     setActivityAnnouncement("");
     if (!workspaceId) { setLoading(false); return () => controller.abort(); }
     void api.list(undefined, controller.signal).then(page => {
-      if (controller.signal.aborted || activeGeneration !== generation.current) return;
-      if (page.items.some(item => item.workspace_id !== workspaceId)) throw new Error("Goal list belongs to a different Workspace.");
+      if (controller.signal.aborted || activeGeneration !== generation.current
+        || !isGoalRequestCurrent(workspaceId, activeWorkspace.current)) return;
+      if (!isGoalWorkspaceResponseCurrent(workspaceId, activeWorkspace.current, page.items.map(item => item.workspace_id))) {
+        throw new Error("Goal list belongs to a different Workspace.");
+      }
       setItems(page.items);
       setNextCursor(page.next_cursor);
       setSelectedId(page.items[0]?.goal_id ?? null);
       setActivityAnnouncement(`${page.items.length} ${page.items.length === 1 ? "Goal" : "Goals"} loaded.`);
     }).catch(error => {
-      if (!controller.signal.aborted && activeGeneration === generation.current) setListFailure(errorText(error));
+      if (!controller.signal.aborted && activeGeneration === generation.current
+        && isGoalRequestCurrent(workspaceId, activeWorkspace.current)) setListFailure(errorText(error));
     }).finally(() => {
-      if (!controller.signal.aborted && activeGeneration === generation.current) setLoading(false);
+      if (!controller.signal.aborted && activeGeneration === generation.current
+        && isGoalRequestCurrent(workspaceId, activeWorkspace.current)) setLoading(false);
     });
     return () => controller.abort();
   }, [api, workspaceId, reload]);
@@ -192,12 +201,15 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
       api.listRelatedTasks(undefined, controller.signal),
       api.listRelatedArtifacts(undefined, controller.signal),
     ]).then(([tasks, artifacts]) => {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !isGoalRequestCurrent(workspaceId, activeWorkspace.current)) return;
+      if (!isGoalWorkspaceResponseCurrent(workspaceId, activeWorkspace.current, artifacts.items.map(item => item.workspace_id))) {
+        throw new Error("Workspace catalog response belongs to a different Workspace.");
+      }
       setTaskOptions(tasks.items); setTaskCursor(tasks.next_cursor);
       setArtifactOptions(artifacts.items); setArtifactCursor(artifacts.next_cursor);
     }).catch(error => {
-      if (!controller.signal.aborted) setCatalogFailure(errorText(error));
-    }).finally(() => { if (!controller.signal.aborted) setCatalogBusy(false); });
+      if (!controller.signal.aborted && isGoalRequestCurrent(workspaceId, activeWorkspace.current)) setCatalogFailure(errorText(error));
+    }).finally(() => { if (!controller.signal.aborted && isGoalRequestCurrent(workspaceId, activeWorkspace.current)) setCatalogBusy(false); });
     return () => controller.abort();
   }, [api, workspaceId]);
 
@@ -209,17 +221,20 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
     setDetailLoading(true);
     setActivityAnnouncement("Loading Goal details.");
     void api.get(selectedId, controller.signal).then(found => {
-      if (controller.signal.aborted || activeGeneration !== generation.current) return;
+      if (controller.signal.aborted || activeGeneration !== generation.current
+        || !isGoalRequestCurrent(workspaceId, activeWorkspace.current)) return;
       if (found.goal_id !== selectedId) throw new Error("Goal detail identity mismatch.");
       if (found.workspace_id !== workspaceId) throw new Error("Goal detail belongs to a different Workspace.");
       setSelected(found);
       setItems(current => current.map(item => item.goal_id === found.goal_id ? found : item));
       setActivityAnnouncement("Goal details loaded.");
     }).catch(error => {
-      if (!controller.signal.aborted && activeGeneration === generation.current) {
+      if (!controller.signal.aborted && activeGeneration === generation.current
+        && isGoalRequestCurrent(workspaceId, activeWorkspace.current)) {
         setFailure(errorText(error));
       }
-    }).finally(() => { if (!controller.signal.aborted && activeGeneration === generation.current) setDetailLoading(false); });
+    }).finally(() => { if (!controller.signal.aborted && activeGeneration === generation.current
+      && isGoalRequestCurrent(workspaceId, activeWorkspace.current)) setDetailLoading(false); });
     return () => controller.abort();
   }, [api, workspaceId, selectedId, mode, reload]);
 
@@ -234,10 +249,11 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
     validateMutationReceipt(goal, pending);
     return goal;
   }
-  function applyMutationReceipt(goal: Goal, pending: PendingGoalMutation): void {
+  function applyMutationReceipt(goal: Goal, pending: PendingGoalMutation, requestWorkspaceId: string): void {
     // A late response after the owner explicitly discarded this envelope must not
     // masquerade as resolving a newer request for the same Goal.
     if (!forgetPendingMutation(pending)) return;
+    if (!isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) return;
     setItems(current => pending.mutation.kind === "CREATE"
       ? [goal, ...current.filter(item => item.goal_id !== goal.goal_id)]
       : current.map(item => item.goal_id === goal.goal_id ? goal : item));
@@ -247,27 +263,30 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
   }
   async function retryPendingMutation(pending: PendingGoalMutation) {
     if (pending.workspaceId !== workspaceId || busy) return;
+    const requestWorkspaceId = workspaceId;
     setBusy(true); setFailure(null); setMessage(null);
     try {
       const goal = await sendMutation(pending);
-      applyMutationReceipt(goal, pending);
+      applyMutationReceipt(goal, pending, requestWorkspaceId);
     } catch (error) {
-      setFailure(errorText(error));
-    } finally { setBusy(false); }
+      if (isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setFailure(errorText(error));
+    } finally { if (isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setBusy(false); }
   }
   async function loadRelatedCatalog(append = false) {
     if (catalogBusy) return;
+    const requestWorkspaceId = workspaceId;
     setCatalogBusy(true); setCatalogFailure(null);
     try {
       const [tasks, artifacts] = await Promise.all([
         api.listRelatedTasks(append ? taskCursor ?? undefined : undefined),
         api.listRelatedArtifacts(append ? artifactCursor ?? undefined : undefined),
       ]);
+      if (!isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) return;
       setTaskOptions(current => append ? [...current, ...tasks.items.filter(item => !current.some(old => old.task_id === item.task_id))] : tasks.items);
       setArtifactOptions(current => append ? [...current, ...artifacts.items.filter(item => !current.some(old => old.artifact_id === item.artifact_id))] : artifacts.items);
       setTaskCursor(tasks.next_cursor); setArtifactCursor(artifacts.next_cursor);
-    } catch (error) { setCatalogFailure(errorText(error)); }
-    finally { setCatalogBusy(false); }
+    } catch (error) { if (isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setCatalogFailure(errorText(error)); }
+    finally { if (isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setCatalogBusy(false); }
   }
   function beginCreate() {
     setSelectedId(null); setSelected(null); setMode("create"); setConfirmArchive(false); setFailure(null); setMessage(null);
@@ -281,6 +300,7 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
 
   async function save() {
     if (!draft || !workspaceId || busy) return;
+    const requestWorkspaceId = workspaceId;
     const revision = makeRevision(draft);
     if (!revision.objective) { setMessage("Add an objective before saving."); return; }
     if (revision.success_criteria.length === 0) { setMessage("Add at least one success criterion so this Goal has a clear outcome."); return; }
@@ -294,35 +314,40 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
     setBusy(true); setFailure(null); setMessage(null);
     try {
       const saved = await sendMutation(pending);
-      applyMutationReceipt(saved, pending);
+      applyMutationReceipt(saved, pending, requestWorkspaceId);
     } catch (error) {
-      setFailure(errorText(error));
-      if (/changed elsewhere|reload the latest/i.test(errorText(error))) setMessage("Reload to review the current Goal before retrying.");
-    } finally { setBusy(false); }
+      if (isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) {
+        setFailure(errorText(error));
+        if (/changed elsewhere|reload the latest/i.test(errorText(error))) setMessage("Reload to review the current Goal before retrying.");
+      }
+    } finally { if (isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setBusy(false); }
   }
 
   async function changeStatus(status: GoalStatus) {
     if (!selected || busy || selected.status === status) return;
+    const requestWorkspaceId = workspaceId;
     let pending: PendingGoalMutation;
     try { pending = registerPendingMutation(workspaceId, { kind: "STATUS", goalId: selected.goal_id, expectedVersion: selected.version, status }); }
     catch (error) { setFailure(errorText(error)); return; }
     setBusy(true); setFailure(null); setMessage(null);
     try {
       const changed = await sendMutation(pending);
-      applyMutationReceipt(changed, pending);
-    } catch (error) { setFailure(errorText(error)); }
-    finally { setBusy(false); }
+      applyMutationReceipt(changed, pending, requestWorkspaceId);
+    } catch (error) { if (isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setFailure(errorText(error)); }
+    finally { if (isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setBusy(false); }
   }
 
   function retryLoad() { setReload(value => value + 1); }
 
   async function loadMore() {
     if (!nextCursor || pageBusy) return;
+    const requestWorkspaceId = workspaceId;
     const activeGeneration = generation.current;
     setPageBusy(true);
     try {
       const page = await api.list(nextCursor);
-      if (activeGeneration !== generation.current || page.items.some(item => item.workspace_id !== workspaceId)) return;
+      if (activeGeneration !== generation.current || !isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) return;
+      if (page.items.some(item => item.workspace_id !== requestWorkspaceId)) throw new Error("Goal page belongs to a different Workspace.");
       const existing = new Set(items.map(item => item.goal_id));
       const additions = page.items.filter(item => !existing.has(item.goal_id));
       setItems(current => {
@@ -332,8 +357,10 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
       setNextCursor(page.next_cursor);
       setActivityAnnouncement(`${additions.length} more ${additions.length === 1 ? "Goal" : "Goals"} loaded. ${items.length + additions.length} shown.`);
     } catch (error) {
-      if (activeGeneration === generation.current) setListFailure(errorText(error));
-    } finally { if (activeGeneration === generation.current) setPageBusy(false); }
+      if (activeGeneration === generation.current && isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setListFailure(errorText(error));
+    } finally {
+      if (activeGeneration === generation.current && isGoalRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setPageBusy(false);
+    }
   }
 
   return (

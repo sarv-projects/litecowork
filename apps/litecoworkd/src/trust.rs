@@ -153,6 +153,7 @@ pub(crate) enum ReasonCode {
     SecretLeaseInvalid,
     WorkspacePolicyDenied,
     ApprovalBindingMismatch,
+    ApprovalDenied,
     ExecutionMethodNotAllowed,
     ApprovalRequired,
     ApprovalRequiredByPinnedPolicy,
@@ -410,6 +411,29 @@ impl PolicyEngine {
 
         let (decision, reason_code) = match request.matches(current) {
             Ok(()) => {
+                // A persisted approval is bound to this exact action by `matches`.
+                // Denial and revocation must remain authoritative even when a
+                // read-only operation would otherwise be allowed by the policy.
+                match current.approval_status {
+                    Some(
+                        ApprovalStatus::Denied
+                        | ApprovalStatus::Expired
+                        | ApprovalStatus::Revoked
+                        | ApprovalStatus::Cancelled,
+                    ) => {
+                        return versioned(
+                            self.bundle.as_ref().expect("bundle verified above"),
+                            result(DecisionKind::Deny, ReasonCode::ApprovalDenied),
+                        );
+                    }
+                    Some(ApprovalStatus::Pending) => {
+                        return versioned(
+                            self.bundle.as_ref().expect("bundle verified above"),
+                            result(DecisionKind::RequireApproval, ReasonCode::ApprovalRequired),
+                        );
+                    }
+                    Some(ApprovalStatus::Approved) | None => {}
+                }
                 let Some(rule) = self
                     .bundle
                     .as_ref()
@@ -564,6 +588,7 @@ pub(crate) enum ApprovalStatus {
     Denied,
     Expired,
     Revoked,
+    Cancelled,
 }
 
 impl StoredEvaluationContext {
@@ -1139,6 +1164,61 @@ mod tests {
         assert_eq!(result.decision(), DecisionKind::RequireApproval);
         assert_eq!(result.reason_code(), ReasonCode::ApprovalRequired);
         assert_eq!(result.effect_id(), request.effect_id.as_ref());
+    }
+
+    #[test]
+    fn denied_approval_for_the_exact_action_is_not_treated_as_a_read_allow() {
+        let (engine, request, mut context) = fixture();
+        context.approval_status = Some(ApprovalStatus::Denied);
+        context.approval_action_digest =
+            Some(digest_serializable(&ActionDigestInput::from(&request)));
+
+        let result = engine.evaluate(&request, &context);
+        assert_eq!(result.decision(), DecisionKind::Deny);
+        assert_eq!(result.reason_code(), ReasonCode::ApprovalDenied);
+    }
+
+    #[test]
+    fn expired_or_revoked_approval_for_the_exact_action_is_denied() {
+        let (engine, request, context) = fixture();
+        let approval_action_digest = Some(digest_serializable(&ActionDigestInput::from(&request)));
+
+        for status in [ApprovalStatus::Expired, ApprovalStatus::Revoked] {
+            let mut context = context.clone();
+            context.approval_status = Some(status);
+            context.approval_action_digest = approval_action_digest.clone();
+
+            let result = engine.evaluate(&request, &context);
+            assert_eq!(result.decision(), DecisionKind::Deny);
+            assert_eq!(result.reason_code(), ReasonCode::ApprovalDenied);
+        }
+    }
+
+    #[test]
+    fn pending_approval_for_the_exact_action_does_not_become_a_read_allow() {
+        let (engine, request, mut context) = fixture();
+        context.approval_status = Some(ApprovalStatus::Pending);
+        context.approval_action_digest =
+            Some(digest_serializable(&ActionDigestInput::from(&request)));
+
+        let result = engine.evaluate(&request, &context);
+        assert_eq!(result.decision(), DecisionKind::RequireApproval);
+        assert_eq!(result.reason_code(), ReasonCode::ApprovalRequired);
+    }
+
+    #[test]
+    fn cancelled_approval_for_the_exact_action_is_denied() {
+        let (engine, request, mut context) = fixture();
+        context.approval_status = Some(
+            serde_json::from_value::<ApprovalStatus>(serde_json::json!("CANCELLED"))
+                .expect("stored CANCELLED approval state must be representable"),
+        );
+        context.approval_action_digest =
+            Some(digest_serializable(&ActionDigestInput::from(&request)));
+
+        let result = engine.evaluate(&request, &context);
+        assert_eq!(result.decision(), DecisionKind::Deny);
+        assert_eq!(result.reason_code(), ReasonCode::ApprovalDenied);
     }
 
     #[test]

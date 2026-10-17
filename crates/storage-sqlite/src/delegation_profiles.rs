@@ -61,6 +61,12 @@ pub struct DelegationProfilePage {
     pub next: Option<(String, String)>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DelegationProfileRevisionPage {
+    pub items: Vec<Value>,
+    pub next: Option<u64>,
+}
+
 #[derive(Clone)]
 pub struct SqliteDelegationProfileStore {
     store: SqliteWorkspaceStore,
@@ -252,6 +258,95 @@ impl SqliteDelegationProfileStore {
             })();
             let _ = reply.send(result);
         }) }, receive)
+    }
+    pub fn list_revisions(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        profile_id: &str,
+        before_revision: Option<u64>,
+        limit: usize,
+    ) -> Result<DelegationProfileRevisionPage, StoreError> {
+        if principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || profile_id.trim().is_empty()
+            || before_revision.is_some_and(|revision| revision == 0 || revision > i64::MAX as u64)
+            || !(1..=200).contains(&limit)
+        {
+            return Err(StoreError::Invalid(
+                "DelegationProfile revision query is invalid".to_owned(),
+            ));
+        }
+        let principal = principal_id.to_owned();
+        let workspace = workspace_id.to_owned();
+        let profile = profile_id.to_owned();
+        let before_revision = before_revision.map(|revision| revision as i64);
+        let (reply, receive) = mpsc::channel();
+        self.store.execute_command(
+            Command::DelegationProfileOperation {
+                operation: Box::new(move |connection| {
+                    let result = (|| {
+                        let tx = connection.transaction().map_err(map_database_error)?;
+                        let owned: bool = tx
+                            .query_row(
+                                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id = ?1 AND owner_principal_id = ?2)",
+                                params![workspace, principal],
+                                |row| row.get(0),
+                            )
+                            .map_err(map_database_error)?;
+                        if !owned {
+                            return Err(StoreError::NotFound);
+                        }
+                        let exists: bool = tx
+                            .query_row(
+                                "SELECT EXISTS(SELECT 1 FROM delegation_profiles WHERE workspace_id = ?1 AND delegation_profile_id = ?2)",
+                                params![workspace, profile],
+                                |row| row.get(0),
+                            )
+                            .map_err(map_database_error)?;
+                        if !exists {
+                            return Err(StoreError::NotFound);
+                        }
+                        let mut statement = tx
+                            .prepare(
+                                "SELECT revision FROM delegation_profile_revisions \
+                                 WHERE workspace_id = ?1 AND delegation_profile_id = ?2 \
+                                   AND (?3 IS NULL OR revision < ?3) \
+                                 ORDER BY revision DESC LIMIT ?4",
+                            )
+                            .map_err(map_database_error)?;
+                        let revisions = statement
+                            .query_map(
+                                params![workspace, profile, before_revision, (limit + 1) as i64],
+                                |row| from_row_u64(row, 0),
+                            )
+                            .map_err(map_database_error)?
+                            .collect::<rusqlite::Result<Vec<_>>>()
+                            .map_err(map_database_error)?;
+                        drop(statement);
+                        let more = revisions.len() > limit;
+                        let page_revisions = revisions.into_iter().take(limit).collect::<Vec<_>>();
+                        let mut items = Vec::with_capacity(page_revisions.len());
+                        for revision in &page_revisions {
+                            let value = load_profile_revision(&tx, &workspace, &profile, *revision)
+                                .map_err(|_| StoreError::Integrity(
+                                    "DelegationProfile revision could not be decoded".to_owned(),
+                                ))?;
+                            let mut item = serde_json::to_value(value)
+                                .map_err(|error| StoreError::Integrity(error.to_string()))?;
+                            if let Some(object) = item.as_object_mut() {
+                                object.remove("name_key");
+                            }
+                            items.push(item);
+                        }
+                        let next = if more { page_revisions.last().copied() } else { None };
+                        Ok(DelegationProfileRevisionPage { items, next })
+                    })();
+                    let _ = reply.send(result);
+                }),
+            },
+            receive,
+        )
     }
 }
 

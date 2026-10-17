@@ -1,0 +1,110 @@
+.workspace-root-observations {
+  margin-top: 0.75rem;
+  color: var(--text-primary, #262a2c);
+}
+
+.workspace-root-observations-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 0;
+  padding: 0.35rem 0;
+  background: transparent;
+  color: var(--text-primary, #262a2c);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.workspace-root-observations-toggle:hover { color: var(--accent-strong, #3c655c); }
+.workspace-root-observations-toggle:focus-visible,
+.workspace-root-observations button:focus-visible,
+.workspace-root-observations input:focus-visible,
+.workspace-root-observations select:focus-visible {
+  outline: 2px solid var(--focus-ring, #477d70);
+  outline-offset: 2px;
+}
+
+.workspace-root-observations-content {
+  margin: 0.5rem 0 0.25rem;
+  padding: 1rem;
+  border: 1px solid var(--border-subtle, #d9ddda);
+  border-radius: 0.75rem;
+  background: var(--surface-raised, #fff);
+}
+
+.workspace-root-observations-note,
+.workspace-root-observations-paused {
+  margin: 0 0 0.85rem;
+  color: var(--text-secondary, #5a625e);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.workspace-root-observations-paused { color: var(--warning-text, #795722); }
+
+.workspace-root-observations-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.workspace-root-observations-filters label {
+  display: grid;
+  gap: 0.3rem;
+  min-width: min(15rem, 100%);
+  color: var(--text-secondary, #5a625e);
+  font-size: 0.8rem;
+}
+
+.workspace-root-observations-filters input,
+.workspace-root-observations-filters select {
+  min-height: 2.35rem;
+  border: 1px solid var(--border-subtle, #cbd1cd);
+  border-radius: 0.45rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface-base, #fff);
+  color: var(--text-primary, #262a2c);
+  font: inherit;
+}
+
+.workspace-root-observation-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workspace-root-observation-list li {
+  display: grid;
+  grid-template-columns: auto minmax(8rem, 1fr) minmax(9rem, auto) auto;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 2.4rem;
+  border-bottom: 1px solid var(--border-subtle, #eceeec);
+  padding: 0.35rem 0.15rem;
+}
+
+.workspace-root-observation-name {
+  overflow-wrap: anywhere;
+  color: var(--text-primary, #262a2c);
+}
+
+.workspace-root-observation-freshness,
+.workspace-root-observation-size {
+  color: var(--text-secondary, #68716c);
+  font-size: 0.8rem;
+}
+
+.workspace-root-observation-freshness.freshness-current { color: var(--success-text, #3c655c); }
+.workspace-root-observation-freshness.freshness-stale { color: var(--warning-text, #795722); }
+
+@media (max-width: 38rem) {
+  .workspace-root-observation-list li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .workspace-root-observation-freshness { grid-column: 2 / 4; }
+}

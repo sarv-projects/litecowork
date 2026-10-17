@@ -1571,6 +1571,24 @@ fn applies_full_contract_schema_and_reports_sqlite_runtime() {
         .expect("ResourceIndex v19 migration receipt");
     assert_eq!(v19_migration.0, V19_MIGRATION_NAME);
     assert_eq!(v19_migration.1, digest(SQLITE_V19_DDL.as_bytes()));
+    let v20_migration: (String, String) = connection
+        .query_row(
+            "SELECT name, source_checksum FROM schema_migrations WHERE version = 20",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("VerificationRun v20 migration receipt");
+    assert_eq!(v20_migration.0, V20_MIGRATION_NAME);
+    assert_eq!(v20_migration.1, digest(SQLITE_V20_DDL.as_bytes()));
+    let v21_migration: (String, String) = connection
+        .query_row(
+            "SELECT name, source_checksum FROM schema_migrations WHERE version = 21",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("WorkspaceRoot observations v21 migration receipt");
+    assert_eq!(v21_migration.0, V21_MIGRATION_NAME);
+    assert_eq!(v21_migration.1, digest(SQLITE_V21_DDL.as_bytes()));
     let policy_decision_column: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('audit_records') WHERE name='policy_decision_json')",
@@ -1594,6 +1612,10 @@ fn applies_full_contract_schema_and_reports_sqlite_runtime() {
         "resource_index_blob_registry",
         "resource_content_blob_registry",
         "resource_upload_chunk_blob_registry",
+        "workspace_root_observation_generations",
+        "workspace_root_observations",
+        "workspace_root_observation_bindings",
+        "workspace_root_observation_batch_receipts",
     ] {
         let exists: bool = connection
             .query_row(
@@ -1645,7 +1667,7 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
     assert!(agent_registry_exists);
     assert!(!resource_index_exists);
 
-    migrate(&mut connection).expect("apply migrations v14 through v19 in order");
+    migrate(&mut connection).expect("apply migrations v14 through v21 in order");
 
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -1658,7 +1680,55 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
         .expect("query applied migrations")
         .collect::<Result<_, _>>()
         .expect("collect migration versions");
-    assert_eq!(applied, [14, 15, 16, 17, 18, 19]);
+    assert_eq!(applied, [14, 15, 16, 17, 18, 19, 20, 21]);
+}
+
+#[test]
+fn v21_workspace_root_observation_migration_rolls_back_atomically_and_replays() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let database = state_database(&directory);
+    std::fs::create_dir_all(database.parent().expect("database parent path"))
+        .expect("create the private state directory");
+    let mut connection = Connection::open(database).expect("open migration database");
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .expect("enable foreign keys");
+
+    assert!(migrate_with_failpoint(&mut connection, Some(Failpoint::DuringV21Migration)).is_err());
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read version after injected failure");
+    assert_eq!(version, 20);
+    let uncommitted_objects: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name IN (
+               'workspace_root_observation_generations',
+               'workspace_root_observations',
+               'workspace_root_observation_bindings',
+               'workspace_root_observation_batch_receipts',
+               'workspace_root_observations_delete_private_binding'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect failed migration objects");
+    assert_eq!(uncommitted_objects, 0);
+    let uncommitted_receipt: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 21",
+            [],
+            |row| row.get(0),
+        )
+        .expect("inspect failed migration receipt");
+    assert_eq!(uncommitted_receipt, 0);
+
+    migrate(&mut connection).expect("retry WorkspaceRoot observations migration");
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("read replayed schema version");
+    assert_eq!(version, 21);
+    verify_migration_record(&connection, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL, true)
+        .expect("verify v21 migration receipt");
 }
 
 #[test]
@@ -1802,7 +1872,22 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
 
     connection
         .execute_batch(
-            "DROP TRIGGER resource_index_blob_registry_reference_delete_guard;
+            "DROP TRIGGER workspace_root_observations_delete_private_binding;
+             DROP TABLE workspace_root_observation_batch_receipts;
+             DROP TABLE workspace_root_observation_bindings;
+             DROP TABLE workspace_root_observations;
+             DROP TABLE workspace_root_observation_generations;
+             DELETE FROM schema_migrations WHERE version = 21;
+             PRAGMA user_version = 20;
+             DROP TRIGGER verification_run_insert_guard;
+             DROP TRIGGER verification_run_transition_guard;
+             DROP TRIGGER verification_run_terminal_immutable;
+             DROP TRIGGER verification_run_delete_guard;
+             DROP INDEX idx_verification_runs_task_status_time;
+             ALTER TABLE verification_runs DROP COLUMN failure_code;
+             ALTER TABLE verification_runs DROP COLUMN version;
+             DELETE FROM schema_migrations WHERE version = 20;
+             DROP TRIGGER resource_index_blob_registry_reference_delete_guard;
              DROP TRIGGER resource_text_index_blob_registry_update_guard;
              DROP TRIGGER resource_text_index_blob_registry_insert_guard;
              DROP INDEX resource_index_blob_registry_gc;
@@ -1849,9 +1934,13 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read replayed v19 version");
-    assert_eq!(version, 19);
-    verify_migration_record(&connection, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL, true)
+    assert_eq!(version, 21);
+    verify_migration_record(&connection, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL, false)
         .expect("verify replayed v19 receipt");
+    verify_migration_record(&connection, 20, V20_MIGRATION_NAME, SQLITE_V20_DDL, false)
+        .expect("verify v20 receipt after v21 replay");
+    verify_migration_record(&connection, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL, true)
+        .expect("verify replayed v21 receipt");
 
     let (registry_count, size_bytes, state, reference_count): (i64, i64, String, i64) = connection
         .query_row(

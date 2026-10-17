@@ -87,14 +87,21 @@ authentication readiness, lead eligibility and session readiness remain separate
 
 The authenticated local Operator may expose a runtime-local installation inventory
 before protocol negotiation. An `INSTALLED` inventory row means a known executable has a
-bounded, recognized version from its `--version` response or, for Cline's local npm CLI on
-Linux/macOS, from the first `package.json` found above the resolved executable. That
+bounded, recognized version from its module-selected version-only command response or,
+for Cline's local npm CLI on Linux/macOS, from the first `package.json` found above the
+resolved executable. That
 manifest must identify the `cline` package and contain a plain numeric release triplet;
 an invalid or different nearest manifest cannot be bypassed by a higher ancestor. If
-metadata cannot establish that observation, Cline falls back to a bounded `--version`
-invocation with inherited daemon environment cleared. The row is
+metadata cannot establish that observation, Cline falls back to a bounded version-only
+command invocation with inherited daemon environment cleared. The row is
 not an `AgentProfile`, `AgentEndpoint`, or `AgentBinding` and does not prove auth,
-provider/model access, session support, or lead/delegation eligibility. The inventory
+provider/model access, session support, or lead/delegation eligibility. The curated
+15-agent inventory now covers Codex, OpenCode, Cline, Claude Code, Gemini CLI, Qwen Code,
+Kiro CLI, Goose, Mistral Vibe, Cursor CLI, JetBrains Junie CLI, GitHub Copilot CLI, Kimi
+Code CLI, Factory Droid, and Auggie. CLI-specific version flags/output formats remain
+version-only observations. Copilot has a ten-second cold-start bound; the other native
+CLI probes use two seconds. Only Codex and OpenCode have explicit profile-probe
+implementations, and neither has a qualified native session path. The inventory
 does not persist executable paths or raw command output. Its readiness fields remain
 `UNKNOWN` / `NOT_PROBED` permanently; later negotiated auth/session readiness belongs
 to separate AgentProfile/RuntimeOffer observations and does not mutate the inventory
@@ -430,8 +437,9 @@ Native subagents remain agent-owned. LiteCowork may record reported lifecycle if
 Native per-harness session startup, version fencing, authentication, and native input
 adaptation are target design in [NATIVE-COMPOSER-LLD.md](NATIVE-COMPOSER-LLD.md) and
 [`V1-FUNCTION-FILE-CATALOG.md`](V1-FUNCTION-FILE-CATALOG.md). Current source provides
-bounded Codex/OpenCode discovery and profile observations, Cline installation inventory,
-and Workspace AgentBinding setup; it does not yet serve native Conversation session startup or native composer
-adaptation. Switching selected AgentBinding must not migrate private provider session
-state or silently modify a running Attempt. UI option switching remains separate from
+bounded installation observations for the 15 curated candidates, Codex/OpenCode profile
+observations, and Workspace AgentBinding setup; it does not yet serve native Conversation
+session startup or native composer adaptation. Switching selected AgentBinding must not
+migrate private provider session state or silently modify a running Attempt. UI option
+switching remains separate from
 persisted session/Task transition receipts.

@@ -317,6 +317,7 @@ const state = {
   createCommits: 0,
   conversationListMode: "single" as "single" | "51" | "empty" | "defer" | "reject",
   conversationListPending: [] as Deferred<unknown>[],
+  emptyConversationSnapshot: false,
   activeStream: null as { sessionId: string; workspaceId: string; conversationId: string } | null,
   resourceReadDeferral: null as ResourceReadCommand | null,
   resourcePending: new Map<string, Deferred<unknown>[]>(),
@@ -973,8 +974,10 @@ mockIPC((rawCommand, rawArgs) => {
     return { items: [item], next_cursor: null };
   }
   if (command === "get_conversation_presentation") {
-    return richDocument(conversationMessage.message_id).then(value =>
-      conversationSnapshot(String(args.workspaceId), state.richAvailability, value.reference, String(args.conversationId)));
+    return richDocument(conversationMessage.message_id).then(value => {
+      const snapshot = conversationSnapshot(String(args.workspaceId), state.richAvailability, value.reference, String(args.conversationId));
+      return state.emptyConversationSnapshot ? { ...snapshot, items: [] } : snapshot;
+    });
   }
   if (command === "get_rich_presentation") {
     if (state.richMode === "reject") return Promise.reject(new Error("test provider unavailable"));
@@ -1043,7 +1046,7 @@ type HarnessApi = {
   activeWorkspace: () => string;
   clearCalls: () => true;
   calls: () => Call[];
-  configureConversation: (workspaceId: string, richMode: "success" | "defer" | "reject", availability: string, operatorReady?: boolean, messageId?: string) => true;
+  configureConversation: (workspaceId: string, richMode: "success" | "defer" | "reject", availability: string, operatorReady?: boolean, messageId?: string, emptySnapshot?: boolean) => true;
   setConversationOperatorReady: (operatorReady: boolean) => true;
   setRichMode: (mode: "success" | "defer" | "reject") => true;
   resolveRich: () => true;
@@ -1075,7 +1078,13 @@ type HarnessApi = {
   returnStaleContextDocumentDeletionDetailStatus: (count?: number) => true;
   resolveResourceCommit: () => true;
   emitReady: () => Promise<true>;
+  hasActiveConversationStream: () => boolean;
   emitSnapshot: (availability: string, revision: number) => Promise<true>;
+  emitEmptyConversationSnapshot: (revision: number) => Promise<true>;
+  emitTurnDelta: (turnId: string, sequence: number, textDelta: string) => Promise<true>;
+  emitTurnSettled: (turnId: string, retryOrdinal: number, committedMessageId?: string) => Promise<true>;
+  emitConversationResync: () => Promise<true>;
+  failConversationStream: () => Promise<true>;
   configureWorkspaceFirstRun: (scenario: WorkspaceFirstRunScenario) => true;
   workspaceActionCounts: () => { startRuntime: number; refreshRuntime: number; refreshWorkspaces: number; createWorkspace: number };
   mountProductionApp: (scenario: WorkspaceAppScenario) => true;
@@ -1245,7 +1254,7 @@ function Harness() {
     activeWorkspace: () => activeWorkspace,
     clearCalls() { state.calls.length = 0; return true; },
     calls: () => structuredClone(state.calls),
-    configureConversation(workspaceId, richMode, availability, operatorReady = true, messageId = "message-a") {
+    configureConversation(workspaceId, richMode, availability, operatorReady = true, messageId = "message-a", emptySnapshot = false) {
       state.richMode = richMode;
       state.richAvailability = availability;
       conversationMessage.message_id = messageId;
@@ -1254,6 +1263,7 @@ function Harness() {
       state.createPending = [];
       state.acknowledgeMode = "success";
       state.activeStream = null;
+      state.emptyConversationSnapshot = emptySnapshot;
       state.appScenario = null;
       setShowProductionApp(false);
       setConversationWorkspace(workspaceId);
@@ -1304,6 +1314,7 @@ function Harness() {
     },
     switchConversationWorkspaceB() { setConversationWorkspace("workspace-b"); return true; },
     switchConversationWorkspaceA() { setConversationWorkspace("workspace-a"); return true; },
+    hasActiveConversationStream: () => state.activeStream !== null,
     async emitReady() {
       await emitStreamFrame({
         type: "stream.ready",
@@ -1346,6 +1357,49 @@ function Harness() {
           active_turn: null,
         },
       });
+      return true;
+    },
+    async emitEmptyConversationSnapshot(revision) {
+      await emitStreamFrame({
+        type: "projection",
+        workspace_id: "workspace-a",
+        projection_type: "conversation_presentation",
+        projection_revision: revision,
+        cursor: `rendered-cursor-${revision}`,
+        payload: {
+          conversation_id: "conversation-a",
+          stream_cursor: `conversation-history-a-${revision}`,
+          origin_sequence: String(revision),
+          items: [],
+          next_cursor: null,
+          active_turn: null,
+        },
+      });
+      return true;
+    },
+    async emitTurnDelta(turnId, sequence, textDelta) {
+      await emitStreamFrame({
+        type: "turn.delta", workspace_id: "workspace-a", conversation_id: "conversation-a",
+        turn_id: turnId, retry_ordinal: 0, sequence, text_delta: textDelta,
+      });
+      return true;
+    },
+    async emitTurnSettled(turnId, retryOrdinal, committedMessageId) {
+      await emitStreamFrame({
+        type: "turn.settled", workspace_id: "workspace-a", conversation_id: "conversation-a",
+        turn_id: turnId, retry_ordinal: retryOrdinal,
+        ...(committedMessageId ? { committed_message_id: committedMessageId } : {}),
+      });
+      return true;
+    },
+    async emitConversationResync() {
+      await emitStreamFrame({ type: "stream.resync_required", workspace_id: "workspace-a", reason: "CURSOR_EXPIRED" });
+      return true;
+    },
+    async failConversationStream() {
+      const stream = state.activeStream;
+      if (!stream) throw new Error("Conversation stream is not subscribed yet.");
+      await emit("conversation-presentation-stream", { ...stream, kind: "error", message: "private transport details stay hidden" });
       return true;
     },
     configureWorkspaceFirstRun(scenario) {

@@ -15,6 +15,11 @@ export interface TaskSnapshotStreamDriver {
 
 export type TaskPresentationStreamStatus = "CONNECTING" | "LIVE" | "RECONNECTING" | "RESYNCING";
 
+/** A unary SQLite read must not overwrite state after a newer stream snapshot arrived. */
+export function isTaskSnapshotEpochCurrent(requestEpoch: number, streamEpoch: number): boolean {
+  return Number.isSafeInteger(requestEpoch) && Number.isSafeInteger(streamEpoch) && requestEpoch === streamEpoch;
+}
+
 export type TaskStreamState = {
   ready: boolean;
   resyncRequired: boolean;

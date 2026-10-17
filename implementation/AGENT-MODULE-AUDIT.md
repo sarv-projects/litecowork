@@ -7,18 +7,26 @@ ADR-0025, `docs/API.md`, `implementation/UI.md`.
 
 ## 1. Current source state
 
+**Source refresh — 2026-10-17:** The original audit below is a 2026-10-10 baseline. The
+current local installation projection now covers the 15 curated candidates via Codex,
+OpenCode, Cline, and a bounded version-only native CLI inventory. This does not add
+AgentModule runtime adapters, ACP Registry discovery, native authentication, or session
+qualification. See the current [E03-S01 review packet](reviews/E03-S01.md#code-addendum--full-curated-installation-inventory--2026-10-17)
+for exact probe inventory and tests.
+
 The repository already contains useful bounded native-agent work, but its current public
-surface is a **transitional two-agent slice**.
+surface is a transitional profile-probe slice; the installation candidate list is broader.
 
 Current code truth:
 
 - `apps/litecoworkd/src/agents/mod.rs`
-  - `discover_local_installations()` fans out directly to Codex and OpenCode.
+  - `discover_local_installations()` combines Codex/OpenCode probes, Cline metadata/CLI
+    inventory, and twelve bounded native CLI installation probes.
   - `InstallationState` is only `Missing | Installed | VersionUnavailable`.
   - authentication is always `Unknown`.
   - session readiness is always `NotProbed`.
-  - `discover_version(binary, expected_prefix)` is a useful bounded primitive but is
-    currently called through agent-specific modules rather than a module registry.
+  - version discovery is a bounded inventory helper, not an AgentModule runtime registry;
+    the remaining agent-specific profile probes are still explicitly wired.
 - `apps/litecoworkd/src/agents/codex_profile_probe.rs`
   - contains useful bounded Codex observation logic.
   - remains Codex-specific and should move behind `CodexAgentModule.lifecycle()`.
@@ -57,7 +65,7 @@ None of the above current-source limitations should be represented as final arch
 
 | Current item | Disposition | Target |
 |---|---|---|
-| bounded `--version` discovery primitive | KEEP/GENERALIZE | lifecycle adapter helper |
+| bounded version-only discovery primitive | KEEP/GENERALIZE | lifecycle adapter helper |
 | Codex profile probe parsing/sanitization | KEEP/WRAP | `CodexAgentModule.lifecycle().probe_control_descriptor` |
 | OpenCode profile probe parsing/sanitization | KEEP/WRAP | `OpenCodeAgentModule.lifecycle().probe_control_descriptor` |
 | `list_agent_profiles` storage/API projection | KEEP | generic AgentProfile projection |

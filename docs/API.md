@@ -1380,6 +1380,7 @@ GET    /v1/resources/{resource_id}/context-document/deletion
 # authenticated folder selection and never accepts an absolute path over the public API.
 # Target only operation: POST /v1/workspace-roots
 GET    /v1/workspace-roots?status=&cursor=&limit=  # limit 1..100, default 100
+GET    /v1/workspace-roots/{root_id}/observations?q=&freshness=&cursor=&limit=  # served; owner-only; requires If-Match root version; metadata observations only
 # Target only: generic policy update is not mounted.
 # Target only operation: PATCH /v1/workspace-roots/{id}
 # GET response: {items: WorkspaceRootView[], nextCursor: string|null}
@@ -1388,6 +1389,14 @@ POST   /v1/workspace-roots/{id}/resume
 POST   /v1/workspace-roots/{id}/revoke
 POST   /v1/workspace-roots/{id}/scan
 ```
+
+`observations` returns metadata captured by a completed scan; it does not establish
+canonical Resource membership, file-content availability, or indexed search. The keyset
+cursor is bound to the authenticated principal, selected Workspace, root/version, Runtime
+incarnation, query, freshness filter, and page size. Its integrity tag is derived from the
+Runtime's private keyed pseudonym key, so clients cannot alter a continuation position; the
+base64 cursor is readable and provides no confidentiality. A changed root version or
+Runtime incarnation invalidates the cursor.
 
 `POST /v1/resources/{resource_id}/text-index/rebuild` is an owner-triggered local
 maintenance command. It requires the selected Workspace header, `Idempotency-Key`, and

@@ -27,6 +27,20 @@ function desktopTransport(workspaceId: string): DelegationProfileTransport {
         workspaceId,
         cursor: url.searchParams.get("cursor"),
       });
+    } else if ((operation.method ?? "GET") === "GET"
+      && /^\/v1\/delegation-profiles\/[^/]+\/revisions$/.test(url.pathname)
+      && [...url.searchParams.keys()].every(key => key === "limit" || key === "cursor")
+      && url.searchParams.get("limit") === "200"
+      && !operation.requestId && operation.expectedVersion === undefined && operation.body === undefined) {
+      const profileId = decodeURIComponent(url.pathname.split("/")[3] ?? "");
+      if (!profileId || profileId.length > 256 || /[\u0000-\u001f\u007f]/.test(profileId)) {
+        throw new Error("Worker profile identifier is invalid.");
+      }
+      response = await invoke<BridgeResponse>("list_delegation_profile_revisions", {
+        workspaceId,
+        profileId,
+        cursor: url.searchParams.get("cursor"),
+      });
     } else if (operation.method === "POST"
       && url.pathname === "/v1/delegation-profiles"
       && url.search === ""

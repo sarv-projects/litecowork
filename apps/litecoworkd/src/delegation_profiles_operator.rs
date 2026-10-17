@@ -25,7 +25,7 @@ pub(super) fn routes() -> Router<ApiState> {
         )
         .route(
             "/v1/delegation-profiles/{delegation_profile_id}/revisions",
-            post(revise_delegation_profile),
+            get(list_delegation_profile_revisions).post(revise_delegation_profile),
         )
         .route(
             "/v1/delegation-profiles/{delegation_profile_id}/duplicate",
@@ -76,6 +76,22 @@ struct DuplicateBody {
 #[serde(deny_unknown_fields)]
 struct StatusBody {
     status: DelegationProfileStatus,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevisionQuery {
+    cursor: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RevisionCursor {
+    version: u32,
+    workspace_id: String,
+    delegation_profile_id: String,
+    before_revision: u64,
 }
 
 fn invalid() -> Response {
@@ -205,6 +221,26 @@ fn decode_cursor(
     Ok((cursor.updated_at, cursor.delegation_profile_id))
 }
 
+fn decode_revision_cursor(
+    encoded: &str,
+    workspace: &str,
+    profile_id: &str,
+) -> Result<u64, Response> {
+    if encoded.is_empty() || encoded.len() > 2048 {
+        return Err(invalid());
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| invalid())?;
+    let cursor: RevisionCursor = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    if cursor.version != 1
+        || cursor.workspace_id != workspace
+        || cursor.delegation_profile_id != profile_id
+        || cursor.before_revision == 0
+    {
+        return Err(invalid());
+    }
+    Ok(cursor.before_revision)
+}
+
 async fn list_delegation_profiles(
     State(state): State<ApiState>,
     headers: HeaderMap,
@@ -290,6 +326,61 @@ async fn get_delegation_profile(
             )
         })?;
     Ok(Json(profile).into_response())
+}
+
+async fn list_delegation_profile_revisions(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    query: Result<Query<RevisionQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<Response, Response> {
+    let workspace = authorized_workspace(&state, &headers)?;
+    if !valid_id(&id) {
+        return Err(invalid());
+    }
+    let Query(query) = query.map_err(|_| invalid())?;
+    let limit = query.limit.unwrap_or(50);
+    if !(1..=200).contains(&limit) {
+        return Err(invalid());
+    }
+    let before_revision = query
+        .cursor
+        .as_deref()
+        .map(|cursor| decode_revision_cursor(cursor, &workspace.workspace_id, &id))
+        .transpose()?;
+    let adapter = SqliteDelegationProfileStore::new(state.store.clone());
+    let page = adapter
+        .list_revisions(
+            &state.principal_id,
+            &workspace.workspace_id,
+            &id,
+            before_revision,
+            limit,
+        )
+        .map_err(store_error)?;
+    let next_cursor = page
+        .next
+        .map(|before_revision| {
+            serde_json::to_vec(&RevisionCursor {
+                version: 1,
+                workspace_id: workspace.workspace_id,
+                delegation_profile_id: id,
+                before_revision,
+            })
+            .map(|bytes| URL_SAFE_NO_PAD.encode(bytes))
+        })
+        .transpose()
+        .map_err(|_| unavailable())?;
+    let mut response = Json(json!({
+        "items": page.items,
+        "next_cursor": next_cursor,
+    }))
+    .into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
 }
 
 fn parse_body<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, Response> {
@@ -559,4 +650,33 @@ async fn change_delegation_profile_status(
         },
         StatusCode::OK,
     )
+}
+
+#[cfg(test)]
+mod revision_cursor_tests {
+    use super::*;
+
+    fn cursor(workspace_id: &str, profile_id: &str, before_revision: u64) -> String {
+        URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&RevisionCursor {
+                version: 1,
+                workspace_id: workspace_id.to_owned(),
+                delegation_profile_id: profile_id.to_owned(),
+                before_revision,
+            })
+            .unwrap(),
+        )
+    }
+
+    #[test]
+    fn revision_cursor_is_bound_to_workspace_and_profile() {
+        let encoded = cursor("workspace-a", "profile-a", 2);
+        assert_eq!(
+            decode_revision_cursor(&encoded, "workspace-a", "profile-a").unwrap(),
+            2
+        );
+        assert!(decode_revision_cursor(&encoded, "workspace-b", "profile-a").is_err());
+        assert!(decode_revision_cursor(&encoded, "workspace-a", "profile-b").is_err());
+        assert!(decode_revision_cursor(&cursor("workspace-a", "profile-a", 0), "workspace-a", "profile-a").is_err());
+    }
 }

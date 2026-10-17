@@ -133,7 +133,7 @@ AgentFeature = session.resume | session.steer | session.interrupt | session.canc
 AgentInstallation = {
   agent_id: string,
   display_name: string,
-  protocol_candidate: CODEX_APP_SERVER | ACP,
+  protocol_candidate: CODEX_APP_SERVER | ACP | CLI,
   installation: AgentInstallationState,
   version: string | null,
   authentication: AgentAuthenticationReadiness,

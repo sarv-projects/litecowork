@@ -316,8 +316,11 @@ def check_event_contract() -> None:
             },
             "observed_digest": "sha256:" + "c" * 64,
         }
-        if event in ("verification.started.v1", "verification.completed.v1"):
+        if event in ("verification.started.v1", "verification.completed.v1", "verification.completed.v2"):
             payload_value["inputs"] = [resource_input]
+        if event == "verification.completed.v2":
+            payload_value["status"] = "FAILED"
+            payload_value["failure_code"] = "VERIFIER_UNAVAILABLE"
         elif event == "artifact.version.created.v1":
             payload_value["input_refs"] = [resource_input["resource_ref"]]
         elif event == "resource.created.v1":
@@ -354,7 +357,7 @@ def check_event_contract() -> None:
         if errors:
             fail(f"{event}: generated valid payload sample is rejected: {errors[0].message}")
             continue
-        if event in ("verification.started.v1", "verification.completed.v1"):
+        if event in ("verification.started.v1", "verification.completed.v1", "verification.completed.v2"):
             invalid_digest = json.loads(json.dumps(envelope))
             invalid_digest["payload"]["inputs"][0]["observed_digest"] = "a" * 64
             if not list(validator.iter_errors(invalid_digest)):

@@ -357,6 +357,133 @@ async fn native_workspace_root_selection_is_private_owner_scoped_and_idempotent(
     assert!(!public_scan.contains("content is never opened"));
     assert!(!public_scan.contains(&selected_directory.to_string_lossy().to_string()));
 
+    // A second complete scan gives the production observation route two rows to
+    // paginate, while keeping the following budget-exhaustion scan partial.
+    fs::write(selected_directory.join("second-private.txt"), b"never read")
+        .expect("second metadata-only observation fixture creates");
+    let mut second_scan = scan_request("root-selection-second-complete-scan-key");
+    second_scan.extensions_mut().insert(AuthenticatedLocalPeer);
+    let second_scan_response = router_for(store.clone(), OWNER)
+        .oneshot(second_scan)
+        .await
+        .expect("second complete metadata scan returns a response");
+    assert_eq!(second_scan_response.status(), StatusCode::OK);
+    let second_scan_body = to_bytes(second_scan_response.into_body(), 4096)
+        .await
+        .expect("bounded second scan summary");
+    let second_scan_json: Value =
+        serde_json::from_slice(&second_scan_body).expect("second scan summary is JSON");
+    assert_eq!(second_scan_json["status"], "COMPLETE");
+    assert_eq!(second_scan_json["files_observed"], 2);
+
+    let observations_path = format!("/v1/workspace-roots/{root_id}/observations?limit=1");
+    let observation_request = |path: &str, if_match: Option<&str>| {
+        let mut request = Request::get(path)
+            .header("x-workspace-id", WORKSPACE)
+            .body(Body::empty())
+            .expect("WorkspaceRoot observations request is valid");
+        if let Some(version) = if_match {
+            request.headers_mut().insert(
+                header::IF_MATCH,
+                version.parse().expect("If-Match header is valid"),
+            );
+        }
+        request.extensions_mut().insert(AuthenticatedLocalPeer);
+        request
+    };
+    let first_page_response = router_for(store.clone(), OWNER)
+        .oneshot(observation_request(&observations_path, Some("1")))
+        .await
+        .expect("owner observation page returns a response");
+    assert_eq!(first_page_response.status(), StatusCode::OK);
+    assert_eq!(
+        first_page_response.headers()[header::CACHE_CONTROL],
+        "no-store"
+    );
+    let first_page_body = to_bytes(first_page_response.into_body(), 8192)
+        .await
+        .expect("bounded observation page");
+    let first_page: Value =
+        serde_json::from_slice(&first_page_body).expect("observation page is JSON");
+    assert_eq!(first_page["workspace_id"], WORKSPACE);
+    assert_eq!(first_page["workspace_root_id"], root_id);
+    assert_eq!(first_page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(first_page["items"][0]["display_name"], "private-name.txt");
+    assert_eq!(first_page["items"][0]["resource_id"], Value::Null);
+    let cursor = first_page["next_cursor"]
+        .as_str()
+        .expect("first page has a continuation cursor")
+        .to_owned();
+    let first_page_text = first_page.to_string();
+    let selected_directory_text = selected_directory.to_string_lossy().to_string();
+    for private_value in [
+        "file_identity_digest",
+        "private_relative_locator",
+        "content is never opened",
+        selected_directory_text.as_str(),
+    ] {
+        assert!(
+            !first_page_text.contains(private_value),
+            "observation response leaked {private_value}"
+        );
+    }
+
+    let next_page_path =
+        format!("/v1/workspace-roots/{root_id}/observations?limit=1&cursor={cursor}");
+    let next_page_response = router_for(store.clone(), OWNER)
+        .oneshot(observation_request(&next_page_path, Some("1")))
+        .await
+        .expect("signed cursor roundtrip returns a response");
+    assert_eq!(next_page_response.status(), StatusCode::OK);
+    let next_page_body = to_bytes(next_page_response.into_body(), 8192)
+        .await
+        .expect("bounded continuation page");
+    let next_page: Value =
+        serde_json::from_slice(&next_page_body).expect("continuation page is JSON");
+    assert_eq!(next_page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(next_page["items"][0]["display_name"], "second-private.txt");
+    assert!(next_page["next_cursor"].is_null());
+
+    let scoped_cursor_path =
+        format!("/v1/workspace-roots/{root_id}/observations?limit=1&q=other&cursor={cursor}");
+    let mismatched_cursor_response = router_for(store.clone(), OWNER)
+        .oneshot(observation_request(&scoped_cursor_path, Some("1")))
+        .await
+        .expect("query-scoped cursor request returns a response");
+    assert_eq!(mismatched_cursor_response.status(), StatusCode::BAD_REQUEST);
+
+    let mut tampered = cursor.clone();
+    let final_index = tampered.len() - 1;
+    let replacement = if &tampered[final_index..] == "A" {
+        "B"
+    } else {
+        "A"
+    };
+    tampered.replace_range(final_index.., replacement);
+    let tampered_path =
+        format!("/v1/workspace-roots/{root_id}/observations?limit=1&cursor={tampered}");
+    let tampered_response = router_for(store.clone(), OWNER)
+        .oneshot(observation_request(&tampered_path, Some("1")))
+        .await
+        .expect("tampered cursor request returns a response");
+    assert_eq!(tampered_response.status(), StatusCode::BAD_REQUEST);
+
+    let missing_if_match = router_for(store.clone(), OWNER)
+        .oneshot(observation_request(&observations_path, None))
+        .await
+        .expect("missing If-Match request returns a response");
+    assert_eq!(missing_if_match.status(), StatusCode::BAD_REQUEST);
+    let stale_if_match = router_for(store.clone(), OWNER)
+        .oneshot(observation_request(&observations_path, Some("2")))
+        .await
+        .expect("stale If-Match request returns a response");
+    assert_eq!(stale_if_match.status(), StatusCode::CONFLICT);
+    let foreign_observation_response = router_for(store.clone(), "root-selection-foreign-owner")
+        .oneshot(observation_request(&observations_path, Some("1")))
+        .await
+        .expect("foreign owner observation request returns a response");
+    assert_eq!(foreign_observation_response.status(), StatusCode::NOT_FOUND);
+
     for index in 0..1_000 {
         fs::write(
             selected_directory.join(format!("scan-private-name-{index:04}.txt")),

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { RichResponseView } from "../presentation/RichResponseView";
 import { parseRichPresentationResponse, type ValidatedRichPresentation } from "../presentation/rich-presentation";
+import type { PresentationStreamState, TransientTurn } from "../presentation/presentation-stream";
 import { appendConversationListPage, appendConversationPage, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
 import { ConversationStreamController, type ConversationStreamDriver, type StreamEnvelope } from "./conversation-stream";
 import { firstUseConversationGuidance } from "./first-use-guidance";
@@ -140,6 +141,8 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   const [error, setError] = useState<string | null>(null);
   const [createReceiptError, setCreateReceiptError] = useState<{ workspaceId: string; requestId: string; message: string } | null>(null);
   const [snapshotLoadedKey, setSnapshotLoadedKey] = useState<string | null>(null);
+  const [presentationStream, setPresentationStream] = useState<PresentationStreamState | null>(null);
+  const [presentationStreamKey, setPresentationStreamKey] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<"CONNECTING" | "LIVE" | "RECONNECTING" | null>(null);
   const requests = useRef(new ConversationRequestEpochs());
   const activeListEpoch = useRef<number | null>(null);
@@ -289,9 +292,13 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
 
   useEffect(() => {
     if (!operatorReady || !selectionKey || snapshotLoadedKey !== selectionKey) {
+      setPresentationStream(null);
+      setPresentationStreamKey(null);
       setStreamStatus(null);
       return;
     }
+    setPresentationStream(null);
+    setPresentationStreamKey(selectionKey);
     const driver: ConversationStreamDriver = {
       listen: async callback => listen<unknown>("conversation-presentation-stream", event => callback(event.payload as StreamEnvelope)),
       start: input => invoke<void>("subscribe_conversation_stream", input),
@@ -300,6 +307,8 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
       newSessionId: () => crypto.randomUUID(),
     };
     const controller = new ConversationStreamController(workspaceId, selectedId!, driver, (state, frame) => {
+      setPresentationStream(state);
+      setPresentationStreamKey(selectionKey);
       const live = state.conversationSnapshot;
       if (frame && typeof frame === "object" && !Array.isArray(frame)) {
         const projectionFrame = frame as Record<string, unknown>;
@@ -438,6 +447,13 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
 
   const selected = items.find(item => item.conversation_id === selectedId) ?? null;
   const currentSnapshot = snapshotLoadedKey === selectionKey && snapshot?.workspace_id === workspaceId && snapshot?.conversation_id === selectedId ? snapshot : null;
+  const currentPresentationStream = presentationStreamKey === selectionKey
+    && presentationStream?.workspaceId === workspaceId
+    ? presentationStream
+    : null;
+  const transientTurns = Object.values(currentPresentationStream?.turns ?? {})
+    .filter((turn): turn is TransientTurn => turn.conversationId === selectedId)
+    .sort((a, b) => a.turnId.localeCompare(b.turnId) || a.retryOrdinal - b.retryOrdinal);
   const automaticRichIds = new Set((currentSnapshot?.messages ?? []).filter(message => message.role === "AGENT" && message.rich_presentation?.availability === "AVAILABLE").slice(-6).map(message => message.message_id));
   const activeStatus = currentSnapshot?.active_turn?.status;
   const statusLabel = activeStatus === "RUNNING" ? "A conversation turn is running"
@@ -446,7 +462,8 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
         : activeStatus === "CANCEL_REQUESTED" ? "Stopping"
           : activeStatus === "OPEN" ? "Preparing"
             : null;
-  const streamStatusLabel = streamStatus === "LIVE" ? "Saved history updates live"
+  const streamStatusLabel = currentPresentationStream?.resyncRequired ? "Refreshing saved conversation updates…"
+    : streamStatus === "LIVE" ? "Saved history updates live"
     : streamStatus === "RECONNECTING" ? "Reconnecting saved-history updates…"
       : streamStatus === "CONNECTING" ? "Connecting saved-history updates…"
         : null;
@@ -520,13 +537,20 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
               : <div className="conversation-empty"><h2>Choose a conversation</h2><p>Create one or select a saved conversation to read its messages.</p></div>
           : busy && !currentSnapshot ? <div className="conversation-empty" role="status">Loading saved messages…</div>
             : !operatorReady && !currentSnapshot ? <div className="conversation-empty"><h2>Saved messages are unavailable</h2><p>These messages were not loaded before the Runtime disconnected. Reconnect to read them.</p></div>
-              : currentSnapshot?.messages.length ? <div className="conversation-messages">
-              {currentSnapshot.next_cursor && <button type="button" className="conversation-load-more" onClick={() => void loadMoreMessages()} disabled={!operatorReady || busy || loadingMore}>{loadingMore ? "Loading messages…" : "Load more messages"}</button>}
-              {currentSnapshot.messages.map(message => <article className={`conversation-message ${message.role.toLowerCase()}`} key={message.message_id}>
+              : currentSnapshot?.messages.length || transientTurns.length ? <div className="conversation-messages">
+              {currentSnapshot?.next_cursor && <button type="button" className="conversation-load-more" onClick={() => void loadMoreMessages()} disabled={!operatorReady || busy || loadingMore}>{loadingMore ? "Loading messages…" : "Load more messages"}</button>}
+              {(currentSnapshot?.messages ?? []).map(message => <article className={`conversation-message ${message.role.toLowerCase()}`} key={message.message_id}>
               <div className="conversation-message-author">{message.role === "USER" ? "You" : message.role === "AGENT" ? "Assistant" : message.role === "SYSTEM_NOTICE" ? "LiteCowork" : "Connected channel"}</div>
               <ConversationMessageContent workspaceId={workspaceId} conversationId={selected.conversation_id} message={message} autoLoadRich={automaticRichIds.has(message.message_id)} presentationEpoch={richPresentationEpochs.get(message.message_id) ?? 0} />
               <time>{timeLabel(message.created_at)}</time>
-            </article>)}</div>
+            </article>)}
+              {transientTurns.map(turn => <article className={`conversation-message agent conversation-transient-turn ${turn.state.toLowerCase()}`} key={`${turn.conversationId}\u0000${turn.turnId}\u0000${turn.retryOrdinal}`} aria-label={turn.state === "STREAMING" ? "Assistant response in progress" : turn.state === "RECONNECTING" ? "Assistant response reconnecting" : "Incomplete assistant response"}>
+                <div className="conversation-message-author" role="status" aria-live="polite" aria-atomic="true">Assistant · {turn.state === "STREAMING" ? "response in progress" : turn.state === "RECONNECTING" ? "reconnecting response" : "response did not finish"}</div>
+                {turn.text && <div className="conversation-message-body conversation-transient-text">{turn.text}</div>}
+                {turn.state === "RECONNECTING" && <p className="conversation-rich-status" role="note">Reconnecting this response. The text remains temporary until it is saved.</p>}
+                {turn.state === "INCOMPLETE" && <p className="conversation-rich-status" role="note">This response did not finish and is not part of saved history. Its partial text is shown above.</p>}
+              </article>)}
+            </div>
               : <div className="conversation-empty"><h2>This conversation is ready</h2><p>Conversation records and messages are durable. Sending messages is not available yet because native agent turn execution is not connected.</p></div>}
         {selected && <div className="conversation-composer"><textarea aria-label="Message" placeholder="Messaging will be available when agent execution is connected" disabled value="" readOnly /><button className="primary-button" type="button" disabled>Send</button><small>Read-only until a real agent session can be admitted safely.</small></div>}
       </section>

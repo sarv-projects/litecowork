@@ -56,7 +56,7 @@ struct V17UploadSourceSnapshot {
 }
 
 #[test]
-fn v11_to_v19_migrations_are_ordered_atomic_and_retryable() {
+fn v11_to_v21_migrations_are_ordered_atomic_and_retryable() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(directory.path().join("state")).unwrap();
     let mut connection = Connection::open(state_database(&directory)).unwrap();
@@ -244,7 +244,7 @@ fn v11_to_v19_migrations_are_ordered_atomic_and_retryable() {
         .unwrap();
     let migration_receipts: i64 = connection
         .query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15, 16, 17, 18, 19)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21)",
             [],
             |row| row.get(0),
         )
@@ -270,7 +270,7 @@ fn v11_to_v19_migrations_are_ordered_atomic_and_retryable() {
             rich_table,
             resource_index_registry
         ),
-        (SCHEMA_VERSION, 9, 1, 1)
+        (SCHEMA_VERSION, 11, 1, 1)
     );
 }
 

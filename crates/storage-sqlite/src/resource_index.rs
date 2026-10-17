@@ -14,6 +14,10 @@ use storage_core::{
     StoreError,
 };
 
+#[path = "workspace_root_observations.rs"]
+pub(crate) mod workspace_root_observations;
+pub(crate) use workspace_root_observations::WriterOperation as WorkspaceRootObservationWriterOperation;
+
 pub const MAX_INDEXABLE_RESOURCE_BYTES: u64 = 1_048_576;
 pub const MAX_TERM_COUNT: usize = 20_000;
 pub const MAX_TERM_CHARS: usize = 128;

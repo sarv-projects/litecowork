@@ -1075,7 +1075,78 @@ fn validate_verification_evidence(
     effect: &EffectRecord,
     evidence_id: &str,
 ) -> Result<(), StoreError> {
-    let valid: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM evidence e JOIN tasks t ON t.task_id=e.task_id WHERE t.workspace_id=?1 AND e.task_id=?2 AND e.evidence_id=?3 AND e.level='VERIFIED' AND e.subject_ref=?4 AND json_extract(e.producer_json,'$.service_id') IS NOT NULL AND EXISTS(SELECT 1 FROM verification_runs v WHERE v.task_id=e.task_id AND v.status='PASSED' AND v.verifier_kind=json_extract(e.producer_json,'$.service_id') AND EXISTS(SELECT 1 FROM json_each(v.evidence_refs_json) ref WHERE ref.value=e.evidence_id)))", params![workspace, effect.task_id, evidence_id, format!("effect:{}", effect.effect_id)], |row| row.get(0)).map_err(map_database_error)?;
+    let valid: bool = connection.query_row(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM evidence e
+            JOIN tasks t ON t.task_id=e.task_id
+            WHERE t.workspace_id=?1
+              AND e.task_id=?2
+              AND e.evidence_id=?3
+              AND e.level='VERIFIED'
+              AND e.subject_ref=?4
+              AND json_extract(e.producer_json,'$.service_id') IS NOT NULL
+              AND EXISTS(
+                SELECT 1
+                FROM verification_runs v
+                WHERE v.task_id=e.task_id
+                  AND v.status='PASSED'
+                  AND v.task_spec_revision=t.current_spec_revision
+                  AND v.verifier_kind=json_extract(e.producer_json,'$.service_id')
+                  AND EXISTS(
+                    SELECT 1
+                    FROM json_each(v.evidence_refs_json) ref
+                    WHERE ref.value=e.evidence_id
+                  )
+                  AND NOT EXISTS(
+                    SELECT 1
+                    FROM json_each(v.inputs_json) pinned_input
+                    LEFT JOIN resources resource
+                      ON resource.workspace_id=?1
+                     AND resource.resource_id=json_extract(pinned_input.value,'$.resource_ref.resource_id')
+                    WHERE json_extract(pinned_input.value,'$.resource_ref.workspace_id') IS NOT ?1
+                       OR resource.current_revision_id IS NULL
+                       OR resource.current_revision_id IS NOT json_extract(pinned_input.value,'$.resource_ref.revision_id')
+                       OR NOT EXISTS(
+                         SELECT 1
+                         FROM resource_revisions pinned_revision
+                         WHERE pinned_revision.resource_id=resource.resource_id
+                           AND pinned_revision.resource_revision_id=json_extract(pinned_input.value,'$.resource_ref.revision_id')
+                       )
+                       OR NOT EXISTS(
+                         SELECT 1
+                         FROM resource_revisions head
+                         WHERE head.resource_id=resource.resource_id
+                           AND NOT EXISTS(
+                             SELECT 1 FROM resource_revision_parents child
+                             WHERE child.resource_id=head.resource_id
+                               AND child.parent_revision_id=head.resource_revision_id
+                           )
+                           AND head.resource_revision_id=json_extract(pinned_input.value,'$.resource_ref.revision_id')
+                       )
+                       OR EXISTS(
+                         SELECT 1
+                         FROM resource_revisions other_head
+                         WHERE other_head.resource_id=resource.resource_id
+                           AND NOT EXISTS(
+                             SELECT 1 FROM resource_revision_parents child
+                             WHERE child.resource_id=other_head.resource_id
+                               AND child.parent_revision_id=other_head.resource_revision_id
+                           )
+                           AND other_head.resource_revision_id<>json_extract(pinned_input.value,'$.resource_ref.revision_id')
+                       )
+                  )
+              )
+        )",
+        params![
+            workspace,
+            effect.task_id,
+            evidence_id,
+            format!("effect:{}", effect.effect_id)
+        ],
+        |row| row.get(0),
+    )
+    .map_err(map_database_error)?;
     if valid {
         Ok(())
     } else {
@@ -1462,6 +1533,7 @@ fn parse_evidence_row(row: EvidenceStorageRow) -> Result<EvidenceRecord, StoreEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
     use serde_json::json;
 
     fn effect() -> EffectRecord {
@@ -1499,6 +1571,80 @@ mod tests {
             failure_digest: None,
             ambiguity_reason_digest: None,
         }
+    }
+
+    fn verification_freshness_db(
+        current_spec_revision: i64,
+        run_spec_revision: i64,
+        current_resource_revision: Option<&str>,
+        run_input_revision: Option<&str>,
+        conflicting_head: bool,
+    ) -> Connection {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(
+            "CREATE TABLE tasks(task_id TEXT, workspace_id TEXT, current_spec_revision INTEGER);
+             CREATE TABLE evidence(evidence_id TEXT, task_id TEXT, level TEXT, subject_ref TEXT, producer_json TEXT);
+             CREATE TABLE verification_runs(task_id TEXT, status TEXT, verifier_kind TEXT, evidence_refs_json TEXT, task_spec_revision INTEGER, inputs_json TEXT);
+             CREATE TABLE resources(workspace_id TEXT, resource_id TEXT, current_revision_id TEXT);
+             CREATE TABLE resource_revisions(resource_revision_id TEXT, resource_id TEXT);
+             CREATE TABLE resource_revision_parents(resource_id TEXT, child_revision_id TEXT, parent_revision_id TEXT);",
+        ).unwrap();
+        connection
+            .execute(
+                "INSERT INTO tasks VALUES ('task-1', 'workspace-1', ?1)",
+                [current_spec_revision],
+            )
+            .unwrap();
+        connection.execute(
+            "INSERT INTO evidence VALUES ('evidence-1', 'task-1', 'VERIFIED', 'effect:effect-1', '{\"service_id\":\"verifier-1\"}')",
+            [],
+        ).unwrap();
+        let inputs = match run_input_revision {
+            Some(revision) => json!([{
+                "resource_ref": {
+                    "workspace_id": "workspace-1",
+                    "resource_id": "resource-1",
+                    "revision_id": revision,
+                },
+                "consumed_digest": null,
+            }]),
+            None => json!([]),
+        };
+        connection.execute(
+            "INSERT INTO verification_runs VALUES ('task-1', 'PASSED', 'verifier-1', '[\"evidence-1\"]', ?1, ?2)",
+            params![run_spec_revision, inputs.to_string()],
+        ).unwrap();
+        if let Some(revision) = current_resource_revision {
+            connection
+                .execute(
+                    "INSERT INTO resources VALUES ('workspace-1', 'resource-1', ?1)",
+                    [revision],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO resource_revisions VALUES (?1, 'resource-1')",
+                    [revision],
+                )
+                .unwrap();
+        }
+        if let Some(revision) = run_input_revision {
+            connection
+                .execute(
+                    "INSERT OR IGNORE INTO resource_revisions VALUES (?1, 'resource-1')",
+                    [revision],
+                )
+                .unwrap();
+        }
+        if conflicting_head {
+            connection
+                .execute(
+                    "INSERT INTO resource_revisions VALUES ('revision-other-head', 'resource-1')",
+                    [],
+                )
+                .unwrap();
+        }
+        connection
     }
 
     #[test]
@@ -1636,5 +1782,59 @@ mod tests {
         };
         response.set_replayed();
         assert!(response.replayed);
+    }
+
+    #[test]
+    fn stale_task_spec_verification_cannot_verify_effect() {
+        let connection = verification_freshness_db(2, 1, None, None, false);
+        assert!(
+            validate_verification_evidence(&connection, "workspace-1", &effect(), "evidence-1")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn changed_input_head_invalidates_verification_for_effect() {
+        let connection = verification_freshness_db(
+            2,
+            2,
+            Some("revision-current"),
+            Some("revision-verified"),
+            false,
+        );
+        assert!(
+            validate_verification_evidence(&connection, "workspace-1", &effect(), "evidence-1")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn current_task_spec_and_input_head_allow_exact_verification_evidence() {
+        let connection = verification_freshness_db(
+            2,
+            2,
+            Some("revision-current"),
+            Some("revision-current"),
+            false,
+        );
+        assert!(
+            validate_verification_evidence(&connection, "workspace-1", &effect(), "evidence-1")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn conflicted_resource_heads_invalidate_verification_for_effect() {
+        let connection = verification_freshness_db(
+            2,
+            2,
+            Some("revision-current"),
+            Some("revision-current"),
+            true,
+        );
+        assert!(
+            validate_verification_evidence(&connection, "workspace-1", &effect(), "evidence-1")
+                .is_err()
+        );
     }
 }

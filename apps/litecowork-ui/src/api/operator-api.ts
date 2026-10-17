@@ -2557,6 +2557,26 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/workspace-roots/{rootId}/observations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search metadata observations beneath an explicitly selected WorkspaceRoot
+         * @description Owner-only, selected-Workspace metadata search over the current Runtime incarnation's bounded WorkspaceRoot scan projection. Searches literal case-insensitive basenames; it reads no file contents and does not create or imply canonical Resource, ResourceRevision, or ResourceLocation aggregates. Results are observed files with resource_id null until a separately authorized canonical Resource producer is wired. The active root, Workspace owner, Runtime incarnation, and local identity bindings are rechecked for each page. The URL-safe base64 cursor binds the authenticated principal, Workspace, root version, Runtime/incarnation, query, freshness, page size, and keyset position. A Runtime-private keyed integrity tag prevents cursor edits; the cursor is readable and provides no confidentiality. Private locators and keyed file-identity digests are never returned.
+         */
+        get: operations["searchWorkspaceRootObservations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/user-requests": {
         parameters: {
             query?: never;
@@ -3708,7 +3728,7 @@ export type components = {
             agent_id: string;
             display_name: string;
             /** @enum {string} */
-            protocol_candidate: "CODEX_APP_SERVER" | "ACP";
+            protocol_candidate: "CODEX_APP_SERVER" | "ACP" | "CLI";
             /** @enum {string} */
             installation: "MISSING" | "INSTALLED" | "VERSION_UNAVAILABLE";
             version: string | null;
@@ -5569,6 +5589,25 @@ export type components = {
             /** Format: date-time */
             completed_at: string;
         } & (unknown & unknown);
+        WorkspaceRootObservationPage: {
+            workspace_id: string;
+            workspace_root_id: string;
+            items: components["schemas"]["WorkspaceRootObservationView"][];
+            next_cursor: string | null;
+        };
+        WorkspaceRootObservationView: {
+            observation_id: string;
+            display_name: string;
+            size_bytes: number;
+            /** Format: date-time */
+            modified_at: string | null;
+            /** Format: date-time */
+            observed_at: string;
+            /** @enum {string} */
+            freshness: "CURRENT" | "STALE" | "UNKNOWN";
+            /** @description Canonical Resource creation is not implied by a metadata observation. */
+            resource_id: null;
+        };
         ResourceSearchResult: {
             resource_ref: components["schemas"]["PinnedResourceRef"];
             /** @description Digest of the exact immutable ResourceRevision named by resource_ref.revision_id; source_matches offsets are valid only against these bytes. */
@@ -11389,6 +11428,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    searchWorkspaceRootObservations: {
+        parameters: {
+            query?: {
+                /** @description Optional literal case-insensitive basename substring, at most 256 UTF-8 bytes. */
+                q?: string;
+                /** @description Optional committed observation freshness filter. */
+                freshness?: "CURRENT" | "STALE" | "UNKNOWN";
+                cursor?: components["parameters"]["Cursor"];
+                /** @description Page size, from 1 through 100; defaults to 50. */
+                limit?: number;
+            };
+            header: {
+                /** @description Selected Workspace scope for this authenticated operation. */
+                "X-Workspace-ID": components["parameters"]["WorkspaceContextHeader"];
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                rootId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deterministic metadata-only observations for the selected root; never a ResourceRef or content-search result. */
+            200: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceRootObservationPage"];
                 };
             };
             default: components["responses"]["Error"];

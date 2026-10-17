@@ -869,6 +869,30 @@ async function runConversationChecks() {
   await waitFor(() => evaluate("document.querySelector('.conversation-list-item')?.textContent.includes('Reconnected conversation') && document.querySelector('.conversation-refresh-notice') === null"), "fresh saved history replaces the stale reconnect snapshot");
   checks.push("Conversation Runtime disconnect retains loaded history as read-only, labels it stale during reconnect, then replaces it with refreshed records");
 
+  await clickHarness("configureConversationList", "single");
+  await clickHarness("configureConversation", "workspace-a", "success", "UNAVAILABLE", true, "message-a", true);
+  await waitFor(() => evaluate("document.querySelector('.conversation-empty h2')?.textContent === 'This conversation is ready' && window.litecoworkHarness.hasActiveConversationStream()"), "empty Conversation presentation stream subscription");
+  assert.equal(await evaluate("document.querySelector('.conversation-status')?.textContent.includes('Connecting saved-history updates')"), true, "a new presentation stream has an accessible connecting state");
+  await clickHarness("emitReady");
+  await clickHarness("emitEmptyConversationSnapshot", 2);
+  await waitFor(() => evaluate("document.querySelector('.conversation-status')?.textContent.includes('Saved history updates live') && document.querySelector('.conversation-empty h2')?.textContent === 'This conversation is ready'"), "empty durable conversation snapshot with a live stream");
+  await clickHarness("emitTurnDelta", "turn-rendered", 1, "Temporary answer <img src=x onerror=alert(1)>.");
+  await waitFor(() => evaluate("document.querySelector('.conversation-transient-turn[aria-label=\"Assistant response in progress\"] .conversation-transient-text')?.textContent.includes('Temporary answer <img')"), "temporary response rendered as semantic text");
+  assert.equal(await evaluate("document.querySelector('.conversation-transient-turn .conversation-message-author')?.getAttribute('aria-live')"), "polite", "turn state changes are announced without making every text delta a live announcement");
+  assert.equal(await evaluate("document.querySelector('.conversation-transient-turn img') === null"), true, "untrusted streamed text is rendered as escaped React text, never interpreted markup");
+  assert.equal(await evaluate("document.querySelector('.conversation-empty') === null"), true, "a streamed response replaces the saved-empty placeholder without claiming it is durable");
+  await clickHarness("emitTurnSettled", "turn-rendered", 0);
+  await waitFor(() => evaluate("document.querySelector('.conversation-transient-turn[aria-label=\"Incomplete assistant response\"] [role=note]') !== null"), "an uncommitted settled turn is labeled incomplete rather than saved");
+  await clickHarness("emitConversationResync");
+  await waitFor(() => evaluate("document.querySelector('.conversation-status')?.textContent.includes('Refreshing saved conversation updates')"), "presentation cursor resynchronization state");
+  assert.equal(await evaluate("document.querySelector('.conversation-transient-turn') === null"), true, "resynchronization clears stale transient text");
+  await clickHarness("emitSnapshot", "UNAVAILABLE", 3);
+  await waitFor(() => evaluate("document.querySelector('.conversation-message-body')?.textContent.includes('Semantic answer remains available.')"), "durable semantic snapshot after stream resynchronization");
+  await clickHarness("failConversationStream");
+  await waitFor(() => evaluate("document.querySelector('.conversation-status')?.textContent.includes('Reconnecting saved-history updates')"), "stream error reconnect state");
+  assert.equal(await evaluate("document.body.innerText.includes('private transport details stay hidden')"), false, "native stream errors do not leak transport details into the UI");
+  checks.push("Conversation presentation renders bounded transient turns as escaped semantic text, labels incomplete/reconnect states, hides transport error details, and restores durable history after resync");
+
   await clickHarness("configureConversationList", "empty");
   await clickHarness("mountProductionApp", "first-use-conversation");
   await waitFor(() => evaluate("Boolean(document.querySelector('.workspace-switcher'))"), "production App shell for first-use Conversation");

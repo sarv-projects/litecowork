@@ -275,6 +275,7 @@ effect.retry.authorized.v1
 evidence.created.v1
 verification.started.v1
 verification.completed.v1
+verification.completed.v2
 
 approval.requested.v1
 approval.resolved.v1
@@ -429,6 +430,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `evidence.created` | `evidence_id`, `task_id`, `subject_ref`, `level`, `kind`, `producer`, `payload_digest?` |
 | `verification.started` | `verification_run_id`, `task_id`, `criterion_id`, `task_spec_revision`, `criterion_digest`, `verifier_kind`, `verifier_version`, `subject_refs[]`, `inputs[]`, `status`, `evidence_refs[]`, `aggregate_version` |
 | `verification.completed` | `verification_run_id`, `task_id`, `criterion_id`, `task_spec_revision`, `criterion_digest`, `verifier_kind`, `verifier_version`, `subject_refs[]`, `inputs[]`, `status`, `evidence_refs[]`, `aggregate_version` |
+| `verification.completed.v2` | `verification_run_id`, `task_id`, `criterion_id`, `task_spec_revision`, `criterion_digest`, `verifier_kind`, `verifier_version`, `subject_refs[]`, `inputs[]`, `status`, `evidence_refs[]`, `aggregate_version`, `failure_code?`; PASSED requires nonempty evidence refs and no failure code; FAILED/INCONCLUSIVE require a typed failure code. Allowed failure_code values: TIMEOUT, INTEGRITY_FAILURE, VERIFIER_UNAVAILABLE, UNSUPPORTED_CRITERION, INPUT_UNAVAILABLE, TASK_CANCELLED. No raw verifier output is recorded. |
 | `approval.*` | `approval_id`, `task_id`, `action_digest`, `required_assurance`, `from?`, `to`, `resolved_by?` |
 | `approval.use.consumed` | `approval_use_id`, `approval_id`, `effect_id?`, `capability_grant_id?`, `request_digest`, `consumed_at` |
 | `user.request.created` | `request_id`, `workspace_id`, `conversation_id?`, `conversation_turn_id?`, `task_id?`, `attempt_id?`, `agent_session_id`, `invocation_id?`, `kind`, `interaction_mode`, `response_schema_digest?`, `expires_at?` |

@@ -68,6 +68,10 @@ export const emptyPresentationStream: PresentationStreamState = {
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_ACTIVE_DRAFTS = 4;
+const MAX_ACTIVE_TURNS = 4;
+const MAX_RETAINED_TURNS = 8;
+const MAX_TRANSIENT_TURN_BYTES = 256 * 1024;
+const MAX_TRANSIENT_TOTAL_BYTES = 512 * 1024;
 const MAX_TRACKED_TURN_FENCES = 512;
 const MAX_DRAFT_BLOCKS = 200;
 const MAX_OPEN_BLOCKS = 32;
@@ -250,15 +254,44 @@ export function reducePresentationFrame(
     if (previous && (f.sequence as number) !== previous.lastSequence + 1) {
       return { ...state, turns: { ...state.turns, [key]: { ...previous, text: "", state: "RECONNECTING" } }, retryFences: setRetryFence(state.retryFences, baseKey, f.retry_ordinal as number) };
     }
+    const activeTurnKeys = Object.entries(state.turns)
+      .filter(([, turn]) => turn.state === "STREAMING" || turn.state === "RECONNECTING")
+      .map(([turnKeyValue]) => turnKeyValue);
+    if (!previous && activeTurnKeys.length >= MAX_ACTIVE_TURNS) return state;
+    let turns = { ...state.turns };
+    if (!previous && Object.keys(turns).length >= MAX_RETAINED_TURNS) {
+      const oldestSettledKey = Object.entries(turns).find(([, turn]) => turn.state === "INCOMPLETE")?.[0];
+      if (!oldestSettledKey) return state;
+      delete turns[oldestSettledKey];
+    }
+    const deltaBytes = utf8Length(f.text_delta);
+    if (deltaBytes > 64 * 1024) {
+      const turn: TransientTurn = {
+        conversationId: f.conversation_id,
+        turnId: f.turn_id,
+        retryOrdinal: f.retry_ordinal as number,
+        text: "",
+        lastSequence: f.sequence as number,
+        state: "RECONNECTING",
+      };
+      turns[key] = turn;
+      return { ...state, turns, retryFences: setRetryFence(state.retryFences, baseKey, f.retry_ordinal as number) };
+    }
     const nextText = `${previous?.text ?? ""}${f.text_delta}`;
-    if (nextText.length > 256 * 1024) return previous
-      ? { ...state, turns: { ...state.turns, [key]: { ...previous, text: "", state: "RECONNECTING" } } }
-      : state;
+    const nextBytes = utf8Length(nextText);
+    const retainedOtherBytes = Object.entries(turns)
+      .filter(([turnKeyValue]) => turnKeyValue !== key)
+      .reduce((total, [, turn]) => total + utf8Length(turn.text), 0);
+    if (nextBytes > MAX_TRANSIENT_TURN_BYTES || retainedOtherBytes + nextBytes > MAX_TRANSIENT_TOTAL_BYTES) {
+      if (!previous) return state;
+      return { ...state, turns: { ...turns, [key]: { ...previous, text: "", state: "RECONNECTING" } } };
+    }
     const turn: TransientTurn = { conversationId: f.conversation_id, turnId: f.turn_id, retryOrdinal: f.retry_ordinal as number, text: nextText, lastSequence: f.sequence as number, state: "STREAMING" };
+    turns[key] = turn;
     const drafts = { ...state.drafts };
     const activeDraft = drafts[baseKey];
     if (activeDraft && (f.retry_ordinal as number) > activeDraft.retryOrdinal) delete drafts[baseKey];
-    return { ...state, turns: { ...state.turns, [key]: turn }, drafts, retryFences: setRetryFence(state.retryFences, baseKey, f.retry_ordinal as number) };
+    return { ...state, turns, drafts, retryFences: setRetryFence(state.retryFences, baseKey, f.retry_ordinal as number) };
   }
   if (f.type === "turn.settled") {
     if (!exactKeys(f, ["type", "workspace_id", "conversation_id", "turn_id", "retry_ordinal", ...(Object.hasOwn(f, "committed_message_id") ? ["committed_message_id"] : [])])

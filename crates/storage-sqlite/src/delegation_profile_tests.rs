@@ -273,3 +273,65 @@ fn delegation_profile_lifecycle_persists_revisions_and_never_enables_execution()
         )
         .is_err());
 }
+
+#[test]
+fn delegation_profile_revision_history_is_owner_scoped_and_descending() {
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-profile");
+    seed_enabled_binding(&directory);
+    execute_profile_command(
+        &store,
+        "history-create",
+        "history-event-create",
+        1,
+        DelegationProfileCommand::Create {
+            profile_id: "profile-history".into(),
+            agent_binding_id: "binding-profile".into(),
+            revision: profile_input("History", "revision one"),
+        },
+    )
+    .unwrap();
+    for revision in 2_u32..=3 {
+        execute_profile_command(
+            &store,
+            &format!("history-revise-{revision}"),
+            &format!("history-event-revise-{revision}"),
+            revision as u8,
+            DelegationProfileCommand::Revise {
+                profile_id: "profile-history".into(),
+                expected_version: u64::from(revision - 1),
+                revision: profile_input("History", &format!("revision {revision}")),
+            },
+        )
+        .unwrap();
+    }
+
+    let adapter = SqliteDelegationProfileStore::new(store.clone());
+    let first = adapter
+        .list_revisions("owner-local", "workspace-profile", "profile-history", None, 2)
+        .expect("owner can read revisions");
+    assert_eq!(first.items.len(), 2);
+    assert_eq!(first.items[0]["revision"], 3);
+    assert_eq!(first.items[1]["revision"], 2);
+    assert_eq!(first.next, Some(2));
+    assert!(first.items.iter().all(|item| item.get("name_key").is_none()));
+
+    let second = adapter
+        .list_revisions(
+            "owner-local",
+            "workspace-profile",
+            "profile-history",
+            first.next,
+            2,
+        )
+        .expect("history page continues");
+    assert_eq!(second.items.len(), 1);
+    assert_eq!(second.items[0]["revision"], 1);
+    assert_eq!(second.next, None);
+
+    assert!(matches!(
+        adapter.list_revisions("other-owner", "workspace-profile", "profile-history", None, 2),
+        Err(StoreError::NotFound)
+    ));
+}

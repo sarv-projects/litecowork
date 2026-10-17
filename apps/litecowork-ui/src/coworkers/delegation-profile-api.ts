@@ -64,6 +64,17 @@ export type DelegationProfile = {
 };
 export type DelegationProfileCatalogItem = DelegationProfile;
 
+export type DelegationProfileRevisionView = {
+  delegation_profile_id: string;
+  revision: number;
+  workspace_id: string;
+  name: string;
+  routing_description: string;
+  instructions: string | null;
+  authored_by: unknown;
+  created_at: string;
+};
+
 export type DelegationProfilePage = { items: DelegationProfile[]; next_cursor: string | null };
 
 export type DelegationProfileOperation = {
@@ -166,6 +177,29 @@ function decodeProfile(value: unknown, workspaceId: string, expectedBindingId?: 
   };
 }
 
+function decodeRevision(value: unknown, workspaceId: string, profileId: string): DelegationProfileRevisionView {
+  const row = object(value);
+  if (text(row.workspace_id) !== workspaceId
+    || text(row.delegation_profile_id, "worker profile identifier", 256) !== profileId) {
+    throw new Error("Worker profile revision belongs to a different scope.");
+  }
+  const instructions = row.instructions === null || row.instructions === undefined
+    ? null : text(row.instructions, "worker instructions", 12000);
+  if (!Number.isSafeInteger(row.revision) || (row.revision as number) < 1) {
+    throw new Error("Invalid worker profile revision number.");
+  }
+  return {
+    delegation_profile_id: profileId,
+    revision: row.revision as number,
+    workspace_id: workspaceId,
+    name: text(row.name, "worker profile name", 120),
+    routing_description: text(row.routing_description, "worker routing description", 240),
+    instructions,
+    authored_by: row.authored_by,
+    created_at: text(row.created_at, "worker profile revision timestamp", 64),
+  };
+}
+
 async function checkedJson(response: Response, expectedStatus: number): Promise<unknown> {
   if (response.status !== expectedStatus) {
     if (response.status === 409 || response.status === 412) throw new Error("The worker profile changed elsewhere. Refresh it and review the latest revision before saving again.");
@@ -200,6 +234,39 @@ export function createDelegationProfileCatalogApi(workspaceId: string, transport
         cursor = next;
       }
       throw new Error("Worker profile catalog exceeds the safe paging limit.");
+    },
+    async listRevisions(profileId: string, signal?: AbortSignal): Promise<DelegationProfileRevisionView[]> {
+      if (!workspaceId) return [];
+      if (!profileId || profileId.length > 256 || /[\u0000-\u001f\u007f]/.test(profileId)) {
+        throw new Error("Worker profile identifier is invalid.");
+      }
+      const revisions: DelegationProfileRevisionView[] = [];
+      const seen = new Set<string>();
+      let cursor: string | null = null;
+      let previousRevision = Number.POSITIVE_INFINITY;
+      for (let pageNumber = 0; pageNumber < 100; pageNumber += 1) {
+        const url = new URL(`/v1/delegation-profiles/${encodeURIComponent(profileId)}/revisions`, "https://operator.invalid");
+        url.searchParams.set("limit", "200");
+        if (cursor) url.searchParams.set("cursor", cursor);
+        const response = await transport({ path: `${url.pathname}${url.search}` }, signal);
+        if (!response.ok) throw new Error(`Worker profile history could not be loaded (${response.status}).`);
+        const row = object(await response.json());
+        if (!Array.isArray(row.items)) throw new Error("Invalid worker profile revision page.");
+        for (const item of row.items) {
+          const decoded = decodeRevision(item, workspaceId, profileId);
+          if (decoded.revision >= previousRevision) throw new Error("Worker profile revision history is out of order.");
+          previousRevision = decoded.revision;
+          revisions.push(decoded);
+        }
+        const next = row.next_cursor;
+        if (next === null || next === undefined || next === "") return revisions;
+        if (typeof next !== "string" || next.length > 2048 || seen.has(next)) {
+          throw new Error("Worker profile revision pagination did not advance.");
+        }
+        seen.add(next);
+        cursor = next;
+      }
+      throw new Error("Worker profile history exceeds the safe paging limit.");
     },
     async create(agentBindingId: string, revision: DelegationProfileRevisionInput, requestId: string, signal?: AbortSignal) {
       const response = await transport({

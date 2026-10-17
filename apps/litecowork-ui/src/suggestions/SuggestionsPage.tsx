@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { SuggestionApi, Suggestion, SuggestionKind, SuggestionPreference, SuggestionTaskAcceptanceReceipt, SuggestionVisibility } from "./suggestion-api";
+import { isSuggestionRequestCurrent, isSuggestionWorkspaceResponseCurrent } from "./suggestion-request-scope";
 import "./suggestions-page.css";
 
 const KIND: Record<Suggestion["kind"], string> = {
@@ -142,6 +143,15 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
   const store = recoveryStore(api.workspaceId);
   const [recoveryRevision, setRecoveryRevision] = useState(0);
   const listGeneration = useRef(0);
+  const activeWorkspace = useRef(api.workspaceId);
+  activeWorkspace.current = api.workspaceId;
+
+  useEffect(() => {
+    setPendingAction(null);
+    setPendingPreference(null);
+    setError(null);
+    setPreferenceError(null);
+  }, [api.workspaceId]);
 
   useEffect(() => {
     const listener = () => setRecoveryRevision(value => value + 1);
@@ -155,38 +165,53 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
     const controller = new AbortController();
     listGeneration.current += 1;
     let current = true;
+    const requestWorkspaceId = api.workspaceId;
     setLoading(true); setLoadingMore(false); setError(null); setItems([]); setNext(null);
     void api.list(visibility, undefined, controller.signal).then(page => {
-      if (current) {
+      if (current && isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) {
+        if (!isSuggestionWorkspaceResponseCurrent(requestWorkspaceId, activeWorkspace.current, page.items.map(item => item.workspace_id))) {
+          throw new Error("Suggestion page belongs to a different Workspace.");
+        }
         setItems(page.items); setNext(page.next_cursor);
         const label = visibility === "VISIBLE" ? "For you" : visibility === "SNOOZED" ? "Snoozed" : "All current";
         setStatusAnnouncement(`${label}: ${page.items.length} ${page.items.length === 1 ? "idea" : "ideas"} loaded.`);
       }
     }).catch(reason => {
-      if (current && !(reason instanceof DOMException && reason.name === "AbortError")) {
+      if (current && isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)
+        && !(reason instanceof DOMException && reason.name === "AbortError")) {
         setError(reason instanceof Error ? reason.message : "Suggestions could not be loaded.");
       }
-    }).finally(() => { if (current) setLoading(false); });
+    }).finally(() => { if (current && isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setLoading(false); });
     return () => { current = false; controller.abort(); };
   }, [api, visibility, reload]);
 
   useEffect(() => {
     let current = true;
+    const requestWorkspaceId = api.workspaceId;
     void api.preferences().then(value => {
-      if (current) { setPreferences(value); setPreferenceError(null); }
+      if (current && isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) {
+        if (!isSuggestionWorkspaceResponseCurrent(requestWorkspaceId, activeWorkspace.current, value.map(item => item.workspace_id))) {
+          throw new Error("Suggestion settings belong to a different Workspace.");
+        }
+        setPreferences(value); setPreferenceError(null);
+      }
     }).catch(reason => {
-      if (current) setPreferenceError(reason instanceof Error ? reason.message : "Suggestion settings could not be loaded.");
+      if (current && isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setPreferenceError(reason instanceof Error ? reason.message : "Suggestion settings could not be loaded.");
     });
     return () => { current = false; };
   }, [api, reload]);
 
   async function loadMore() {
     if (!next || loadingMore) return;
+    const requestWorkspaceId = api.workspaceId;
     const activeGeneration = listGeneration.current;
     setLoadingMore(true); setError(null);
     try {
       const page = await api.list(visibility, next);
-      if (activeGeneration !== listGeneration.current) return;
+      if (activeGeneration !== listGeneration.current || !isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) return;
+      if (!isSuggestionWorkspaceResponseCurrent(requestWorkspaceId, activeWorkspace.current, page.items.map(item => item.workspace_id))) {
+        throw new Error("Suggestion page belongs to a different Workspace.");
+      }
       const known = new Set(items.map(item => item.suggestion_id));
       const additions = page.items.filter(item => !known.has(item.suggestion_id));
       setItems(current => {
@@ -196,8 +221,10 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
       setNext(page.next_cursor);
       setStatusAnnouncement(`${additions.length} more ${additions.length === 1 ? "idea" : "ideas"} loaded.`);
     } catch (reason) {
-      if (activeGeneration === listGeneration.current) setError(reason instanceof Error ? reason.message : "More suggestions could not be loaded.");
-    } finally { if (activeGeneration === listGeneration.current) setLoadingMore(false); }
+      if (activeGeneration === listGeneration.current && isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setError(reason instanceof Error ? reason.message : "More suggestions could not be loaded.");
+    } finally {
+      if (activeGeneration === listGeneration.current && isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setLoadingMore(false);
+    }
   }
 
   async function ownerAction(item: Suggestion, action: "dismiss" | "snooze" | "unsnooze") {
@@ -206,6 +233,7 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
       return;
     }
     if (pendingAction) return;
+    const requestWorkspaceId = api.workspaceId;
     setPendingAction(item.suggestion_id);
     setError(null);
     try {
@@ -239,15 +267,17 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
       store.records.delete(requestKey);
       notifyRecoveryStore(store);
       setRecoveryRevision(value => value + 1);
+      if (!isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) return;
       setStatusAnnouncement(action === "dismiss" ? "Idea dismissed." : action === "snooze" ? "Idea snoozed." : "Idea shown now.");
       setReload(value => value + 1);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The idea could not be updated.");
-    } finally { setPendingAction(null); }
+      if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setError(reason instanceof Error ? reason.message : "The idea could not be updated.");
+    } finally { if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setPendingAction(null); }
   }
 
   async function acceptTask(item: Suggestion) {
     if (pendingAction || item.workspace_id !== api.workspaceId || item.proposed_action !== "TASK" || !item.proposed_task_spec) return;
+    const requestWorkspaceId = api.workspaceId;
     setPendingAction(item.suggestion_id);
     setError(null);
     const key = acceptanceMutationKey(item.suggestion_id, item.version);
@@ -274,11 +304,12 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
         notifyRecoveryStore(store);
         setRecoveryRevision(value => value + 1);
       }
+      if (!isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) return;
       setStatusAnnouncement("Task saved for review. It has not started running.");
       onTaskAccepted(receipt.task.task_id);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The Task could not be created.");
-    } finally { setPendingAction(null); }
+      if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setError(reason instanceof Error ? reason.message : "The Task could not be created.");
+    } finally { if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setPendingAction(null); }
   }
 
   async function togglePreference(item: SuggestionPreference) {
@@ -287,6 +318,7 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
       return;
     }
     if (pendingPreference) return;
+    const requestWorkspaceId = api.workspaceId;
     const muted = !item.muted;
     const requestKey = preferenceMutationKey(item.kind, item.version, muted);
     let request = store.records.get(requestKey) as PreferenceMutation | undefined;
@@ -308,12 +340,13 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
       store.records.delete(requestKey);
       notifyRecoveryStore(store);
       setRecoveryRevision(value => value + 1);
+      if (!isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) return;
       setPreferences(current => current?.map(value => value.kind === updated.kind ? updated : value) ?? [updated]);
       setStatusAnnouncement(`${PREFERENCE_KIND[updated.kind]} ${updated.muted ? "muted" : "allowed"}.`);
       setReload(value => value + 1);
     } catch (reason) {
-      setPreferenceError(reason instanceof Error ? reason.message : "Suggestion settings could not be updated.");
-    } finally { setPendingPreference(null); }
+      if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setPreferenceError(reason instanceof Error ? reason.message : "Suggestion settings could not be updated.");
+    } finally { if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setPendingPreference(null); }
   }
 
   async function retryMutation(request: RecoverableMutation) {
@@ -321,6 +354,7 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
       setError("This saved request belongs to a different Workspace and cannot be submitted here.");
       return;
     }
+    const requestWorkspaceId = request.workspaceId;
     if (request.type === "acceptance") {
       if (pendingAction) return;
       setPendingAction(request.suggestionId);
@@ -333,11 +367,12 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
           notifyRecoveryStore(store);
           setRecoveryRevision(value => value + 1);
         }
+        if (!isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) return;
         setStatusAnnouncement("Task saved for review. It has not started running.");
         onTaskAccepted(receipt.task.task_id);
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "The saved Task acceptance could not be confirmed.");
-      } finally { setPendingAction(null); }
+        if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setError(reason instanceof Error ? reason.message : "The saved Task acceptance could not be confirmed.");
+      } finally { if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setPendingAction(null); }
       return;
     }
     if (request.type === "suggestion") {
@@ -354,11 +389,12 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
         store.records.delete(request.key);
         notifyRecoveryStore(store);
         setRecoveryRevision(value => value + 1);
+        if (!isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) return;
         setStatusAnnouncement("Idea change confirmed.");
         setReload(value => value + 1);
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "The saved idea change could not be confirmed.");
-      } finally { setPendingAction(null); }
+        if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setError(reason instanceof Error ? reason.message : "The saved idea change could not be confirmed.");
+      } finally { if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setPendingAction(null); }
       return;
     }
     if (pendingPreference) return;
@@ -370,12 +406,13 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
       store.records.delete(request.key);
       notifyRecoveryStore(store);
       setRecoveryRevision(value => value + 1);
+      if (!isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) return;
       setPreferences(values => values?.map(value => value.kind === updated.kind ? updated : value) ?? [updated]);
       setStatusAnnouncement(`${PREFERENCE_KIND[updated.kind]} ${updated.muted ? "muted" : "allowed"}.`);
       setReload(value => value + 1);
     } catch (reason) {
-      setPreferenceError(reason instanceof Error ? reason.message : "The saved settings change could not be confirmed.");
-    } finally { setPendingPreference(null); }
+      if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setPreferenceError(reason instanceof Error ? reason.message : "The saved settings change could not be confirmed.");
+    } finally { if (isSuggestionRequestCurrent(requestWorkspaceId, activeWorkspace.current)) setPendingPreference(null); }
   }
 
   function discardMutation(request: RecoverableMutation) {
@@ -446,7 +483,9 @@ export function SuggestionsPage({ api, onTaskAccepted }: { api: SuggestionApi; o
         : <div className="suggestions-list" aria-busy={pendingAction !== null}>{items.map(item => <SuggestionCard key={item.suggestion_id} item={item}
           busy={pendingAction === item.suggestion_id || pendingAction !== null}
           onAcceptTask={() => void acceptTask(item)}
-          onOpenTask={() => { if (item.result_task_id) onTaskAccepted(item.result_task_id); }}
+          onOpenTask={() => {
+            if (item.workspace_id === activeWorkspace.current && item.result_task_id) onTaskAccepted(item.result_task_id);
+          }}
           onDismiss={() => void ownerAction(item, "dismiss")}
           onSnooze={() => void ownerAction(item, "snooze")}
           onUnsnooze={() => void ownerAction(item, "unsnooze")} />)}</div>}

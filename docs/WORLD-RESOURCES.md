@@ -18,12 +18,14 @@ owns the canonical record fields; `API.md`, `STATE-MACHINES.md`, `EVENTS.md`, an
 The current desktop implementation can create a persistent `WorkspaceRoot` through
 authenticated native folder selection, list roots, pause/resume/revoke them, revalidate
 saved identity at Runtime startup on supported Linux/macOS source paths, and perform an
-explicit bounded metadata census on Linux. The census returns and durably records only a
-no-store count/status summary scoped to the Workspace, root, request, and root version, with
-a safe partial reason and completion time; it does not create Resources, revisions,
-locations, membership, or events. The mounted `GET /v1/resources/search` searches existing
-managed Resources and is not root-aware. Membership reconciliation, root-aware search,
-and a local-root watcher remain target contracts, not claims about the current product.
+explicit bounded metadata census on Linux. The census returns a no-store count/status
+summary and atomically commits a Runtime-keyed observed-file projection alongside the scan
+receipt. An owner-only root-version-fenced search route can page literal basename matches
+from that projection and reports observed metadata without content. These observations do
+not create Resources, revisions, or locations, and are not canonical membership. The mounted
+`GET /v1/resources/search` still searches existing managed Resources and is not root-aware.
+Canonical Resource promotion and a local-root watcher remain target contracts, not claims
+about the current product.
 
 ## Identity and location
 
@@ -211,20 +213,28 @@ traversal stops at 7 seconds to reserve the final second for mandatory saved-roo
 revalidation. At most two scan jobs run concurrently. Linux resolves each candidate from the selected root with
 `openat2` beneath-root, no-symlink, no-magic-link, and no-cross-mount constraints. It records
 one idempotent count/status receipt whose caller identity is stable across Runtime process
-restarts; current Runtime identity still fences a new receipt at commit. The response and
-receipt expose no path, name, identity, file content, or deletion inference. It neither
-creates a Resource or ResourceLocation nor changes membership or freshness. A successful
-response is not an atomic filesystem snapshot. A new scan attempt on macOS and Windows
-fails closed as unsupported until metadata-only traversal is qualified; an exact committed
-receipt is replayed before that platform check.
+restarts; current Runtime identity still fences a new receipt at commit. The scan summary
+exposes no path, name, identity, file content, or deletion inference. The scan also commits
+a separate Runtime-keyed metadata-observation projection in the same SQLite transaction as
+its receipt. That projection supports owner-scoped literal basename search under the
+selected active root and reports `CURRENT`, `STALE`, or `UNKNOWN` from scan completeness;
+it does not create or imply a Resource, ResourceRevision, or ResourceLocation aggregate.
+A complete scan advances its generation and may mark unseen observations stale; a partial
+scan preserves unseen observations and does not infer deletion. The owner-only observation
+page requires the selected Workspace and current root version, rechecks Workspace
+ownership and active root/Runtime bindings, uses a version- and query-bound keyset cursor,
+and returns safe display metadata only. Private locators and keyed identity digests stay
+local and are never returned. A successful scan is not an atomic filesystem snapshot. A
+new scan attempt on macOS and Windows fails closed as unsupported until metadata-only
+traversal is qualified; an exact committed receipt is replayed before that platform check.
 
 ### WorkspaceRoot watcher — target only
 
 The `F28 — Persistent WorkspaceRoot and deterministic search` flow in `FLOWS.md` remains
-a target scenario. The bounded Linux metadata census described above is served, but it
-does not reconcile file membership or freshness. Membership-producing root scans,
-watchers, and root-aware search are not served by the current implementation. The
-`WorldIndexer` contract below remains target-only:
+partially served. The bounded Linux metadata census and its separate observed-file search
+projection are served, but neither produces canonical Resource membership or watches for
+changes. `WorldIndexer` and canonical Resource/Revision/Location promotion remain
+target-only:
 when implemented, it will watch only active roots and provider locations authorized for
 the Workspace. Watcher notifications will be hints, not a complete change log. On startup,
 reconnect, overflow, permission error, or detected watcher gap, it will mark affected

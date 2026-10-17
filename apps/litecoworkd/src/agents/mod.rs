@@ -8,6 +8,7 @@ mod cline;
 mod codex;
 mod codex_app_server;
 mod codex_profile_probe;
+mod native_cli;
 mod opencode;
 mod opencode_profile_probe;
 mod opencode_server;
@@ -81,16 +82,39 @@ pub fn discover_local_installations() -> Vec<AgentInstallation> {
         let codex = scope.spawn(codex::discover);
         let opencode = scope.spawn(opencode::discover);
         let cline = scope.spawn(cline::discover);
+        let native = scope.spawn(native_cli::discover_all);
         let codex = codex.join().unwrap_or_else(|_| codex::unavailable());
         let opencode = opencode.join().unwrap_or_else(|_| opencode::unavailable());
         let cline = cline.join().unwrap_or_else(|_| cline::unavailable());
-        vec![codex, opencode, cline]
+        let native = native.join().unwrap_or_else(|_| {
+            native_cli::INVENTORY_CANDIDATES
+                .into_iter()
+                .map(native_cli::unavailable)
+                .collect()
+        });
+        [vec![codex, opencode, cline], native].concat()
     });
     *cache = Some((std::time::Instant::now(), entries.clone()));
     entries
 }
 
 fn discover_version(binary: &str, expected_prefix: &str) -> (InstallationState, Option<String>) {
+    discover_version_with_args(
+        binary,
+        &["--version"],
+        expected_prefix,
+        false,
+        std::time::Duration::from_secs(2),
+    )
+}
+
+fn discover_version_with_args(
+    binary: &str,
+    version_args: &[&str],
+    expected_prefix: &str,
+    trailing_period: bool,
+    timeout: std::time::Duration,
+) -> (InstallationState, Option<String>) {
     use std::{
         io::Read,
         process::{Command, Stdio},
@@ -103,23 +127,7 @@ fn discover_version(binary: &str, expected_prefix: &str) -> (InstallationState, 
     // the CLI's helper lookup path (needed by launchers such as Codex's
     // `#!/usr/bin/env node` shim), but do not forward credentials, proxy
     // settings, or other arbitrary daemon environment variables.
-    let mut command = Command::new(binary);
-    command.env_clear();
-    if let Some(path) = std::env::var_os("PATH") {
-        command.env("PATH", path);
-    }
-    #[cfg(windows)]
-    if let Some(system_root) = std::env::var_os("SystemRoot") {
-        command.env("SystemRoot", system_root);
-    }
-
-    let mut child = match command
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    {
+    let mut child = match spawn_version_process(binary, version_args) {
         Ok(child) => child,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return (InstallationState::Missing, None);
@@ -135,7 +143,7 @@ fn discover_version(binary: &str, expected_prefix: &str) -> (InstallationState, 
         let _ = stdout.by_ref().take(257).read_to_end(&mut output);
         let _ = output_sender.send(output);
     });
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -161,18 +169,64 @@ fn discover_version(binary: &str, expected_prefix: &str) -> (InstallationState, 
 
     // CLI output is untrusted. Accept only a small version-shaped suffix, never
     // return arbitrary stdout/stderr through the authenticated Operator API.
-    let stdout = String::from_utf8_lossy(&stdout);
-    let version = stdout
-        .lines()
-        .next()
-        .and_then(|line| line.strip_prefix(expected_prefix))
-        .map(str::trim)
-        .filter(|candidate| is_version_shaped(candidate))
-        .map(str::to_owned);
+    let version = project_version_output(&stdout, expected_prefix, trailing_period);
     match version {
         Some(version) => (InstallationState::Installed, Some(version)),
         None => (InstallationState::VersionUnavailable, None),
     }
+}
+
+fn spawn_version_process(
+    binary: &str,
+    version_args: &[&str],
+) -> std::io::Result<std::process::Child> {
+    use std::process::{Command, Stdio};
+
+    fn command(binary: &str, version_args: &[&str]) -> Command {
+        let mut command = Command::new(binary);
+        command.env_clear();
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", path);
+        }
+        #[cfg(windows)]
+        if let Some(system_root) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", system_root);
+        }
+        command
+            .args(version_args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        command
+    }
+
+    match command(binary, version_args).spawn() {
+        #[cfg(windows)]
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                && std::path::Path::new(binary).extension().is_none() =>
+        {
+            // Native npm installations expose `.cmd` shims. Pass the module's
+            // fixed version args directly; never synthesize a `cmd /c` string.
+            command(&format!("{binary}.cmd"), version_args).spawn()
+        }
+        result => result,
+    }
+}
+
+fn project_version_output(
+    stdout: &[u8],
+    expected_prefix: &str,
+    trailing_period: bool,
+) -> Option<String> {
+    let output = String::from_utf8_lossy(stdout);
+    let version = output.lines().next()?.strip_prefix(expected_prefix)?.trim();
+    let version = if trailing_period {
+        version.strip_suffix('.').unwrap_or(version)
+    } else {
+        version
+    };
+    is_version_shaped(version).then(|| version.to_owned())
 }
 
 fn is_version_shaped(candidate: &str) -> bool {
@@ -301,5 +355,51 @@ mod tests {
         assert!(!stderr.contains("test-only-secret-marker"));
         assert!(!stdout.contains("raw-native-output"));
         assert!(!stderr.contains("raw-native-output"));
+    }
+
+    #[test]
+    fn local_inventory_reports_native_cli_candidates_without_claiming_auth_or_session_readiness() {
+        let inventory = discover_local_installations();
+        for (agent_id, display_name) in [
+            ("claude-code", "Claude Code"),
+            ("gemini-cli", "Gemini CLI"),
+            ("qwen-code", "Qwen Code"),
+            ("cursor-cli", "Cursor CLI"),
+            ("kiro-cli", "Kiro CLI"),
+            ("goose", "Goose"),
+            ("mistral-vibe", "Mistral Vibe"),
+            ("jetbrains-junie-cli", "JetBrains Junie CLI"),
+            ("github-copilot-cli", "GitHub Copilot CLI"),
+            ("kimi-code-cli", "Kimi Code CLI"),
+            ("factory-droid", "Factory Droid"),
+            ("auggie-cli", "Auggie CLI"),
+        ] {
+            let row = inventory
+                .iter()
+                .find(|entry| entry.agent_id == agent_id)
+                .unwrap_or_else(|| panic!("inventory omitted {agent_id}"));
+            assert_eq!(row.display_name, display_name);
+            assert_eq!(row.protocol_candidate, "CLI");
+            assert!(matches!(
+                row.authentication,
+                AuthenticationReadiness::Unknown
+            ));
+            assert!(matches!(row.session_readiness, SessionReadiness::NotProbed));
+            assert!(matches!(
+                row.installation,
+                InstallationState::Missing
+                    | InstallationState::Installed
+                    | InstallationState::VersionUnavailable
+            ));
+        }
+    }
+
+    #[test]
+    fn native_version_projection_accepts_vendor_prefix_without_returning_other_output() {
+        let output = "GitHub Copilot CLI 1.0.78.\nRun 'copilot update' to check for updates.\n";
+        let version = project_version_output(output.as_bytes(), "GitHub Copilot CLI ", true);
+
+        assert_eq!(version.as_deref(), Some("1.0.78"));
+        assert!(!output.contains("1.0.78.\nRun"));
     }
 }

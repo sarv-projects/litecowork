@@ -459,3 +459,38 @@ test("ignores turn settlement frames from another Workspace", () => {
   });
   assert.equal(foreign.turns[JSON.stringify([conversationId, turnId, 0])]?.state, "STREAMING");
 });
+
+test("bounds concurrent transient turns and rejects additional turn identities", () => {
+  let state = ready();
+  for (let index = 1; index <= 5; index += 1) {
+    state = reducePresentationFrame(state, {
+      type: "turn.delta", workspace_id: workspaceId, conversation_id: conversationId,
+      turn_id: `turn-${index}`, retry_ordinal: 0, sequence: 1, text_delta: `response-${index}`,
+    });
+  }
+  assert.equal(Object.keys(state.turns).length, 4);
+  assert.equal(state.turns[JSON.stringify([conversationId, "turn-5", 0])], undefined);
+});
+
+test("bounds transient response bytes by UTF-8 size rather than JavaScript string length", () => {
+  let state = ready();
+  for (let sequence = 1; sequence <= 5; sequence += 1) {
+    state = reducePresentationFrame(state, {
+      type: "turn.delta", workspace_id: workspaceId, conversation_id: conversationId,
+      turn_id: turnId, retry_ordinal: 0, sequence, text_delta: "🙂".repeat(16_000),
+    });
+  }
+  const turn = state.turns[JSON.stringify([conversationId, turnId, 0])];
+  assert.equal(turn?.state, "RECONNECTING");
+  assert.equal(turn?.text, "");
+});
+
+test("marks an oversized single UTF-8 delta as reconnecting instead of leaving a silent spinner", () => {
+  const state = reducePresentationFrame(ready(), {
+    type: "turn.delta", workspace_id: workspaceId, conversation_id: conversationId,
+    turn_id: turnId, retry_ordinal: 0, sequence: 1, text_delta: "界".repeat(22_000),
+  });
+  const turn = state.turns[JSON.stringify([conversationId, turnId, 0])];
+  assert.equal(turn?.state, "RECONNECTING");
+  assert.equal(turn?.text, "");
+});

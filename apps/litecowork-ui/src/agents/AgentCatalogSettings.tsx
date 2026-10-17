@@ -4,6 +4,7 @@ import {
   type DelegationProfile,
 } from "../coworkers/delegation-profile-api";
 import { desktopDelegationProfileCatalogApi } from "../coworkers/desktop-delegation-profile-api";
+import { DelegationProfileHistory } from "./DelegationProfileHistory";
 import { scheduleOfferExpiryRefresh } from "./agent-offer-expiry";
 import { AGENT_CANDIDATES } from "./agent-candidate-catalog";
 import "./agent-catalog-settings.css";
@@ -578,13 +579,13 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
       </header>
 
       <div className="agent-catalog__explanation" role="note">
-        <strong>Three separate states</strong>
+        <strong>Separate agent states</strong>
         <ol>
           <li><b>Installed</b> means a local executable has a recognized version from bounded inventory evidence.</li>
           <li><b>Profile observed</b> means an adapter reported protocol and expiring Runtime readiness.</li>
           <li><b>Workspace binding</b> records whether LiteCowork may use it and whether it is lead-eligible.</li>
         </ol>
-        <p>Cline inventory may use its matching nearest npm package manifest or a bounded CLI version response. Neither source proves sign-in, session readiness, or agent support.</p>
+        <p>The local installation inventory covers all 15 curated candidates, using bounded version-only probes or Cline package metadata. These observations do not prove sign-in, session readiness, or agent support.</p>
         <p>None of these starts a Task. Lead eligibility is not worker-profile enablement, and enabling a binding only permits future admission.</p>
         <p className="agent-catalog__authoring-status"><strong>Worker profiles can be saved, but cannot be enabled for execution.</strong> Create a disabled profile for an enabled Workspace binding and revise its instructions. Model/session options stay empty until an adapter negotiates and validates them. Trust admission, isolated execution, Task delegation, and worker runs remain unavailable.</p>
       </div>
@@ -598,7 +599,7 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
           <strong>ACP Registry data is not connected</strong>
           <span>No live or cached Registry results are loaded. Candidate presence does not mean the agent is installed, configured, or supported.</span>
         </div>
-        <p className="agent-catalog__footnote">Codex and OpenCode have bounded profile-probe implementations. A profile is marked observed only when this Workspace has a recorded probe observation; that history is separate from the latest offer’s readiness and expiry. The other candidates have no LiteCowork profile probe yet. No candidate has an implemented, qualified session module.</p>
+        <p className="agent-catalog__footnote">Codex and OpenCode have bounded profile-probe implementations. A profile is marked observed only when this Workspace has a recorded probe observation; that history is separate from the latest offer’s readiness and expiry. The other candidates have no LiteCowork profile probe yet. None has an implemented, qualified native session module.</p>
         <ul className="agent-catalog__candidates" aria-label="Curated agent candidates">
           {AGENT_CANDIDATES.map((candidate) => {
             const observed = candidate.profileProviderKey !== null
@@ -610,8 +611,12 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
             return <li key={candidate.id} data-agent-candidate-id={candidate.id} data-catalog-stage={candidate.catalogStage}>
               <div className="agent-catalog__candidate-heading">
                 <strong>{candidate.displayName}</strong>
-                <span className={`agent-catalog__badge ${candidate.catalogStage === "PROFILE_PROBE_IMPLEMENTED" ? "is-caution" : "is-muted"}`}>
-                  {candidate.catalogStage === "PROFILE_PROBE_IMPLEMENTED" ? "Profile probe implemented" : "Candidate only"}
+                <span className={`agent-catalog__badge ${candidate.catalogStage === "CANDIDATE_ONLY" ? "is-muted" : "is-caution"}`}>
+                  {candidate.catalogStage === "PROFILE_PROBE_IMPLEMENTED"
+                    ? "Profile probe implemented"
+                    : candidate.catalogStage === "INSTALLATION_PROBE_IMPLEMENTED"
+                      ? "Installation probe implemented"
+                      : "Candidate only"}
                 </span>
               </div>
               <span className="agent-catalog__candidate-path">{candidate.candidatePath}</span>
@@ -882,6 +887,12 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
                 {!archived && !archiveConfirmation && <button type="button" className="agent-catalog__secondary" disabled={!workspaceActive || !runtimeReady || !runtimeEnrolled || workerProfileLifecycleBusy !== null} onClick={() => setWorkerProfileArchiveConfirmation({ profileId: profile.delegation_profile_id, baseVersion: profile.version })}>Archive…</button>}
                 {!profile.editable && profile.edit_block_reason && <small>{profile.edit_block_reason}</small>}
               </div>
+              {profileApi && <DelegationProfileHistory
+                key={`${workspaceId}:${profile.delegation_profile_id}:${profile.current_revision}`}
+                api={profileApi}
+                profileId={profile.delegation_profile_id}
+                currentRevision={profile.current_revision}
+              />}
               {duplicateForm && <form className="agent-catalog__lifecycle-form" onSubmit={event => { event.preventDefault(); if (!changedSinceDuplicateForm && duplicateForm.name.trim()) duplicateProfile(duplicateForm); }}>
                 <strong>Duplicate as a disabled profile</strong>
                 <span>Copies the current non-secret settings into revision 1. Attempts, credentials, grants, and environments are never copied.</span>

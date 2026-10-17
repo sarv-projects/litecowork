@@ -12,7 +12,7 @@ No problems detected by these checks.
 
 - ConversationsPage explicitly states native message submission is unavailable.
 - ConversationsPage contains readOnly and disabled controls; verify exact JSX and real send execution before release claims.
-- OpenAPI operations specified (not served-route count): 208
+- OpenAPI operations specified (not served-route count): 209
 - Supplemental UIV1 explicit acceptance definitions: 158
 - Actual backlog stories: 67
 

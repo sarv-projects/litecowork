@@ -11,7 +11,8 @@ use storage_core::{
     StoreError, Workspace, WorkspaceCreateRequest, WorkspaceInstructionRevisionRecord,
     WorkspaceRootCreateCommit, WorkspaceRootListRecord, WorkspaceRootRecord,
     WorkspaceRootResumeCommit, WorkspaceRootScanCandidate, WorkspaceRootScanCommit,
-    WorkspaceRootScanResult, WorkspaceRootStatusAction, WorkspaceRootStatusCommit,
+    WorkspaceRootScanResult, WorkspaceRootFileObservation, WorkspaceRootStatusAction,
+    WorkspaceRootStatusCommit,
     WorkspaceRootStore, WorkspaceStore, is_sha256_digest,
 };
 
@@ -520,6 +521,7 @@ where
         &self,
         command: &ScanWorkspaceRoot,
         result: WorkspaceRootScanResult,
+        observations: Vec<WorkspaceRootFileObservation>,
     ) -> Result<WorkspaceRootScanResult, StoreError> {
         validate_workspace_root_scan_command(command)?;
         if result.workspace_id != command.workspace_id
@@ -528,6 +530,7 @@ where
             || result.root_version != command.expected_version
             || result.entries_examined > storage_core::MAX_WORKSPACE_ROOT_SCAN_ENTRIES
             || result.entries_examined < result.files_observed
+            || observations.len() != result.files_observed as usize
             || (result.status == storage_core::WorkspaceRootScanStatus::Complete
                 && result.partial_reason.is_some())
             || (result.status == storage_core::WorkspaceRootScanStatus::Partial
@@ -546,6 +549,7 @@ where
                 runtime_id: command.runtime_id.clone(),
                 runtime_incarnation_id: command.runtime_incarnation_id.clone(),
                 result,
+                observations,
             })
     }
 

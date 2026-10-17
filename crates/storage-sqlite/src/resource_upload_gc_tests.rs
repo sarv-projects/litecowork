@@ -1456,7 +1456,23 @@ fn downgrade_resource_content_schema_to_v16(connection: &Connection) {
 fn downgrade_resource_index_schema_to_v18(connection: &Connection) {
     connection
         .execute_batch(
-            "DROP TRIGGER IF EXISTS resource_index_blob_registry_reference_delete_guard;
+            "DROP TRIGGER IF EXISTS workspace_root_observations_delete_private_binding;
+             DROP TABLE IF EXISTS workspace_root_observation_batch_receipts;
+             DROP TABLE IF EXISTS workspace_root_observation_bindings;
+             DROP TABLE IF EXISTS workspace_root_observations;
+             DROP TABLE IF EXISTS workspace_root_observation_generations;
+             DELETE FROM schema_migrations WHERE version = 21;
+             PRAGMA user_version = 20;
+             DROP TRIGGER IF EXISTS verification_run_insert_guard;
+             DROP TRIGGER IF EXISTS verification_run_transition_guard;
+             DROP TRIGGER IF EXISTS verification_run_terminal_immutable;
+             DROP TRIGGER IF EXISTS verification_run_delete_guard;
+             DROP INDEX IF EXISTS idx_verification_runs_task_status_time;
+             ALTER TABLE verification_runs DROP COLUMN failure_code;
+             ALTER TABLE verification_runs DROP COLUMN version;
+             DELETE FROM schema_migrations WHERE version = 20;
+             PRAGMA user_version = 19;
+             DROP TRIGGER IF EXISTS resource_index_blob_registry_reference_delete_guard;
              DROP TRIGGER IF EXISTS resource_text_index_blob_registry_update_guard;
              DROP TRIGGER IF EXISTS resource_text_index_blob_registry_insert_guard;
              DROP INDEX IF EXISTS resource_index_blob_registry_gc;

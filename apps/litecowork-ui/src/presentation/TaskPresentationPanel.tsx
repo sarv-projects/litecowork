@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { PresentationRuntime } from "./PresentationRuntime";
 import { parsePresentationItem, type PresentationItem } from "./presentation-types";
-import { TaskPresentationStreamController, type TaskPresentationStreamStatus, type TaskSnapshotStreamDriver, type TaskStreamEnvelope } from "../tasks/task-stream.ts";
+import { isTaskSnapshotEpochCurrent, TaskPresentationStreamController, type TaskPresentationStreamStatus, type TaskSnapshotStreamDriver, type TaskStreamEnvelope } from "../tasks/task-stream.ts";
 import "./task-presentation.css";
 
 type Snapshot = {
@@ -335,7 +335,7 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
         if (!mayRefresh()) return;
         // Validate each projected item at the IPC boundary. Invalid records stay out of
         // renderers while the owning Task remains viewable.
-        if (streamSnapshotEpoch.current === streamEpochAtRequestStart) {
+        if (isTaskSnapshotEpochCurrent(streamEpochAtRequestStart, streamSnapshotEpoch.current)) {
           // A stream snapshot accepted while this read was in flight is newer than
           // this request's captured SQLite view; never let the unary read roll it back.
           const parsed = snapshot.items.map(parsePresentationItem);
@@ -346,13 +346,13 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
           setFreshness(snapshot.freshness);
           setSavedSnapshotIdentity(identity);
           hasSnapshot.current = true;
+          setProgress(progressResult.progress);
+          setProgressFailure(progressResult.failure);
         }
-        setProgress(progressResult.progress);
-        setProgressFailure(progressResult.failure);
         setFailure(null);
         setSavedSnapshotNotice(null);
       }).catch(error => {
-        if (!mayRefresh()) return;
+        if (!mayRefresh() || !isTaskSnapshotEpochCurrent(streamEpochAtRequestStart, streamSnapshotEpoch.current)) return;
         if (hasSnapshot.current) {
           setFailure(null);
           setSavedSnapshotNotice({ identity, message: operatorReady
