@@ -100,12 +100,16 @@ impl RuntimeOsPrincipalIdentity {
         hex::encode(hmac_sha256(&self.pseudonym_key, &message))
     }
 
-    /// Constructs a synthetic Unix identity for tests that need to spawn a daemon.
+    /// Constructs a synthetic OS identity for tests that need to exercise local routes.
     ///
     /// This is available only when the explicit `test-support` feature is enabled. Its
     /// binding fingerprint and pseudonym key are fixed test values and must never be
     /// used to authenticate a real local IPC peer.
-    #[cfg(all(feature = "test-support", debug_assertions, unix))]
+    #[cfg(all(
+        feature = "test-support",
+        debug_assertions,
+        any(target_os = "linux", target_os = "macos", target_os = "windows")
+    ))]
     pub fn test_support(runtime_id: impl Into<String>) -> Result<Self, StoreError> {
         const TEST_PSEUDONYM_KEY: [u8; KEY_BYTES] = *b"litecowork-test-pseudonym-key-v1";
 
@@ -114,15 +118,21 @@ impl RuntimeOsPrincipalIdentity {
             return Err(StoreError::Invalid("RuntimeId is required".to_owned()));
         }
 
-        let platform = if cfg!(target_os = "linux") {
-            RuntimeOsPlatform::Linux
-        } else if cfg!(target_os = "macos") {
-            RuntimeOsPlatform::MacOs
-        } else {
-            return Err(StoreError::Blob(
-                "test OS principal identity is supported only on Linux and macOS".to_owned(),
-            ));
-        };
+        #[cfg(target_os = "linux")]
+        let (platform, principal) = (
+            RuntimeOsPlatform::Linux,
+            RuntimeOsPrincipal::UnixUid(unix_process_principal()?),
+        );
+        #[cfg(target_os = "macos")]
+        let (platform, principal) = (
+            RuntimeOsPlatform::MacOs,
+            RuntimeOsPrincipal::UnixUid(unix_process_principal()?),
+        );
+        #[cfg(target_os = "windows")]
+        let (platform, principal) = (
+            RuntimeOsPlatform::Windows,
+            RuntimeOsPrincipal::WindowsLogonSid(Zeroizing::new("S-1-5-21-0-0-0-1000".to_owned())),
+        );
 
         Ok(Self {
             binding: RuntimeOsPrincipalBinding {
@@ -131,7 +141,7 @@ impl RuntimeOsPrincipalIdentity {
                 principal_fingerprint: "test-only:fake-runtime-principal-binding-v1".to_owned(),
                 binding_version: 1,
             },
-            principal: RuntimeOsPrincipal::UnixUid(unix_process_principal()?),
+            principal,
             pseudonym_key: Zeroizing::new(TEST_PSEUDONYM_KEY),
         })
     }
@@ -448,7 +458,12 @@ fn fingerprint(
     format!("hmac-sha256:{}", hex::encode(hmac_sha256(key, &message)))
 }
 
-#[cfg(all(test, feature = "test-support", debug_assertions, unix))]
+#[cfg(all(
+    test,
+    feature = "test-support",
+    debug_assertions,
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
+))]
 mod test_support_tests {
     use super::{RuntimeOsPlatform, RuntimeOsPrincipalIdentity};
 
@@ -481,6 +496,22 @@ mod test_support_tests {
             second_identity.keyed_pseudonym("test-namespace", b"test-material")
         );
         assert!(!pseudonym.contains("test-only"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_support_identity_uses_a_non_current_synthetic_logon_sid() {
+        let identity = RuntimeOsPrincipalIdentity::test_support("runtime-test-windows")
+            .expect("Windows test identity is available with test-support");
+        assert_eq!(identity.binding.platform, RuntimeOsPlatform::Windows);
+        assert_eq!(
+            identity.principal.windows_logon_sid(),
+            Some("S-1-5-21-0-0-0-1000")
+        );
+        assert_eq!(
+            identity.binding.principal_fingerprint,
+            "test-only:fake-runtime-principal-binding-v1"
+        );
     }
 }
 

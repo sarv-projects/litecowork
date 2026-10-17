@@ -36,7 +36,10 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 #[cfg(test)]
 #[path = "runtime_recovery_tests.rs"]
 mod recovery_tests;
-#[cfg(test)]
+// Root revalidation fixtures exercise Unix directory identity/openat semantics. The
+// production Windows implementation has a distinct handle-based path and must not
+// import the Unix-only test helper.
+#[cfg(all(test, unix))]
 #[path = "runtime_revalidation_tests.rs"]
 mod revalidation_tests;
 #[cfg(all(test, unix, debug_assertions))]

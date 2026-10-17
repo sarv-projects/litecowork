@@ -228,7 +228,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
-    use std::{os::unix::fs::PermissionsExt, sync::Arc, time::Duration};
+    use std::{sync::Arc, time::Duration};
     use storage_core::{BlobPurpose, StoreError};
     use storage_sqlite::{
         FileBlobStore, SqliteConfig, SqliteWorkspaceStore, WorkspaceBlobKey,
@@ -239,6 +239,17 @@ mod tests {
 
     #[derive(Clone)]
     struct TestKeys;
+
+    fn restrict_test_directory(directory: &tempfile::TempDir) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+                .expect("private test directory permissions");
+        }
+        #[cfg(not(unix))]
+        let _ = directory;
+    }
 
     impl WorkspaceBlobKeyProvider for TestKeys {
         fn current_key(
@@ -279,8 +290,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_offer_route_requires_selected_workspace_context() {
         let directory = tempfile::tempdir().expect("temporary store directory");
-        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
-            .expect("private test directory permissions");
+        restrict_test_directory(&directory);
         let app = runtime_offers_router(RuntimeOffersApiState {
             store: test_store(&directory),
             principal_id: "owner-local".to_owned(),
@@ -299,8 +309,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_offer_route_rejects_limits_above_the_contract_cap() {
         let directory = tempfile::tempdir().expect("temporary store directory");
-        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
-            .expect("private test directory permissions");
+        restrict_test_directory(&directory);
         let app = runtime_offers_router(RuntimeOffersApiState {
             store: test_store(&directory),
             principal_id: "owner-local".to_owned(),
