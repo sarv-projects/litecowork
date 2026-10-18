@@ -70,3 +70,31 @@ jobs:
             librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev pkg-config wget
       - name: Test separate Tauri Cargo workspace
         run: cargo test --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --workspace --locked
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: apps/litecowork-ui/.node-version
+      - name: Enable pinned pnpm shim
+        run: corepack enable pnpm
+      - name: Install locked UI dependencies
+        working-directory: apps/litecowork-ui
+        run: corepack pnpm@12.10.1 install --frozen-lockfile
+      - name: Test Windows security and staging providers
+        run: cargo test --locked -p windows-local-security -p local-environment-staging -- --test-threads=1
+      - name: Test Windows Runtime and Operator
+        run: cargo test --locked -p litecoworkd --bin litecoworkd -- --test-threads=1
+      - name: Test Windows Tauri bridges
+        run: cargo test --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --workspace --locked
+      - name: Test desktop helpers and build the Windows installer
+        working-directory: apps/litecowork-ui
+        run: |
+          corepack pnpm@12.10.1 test
+          corepack pnpm@12.10.1 run tauri -- build --bundles nsis
