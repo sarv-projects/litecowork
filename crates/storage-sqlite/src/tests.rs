@@ -16,6 +16,8 @@ mod runtime_capability_host_tests;
 mod runtime_lifecycle_tests;
 #[path = "runtime_offer_tests.rs"]
 mod runtime_offer_tests;
+#[path = "task_lead_handoff_tests.rs"]
+mod task_lead_handoff_tests;
 #[path = "workspace_archive_tests.rs"]
 mod workspace_archive_tests;
 #[path = "workspace_instruction_tests.rs"]
@@ -31,6 +33,8 @@ mod coworker_tests;
 mod delegation_profile_tests;
 #[path = "environment_tests.rs"]
 mod environment_tests;
+#[path = "evidence_run_binding_migration_tests.rs"]
+mod evidence_run_binding_migration_tests;
 #[path = "goal_tests.rs"]
 mod goal_tests;
 #[path = "routine_tests.rs"]
@@ -1423,6 +1427,32 @@ fn resource_location_list_is_workspace_scoped_public_and_uses_committed_freshnes
             [],
         )
         .expect("revisionless resource location");
+    connection
+        .execute(
+            "INSERT INTO workspace_roots(
+               workspace_root_id, workspace_id, resource_id, location_id, display_name,
+               watch_policy, replication_policy, status, added_by_json,
+               created_at, updated_at, version
+             ) VALUES (
+               'root-resource-location-view', 'workspace-context', 'resource-context',
+               'location-context', 'root', 'METADATA', 'NONE', 'ACTIVE',
+               '{\"kind\":\"USER\",\"principal_id\":\"owner\"}',
+               '2026-10-06T10:00:00Z', '2026-10-06T10:00:00Z', 1
+             )",
+            [],
+        )
+        .expect("root owning the selected FILE location");
+    connection
+        .execute(
+            "INSERT INTO workspace_root_file_locations(
+               workspace_id, workspace_root_id, location_id, resource_id, observed_at
+             ) VALUES (
+               'workspace-context', 'root-resource-location-view',
+               'location-context', 'resource-context', '2026-10-06T10:00:00Z'
+             )",
+            [],
+        )
+        .expect("index root-linked FILE location");
 
     let locations = store
         .list_resource_locations("workspace-context", "resource-context")
@@ -1443,6 +1473,23 @@ fn resource_location_list_is_workspace_scoped_public_and_uses_committed_freshnes
             ("location-unavailable", "UNAVAILABLE"),
             ("location-unknown", "UNKNOWN"),
         ]
+    );
+    connection
+        .execute(
+            "UPDATE workspace_roots SET status='REVOKED'
+             WHERE workspace_root_id='root-resource-location-view'",
+            [],
+        )
+        .expect("revoke owning root for read-projection check");
+    let after_revocation = store
+        .list_resource_locations("workspace-context", "resource-context")
+        .expect("read after root revocation")
+        .expect("resource remains retained");
+    assert!(
+        after_revocation
+            .iter()
+            .all(|location| location.location_id != "location-context"),
+        "a root-revoked ResourceLocation must not remain in the read projection"
     );
     assert_eq!(locations[0].runtime_id, None);
     assert_eq!(locations[0].environment_id, None);
@@ -1589,6 +1636,24 @@ fn applies_full_contract_schema_and_reports_sqlite_runtime() {
         .expect("WorkspaceRoot observations v21 migration receipt");
     assert_eq!(v21_migration.0, V21_MIGRATION_NAME);
     assert_eq!(v21_migration.1, digest(SQLITE_V21_DDL.as_bytes()));
+    let v22_migration: (String, String) = connection
+        .query_row(
+            "SELECT name, source_checksum FROM schema_migrations WHERE version = 22",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("VerificationRun Evidence binding v22 migration receipt");
+    assert_eq!(v22_migration.0, V22_MIGRATION_NAME);
+    assert_eq!(v22_migration.1, digest(SQLITE_V22_DDL.as_bytes()));
+    let v23_migration: (String, String) = connection
+        .query_row(
+            "SELECT name, source_checksum FROM schema_migrations WHERE version = 23",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("WorkspaceRoot membership v23 migration receipt");
+    assert_eq!(v23_migration.0, V23_MIGRATION_NAME);
+    assert_eq!(v23_migration.1, digest(SQLITE_V23_DDL.as_bytes()));
     let policy_decision_column: bool = connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info('audit_records') WHERE name='policy_decision_json')",
@@ -1616,6 +1681,8 @@ fn applies_full_contract_schema_and_reports_sqlite_runtime() {
         "workspace_root_observations",
         "workspace_root_observation_bindings",
         "workspace_root_observation_batch_receipts",
+        "workspace_root_file_locations",
+        "workspace_root_cleanup_outbox",
     ] {
         let exists: bool = connection
             .query_row(
@@ -1667,7 +1734,7 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
     assert!(agent_registry_exists);
     assert!(!resource_index_exists);
 
-    migrate(&mut connection).expect("apply migrations v14 through v21 in order");
+    migrate(&mut connection).expect("apply migrations v14 through v25 in order");
 
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -1680,7 +1747,7 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
         .expect("query applied migrations")
         .collect::<Result<_, _>>()
         .expect("collect migration versions");
-    assert_eq!(applied, [14, 15, 16, 17, 18, 19, 20, 21]);
+    assert_eq!(applied, [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]);
 }
 
 #[test]
@@ -1726,9 +1793,17 @@ fn v21_workspace_root_observation_migration_rolls_back_atomically_and_replays() 
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read replayed schema version");
-    assert_eq!(version, 21);
-    verify_migration_record(&connection, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL, true)
-        .expect("verify v21 migration receipt");
+    assert_eq!(version, 25);
+    verify_migration_record(&connection, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL, false)
+        .expect("verify replayed v21 migration receipt");
+    verify_migration_record(&connection, 22, V22_MIGRATION_NAME, SQLITE_V22_DDL, false)
+        .expect("verify v22 migration receipt");
+    verify_migration_record(&connection, 23, V23_MIGRATION_NAME, SQLITE_V23_DDL, false)
+        .expect("verify v23 migration receipt");
+    verify_migration_record(&connection, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL, false)
+        .expect("verify historical v24 migration receipt");
+    verify_migration_record(&connection, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL, true)
+        .expect("verify latest v25 migration receipt");
 }
 
 #[test]
@@ -1872,7 +1947,22 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
 
     connection
         .execute_batch(
-            "DROP TRIGGER workspace_root_observations_delete_private_binding;
+            "DROP TRIGGER IF EXISTS delegation_results_immutable_update;
+             DROP TRIGGER IF EXISTS delegation_results_immutable_delete;
+             DROP TABLE IF EXISTS delegation_results;
+             DELETE FROM schema_migrations WHERE version = 24;
+             DROP INDEX IF EXISTS idx_workspace_root_file_locations_cleanup;
+             DROP TABLE IF EXISTS workspace_root_file_locations;
+             DROP TABLE IF EXISTS workspace_root_cleanup_outbox;
+             DELETE FROM schema_migrations WHERE version = 23;
+             DROP TRIGGER effect_verified_requires_bound_evidence_v22;
+             DROP TRIGGER verification_run_pass_requires_bound_evidence;
+             DROP TRIGGER evidence_verification_run_binding_insert_guard;
+             DROP INDEX evidence_verification_run;
+             ALTER TABLE evidence DROP COLUMN verification_run_id;
+             DELETE FROM schema_migrations WHERE version = 22;
+             PRAGMA user_version = 21;
+             DROP TRIGGER workspace_root_observations_delete_private_binding;
              DROP TABLE workspace_root_observation_batch_receipts;
              DROP TABLE workspace_root_observation_bindings;
              DROP TABLE workspace_root_observations;
@@ -1934,13 +2024,19 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read replayed v19 version");
-    assert_eq!(version, 21);
+    assert_eq!(version, 24);
     verify_migration_record(&connection, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL, false)
         .expect("verify replayed v19 receipt");
     verify_migration_record(&connection, 20, V20_MIGRATION_NAME, SQLITE_V20_DDL, false)
         .expect("verify v20 receipt after v21 replay");
-    verify_migration_record(&connection, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL, true)
+    verify_migration_record(&connection, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL, false)
         .expect("verify replayed v21 receipt");
+    verify_migration_record(&connection, 22, V22_MIGRATION_NAME, SQLITE_V22_DDL, false)
+        .expect("verify replayed v22 receipt");
+    verify_migration_record(&connection, 23, V23_MIGRATION_NAME, SQLITE_V23_DDL, false)
+        .expect("verify replayed v23 receipt");
+    verify_migration_record(&connection, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL, true)
+        .expect("verify latest migration receipt");
 
     let (registry_count, size_bytes, state, reference_count): (i64, i64, String, i64) = connection
         .query_row(

@@ -208,7 +208,8 @@ VERIFIED  # required postcondition independently checked
 
 Evidence is immutable and append-only.
 Each Evidence item names its subject, producer, observation method, time, and optional
-payload digest/ref. Verification evidence is additionally bound to one TaskSpecRevision,
+payload digest/ref. Verification evidence names its exact `verification_run_id` and is
+additionally bound through that immutable run to one TaskSpecRevision,
 criterion digest, verifier/version, exact revision-pinned input ResourceRefs, and the
 digests of the bytes actually consumed. Agent output is untrusted data. `REPORTED` can support a progress
 display but cannot satisfy an `OBSERVED` or `VERIFIED` criterion. A later independent
@@ -224,16 +225,32 @@ caller-selected Evidence `kind` string.
 
 ### Current SQLite persistence boundary
 
-The current Runtime-authenticated persistence writer admits only `REPORTED` Evidence whose
-producer exactly matches that authenticated Runtime principal. It rejects Runtime attempts
-to submit `OBSERVED` or `VERIFIED` Evidence. Those levels require a separately authenticated
-observer/verifier admission contract, which is not implemented; Effect transitions to
-`OBSERVED`/`VERIFIED` therefore remain unavailable through this slice. If `OBSERVED` is
-admitted by a future trusted path, its Evidence ID is pinned in the Effect's
+The Runtime-authenticated append path admits only `REPORTED` Evidence whose producer
+exactly matches that authenticated Runtime principal. It rejects Runtime attempts to
+submit `OBSERVED` or `VERIFIED` Evidence. The separate VerificationRun settlement path
+accepts `VERIFIED` Evidence only from the Core-authenticated verifier identity pinned on
+that exact run. It commits the Evidence row, immutable `evidence.created.v1` event, exact
+run binding, and passing VerificationRun event in one SQLite transaction after rechecking
+the current TaskSpec criterion and pinned input heads. Its Evidence subject and optional
+payload ResourceRef must match the run's pinned subjects or inputs. This does not execute
+or independently qualify a verifier. `OBSERVED` Evidence and Effect transitions to
+`OBSERVED`/`VERIFIED` remain unavailable through this slice. If `OBSERVED` is admitted by
+a future trusted path, its Evidence ID is pinned in the Effect's
 `observed_state._evidence_id` reserved field and in the transition event. Failure and
 ambiguity transitions persist a typed error code and/or a digest of the bounded reason in
 the immutable event payload; failed transitions also record the retryability classification.
 Raw provider/agent diagnostics are not persisted there.
+
+SQLite schema v22 adds an optional immutable `evidence.verification_run_id` foreign key.
+Run-bound Evidence can be appended only while the exact same-Task VerificationRun is
+`RUNNING`. A database guard rejects any `PASSED` settlement unless its non-empty,
+duplicate-free reference list is exactly the set of same-Task, `VERIFIED` Evidence rows
+bound to that run. The settlement adapter enforces this in the same transaction as the
+Evidence rows/events and run transition, while preserving the runtime-only `REPORTED`
+admission rule.
+The schema also guards Effect `VERIFIED` transitions against a different or unbound
+VerificationRun. The Effect writer's full transition path remains incomplete and does not
+yet expose this verifier settlement as a verified Effect transition.
 
 Effect proposal persistence is not dispatch admission. The current port checks the active
 Attempt/lease fence and exact already-created Invocation, then commits `PROPOSED`; it does

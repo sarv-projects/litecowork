@@ -1,8 +1,9 @@
 //! Read-only ZIP-intake capability status for the authenticated local Operator.
 //!
-//! This route intentionally does not invoke the Python parser. The parser has no
-//! supervised isolation boundary with hard resource limits, so ZIP content remains an
-//! opaque Resource until that boundary is qualified.
+//! This route intentionally does not invoke the standalone Python capability. Its Linux
+//! Bubblewrap preview/extraction process is not yet integrated with daemon-side exact
+//! Resource resolution, cancellation, Core publication, or platform qualification, so ZIP
+//! content remains an opaque Resource through the Operator.
 
 #![allow(clippy::result_large_err)] // Handlers return full Axum Responses to preserve status, body, and headers.
 

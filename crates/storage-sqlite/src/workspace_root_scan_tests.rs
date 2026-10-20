@@ -8,8 +8,7 @@ use storage_core::{
     DeviceIdentityRecord, LocalFileIdentityBindingRecord, RuntimeIncarnationLocalObservationRecord,
     RuntimeIncarnationRecord, RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeRecord,
     RuntimeWorkspaceBindingStore, WorkspaceCreateRequest, WorkspaceRootFileObservation,
-    WorkspaceRootScanCommit, WorkspaceRootScanResult, WorkspaceRootScanStatus,
-    WorkspaceRootStore,
+    WorkspaceRootScanCommit, WorkspaceRootScanResult, WorkspaceRootScanStatus, WorkspaceRootStore,
 };
 use zeroize::Zeroizing;
 
@@ -262,6 +261,7 @@ fn scan_commit(request_id: &str, runtime_id: &str) -> WorkspaceRootScanCommit {
                 private_relative_locator: b"two.txt".to_vec(),
             },
         ],
+        memberships: Vec::new(),
     }
 }
 

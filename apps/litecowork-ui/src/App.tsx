@@ -54,6 +54,8 @@ import {
 import { ResourceRevisionEditor } from "./resources/ResourceRevisionEditor";
 import { LibraryNavigationDialog, libraryNavigationMainIsInert, useLibraryNavigation } from "./resources/library-navigation";
 import { TaskResourceTextPreview } from "./resources/TaskResourceTextPreview";
+import { ResourceSourceReferences } from "./resources/ResourceSourceReferences";
+import { resourceSearchSourceReferences } from "./resources/resource-source-references";
 import { performResourceIndexRebuild } from "./resources/resource-index-rebuild.ts";
 import { validateResourceSourceHighlights, type ResourceSourceMatch, type SourceHighlightResult } from "./resources/source-span-highlights";
 import { TaskAttentionPage } from "./needs-you/TaskAttentionPage";
@@ -71,7 +73,8 @@ import { ConversationsPage } from "./conversations/ConversationsPage";
 import {
   WorkspaceInstructionDraftCache,
   canApplyWorkspaceInstructionResponse,
-  getOrCreateInstructionSave,
+  clearWorkspaceInstructionSave,
+  getOrCreateWorkspaceInstructionSave,
   instructionSaveFailureKind,
   instructionSaveRefreshKind,
   workspaceInstructionByteLength,
@@ -571,7 +574,9 @@ function App() {
   const [instructionBusy, setInstructionBusy] = useState(false);
   const [instructionMessage, setInstructionMessage] = useState<string | null>(null);
   const [latestInstructionsAfterConflict, setLatestInstructionsAfterConflict] = useState<string | null>(null);
-  const [pendingInstructions, setPendingInstructions] = useState<PendingWorkspaceInstructionSave | null>(null);
+  // Keep ambiguous save identities per Workspace. A failed A request must retain
+  // its original Resource and revision request IDs while the user saves B.
+  const pendingInstructions = useRef(new Map<string, PendingWorkspaceInstructionSave>());
   const instructionGeneration = useRef(0);
   const [pendingWorkspaceRequest, setPendingWorkspaceRequest] = useState<PendingWorkspaceCreate | null>(null);
   const pendingWorkspaceRequestRef = useRef<PendingWorkspaceCreate | null>(null);
@@ -1428,13 +1433,13 @@ function App() {
       setInstructionMessage("Workspace instructions are limited to 64 KiB of UTF-8 text.");
       return;
     }
-    const pending = getOrCreateInstructionSave(pendingInstructions, {
+    const pending = getOrCreateWorkspaceInstructionSave(pendingInstructions.current, {
       workspaceId: workspace.workspaceId,
       text: instructionText,
       expectedVersion: workspace.version,
       parentRevisions: workspaceInstructions.length > 0 ? [workspaceInstructions[workspaceInstructions.length - 1].revision] : [],
     }, () => crypto.randomUUID());
-    setPendingInstructions(pending);
+    pendingInstructions.current.set(workspace.workspaceId, pending);
     setInstructionBusy(true);
     setInstructionMessage("Saving a versioned Workspace instruction revision…");
     const requestContext = { workspaceId: workspace.workspaceId, generation };
@@ -1474,7 +1479,7 @@ function App() {
         const stale = typeof error === "string" && error.includes("STALE_WORKSPACE_VERSION");
         const failureKind = instructionSaveFailureKind({ stale, resourceImported });
         if (failureKind === "STALE" || failureKind === "STALE_AFTER_RESOURCE_IMPORT") {
-          setPendingInstructions((current) => current?.requestId === pending.requestId ? null : current);
+          clearWorkspaceInstructionSave(pendingInstructions.current, workspace.workspaceId, pending.requestId);
           if (isCurrent()) {
             setInstructionMessage(failureKind === "STALE_AFTER_RESOURCE_IMPORT"
               ? "This Workspace changed while you were editing. No instruction revision was saved; the text Resource was imported and remains in the Library. Your draft is still here. Review the latest revision before saving again."
@@ -1514,7 +1519,7 @@ function App() {
         return;
       }
 
-      setPendingInstructions((current) => current?.requestId === pending.requestId ? null : current);
+      clearWorkspaceInstructionSave(pendingInstructions.current, workspace.workspaceId, pending.requestId);
       instructionDrafts.current.delete(workspace.workspaceId);
       if (isCurrent()) {
         setInstructionMessage("Workspace instructions saved. New Tasks can pin this revision; existing Tasks remain unchanged.");
@@ -3124,6 +3129,7 @@ function SettingsPage({ runtime, runtimeLifecycle, runtimeLifecycleLoading, runt
         actionError={agentActionError}
         busyAction={agentActionBusy}
         defaultAgentBusy={defaultAgentBusy}
+        registryApi={desktopAgentCatalogApi}
         onRefresh={() => { void refreshAgents(); void onRefreshAgentProfiles(); void onRefreshAgentBindings(); }}
         onProbeCodex={() => { void onProbeCodex(); }}
         onProbeOpenCode={() => { void onProbeOpenCode(); }}
@@ -3719,6 +3725,18 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
               {(root.status === "ACTIVE" || root.status === "PAUSED") && <WorkspaceRootObservations
                 root={root}
                 scanUnsupported={scanUnavailable}
+                openResource={(resourceId, displayName, sizeBytes) => {
+                  const catalogResource = resources.find((resource) => resource.resourceId === resourceId);
+                  setRevisionResource(catalogResource ?? {
+                    resourceId,
+                    workspaceId: selectedWorkspaceId,
+                    resourceRevisionId: "",
+                    displayName,
+                    mediaType: "application/octet-stream",
+                    contentDigest: "",
+                    sizeBytes,
+                  });
+                }}
                 loadPage={(request: WorkspaceRootObservationRequest) => invoke<WorkspaceRootObservationPage>("search_workspace_root_observations", {
                   workspaceId: request.workspaceId,
                   workspaceRootId: request.workspaceRootId,
@@ -3852,6 +3870,18 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
               const exactRevisionAttached = attached?.revisionId === result.resourceRevisionId;
               return <li key={result.resourceId}><span className="resource-file-icon" aria-hidden="true">▤</span><span><strong>{result.displayName}</strong><small>{result.matchReasons.map((reason) => reason === "MEDIA_TYPE" ? "Type match" : reason === "CONTENT_ON_DEMAND" ? "Text match · scanned now" : reason === "CONTENT_INDEXED" ? "Text match · local index" : "Name match").join(" · ") || "Saved Resource"} · {result.freshness.toLocaleLowerCase()}</small></span><span className={result.snippet ? "resource-search-snippet" : "resource-digest"}>{result.snippet ?? "Metadata match"}</span><button className="quiet-button" type="button" onClick={() => void onPreview(result.resourceId, result.displayName, result.resourceRevisionId, result.sourceMatches.length > 0 ? { contentDigest: result.sourceContentDigest, matches: result.sourceMatches } : undefined)} aria-expanded={previewResourceId === result.resourceId}>Preview</button><button className="quiet-button" type="button" aria-pressed={exactRevisionAttached} onClick={() => onToggleTaskInput({ resourceId: result.resourceId, resourceRevisionId: result.resourceRevisionId, displayName: result.displayName })}>{exactRevisionAttached ? "Remove input" : attached ? "Use this revision" : "Add to Task"}</button></li>;
             })}</ul>}
+            {selectedWorkspaceId && <ResourceSourceReferences
+              workspaceId={selectedWorkspaceId}
+              references={resourceSearchSourceReferences(selectedWorkspaceId, searchResults)}
+              onOpenExactSource={(pin) => {
+                const source = searchResults.find((result) => result.resourceId === pin.resourceId && result.resourceRevisionId === pin.revisionId);
+                if (!source) return;
+                void onPreview(source.resourceId, source.displayName, pin.revisionId, {
+                  contentDigest: pin.contentDigest,
+                  matches: [...pin.sourceMatches],
+                });
+              }}
+            />}
             {searchCursor && <div className="load-more-row"><button className="quiet-button" type="button" disabled={searchBusy} onClick={() => void loadMoreSearchResults()}>{searchBusy ? "Searching…" : "Load more results"}</button></div>}
           </> : <>
             {resources.length === 0 ? null : <ul className="resource-list">{resources.map((resource) => {
@@ -3879,9 +3909,9 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
                 : preview}</pre>
             </>}
           </section>}
-          {revisionResource && <ResourceRevisionEditor resource={revisionResource} activeWorkspaceId={selectedWorkspaceId} onClose={() => setRevisionResource(null)} onSelectResource={setRevisionResource} onSelectWorkspace={onSelectWorkspace} onNavigationSaveFailure={onDraftSaveFailure} onCommitted={(updated) => { onRevisionCommitted(updated); setRevisionResource((current) => current?.workspaceId === updated.workspaceId && current.resourceId === updated.resourceId ? updated : current); }} />}
         </>
       )}
+      {revisionResource && <ResourceRevisionEditor resource={revisionResource} activeWorkspaceId={selectedWorkspaceId} onClose={() => setRevisionResource(null)} onSelectResource={setRevisionResource} onSelectWorkspace={onSelectWorkspace} onNavigationSaveFailure={onDraftSaveFailure} onCommitted={(updated) => { onRevisionCommitted(updated); setRevisionResource((current) => current?.workspaceId === updated.workspaceId && current.resourceId === updated.resourceId ? updated : current); }} />}
       <section className="workspace-list-card" aria-labelledby="finished-artifacts-heading">
         <div className="section-heading"><div><h2 id="finished-artifacts-heading">Finished Artifacts</h2><p>Committed outputs from work in this Workspace, with version history and provenance.</p></div></div>
         {!selectedWorkspaceId

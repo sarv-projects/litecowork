@@ -1,0 +1,71 @@
+.resource-source-references {
+  margin: 12px 0 0;
+  color: var(--color-text);
+}
+
+.resource-source-references h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.resource-source-references ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.resource-source-references li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border-left: 2px solid var(--color-primary);
+  background: var(--color-surface-muted, var(--color-surface));
+}
+
+.resource-source-references__copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  overflow-wrap: anywhere;
+}
+
+.resource-source-references__copy strong {
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.resource-source-references__copy > span,
+.resource-source-references__note {
+  color: var(--color-text-subtle);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.resource-source-references blockquote {
+  margin: 3px 0 0;
+  padding-left: 9px;
+  border-left: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.resource-source-references .quiet-button {
+  flex: 0 0 auto;
+  min-height: 32px;
+}
+
+.resource-source-references .quiet-button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.resource-source-references__note {
+  margin: 6px 0 0;
+}

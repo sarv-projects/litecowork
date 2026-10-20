@@ -6,6 +6,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+const MAX_VERIFICATION_SUBJECTS: usize = 128;
+const MAX_VERIFICATION_INPUTS: usize = 128;
+const MAX_VERIFICATION_EVIDENCE_REFS: usize = 128;
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EffectState {
@@ -230,6 +234,10 @@ pub struct EvidenceRecord {
     pub producer: Value,
     pub payload_ref: Option<Value>,
     pub payload_digest: Option<String>,
+    /// The exact VerificationRun that produced verifier-scoped Evidence. Runtime
+    /// reports leave this unset; Runtime admission cannot claim a verifier run.
+    #[serde(default)]
+    pub verification_run_id: Option<String>,
     pub created_at: String,
 }
 
@@ -247,6 +255,10 @@ impl EvidenceRecord {
             }
         }
         if !valid_producer(&self.producer)
+            || self
+                .verification_run_id
+                .as_deref()
+                .is_some_and(|value| invalid_bounded(value, 256))
             || self
                 .payload_ref
                 .as_ref()
@@ -370,6 +382,9 @@ impl VerificationRunRecord {
             || !valid_digest(&self.criterion_digest)
             || !valid(&self.verifier_kind, 256)
             || !valid(&self.verifier_version, 256)
+            || self.subject_refs.len() > MAX_VERIFICATION_SUBJECTS
+            || self.inputs.len() > MAX_VERIFICATION_INPUTS
+            || self.evidence_refs.len() > MAX_VERIFICATION_EVIDENCE_REFS
             || self.evidence_refs.iter().any(|value| !valid(value, 256))
             || has_duplicates(&self.evidence_refs)
             || self
@@ -520,6 +535,7 @@ pub struct RequiredVerificationCriterion {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompletionBlocker {
     InvalidCriterion,
+    EvaluationInputOverBudget,
     VerifierEvidenceBindingUnavailable,
     CriterionUnverified(String),
     UnresolvedEffects,
@@ -584,6 +600,110 @@ pub fn assess_completion(
         eligible: blockers.is_empty(),
         blockers,
     }
+}
+
+/// Evaluates completion from a trusted, committed Evidence projection. The caller must
+/// obtain `evidence` from the authoritative EvidenceStore (never from agent/verifier
+/// output) and the Task transition still has to recheck source heads and open Effects
+/// transactionally. This overload can establish exact same-run Evidence binding; the
+/// compatibility overload above deliberately stays fail-closed when Evidence rows are
+/// unavailable.
+pub fn assess_completion_with_evidence(
+    task_id: &str,
+    criteria: &[RequiredVerificationCriterion],
+    runs: &[VerificationRunRecord],
+    evidence: &[EvidenceRecord],
+    unresolved_effects: usize,
+    pending_approvals: usize,
+    incomplete_children: usize,
+) -> CompletionAssessment {
+    let mut blockers = Vec::new();
+    if invalid_bounded(task_id, 256) {
+        blockers.push(CompletionBlocker::InvalidCriterion);
+    }
+    if criteria.len() > 256 || runs.len() > 4096 || evidence.len() > 16_384 {
+        blockers.push(CompletionBlocker::EvaluationInputOverBudget);
+    }
+
+    for criterion in criteria.iter().take(256) {
+        if invalid_bounded(&criterion.criterion_id, 512)
+            || criterion.task_spec_revision == 0
+            || !valid_digest(&criterion.criterion_digest)
+        {
+            blockers.push(CompletionBlocker::InvalidCriterion);
+            continue;
+        }
+
+        let satisfied = runs.iter().take(4096).any(|run| {
+            if run.validate().is_err()
+                || run.task_id != task_id
+                || run.status != VerificationRunStatus::Passed
+                || run.criterion_id != criterion.criterion_id
+                || run.task_spec_revision != criterion.task_spec_revision
+                || run.criterion_digest != criterion.criterion_digest
+            {
+                return false;
+            }
+
+            let bound: Vec<_> = evidence
+                .iter()
+                .take(16_384)
+                .filter(|item| {
+                    item.verification_run_id.as_deref() == Some(&run.verification_run_id)
+                })
+                .collect();
+            if bound.len() != run.evidence_refs.len() || bound.is_empty() {
+                return false;
+            }
+
+            run.evidence_refs.iter().all(|evidence_id| {
+                let Some(item) = evidence
+                    .iter()
+                    .take(16_384)
+                    .find(|item| item.evidence_id == *evidence_id)
+                else {
+                    return false;
+                };
+                item.validate().is_ok()
+                    && item.task_id == task_id
+                    && item.level == EvidenceLevel::Verified
+                    && item.verification_run_id.as_deref() == Some(&run.verification_run_id)
+                    && verifier_evidence_subject_is_pinned(run, &item.subject_ref)
+            })
+        });
+        if !satisfied {
+            blockers.push(CompletionBlocker::CriterionUnverified(
+                criterion.criterion_id.clone(),
+            ));
+        }
+    }
+
+    if unresolved_effects > 0 {
+        blockers.push(CompletionBlocker::UnresolvedEffects);
+    }
+    if pending_approvals > 0 {
+        blockers.push(CompletionBlocker::PendingApprovals);
+    }
+    if incomplete_children > 0 {
+        blockers.push(CompletionBlocker::IncompleteChildren);
+    }
+    CompletionAssessment {
+        eligible: blockers.is_empty(),
+        blockers,
+    }
+}
+
+fn verifier_evidence_subject_is_pinned(run: &VerificationRunRecord, subject: &str) -> bool {
+    if run.subject_refs.is_empty() {
+        return subject == format!("task:{}", run.task_id);
+    }
+    run.subject_refs.iter().any(|reference| {
+        subject
+            == format!(
+                "resource://{}/{}@{}",
+                reference.workspace_id, reference.resource_id, reference.revision_id
+            )
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -751,9 +871,27 @@ mod tests {
             producer: json!({"service_id":"adapter"}),
             payload_ref: None,
             payload_digest: None,
+            verification_run_id: None,
             created_at: "2026-10-08T00:00:00Z".into(),
         };
         assert!(evidence.validate().is_ok());
+    }
+
+    #[test]
+    fn old_evidence_payloads_deserialize_without_a_run_binding() {
+        let value = json!({
+            "evidence_id":"ev-legacy",
+            "task_id":"task-1",
+            "subject_ref":"task:task-1",
+            "level":"REPORTED",
+            "kind":"provider_result",
+            "producer":{"service_id":"adapter"},
+            "payload_ref":null,
+            "payload_digest":null,
+            "created_at":"2026-10-08T00:00:00Z"
+        });
+        let evidence: EvidenceRecord = serde_json::from_value(value).unwrap();
+        assert_eq!(evidence.verification_run_id, None);
     }
 
     #[test]
@@ -829,6 +967,12 @@ mod tests {
             },
             consumed_digest: Some("sha256:bad".into()),
         });
+        assert_eq!(run.validate(), Err(VerificationRunError::InvalidRecord));
+
+        run.inputs.clear();
+        run.evidence_refs = (0..=MAX_VERIFICATION_EVIDENCE_REFS)
+            .map(|index| format!("evidence-{index}"))
+            .collect();
         assert_eq!(run.validate(), Err(VerificationRunError::InvalidRecord));
     }
 
@@ -940,6 +1084,133 @@ mod tests {
                 CompletionBlocker::PendingApprovals,
                 CompletionBlocker::IncompleteChildren,
             ]
+        );
+    }
+
+    #[test]
+    fn committed_same_run_verified_evidence_can_satisfy_exact_criterion() {
+        let criterion = RequiredVerificationCriterion {
+            criterion_id: "criterion-1".into(),
+            task_spec_revision: 4,
+            criterion_digest: format!("sha256:{}", "a".repeat(64)),
+        };
+        let run = VerificationRunRecord {
+            verification_run_id: "verify-1".into(),
+            task_id: "task-1".into(),
+            criterion_id: criterion.criterion_id.clone(),
+            task_spec_revision: criterion.task_spec_revision,
+            criterion_digest: criterion.criterion_digest.clone(),
+            verifier_kind: "deterministic-test".into(),
+            verifier_version: "1".into(),
+            subject_refs: vec![],
+            inputs: vec![],
+            status: VerificationRunStatus::Passed,
+            version: 2,
+            evidence_refs: vec!["evidence-1".into()],
+            started_at: Some("2026-10-16T10:00:00Z".into()),
+            completed_at: Some("2026-10-16T10:00:01Z".into()),
+            failure_code: None,
+        };
+        let evidence = EvidenceRecord {
+            evidence_id: "evidence-1".into(),
+            task_id: "task-1".into(),
+            subject_ref: "task:task-1".into(),
+            level: EvidenceLevel::Verified,
+            kind: "criterion-check".into(),
+            producer: json!({"service_id":"verifier-1"}),
+            payload_ref: None,
+            payload_digest: None,
+            verification_run_id: Some("verify-1".into()),
+            created_at: "2026-10-16T10:00:01Z".into(),
+        };
+
+        let assessment =
+            assess_completion_with_evidence("task-1", &[criterion], &[run], &[evidence], 0, 0, 0);
+        assert!(assessment.eligible);
+        assert!(assessment.blockers.is_empty());
+    }
+
+    #[test]
+    fn completion_rejects_reported_cross_run_and_unpinned_subject_evidence() {
+        let criterion = RequiredVerificationCriterion {
+            criterion_id: "criterion-1".into(),
+            task_spec_revision: 4,
+            criterion_digest: format!("sha256:{}", "b".repeat(64)),
+        };
+        let run = VerificationRunRecord {
+            verification_run_id: "verify-1".into(),
+            task_id: "task-1".into(),
+            criterion_id: criterion.criterion_id.clone(),
+            task_spec_revision: criterion.task_spec_revision,
+            criterion_digest: criterion.criterion_digest.clone(),
+            verifier_kind: "deterministic-test".into(),
+            verifier_version: "1".into(),
+            subject_refs: vec![VerificationResourceRef {
+                workspace_id: "workspace-1".into(),
+                resource_id: "resource-1".into(),
+                revision_id: "revision-1".into(),
+            }],
+            inputs: vec![],
+            status: VerificationRunStatus::Passed,
+            version: 2,
+            evidence_refs: vec!["evidence-1".into()],
+            started_at: Some("2026-10-16T10:00:00Z".into()),
+            completed_at: Some("2026-10-16T10:00:01Z".into()),
+            failure_code: None,
+        };
+        let mut evidence = EvidenceRecord {
+            evidence_id: "evidence-1".into(),
+            task_id: "task-1".into(),
+            subject_ref: "resource://workspace-1/resource-1@revision-1".into(),
+            level: EvidenceLevel::Reported,
+            kind: "criterion-check".into(),
+            producer: json!({"service_id":"verifier-1"}),
+            payload_ref: None,
+            payload_digest: None,
+            verification_run_id: Some("verify-other".into()),
+            created_at: "2026-10-16T10:00:01Z".into(),
+        };
+
+        let blocked = assess_completion_with_evidence(
+            "task-1",
+            &[criterion.clone()],
+            &[run.clone()],
+            &[evidence.clone()],
+            0,
+            0,
+            0,
+        );
+        assert!(!blocked.eligible);
+        assert!(
+            blocked
+                .blockers
+                .contains(&CompletionBlocker::CriterionUnverified(
+                    "criterion-1".into()
+                ))
+        );
+
+        evidence.level = EvidenceLevel::Verified;
+        evidence.verification_run_id = Some("verify-1".into());
+        evidence.subject_ref = "resource://workspace-1/resource-1@revision-other".into();
+        let blocked =
+            assess_completion_with_evidence("task-1", &[criterion], &[run], &[evidence], 0, 0, 0);
+        assert!(!blocked.eligible);
+    }
+
+    #[test]
+    fn completion_evaluation_rejects_oversized_projection_sets() {
+        let criterion = RequiredVerificationCriterion {
+            criterion_id: "criterion-1".into(),
+            task_spec_revision: 1,
+            criterion_digest: format!("sha256:{}", "a".repeat(64)),
+        };
+        let criteria = vec![criterion; 257];
+        let assessment = assess_completion_with_evidence("task-1", &criteria, &[], &[], 0, 0, 0);
+        assert!(!assessment.eligible);
+        assert!(
+            assessment
+                .blockers
+                .contains(&CompletionBlocker::EvaluationInputOverBudget)
         );
     }
 }

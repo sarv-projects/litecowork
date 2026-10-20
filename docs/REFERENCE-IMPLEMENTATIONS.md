@@ -30,6 +30,11 @@ control plane.
 | REF-COMPOSIO | https://github.com/ComposioHQ/composio | `f9ce49953598e13371c406ac346846696a4d8385` on `next` | MIT at checked root LICENSE | Optional integration/tool provider and catalog reference; never a mandatory dependency or secret owner. |
 | REF-ACP-REGISTRY | https://github.com/agentclientprotocol/registry | `4d1729af836732b46840080920912dac7d5a2935` | Apache-2.0 | Descriptive agent/distribution metadata and protocol adaptation matrix only. Registry presence does not establish LiteCowork support, installation, auth, capability, readiness, or safety. |
 | REF-OPENINTELLIGENTUI | [CopilotKit/OpenIntelligentUI](https://github.com/CopilotKit/OpenIntelligentUI) | [`f6e4388b26a64b9a0714943b08a1ce622b924eec`](https://github.com/CopilotKit/OpenIntelligentUI/tree/f6e4388b26a64b9a0714943b08a1ce622b924eec) | MIT at checked root LICENSE | E08-S08 UX, sandbox lifecycle, explicit bridge, and renderer-test reference. Do not adopt its arbitrary generated HTML/CSS/JavaScript renderer or CSP policy as LiteCowork's RichPresentation implementation. |
+| REF-BROWSER-USE | [browser-use/browser-use](https://github.com/browser-use/browser-use) | [`ccd22fef47a1a36e0c4596fef5db73a5117b9d06`](https://github.com/browser-use/browser-use/tree/ccd22fef47a1a36e0c4596fef5db73a5117b9d06) | MIT at checked root LICENSE | Study bounded DOM/accessibility serialization and screencast lifecycle. Do not adopt default profile copying, storage-state cookie handling, ambient CDP attachment, model loop, or unfiltered logging. Candidate files and security adaptation are below. |
+| REF-JEV-ULTRAFAST | [browser-use/jev-ultrafast](https://github.com/browser-use/jev-ultrafast) | [`1231850a0bf1a0c0341fe408ef1668dbbfdfac46`](https://github.com/browser-use/jev-ultrafast/tree/1231850a0bf1a0c0341fe408ef1668dbbfdfac46) | MIT at checked root LICENSE | Study dynamic typed action spaces, stable observed-node references, atomic DOM snapshots, stale-target checks, and stop-and-inspect after ambiguous mutation. Do not run its independent agent/model loop as a LiteCowork provider. |
+| REF-BROWSERCODE | [browser-use/browsercode](https://github.com/browser-use/browsercode) | [`b200643fe0eb93ce5a3aadd4bb21cb6cceb2ed04`](https://github.com/browser-use/browsercode/tree/b200643fe0eb93ce5a3aadd4bb21cb6cceb2ed04) | MIT at checked root LICENSE | Study the CDP WebSocket lifecycle, generated protocol bindings, and connection-race tests. Never expose its persistent raw CDP session or arbitrary agent JavaScript execution. |
+| REF-BROWSER-HARNESS | [browser-use/browser-harness](https://github.com/browser-use/browser-harness) | [`a6426f846fc59d16f38cf66f79176bc7793c16b6`](https://github.com/browser-use/browser-harness/tree/a6426f846fc59d16f38cf66f79176bc7793c16b6) | MIT at checked root LICENSE | Candidate LiteSPM-managed shared browser package for compatible agents. Exact reusable files and wrapper requirements are documented below; raw attached-Chrome access is not itself a LiteCowork-qualified capability. |
+| REF-LITESPM | [sarv-projects/LiteSPM](https://github.com/sarv-projects/LiteSPM) | [`9f42b25ddfb1acedce0f2dbf9964f4a7724d622e`](https://github.com/sarv-projects/LiteSPM/tree/9f42b25ddfb1acedce0f2dbf9964f4a7724d622e) | Apache-2.0 at checked root LICENSE | Selected package lifecycle authority. Still in active development; use its published package/host contract when available, and do not invent or duplicate its API. |
 
 ## ACP Registry exact files and boundary
 
@@ -117,6 +122,117 @@ versions, failures, and limitations in the E08-S08 review packet and
 `implementation/CURRENT-RUN.md`. Until then, the assessment remains a planning hypothesis:
 OpenIntelligentUI is likely quicker for a standalone generated-UI prototype, while
 LiteCowork's native bounded renderer is likely quicker to ship inside the existing product.
+
+## Browser Use repositories and LiteSPM integration
+
+These four Browser Use repositories were reviewed at the exact revisions in the pinned
+repository matrix. They provide concrete implementation material for E07, but none is a
+drop-in substitute for LiteCowork's browser provider, Environment, Trust, or Effect
+services.
+
+### Browser Harness
+
+Repository: [browser-use/browser-harness](https://github.com/browser-use/browser-harness)
+
+Reviewed at [`a6426f846fc59d16f38cf66f79176bc7793c16b6`](https://github.com/browser-use/browser-harness/tree/a6426f846fc59d16f38cf66f79176bc7793c16b6).
+The project is a Python CDP harness for an existing Chrome, an editable agent workspace,
+and an optional MCP server. Its setup guide requires the user to enable Chrome remote
+debugging; it can operate on tabs with the user's signed-in state. LiteCowork's desired
+package shape is to let LiteSPM manage one shared Browser Harness package and offer it to
+compatible installed hosts when LiteSPM's actual package contract is ready. The source
+review covers the daemon, helper, IPC, MCP, recorder, and package files below.
+
+| File | What to reuse or test | LiteCowork constraint |
+|---|---|---|
+| `src/browser_harness/daemon.py` | CDP request framing, target attachment and stale-session handling | `get_ws_url()` discovers ambient CDP; `handle()` accepts generic CDP. Replace both with explicit provider-owned sessions and allowlisted typed methods. Never retry a consequential action before Effect reconciliation. |
+| `src/browser_harness/helpers.py` | CDP navigation, tab, wait, screenshot and input mechanics | Route each operation through LiteCowork authorization, site grants, action receipt and current control epoch. |
+| `src/browser_harness/_ipc.py` | Local daemon transport patterns (private Unix socket or tokenized loopback) | Bind transport to Runtime identity and authenticated local Operator; no agent-facing raw transport. |
+| `src/browser_harness/admin.py` | Daemon launch and recovery cases | Replace detached self-supervision/profile discovery with LiteSPM package supervision and an opaque LiteCowork-managed isolated profile. |
+| `src/mcp_server.py` | Host/tool packaging and operation grouping | Do not expose `browser_js`, arbitrary CDP, caller-selected upload paths, or unrestricted tab controls. Advertise only scoped bridge operations. |
+| `src/browser_harness/recorder.py` | Frame/action sequencing and failure cases | Route any retained media through Core Artifact/Evidence policy; default recording is off and observations are bounded/redacted. |
+| `pyproject.toml` | Runtime and dependency footprint | Python 3.11+ and pinned `cdp-use`, `fetch-use`, Pillow and WebSocket dependencies mean this requires supervised Python packaging, not a direct Rust link. |
+
+Source audit also found default browser-profile discovery across Chromium-family browsers,
+generic CDP access, automatic reattachment/retry on a stale session, optional cloud and
+profile-cookie synchronization, and telemetry that can include task text/output. These
+behaviors must be disabled or replaced in the LiteCowork adapter; normal Chrome profiles,
+cookies, page content and telemetry cannot flow through silently.
+
+**Adoption rule:** retain Browser Harness's reusable browser mechanics and agent-facing
+workflow where they fit, but route consequential operations through the LiteCowork-owned
+browser service. Do not pass a raw CDP endpoint or unrestricted browser tool directly to
+an agent. Existing-Chrome connection remains explicitly consented and high-trust; the
+managed isolated profile is the normal automated path. Default package availability does
+not mean a default site grant, session attachment, or input-control authority. LiteSPM
+owns package lifecycle and process supervision; LiteCowork owns per-Conversation/Task
+compatibility, Grant, Activation, invocation, and Effect/Evidence accounting.
+
+### Browser Use
+
+Repository: [browser-use/browser-use](https://github.com/browser-use/browser-use)
+
+Reviewed at [`ccd22fef47a1a36e0c4596fef5db73a5117b9d06`](https://github.com/browser-use/browser-use/tree/ccd22fef47a1a36e0c4596fef5db73a5117b9d06).
+
+| File | What to reuse or test | LiteCowork constraint |
+|---|---|---|
+| `browser_use/dom/service.py`, `dom/serializer/{serializer,html_serializer,clickable_elements}.py`, `dom/views.py` | Bounded DOM and clickable-node observation patterns | Redact page secrets and bind observations to exact browser session, tab generation, observation revision and authorization scope. |
+| `browser_use/browser/watchdogs/recording_watchdog.py` | CDP screencast lifecycle, frame IDs and acknowledgements | Port into a bounded queue with session/epoch binding, backpressure, stale-frame rejection and authorized UI stream. |
+| `browser_use/browser/profile.py` | Provider/profile configuration cases | Do not use default profile-copy behavior, cookie/storage-state import, insecure Chrome flags, automatic extensions or ambient account state. |
+| `browser_use/browser/watchdogs/local_browser_watchdog.py`, `browser_use/browser/session.py` | Launch, attach, target lifecycle and cleanup cases | Process supervision is not Runtime lease enforcement; reject ambient CDP discovery, redact endpoint secrets, and let only the qualified provider own its process. |
+
+This repository includes a broad agent loop and many optional model/integration
+dependencies. Reusing all of it as LiteCowork's provider would bring unnecessary runtime
+weight and a second agent authority. Reuse discrete provider mechanics only after they
+are wrapped by scoped BrowserActionService admission and durable Effect reconciliation.
+
+### browsercode
+
+Repository: [browser-use/browsercode](https://github.com/browser-use/browsercode)
+
+Reviewed at [`b200643fe0eb93ce5a3aadd4bb21cb6cceb2ed04`](https://github.com/browser-use/browsercode/tree/b200643fe0eb93ce5a3aadd4bb21cb6cceb2ed04).
+
+| File | Candidate use | Required adaptation |
+|---|---|---|
+| `packages/bcode-browser/src/cdp/session.ts` | CDP WebSocket lifecycle, events and session invalidation | Require an explicit consent-bound provider endpoint; remove automatic discovery and environment-variable endpoint selection. |
+| `packages/bcode-browser/src/cdp/generated.ts`, `src/cdp/gen.ts`, checked-in protocol JSON | Typed CDP methods and protocol generation | Pin protocol to the qualified Chrome version; expose only narrow typed provider methods. |
+| `packages/bcode-browser/test/cdp-session.test.ts` | Late callback, timeout and stale-session race cases | Bind cases to LiteCowork's session, tab-generation and control-epoch contract. |
+| `packages/bcode-browser/src/browser-execute.ts` | No production adoption | It runs arbitrary agent JavaScript with persistent raw CDP access in the host process and must not be a LiteCowork tool surface. |
+
+### jev-ultrafast
+
+Repository: [browser-use/jev-ultrafast](https://github.com/browser-use/jev-ultrafast)
+
+Reviewed at [`1231850a0bf1a0c0341fe408ef1668dbbfdfac46`](https://github.com/browser-use/jev-ultrafast/tree/1231850a0bf1a0c0341fe408ef1668dbbfdfac46).
+
+Study `jev_ultrafast/model.py`, `snapshot.js`, `browser.py`, `agent.py`, and
+`tests/test_agent.py` for operation-specific typed action spaces, atomic DOM snapshots,
+stable observed node references, and stale-target validation. If an action response is
+ambiguous, its useful rule is to stop and inspect current state before any retry. Port
+these patterns inside LiteCowork's authorized provider; do not expose the demo agent's
+direct CDP input path. Its reported speed comparison used three paired repetitions of one
+Flights flow (median 9.450s versus 7.092s, both 3/3 verified). Treat that as a small
+directional observation, not a general performance result or a LiteCowork speed claim.
+
+### Speed and integration choice
+
+For an unguarded demo that acts directly on an already running Chrome, Browser Harness is
+the shortest path because it already supplies CDP interaction and an agent-facing
+workspace/MCP. For LiteCowork's product, Browser Harness plus LiteSPM is the fastest
+candidate path once LiteSPM publishes its package/host contract; the remaining LiteCowork
+work is the browser admission, lease, Effect and UI adapter that preserves the accepted
+architecture. This should be faster than building CDP process/session mechanics from
+scratch, but that delivery-time claim has not yet been measured. It is viable only after
+the default-profile discovery, arbitrary CDP/JavaScript, unsafe retry, telemetry and
+detached supervision behavior are wrapped or removed. Copying Browser Use's full agent
+runtime or browsercode's unrestricted execution surface would create a second authority
+and require more removal/rework before V1. This comparison concerns integration effort,
+not measured browser latency. No browser-provider code has yet been imported; E07 owns
+the adaptation and must record exact provenance and tests for each adopted file.
+
+LiteSPM was reviewed at
+[`9f42b25ddfb1acedce0f2dbf9964f4a7724d622e`](https://github.com/sarv-projects/LiteSPM/tree/9f42b25ddfb1acedce0f2dbf9964f4a7724d622e).
+It is the selected lifecycle authority, but its current checkout does not settle the
+LiteCowork-facing package API. No LiteSPM wire contract is inferred here.
 
 ## Agenta exact files
 

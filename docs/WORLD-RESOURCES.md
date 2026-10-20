@@ -11,7 +11,9 @@ The index lets placement and agents answer deterministic questions without askin
 to rediscover local facts or spending tokens. Web research, embeddings, semantic RAG,
 OCR-heavy interpretation, and domain-specific search remain capabilities. `DATA-MODEL.md`
 owns the canonical record fields; `API.md`, `STATE-MACHINES.md`, `EVENTS.md`, and
-`schemas/sqlite-v19.sql` carries the current persistence form.
+`schemas/sqlite-v23.sql` adds WorkspaceRoot membership and cleanup tables; the current
+`schemas/sqlite-v24.sql` adds immutable child ResultEnvelope persistence. Prior schema files
+remain immutable migration inputs.
 
 ### Served implementation boundary
 
@@ -19,13 +21,25 @@ The current desktop implementation can create a persistent `WorkspaceRoot` throu
 authenticated native folder selection, list roots, pause/resume/revoke them, revalidate
 saved identity at Runtime startup on supported Linux/macOS source paths, and perform an
 explicit bounded metadata census on Linux. The census returns a no-store count/status
-summary and atomically commits a Runtime-keyed observed-file projection alongside the scan
-receipt. An owner-only root-version-fenced search route can page literal basename matches
-from that projection and reports observed metadata without content. These observations do
-not create Resources, revisions, or locations, and are not canonical membership. The mounted
+summary and atomically commits canonical FILE Resource/Location membership candidates,
+current Runtime-incarnation private bindings, a Runtime-keyed observed-file projection, and
+the scan receipt. Membership uses Workspace-scoped keyed file identity, reads no content,
+creates no ResourceRevision, and never tombstones a Resource when a root scan omits it. An
+owner-only root-version-fenced search route can page literal basename matches from the
+projection and reports observed metadata without content; a linked `resource_id` opens the
+canonical Resource detail view. Legacy observations may still have a null Resource ID. The
+projection and route are not content search. The mounted
 `GET /v1/resources/search` still searches existing managed Resources and is not root-aware.
-Canonical Resource promotion and a local-root watcher remain target contracts, not claims
-about the current product.
+General root-aware content search and a local-root watcher remain target contracts, not
+claims about the current product.
+
+Root revocation commits the `REVOKED` policy fence, removes the root and all indexed file
+locations' private locator/raw-identity bindings, and removes selected-root replication
+membership in one transaction. Root-linked reads and search are denied as soon as the root
+is not `ACTIVE`. Migration v23 persists the explicit root-to-file-location relation and
+a bounded cleanup cursor; canonical FILE ResourceLocations and their existing change
+events must be terminally revoked in stable batches before the cursor completes. The
+restart-safe cleanup runner and end-to-end event projection are not yet qualified.
 
 ## Identity and location
 
@@ -151,8 +165,13 @@ platform, invalid locator, or changed/unopenable directory commits the root and 
 availability, safe events/snapshots, and private binding writes are one SQLite transaction.
 Root-specific failures do not prevent unrelated Runtime service startup. Revoked roots are
 excluded and cannot be reactivated. `PAUSED` is an explicit user/service lifecycle state,
-not a synonym for offline availability. This startup implementation currently has Linux/macOS
-source support only and is not OS-qualified; Windows and unsupported platforms fail closed.
+not a synonym for offline availability. The source startup implementation also reopens
+Windows drive-rooted locators through a verified no-reparse directory handle and compares
+the persisted volume serial plus full `FILE_ID_128` identity before refreshing
+current-incarnation bindings. Focused tests on Windows 11 build 26200 pass for exact
+selection/reopen, path replacement, and malformed-locator rejection. This does not qualify
+packaged Runtime startup, root scanning, keyring identity, or owner acceptance on Windows;
+unsupported platforms still fail closed.
 Loss of the OS-principal/keyring identity currently blocks startup before this root
 transaction, so that key-loss path does not yet durably mark roots unavailable.
 
@@ -186,8 +205,16 @@ owner/request/payload receipt before the expected Workspace-version compare-and-
 overlap checks. A retry of a committed request therefore returns its original receipt after
 an unrelated Workspace version advance; a new request with a stale Workspace version
 conflicts. Canonical paths remain private Runtime-local locator data and are never copied to
-WorkspaceRoot aggregates, events, public projections, or error messages. Unsupported or
-malformed persisted locators fail closed during overlap admission.
+WorkspaceRoot aggregates, events, public projections, or error messages. Unix locators use
+the existing `unix-path-b64:` encoding. Windows locators use
+`windows-path-u16le-b64:` with canonical unpadded base64url of the exact UTF-16LE drive-rooted
+path, capped at 16,896 UTF-16 code units. The storage decoder rejects malformed UTF-16,
+noncanonical base64, NUL, UNC/device and drive-relative forms, dot segments, and ambiguous
+separators before overlap comparison. Windows overlap checks compare drive and component
+boundaries with Win32 ordinal case-insensitive semantics and fail closed if the comparison
+cannot be completed. The locator remains private; this encoding alone does not qualify
+Windows startup revalidation or directory traversal. Unsupported or malformed persisted
+locators fail closed during overlap admission.
 
 ## Relationships and dependency invalidation
 
@@ -218,23 +245,27 @@ exposes no path, name, identity, file content, or deletion inference. The scan a
 a separate Runtime-keyed metadata-observation projection in the same SQLite transaction as
 its receipt. That projection supports owner-scoped literal basename search under the
 selected active root and reports `CURRENT`, `STALE`, or `UNKNOWN` from scan completeness;
-it does not create or imply a Resource, ResourceRevision, or ResourceLocation aggregate.
-A complete scan advances its generation and may mark unseen observations stale; a partial
-scan preserves unseen observations and does not infer deletion. The owner-only observation
-page requires the selected Workspace and current root version, rechecks Workspace
-ownership and active root/Runtime bindings, uses a version- and query-bound keyset cursor,
-and returns safe display metadata only. Private locators and keyed identity digests stay
-local and are never returned. A successful scan is not an atomic filesystem snapshot. A
-new scan attempt on macOS and Windows fails closed as unsupported until metadata-only
-traversal is qualified; an exact committed receipt is replayed before that platform check.
+alongside canonical FILE Resource and path-specific ResourceLocation membership committed
+atomically with the receipt. File identity is keyed and Workspace-scoped; raw identity and
+relative locators remain only in current Runtime-incarnation local bindings. Metadata scans
+read no content and create no ResourceRevision. A complete scan advances its generation
+and may mark unseen observations stale; a partial scan preserves unseen observations and
+does not infer deletion or tombstone Resources. The owner-only observation page requires
+the selected Workspace and current root version, rechecks Workspace ownership and active
+root/Runtime bindings, uses a version- and query-bound keyset cursor, and returns safe
+display metadata plus an optional canonical Resource ID. Private locators and keyed
+identity digests stay local and are never returned. A successful scan is not an atomic
+filesystem snapshot. A new scan attempt on macOS and Windows fails closed as unsupported
+until metadata-only traversal is qualified; an exact committed receipt is replayed before
+that platform check.
 
 ### WorkspaceRoot watcher — target only
 
 The `F28 — Persistent WorkspaceRoot and deterministic search` flow in `FLOWS.md` remains
-partially served. The bounded Linux metadata census and its separate observed-file search
-projection are served, but neither produces canonical Resource membership or watches for
-changes. `WorldIndexer` and canonical Resource/Revision/Location promotion remain
-target-only:
+partially served. The bounded Linux metadata census, atomic canonical FILE Resource/Location
+membership, and separate observed-file search projection are served, but scanning does not
+create revisions, search content, or watch for changes. `WorldIndexer` and ongoing watcher
+reconciliation remain target-only:
 when implemented, it will watch only active roots and provider locations authorized for
 the Workspace. Watcher notifications will be hints, not a complete change log. On startup,
 reconnect, overflow, permission error, or detected watcher gap, it will mark affected
@@ -248,8 +279,13 @@ Managed Resource index projections are rebuildable and are not replicated as aut
 event history. Durable Resource, ResourceRevision, ResourceLocation, WorkspaceRoot
 lifecycle, and ResourceEdge changes are evented. The current managed-Resource text index
 is workspace-scoped; its encrypted storage, bounded extraction, and deletion behavior are
-described below. A future root-membership projection must remain scoped by Workspace and
-root authorization and follow root revocation and retention rules.
+described below. Root-scan observations are a rebuildable, Runtime-local projection, while
+the associated FILE Resource and ResourceLocation are canonical evented records. Root
+revocation persists an indexed cleanup cursor after immediately fencing reads and removing
+private bindings. A bounded restart-safe worker must still terminally revoke each canonical
+ResourceLocation and append its existing `resource.location.changed.v1` event before
+removing relation rows and completing the cursor; canonical Resources and revisions remain
+retained.
 
 ## Deterministic resource search — target root-aware behavior
 
@@ -383,13 +419,19 @@ Search results are not implicit Task/Agent attachments; a user or authorized wor
 explicitly selects a pinned ResourceRef.
 
 The local Operator's read-only `GET /v1/capabilities/zip-intake` readiness route is
-mounted and Workspace-owner scoped; a Tauri command exposes that observation to the Library.
-Its current status is `UNAVAILABLE` because the parser has not been integrated behind a
-supervised isolated worker with enforced hard resource budgets. The desktop may save a ZIP
-as an opaque Resource but must tell the user its members are not unpacked or indexed. Do not
-pass archive bytes to the in-process Python provider. Extraction remains deferred until
-worker containment, cancellation and crash handling, per-entry provenance, transactional
-child-Resource publication, deletion, and platform/system qualification are implemented.
+Workspace-owner scoped; a Tauri command exposes that observation to the Library. In a
+Linux source checkout, the Operator also serves
+`POST /v1/resources/{resource_id}/archive/preview`, which verifies an exact managed
+Resource revision and invokes the fixed Python CLI through Bubblewrap. It returns bounded
+member metadata only; it does not expand member bytes or create child Resources. The worker
+admits at most two previews per Runtime; a saturated Runtime returns `429 RATE_LIMITED`
+before reading Resource content, without durable state. The `no-store` permit covers the
+bounded read and worker completion. The worker
+path is unavailable in packaged and non-Linux Runtimes, so readiness remains
+`UNAVAILABLE` and the desktop treats uploaded ZIPs as opaque Resources. Do not pass archive
+bytes to the in-process Python provider. Extraction remains deferred until cancellation and
+crash recovery, per-entry provenance, transactional child-Resource publication, deletion,
+and platform/system qualification are implemented.
 
 ## Local application availability
 

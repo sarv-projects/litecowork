@@ -9,6 +9,7 @@ import {
   type NeedsYouStatus,
 } from "./task-attention-state";
 import { UserRequestDetail } from "./UserRequestDetail";
+import { ApprovalDetail } from "./ApprovalDetail";
 import "./task-attention-page.css";
 
 type TaskStatus = "WAITING_USER" | "NEEDS_USER" | "BLOCKED";
@@ -132,10 +133,11 @@ export function NeedsYouFilter({ status, onChange }: {
   </fieldset>;
 }
 
-export function NeedsYouItemCard({ item, onOpenTask, onOpenUserRequest }: {
+export function NeedsYouItemCard({ item, onOpenTask, onOpenUserRequest, onOpenApproval }: {
   item: NeedsYouItemView;
   onOpenTask: (taskId: string) => void;
   onOpenUserRequest: (requestId: string, trigger: HTMLButtonElement) => void;
+  onOpenApproval: (approvalId: string, trigger: HTMLButtonElement) => void;
 }) {
   const canOpenTask = item.kind === "TASK_BLOCKER" && item.taskId !== null;
   return <article className="needs-you-card">
@@ -161,7 +163,12 @@ export function NeedsYouItemCard({ item, onOpenTask, onOpenUserRequest }: {
               <button type="button" className="quiet-button" onClick={event => onOpenUserRequest(item.userRequestId!, event.currentTarget)}>View request details</button>
               <span>Review only. Opening this request does not answer or dismiss it.</span>
             </div>
-            : <p className="needs-you-action-note">Approval details remain on their owning review surface.</p>}
+            : item.kind === "APPROVAL" && item.approvalId
+              ? <div className="needs-you-card-action">
+                <button type="button" className="quiet-button" onClick={event => onOpenApproval(item.approvalId!, event.currentTarget)}>{item.status === "OPEN" ? "Review decision" : "View decision"}</button>
+                <span>{item.status === "OPEN" ? "Review the exact action and target before deciding." : "This saved decision is read-only."}</span>
+              </div>
+              : <p className="needs-you-action-note">Approval details are unavailable for this item.</p>}
   </article>;
 }
 
@@ -187,7 +194,8 @@ export function TaskAttentionPage({
   onOpenTask: (taskId: string) => void;
 }) {
   const [selectedUserRequest, setSelectedUserRequest] = useState<{ workspaceId: string; requestId: string } | null>(null);
-  const userRequestOpener = useRef<HTMLButtonElement | null>(null);
+  const [selectedApproval, setSelectedApproval] = useState<{ workspaceId: string; approvalId: string } | null>(null);
+  const itemOpener = useRef<HTMLButtonElement | null>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const [status, setStatus] = useState<NeedsYouStatus>("OPEN");
   const [items, setItems] = useState<NeedsYouItemView[]>([]);
@@ -207,8 +215,9 @@ export function TaskAttentionPage({
   useLayoutEffect(() => {
     if (previousWorkspace.current !== workspaceId) {
       previousWorkspace.current = workspaceId;
-      userRequestOpener.current = null;
+      itemOpener.current = null;
       setSelectedUserRequest(null);
+      setSelectedApproval(null);
     }
     const current = ++generation.current;
     paginationGate.current.invalidate(current);
@@ -299,19 +308,39 @@ export function TaskAttentionPage({
       <div><h1 ref={heading} tabIndex={-1}>Needs You</h1><p>Review open requests and blockers, or browse resolved history.</p></div>
       <button type="button" className="quiet-button" onClick={() => setRefreshToken(value => value + 1)} disabled={!operatorReady || busy}>Refresh</button>
     </div>
-    <p className="task-attention-scope-note">UserRequest rows open read-only details; opening one does not answer or dismiss it. Task blockers open current Task detail. Approval actions remain on their owning review surface.</p>
+    <p className="task-attention-scope-note">User request responses and dismissals are saved against the current request version. Task blockers open the current Task. Approval decisions are checked against the current Workspace, target, and version before they are saved.</p>
     {selectedUserRequest?.workspaceId === workspaceId && <UserRequestDetail
       workspaceId={selectedUserRequest.workspaceId}
       requestId={selectedUserRequest.requestId}
       operatorReady={operatorReady}
       refreshToken={refreshToken}
+      onResolved={() => setRefreshToken(value => value + 1)}
       onBack={() => {
-        const opener = userRequestOpener.current;
+        const opener = itemOpener.current;
         setSelectedUserRequest(null);
         requestAnimationFrame(() => {
           if (opener?.isConnected) opener.focus();
           else heading.current?.focus();
         });
+      }}
+    />}
+    {selectedApproval?.workspaceId === workspaceId && <ApprovalDetail
+      workspaceId={selectedApproval.workspaceId}
+      approvalId={selectedApproval.approvalId}
+      operatorReady={operatorReady}
+      refreshToken={refreshToken}
+      onBack={() => {
+        const opener = itemOpener.current;
+        setSelectedApproval(null);
+        requestAnimationFrame(() => {
+          if (opener?.isConnected) opener.focus();
+          else heading.current?.focus();
+        });
+      }}
+      onResolved={() => {
+        setSelectedApproval(null);
+        setSelectedUserRequest(null);
+        setRefreshToken(value => value + 1);
       }}
     />}
     <NeedsYouFilter status={status} onChange={setStatus} />
@@ -326,8 +355,12 @@ export function TaskAttentionPage({
           item={item}
           onOpenTask={onOpenTask}
           onOpenUserRequest={(requestId, trigger) => {
-            userRequestOpener.current = trigger;
+            itemOpener.current = trigger;
             setSelectedUserRequest({ workspaceId, requestId });
+          }}
+          onOpenApproval={(approvalId, trigger) => {
+            itemOpener.current = trigger;
+            setSelectedApproval({ workspaceId, approvalId });
           }}
         />
       </li>)}</ul>}

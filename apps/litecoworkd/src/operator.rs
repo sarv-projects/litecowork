@@ -86,10 +86,22 @@ use tokio::sync::oneshot as tokio_oneshot;
 use tokio::{task::JoinSet, time::timeout};
 use tower::ServiceExt;
 
+#[path = "agent_control_operator.rs"]
+mod agent_control_operator;
+#[path = "agent_credentials_routes.rs"]
+mod agent_credentials_routes;
+#[path = "agent_quota_observation_operator.rs"]
+mod agent_quota_observation_operator;
+#[path = "agent_registry_operator.rs"]
+mod agent_registry_operator;
+#[path = "approval_operator.rs"]
+mod approval_operator;
 #[path = "artifact_operator.rs"]
 mod artifact_operator;
 #[path = "automation_operator.rs"]
 mod automation_operator;
+#[path = "capability_invocations_operator.rs"]
+mod capability_invocations_operator;
 #[path = "conversation_operator.rs"]
 mod conversation_operator;
 #[path = "coworker_operator.rs"]
@@ -102,8 +114,6 @@ mod dependency_invalidations_operator;
 mod goal_operator;
 #[path = "needs_you_operator.rs"]
 mod needs_you_operator;
-#[path = "user_request_operator.rs"]
-mod user_request_operator;
 #[cfg(all(test, unix))]
 #[path = "operator_ipc_tests.rs"]
 mod operator_ipc_tests;
@@ -112,6 +122,8 @@ mod operator_ipc_tests;
 mod operator_runtime_binding_tests;
 #[path = "presentation_operator.rs"]
 mod presentation_operator;
+#[path = "resource_archive_operator.rs"]
+mod resource_archive_operator;
 #[cfg(all(test, unix))]
 #[path = "resource_content_gc_operator_tests.rs"]
 mod resource_content_gc_operator_tests;
@@ -125,6 +137,12 @@ mod runtime_capability_hosts_operator;
 mod runtime_offers_operator;
 #[path = "suggestions_operator.rs"]
 mod suggestions_operator;
+#[path = "task_lead_handoff_operator.rs"]
+mod task_lead_handoff_operator;
+#[path = "trust_operator.rs"]
+mod trust_operator;
+#[path = "user_request_operator.rs"]
+mod user_request_operator;
 #[path = "workspace_root_scan_operator.rs"]
 mod workspace_root_scan_operator;
 #[cfg(all(test, unix))]
@@ -1470,6 +1488,14 @@ fn build_operator_router(state: ApiState) -> Router {
     let user_request_state = user_request_operator::UserRequestApiState::from_ref(&state);
     Router::new()
         .merge(artifact_operator::routes())
+        .merge(capability_invocations_operator::routes())
+        .merge(agent_quota_observation_operator::routes())
+        .merge(agent_control_operator::routes())
+        .merge(agent_credentials_routes::routes())
+        .merge(approval_operator::routes())
+        .merge(agent_registry_operator::routes())
+        .merge(trust_operator::routes())
+        .merge(resource_archive_operator::routes())
         .merge(
             dependency_invalidations_operator::routes().with_state(dependency_invalidations_state),
         )
@@ -1481,6 +1507,7 @@ fn build_operator_router(state: ApiState) -> Router {
         .merge(conversation_operator::routes())
         .merge(delegation_profiles_operator::routes())
         .merge(goal_operator::routes())
+        .merge(task_lead_handoff_operator::routes())
         .merge(suggestions_operator::routes())
         .merge(presentation_operator::routes())
         .merge(routine_operator::routes())
@@ -6673,7 +6700,7 @@ pub(super) fn idempotency_key(headers: &HeaderMap) -> Result<String, Response> {
 }
 
 fn parse_if_match(headers: &HeaderMap) -> Result<u64, Response> {
-    headers
+    let version = headers
         .get(header::IF_MATCH)
         .and_then(|value| value.to_str().ok())
         .map(|value| value.trim().trim_matches('"').parse::<u64>())
@@ -6691,7 +6718,15 @@ fn parse_if_match(headers: &HeaderMap) -> Result<u64, Response> {
                 "INVALID_ARGUMENT",
                 "If-Match is required",
             )
-        })
+        })?;
+    if version == 0 {
+        return Err(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "If-Match must contain the current aggregate version",
+        ));
+    }
+    Ok(version)
 }
 
 fn map_agent_store_error(error: storage_core::StoreError, message: &'static str) -> Response {

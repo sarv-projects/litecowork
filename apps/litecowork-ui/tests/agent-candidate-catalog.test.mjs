@@ -85,7 +85,7 @@ test("candidate display labels profile probes without claiming a Workspace obser
   }
   assert.match(html, /Agent candidates/);
   assert.match(html, /15 curated candidates/);
-  assert.match(html, /ACP Registry data is not connected/);
+  assert.match(html, /ACP Registry service unavailable in this view/);
   assert.match(html, /Codex[\s\S]*?Profile probe implemented[\s\S]*?No observation recorded in this Workspace/);
   assert.match(html, /OpenCode[\s\S]*?Profile probe implemented[\s\S]*?No observation recorded in this Workspace/);
   assert.match(html, /Claude Code[\s\S]*?Installation probe implemented/);

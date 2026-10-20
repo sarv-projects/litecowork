@@ -126,9 +126,10 @@ The desktop/local Operator serves this projection over authenticated local IPC, 
 Needs You page reads it through the native Tauri bridge. The projection does not create or
 resolve source records. Approval and UserRequest rows appear only when their canonical
 source records already exist in the local store. Task blockers open current Task detail.
-UserRequest rows can open the exact read-only detail below. Approval details/actions and
-UserRequest response/dismissal actions remain on their owning surfaces; the documented
-action routes are not served by the local Operator yet.
+UserRequest rows can open the exact detail below. Approval details/actions and UserRequest
+response/dismissal actions remain on their owning surfaces. The local Operator serves the
+authenticated UserRequest response and dismissal routes used by the Needs You detail
+surface; their replies expose only safe record summaries, never choice values or schema.
 
 ```text
 GET /v1/user-requests/{requestId}
@@ -378,7 +379,7 @@ Invocation. Once planning or an accepted Plan exists, intent changes must use th
 steering/replanning lifecycle. `GET /v1/tasks/{id}/spec-revisions` returns the immutable
 history in revision order.
 
-The lead-agent command body is `{ agent_binding_id}`. The response is accepted asynchronously; current Attempts remain pinned while work drains, and a replacement execution Attempt waits for old lease settlement and Effect reconciliation.
+`POST /v1/tasks/{id}/lead-agent` requires the selected Workspace, authenticated owner, `Idempotency-Key`, and `If-Match` with the expected Task version. Its body is `{ expected_task_spec_revision, target_agent_binding_id }`. The route atomically changes the Task's assigned lead, increments its aggregate version, appends `task.lead_agent.changed.v1`, and commits an exact replay receipt; it does not rewrite the immutable TaskSpec preference. The current local implementation accepts handoff only while the Task is `READY`, before a Plan or live planning session, and after Attempts and Effects settle. The selected binding must be enabled and lead-eligible in the same Workspace. The response reports the committed from/to bindings, pinned spec revision, aggregate version, and whether the response was replayed. A stale Task or changed-payload key returns `409`; an unsafe boundary or ineligible target fails closed. Policy failover handoff and active execution drain remain unavailable until their durable observations and recovery path are integrated.
 
 `POST /v1/tasks/{id}/plan-revisions` accepts a `SubmitPlanRequest` and returns a
 `PlanAcceptance` with HTTP `201`. It requires the authenticated Workspace context,
@@ -483,6 +484,29 @@ Resolution body:
   confirmation_digest?
 }
 ```
+
+## Capability grants
+
+```text
+POST /v1/capability-grants
+POST /v1/capability-grants/{id}/revoke
+```
+
+These local owner routes currently expose one bounded grant path: an authenticated
+Workspace owner may grant `workspace.resource.read` for an exact Task-planning scope and
+an explicit list of same-Workspace Resources. The request supplies the Task, normalized
+CapabilityRef, Resource IDs (with an optional pinned revision), and an absolute RFC3339
+expiry no more than 24 hours away. Core derives the owner and local assurance from the
+authenticated IPC peer. The route rejects Approval IDs, SecretRefs, caller-selected actor
+or assurance, other scope kinds, and operations that mutate external state. A successful
+create returns the durable grant and `X-Correlation-ID`; the same Idempotency-Key and exact
+request return the original grant. Reusing that key with changed authority conflicts.
+
+Revocation requires the selected Workspace, `Idempotency-Key`, and `If-Match` with the
+current grant version. It removes authority and records its event/audit atomically; exact
+retries return the committed revocation. These routes do not activate or invoke a
+capability, consume an Approval, issue SecretLeases, or provide a credential store. No
+grant makes an unqualified provider usable.
 
 ## Library / artifacts
 
@@ -1157,12 +1181,36 @@ GET /v1/capabilities/zip-intake
 This is an authenticated, Workspace-scoped capability observation. The current local
 response is `UNAVAILABLE` with `resource_behavior=OPAQUE_RESOURCE_ONLY` and reason
 `ISOLATED_WORKER_NOT_QUALIFIED`. It distinguishes an integrated provider and enabled
-extraction from the current unavailable state. It never previews or extracts a Resource. ZIP upload
-remains an ordinary resumable Resource upload and preserves the exact archive bytes. The
-endpoint is read-only, returns `Cache-Control: no-store`, and creates no event, Grant,
+extraction from the current unavailable state. The readiness endpoint itself never previews
+or extracts a Resource. ZIP upload remains an ordinary resumable Resource upload and
+preserves the exact archive bytes. The endpoint is read-only, returns `Cache-Control: no-store`, and creates no event, Grant,
 CapabilityActivation, Invocation, Effect, or Artifact. Do not use a cached status to admit
 an extraction request; extraction has no Operator command until the isolated worker and
 Core publication path are qualified.
+
+The Linux development Runtime also exposes a separate read-only ZIP metadata preview:
+
+```text
+POST /v1/resources/{resource_id}/archive/preview
+```
+
+It requires the selected Workspace header and a closed body containing the exact
+`resource_revision_id` and matching `content_digest`. The Runtime reads that immutable
+revision through the bounded managed-content path, verifies its size/digest, and invokes
+the supervised Bubblewrap worker. The response contains only normalized safe virtual
+paths, member-name digests, declared/compressed sizes, CRC values, and typed rejection
+reasons plus the exact source content digest; it never includes member bytes or member
+payload digests. The route is `no-store` and
+creates no event, receipt, CapabilityActivation, Invocation, Effect, Resource, or Artifact.
+At most two previews run concurrently per Runtime. If both slots are occupied, the
+Runtime returns `429 RATE_LIMITED` with `Cache-Control: no-store` before reading Resource
+content; the rejected request creates no durable state. The admission permit remains held
+through the bounded read and isolated worker completion.
+The worker path is compiled only for Linux with the explicit, non-default
+`source-zip-worker` development feature; the release sidecar build omits it, so packaged
+Runtimes return `DEPENDENCY_UNAVAILABLE` even if the source checkout remains present.
+Non-Linux Runtimes also return `DEPENDENCY_UNAVAILABLE`; ZIP readiness remains
+`UNAVAILABLE / ISOLATED_WORKER_NOT_QUALIFIED`, and no extraction command is enabled.
 
 The local desktop uses resumable uploads for file intake:
 
@@ -1531,8 +1579,14 @@ preempted by the cooperative deadline. Its response is a durable,
 replayable summary containing
 Workspace/root/request IDs, the root version, counts, status, a safe partial reason, and
 completion time. It is returned with `Cache-Control: no-store`. No path, file name,
-identity, content, hash, Resource membership, search result, watcher state, or deletion
-inference is returned or persisted. Exact retries replay before filesystem I/O, including after a Runtime
+identity, content, Resource membership, search result, watcher state, or deletion
+inference is returned. In the same fenced SQLite transaction as the scan receipt, the
+Runtime updates its private metadata-observation projection and reconciles canonical FILE
+Resource/ResourceLocation membership for observed regular files. New Resources and changed
+locations append `resource.created.v1` and `resource.location.changed.v1` events as
+applicable in that transaction. This metadata path reads no file content, creates no
+ResourceRevision or content digest, and does not infer deletion.
+Exact retries replay before filesystem I/O, including after a Runtime
 process restart; the idempotency payload contains only the operation, Workspace, root,
 and requested root version. Runtime identity remains a commit-time fence for new receipts.
 Key reuse with changed caller inputs conflicts. A PARTIAL result is retained as that
@@ -1540,11 +1594,12 @@ request's result; a new key starts another bounded census. The scan is not an at
 filesystem snapshot, and its completion does not prove that no files were missed or
 removed. The local Runtime revalidates the selected directory after traversal; the final
 SQLite transaction rechecks Workspace ownership/status, root version/status, Runtime
-incarnation, and current local bindings. No Resource or domain event is written. A new
-scan attempt returns `SCAN_UNSUPPORTED_PLATFORM` on macOS and Windows until their
+incarnation, and current local bindings. A new scan attempt returns
+`SCAN_UNSUPPORTED_PLATFORM` on macOS and Windows until their
 metadata-only handle traversal is qualified; exact committed receipt replay is resolved
-before platform support is checked. This narrow route is a
-served summary only; the full F28 membership/index/search flow remains incomplete.
+before platform support is checked. This is a served metadata-membership and basename-search
+slice; content indexing, content search over WorkspaceRoots, and ongoing watcher
+reconciliation remain incomplete.
 
 The Operator API above is the logical root-management contract. The current desktop source
 implements owner-scoped listing, pause/resume/revoke on the authenticated local Operator;
@@ -1670,9 +1725,14 @@ POST /v1/skill-proposals/{id}/reject
 ```
 
 UserRequest responses are validated against the pinned response schema and appended as
-immutable records. Ordinary `FORM` answers are non-secret Workspace input and can
-replicate under Workspace policy; credentials must never be entered there. `EXTERNAL_URL`
-requests return only `{action: "accept" | "decline" | "cancel"}` from the response route.
+immutable records. For `DECISION` and `RESOURCE_SELECTION` requests, the owner may submit a
+safe `choice_id`; the source Runtime resolves it against immutable stored choices inside
+the same response transaction and validates the stored value against the pinned schema.
+The choice value and response schema are never returned to the UI. Other `FORM` answers are
+non-secret Workspace input and can replicate under Workspace policy; credentials must never
+be entered there. `EXTERNAL_URL` requests accept only `{action: "accept" | "decline" | "cancel"}`
+from the response route. A stored response does not confirm provider delivery or resume a
+Conversation, Task, Attempt, or Invocation.
 The separate `external-handoff` command is available only for a pending external
 authorization request after explicit owner authentication/action; the source Runtime
 returns the provider URL only for that request with `Cache-Control: no-store`, without

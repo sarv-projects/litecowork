@@ -14,6 +14,8 @@ use storage_core::{
     StoreError,
 };
 
+#[path = "workspace_root_membership.rs"]
+pub(crate) mod workspace_root_membership;
 #[path = "workspace_root_observations.rs"]
 pub(crate) mod workspace_root_observations;
 pub(crate) use workspace_root_observations::WriterOperation as WorkspaceRootObservationWriterOperation;

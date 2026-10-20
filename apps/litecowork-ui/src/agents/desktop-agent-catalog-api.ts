@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AgentCatalogApi } from "./agent-catalog-api";
+import type { AgentCatalogApi, AgentRegistryPage, AgentRegistrySnapshot } from "./agent-catalog-api";
 import type { AgentBinding, AgentInstallation, AgentProfile } from "./AgentCatalogSettings";
 
 /** Thin desktop bridge over existing authenticated local Operator commands.
@@ -8,6 +8,12 @@ import type { AgentBinding, AgentInstallation, AgentProfile } from "./AgentCatal
  */
 export const desktopAgentCatalogApi: AgentCatalogApi = {
   listInstallations: () => invoke<AgentInstallation[]>("list_agent_installations"),
+  listRegistry: (input) => invoke<AgentRegistryPage>("list_agent_registry", {
+    q: input?.query ?? null,
+    cursor: input?.cursor ?? null,
+    limit: input?.limit ?? null,
+  }),
+  refreshRegistry: () => invoke<AgentRegistrySnapshot>("refresh_agent_registry"),
   listProfiles: async (workspaceId) => {
     return invoke<{ items: AgentProfile[]; nextCursor: string | null }>("list_agent_profiles", { workspaceId })
       .then((page) => page.items);

@@ -4,10 +4,13 @@
 //! evidence of authentication or session readiness. Protocol adapters fill those
 //! fields only after a scoped, side-effect-bounded handshake.
 
+pub(crate) mod acp_registry;
 mod cline;
 mod codex;
 mod codex_app_server;
 mod codex_profile_probe;
+pub(crate) mod control_descriptor;
+pub(crate) mod module_registry;
 mod native_cli;
 mod opencode;
 mod opencode_profile_probe;
@@ -99,12 +102,13 @@ pub fn discover_local_installations() -> Vec<AgentInstallation> {
 }
 
 fn discover_version(binary: &str, expected_prefix: &str) -> (InstallationState, Option<String>) {
-    discover_version_with_args(
+    discover_version_with_interpreters(
         binary,
         &["--version"],
         expected_prefix,
         false,
         std::time::Duration::from_secs(2),
+        &["node"],
     )
 }
 
@@ -115,10 +119,26 @@ fn discover_version_with_args(
     trailing_period: bool,
     timeout: std::time::Duration,
 ) -> (InstallationState, Option<String>) {
+    discover_version_with_interpreters(
+        binary,
+        version_args,
+        expected_prefix,
+        trailing_period,
+        timeout,
+        &[],
+    )
+}
+
+fn discover_version_with_interpreters(
+    binary: &str,
+    version_args: &[&str],
+    expected_prefix: &str,
+    trailing_period: bool,
+    timeout: std::time::Duration,
+    allowed_interpreters: &[&str],
+) -> (InstallationState, Option<String>) {
     use std::{
         io::Read,
-        process::{Command, Stdio},
-        sync::mpsc,
         thread,
         time::{Duration, Instant},
     };
@@ -127,65 +147,171 @@ fn discover_version_with_args(
     // the CLI's helper lookup path (needed by launchers such as Codex's
     // `#!/usr/bin/env node` shim), but do not forward credentials, proxy
     // settings, or other arbitrary daemon environment variables.
-    let mut child = match spawn_version_process(binary, version_args) {
+    #[cfg(unix)]
+    let (binary, pinned_path): (String, Option<std::ffi::OsString>) =
+        match resolve_version_probe_target(binary, allowed_interpreters) {
+            Ok(target) => (target.executable, target.pinned_path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return (InstallationState::Missing, None);
+            }
+            Err(_) => return (InstallationState::VersionUnavailable, None),
+        };
+    #[cfg(not(unix))]
+    let (binary, pinned_path): (String, Option<std::ffi::OsString>) = (binary.to_owned(), None);
+
+    let mut child = match spawn_version_process(&binary, version_args, pinned_path.as_deref()) {
         Ok(child) => child,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return (InstallationState::Missing, None);
         }
         Err(_) => return (InstallationState::VersionUnavailable, None),
     };
-    let Some(mut stdout) = child.stdout.take() else {
-        return (InstallationState::VersionUnavailable, None);
-    };
-    let (output_sender, output_receiver) = mpsc::sync_channel(1);
-    let _reader = thread::spawn(move || {
-        let mut output = Vec::with_capacity(128);
-        let _ = stdout.by_ref().take(257).read_to_end(&mut output);
-        let _ = output_sender.send(output);
-    });
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return (InstallationState::VersionUnavailable, None);
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return (InstallationState::VersionUnavailable, None);
-            }
-        }
-    };
-    let Ok(stdout) = output_receiver.recv_timeout(Duration::from_millis(100)) else {
-        return (InstallationState::VersionUnavailable, None);
-    };
-    if !status.is_some_and(|status| status.success()) {
+
+    // On Windows the child remains suspended and inside its Job Object until
+    // this transition. Start the execution deadline immediately before resume.
+    let started_at = Instant::now();
+    if child.resume().is_err() {
         return (InstallationState::VersionUnavailable, None);
     }
+    let deadline = started_at + timeout;
 
-    // CLI output is untrusted. Accept only a small version-shaped suffix, never
-    // return arbitrary stdout/stderr through the authenticated Operator API.
-    let version = project_version_output(&stdout, expected_prefix, trailing_period);
-    match version {
-        Some(version) => (InstallationState::Installed, Some(version)),
-        None => (InstallationState::VersionUnavailable, None),
+    #[cfg(unix)]
+    {
+        use std::io::ErrorKind;
+
+        let Some(mut stdout) = child.take_stdout().ok().flatten() else {
+            let _ = child.kill_tree();
+            let _ = child.wait();
+            return (InstallationState::VersionUnavailable, None);
+        };
+        let flags = match rustix::fs::fcntl_getfl(&stdout) {
+            Ok(flags) => flags,
+            Err(_) => {
+                let _ = child.kill_tree();
+                let _ = child.wait();
+                return (InstallationState::VersionUnavailable, None);
+            }
+        };
+        if rustix::fs::fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK).is_err() {
+            let _ = child.kill_tree();
+            let _ = child.wait();
+            return (InstallationState::VersionUnavailable, None);
+        }
+
+        let mut output = Vec::with_capacity(128);
+        let mut read_failed = false;
+        let status = loop {
+            while output.len() < 257 {
+                let mut buffer = [0_u8; 257];
+                let buffer = &mut buffer[..257 - output.len()];
+                match stdout.read(buffer) {
+                    Ok(0) => break,
+                    Ok(read) => output.extend_from_slice(&buffer[..read]),
+                    Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                    Err(_) => {
+                        read_failed = true;
+                        break;
+                    }
+                }
+            }
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+                Ok(None) | Err(_) => break None,
+            }
+        };
+
+        // A Unix process group is a best-effort cleanup scope. A hostile
+        // descendant can escape with setsid, so never block on EOF here; the
+        // nonblocking pipe keeps escaped descendants from hanging discovery.
+        let _ = child.kill_tree();
+        if status.is_none() {
+            let _ = child.wait();
+        }
+        drop(stdout);
+        drop(child);
+        if read_failed || !status.is_some_and(|status| status.success()) {
+            return (InstallationState::VersionUnavailable, None);
+        }
+
+        let version = project_version_output(&output, expected_prefix, trailing_period);
+        return match version {
+            Some(version) => (InstallationState::Installed, Some(version)),
+            None => (InstallationState::VersionUnavailable, None),
+        };
+    }
+
+    #[cfg(not(unix))]
+    {
+        let Some(mut stdout) = child.take_stdout().ok().flatten() else {
+            return (InstallationState::VersionUnavailable, None);
+        };
+
+        // Windows Job Objects terminate the whole assigned process tree, so a
+        // bounded reader may wait for EOF after cleanup.
+        let reader = thread::Builder::new()
+            .name("agent-version-output".to_owned())
+            .spawn(move || {
+                let mut output = Vec::with_capacity(128);
+                let _ = stdout.by_ref().take(257).read_to_end(&mut output);
+                output
+            });
+        let Ok(reader) = reader else {
+            let _ = child.kill_tree();
+            let _ = child.wait();
+            return (InstallationState::VersionUnavailable, None);
+        };
+
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+                Ok(None) | Err(_) => break None,
+            }
+        };
+
+        let _ = child.kill_tree();
+        if status.is_none() {
+            let _ = child.wait();
+        }
+        drop(child);
+
+        let Ok(stdout) = reader.join() else {
+            return (InstallationState::VersionUnavailable, None);
+        };
+        if !status.is_some_and(|status| status.success()) {
+            return (InstallationState::VersionUnavailable, None);
+        }
+
+        // CLI output is untrusted. Accept only a small version-shaped suffix, never
+        // return arbitrary stdout/stderr through the authenticated Operator API.
+        let version = project_version_output(&stdout, expected_prefix, trailing_period);
+        match version {
+            Some(version) => (InstallationState::Installed, Some(version)),
+            None => (InstallationState::VersionUnavailable, None),
+        }
     }
 }
 
 fn spawn_version_process(
     binary: &str,
     version_args: &[&str],
-) -> std::io::Result<std::process::Child> {
+    pinned_path: Option<&std::ffi::OsStr>,
+) -> std::io::Result<AgentChild> {
     use std::process::{Command, Stdio};
 
-    fn command(binary: &str, version_args: &[&str]) -> Command {
+    fn command(
+        binary: &str,
+        version_args: &[&str],
+        pinned_path: Option<&std::ffi::OsStr>,
+    ) -> Command {
         let mut command = Command::new(binary);
         command.env_clear();
-        if let Some(path) = std::env::var_os("PATH") {
+        let path = pinned_path
+            .map(std::ffi::OsStr::to_owned)
+            .or_else(|| std::env::var_os("PATH"));
+        if let Some(path) = path {
             command.env("PATH", path);
         }
         #[cfg(windows)]
@@ -193,6 +319,10 @@ fn spawn_version_process(
             command.env("SystemRoot", system_root);
         }
         command
+            // Never let an inventory-only version probe inherit a Workspace,
+            // project, or arbitrary daemon working directory. Some native
+            // CLIs inspect repository configuration even for version queries.
+            .current_dir(version_probe_working_directory())
             .args(version_args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -200,7 +330,7 @@ fn spawn_version_process(
         command
     }
 
-    match command(binary, version_args).spawn() {
+    match AgentChild::spawn(command(binary, version_args, pinned_path)) {
         #[cfg(windows)]
         Err(error)
             if error.kind() == std::io::ErrorKind::NotFound
@@ -208,9 +338,287 @@ fn spawn_version_process(
         {
             // Native npm installations expose `.cmd` shims. Pass the module's
             // fixed version args directly; never synthesize a `cmd /c` string.
-            command(&format!("{binary}.cmd"), version_args).spawn()
+            // The contained helper starts the shim host suspended and assigns
+            // it to the Job before any command-script code can run.
+            AgentChild::spawn(command(&format!("{binary}.cmd"), version_args, pinned_path))
         }
         result => result,
+    }
+}
+
+#[cfg(unix)]
+struct VersionProbeTarget {
+    executable: String,
+    pinned_path: Option<std::ffi::OsString>,
+}
+
+#[cfg(unix)]
+fn resolve_version_probe_target(
+    binary: &str,
+    allowed_interpreters: &[&str],
+) -> std::io::Result<VersionProbeTarget> {
+    use std::{
+        fs::{self, File},
+        io::Read,
+        os::unix::fs::PermissionsExt,
+        path::{Path, PathBuf},
+    };
+
+    fn resolve_executable(path: &Path) -> std::io::Result<PathBuf> {
+        let canonical = fs::canonicalize(path)?;
+        let metadata = fs::metadata(&canonical)?;
+        if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "version probe candidate is not an executable file",
+            ));
+        }
+        Ok(canonical)
+    }
+
+    fn find_on_path(name: &str) -> std::io::Result<PathBuf> {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        for directory in std::env::split_paths(&path) {
+            let candidate = directory.join(name);
+            if candidate.exists() {
+                return resolve_executable(&candidate);
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "version probe candidate was not found on PATH",
+        ))
+    }
+
+    let candidate = Path::new(binary);
+    let candidate_path = if candidate.components().count() > 1 {
+        resolve_executable(candidate)?
+    } else {
+        find_on_path(binary)?
+    };
+    let mut header = [0_u8; 4096];
+    let read = File::open(&candidate_path)?.read(&mut header)?;
+    let header = &header[..read];
+    let Some(first_line) = header.split(|byte| *byte == b'\n').next() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "version probe candidate has no executable header",
+        ));
+    };
+    let mut pinned_path = None;
+    if first_line.starts_with(b"#!") {
+        let line = std::str::from_utf8(&first_line[2..]).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "version probe launcher has a non-UTF-8 shebang",
+            )
+        })?;
+        if first_line.len() > 255 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "version probe launcher shebang is too long",
+            ));
+        }
+        let fields: Vec<_> = line.split_ascii_whitespace().collect();
+        let (interpreter_name, interpreter_path) = match fields.as_slice() {
+            [absolute] if absolute.starts_with('/') => {
+                let path = Path::new(absolute);
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid shebang interpreter",
+                        )
+                    })?;
+                (name, resolve_executable(path)?)
+            }
+            [env_path, name]
+                if matches!(*env_path, "/usr/bin/env" | "/bin/env") && !name.starts_with('-') =>
+            {
+                let env_interpreter = Path::new(env_path);
+                let _validated_env = resolve_executable(env_interpreter)?;
+                let path = find_on_path(name)?;
+                (*name, path)
+            }
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "launcher shebang is not an explicitly supported interpreter form",
+                ));
+            }
+        };
+        if !allowed_interpreters.contains(&interpreter_name) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "launcher interpreter is not allowlisted for this AgentModule",
+            ));
+        }
+        if fields.first().is_some_and(|field| field.ends_with("/env")) {
+            // Pin env's lookup to the exact interpreter directory validated above,
+            // while retaining the original PATH for ordinary helper commands.
+            let mut paths = vec![
+                interpreter_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("/"))
+                    .to_path_buf(),
+            ];
+            if let Some(original) = std::env::var_os("PATH") {
+                paths.extend(std::env::split_paths(&original));
+            }
+            pinned_path = Some(std::env::join_paths(paths).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid PATH")
+            })?);
+        }
+    }
+    Ok(VersionProbeTarget {
+        executable: candidate_path.to_string_lossy().into_owned(),
+        pinned_path,
+    })
+}
+
+fn version_probe_working_directory() -> std::path::PathBuf {
+    #[cfg(unix)]
+    {
+        std::path::PathBuf::from("/")
+    }
+    #[cfg(windows)]
+    {
+        std::env::var_os("SystemRoot")
+            .map(std::path::PathBuf::from)
+            .map(|system_root| system_root.join("Temp"))
+            .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows\Temp"))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::path::PathBuf::new()
+    }
+}
+
+pub(crate) enum AgentChild {
+    #[cfg(unix)]
+    Unix(std::process::Child),
+    #[cfg(windows)]
+    Windows(windows_local_security::ContainedChild),
+}
+
+impl AgentChild {
+    pub(crate) fn spawn(command: std::process::Command) -> std::io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let mut command = command;
+            command.process_group(0);
+            command.spawn().map(Self::Unix)
+        }
+        #[cfg(windows)]
+        {
+            windows_local_security::spawn_kill_on_drop_job(command).map(Self::Windows)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = command;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "native agent processes are unsupported on this platform",
+            ))
+        }
+    }
+
+    pub(crate) fn id(&self) -> u32 {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(child) => child.id(),
+            #[cfg(windows)]
+            Self::Windows(child) => child.id(),
+        }
+    }
+
+    pub(crate) fn resume(&mut self) -> std::io::Result<()> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(_) => Ok(()),
+            #[cfg(windows)]
+            Self::Windows(child) => child.resume(),
+        }
+    }
+
+    pub(crate) fn take_stdout(&mut self) -> std::io::Result<Option<std::process::ChildStdout>> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(child) => Ok(child.stdout.take()),
+            #[cfg(windows)]
+            Self::Windows(child) => child.take_stdout(),
+        }
+    }
+
+    pub(crate) fn take_stdin(&mut self) -> std::io::Result<Option<std::process::ChildStdin>> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(child) => Ok(child.stdin.take()),
+            #[cfg(windows)]
+            Self::Windows(child) => child.take_stdin(),
+        }
+    }
+
+    pub(crate) fn take_stderr(&mut self) -> std::io::Result<Option<std::process::ChildStderr>> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(child) => Ok(child.stderr.take()),
+            #[cfg(windows)]
+            Self::Windows(child) => child.take_stderr(),
+        }
+    }
+
+    pub(crate) fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(child) => child.try_wait(),
+            #[cfg(windows)]
+            Self::Windows(child) => child.try_wait(),
+        }
+    }
+
+    pub(crate) fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(child) => child.wait(),
+            #[cfg(windows)]
+            Self::Windows(child) => child.wait(),
+        }
+    }
+
+    pub(crate) fn kill_tree(&mut self) -> std::io::Result<()> {
+        match self {
+            #[cfg(unix)]
+            Self::Unix(child) => {
+                let process_group =
+                    rustix::process::Pid::from_raw(child.id() as rustix::process::RawPid)
+                        .ok_or_else(|| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::InvalidInput,
+                                "version probe process ID is invalid",
+                            )
+                        })?;
+                rustix::process::kill_process_group(process_group, rustix::process::Signal::KILL)
+                    .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))
+            }
+            #[cfg(windows)]
+            Self::Windows(child) => child.kill_tree(),
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for AgentChild {
+    fn drop(&mut self) {
+        let _ = self.kill_tree();
+        let Self::Unix(child) = self;
+        if child.try_wait().ok().flatten().is_none() {
+            let _ = child.kill();
+        }
+        let _ = child.wait();
     }
 }
 
@@ -308,6 +716,131 @@ mod tests {
         fs::set_permissions(path, permissions).expect("make fake CLI helper executable");
     }
 
+    fn shell_quote(path: &Path) -> String {
+        format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+    }
+
+    #[test]
+    fn inventory_does_not_execute_a_launcher_without_a_module_interpreter_policy() {
+        let temporary = TemporaryDirectory::new();
+        let binary = temporary.0.join("unqualified-launcher");
+        let marker = temporary.0.join("launched");
+        write_executable(
+            &binary,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' '1.2.3'\n: > {}\n",
+                shell_quote(&marker)
+            ),
+        );
+
+        let (installation, version) = discover_version_with_args(
+            &binary.to_string_lossy(),
+            &["--version"],
+            "",
+            false,
+            std::time::Duration::from_secs(2),
+        );
+
+        assert!(matches!(
+            installation,
+            InstallationState::VersionUnavailable
+        ));
+        assert_eq!(version, None);
+        assert!(!marker.exists(), "unqualified launcher code was executed");
+    }
+
+    #[test]
+    fn launcher_interpreter_is_checked_against_module_policy_before_execution() {
+        let temporary = TemporaryDirectory::new();
+        let allowed_launcher = temporary.0.join("allowed-launcher");
+        let allowed_marker = temporary.0.join("allowed-launched");
+        write_executable(
+            &allowed_launcher,
+            &format!(
+                "#!/usr/bin/env sh\nprintf '%s\\n' '1.2.3'\n: > {}\n",
+                shell_quote(&allowed_marker)
+            ),
+        );
+        let (installation, version) = discover_version_with_interpreters(
+            &allowed_launcher.to_string_lossy(),
+            &["--version"],
+            "",
+            false,
+            std::time::Duration::from_secs(2),
+            &["sh"],
+        );
+        assert!(matches!(installation, InstallationState::Installed));
+        assert_eq!(version.as_deref(), Some("1.2.3"));
+        assert!(allowed_marker.exists());
+
+        let denied_launcher = temporary.0.join("denied-launcher");
+        let denied_marker = temporary.0.join("denied-launched");
+        write_executable(
+            &denied_launcher,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' '1.2.3'\n: > {}\n",
+                shell_quote(&denied_marker)
+            ),
+        );
+        let (installation, version) = discover_version_with_interpreters(
+            &denied_launcher.to_string_lossy(),
+            &["--version"],
+            "",
+            false,
+            std::time::Duration::from_secs(2),
+            &["node"],
+        );
+        assert!(matches!(
+            installation,
+            InstallationState::VersionUnavailable
+        ));
+        assert_eq!(version, None);
+        assert!(!denied_marker.exists(), "disallowed interpreter ran");
+    }
+
+    #[test]
+    fn env_split_and_malformed_shebangs_fail_closed() {
+        let temporary = TemporaryDirectory::new();
+        for (name, shebang) in [
+            ("split", "#!/usr/bin/env -S sh -c"),
+            ("relative", "#!sh"),
+            ("nonstandard-env", "#!/usr/bin/../bin/env sh"),
+        ] {
+            let binary = temporary.0.join(name);
+            let marker = temporary.0.join(format!("{name}-launched"));
+            write_executable(
+                &binary,
+                &format!(
+                    "{shebang}\nprintf '%s\\n' '1.2.3'\n: > {}\n",
+                    shell_quote(&marker)
+                ),
+            );
+            let (installation, version) = discover_version_with_interpreters(
+                &binary.to_string_lossy(),
+                &["--version"],
+                "",
+                false,
+                std::time::Duration::from_secs(2),
+                &["sh"],
+            );
+            assert!(matches!(
+                installation,
+                InstallationState::VersionUnavailable
+            ));
+            assert_eq!(version, None);
+            assert!(!marker.exists(), "malformed launcher {name} executed");
+        }
+
+        let native = resolve_version_probe_target(
+            &std::env::current_exe()
+                .expect("test binary path")
+                .to_string_lossy(),
+            &[],
+        )
+        .expect("a native executable needs no script interpreter policy");
+        assert!(native.pinned_path.is_none());
+    }
+
     #[test]
     fn version_probe_clears_daemon_secrets_and_keeps_path_for_codex_node_shim() {
         if std::env::var_os(CHILD_TEST_MARKER).is_some() {
@@ -358,6 +891,99 @@ mod tests {
     }
 
     #[test]
+    fn version_probe_kills_background_launcher_children_that_hold_stdout() {
+        let temporary = TemporaryDirectory::new();
+        let binary = temporary.0.join("launcher-with-background-child");
+        write_executable(&binary, "#!/bin/sh\n(sleep 5) &\nprintf '%s\\n' '1.2.3'\n");
+
+        let started_at = std::time::Instant::now();
+        let (installation, version) = discover_version_with_interpreters(
+            &binary.to_string_lossy(),
+            &["--version"],
+            "",
+            false,
+            std::time::Duration::from_secs(2),
+            &["sh"],
+        );
+
+        assert!(matches!(installation, InstallationState::Installed));
+        assert_eq!(version.as_deref(), Some("1.2.3"));
+        assert!(
+            started_at.elapsed() < std::time::Duration::from_secs(2),
+            "a launcher descendant holding stdout must not extend the probe timeout"
+        );
+    }
+
+    #[test]
+    fn version_probe_uses_a_non_workspace_working_directory() {
+        let temporary = TemporaryDirectory::new();
+        let binary = temporary.0.join("cwd-sensitive-version");
+        let expected_cwd = version_probe_working_directory();
+        let expected_cwd = expected_cwd.to_string_lossy().replace('\'', "'\\''");
+        write_executable(
+            &binary,
+            &format!(
+                "#!/bin/sh\nif [ \"$PWD\" = '{expected_cwd}' ]; then printf '%s\\n' '1.2.3'; else exit 7; fi\n"
+            ),
+        );
+
+        let (installation, version) = discover_version_with_interpreters(
+            &binary.to_string_lossy(),
+            &["--version"],
+            "",
+            false,
+            std::time::Duration::from_secs(2),
+            &["sh"],
+        );
+
+        assert!(matches!(installation, InstallationState::Installed));
+        assert_eq!(version.as_deref(), Some("1.2.3"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn version_probe_timeout_does_not_wait_for_a_descendant_that_escaped_its_process_group() {
+        let temporary = TemporaryDirectory::new();
+        let binary = temporary.0.join("launcher-with-session-escape");
+        let escaped_pid_path = temporary.0.join("escaped-pid");
+        write_executable(
+            &binary,
+            &format!(
+                "#!/bin/sh\nsetsid sh -c 'echo $$ > \"$1\"; sleep 5' sh '{}' &\nprintf '%s\\n' '1.2.3'\n",
+                escaped_pid_path.display()
+            ),
+        );
+
+        let started_at = std::time::Instant::now();
+        let (installation, version) = discover_version_with_interpreters(
+            &binary.to_string_lossy(),
+            &["--version"],
+            "",
+            false,
+            std::time::Duration::from_secs(2),
+            &["sh"],
+        );
+        let elapsed = started_at.elapsed();
+
+        let cleanup_deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+        while !escaped_pid_path.exists() && std::time::Instant::now() < cleanup_deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        if let Ok(pid) = fs::read_to_string(&escaped_pid_path)
+            && let Ok(pid) = pid.trim().parse::<u32>()
+            && let Some(group) = rustix::process::Pid::from_raw(pid as rustix::process::RawPid)
+        {
+            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+        }
+        assert!(matches!(installation, InstallationState::Installed));
+        assert_eq!(version.as_deref(), Some("1.2.3"));
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "a descendant that escaped the launcher's process group must not block the probe"
+        );
+    }
+
+    #[test]
     fn local_inventory_reports_native_cli_candidates_without_claiming_auth_or_session_readiness() {
         let inventory = discover_local_installations();
         for (agent_id, display_name) in [
@@ -400,6 +1026,61 @@ mod tests {
         let version = project_version_output(output.as_bytes(), "GitHub Copilot CLI ", true);
 
         assert_eq!(version.as_deref(), Some("1.0.78"));
-        assert!(!output.contains("1.0.78.\nRun"));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_cli_tests {
+    use super::{InstallationState, discover_version_with_args};
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    struct TemporaryDirectory(PathBuf);
+
+    impl TemporaryDirectory {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock is after Unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "litecowork-windows-agent-version-probe-{}-{unique}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("create temporary Windows probe directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn version_probe_uses_fixed_arguments_and_the_os_owned_cwd_for_cmd_shims() {
+        let temporary = TemporaryDirectory::new();
+        let binary_without_extension = temporary.0.join("codex");
+        let shim = temporary.0.join("codex.cmd");
+        fs::write(
+            &shim,
+            "@echo off\r\nif not \"%~1\"==\"--version\" exit /b 91\r\nif /I not \"%CD%\"==\"%SystemRoot%\\Temp\" exit /b 92\r\necho codex-cli 7.8.9\r\n",
+        )
+        .expect("write fixed version-only cmd shim");
+
+        let (installation, version) = discover_version_with_args(
+            &binary_without_extension.to_string_lossy(),
+            &["--version"],
+            "codex-cli ",
+            false,
+            std::time::Duration::from_secs(2),
+        );
+
+        assert!(matches!(installation, InstallationState::Installed));
+        assert_eq!(version.as_deref(), Some("7.8.9"));
     }
 }

@@ -7,6 +7,14 @@
 .user-request-detail-prompt { padding: 14px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface-subtle); color: var(--color-text); font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .user-request-detail section h3 { margin: 0 0 8px; font-size: 13px; }
 .user-request-choice-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.user-request-choice-option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; cursor: pointer; }
+.user-request-choice-option input { margin: 2px 0 0; accent-color: var(--color-accent); }
+.user-request-choice-option > span { display: grid; gap: 4px; }
+.user-request-choice-description { color: var(--color-text-subtle); font-size: 12px; line-height: 1.45; }
+.user-request-response-field { display: grid; gap: 7px; color: var(--color-text); font-size: 13px; font-weight: 600; }
+.user-request-response-field textarea { width: 100%; min-height: 96px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface-subtle); color: var(--color-text); font: inherit; font-weight: 400; line-height: 1.5; resize: vertical; }
+.user-request-response-field small { color: var(--color-text-subtle); font-size: 11px; font-weight: 400; line-height: 1.45; }
+.user-request-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .user-request-choice-list li { padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; overflow-wrap: anywhere; }
 .user-request-choice-label { font-size: 13px; }
 .user-request-choice-list p { margin: 4px 0 0; color: var(--color-text-subtle); font-size: 12px; line-height: 1.45; }

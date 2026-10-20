@@ -50,7 +50,7 @@ test("Needs You pages validate the requested status and strictly advancing curso
   assert.equal(isValidNeedsYouPage("OPEN", { items: [item(), item()], nextCursor: null }, null), false);
 });
 
-test("Needs You pagination retains stable item identity and appends only unseen rows", () => {
+test("Needs You pagination treats a replayed inbox item as the same source row", () => {
   const result = mergeNeedsYouPage(
     [item(), item({ itemId: "needs-2", taskId: "task-2" })],
     { items: [item({ title: "Updated duplicate" }), item({ itemId: "needs-3", taskId: "task-3" })], nextCursor: null },
@@ -73,28 +73,34 @@ test("the Open and Resolved history filter exposes its selected state to assisti
   assert.match(html, /checked="" value="RESOLVED"/);
 });
 
-test("Approval and UserRequest entries are display-only even when linked to a Task", () => {
-  for (const kind of ["APPROVAL", "USER_REQUEST"]) {
-    const html = renderToStaticMarkup(createElement(NeedsYouItemCard, {
-      item: item({ kind, approvalId: kind === "APPROVAL" ? "approval-1" : null, userRequestId: kind === "USER_REQUEST" ? "request-1" : null }),
-      onOpenTask: () => {},
-    }));
+test("Approval entries open the owning decision surface; UserRequest entries stay read-only", () => {
+  const approvalHtml = renderToStaticMarkup(createElement(NeedsYouItemCard, {
+    item: item({ kind: "APPROVAL", approvalId: "approval-1", taskId: "task-1" }),
+    onOpenTask: () => {},
+    onOpenUserRequest: () => {},
+    onOpenApproval: () => {},
+  }));
+  assert.match(approvalHtml, /<button[^>]*>Review decision<\/button>/);
+  assert.match(approvalHtml, /Review the exact action and target before deciding\./);
+  assert.doesNotMatch(approvalHtml, /Open current Task/);
 
-    assert.match(html, /<article/);
-    if (kind === "APPROVAL") {
-      assert.match(html, /Approval details remain on their owning review surface\./);
-      assert.doesNotMatch(html, /<button/);
-    } else {
-      assert.match(html, /<button[^>]*>View request details<\/button>/);
-      assert.match(html, /Opening this request does not answer or dismiss it\./);
-    }
-  }
+  const requestHtml = renderToStaticMarkup(createElement(NeedsYouItemCard, {
+    item: item({ kind: "USER_REQUEST", userRequestId: "request-1", taskId: "task-1" }),
+    onOpenTask: () => {},
+    onOpenUserRequest: () => {},
+    onOpenApproval: () => {},
+  }));
+  assert.match(requestHtml, /<button[^>]*>View request details<\/button>/);
+  assert.match(requestHtml, /Opening this request does not answer or dismiss it\./);
+  assert.doesNotMatch(requestHtml, /Open current Task/);
 });
 
 test("only a Task blocker offers a non-mutating link to its current Task detail", () => {
   const html = renderToStaticMarkup(createElement(NeedsYouItemCard, {
     item: item(),
     onOpenTask: () => {},
+    onOpenUserRequest: () => {},
+    onOpenApproval: () => {},
   }));
 
   assert.match(html, /<button[^>]*type="button"/);
@@ -108,6 +114,8 @@ test("a Task blocker without a Task identity has no misleading navigation action
   const html = renderToStaticMarkup(createElement(NeedsYouItemCard, {
     item: item({ taskId: null }),
     onOpenTask: () => {},
+    onOpenUserRequest: () => {},
+    onOpenApproval: () => {},
   }));
 
   assert.doesNotMatch(html, /<button/);

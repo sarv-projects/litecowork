@@ -55,6 +55,23 @@ export function getOrCreateInstructionSave(
   };
 }
 
+export function getOrCreateWorkspaceInstructionSave(
+  pendingByWorkspace: ReadonlyMap<string, PendingWorkspaceInstructionSave>,
+  input: WorkspaceInstructionSaveInput,
+  createId: () => string,
+): PendingWorkspaceInstructionSave {
+  return getOrCreateInstructionSave(pendingByWorkspace.get(input.workspaceId) ?? null, input, createId);
+}
+
+export function clearWorkspaceInstructionSave(
+  pendingByWorkspace: Map<string, PendingWorkspaceInstructionSave>,
+  workspaceId: string,
+  requestId: string,
+): boolean {
+  if (pendingByWorkspace.get(workspaceId)?.requestId !== requestId) return false;
+  return pendingByWorkspace.delete(workspaceId);
+}
+
 export function instructionSaveFailureKind(input: {
   stale: boolean;
   resourceImported: boolean;

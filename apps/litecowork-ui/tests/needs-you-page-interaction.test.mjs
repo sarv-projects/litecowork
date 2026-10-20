@@ -162,6 +162,9 @@ async function click(label) {
 function item(id, kind = "TASK_BLOCKER", status = "OPEN", taskId = "task-a") {
   return { itemId: id, kind, status, approvalId: kind === "APPROVAL" ? "approval-a" : null, userRequestId: kind === "USER_REQUEST" ? "request-a" : null, taskId: kind === "TASK_BLOCKER" ? taskId : null, blockerId: kind === "TASK_BLOCKER" ? "blocker-a" : null, title: id, safeSummary: "A persisted item needs attention.", createdAt: "2026-10-14T10:00:00Z", resolvedAt: status === "RESOLVED" ? "2026-10-14T11:00:00Z" : null };
 }
+function approval(status = "PENDING", version = 2) {
+  return { approvalId: "approval-a", taskId: "task-a", requestedByAttempt: null, kind: "EXTERNAL_MUTATION", actionSummary: "Publish the approved document", targetRef: { workspaceId: "workspace-b", resourceId: "resource-a", revisionId: "revision-a" }, scopeDigest: `sha256:${"a".repeat(64)}`, actionDigest: `sha256:${"b".repeat(64)}`, risk: "SENSITIVE", requiredAssurance: "APPROVE_SENSITIVE", status, requestedAt: "2026-10-14T10:00:00Z", expiresAt: null, resolvedBy: status === "PENDING" ? null : { principalId: "owner-a", kind: "USER" }, resolvedAt: status === "PENDING" ? null : "2026-10-14T11:00:00Z", version };
+}
 async function callCount() { return evaluate("window.__calls.length"); }
 async function settle(index, result, error = false) { await evaluate(`window.${error ? "rejectCall" : "resolveCall"}(${index}, ${JSON.stringify(result)})`); }
 
@@ -240,7 +243,7 @@ test("mounted Needs You page fences Workspace switches and renders selected stat
   }
 });
 
-test("mounted page reports refresh and pagination failures truthfully, releases busy state, and only opens Task blockers", async context => {
+test("mounted page reports inbox failures and checks exact approvals before resolving them", async context => {
   // Reuse the browser/session initialized by the preceding test.
   const skipReason = dependentBrowserSkipReason(browserSetupFailure, socket);
   if (skipReason) {
@@ -267,7 +270,49 @@ test("mounted page reports refresh and pagination failures truthfully, releases 
   await settle(6, { items: [item("later-row")], nextCursor: null });
   await until(() => evaluate("document.body.innerText.includes('later-row')"), "pagination retry result");
 
-  assert.equal(await evaluate("[...document.querySelectorAll('article')].find(x=>x.innerText.includes('approval-row')).querySelector('button') === null"), true, "Approval is display-only");
+  await click("Review decision");
+  const approvalLoadIndex = await callCount() - 1;
+  await until(() => evaluate("window.__calls[" + approvalLoadIndex + "]?.command === 'get_approval_detail'"), "approval detail request");
+  assert.equal(await evaluate("window.__calls[" + approvalLoadIndex + "].args.workspaceId"), "workspace-b");
+  await settle(approvalLoadIndex, approval());
+  await until(() => evaluate("document.body.innerText.includes('Publish the approved document') && document.body.innerText.includes('revision-a')"), "exact approval action and target");
+  assert.equal(await evaluate("document.body.innerText.includes('does not grant a reusable capability')"), true, "approval boundary is explained plainly");
+  await click("Back to Needs You");
+  await until(() => evaluate("!document.body.innerText.includes('Publish the approved document')"), "approval detail closes");
+  assert.match(await evaluate("document.activeElement?.textContent.trim() ?? ''"), /Review decision/, "Back restores focus to the opening Approval row");
+  const approvalRetryStart = await callCount();
+  await click("Review decision");
+  await until(() => evaluate("window.__calls.slice(" + approvalRetryStart + ").some(call => call.command === 'get_approval_detail')"), "approval detail reopened");
+  const reopenedDetailIndex = await evaluate("window.__calls.findIndex((call, index) => index >= " + approvalRetryStart + " && call.command === 'get_approval_detail')");
+  await settle(reopenedDetailIndex, approval());
+  await until(() => evaluate("document.body.innerText.includes('Publish the approved document')"), "approval detail after reopen");
+
+  await evaluate("window.setOperatorReady(false)");
+  assert.equal(await evaluate("[...document.querySelectorAll('button')].find(button => button.textContent.includes('Approve this action'))?.disabled"), true, "approval action is disabled while local Runtime is offline");
+  const reconnectCallStart = await callCount();
+  await evaluate("window.setOperatorReady(true)");
+  await until(() => evaluate("window.__calls.slice(" + reconnectCallStart + ").some(call => call.command === 'get_approval_detail')"), "approval refresh after reconnect");
+  const approvalReloadIndex = await evaluate("window.__calls.findIndex((call, index) => index >= " + reconnectCallStart + " && call.command === 'get_approval_detail')");
+  const inboxReconnectIndex = await evaluate("window.__calls.findIndex((call, index) => index >= " + reconnectCallStart + " && call.command === 'list_needs_you')");
+  await settle(approvalReloadIndex, approval());
+  if (inboxReconnectIndex >= 0) await settle(inboxReconnectIndex, { items: [item("blocker-row"), item("approval-row", "APPROVAL")], nextCursor: null });
+  const inboxCountBeforeApproval = await evaluate("window.__calls.filter(call => call.command === 'list_needs_you').length");
+  await click("Approve this action");
+  await until(() => evaluate("window.__calls.some(call => call.command === 'resolve_approval')"), "approval decision request");
+  const resolveIndex = await evaluate("window.__calls.findIndex(call => call.command === 'resolve_approval')");
+  const resolveArgs = await evaluate("window.__calls[" + resolveIndex + "].args");
+  assert.equal(resolveArgs.workspaceId, "workspace-b");
+  assert.equal(resolveArgs.approvalId, "approval-a");
+  assert.equal(resolveArgs.expectedVersion, 2);
+  assert.equal(resolveArgs.decision, "APPROVE");
+  assert.equal(resolveArgs.confirmationDigest, approval().actionDigest);
+  assert.match(resolveArgs.requestId, /^approval-ui-[0-9a-f-]{36}$/u);
+  await settle(resolveIndex, approval("APPROVED", 3));
+  await until(() => evaluate("window.__calls.filter(call => call.command === 'list_needs_you').length > " + inboxCountBeforeApproval), "Needs You refresh after approval");
+  const approvalRefreshIndex = await evaluate("window.__calls.map((call, index) => ({call,index})).filter(entry => entry.call.command === 'list_needs_you').at(-1).index");
+  await settle(approvalRefreshIndex, { items: [item("blocker-row")], nextCursor: null });
+  await until(() => evaluate("!document.body.innerText.includes('Publish the approved document')"), "approval closes after successful decision");
+
   await evaluate("(() => { const article=[...document.querySelectorAll('article')].find(x=>x.innerText.includes('blocker-row')); article.querySelector('button').click(); })()");
   assert.deepEqual(await evaluate("window.__openedTasks"), ["task-a"], "only blocker navigation opens the Task");
 });

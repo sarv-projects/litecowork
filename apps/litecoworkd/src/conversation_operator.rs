@@ -24,6 +24,40 @@ struct ListQuery {
     limit: Option<usize>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubmitConversationTurnBody {
+    content: Vec<ConversationTurnContentBlock>,
+    #[serde(default)]
+    resource_refs: Vec<ConversationTurnResourceRef>,
+    #[serde(default)]
+    agent_binding_id: Option<String>,
+    #[serde(default)]
+    presentation_preference: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+enum ConversationTurnContentBlock {
+    #[serde(rename = "TEXT")]
+    Text { text: String },
+    #[serde(rename = "RESOURCE")]
+    Resource {
+        resource_ref: ConversationTurnResourceRef,
+        #[serde(default)]
+        display_name: Option<String>,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConversationTurnResourceRef {
+    workspace_id: String,
+    resource_id: String,
+    #[serde(default)]
+    revision_id: Option<String>,
+}
+
 #[derive(Serialize)]
 struct ConversationListResponse {
     items: Vec<ConversationRecord>,
@@ -69,6 +103,18 @@ where
         .route(
             "/v1/conversations",
             get(list_conversations).post(create_conversation),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}/turns",
+            post(submit_conversation_turn),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}/turns/{turn_id}/retry",
+            post(retry_conversation_turn),
+        )
+        .route(
+            "/v1/conversations/{conversation_id}/turns/{turn_id}/cancel",
+            post(cancel_conversation_turn),
         )
         .route("/v1/conversations/{conversation_id}", get(get_conversation))
 }
@@ -191,6 +237,172 @@ async fn get_conversation(
     .map_err(|_| internal())?
     .map_err(map_store_error)?;
     record.map(Json).ok_or_else(not_found)
+}
+
+async fn submit_conversation_turn(
+    State(state): State<ConversationApiState>,
+    Path(conversation_id): Path<String>,
+    headers: HeaderMap,
+    Json(body): Json<SubmitConversationTurnBody>,
+) -> Result<Response, Response> {
+    let _request_id = idempotency_key(&headers)?;
+    let workspace_id = selected_workspace(&headers)?;
+    validate_turn_request(&body, &workspace_id)?;
+    ensure_conversation_available(&state, &headers, &conversation_id).await?;
+    // Native Conversation sessions are not yet admitted through a qualified
+    // AgentModule + Trust + Environment path. Do not persist an OPEN turn or user
+    // message that has no provider capable of settling it.
+    Err(turn_dispatch_unavailable())
+}
+
+async fn retry_conversation_turn(
+    State(state): State<ConversationApiState>,
+    Path((conversation_id, turn_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, Response> {
+    let _request_id = idempotency_key(&headers)?;
+    let _expected_version = super::parse_if_match(&headers)?;
+    if !valid_task_query_id(&turn_id) {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation turn ID is invalid",
+        ));
+    }
+    ensure_conversation_available(&state, &headers, &conversation_id).await?;
+    Err(turn_dispatch_unavailable())
+}
+
+async fn cancel_conversation_turn(
+    State(state): State<ConversationApiState>,
+    Path((conversation_id, turn_id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<Response, Response> {
+    let _request_id = idempotency_key(&headers)?;
+    let _expected_version = super::parse_if_match(&headers)?;
+    if !valid_task_query_id(&turn_id) {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation turn ID is invalid",
+        ));
+    }
+    ensure_conversation_available(&state, &headers, &conversation_id).await?;
+    Err(turn_dispatch_unavailable())
+}
+
+async fn ensure_conversation_available(
+    state: &ConversationApiState,
+    headers: &HeaderMap,
+    conversation_id: &str,
+) -> Result<(), Response> {
+    let workspace_id = selected_workspace(headers)?;
+    if !valid_task_query_id(conversation_id) {
+        return Err(error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation ID is invalid",
+        ));
+    }
+    let store = state.store.clone();
+    let principal_id = state.principal_id.clone();
+    let conversation_id = conversation_id.to_owned();
+    let conversation = tokio::task::spawn_blocking(move || {
+        SqliteConversationStore::new(store).get_conversation(
+            &principal_id,
+            &workspace_id,
+            &conversation_id,
+        )
+    })
+    .await
+    .map_err(|_| internal())?
+    .map_err(map_store_error)?;
+    conversation.map(|_| ()).ok_or_else(not_found)
+}
+
+fn validate_turn_request(
+    body: &SubmitConversationTurnBody,
+    workspace_id: &str,
+) -> Result<(), Response> {
+    let invalid = || {
+        error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "Conversation turn request is invalid",
+        )
+    };
+    if body.content.is_empty()
+        || body.content.len() > 256
+        || body.resource_refs.len() > 256
+        || body
+            .agent_binding_id
+            .as_ref()
+            .is_some_and(|id| !valid_task_query_id(id))
+        || body
+            .presentation_preference
+            .as_deref()
+            .is_some_and(|value| !matches!(value, "AUTO" | "SIMPLE" | "RICH"))
+    {
+        return Err(invalid());
+    }
+    let mut total_text_bytes = 0_usize;
+    for block in &body.content {
+        match block {
+            ConversationTurnContentBlock::Text { text } => {
+                total_text_bytes = total_text_bytes
+                    .checked_add(text.len())
+                    .ok_or_else(invalid)?;
+            }
+            ConversationTurnContentBlock::Resource {
+                resource_ref,
+                display_name,
+            } => {
+                if display_name.as_ref().is_some_and(|name| {
+                    name.chars().count() > 512 || name.chars().any(char::is_control)
+                }) {
+                    return Err(invalid());
+                }
+                validate_turn_resource_ref(resource_ref, workspace_id).map_err(|_| invalid())?;
+            }
+        }
+    }
+    if total_text_bytes > 1024 * 1024 {
+        return Err(invalid());
+    }
+    for resource_ref in &body.resource_refs {
+        validate_turn_resource_ref(resource_ref, workspace_id).map_err(|_| invalid())?;
+    }
+    Ok(())
+}
+
+fn validate_turn_resource_ref(
+    resource_ref: &ConversationTurnResourceRef,
+    workspace_id: &str,
+) -> Result<(), ()> {
+    if resource_ref.workspace_id != workspace_id
+        || !valid_task_query_id(&resource_ref.workspace_id)
+        || !valid_task_query_id(&resource_ref.resource_id)
+        || resource_ref
+            .revision_id
+            .as_ref()
+            .is_some_and(|revision_id| !valid_task_query_id(revision_id))
+    {
+        return Err(());
+    }
+    Ok(())
+}
+
+fn turn_dispatch_unavailable() -> Response {
+    let mut response = error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "DEPENDENCY_UNAVAILABLE",
+        "Qualified native Conversation session admission is unavailable; the message was not sent",
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    response
 }
 
 async fn list_conversations(

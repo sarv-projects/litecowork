@@ -4,7 +4,7 @@
 //! launches `opencode serve` on IPv4 loopback with a generated Basic-auth
 //! password, then speaks only the version-qualified V2 HTTP API.
 //! It is transport only: it does not admit a Task/Attempt, authorize tools,
-//! mediate Effects, or establish child-process writer quiescence.
+//! mediate Effects, or establish Environment writer quiescence.
 //!
 //! API reference: https://dev.opencode.ai/v2/docs/api/ . Server routes and request
 //! shapes are taken from the OpenCode Server/SDK documentation. This adapter
@@ -16,7 +16,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream},
     path::PathBuf,
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::mpsc::{self, Receiver, SyncSender},
     thread,
     time::{Duration, Instant},
@@ -24,6 +24,8 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use serde_json::{Value, json};
+
+use super::AgentChild;
 
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_HEALTH_RESPONSE_BYTES: usize = 64 * 1024;
@@ -257,11 +259,13 @@ impl OpenCodeServerConfig {
     }
 }
 
-/// Owns only the direct `opencode serve` process. A stopped server does not
-/// prove its agent/tool descendants stopped writing; a future Task supervisor
-/// must fence the Environment independently before replacing an Attempt.
+/// Owns the `opencode serve` launch scope. Windows Job Objects terminate the
+/// assigned process tree; Unix process-group cleanup cannot prevent an
+/// adversarial child from escaping. This still does not prove arbitrary
+/// Environment writers stopped; a future Task supervisor must fence the
+/// Environment independently before replacing an Attempt.
 pub(crate) struct OpenCodeServer {
-    child: Child,
+    child: AgentChild,
     address: SocketAddr,
     password: Vec<u8>,
     request_timeout: Duration,
@@ -317,7 +321,9 @@ impl OpenCodeServer {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let child = command.spawn().map_err(|_| OpenCodeError::SpawnFailed)?;
+        let mut child = AgentChild::spawn(command).map_err(|_| OpenCodeError::SpawnFailed)?;
+        let started_at = Instant::now();
+        child.resume().map_err(|_| OpenCodeError::SpawnFailed)?;
         // Install the RAII owner immediately. Every readiness/HTTP early return
         // below drops this value, which kills and waits for the direct child.
         let mut server = Self {
@@ -332,8 +338,9 @@ impl OpenCodeServer {
 
         let stdout = server
             .child
-            .stdout
-            .take()
+            .take_stdout()
+            .ok()
+            .flatten()
             .ok_or(OpenCodeError::SpawnFailed)?;
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         thread::Builder::new()
@@ -341,7 +348,7 @@ impl OpenCodeServer {
             .spawn(move || drain_startup_output(stdout, startup_tx))
             .map_err(|_| OpenCodeError::SpawnFailed)?;
 
-        let deadline = Instant::now() + config.startup_timeout;
+        let deadline = started_at + config.startup_timeout;
         wait_for_bound_server(&mut server, &startup_rx, deadline)?;
 
         let mut health_checks = 0_usize;
@@ -596,7 +603,7 @@ impl OpenCodeServer {
         if self.stopped {
             return OpenCodeProcessState::Exited;
         }
-        let _ = self.child.kill();
+        let _ = self.child.kill_tree();
         match self.child.wait() {
             Ok(_) => {
                 self.stopped = true;
@@ -1295,6 +1302,20 @@ fn map_read_error(error: std::io::Error) -> OpenCodeError {
 mod tests {
     use super::*;
 
+    fn test_server_config() -> OpenCodeServerConfig {
+        #[cfg(windows)]
+        {
+            OpenCodeServerConfig::bounded(
+                r"C:\Program Files\OpenCode\opencode.exe",
+                r"C:\Users\LiteCowork\workspace",
+            )
+        }
+        #[cfg(not(windows))]
+        {
+            OpenCodeServerConfig::bounded("/usr/bin/opencode", "/tmp/workspace")
+        }
+    }
+
     #[test]
     fn qualified_protocols_use_their_exact_server_auth_and_readiness_contracts() {
         assert_eq!(
@@ -1349,17 +1370,27 @@ mod tests {
 
     #[test]
     fn server_configuration_bounds_startup_and_request_timeouts() {
-        let config = OpenCodeServerConfig::bounded("/usr/bin/opencode", "/tmp/workspace");
+        let config = test_server_config();
         assert!(config.is_valid());
 
-        let mut zero_timeout = OpenCodeServerConfig::bounded("/usr/bin/opencode", "/tmp/workspace");
+        let mut zero_timeout = test_server_config();
         zero_timeout.request_timeout = Duration::ZERO;
         assert!(!zero_timeout.is_valid());
 
-        let mut excessive_timeout =
-            OpenCodeServerConfig::bounded("/usr/bin/opencode", "/tmp/workspace");
+        let mut excessive_timeout = test_server_config();
         excessive_timeout.startup_timeout = Duration::from_secs(61);
         assert!(!excessive_timeout.is_valid());
+    }
+
+    #[test]
+    fn server_configuration_requires_absolute_paths_on_the_current_platform() {
+        let mut relative_executable = test_server_config();
+        relative_executable.executable = PathBuf::from("opencode");
+        assert!(!relative_executable.is_valid());
+
+        let mut relative_workspace = test_server_config();
+        relative_workspace.working_directory = PathBuf::from("workspace");
+        assert!(!relative_workspace.is_valid());
     }
 
     #[test]

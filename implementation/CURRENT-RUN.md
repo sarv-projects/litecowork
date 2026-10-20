@@ -1,3 +1,217 @@
+## 2026-10-18 — Windows native CI introduction and source corrections
+
+- Added the `windows-latest` CI job in commit `25ea383` and pushed it to `main`. It runs
+  Windows security/staging tests, the native `litecoworkd` suite, Tauri bridge tests, UI
+  helpers, and builds an unsigned NSIS installer. The hosted run completed Linux Tauri/UI
+  jobs successfully, but the existing aggregate `scripts/check.sh` stopped at rustfmt and
+  the Windows job stopped in `local-environment-staging` on the older committed source.
+- Retrieved the hosted job logs: `cargo fmt --all -- --check` identified formatting drift
+  in eight current-tree Rust files. The Windows staging failure came from an older
+  `non_unix_staging_fails_closed_until_private_acl_is_qualified` test being compiled on
+  Windows; its newer source uses the exact non-Unix/non-Windows cfg and includes the
+  owner/SYSTEM ACL staging implementation. These hosted failures do not qualify the
+  current uncommitted implementation.
+- Ran `cargo fmt --all` and verified `cargo fmt --all -- --check` passes locally. Moved
+  exact input digest verification before staging-root creation so a bad later pin cannot
+  trigger partial filesystem materialization. With Rust/Cargo 1.98.1 on Linux WSL2:
+  `cargo test --locked --offline -p local-environment-staging -- --nocapture
+  --test-threads=1` passed **17/17**; `cargo test --locked --offline -p domain-task
+  coordinator_ -- --nocapture --test-threads=1` passed **2/2**;
+  `cargo test --locked --offline -p storage-sqlite resource_edge -- --nocapture
+  --test-threads=1` passed **3/3**; and
+  `cargo test --locked --offline -p storage-sqlite
+  delegation_result_migration_is_atomic_and_records_immutable_storage -- --nocapture
+  --test-threads=1` passed **1/1** after updating the v25 terminal migration assertion.
+- The corrected full Windows source tree has not yet been run on the native host or in
+  hosted CI. Only the explicitly noted staging/security modules below have been refreshed
+  into the Windows qualification copy. The workflow commit remains on `main`; current
+  implementation files and the broader
+  pre-existing dirty working tree have not been committed together. Do not infer Windows
+  SYSTEM/package or V1 release qualification from the earlier Windows 208/0/1 source run.
+- **Current-source native Windows staging test:** copied the exact working-tree
+  `crates/local-environment-staging/src/lib.rs` into the user-authorized qualification
+  checkout under `C:\Users\sonali\Desktop\testing\LiteCowork testing\qualification-2026-10-18`
+  and ran `cargo test --locked --offline -p local-environment-staging --target-dir
+  target-windows -- --test-threads=1` through PowerShell. Windows 11 Home Single Language
+  build 26200, PowerShell 5.1.26100.9711, Rust/Cargo 1.98.1 MSVC: **14/14 passed**, including
+  owner/SYSTEM ACL staging, nested handle-relative files, and pre-mutation digest rejection.
+  Only that one source file was refreshed in the existing test copy; this is CODE evidence
+  for staging and does not qualify the full daemon, installed Tauri package, process
+  isolation, Windows WorkspaceRoot scanning, SYSTEM end-to-end behavior, or owner USER gate.
+- The same Windows qualification copy ran `cargo test --locked --offline
+  -p windows-local-security --target-dir target-windows -- --test-threads=1` on that host:
+  **36/36 passed**, including nested handle-relative creation, protected owner/SYSTEM DACL,
+  reparse/junction rejection, replacement detection, and contained-child Job Object cases.
+  This helper evidence does not qualify a packaged daemon or product-level process
+  isolation; the Windows source copy and incremental target remain for the active native
+  qualification lane.
+
+## 2026-10-18 — Windows, E04/E05 source integration, and desktop verification
+
+- **E02-S03 / Windows:** Saved Windows WorkspaceRoot paths now reopen through a verified
+  no-reparse directory handle and compare the exact volume serial plus full `FILE_ID_128`
+  before refreshing Runtime-incarnation bindings. Runtime's exhaustive failure mapper now
+  covers the Windows selection/open variants. On Windows 11 build `26200.0`, PowerShell
+  `5.1.26100.9711`, Rust/Cargo `1.98.1` (`x86_64-pc-windows-msvc`), the copied-source
+  daemon filter passed **3/3**:
+  `cargo test --offline -p litecoworkd windows_workspace_root_revalidation_tests -- --nocapture --test-threads=1`.
+  This covers exact selection/reopen, path-replacement rejection, and malformed locator
+  rejection. It does not enable Windows scanning or qualify packaged startup/key identity.
+  `docs/WORLD-RESOURCES.md` and the E02-S03 review packet now reflect this bounded source
+  support and its limits.
+- **Windows WorkspaceRoot identity:** Saved Windows roots reopen through a verified
+  no-reparse directory handle and compare exact volume serial plus full `FILE_ID_128`.
+  On Windows 11 build `26200.0`, PowerShell `5.1.26100.9711`, Rust/Cargo `1.98.1`
+  (`x86_64-pc-windows-msvc`), the copied-source daemon filter passed **3/3** for exact
+  selection/reopen, replacement rejection, and malformed locators. This is partial CODE
+  only; it does not enable Windows scanning or qualify packaged startup/key identity.
+- **E05 performance history:** The existing projection route is now wired to owner-scoped
+  SQLite samples, the existing domain aggregator, and a lazy desktop profile disclosure
+  through the typed API and fixed Tauri command. Unknown/unattributed verifier and cost
+  values remain null; confidence remains LOW; no prompts/transcripts are exposed. Focused
+  Operator projection, owner/empty SQLite, populated settlement-window/category SQLite,
+  and fractional-quantity parser tests passed **1/1 each**; the mounted nullable quota
+  observation route passed **3/3** with null/no-store behavior and owner/binding denial.
+  SQL attribution requires the
+  exact Workspace/Task/Attempt and pinned AgentSession TaskSpec category; only terminal
+  samples enter denominators. The desktop API/rendering/bridge tests pass **10/10**, and
+  the Tauri path helper passes **1/1**. Node.js `24.21.0` / pnpm `12.10.1` TypeScript and
+  the production UI build pass (142 modules, 924.05 kB minified JS / 253.53 kB gzip;
+  existing chunk advisory). Quota remains null until a qualified adapter provides an
+  authoritative observation; no cost or quota value is invented.
+- **UI regression:** The serial `pnpm test` run reported **340 passed, 5 failed, 3
+  skipped** out of 348. All five failures were in three Chrome/CDP-hosted cases during the
+  loaded aggregate run. Focused retries passed: Needs You Workspace-switch interaction
+  **1/1**, UserRequest detail interactions **3/3**, and rendered WorkspaceRoot search
+  interaction **1/1**. Do not replace these isolated passes for a clean aggregate-run
+  result; retry the full UI suite at a later integration gate.
+- **E04 Invocation history:** Read-only owner-scoped GET handlers now serve the specified
+  Task Invocation page and Invocation detail routes. SQLite keyset/owner-scoped single-read
+  coverage passed **1/1**; daemon projection, cursor binding, no-store, private-field
+  omission, and opaque failure-details redaction tests passed **3/3**. Provider
+  reconciliation and dispatch remain separate from these read projections and continue
+  to fail closed.
+- **E06 ZIP preview:** Strict manifest checks reject preview manifests claiming extracted
+  payloads and enforce per-entry expansion size/compression ratio. The Python provider
+  suite passes **61/61** and the feature-enabled Operator suite **6/6**. This preview route
+  creates no child Resources/provenance or extraction Effects; those contract and provider
+  edges remain open.
+- **E08-S04 Task stream:** The existing authenticated presentation stream and client
+  reducer were rechecked against the live source. From the repository root,
+  `PATH=/home/sarvesh/.nvm/versions/node/v24.21.0/bin:$PATH node --experimental-transform-types --test apps/litecowork-ui/tests/task-stream.test.ts apps/litecowork-ui/tests/task-progress-truth.test.mjs`
+  passed **13/13** on Node.js `24.21.0`. It covers scope/revision fencing, atomic snapshots,
+  duplicate/late updates, cursor resume/resync, reconnect, stale unary-read rejection, and
+  activity-vs-Evidence labeling. It does not qualify packaged transport, provider/Environment
+  liveness, semantic Work filters, or owner acceptance; the E08-S04 packet and epic were
+  corrected to distinguish this source from those remaining gates.
+- **E07 Windows child quiescence and staging:** A terminated parent is not reported settled
+  while its private Job still contains descendants. The Windows handle-safe staging API
+  creates nested input files relative to verified directory handles, applies protected
+  current-user/SYSTEM DACLs at file creation, rejects reparse/traversal/collision cases,
+  and retains the documented boundary that staging alone is not process isolation. On
+  Windows 11 build `26200.0` with Rust/Cargo `1.98.1` (`x86_64-pc-windows-msvc`),
+  `windows-local-security` passed **35/35** and `local-environment-staging` passed
+  **14/14**; the Linux staging suite passed **17/17**. The downstream daemon AgentModule
+  filter compiled and ran 63 tests: **61 passed, 1 ignored, 1 failed**. The failure is
+  the existing E03 OpenCode test using Unix-shaped paths on Windows; caller source
+  compatibility is proven, full Windows qualification is not. Browser/lease integration,
+  packaged OS qualification, and task-created Windows build-target cleanup are still being
+  checked. The user-authorized source-copy folder remains.
+- One `main` worktree remains; no task-created worktrees or branches exist. The shared
+  incremental `target/` grew from 22,130,375,486 to 23,995,281,962 bytes and is retained
+  while active Rust builds use it. The temporary Tauri-local 7.1 GiB target was removed
+  after its native path-helper test passed. `/mnt/c` has about 32 GiB available after the
+  Windows target cleanup.
+  The user-authorized Windows source copy remains for continued real-host qualification.
+  No owner caches, unrelated files, or private data were removed.
+
+## 2026-10-17 — continued E02/E03/E04 implementation and Windows ACL hardening
+
+This entry supersedes earlier same-day pending notes below where later results are stated.
+
+- **E02:** Atomic Linux root-scan FILE Resource/ResourceLocation membership and private
+  current-incarnation identity/locator bindings are now in the production transaction. The
+  focused membership tests passed **2/2**, scan transaction tests **6/6**, pinned UI suite
+  **334/334**, and rendered observed-Resource detail test **1/1**. Linux filesystem mtime
+  propagation was added afterward; its new focused regression and daemon route integration
+  rerun are still pending. Windows/macOS safe traversal, root-revocation cleanup, watcher,
+  packaged behavior, and owner acceptance remain open.
+- **E03:** The previous full `agents::` daemon suite passed **52 tests, 0 failures, 1
+  ignored**; Cline inventory tests passed **10/10**. A new partial AgentModule manifest
+  matching kernel passes **6/6** in its standalone Rust test build, but the final daemon
+  Cargo rerun after the last registry-ID validation change remains pending. Native
+  Conversation dispatch, qualified module lifecycle/config/auth, Attempt execution and
+  supported-provider acceptance remain open.
+- **E04:** Canonical ApprovalTargetRef production/storage validation was added alongside
+  bounded ActionBatch checks and a fail-closed direct-vs-Gateway classifier. Focused
+  domain-invocations tests passed **12/12**, SQLite Trust tests **13/13**, and daemon Trust
+  tests **27/27**. These do not implement grant/SecretLease issuance, Gateway dispatch,
+  atomic ApprovalUse/Invocation/Effect admission, real LiteSPM integration, or independent
+  verifier success; E04 remains partial.
+- **E01 Windows:** The key-rotation lock directory and an existing `mutations.lock` now
+  receive protected owner/SYSTEM DACLs; the lock-file reset handles legacy broad ACLs and
+  fails closed. A PowerShell 5.1 Win32 probe passed on Windows 11 build `26200.0` after
+  deliberately granting BUILTIN\Users access to a pre-existing test lock file, then
+  checking that only owner/SYSTEM remained. The Windows security crate test targets passed
+  `cargo check --locked --tests --target x86_64-pc-windows-gnu -p
+  windows-local-security`. The storage-sqlite Windows cross-check stopped in bundled
+  SQLite C compilation because `x86_64-w64-mingw32-gcc` is unavailable; the Windows
+  `os_key_provider.rs` call site is not yet cross-compiled, and live OS keyring rotation
+  remains unqualified.
+
+The active Git tree remains the single `main` worktree; no subagent worktrees were created.
+Root `target/` is approximately 14.3 GB and retained for incremental builds. The Windows
+ACL verification script is intentionally retained at the user-requested Desktop testing
+folder; no source files or private credentials were copied there for this probe. Full
+working-tree integration, review, version-control checkpoint, and any optional-output
+cleanup remain pending; do not infer V1 release readiness from these focused results.
+
+## 2026-10-17 — Parallel E02/E03/E04 implementation and E05 delegation envelopes
+
+E05-S02 has a partial production-code increment in `crates/domain-task`: closed, typed
+TaskPacket/ResultEnvelope models and bounded Workspace/revision/child-binding validators.
+Focused tests pass 6/6. E05-S03 now has a pure versioned ranking function over
+caller-qualified candidates, explicit profile selection, quality-floor filtering,
+comparable-cost/unknown-cost handling, and stable rank rules; focused tests pass 10/10 and
+the full `domain-task --lib` suite passes 32/32 with Rust/Cargo 1.98.1. Neither increment
+is wired to child admission/native dispatch or live eligibility, usage/quota, Budget
+reservation, or B83 benefit evidence. Both stories remain `IN_PROGRESS`; see the
+[E05-S02](reviews/E05-S02.md) and [E05-S03](reviews/E05-S03.md) partial packets.
+
+**E05-S02 source continuation (2026-10-17):** Added and exported a pure child-admission
+policy over exact Task/Plan/Step/parent Attempt/session/lease/profile/Coworker projections,
+and a canonical bounded TaskPacket preparation helper over exact identity pins and
+caller-resolved allowsets. A delegated parent without its immutable profile pin now fails
+closed, while an unpinned root Attempt remains bounded by platform depth. Focused CODE
+tests pass 7/7 and 4/4 with Rust/Cargo 1.98.1. These helpers are still not consumed by the
+SQLite Attempt admission transaction or a TaskPacket producer; no child Attempt is
+admitted/dispatched and no lease, grant, budget, private worktree, SYSTEM or USER gate is
+complete. The full `cargo fmt --all -- --check` remains blocked by formatting drift in
+other dirty files; the changed E05 domain files were formatted directly.
+
+The E02 owner has connected Needs You approval detail through the local bridge and
+approval routes; focused rendered tests pass 6/6, approval reducer tests 3/3, and current
+TypeScript/OpenAPI freshness checks pass. A Resource rendered test remains blocked before
+mount because Chrome did not publish `DevToolsActivePort`; generic Task blocker resolution
+stays read-only because TASK-RUNTIME does not define its request or transition contract.
+The E03 owner has a Linux escaped-descendant pipe regression and fixed-OS-owned probe cwd;
+the focused Linux probe test passed 1/1 and the E03 agent suite passed 47/48 (one ignored).
+Native Windows helper tests passed 6/6 on Windows 11 build 26200 and the refreshed daemon
+cross-check passed `cargo check --locked -p litecoworkd`; native daemon tests still cannot
+compile because shared runtime test modules import Unix-only APIs. The E04 owner added the
+Approval request producer and exact Task/Attempt/action/target/scope binding; focused
+storage tests passed 7/7 and daemon Trust tests passed 24/24 before the latest target-ref
+bound. The latest target-ref storage tests passed 7/7; a daemon rerun was blocked by E02's
+in-progress UserRequest exports/routes until root registration. These epics remain partial;
+packaged/OS/provider and owner acceptance are not claimed.
+
+There is one shared Cargo target and one Git worktree. The root `target/debug` measurement
+rose from the recorded 8.1 GiB slice baseline to 9,569,739,582 bytes during concurrent
+builds. The E03 Windows test copy contains 82,327,050 bytes, including 55,510,237 bytes of
+task-created target output; the owner left its source and concise log intact and will clean
+only that target after its remaining Windows checks. No unrelated owner data or shared
+caches have been removed. Shared Cargo verification is serialized among E02/E03/E04/E05.
+
 ## 2026-10-16 — E02-S04 UserRequest detail and serial UI verification
 
 The read-only detail path now has CODE evidence across the real SQLite projection,

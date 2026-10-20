@@ -52,7 +52,7 @@ function observation(name, idChar) {
     modified_at: null,
     observed_at: "2026-10-17T10:00:00.000Z",
     freshness: "CURRENT",
-    resource_id: null,
+    resource_id: "resource-file-a",
   };
 }
 
@@ -178,6 +178,7 @@ test("rendered Library observed files search, paginate, and discard a response a
       window.__observationCalls = [];
       window.__observationPending = [];
       window.__observationPauseCalls = [];
+      window.__resourceDetailCalls = [];
       bridge.invoke = (command, args, options) => {
         if (command === "search_workspace_root_observations") {
           window.__observationCalls.push(args);
@@ -190,6 +191,9 @@ test("rendered Library observed files search, paginate, and discard a response a
           else if (args.query === "plan") page = {
             workspace_id: "workspace-a", workspace_root_id: "workspace-root-a",
             items: [${JSON.stringify(observation("Plan one.txt", "1"))}], next_cursor: "plan-next",
+          };
+          else if (args.query === "missing") page = {
+            workspace_id: "workspace-a", workspace_root_id: "workspace-root-a", items: [], next_cursor: null,
           };
           else page = {
             workspace_id: "workspace-a", workspace_root_id: "workspace-root-a",
@@ -206,6 +210,14 @@ test("rendered Library observed files search, paginate, and discard a response a
             status: "PAUSED", version: args.expectedVersion + 1, locationAvailability: "AVAILABLE",
           });
         }
+        if (command === "get_resource_detail") {
+          window.__resourceDetailCalls.push(args);
+          return Promise.resolve({
+          resourceId: args.resourceId, workspaceId: args.workspaceId, kind: "FILE",
+          displayName: "Quarterly notes.txt", currentRevisionId: null, version: 1, contextDocument: null,
+          });
+        }
+        if (command === "list_resource_revisions") return Promise.resolve({ items: [], nextCursor: null });
         return originalInvoke(command, args, options);
       };
       window.resolveStaleObservationPage = () => window.__observationPending.shift()({
@@ -221,8 +233,13 @@ test("rendered Library observed files search, paginate, and discard a response a
     await until(() => evaluate("Boolean(document.querySelector('.workspace-root-observations'))"), "observed-files panel mounted from Library root fixture");
     await click(".workspace-root-observations-toggle", "Browse observed files");
     await until(() => evaluate("document.body.innerText.includes('Quarterly notes.txt')"), "first observed metadata row");
-    assert.equal(await evaluate("document.body.innerText.includes('not files added to the Library')"), true, "the UI explains these are metadata observations rather than Library Resources");
+    assert.equal(await evaluate("document.body.innerText.includes('this scan does not read file contents')"), true, "the UI explains metadata scans do not read file contents");
     assert.equal(await evaluate("window.__observationCalls[0].rootVersion"), 7, "the page request carries the selected WorkspaceRoot version");
+    await click('.workspace-root-observation-list button', "Open Resource details");
+    await until(() => evaluate("window.__resourceDetailCalls.length > 0"), "canonical Resource detail request");
+    await until(() => evaluate("document.body.innerText.toLowerCase().includes('current revision')"), "canonical Resource details opened from observed file");
+    assert.equal(await evaluate("document.body.innerText.includes('None (metadata only)')"), true, "the action opens canonical Resource details and describes the revisionless metadata Resource truthfully");
+    await click('.resource-revision-header button', "Close Resource details");
 
     await evaluate(`(() => {
       const input=document.querySelector('.workspace-root-observations input');
@@ -246,6 +263,16 @@ test("rendered Library observed files search, paginate, and discard a response a
 
     await evaluate(`(() => {
       const input=document.querySelector('.workspace-root-observations input');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'missing');
+      input.dispatchEvent(new Event('input',{bubbles:true}));
+      input.closest('form').requestSubmit();
+    })()`);
+    await until(() => evaluate("window.__observationCalls.some(call => call.query === 'missing')"), "empty search on an unsupported scanner");
+    await until(() => evaluate("document.body.innerText.includes('Metadata scanning is unsupported on this platform')"), "unsupported scanner empty-state explanation");
+    assert.equal(await evaluate("document.body.innerText.includes('Run Scan folder to refresh this list')"), false, "the empty state never invites a scan after this platform rejected scanning");
+
+    await evaluate(`(() => {
+      const input=document.querySelector('.workspace-root-observations input');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'version-check');
       input.dispatchEvent(new Event('input',{bubbles:true}));
       input.closest('form').requestSubmit();
@@ -257,15 +284,16 @@ test("rendered Library observed files search, paginate, and discard a response a
     await evaluate("window.resolveStaleObservationPage()");
     await wait(100);
     assert.equal(await evaluate("document.body.innerText.includes('Late stale result.txt')"), false, "a response from the previous root version cannot populate the refreshed panel");
-    assert.equal(await evaluate("document.body.innerText.includes('not files added to the Library')"), true);
+    assert.equal(await evaluate("document.body.innerText.includes('does not add files to the Library')"), true, "the Workspace root description keeps metadata observations separate from Library membership");
     assert.deepEqual(await evaluate("window.__observationCalls.map(call => [call.query, call.rootVersion, call.cursor])"), [
-      ["", 7, null], ["plan", 7, null], ["plan", 7, "plan-next"], ["version-check", 7, null],
+      ["", 7, null], ["plan", 7, null], ["plan", 7, "plan-next"], ["missing", 7, null], ["version-check", 7, null],
     ]);
   } catch (error) {
     const renderedState = await evaluate(`JSON.stringify({
       body: document.body.innerText,
       observationCalls: window.__observationCalls,
       pauseCalls: window.__observationPauseCalls,
+      resourceDetailCalls: window.__resourceDetailCalls,
     })`).catch(() => "unavailable");
     error.message = `${error.message}; rendered state=${renderedState}; browser diagnostics=${JSON.stringify(diagnostics)}`;
     throw error;

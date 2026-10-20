@@ -5,13 +5,20 @@
 use super::*;
 use axum::extract::FromRef;
 use storage_core::{
-    USER_REQUEST_DETAIL_MAX_BYTES, USER_REQUEST_ID_MAX_BYTES, UserRequestDetailReadStore,
+    DismissUserRequestCommit, EventDraft, RespondUserRequestCommit, USER_REQUEST_DETAIL_MAX_BYTES,
+    USER_REQUEST_ID_MAX_BYTES, USER_REQUEST_RESPONSE_MAX_BYTES, UserRequestDetailReadStore,
+    UserRequestResolutionActor, UserRequestResolutionStore, UserRequestResponseInput,
+    UserRequestResponseRecord,
 };
+use storage_sqlite::SqliteUserRequestResolutionStore;
+
+const MAX_USER_REQUEST_ACTION_BODY_BYTES: usize = USER_REQUEST_RESPONSE_MAX_BYTES + 1024;
 
 #[derive(Clone)]
 pub(super) struct UserRequestApiState {
     store: SqliteWorkspaceStore,
     principal_id: String,
+    runtime_id: String,
 }
 
 impl FromRef<ApiState> for UserRequestApiState {
@@ -19,6 +26,7 @@ impl FromRef<ApiState> for UserRequestApiState {
         Self {
             store: state.store.clone(),
             principal_id: state.principal_id.clone(),
+            runtime_id: state.runtime_id.clone(),
         }
     }
 }
@@ -29,8 +37,279 @@ pub(super) fn routes() -> Router<UserRequestApiState> {
             "/v1/user-requests/{request_id}",
             get(get_user_request_detail),
         )
+        .route(
+            "/v1/user-requests/{request_id}/respond",
+            post(respond_to_user_request),
+        )
+        .route(
+            "/v1/user-requests/{request_id}/dismiss",
+            post(dismiss_user_request),
+        )
+        .layer(DefaultBodyLimit::max(MAX_USER_REQUEST_ACTION_BODY_BYTES))
         .route_layer(middleware::from_fn(authenticate))
         .route_layer(middleware::from_fn(user_request_no_store))
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RespondBody {
+    Value(ResponseValueBody),
+    Choice(ChoiceIdBody),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResponseValueBody {
+    response: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChoiceIdBody {
+    choice_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct UserRequestResolutionReceiptView {
+    request_id: String,
+    workspace_id: String,
+    status: String,
+    version: u64,
+    resolved_at: String,
+    resolved_by: UserRequestResolutionActor,
+    response_digest: Option<String>,
+    event_id: String,
+}
+
+async fn respond_to_user_request(
+    State(state): State<UserRequestApiState>,
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+    body: Bytes,
+) -> Response {
+    if body.len() > MAX_USER_REQUEST_ACTION_BODY_BYTES {
+        return add_no_store(operator_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "USER_REQUEST_RESPONSE_TOO_LARGE",
+            "UserRequest response exceeds its local size limit",
+        ));
+    }
+    let workspace_id = match selected_workspace(&headers) {
+        Ok(value) => value,
+        Err(response) => return add_no_store(response),
+    };
+    if !valid_user_request_id(&request_id) {
+        return add_no_store(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "UserRequest identifier is invalid",
+        ));
+    }
+    let key = match idempotency_key(&headers) {
+        Ok(value) => value,
+        Err(response) => return add_no_store(response),
+    };
+    let expected_version = match parse_if_match(&headers) {
+        Ok(value) if value > 0 => value,
+        Ok(_) => {
+            return add_no_store(operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "If-Match must contain a positive UserRequest version",
+            ));
+        }
+        Err(response) => return add_no_store(response),
+    };
+    let body: RespondBody = match serde_json::from_slice::<RespondBody>(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return add_no_store(operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "UserRequest response body must contain exactly one supported input",
+            ));
+        }
+    };
+    let input = match body {
+        RespondBody::Value(value) => UserRequestResponseInput::Value(value.response),
+        RespondBody::Choice(choice) => UserRequestResponseInput::ChoiceId(choice.choice_id),
+    };
+    let actor = UserRequestResolutionActor {
+        principal_id: state.principal_id.clone(),
+        kind: "USER".to_owned(),
+    };
+    let correlation_id = idempotent_id("cor", &state.principal_id, &key, "user-request-respond");
+    let event = match event_context(&state.runtime_id, &correlation_id) {
+        Ok(context) => EventDraft {
+            event_id: idempotent_id("evt", &state.principal_id, &key, "user-request-resolved"),
+            workspace_id: workspace_id.clone(),
+            entity_type: "user_request".to_owned(),
+            entity_id: request_id.clone(),
+            origin_runtime_id: state.runtime_id.clone(),
+            entity_revision: expected_version.saturating_add(1),
+            hlc_timestamp: context.hlc_timestamp,
+            correlation_id: context.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "user.request.resolved.v1".to_owned(),
+            payload: serde_json::json!({}),
+            recorded_at: context.recorded_at,
+        },
+        Err(()) => {
+            return add_no_store(operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "UserRequest event context is unavailable",
+            ));
+        }
+    };
+    let command = RespondUserRequestCommit {
+        owner_principal_id: state.principal_id.clone(),
+        actor,
+        workspace_id: workspace_id.clone(),
+        request_id: request_id.clone(),
+        idempotency_key: key.clone(),
+        expected_version,
+        response_id: idempotent_id("urs", &state.principal_id, &key, "user-request-response"),
+        input,
+        event,
+    };
+    let owner = state.principal_id.clone();
+    let store = state.store.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        ensure_workspace_owner_for(&store, &owner, &workspace_id)?;
+        SqliteUserRequestResolutionStore::new(store)
+            .respond_to_user_request(command)
+            .map_err(user_request_resolution_store_error)
+    })
+    .await;
+    match result {
+        Ok(Ok(receipt)) => {
+            let Some(response_digest) = receipt.response_digest else {
+                return add_no_store(operator_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTEGRITY_FAILURE",
+                    "UserRequest response receipt is incomplete",
+                ));
+            };
+            let response = UserRequestResponseRecord {
+                request_id: receipt.request_id,
+                response_digest,
+                responded_by: receipt.resolved_by,
+                response_channel_ref: None,
+                responded_at: receipt.resolved_at,
+            };
+            add_no_store(Json(response).into_response())
+        }
+        Ok(Err(response)) => add_no_store(response),
+        Err(_) => add_no_store(operator_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "DEPENDENCY_UNAVAILABLE",
+            "UserRequest response could not be saved",
+        )),
+    }
+}
+
+async fn dismiss_user_request(
+    State(state): State<UserRequestApiState>,
+    headers: HeaderMap,
+    Path(request_id): Path<String>,
+) -> Response {
+    let workspace_id = match selected_workspace(&headers) {
+        Ok(value) => value,
+        Err(response) => return add_no_store(response),
+    };
+    if !valid_user_request_id(&request_id) {
+        return add_no_store(operator_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+            "UserRequest identifier is invalid",
+        ));
+    }
+    let key = match idempotency_key(&headers) {
+        Ok(value) => value,
+        Err(response) => return add_no_store(response),
+    };
+    let expected_version = match parse_if_match(&headers) {
+        Ok(value) if value > 0 => value,
+        Ok(_) => {
+            return add_no_store(operator_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_ARGUMENT",
+                "If-Match must contain a positive UserRequest version",
+            ));
+        }
+        Err(response) => return add_no_store(response),
+    };
+    let actor = UserRequestResolutionActor {
+        principal_id: state.principal_id.clone(),
+        kind: "USER".to_owned(),
+    };
+    let correlation_id = idempotent_id("cor", &state.principal_id, &key, "user-request-dismiss");
+    let event = match event_context(&state.runtime_id, &correlation_id) {
+        Ok(context) => EventDraft {
+            event_id: idempotent_id("evt", &state.principal_id, &key, "user-request-resolved"),
+            workspace_id: workspace_id.clone(),
+            entity_type: "user_request".to_owned(),
+            entity_id: request_id.clone(),
+            origin_runtime_id: state.runtime_id.clone(),
+            entity_revision: expected_version.saturating_add(1),
+            hlc_timestamp: context.hlc_timestamp,
+            correlation_id: context.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "user.request.resolved.v1".to_owned(),
+            payload: serde_json::json!({}),
+            recorded_at: context.recorded_at,
+        },
+        Err(()) => {
+            return add_no_store(operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "UserRequest event context is unavailable",
+            ));
+        }
+    };
+    let command = DismissUserRequestCommit {
+        owner_principal_id: state.principal_id.clone(),
+        actor,
+        workspace_id: workspace_id.clone(),
+        request_id: request_id.clone(),
+        idempotency_key: key.clone(),
+        expected_version,
+        event,
+    };
+    let owner = state.principal_id.clone();
+    let store = state.store.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        ensure_workspace_owner_for(&store, &owner, &workspace_id)?;
+        SqliteUserRequestResolutionStore::new(store)
+            .dismiss_user_request(command)
+            .map_err(user_request_resolution_store_error)
+    })
+    .await;
+    match result {
+        Ok(Ok(receipt)) => add_no_store(
+            Json(UserRequestResolutionReceiptView {
+                request_id: receipt.request_id,
+                workspace_id: receipt.workspace_id,
+                status: receipt.status,
+                version: receipt.version,
+                resolved_at: receipt.resolved_at,
+                resolved_by: receipt.resolved_by,
+                response_digest: receipt.response_digest,
+                event_id: receipt.event.event_id,
+            })
+            .into_response(),
+        ),
+        Ok(Err(response)) => add_no_store(response),
+        Err(_) => add_no_store(operator_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "DEPENDENCY_UNAVAILABLE",
+            "UserRequest dismissal could not be saved",
+        )),
+    }
 }
 
 async fn user_request_no_store(request: Request<Body>, next: Next) -> Response {
@@ -143,6 +422,61 @@ fn user_request_detail_store_error(error: StoreError) -> Response {
     }
 }
 
+fn user_request_resolution_store_error(error: StoreError) -> Response {
+    match error {
+        StoreError::NotFound => operator_error(
+            StatusCode::NOT_FOUND,
+            "NOT_FOUND",
+            "UserRequest is unavailable",
+        ),
+        StoreError::Conflict { .. } => operator_error(
+            StatusCode::CONFLICT,
+            "CONFLICT",
+            "UserRequest is stale or no longer pending",
+        ),
+        StoreError::IdempotencyConflict => operator_error(
+            StatusCode::CONFLICT,
+            "CONFLICT",
+            "Idempotency-Key was reused for a different UserRequest action",
+        ),
+        StoreError::Invalid(code) if code == "USER_REQUEST_EXPIRED" => operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "USER_REQUEST_EXPIRED",
+            "UserRequest has expired",
+        ),
+        StoreError::Invalid(code) if code == "SENSITIVE_INPUT_UNSUPPORTED" => operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "SENSITIVE_INPUT_UNSUPPORTED",
+            "This request cannot safely collect sensitive information",
+        ),
+        StoreError::Invalid(code) if code == "PROVIDER_INPUT_UNSUPPORTED" => operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "PROVIDER_INPUT_UNSUPPORTED",
+            "This provider request uses an unsupported response contract",
+        ),
+        StoreError::Invalid(code) if code == "USER_REQUEST_RESPONSE_TOO_LARGE" => operator_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "USER_REQUEST_RESPONSE_TOO_LARGE",
+            "UserRequest response exceeds its size or nesting limit",
+        ),
+        StoreError::Invalid(_) => operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INVALID_ARGUMENT",
+            "UserRequest response does not match the current request",
+        ),
+        StoreError::Integrity(_) => operator_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTEGRITY_FAILURE",
+            "UserRequest state could not be verified",
+        ),
+        _ => operator_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "DEPENDENCY_UNAVAILABLE",
+            "UserRequest storage is unavailable",
+        ),
+    }
+}
+
 fn add_no_store(mut response: Response) -> Response {
     response
         .headers_mut()
@@ -155,6 +489,7 @@ fn test_router(store: SqliteWorkspaceStore, principal_id: String) -> Router {
     routes().with_state(UserRequestApiState {
         store,
         principal_id,
+        runtime_id: "user-request-test-runtime".to_owned(),
     })
 }
 
@@ -269,6 +604,17 @@ mod tests {
         }
         connection
             .execute(
+                "INSERT INTO agent_sessions(agent_session_id, workspace_id, scope_kind, task_id,
+                task_spec_revision, agent_binding_id, endpoint_id, runtime_id,
+                runtime_incarnation_id, status, started_at)
+             VALUES ('session-internal', ?1, 'TASK_PLANNING', 'task-visible', 1,
+                'binding-fixture', 'endpoint-fixture', 'runtime-fixture',
+                'incarnation-fixture', 'ACTIVE', ?2)",
+                rusqlite::params![WORKSPACE, AT],
+            )
+            .expect("synthetic Task planning session exists for mutation checks");
+        connection
+            .execute(
                 "INSERT INTO user_requests(request_id, workspace_id, task_id, agent_session_id,
                     kind, interaction_mode, prompt, choices_json, status, created_at, version)
                  VALUES ('request-visible', ?1, 'task-visible', 'session-internal', 'QUESTION',
@@ -278,6 +624,39 @@ mod tests {
                 rusqlite::params![WORKSPACE, AT],
             )
             .expect("valid UserRequest fixture inserts");
+        connection
+            .execute(
+                "INSERT INTO user_requests(request_id, workspace_id, task_id, agent_session_id,
+                    kind, interaction_mode, prompt, response_schema_json, choices_json,
+                    status, created_at, version)
+                 VALUES ('request-choice', ?1, 'task-visible', 'session-internal', 'DECISION',
+                    'FORM', 'Choose one',
+                    '{\"type\":\"object\",\"required\":[\"choice\"],\"properties\":{\"choice\":{\"type\":\"string\",\"enum\":[\"one\",\"two\"]}},\"additionalProperties\":false}',
+                    '[{\"choice_id\":\"choice-one\",\"label\":\"One\",\"description\":null,\"value\":{\"choice\":\"one\"}},{\"choice_id\":\"choice-two\",\"label\":\"Two\",\"description\":null,\"value\":{\"choice\":\"two\"}}]',
+                    'PENDING', ?2, 1)",
+                rusqlite::params![WORKSPACE, AT],
+            )
+            .expect("choice-backed UserRequest fixture inserts");
+        connection
+            .execute(
+                "INSERT INTO user_requests(request_id, workspace_id, task_id, agent_session_id,
+                    kind, interaction_mode, prompt, choices_json, status, created_at, version)
+                 VALUES ('request-dismiss', ?1, 'task-visible', 'session-internal', 'QUESTION',
+                    'FORM', 'Dismiss this request', '[]', 'PENDING', ?2, 1)",
+                rusqlite::params![WORKSPACE, AT],
+            )
+            .expect("dismissal UserRequest fixture inserts");
+        connection
+            .execute(
+                "INSERT INTO user_requests(request_id, workspace_id, task_id, agent_session_id,
+                    kind, interaction_mode, prompt, response_schema_json, choices_json,
+                    status, created_at, version)
+                 VALUES ('request-null-response', ?1, 'task-visible', 'session-internal', 'QUESTION',
+                    'FORM', 'Confirm the empty value', '{\"type\":\"null\"}', '[]',
+                    'PENDING', ?2, 1)",
+                rusqlite::params![WORKSPACE, AT],
+            )
+            .expect("null-response UserRequest fixture inserts");
         connection
             .execute(
                 "INSERT INTO user_requests(request_id, workspace_id, task_id, agent_session_id,
@@ -311,6 +690,177 @@ mod tests {
             .oneshot(request)
             .await
             .expect("router returns response")
+    }
+
+    async fn post_action(
+        router: Router,
+        path: &str,
+        workspace_id: &str,
+        key: &str,
+        body: &str,
+    ) -> Response {
+        let mut request = Request::post(path)
+            .header("x-workspace-id", workspace_id)
+            .header("idempotency-key", key)
+            .header("if-match", "1")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_owned()))
+            .expect("request builds");
+        request.extensions_mut().insert(AuthenticatedLocalPeer);
+        router
+            .oneshot(request)
+            .await
+            .expect("router returns action response")
+    }
+
+    #[tokio::test]
+    async fn response_choice_id_commits_safely_and_exact_replay_is_idempotent() {
+        let (directory, _store, router) = fixture();
+        let path = "/v1/user-requests/request-choice/respond";
+        let first = post_action(
+            router.clone(),
+            path,
+            WORKSPACE,
+            "choice-key-1",
+            r#"{"choice_id":"choice-one"}"#,
+        )
+        .await;
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(first.headers()[header::CACHE_CONTROL], "no-store");
+        let bytes = to_bytes(first.into_body(), 16 * 1024)
+            .await
+            .expect("bounded response record");
+        let response: Value = serde_json::from_slice(&bytes).expect("response receipt JSON");
+        assert_eq!(response["request_id"], "request-choice");
+        assert_eq!(response["response_digest"].as_str().unwrap().len(), 71);
+        assert_eq!(response["responded_by"]["kind"], "USER");
+        assert!(response.get("response").is_none());
+        assert!(response.get("choice_id").is_none());
+
+        let replay = post_action(
+            router.clone(),
+            path,
+            WORKSPACE,
+            "choice-key-1",
+            r#"{"choice_id":"choice-one"}"#,
+        )
+        .await;
+        assert_eq!(
+            replay.status(),
+            StatusCode::OK,
+            "exact retry returns its committed result after the request is terminal"
+        );
+        let changed_payload = post_action(
+            router,
+            path,
+            WORKSPACE,
+            "choice-key-1",
+            r#"{"choice_id":"choice-two"}"#,
+        )
+        .await;
+        assert_eq!(changed_payload.status(), StatusCode::CONFLICT);
+        let changed_payload_body = to_bytes(changed_payload.into_body(), 16 * 1024)
+            .await
+            .expect("bounded conflict body");
+        let changed_payload_error: Value =
+            serde_json::from_slice(&changed_payload_body).expect("conflict error JSON");
+        assert_eq!(changed_payload_error["code"], "CONFLICT");
+        let connection =
+            Connection::open(directory.path().join("state.sqlite3")).expect("open action fixture");
+        let (status, version, count): (String, i64, i64) = connection.query_row(
+            "SELECT status, version, (SELECT count(*) FROM user_request_responses WHERE request_id='request-choice')
+             FROM user_requests WHERE request_id='request-choice'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).expect("read committed request state");
+        assert_eq!((status.as_str(), version, count), ("ANSWERED", 2, 1));
+        let resolved_events: i64 = connection.query_row(
+            "SELECT count(*) FROM domain_events WHERE entity_id='request-choice' AND type='user.request.resolved.v1'",
+            [], |row| row.get(0),
+        ).expect("count committed resolution events");
+        assert_eq!(resolved_events, 1);
+    }
+
+    #[tokio::test]
+    async fn explicit_json_null_response_is_distinct_from_a_missing_response() {
+        let (directory, _store, router) = fixture();
+        let response = post_action(
+            router,
+            "/v1/user-requests/request-null-response/respond",
+            WORKSPACE,
+            "null-response-key",
+            r#"{"response":null}"#,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .expect("bounded response receipt");
+        let receipt: Value = serde_json::from_slice(&body).expect("response record JSON");
+        assert_eq!(receipt["request_id"], "request-null-response");
+        assert_eq!(receipt["response_digest"].as_str().unwrap().len(), 71);
+
+        let connection =
+            Connection::open(directory.path().join("state.sqlite3")).expect("open action fixture");
+        let (status, response_json): (String, String) = connection
+            .query_row(
+                "SELECT u.status, r.response_json FROM user_requests u
+                 JOIN user_request_responses r USING (request_id)
+                 WHERE u.request_id='request-null-response'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read committed explicit-null response");
+        assert_eq!(
+            (status.as_str(), response_json.as_str()),
+            ("ANSWERED", "null")
+        );
+
+        let missing = post_action(
+            test_router(_store, OWNER.to_owned()),
+            "/v1/user-requests/request-null-response/respond",
+            WORKSPACE,
+            "missing-response-key",
+            "{}",
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn dismissal_returns_only_minimal_receipt_and_commits_once() {
+        let (directory, _store, router) = fixture();
+        let path = "/v1/user-requests/request-dismiss/dismiss";
+        let response = post_action(router.clone(), path, WORKSPACE, "dismiss-key-1", "").await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let bytes = to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .expect("bounded dismissal receipt");
+        let receipt: Value = serde_json::from_slice(&bytes).expect("minimal receipt JSON");
+        assert_eq!(receipt["request_id"], "request-dismiss");
+        assert_eq!(receipt["status"], "DISMISSED");
+        assert_eq!(receipt["version"], 2);
+        assert!(receipt.get("response_schema_json").is_none());
+        assert!(receipt.get("agent_session_id").is_none());
+        assert!(receipt.get("choices").is_none());
+        assert!(receipt.get("response").is_none());
+
+        let replay = post_action(router, path, WORKSPACE, "dismiss-key-1", "").await;
+        assert_eq!(replay.status(), StatusCode::OK);
+        let connection =
+            Connection::open(directory.path().join("state.sqlite3")).expect("open action fixture");
+        let version: i64 = connection
+            .query_row(
+                "SELECT version FROM user_requests WHERE request_id='request-dismiss'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("read dismissed version");
+        let events: i64 = connection.query_row(
+            "SELECT count(*) FROM domain_events WHERE entity_id='request-dismiss' AND type='user.request.resolved.v1'",
+            [], |row| row.get(0),
+        ).expect("count dismissal events");
+        assert_eq!((version, events), (2, 1));
     }
 
     #[tokio::test]

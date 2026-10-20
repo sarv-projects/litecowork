@@ -2,7 +2,9 @@
 //!
 //! Wire authority: https://developers.openai.com/codex/app-server . Native
 //! payloads stay private. No payload is logged, persisted, or auto-approved.
-//! This module does not establish descendant-writer quiescence or Trust grants.
+//! Windows Job Objects kill descendants with the owned host; Unix cleanup kills
+//! the launcher's process group but cannot prevent an escape. Neither proves
+//! Environment writer quiescence or supplies Trust grants.
 #![allow(dead_code)] // The unqualified native transport remains staged until admitted dispatch and descendant settlement are integrated.
 
 use std::{
@@ -10,7 +12,7 @@ use std::{
     ffi::OsString,
     io::{BufRead, BufReader, Read, Write},
     path::Path,
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -21,6 +23,8 @@ use std::{
 };
 
 use serde_json::{Value, json};
+
+use super::AgentChild;
 
 #[derive(Clone, Copy)]
 pub(crate) struct TransportLimits {
@@ -346,19 +350,22 @@ impl CodexAppServer {
         }
         let mut command = Command::new(executable);
         environment.apply(&mut command);
-        let mut child = command
+        command
             .args(["app-server", "--listen", "stdio://"])
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|_| TransportError::SpawnFailed)?;
-        let (Some(mut stdin), Some(stdout), Some(mut stderr)) =
-            (child.stdin.take(), child.stdout.take(), child.stderr.take())
-        else {
+            .stderr(Stdio::piped());
+        let mut child = AgentChild::spawn(command).map_err(|_| TransportError::SpawnFailed)?;
+        let started_at = Instant::now();
+        child.resume().map_err(|_| TransportError::SpawnFailed)?;
+        let (Some(mut stdin), Some(stdout), Some(mut stderr)) = (
+            child.take_stdin().ok().flatten(),
+            child.take_stdout().ok().flatten(),
+            child.take_stderr().ok().flatten(),
+        ) else {
             // Owned fallback reaper: child must never be abandoned unreaped.
-            let _ = child.kill();
+            let _ = child.kill_tree();
             let _ = child.wait();
             return Err(TransportError::PipeUnavailable);
         };
@@ -367,9 +374,9 @@ impl CodexAppServer {
             fault: None,
             process: ProcessObservation::Running,
             stop_requested: false,
-            next_rpc_deadline: Some(Instant::now() + limits.startup_timeout),
+            next_rpc_deadline: Some(started_at + limits.startup_timeout),
         })));
-        // Transfer Child to its sole owner before starting pipe workers. The
+        // Transfer the platform-owned child to its sole owner before starting pipe workers. The
         // owner remains alive until try_wait confirms that the child was reaped.
         let owned_child = Arc::new(Mutex::new(Some(child)));
         let reaper_child = Arc::clone(&owned_child);
@@ -392,7 +399,7 @@ impl CodexAppServer {
                 .unwrap_or_else(|error| error.into_inner())
                 .take()
             {
-                let _ = child.kill();
+                let _ = child.kill_tree();
                 let _ = child.wait();
             }
             return Err(TransportError::WorkerUnavailable);
@@ -1007,7 +1014,7 @@ impl Drop for CodexAppServer {
     }
 }
 
-fn monitor_child(mut child: Child, lifecycle: LifecycleObservation) {
+fn monitor_child(mut child: AgentChild, lifecycle: LifecycleObservation) {
     loop {
         let stop = {
             let mut state = lifecycle
@@ -1027,7 +1034,7 @@ fn monitor_child(mut child: Child, lifecycle: LifecycleObservation) {
             state.stop_requested
         };
         if stop {
-            let _ = child.kill();
+            let _ = child.kill_tree();
         }
         match child.try_wait() {
             Ok(Some(_)) => {
@@ -1042,6 +1049,7 @@ fn monitor_child(mut child: Child, lifecycle: LifecycleObservation) {
             }
             Ok(None) => {}
             Err(_) => {
+                let _ = child.kill_tree();
                 let mut state = lifecycle
                     .0
                     .lock()

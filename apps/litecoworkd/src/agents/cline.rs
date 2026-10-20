@@ -194,17 +194,26 @@ mod tests {
         }
     }
 
-    fn write_executable(path: &Path, body: &str) {
-        fs::write(path, body).expect("write fake Cline executable");
-        let mut permissions = fs::metadata(path)
-            .expect("read fake Cline executable metadata")
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(path, permissions).expect("make fake Cline executable runnable");
+    fn node_interpreter() -> PathBuf {
+        std::env::split_paths(&std::env::var_os("PATH").expect("test process PATH"))
+            .map(|directory| directory.join("node"))
+            .find(|candidate| {
+                fs::metadata(candidate).is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+                })
+            })
+            .expect("Cline's qualified node interpreter is installed for this test")
     }
 
-    fn shell_quote(path: &Path) -> String {
-        format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+    fn write_node_executable(path: &Path, body: &str) {
+        let source = format!("#!{}\n{body}", node_interpreter().display());
+        fs::write(path, source).expect("write fake Node-based Cline executable");
+        let mut permissions = fs::metadata(path)
+            .expect("read fake Node-based Cline executable metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions)
+            .expect("make fake Node-based Cline executable runnable");
     }
 
     fn write_fake_npm_package(
@@ -221,11 +230,12 @@ mod tests {
             .expect("create fake npm package bin directory");
         fs::create_dir_all(&path_directory).expect("create isolated PATH directory");
         fs::write(package.join("package.json"), manifest).expect("write package metadata");
-        write_executable(
+        write_node_executable(
             &executable,
             &format!(
-                "#!/bin/sh\n: > {}\nprintf '%s\\n' '9.8.7'\n",
-                shell_quote(marker)
+                "require('node:fs').writeFileSync({}, ''); console.log('9.8.7');\n",
+                serde_json::to_string(&marker.to_string_lossy().to_string())
+                    .expect("encode marker path")
             ),
         );
         symlink(&executable, path_directory.join("cline")).expect("link fake CLI into PATH");
@@ -266,6 +276,16 @@ mod tests {
                     InstallationState::Installed
                 ));
                 assert_eq!(installation.version.as_deref(), Some("9.8.7"));
+            }
+            "metadata_unusable" => {
+                assert!(
+                    matches!(
+                        installation.installation,
+                        InstallationState::VersionUnavailable
+                    ),
+                    "unexpected result for unusable metadata: {installation:?}"
+                );
+                assert_eq!(installation.version, None);
             }
             "cli_build_metadata" => {
                 assert!(matches!(
@@ -353,10 +373,12 @@ mod tests {
         }
 
         let temporary = TemporaryDirectory::new();
-        write_executable(
+        write_node_executable(
             &temporary.0.join("cline"),
             &format!(
-                "#!/bin/sh\nif [ \"${{{SECRET_ENV}-}}\" = \"{TEST_SECRET}\" ]; then printf '%s\\n' 'raw-native-output'; exit 71; fi\nprintf '%s\\n' '3.0.72' 'raw-native-output'\n"
+                "if (process.env[{secret_key:?}] === {secret:?}) {{ console.log('raw-native-output'); process.exit(71); }}\nconsole.log('3.0.72'); console.log('raw-native-output');\n",
+                secret_key = SECRET_ENV,
+                secret = TEST_SECRET,
             ),
         );
         let output = run_isolated_inventory_case(
@@ -454,11 +476,12 @@ mod tests {
             br#"{"name":"other","version":"1.0.0"}"#,
         )
         .expect("write nearest non-Cline manifest");
-        write_executable(
+        write_node_executable(
             &executable,
             &format!(
-                "#!/bin/sh\n: > {}\nprintf '%s\\n' '9.8.7'\n",
-                shell_quote(&marker)
+                "require('node:fs').writeFileSync({}, ''); console.log('9.8.7');\n",
+                serde_json::to_string(&marker.to_string_lossy().to_string())
+                    .expect("encode marker path")
             ),
         );
         std::os::unix::fs::symlink(&executable, path_directory.join("cline"))
@@ -490,28 +513,35 @@ mod tests {
         oversized.resize(MAX_PACKAGE_JSON_BYTES as usize + 1, b' ');
         let build_metadata = br#"{"name":"cline","version":"3.0.72+private-account"}"#;
         let prerelease = br#"{"name":"cline","version":"3.0.72-rc.1"}"#;
-        let cases: [(&str, &[u8]); 6] = [
-            ("malformed", malformed),
-            ("wrong-name", wrong_name),
-            ("invalid-version", invalid_version),
-            ("private-build-metadata", build_metadata),
-            ("prerelease", prerelease),
-            ("oversized", oversized.as_slice()),
+        let cases: [(&str, &[u8], bool); 6] = [
+            // Node itself refuses to execute a package beneath malformed
+            // package.json, so fallback is truthfully unavailable.
+            ("malformed", malformed, false),
+            ("wrong-name", wrong_name, true),
+            ("invalid-version", invalid_version, true),
+            ("private-build-metadata", build_metadata, true),
+            ("prerelease", prerelease, true),
+            ("oversized", oversized.as_slice(), true),
         ];
 
-        for (label, manifest) in cases {
+        for (label, manifest, fallback_runs) in cases {
             let temporary = TemporaryDirectory::new();
             let marker = temporary.0.join("cli-was-executed");
             let path = write_fake_npm_package(&temporary, manifest, &marker);
             let output = run_isolated_inventory_case(
                 "agents::cline::tests::cline_inventory_falls_back_when_npm_metadata_is_invalid_or_untrusted",
-                "metadata_fallback",
+                if fallback_runs {
+                    "metadata_fallback"
+                } else {
+                    "metadata_unusable"
+                },
                 path.as_os_str(),
             );
             assert_child_passed(&output);
-            assert!(
+            assert_eq!(
                 marker.exists(),
-                "fallback did not invoke the fake CLI for {label} metadata"
+                fallback_runs,
+                "unexpected CLI fallback for {label} metadata"
             );
             temporary.remove();
         }
@@ -524,9 +554,9 @@ mod tests {
         }
 
         let temporary = TemporaryDirectory::new();
-        write_executable(
+        write_node_executable(
             &temporary.0.join("cline"),
-            "#!/bin/sh\nprintf '%s\\n' '3.0.72 account=private-account'\n",
+            "console.log('3.0.72 account=private-account');\n",
         );
         let output = run_isolated_inventory_case(
             "agents::cline::tests::cline_inventory_hides_malformed_native_version_output",
@@ -544,9 +574,9 @@ mod tests {
         }
 
         let temporary = TemporaryDirectory::new();
-        write_executable(
+        write_node_executable(
             &temporary.0.join("cline"),
-            "#!/bin/sh\nprintf '%s\\n' '9.8.7+private-account'\n",
+            "console.log('9.8.7+private-account');\n",
         );
         let output = run_isolated_inventory_case(
             "agents::cline::tests::cline_inventory_strips_private_build_metadata_from_cli_version",
@@ -564,10 +594,7 @@ mod tests {
         }
 
         let temporary = TemporaryDirectory::new();
-        write_executable(
-            &temporary.0.join("cline"),
-            "#!/bin/sh\nprintf '%s\\n' '9.8.7-rc.1'\n",
-        );
+        write_node_executable(&temporary.0.join("cline"), "console.log('9.8.7-rc.1');\n");
         let output = run_isolated_inventory_case(
             "agents::cline::tests::cline_inventory_rejects_prerelease_cli_version",
             "cli_prerelease",
@@ -600,7 +627,7 @@ mod tests {
         }
 
         let temporary = TemporaryDirectory::new();
-        write_executable(&temporary.0.join("cline"), "#!/bin/sh\nexec /bin/sleep 5\n");
+        write_node_executable(&temporary.0.join("cline"), "setTimeout(() => {}, 5000);\n");
         let output = run_isolated_inventory_case(
             "agents::cline::tests::cline_inventory_bounds_a_hung_version_probe",
             "timeout",

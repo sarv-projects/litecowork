@@ -1,6 +1,7 @@
 //! Atomic Step Attempt / ExecutionLease transaction contracts. No implementation
 //! may claim support from a process start or caller-supplied eligibility flags.
 
+use crate::ChildAttemptAdmissionSnapshot;
 use crate::{DomainEvent, PlanRevisionRecord, StepRecord, StoreError, TaskRecord};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -392,6 +393,15 @@ fn unsupported() -> StoreError {
 /// All mediated mutations recheck the current fence at their own commit authority.
 /// Defaults fail closed: existing stores cannot imply these guarantees by omission.
 pub trait StepAttemptStore: Send + Sync {
+    /// Read exact durable Task/Step/parent/profile facts for a proposed hosted child.
+    /// This projection is advisory; final admission must repeat all mutable checks
+    /// under its write transaction and prove every authority prerequisite.
+    fn child_attempt_admission_snapshot(
+        &self,
+        _command: &AdmitStepAttempt,
+    ) -> Result<ChildAttemptAdmissionSnapshot, StoreError> {
+        Err(unsupported())
+    }
     fn step_attempt_admission_snapshot(
         &self,
         _command: &AdmitStepAttempt,

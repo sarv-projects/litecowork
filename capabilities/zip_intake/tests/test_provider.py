@@ -40,7 +40,7 @@ class ZipIntakeTests(unittest.TestCase):
         self.assertEqual(data, original)
 
     def test_unsafe_names_are_rejected_and_not_reflected(self):
-        for name in ("../escape", "/absolute", "C:/escape", "a\\..\\escape", "a//b", "a/./b", "a/../b", "NUL.txt", "a/b.", "a/b ", "a\x00secret", "a\u202esecret", "//server/share"):
+        for name in ("../escape", "/absolute", "C:/escape", "a\\..\\escape", "a//b", "a/./b", "a/../b", "NUL.txt", "COM¹.txt", "LPT²", "ＣＯＮ.txt", "a/b.", "a/b ", "a\x00secret", "a\u202esecret", "//server/share"):
             with self.subTest(name=name):
                 # Construct NUL by mutating both headers, since the ZIP writer
                 # itself truncates at NUL before serializing the hostile name.

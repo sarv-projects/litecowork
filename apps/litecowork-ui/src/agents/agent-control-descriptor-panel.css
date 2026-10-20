@@ -1,0 +1,97 @@
+.agent-control-panel {
+  margin-block: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border-subtle, #d9dde5);
+  border-radius: 0.75rem;
+  background: var(--surface-muted, #f7f8fa);
+  color: var(--text-primary, #20242b);
+}
+
+.agent-control-panel__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.agent-control-panel__heading h4 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.agent-control-panel__heading p,
+.agent-control-panel__notice p,
+.agent-control-panel__summary p {
+  margin: 0.35rem 0 0;
+  color: var(--text-secondary, #596273);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.agent-control-panel button {
+  flex: 0 0 auto;
+  min-height: 2.25rem;
+  padding-inline: 0.75rem;
+  border: 1px solid var(--border-strong, #aeb5c1);
+  border-radius: 0.5rem;
+  background: var(--surface, #fff);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.agent-control-panel button:disabled {
+  cursor: progress;
+  opacity: 0.65;
+}
+
+.agent-control-panel button:focus-visible {
+  outline: 3px solid var(--focus-ring, #4b83f5);
+  outline-offset: 2px;
+}
+
+.agent-control-panel__notice {
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.75rem;
+  border-inline-start: 3px solid var(--status-warning, #9a6a12);
+  background: var(--surface, #fff);
+}
+
+.agent-control-panel__notice small {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--text-tertiary, #737d8d);
+}
+
+.agent-control-panel__summary dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.6rem 1rem;
+  margin: 0.8rem 0 0;
+}
+
+.agent-control-panel__summary dl div {
+  min-width: 0;
+}
+
+.agent-control-panel__summary dt {
+  color: var(--text-tertiary, #737d8d);
+  font-size: 0.75rem;
+}
+
+.agent-control-panel__summary dd {
+  margin: 0.15rem 0 0;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+}
+
+.agent-control-panel__qualification {
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border-subtle, #d9dde5);
+}
+
+@media (max-width: 38rem) {
+  .agent-control-panel__heading {
+    flex-direction: column;
+  }
+}

@@ -94,11 +94,11 @@ async function settle(index, value, error = false) { await evaluate(`window.${er
 function inboxItem(workspaceId = "workspace-a") {
   return { itemId: `sha256:${"a".repeat(64)}`, kind: "USER_REQUEST", status: "OPEN", approvalId: null, userRequestId: "request-a", taskId: null, blockerId: null, title: "Response needed", safeSummary: "A response is waiting.", createdAt: "2026-10-15T10:00:00Z", resolvedAt: null, workspaceId };
 }
-function detail(status = "DISMISSED", resolvedAt = status === "PENDING" ? null : "2026-10-15T11:00:00Z", requestId = "request-a", interactionMode = "FORM") {
+function detail(status = "DISMISSED", resolvedAt = status === "PENDING" ? null : "2026-10-15T11:00:00Z", requestId = "request-a", interactionMode = "FORM", kindOverride = null) {
   return {
     requestId, workspaceId: "workspace-a",
     scope: { kind: "TASK_PLANNING", taskId: "task-a" },
-    kind: interactionMode === "EXTERNAL_URL" ? "EXTERNAL_AUTHORIZATION" : "QUESTION", interactionMode,
+    kind: kindOverride ?? (interactionMode === "EXTERNAL_URL" ? "EXTERNAL_AUTHORIZATION" : "QUESTION"), interactionMode,
     prompt: requestId === "request-a" ? '<img src=x onerror="window.__xss=1"> Choose a path A' : "Private prompt B",
     choices: interactionMode === "EXTERNAL_URL" ? [] : [{ choiceId: "choice-a", label: '<script>window.__xss=2</script>Option A', description: "Safe text" }],
     status, version: 3, createdAt: "2026-10-15T10:00:00Z", expiresAt: null,
@@ -121,7 +121,7 @@ after(async () => {
   if (tempViteCache) await rm(tempViteCache, { recursive: true, force: true });
 });
 
-test("Needs You opens the exact request with read-only, inert, current detail", async () => {
+test("Needs You opens the exact request with safe, inert, current detail and explicit responses", async () => {
   assert.ok(chrome, "Chrome is configured");
   tempViteCache = await mkdtemp(join(tmpdir(), "litecowork-request-detail-vite-"));
   vite = await createServer({
@@ -220,7 +220,7 @@ test("Needs You opens the exact request with read-only, inert, current detail", 
   assert.equal(state.imageCount, 0);
   assert.equal(state.scriptCount, 0);
   assert.deepEqual(state.links, [], "choice values never become active links");
-  assert.deepEqual(state.controls, ["Back to Needs You"], "detail has no answer, dismiss, Approval, or continuation actions");
+  assert.deepEqual(state.controls, ["Back to Needs You"], "terminal detail has no further mutation actions");
   assert.equal(state.xss, 0);
   assert.equal(await evaluate(`window.validateRequestDetail("workspace-a", "request-a", ${JSON.stringify(detail("DISMISSED", null))})`), true);
   const detailWithRawChoiceValue = { ...detail("DISMISSED", null), choices: [{ ...detail("DISMISSED", null).choices[0], value: "secret raw value" }] };
@@ -251,17 +251,47 @@ test("Needs You opens the exact request with read-only, inert, current detail", 
   const pendingHandoffCopy = await evaluate('document.querySelector("#direct-detail-root .user-request-detail")?.innerText ?? ""');
   assert.match(pendingHandoffCopy, /needs an external sign-in handoff/i, "pending requests explain the handoff requirement");
   assert.equal(await evaluate('document.querySelector("#direct-detail-root .user-request-detail-prompt")?.textContent.includes("path A")'), false, "request A detail never appears under request B");
+  await activateWithEnter("Decline sign-in");
+  await until(async () => (await callCount()) === 8, "authenticated UserRequest response bridge call");
+  const declineCall = await evaluate("window.__calls[7]");
+  assert.equal(declineCall.command, "respond_user_request");
+  assert.equal(declineCall.args.workspaceId, "workspace-a");
+  assert.equal(declineCall.args.requestId, "request-b");
+  assert.equal(declineCall.args.expectedVersion, 3);
+  assert.deepEqual(declineCall.args.response, { action: "decline" });
+  assert.equal(declineCall.args.choiceId, null);
+  assert.match(declineCall.args.idempotencyKey, /^[0-9a-f-]{36}$/i);
+  await settle(7, { requestId: "request-b", workspaceId: "workspace-a", status: "ANSWERED", version: 4, resolvedAt: "2026-10-15T11:10:00Z" });
+  await until(async () => (await callCount()) === 9, "post-response request status refresh");
+  await settle(8, detail("ANSWERED", "2026-10-15T11:10:00Z", "request-b", "EXTERNAL_URL"));
+  await until(() => evaluate('document.querySelector("#direct-detail-root .user-request-detail")?.innerText.includes("Response saved")'), "saved response status shown without claiming provider continuation");
+  await evaluate('window.setDirectDetailIdentity("workspace-a", "request-choice")');
+  await until(async () => (await callCount()) === 10, "choice request detail read");
+  await settle(9, detail("PENDING", null, "request-choice", "FORM", "DECISION"));
+  await until(() => evaluate('document.querySelector("#direct-detail-root input[type=radio][value=choice-a]") !== null'), "safe choice handle rendered as a native radio control");
+  await evaluate('document.querySelector("#direct-detail-root input[type=radio][value=choice-a]").click()');
+  await click("Save response");
+  await until(async () => (await callCount()) === 11, "choice ID sent to the response bridge");
+  const choiceCall = await evaluate("window.__calls[10]");
+  assert.equal(choiceCall.command, "respond_user_request");
+  assert.equal(choiceCall.args.choiceId, "choice-a");
+  assert.equal(choiceCall.args.response, null);
+  await settle(10, { requestId: "request-choice", workspaceId: "workspace-a", status: "ANSWERED", version: 4, resolvedAt: "2026-10-15T11:20:00Z" });
+  await until(async () => (await callCount()) === 12, "choice response status refresh");
+  await settle(11, detail("ANSWERED", "2026-10-15T11:20:00Z", "request-choice", "FORM", "DECISION"));
+  await until(() => evaluate('document.querySelector("#direct-detail-root .user-request-detail")?.innerText.includes("Response saved")'), "choice response status rendered");
   await evaluate("window.unmountDirectDetail()");
   assert.deepEqual(diagnostics, [], "the browser reports no runtime exceptions");
 
   await activateWithEnter("Back to Needs You");
   await until(() => evaluate("document.activeElement?.textContent?.trim() === 'View request details'"), "keyboard focus returns to the originating request row");
+  const pageCallBase = await callCount();
   await click("View request details");
-  await until(async () => (await callCount()) === 8, "next request detail read");
+  await until(async () => (await callCount()) === pageCallBase + 1, "next request detail read");
   await evaluate("window.setWorkspace('workspace-b')");
-  await until(async () => (await callCount()) === 9, "new Workspace inbox read");
-  await settle(8, { items: [], nextCursor: null });
-  await settle(7, detail("PENDING"));
+  await until(async () => (await callCount()) === pageCallBase + 2, "new Workspace inbox read");
+  await settle(pageCallBase + 1, { items: [], nextCursor: null });
+  await settle(pageCallBase, detail("PENDING"));
   await wait(100);
   assert.equal(await evaluate("document.body.innerText.includes('Choose a path')"), false, "a late prior-Workspace detail cannot populate the new Workspace");
   assert.equal(await evaluate("document.body.innerText.includes('request-a')"), false);
@@ -316,6 +346,6 @@ test("page Refresh rechecks the exact open request and labels retained status th
   await until(() => evaluate("document.body.innerText.includes('Response received')"), "refreshed request status");
   await activateWithEnter("Back to Needs You");
   await until(() => evaluate("document.activeElement === document.querySelector('.task-attention-heading h1')"), "Back falls back after refresh removes invoking row");
-  assert.equal(await evaluate("window.__calls.every(call => ['list_needs_you', 'get_user_request_detail'].includes(call.command))"), true, "refresh and retry remain read-only");
+  assert.equal(await evaluate(`window.__calls.slice(${refreshIndex}).every(call => ['list_needs_you', 'get_user_request_detail'].includes(call.command))`), true, "refresh and retry remain read-only");
   assert.deepEqual(diagnostics, [], "the browser reports no runtime exceptions");
 });

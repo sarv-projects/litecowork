@@ -67,6 +67,29 @@ pub struct DelegationProfileRevisionPage {
     pub next: Option<u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DelegationProfilePerformanceCost {
+    pub source: String,
+    pub quantity: String,
+    pub unit: String,
+    pub currency: String,
+    pub confidence: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DelegationProfilePerformanceSample {
+    pub attempt_id: String,
+    pub task_id: String,
+    pub step_id: String,
+    pub status: String,
+    pub admitted_at: String,
+    pub terminal_at: Option<String>,
+    pub task_category: String,
+    pub superseded_by_later_attempt: bool,
+    pub blocked_by_owner_request: bool,
+    pub cost: Option<DelegationProfilePerformanceCost>,
+}
+
 #[derive(Clone)]
 pub struct SqliteDelegationProfileStore {
     store: SqliteWorkspaceStore,
@@ -347,6 +370,173 @@ impl SqliteDelegationProfileStore {
             },
             receive,
         )
+    }
+
+    /// Rebuild the sanitized owner-scoped samples used by the existing profile
+    /// performance projection. VerificationRun does not carry an Attempt reference in
+    /// the current schema, so this query deliberately does not infer verifier outcomes.
+    pub fn worker_performance_attempts(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        profile_id: &str,
+        task_category: &str,
+        now: &str,
+    ) -> Result<Vec<DelegationProfilePerformanceSample>, DelegationProfileError> {
+        if principal_id.trim().is_empty()
+            || workspace_id.trim().is_empty()
+            || profile_id.trim().is_empty()
+            || task_category.trim().is_empty()
+        {
+            return Err(DelegationProfileError::InvalidDefinition);
+        }
+        let now = time::OffsetDateTime::parse(now, &time::format_description::well_known::Rfc3339)
+            .map_err(|_| DelegationProfileError::InvalidDefinition)?;
+        let cutoff = now - time::Duration::days(90);
+        let now = now
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|_| DelegationProfileError::InvalidDefinition)?;
+        let cutoff = cutoff
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|_| DelegationProfileError::InvalidDefinition)?;
+        let principal = principal_id.to_owned();
+        let workspace = workspace_id.to_owned();
+        let profile = profile_id.to_owned();
+        let category = task_category.to_owned();
+        self.run(move |connection| {
+            let tx = connection
+                .transaction()
+                .map_err(map_database_error)
+                .map_err(profile_store_error)?;
+            let owned: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id=?1 AND owner_principal_id=?2)",
+                    params![workspace, principal],
+                    |row| row.get(0),
+                )
+                .map_err(map_database_error)
+                .map_err(profile_store_error)?;
+            if !owned {
+                return Err(DelegationProfileError::Unauthorized);
+            }
+            let exists: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM delegation_profiles WHERE workspace_id=?1 AND delegation_profile_id=?2)",
+                    params![workspace, profile],
+                    |row| row.get(0),
+                )
+                .map_err(map_database_error)
+                .map_err(profile_store_error)?;
+            if !exists {
+                return Err(DelegationProfileError::NotFound);
+            }
+            // Pull terminal Attempts and their cost observations in one statement.
+            // The former per-Attempt lookup made a 100k-sample projection issue up to
+            // 100k extra statements on the serialized SQLite store connection.
+            let mut statement = tx.prepare(
+                "WITH eligible_attempts AS (
+                    SELECT a.attempt_id,a.task_id,a.step_id,a.status,a.created_at,a.settled_at,
+                           COALESCE(spec.task_category,'OTHER') AS task_category,
+                           EXISTS(SELECT 1 FROM attempts later WHERE later.task_id=a.task_id AND later.step_id=a.step_id AND later.created_at>a.created_at AND later.created_at<=?5) AS superseded,
+                           EXISTS(SELECT 1 FROM user_requests request WHERE request.workspace_id=?1 AND request.task_id=a.task_id AND request.attempt_id=a.attempt_id AND request.created_at<=?5) AS blocked
+                    FROM attempts a
+                    JOIN tasks task ON task.task_id=a.task_id AND task.workspace_id=?1
+                    LEFT JOIN agent_sessions session ON session.agent_session_id=a.agent_session_id AND session.task_id=a.task_id AND session.attempt_id=a.attempt_id
+                    LEFT JOIN task_spec_revisions spec ON spec.task_id=session.task_id AND spec.revision=session.task_spec_revision
+                    WHERE a.parent_attempt_id IS NOT NULL AND a.delegation_profile_id=?2
+                      AND a.status IN ('COMPLETED','FAILED')
+                      AND COALESCE(spec.task_category,'OTHER')=?3
+                      AND a.settled_at>=?4 AND a.settled_at<=?5
+                    ORDER BY a.settled_at,a.attempt_id LIMIT 100001
+                 ), eligible_costs AS (
+                    SELECT usage.attempt_id,COUNT(*) AS observation_count,
+                           MIN(usage.source) AS source,MIN(usage.quantity) AS quantity,
+                           MIN(usage.unit) AS unit,MIN(usage.currency) AS currency,
+                           MIN(usage.confidence) AS confidence
+                    FROM usage_observations usage
+                    JOIN eligible_attempts eligible
+                      ON eligible.attempt_id=usage.attempt_id AND eligible.task_id=usage.task_id
+                    WHERE usage.workspace_id=?1 AND usage.metric='COST'
+                      AND usage.observed_at>=?4 AND usage.observed_at<=?5
+                    GROUP BY usage.attempt_id
+                 )
+                 SELECT eligible.attempt_id,eligible.task_id,eligible.step_id,eligible.status,
+                        eligible.created_at,eligible.settled_at,eligible.task_category,
+                        eligible.superseded,eligible.blocked,costs.observation_count,
+                        costs.source,costs.quantity,costs.unit,costs.currency,costs.confidence
+                 FROM eligible_attempts eligible
+                 LEFT JOIN eligible_costs costs ON costs.attempt_id=eligible.attempt_id
+                 ORDER BY eligible.settled_at,eligible.attempt_id",
+            )
+            .map_err(map_database_error)
+            .map_err(profile_store_error)?;
+            let rows = statement
+                .query_map(params![workspace, profile, category, cutoff, now], |row| {
+                    let cost_count = row.get::<_, Option<i64>>(9)?;
+                    let cost_count = cost_count
+                        .map(|count| {
+                            u64::try_from(count).map_err(|_| {
+                                rusqlite::Error::IntegralValueOutOfRange(9, count)
+                            })
+                        })
+                        .transpose()?;
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, bool>(7)?,
+                        row.get::<_, bool>(8)?,
+                        cost_count,
+                        row.get::<_, Option<String>>(10)?,
+                        row.get::<_, Option<String>>(11)?,
+                        row.get::<_, Option<String>>(12)?,
+                        row.get::<_, Option<String>>(13)?,
+                        row.get::<_, Option<String>>(14)?,
+                    ))
+                })
+                .map_err(map_database_error)
+                .map_err(profile_store_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(map_database_error)
+                .map_err(profile_store_error)?;
+            drop(statement);
+
+            let mut samples = Vec::with_capacity(rows.len());
+            for (attempt_id, task_id, step_id, status, admitted_at, terminal_at, category, superseded, blocked, cost_count, source, quantity, unit, currency, confidence) in rows {
+                let cost = match (cost_count, source, quantity, unit, currency, confidence) {
+                    (Some(1), Some(source), Some(quantity), Some(unit), Some(currency), Some(confidence))
+                        if !quantity.is_empty() && !unit.is_empty() && !currency.is_empty() =>
+                    {
+                        Some(DelegationProfilePerformanceCost {
+                            source,
+                            quantity,
+                            unit,
+                            currency,
+                            confidence,
+                        })
+                    }
+                    _ => None,
+                };
+                samples.push(DelegationProfilePerformanceSample {
+                    attempt_id,
+                    task_id,
+                    step_id,
+                    status,
+                    admitted_at,
+                    terminal_at,
+                    task_category: category,
+                    superseded_by_later_attempt: superseded,
+                    blocked_by_owner_request: blocked,
+                    cost,
+                });
+            }
+            tx.commit().map_err(map_database_error).map_err(profile_store_error)?;
+            Ok(samples)
+        })
     }
 }
 

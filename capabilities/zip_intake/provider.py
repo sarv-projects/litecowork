@@ -1,7 +1,9 @@
 """ZIP intake from immutable, already authorized Resource bytes.
 
-All paths are virtual provenance labels. This implementation never calls extract(),
-opens a filesystem path, creates Resources, or asserts authorization/Evidence truth.
+All paths are virtual provenance labels. The provider never opens a filesystem path,
+creates Resources, or asserts authorization/Evidence truth. Its ``extract()`` method
+returns bounded payloads in memory; production callers must use the isolated supervisor
+and publish only through Core-owned transactions.
 """
 
 from dataclasses import dataclass, replace
@@ -128,7 +130,14 @@ def _virtual_path(raw: str, limits: Limits) -> str:
     parts = path.split("/")
     if len(parts) > limits.max_path_depth or len(path.encode("utf-8")) > limits.max_path_bytes:
         raise ArchiveRejected("PATH_LIMIT")
-    if any(not part or part in (".", "..") or part.endswith((" ", ".")) or any(char in part for char in '<>"|?*') or _RESERVED.match(part) for part in parts):
+    if any(
+        not part
+        or part in (".", "..")
+        or part.endswith((" ", "."))
+        or any(char in part for char in '<>"|?*')
+        or _RESERVED.match(unicodedata.normalize("NFKC", part).casefold())
+        for part in parts
+    ):
         raise ArchiveRejected("UNSAFE_PATH")
     return path
 
@@ -142,7 +151,9 @@ class ZipIntakeProvider:
 
     preview() only admits metadata; READY is never a parsed/searchable claim.
     extract() repeats all checks on the exact bytes, then validates bounded streams.
-    Run in an isolated supervised process before exposing this to untrusted callers.
+    Do not call this implementation directly on untrusted bytes in the Runtime process.
+    Use ``ZipWorker`` so parsing and decompression execute under the bounded Linux
+    process boundary.
     """
 
     def __init__(self, limits: Limits | None = None):

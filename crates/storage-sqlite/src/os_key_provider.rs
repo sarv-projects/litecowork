@@ -12,6 +12,10 @@ use zeroize::Zeroizing;
 const KEYRING_SERVICE: &str = "com.litecowork.workspace-blob-key";
 const KEY_BYTES: usize = 32;
 static KEYRING_MUTATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+#[cfg(windows)]
+static WINDOWS_LOCK_DIRECTORY_READY: OnceLock<()> = OnceLock::new();
+#[cfg(windows)]
+static WINDOWS_LOCK_FILE_READY: OnceLock<()> = OnceLock::new();
 
 trait CredentialStore {
     fn get_password(&self, account: &str) -> Result<Option<Zeroizing<String>>, StoreError>;
@@ -342,6 +346,11 @@ fn mutation_lock() -> Result<KeyringMutationGuard, StoreError> {
         .map_err(|_| key_store_error())?;
     let path = mutation_lock_path()?;
     let file = open_mutation_lock_file(&path)?;
+    #[cfg(windows)]
+    if WINDOWS_LOCK_FILE_READY.get().is_none() {
+        windows_local_security::secure_current_user_file(&path).map_err(|_| key_store_error())?;
+        let _ = WINDOWS_LOCK_FILE_READY.set(());
+    }
     file.lock_exclusive().map_err(|_| key_store_error())?;
     Ok(KeyringMutationGuard {
         _process_guard: process_guard,
@@ -395,6 +404,17 @@ fn mutation_lock_path() -> Result<PathBuf, StoreError> {
     ensure_windows_lock_directory(&app_directory)?;
     let directory = app_directory.join("keyring-locks");
     ensure_windows_lock_directory(&directory)?;
+    if WINDOWS_LOCK_DIRECTORY_READY.get().is_none() {
+        windows_local_security::secure_current_user_directory(&directory)
+            .map_err(|_| key_store_error())?;
+        let _ = WINDOWS_LOCK_DIRECTORY_READY.set(());
+    }
+    let directory_metadata = fs::symlink_metadata(&directory).map_err(|_| key_store_error())?;
+    if !directory_metadata.file_type().is_dir()
+        || directory_metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    {
+        return Err(key_store_error());
+    }
     Ok(directory.join("mutations.lock"))
 }
 

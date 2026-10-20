@@ -8,6 +8,80 @@ mod planning;
 
 pub use planning::{TaskPlanningPacket, initial_plan_output_schema, parse_initial_plan_output};
 
+mod delegation_envelopes;
+pub use delegation_envelopes::{
+    AcceptanceCriterionRef, ArtifactVersionRef, BoundedDecision, DelegationBlocker,
+    DelegationBlockerSubject, DelegationBudgetSpec, DelegationEnvelopeError,
+    DelegationOutputRequirement, DelegationResultStatus, DelegationServiceRef, LooseResourceRef,
+    PinnedResourceRef, RequiredDelegationEvidence, ResultEnvelope, TaskPacket,
+    validate_result_envelope, validate_task_packet,
+};
+
+mod delegation_result_service;
+pub use delegation_result_service::{
+    AuthenticatedChildResultPublisher, ChildResultReadContext, DelegationResultService,
+    PublishChildResult,
+};
+
+mod delegation_channel;
+pub use delegation_channel::{DelegationChannelParentScope, DelegationChannelResultReader};
+
+mod delegation_routing_impl;
+pub use delegation_routing_impl::{
+    CostLimit, CostObservation, EnforcedCostCeiling, ProfileSelection, RankedWorkerCandidate,
+    WorkerCandidate, WorkerCostMedian, WorkerCostObservation, WorkerObservationConfidence,
+    WorkerPerformanceAttempt, WorkerPerformanceAttemptState, WorkerPerformanceError,
+    WorkerPerformanceProjection, WorkerPerformanceQuery, WorkerRankingRule, WorkerSelectionError,
+    WorkerSelectionRequest, WorkerSelectionResult, WorkerUsageConfidence, WorkerUsageSource,
+    WorkerVerificationOutcome, aggregate_worker_performance, rank_worker_candidates,
+};
+#[cfg(test)]
+mod delegation_routing;
+
+mod lead_failover;
+pub use lead_failover::{
+    FailoverCandidate, FailoverCandidateReadiness, FailoverDecision, FailoverPolicy,
+    FailoverPolicyMode, FailoverTrigger, FailoverTriggerObservation, FailoverTriggerState,
+    InvalidFailoverPolicy, LeadFailoverBlocker, decide_lead_failover, resolve_task_failover_policy,
+    validate_failover_policy_value,
+};
+
+mod lead_handoff;
+pub use lead_handoff::{
+    CommittedTaskLeadHandoff, FreshLeadTriggerObservation, HandoffCommandError,
+    TaskLeadHandoffActor, TaskLeadHandoffCommand, TaskLeadHandoffMode, TaskLeadHandoffService,
+    canonical_task_lead_handoff_payload, lead_handoff_event_payload, validate_handoff_command,
+};
+
+mod delegation_recovery;
+pub use delegation_recovery::{
+    EscalationAttemptOutcome, EscalationBlocker, EscalationCandidate, EscalationCandidateReadiness,
+    EscalationDecision, EscalationPolicy, EscalationRequest, decide_delegation_escalation,
+};
+
+mod delegation_benchmark;
+pub use delegation_benchmark::{
+    B83ArmSummary, B83BenchmarkArm, B83BenchmarkError, B83BenchmarkReport, B83CostMedian,
+    B83CostObservation, B83ObservationConfidence, B83ObservationSource, B83PairedComparison,
+    B83RunOutcome, B83RunSample, B83UsageMedian, B83UsageObservation, B83VerificationOutcome,
+    aggregate_b83_benchmark,
+};
+
+mod delegation_admission;
+pub use delegation_admission::{
+    CHILD_ADMISSION_POLICY_VERSION, CandidateProfileProjection, ChildAdmissionDecision,
+    ChildAdmissionDenial, ChildAdmissionRequest, ChildAdmissionSnapshot, ChildStepProjection,
+    ChildTaskProjection, ParentAttemptProjection, PinnedProfileProjection,
+    decide_child_attempt_admission, decide_child_attempt_admission_from_durable_snapshot,
+    preview_child_attempt_admission, preview_child_attempt_admission_from_durable_snapshot,
+};
+
+mod task_packet_preparation;
+pub use task_packet_preparation::{
+    AcceptedTaskPacketContext, PreparedTaskPacket, TaskPacketPreparationError,
+    TaskPacketSourcePins, prepare_task_packet, prepare_task_packet_for_accepted_step,
+};
+
 use domain_workspace::EventContext;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -235,18 +309,11 @@ impl<S: TaskStore> TaskService<S> {
             approvals_required: value_array(request, "approvals_required")?,
             budget: optional_value(request, "budget"),
             delegation_budget_policy: optional_value(request, "delegation_budget_policy"),
-            lead_failover_policy: request
-                .get("lead_failover_policy")
-                .cloned()
-                .or(command.coworker_default_lead_failover_policy)
-                .unwrap_or_else(|| {
-                    json!({
-                        "mode": "DISABLED",
-                        "triggers": [],
-                        "fallback_agent_binding_ids": [],
-                        "max_lead_changes": 0
-                    })
-                }),
+            lead_failover_policy: resolve_task_failover_policy(
+                request.get("lead_failover_policy"),
+                command.coworker_default_lead_failover_policy,
+            )
+            .map_err(|_| StoreError::Invalid("Task lead failover policy is invalid".to_owned()))?,
             deadline: optional_string(request, "deadline")?.map(str::to_owned),
             source_message_refs: Vec::new(),
             placement_preference: request
@@ -374,6 +441,11 @@ impl<S: TaskStore> TaskService<S> {
         }
 
         let parent_spec = task.current_spec_revision.clone();
+        if !validate_failover_policy_value(&parent_spec.lead_failover_policy) {
+            return Err(StoreError::Integrity(
+                "stored Task lead failover policy is invalid".to_owned(),
+            ));
+        }
         let mut revision = parent_spec.clone();
         revision.revision = revision
             .revision
@@ -422,6 +494,11 @@ impl<S: TaskStore> TaskService<S> {
             revision.preferred_lead_agent_binding_id = Some(value);
         }
         if let Some(value) = command.lead_failover_policy {
+            if !validate_failover_policy_value(&value) {
+                return Err(StoreError::Invalid(
+                    "Task lead failover policy is invalid".to_owned(),
+                ));
+            }
             revision.lead_failover_policy = value;
         }
         if same_task_spec_content(&parent_spec, &revision) {

@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::AppHandle;
 
 const MAX_USER_REQUEST_ID_BYTES: usize = 512;
 const MAX_USER_REQUEST_PROMPT_BYTES: usize = 256 * 1024;
 const MAX_USER_REQUEST_CHOICES_BYTES: usize = 512 * 1024;
 const MAX_USER_REQUEST_DETAIL_BYTES: usize = 900 * 1024;
+const MAX_USER_REQUEST_RESPONSE_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -101,6 +103,72 @@ pub(crate) struct UserRequestDetailView {
     created_at: String,
     expires_at: Option<String>,
     resolved_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserRequestResponseWire {
+    request_id: String,
+    response_digest: String,
+    responded_by: PrincipalRefWire,
+    #[serde(default)]
+    response_channel_ref: Option<Value>,
+    responded_at: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserRequestResolutionReceiptWire {
+    request_id: String,
+    workspace_id: String,
+    status: String,
+    version: u64,
+    resolved_at: String,
+    resolved_by: PrincipalRefWire,
+    response_digest: Option<String>,
+    event_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PrincipalRefWire {
+    principal_id: String,
+    kind: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct UserRequestActionReceiptView {
+    request_id: String,
+    workspace_id: String,
+    status: String,
+    version: u64,
+    resolved_at: String,
+    resolved_by: String,
+    response_digest: Option<String>,
+    event_id: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct UserRequestResponseInputWire {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    choice_id: Option<String>,
+}
+
+fn response_input_wire(response: Value, choice_id: Option<String>) -> UserRequestResponseInputWire {
+    match choice_id {
+        Some(choice_id) => UserRequestResponseInputWire {
+            response: None,
+            choice_id: Some(choice_id),
+        },
+        None => UserRequestResponseInputWire {
+            response: Some(response),
+            choice_id: None,
+        },
+    }
 }
 
 fn valid_id(value: &str) -> bool {
@@ -349,6 +417,205 @@ pub(crate) async fn get_user_request_detail(
     .map_err(|_| "UserRequest detail read did not complete".to_owned())?
 }
 
+fn valid_idempotency_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 200
+        && value.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
+}
+
+fn valid_digest(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+#[tauri::command]
+pub(crate) async fn respond_user_request(
+    app: AppHandle,
+    workspace_id: String,
+    request_id: String,
+    expected_version: u64,
+    idempotency_key: String,
+    response: Value,
+    choice_id: Option<String>,
+) -> Result<UserRequestActionReceiptView, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !valid_id(&workspace_id)
+            || !valid_id(&request_id)
+            || !valid_idempotency_key(&idempotency_key)
+            || expected_version == 0
+        {
+            return Err("UserRequest response selection is invalid".to_owned());
+        }
+        if choice_id.as_deref().is_some_and(|value| !valid_id(value)) {
+            return Err("UserRequest choice selection is invalid".to_owned());
+        }
+        let input = response_input_wire(response, choice_id);
+        let body =
+            serde_json::to_vec(&input).map_err(|_| "UserRequest response is invalid".to_owned())?;
+        if body.len() > MAX_USER_REQUEST_RESPONSE_BYTES + 1024 {
+            return Err("UserRequest response exceeds its size limit".to_owned());
+        }
+        let (client, workspace_url) = super::operator_client(&app)?;
+        let base_url = workspace_url.trim_end_matches("/workspaces");
+        let response = client
+            .post(format!(
+                "{base_url}/user-requests/{}/respond",
+                encode_path_segment(&request_id)
+            ))
+            .header("X-Workspace-ID", &workspace_id)
+            .header("Idempotency-Key", &idempotency_key)
+            .header("If-Match", expected_version.to_string())
+            .json(&input)
+            .send()
+            .map_err(|_| "Local UserRequest response could not be confirmed".to_owned())?;
+        if !response.is_success() {
+            return Err(
+                "UserRequest response was not accepted. Refresh the request before trying again."
+                    .to_owned(),
+            );
+        }
+        if response.header("cache-control") != Some("no-store") {
+            return Err(
+                "Local Runtime returned a UserRequest response without no-store protection"
+                    .to_owned(),
+            );
+        }
+        let body = super::read_bounded_response(response)?;
+        if body.len() > 16 * 1024 {
+            return Err(
+                "Local Runtime returned an oversized UserRequest response receipt".to_owned(),
+            );
+        }
+        let receipt: UserRequestResponseWire = serde_json::from_slice(&body).map_err(|_| {
+            "Local Runtime returned an invalid UserRequest response receipt".to_owned()
+        })?;
+        if receipt.request_id != request_id
+            || !valid_digest(&receipt.response_digest)
+            || !valid_id(&receipt.responded_by.principal_id)
+            || receipt.responded_by.kind != "USER"
+            || !valid_timestamp(&receipt.responded_at)
+            || receipt.response_channel_ref.is_some()
+        {
+            return Err(
+                "Local Runtime returned a mismatched UserRequest response receipt".to_owned(),
+            );
+        }
+        Ok(UserRequestActionReceiptView {
+            request_id: receipt.request_id,
+            workspace_id,
+            status: "ANSWERED".to_owned(),
+            version: expected_version.saturating_add(1),
+            resolved_at: receipt.responded_at,
+            resolved_by: receipt.responded_by.principal_id,
+            response_digest: Some(receipt.response_digest),
+            event_id: None,
+        })
+    })
+    .await
+    .map_err(|_| "UserRequest response did not complete".to_owned())?
+}
+
+#[cfg(test)]
+mod response_input_tests {
+    use super::response_input_wire;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn explicit_json_null_is_forwarded_as_a_present_response() {
+        let input = response_input_wire(Value::Null, None);
+        assert_eq!(
+            serde_json::to_value(input).expect("serialize response input"),
+            json!({"response": null})
+        );
+    }
+
+    #[test]
+    fn choice_input_does_not_forward_the_placeholder_response() {
+        let input = response_input_wire(Value::Null, Some("choice-a".to_owned()));
+        assert_eq!(
+            serde_json::to_value(input).expect("serialize choice input"),
+            json!({"choice_id": "choice-a"})
+        );
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn dismiss_user_request(
+    app: AppHandle,
+    workspace_id: String,
+    request_id: String,
+    expected_version: u64,
+    idempotency_key: String,
+) -> Result<UserRequestActionReceiptView, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !valid_id(&workspace_id)
+            || !valid_id(&request_id)
+            || !valid_idempotency_key(&idempotency_key)
+            || expected_version == 0
+        {
+            return Err("UserRequest dismissal selection is invalid".to_owned());
+        }
+        let (client, workspace_url) = super::operator_client(&app)?;
+        let base_url = workspace_url.trim_end_matches("/workspaces");
+        let response = client
+            .post(format!(
+                "{base_url}/user-requests/{}/dismiss",
+                encode_path_segment(&request_id)
+            ))
+            .header("X-Workspace-ID", &workspace_id)
+            .header("Idempotency-Key", &idempotency_key)
+            .header("If-Match", expected_version.to_string())
+            .body(Vec::new())
+            .send()
+            .map_err(|_| "Local UserRequest dismissal could not be confirmed".to_owned())?;
+        if !response.is_success() {
+            return Err(
+                "UserRequest dismissal was not accepted. Refresh the request before trying again."
+                    .to_owned(),
+            );
+        }
+        if response.header("cache-control") != Some("no-store") {
+            return Err(
+                "Local Runtime returned a UserRequest receipt without no-store protection"
+                    .to_owned(),
+            );
+        }
+        let body = super::read_bounded_response(response)?;
+        if body.len() > 16 * 1024 {
+            return Err("Local Runtime returned an oversized UserRequest receipt".to_owned());
+        }
+        let receipt: UserRequestResolutionReceiptWire = serde_json::from_slice(&body)
+            .map_err(|_| "Local Runtime returned an invalid UserRequest receipt".to_owned())?;
+        if receipt.request_id != request_id
+            || receipt.workspace_id != workspace_id
+            || receipt.status != "DISMISSED"
+            || receipt.version != expected_version.saturating_add(1)
+            || !valid_timestamp(&receipt.resolved_at)
+            || !valid_id(&receipt.resolved_by.principal_id)
+            || receipt.resolved_by.kind != "USER"
+            || receipt.response_digest.is_some()
+            || !valid_id(&receipt.event_id)
+        {
+            return Err("Local Runtime returned a mismatched UserRequest receipt".to_owned());
+        }
+        Ok(UserRequestActionReceiptView {
+            request_id: receipt.request_id,
+            workspace_id: receipt.workspace_id,
+            status: receipt.status,
+            version: receipt.version,
+            resolved_at: receipt.resolved_at,
+            resolved_by: receipt.resolved_by.principal_id,
+            response_digest: receipt.response_digest,
+            event_id: Some(receipt.event_id),
+        })
+    })
+    .await
+    .map_err(|_| "UserRequest dismissal did not complete".to_owned())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,6 +670,15 @@ mod tests {
         let mut invalid_time = wire();
         invalid_time.created_at = "yesterday".to_owned();
         assert!(map_user_request_detail("workspace-1", "request-1", invalid_time).is_err());
+    }
+
+    #[test]
+    fn action_receipts_require_printable_idempotency_and_canonical_digests() {
+        assert!(valid_idempotency_key(&"k".repeat(200)));
+        assert!(!valid_idempotency_key(&"k".repeat(201)));
+        assert!(!valid_idempotency_key("contains\nnewline"));
+        assert!(valid_digest(&format!("sha256:{}", "a".repeat(64))));
+        assert!(!valid_digest(&format!("sha256:{}", "A".repeat(64))));
     }
 
     #[test]

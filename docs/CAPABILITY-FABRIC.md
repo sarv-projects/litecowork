@@ -8,6 +8,24 @@ related capability packages: discovery, verification, installation, updates, rem
 package/provider supervision and exact package identity. LiteCowork must not duplicate
 that marketplace/lifecycle.
 
+**Owner direction — shared Browser Harness package (2026-10-17):** The intended product
+shape is one LiteSPM-managed Browser Harness capability, made available by default to
+compatible installed agent hosts after LiteSPM's package contract is ready. LiteSPM owns
+its package discovery, install/update/remove and process supervision; LiteCowork binds the
+same installed package through each qualified `AgentCapabilityBridge`, rather than
+installing a separate browser implementation for every agent. Here, “available by
+default” means discoverable and offerable to compatible bindings. It never creates a
+browser/site/session Grant, attaches to an existing Chrome profile, transfers control, or
+authorizes an action by itself. Native configurations remain untouched unless their
+owner explicitly configures a supported bridge. Every consequential browser operation
+remains behind LiteCowork's authenticated browser service, Environment/session scope,
+Trust decision, current control epoch, Effect/idempotency receipt and reconciliation.
+Browser Use source candidates and the exact reviewed revisions are recorded in
+[`REFERENCE-IMPLEMENTATIONS.md`](REFERENCE-IMPLEMENTATIONS.md). The upstream LiteSPM
+checkout is still under development and its API/package contract is not specified here;
+do not invent calls or enable this package integration until that contract is published
+and qualified.
+
 LiteCowork owns the **use** of a LiteSPM-managed package in a Conversation/Task:
 CapabilityRefs, Offers, Grants, Activations, Invocations, Effects, Evidence, and the
 attachment route selected for one agent. The selected AgentModule exposes an
@@ -175,18 +193,19 @@ out of scope here.
 
 ### Local ZIP intake provider boundary
 
-`capabilities/zip_intake` currently contains a bounded Python parser implementation and
-fixture tests, but it is not an activated Capability and is not called by `litecoworkd`.
-Cooperative checks in a library do not provide hard CPU/RSS/time containment. The local
-Operator router currently mounts only a read-only, owner-scoped readiness observation at
-`GET /v1/capabilities/zip-intake`; the Tauri bridge and Library notice are also registered.
-They report ZIP extraction as unavailable. Existing resumable upload stores the archive
-intact as an opaque Resource. Do not add an in-process call, direct UI extraction, or direct
-agent attachment of members. Integration requires a supervised isolated worker with bounded
-IPC, OS-level resource limits, cancellation/timeout and crash recovery, exact source-revision
-binding, and a Core-mediated path for publishing each accepted member's Resource,
-provenance and deletion lifecycle. Qualification must include hostile archive fixtures and
-the supported desktop OS matrix before the status can report READY.
+`capabilities/zip_intake` contains a bounded Python parser and fixture tests. It is not an
+activated Capability or general Agent tool. `litecoworkd` serves the owner-scoped
+`GET /v1/capabilities/zip-intake` readiness observation and, in a Linux source checkout,
+`POST /v1/resources/{resource_id}/archive/preview`. The latter passes only an exact managed
+Resource revision to the fixed CLI and supervised Bubblewrap worker, and returns safe
+metadata without expanding or returning member bytes. Packaged and non-Linux Runtimes
+return `DEPENDENCY_UNAVAILABLE`; readiness remains `UNAVAILABLE` and extraction remains
+disabled. Existing resumable upload stores the archive intact as an opaque Resource. Do not
+add an in-process parser call, direct UI extraction, or direct Agent attachment of members.
+Extraction still requires a cancellable/recoverable worker operation, a Core-mediated path
+for publishing each accepted member's Resource, provenance and deletion lifecycle, and
+hostile-archive qualification across the supported desktop OS matrix before readiness can
+report READY.
 
 `CapabilityRef` is LiteCowork's internal normalization boundary: package references carry
 the LiteSPM-normalized source, package version, and package digest; an MCP Skill carries

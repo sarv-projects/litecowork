@@ -80,7 +80,7 @@
 
 .workspace-root-observation-list li {
   display: grid;
-  grid-template-columns: auto minmax(8rem, 1fr) minmax(9rem, auto) auto;
+  grid-template-columns: auto minmax(8rem, 1fr) minmax(9rem, auto) auto auto;
   align-items: center;
   gap: 0.65rem;
   min-height: 2.4rem;
@@ -107,4 +107,5 @@
     grid-template-columns: auto minmax(0, 1fr) auto;
   }
   .workspace-root-observation-freshness { grid-column: 2 / 4; }
+  .workspace-root-observation-list li > button { grid-column: 2 / 4; justify-self: start; }
 }

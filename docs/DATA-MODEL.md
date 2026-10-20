@@ -1210,6 +1210,7 @@ Evidence {
   producer: PrincipalRef | ServiceRef
   payload_ref: ResourceRef?
   payload_digest: Sha256Digest?
+  verification_run_id: VerificationRunId? # exact verifier provenance; absent for ordinary reports
   created_at: Timestamp
 }
 ```
@@ -2118,6 +2119,13 @@ FileIdentityBinding { # Runtime-local raw operating-system identity
   platform_kind: string
   observed_at: Timestamp
 }
+
+For `WINDOWS_VOLUME_FILE_ID_128`, `raw_filesystem_instance_id` is the lower-case
+16-digit hexadecimal volume serial, `raw_volume_id` and `raw_generation` are null, and
+`raw_file_id` is the lower-case 32-digit hexadecimal `FILE_ID_128`. The keyed identity
+digest uses the serial's 8 bytes followed by the complete 16-byte file ID. Public
+`FileIdentity` fields remain Runtime-keyed pseudonyms; raw values are never returned by
+Operator projections.
 
 ResourceRevision {
   resource_revision_id: ResourceRevisionId

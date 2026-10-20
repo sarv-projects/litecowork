@@ -141,6 +141,70 @@ async fn list_page(router: &Router, workspace_id: &str, cursor: Option<&str>) ->
         .expect("authenticated Conversation route responds")
 }
 
+async fn create_conversation_request(
+    router: &Router,
+    workspace_id: &str,
+    request_id: &str,
+    title: &str,
+) -> Response {
+    let mut request = Request::post("/v1/conversations")
+        .header("x-workspace-id", workspace_id)
+        .header("idempotency-key", request_id)
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "workspace_id": workspace_id,
+                "title": title,
+            })
+            .to_string(),
+        ))
+        .expect("Conversation creation request is valid");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("authenticated Conversation creation route responds")
+}
+
+async fn read_created_conversation(response: Response) -> ConversationRecord {
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let bytes = to_bytes(response.into_body(), 8192)
+        .await
+        .expect("Conversation creation response is bounded");
+    serde_json::from_slice(&bytes).expect("Conversation creation response matches its contract")
+}
+
+async fn submit_turn(router: &Router, workspace_id: &str, conversation_id: &str) -> Response {
+    submit_turn_body(
+        router,
+        workspace_id,
+        conversation_id,
+        r#"{"content":[{"kind":"TEXT","text":"Please summarize this project."}],"resource_refs":[],"agent_binding_id":null,"presentation_preference":"AUTO"}"#,
+    )
+    .await
+}
+
+async fn submit_turn_body(
+    router: &Router,
+    workspace_id: &str,
+    conversation_id: &str,
+    body: &str,
+) -> Response {
+    let mut request = Request::post(format!("/v1/conversations/{conversation_id}/turns"))
+        .header("x-workspace-id", workspace_id)
+        .header("idempotency-key", "conversation-turn-submit-1")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_owned()))
+        .expect("Conversation turn request is valid");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("authenticated Conversation turn route responds")
+}
+
 async fn read_page(response: Response) -> TestConversationPage {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = to_bytes(response.into_body(), 1024 * 1024)
@@ -302,4 +366,194 @@ async fn conversation_operator_cursor_paginates_more_than_fifty_and_fences_works
         StatusCode::NOT_FOUND,
         "a different authenticated principal cannot enumerate another owner's Workspace"
     );
+}
+
+#[tokio::test]
+async fn conversation_create_retry_replays_the_committed_identity_without_duplicates() {
+    let directory = tempfile::tempdir().expect("temporary Conversation replay directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private Conversation replay directory");
+    let store = SqliteWorkspaceStore::open(
+        directory.path().join("state.sqlite3"),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "create-replay");
+    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+    let request_id = "conversation-create-replay-request-1";
+
+    // Model a lost acknowledgement: the exact same durable request is sent again
+    // after the first server-side commit has already happened.
+    let first = read_created_conversation(
+        create_conversation_request(&router, WORKSPACE_A, request_id, "Research notes").await,
+    )
+    .await;
+    let replay = read_created_conversation(
+        create_conversation_request(&router, WORKSPACE_A, request_id, "Research notes").await,
+    )
+    .await;
+    assert_eq!(
+        replay, first,
+        "a retry returns the original committed identity"
+    );
+
+    let page = read_page(list_page(&router, WORKSPACE_A, None).await).await;
+    assert_eq!(
+        page.items.as_slice(),
+        std::slice::from_ref(&first),
+        "one receipt produces one Conversation row"
+    );
+
+    let changed_payload = create_conversation_request(
+        &router,
+        WORKSPACE_A,
+        request_id,
+        "Different request with reused key",
+    )
+    .await;
+    assert_eq!(
+        changed_payload.status(),
+        StatusCode::CONFLICT,
+        "the same key cannot be reused for a different title"
+    );
+    let page_after_conflict = read_page(list_page(&router, WORKSPACE_A, None).await).await;
+    assert_eq!(page_after_conflict.items.len(), 1);
+}
+
+#[tokio::test]
+async fn concurrent_conversation_create_retries_commit_only_one_identity() {
+    let directory = tempfile::tempdir().expect("temporary concurrent Conversation directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private concurrent Conversation directory");
+    let store = SqliteWorkspaceStore::open(
+        directory.path().join("state.sqlite3"),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "create-race");
+    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+    let request_id = "conversation-create-race-request-1";
+
+    // Both callers may be retries after a lost acknowledgement. Their generated
+    // candidate IDs differ, but the durable receipt must choose one committed row.
+    let (first_response, retry_response) = tokio::join!(
+        create_conversation_request(&router, WORKSPACE_A, request_id, "Shared request"),
+        create_conversation_request(&router, WORKSPACE_A, request_id, "Shared request"),
+    );
+    let first = read_created_conversation(first_response).await;
+    let retry = read_created_conversation(retry_response).await;
+    assert_eq!(
+        retry, first,
+        "concurrent retries resolve to one committed identity"
+    );
+
+    let page = read_page(list_page(&router, WORKSPACE_A, None).await).await;
+    assert_eq!(page.items, vec![first]);
+}
+
+#[tokio::test]
+async fn conversation_turn_route_fails_closed_without_creating_an_unsettleable_turn() {
+    let directory = tempfile::tempdir().expect("temporary Conversation turn directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private Conversation turn directory");
+    let store = SqliteWorkspaceStore::open(
+        directory.path().join("state.sqlite3"),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "turn-workspace");
+    seed_conversation(
+        &store,
+        WORKSPACE_A,
+        "a06-conversation-turn",
+        "Draft conversation",
+        "2026-10-15T12:00:00.000000000Z",
+    );
+    let router = test_router(store.clone(), OWNER.to_owned(), RUNTIME.to_owned());
+
+    let response = submit_turn(&router, WORKSPACE_A, "a06-conversation-turn").await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let body = to_bytes(response.into_body(), 8192)
+        .await
+        .expect("bounded unavailable response");
+    let error: serde_json::Value = serde_json::from_slice(&body).expect("Operator error JSON");
+    assert_eq!(error["code"], "DEPENDENCY_UNAVAILABLE");
+    assert!(
+        error["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not sent"),
+        "the unavailable response must say the message was not sent"
+    );
+    let conversation = SqliteConversationStore::new(store.clone())
+        .get_conversation(OWNER, WORKSPACE_A, "a06-conversation-turn")
+        .expect("conversation read succeeds")
+        .expect("conversation remains available");
+    assert_eq!(
+        conversation.version, 1,
+        "no User message or OPEN turn was committed"
+    );
+}
+
+#[tokio::test]
+async fn conversation_turn_route_rejects_cross_workspace_resource_pins_before_provider_gate() {
+    let directory = tempfile::tempdir().expect("temporary Conversation turn validation directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private Conversation turn validation directory");
+    let store = SqliteWorkspaceStore::open(
+        directory.path().join("state.sqlite3"),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "turn-validation-a");
+    seed_conversation(
+        &store,
+        WORKSPACE_A,
+        "a06-conversation-turn-validation",
+        "Draft conversation",
+        "2026-10-15T12:00:00.000000000Z",
+    );
+    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+
+    let response = submit_turn_body(
+        &router,
+        WORKSPACE_A,
+        "a06-conversation-turn-validation",
+        r#"{"content":[{"kind":"RESOURCE","resource_ref":{"workspace_id":"foreign-workspace","resource_id":"resource-1","revision_id":"revision-1"}}],"resource_refs":[]}"#,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

@@ -5,8 +5,12 @@ import {
 } from "../coworkers/delegation-profile-api";
 import { desktopDelegationProfileCatalogApi } from "../coworkers/desktop-delegation-profile-api";
 import { DelegationProfileHistory } from "./DelegationProfileHistory";
+import { DelegationProfilePerformance } from "./DelegationProfilePerformance";
+import { AgentQuotaObservation } from "./QuotaObservation";
+import { desktopAgentQuotaObservationApi } from "./desktop-agent-quota-api";
 import { scheduleOfferExpiryRefresh } from "./agent-offer-expiry";
 import { AGENT_CANDIDATES } from "./agent-candidate-catalog";
+import type { AgentCatalogApi, AgentRegistryEntry } from "./agent-catalog-api";
 import "./agent-catalog-settings.css";
 
 export type AgentInstallation = {
@@ -79,6 +83,7 @@ export type AgentCatalogSettingsProps = {
   actionError?: string | null;
   busyAction?: string | null;
   defaultAgentBusy?: boolean;
+  registryApi?: Pick<AgentCatalogApi, "listRegistry" | "refreshRegistry">;
   onRefresh: () => void;
   onProbeCodex: () => void;
   onProbeOpenCode: () => void;
@@ -409,6 +414,10 @@ function candidateInstallationStatus(candidate: typeof AGENT_CANDIDATES[number],
   return humanize(installation.installation);
 }
 
+function registryApiUnavailable(api: AgentCatalogSettingsProps["registryApi"]): string {
+  return api ? "ACP Registry snapshot not yet loaded" : "ACP Registry service unavailable in this view";
+}
+
 export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
   const {
     workspaceId, workspaceName, workspaceActive, runtimeReady, runtimeEnrolled,
@@ -416,11 +425,21 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
     error, actionMessage, actionError, busyAction, defaultAgentBusy = false, onRefresh, onProbeCodex,
     onProbeOpenCode, onCreateBinding, onEnableBinding, onDisableBinding, onSetDefaultLead,
   } = props;
+  const [registryEntries, setRegistryEntries] = useState<AgentRegistryEntry[]>([]);
+  const [registryQuery, setRegistryQuery] = useState("");
+  const [registrySearchDraft, setRegistrySearchDraft] = useState("");
+  const [registryCursor, setRegistryCursor] = useState<string | null>(null);
+  const [registryStale, setRegistryStale] = useState(false);
+  const [registryObservedAt, setRegistryObservedAt] = useState<string | null>(null);
+  const [registryLoading, setRegistryLoading] = useState(false);
+  const [registryError, setRegistryError] = useState<string | null>(null);
+  const registryGeneration = useRef(0);
   const [leadEligibleByProfile, setLeadEligibleByProfile] = useState<Record<string, boolean>>({});
   const [offerClock, setOfferClock] = useState(() => Date.now());
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
   const profileApi = useMemo(() => workspaceId ? desktopDelegationProfileCatalogApi(workspaceId) : null, [workspaceId]);
+  const quotaApi = useMemo(() => workspaceId ? desktopAgentQuotaObservationApi(workspaceId) : null, [workspaceId]);
   const [workerProfiles, setWorkerProfiles] = useState<DelegationProfile[]>([]);
   const [workerProfilesError, setWorkerProfilesError] = useState<string | null>(null);
   const [workerProfilesLoading, setWorkerProfilesLoading] = useState(false);
@@ -432,6 +451,49 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
   const [workerProfileLifecycleBusy, setWorkerProfileLifecycleBusy] = useState<string | null>(null);
   const workerProfileGeneration = useRef(0);
   const workerProfileRequestIds = useRef(new Map<string, string>());
+  const requestRegistryPage = (query: string, cursor: string | null, append: boolean) => {
+    if (!props.registryApi) return;
+    const generation = ++registryGeneration.current;
+    setRegistryLoading(true);
+    setRegistryError(null);
+    void props.registryApi.listRegistry({ query, cursor: cursor ?? undefined, limit: 50 }).then(page => {
+      if (generation !== registryGeneration.current) return;
+      setRegistryEntries(current => append ? [...current, ...page.items] : page.items);
+      setRegistryCursor(page.nextCursor);
+      setRegistryObservedAt(page.observedAt);
+      setRegistryStale(page.stale);
+    }).catch(() => {
+      if (generation !== registryGeneration.current) return;
+      setRegistryError("ACP Registry results could not be loaded. Curated candidates and local installation data remain available.");
+    }).finally(() => {
+      if (generation === registryGeneration.current) setRegistryLoading(false);
+    });
+  };
+  useEffect(() => {
+    if (!props.registryApi) return;
+    requestRegistryPage("", null, false);
+    return () => { registryGeneration.current += 1; };
+  }, [props.registryApi]);
+  const refreshRegistry = () => {
+    if (!props.registryApi) return;
+    const generation = ++registryGeneration.current;
+    setRegistryLoading(true);
+    setRegistryError(null);
+    void props.registryApi.refreshRegistry().then(snapshot => {
+      if (generation !== registryGeneration.current) return;
+      setRegistryStale(snapshot.stale);
+      setRegistryObservedAt(snapshot.observedAt);
+      setRegistryEntries(snapshot.items.slice(0, 50));
+      setRegistryCursor(snapshot.items.length > 50 ? null : null);
+      requestRegistryPage(registryQuery, null, false);
+    }).catch(() => {
+      if (generation !== registryGeneration.current) return;
+      setRegistryError("ACP Registry refresh failed. The previous snapshot remains visible when available.");
+      requestRegistryPage(registryQuery, null, false);
+    }).finally(() => {
+      if (generation === registryGeneration.current) setRegistryLoading(false);
+    });
+  };
   useEffect(() => scheduleOfferExpiryRefresh(
     profiles.flatMap(profile => profile.observations),
     () => {
@@ -596,9 +658,13 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
           <span className="agent-catalog__count" aria-label="15 curated candidates">{AGENT_CANDIDATES.length}</span>
         </div>
         <div className="agent-catalog__registry-state" role="note">
-          <strong>ACP Registry data is not connected</strong>
-          <span>No live or cached Registry results are loaded. Candidate presence does not mean the agent is installed, configured, or supported.</span>
+          <strong>{registryLoading ? "Loading ACP Registry…" : registryStale ? "Showing a cached ACP Registry snapshot" : registryObservedAt ? "ACP Registry snapshot loaded" : registryApiUnavailable(props.registryApi)}</strong>
+          <span>{registryObservedAt ? `Observed ${formatTime(registryObservedAt)}${registryStale ? " · stale" : " · current"}. Registry presence does not mean the agent is installed, signed in, configured, or supported.` : "Curated candidates remain available independently of the remote Registry."}</span>
+          <button type="button" className="agent-catalog__secondary" onClick={refreshRegistry} disabled={!props.registryApi || registryLoading}>
+            {registryLoading ? "Refreshing…" : "Refresh ACP Registry"}
+          </button>
         </div>
+        {registryError && <p className="agent-catalog__error" role="status">{registryError}</p>}
         <p className="agent-catalog__footnote">Codex and OpenCode have bounded profile-probe implementations. A profile is marked observed only when this Workspace has a recorded probe observation; that history is separate from the latest offer’s readiness and expiry. The other candidates have no LiteCowork profile probe yet. None has an implemented, qualified native session module.</p>
         <ul className="agent-catalog__candidates" aria-label="Curated agent candidates">
           {AGENT_CANDIDATES.map((candidate) => {
@@ -630,6 +696,30 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
             </li>;
           })}
         </ul>
+        <section className="agent-catalog__registry-results" aria-labelledby="agent-registry-results-title">
+          <div className="agent-catalog__section-heading">
+            <div><h4 id="agent-registry-results-title">ACP Registry distributions</h4><p>Descriptive package metadata only. Registry-provided commands and environment values are discarded.</p></div>
+            <span className="agent-catalog__count">{registryEntries.length}</span>
+          </div>
+          <form className="agent-catalog__registry-search" onSubmit={(event) => { event.preventDefault(); const query = registrySearchDraft.trim(); setRegistryQuery(query); setRegistryEntries([]); requestRegistryPage(query, null, false); }}>
+            <label htmlFor="agent-registry-search">Search remote entries</label>
+            <input id="agent-registry-search" type="search" maxLength={128} value={registrySearchDraft} onChange={(event) => setRegistrySearchDraft(event.currentTarget.value)} placeholder="Name or agent ID" />
+            <button type="submit" className="agent-catalog__secondary" disabled={!props.registryApi || registryLoading}>Search</button>
+          </form>
+          {registryEntries.length === 0 && !registryLoading && <p className="agent-catalog__empty">{registryError ? "Remote Registry entries are unavailable." : "No ACP Registry entries match this search."}</p>}
+          {registryEntries.length > 0 && <ul className="agent-catalog__registry-list">
+            {registryEntries.map((entry) => <li key={`${entry.sourceRevision ?? "unknown"}:${entry.registryAgentId}`}>
+              <div className="agent-catalog__candidate-heading"><strong>{entry.displayName}</strong><span className="agent-catalog__badge is-muted">{entry.adapterSupport === "SUPPORTED" ? "Module descriptor match" : entry.adapterSupport === "UNSUPPORTED_OS" ? "Unsupported on this Runtime" : "No adapter"}</span></div>
+              <span className="agent-catalog__candidate-path">{entry.registryAgentId} · {entry.sourceRevision ?? "revision unknown"}</span>
+              {entry.description && <p>{entry.description}</p>}
+              <dl className="agent-catalog__candidate-states">
+                <div><dt>Distributions</dt><dd>{entry.distributions.length ? entry.distributions.map(item => `${item.kind} · ${item.packageRef}`).join("; ") : "None advertised"}</dd></div>
+                <div><dt>Supported platforms</dt><dd>{[...new Set(entry.distributions.flatMap(item => item.os))].join(", ") || "Not reported"}</dd></div>
+              </dl>
+            </li>)}
+          </ul>}
+          {registryCursor && <button type="button" className="agent-catalog__secondary" onClick={() => requestRegistryPage(registryQuery, registryCursor, true)} disabled={registryLoading}>{registryLoading ? "Loading…" : "Load more Registry entries"}</button>}
+        </section>
       </section>
 
       {!hasWorkspace && <p className="agent-catalog__notice">Select a Workspace to inspect its profiles and bindings.</p>}
@@ -833,6 +923,11 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
                 {eligibleLead && !isDefaultLead && <button type="button" className="agent-catalog__secondary" disabled={!canChangeWorkspaceAgentPolicy || defaultAgentBusy} onClick={() => onSetDefaultLead(binding.agentBindingId)}>{defaultAgentBusy ? "Saving lead…" : "Set as default lead"}</button>}
                 {binding.enabled && !binding.leadEligible && <span className="agent-catalog__hint">Cannot be selected as a lead</span>}
               </div>
+              {workspaceId && quotaApi && <AgentQuotaObservation
+                key={`${workspaceId}:${binding.agentBindingId}:quota`}
+                api={quotaApi}
+                agentBindingId={binding.agentBindingId}
+              />}
             </li>;
           })}
         </ul>}
@@ -887,6 +982,11 @@ export function AgentCatalogSettings(props: AgentCatalogSettingsProps) {
                 {!archived && !archiveConfirmation && <button type="button" className="agent-catalog__secondary" disabled={!workspaceActive || !runtimeReady || !runtimeEnrolled || workerProfileLifecycleBusy !== null} onClick={() => setWorkerProfileArchiveConfirmation({ profileId: profile.delegation_profile_id, baseVersion: profile.version })}>Archive…</button>}
                 {!profile.editable && profile.edit_block_reason && <small>{profile.edit_block_reason}</small>}
               </div>
+              {profileApi && profile.status !== "ARCHIVED" && <DelegationProfilePerformance
+                key={`${workspaceId}:${profile.delegation_profile_id}:performance`}
+                api={profileApi}
+                profileId={profile.delegation_profile_id}
+              />}
               {profileApi && <DelegationProfileHistory
                 key={`${workspaceId}:${profile.delegation_profile_id}:${profile.current_revision}`}
                 api={profileApi}

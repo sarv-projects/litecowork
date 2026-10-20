@@ -75,6 +75,20 @@ export type DelegationProfileRevisionView = {
   created_at: string;
 };
 
+export type WorkerTaskCategory = "SOFTWARE_ENGINEERING" | "RESEARCH" | "WRITING" | "DATA_ANALYSIS" | "OFFICE" | "BROWSER" | "PERSONAL_ADMIN" | "OTHER";
+export type WorkerPerformanceProjection = {
+  delegation_profile_id: string;
+  task_category: WorkerTaskCategory;
+  sample_count: number;
+  verifier_pass_rate: number | null;
+  median_latency_ms: number | null;
+  median_observed_cost: { quantity: number; unit: string; currency: string | null; confidence: "EXACT" | "ESTIMATED" } | null;
+  retry_rate: number | null;
+  human_intervention_rate: number | null;
+  failure_categories: string[];
+  confidence: "LOW" | "MEDIUM" | "HIGH";
+};
+
 export type DelegationProfilePage = { items: DelegationProfile[]; next_cursor: string | null };
 
 export type DelegationProfileOperation = {
@@ -200,6 +214,78 @@ function decodeRevision(value: unknown, workspaceId: string, profileId: string):
   };
 }
 
+const WORKER_TASK_CATEGORIES: readonly WorkerTaskCategory[] = [
+  "SOFTWARE_ENGINEERING", "RESEARCH", "WRITING", "DATA_ANALYSIS", "OFFICE", "BROWSER", "PERSONAL_ADMIN", "OTHER",
+];
+
+function nullableRate(value: unknown, label: string): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`Invalid worker performance ${label}.`);
+  }
+  return value;
+}
+
+function nullableNonNegativeInteger(value: unknown, label: string): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Invalid worker performance ${label}.`);
+  }
+  return value;
+}
+
+function decodePerformance(value: unknown, profileId: string, requestedCategory?: WorkerTaskCategory): WorkerPerformanceProjection {
+  const row = object(value);
+  if (text(row.delegation_profile_id, "worker profile identifier", 256) !== profileId) {
+    throw new Error("Worker performance projection belongs to a different profile scope.");
+  }
+  if (typeof row.task_category !== "string" || !WORKER_TASK_CATEGORIES.includes(row.task_category as WorkerTaskCategory)
+    || (requestedCategory !== undefined && row.task_category !== requestedCategory)) {
+    throw new Error("Worker performance projection has a different or invalid task category.");
+  }
+  if (typeof row.sample_count !== "number" || !Number.isSafeInteger(row.sample_count) || row.sample_count < 0) {
+    throw new Error("Invalid worker performance sample count.");
+  }
+  const confidence = row.confidence;
+  if (confidence !== "LOW" && confidence !== "MEDIUM" && confidence !== "HIGH") {
+    throw new Error("Invalid worker performance confidence.");
+  }
+  const rawFailures = row.failure_categories;
+  if (!Array.isArray(rawFailures) || rawFailures.length > 64) throw new Error("Invalid worker performance failure categories.");
+  const failureCategories = rawFailures.map(item => text(item, "worker performance failure category", 128));
+  if (new Set(failureCategories).size !== failureCategories.length) throw new Error("Duplicate worker performance failure category.");
+  let medianObservedCost: WorkerPerformanceProjection["median_observed_cost"] = null;
+  if (row.median_observed_cost !== null && row.median_observed_cost !== undefined) {
+    const cost = object(row.median_observed_cost);
+    if (typeof cost.quantity !== "number" || !Number.isFinite(cost.quantity) || cost.quantity < 0) {
+      throw new Error("Invalid worker performance cost quantity.");
+    }
+    const currency = cost.currency;
+    if (currency !== null && currency !== undefined && (typeof currency !== "string" || !/^[A-Z]{3}$/.test(currency))) {
+      throw new Error("Invalid worker performance cost currency.");
+    }
+    if (cost.confidence !== "EXACT" && cost.confidence !== "ESTIMATED") throw new Error("Invalid worker performance cost confidence.");
+    medianObservedCost = {
+      quantity: cost.quantity,
+      unit: text(cost.unit, "worker performance cost unit", 64),
+      currency: currency ?? null,
+      confidence: cost.confidence,
+    };
+  }
+  return {
+    delegation_profile_id: profileId,
+    task_category: row.task_category as WorkerTaskCategory,
+    sample_count: row.sample_count,
+    verifier_pass_rate: nullableRate(row.verifier_pass_rate, "verification rate"),
+    median_latency_ms: nullableNonNegativeInteger(row.median_latency_ms, "median latency"),
+    median_observed_cost: medianObservedCost,
+    retry_rate: nullableRate(row.retry_rate, "retry rate"),
+    human_intervention_rate: nullableRate(row.human_intervention_rate, "human intervention rate"),
+    failure_categories: failureCategories,
+    confidence,
+  };
+}
+
 async function checkedJson(response: Response, expectedStatus: number): Promise<unknown> {
   if (response.status !== expectedStatus) {
     if (response.status === 409 || response.status === 412) throw new Error("The worker profile changed elsewhere. Refresh it and review the latest revision before saving again.");
@@ -237,7 +323,8 @@ export function createDelegationProfileCatalogApi(workspaceId: string, transport
     },
     async listRevisions(profileId: string, signal?: AbortSignal): Promise<DelegationProfileRevisionView[]> {
       if (!workspaceId) return [];
-      if (!profileId || profileId.length > 256 || /[\u0000-\u001f\u007f]/.test(profileId)) {
+      if (!profileId || profileId === "." || profileId === ".." || profileId.includes("/") || profileId.includes("\\")
+        || profileId.length > 256 || /[\u0000-\u001f\u007f]/.test(profileId)) {
         throw new Error("Worker profile identifier is invalid.");
       }
       const revisions: DelegationProfileRevisionView[] = [];
@@ -267,6 +354,18 @@ export function createDelegationProfileCatalogApi(workspaceId: string, transport
         cursor = next;
       }
       throw new Error("Worker profile history exceeds the safe paging limit.");
+    },
+    async getPerformance(profileId: string, taskCategory?: WorkerTaskCategory, signal?: AbortSignal): Promise<WorkerPerformanceProjection> {
+      if (!workspaceId) throw new Error("A Workspace is required to load worker performance.");
+      if (!profileId || profileId === "." || profileId === ".." || profileId.includes("/") || profileId.includes("\\")
+        || profileId.length > 256 || /[\u0000-\u001f\u007f]/.test(profileId)) {
+        throw new Error("Worker profile identifier is invalid.");
+      }
+      if (taskCategory !== undefined && !WORKER_TASK_CATEGORIES.includes(taskCategory)) throw new Error("Worker task category is invalid.");
+      const url = new URL(`/v1/delegation-profiles/${encodeURIComponent(profileId)}/performance`, "https://operator.invalid");
+      if (taskCategory) url.searchParams.set("task_category", taskCategory);
+      const response = await transport({ path: `${url.pathname}${url.search}` }, signal);
+      return decodePerformance(await checkedJson(response, 200), profileId, taskCategory);
     },
     async create(agentBindingId: string, revision: DelegationProfileRevisionInput, requestId: string, signal?: AbortSignal) {
       const response = await transport({

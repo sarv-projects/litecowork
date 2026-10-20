@@ -1,5 +1,4 @@
 use super::{create_workspace, state_database, test_store};
-#[cfg(unix)]
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 #[cfg(unix)]
 use domain_workspace::{
@@ -624,6 +623,88 @@ fn private_locator_for_test_path(path: &Path) -> String {
         "unix-path-b64:{}",
         URL_SAFE_NO_PAD.encode(path.as_os_str().as_bytes())
     )
+}
+
+fn windows_private_locator(path: &str) -> String {
+    let bytes = path
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    format!("windows-path-u16le-b64:{}", URL_SAFE_NO_PAD.encode(bytes))
+}
+
+#[test]
+fn windows_workspace_root_locator_requires_canonical_drive_rooted_utf16() {
+    let valid = windows_private_locator("C:\\Users\\Owner\\Documents");
+    assert_eq!(
+        super::super::decode_windows_workspace_root_locator(&valid)
+            .expect("canonical Windows path decodes"),
+        "C:\\Users\\Owner\\Documents"
+            .encode_utf16()
+            .collect::<Vec<_>>()
+    );
+
+    for path in [
+        "C:relative",
+        "\\\\server\\share",
+        "\\\\?\\C:\\device",
+        "C:\\folder\\..\\secret",
+        "C:\\folder\\.",
+        "C:\\folder\\",
+        "C:\\folder//child",
+        "C:\\folder\\bad.",
+        "C:\\folder\\bad ",
+    ] {
+        assert!(
+            super::super::decode_windows_workspace_root_locator(&windows_private_locator(path))
+                .is_err(),
+            "rejected noncanonical path {path:?}"
+        );
+    }
+
+    let odd_bytes = URL_SAFE_NO_PAD.encode([b'C', 0, b':']);
+    assert!(
+        super::super::decode_windows_workspace_root_locator(&format!(
+            "windows-path-u16le-b64:{odd_bytes}"
+        ))
+        .is_err()
+    );
+
+    let nul_path = windows_private_locator("C:\\folder\\\0name");
+    assert!(super::super::decode_windows_workspace_root_locator(&nul_path).is_err());
+
+    let unpaired_surrogate = URL_SAFE_NO_PAD.encode([b'C', 0, b':', 0, b'\\', 0, 0, 0xd8]);
+    assert!(
+        super::super::decode_windows_workspace_root_locator(&format!(
+            "windows-path-u16le-b64:{unpaired_surrogate}"
+        ))
+        .is_err()
+    );
+
+    let oversized = windows_private_locator(&format!("C:\\{}", "a".repeat(16_896)));
+    assert!(super::super::decode_windows_workspace_root_locator(&oversized).is_err());
+}
+
+#[test]
+fn windows_workspace_root_identity_binding_requires_full_canonical_file_id() {
+    let mut binding = LocalFileIdentityBindingRecord {
+        location_id: "location".to_owned(),
+        runtime_id: "runtime".to_owned(),
+        runtime_incarnation_id: "incarnation".to_owned(),
+        raw_filesystem_instance_id: "0123456789abcdef".to_owned(),
+        raw_volume_id: None,
+        raw_file_id: "0123456789abcdef0123456789abcdef".to_owned(),
+        raw_generation: None,
+        platform_kind: "WINDOWS_VOLUME_FILE_ID_128".to_owned(),
+        observed_at: NOW.to_owned(),
+    };
+    assert!(super::super::valid_workspace_root_raw_identity(&binding));
+
+    binding.raw_file_id = "0123456789ABCDEF0123456789ABCDEF".to_owned();
+    assert!(!super::super::valid_workspace_root_raw_identity(&binding));
+    binding.raw_file_id = "0123456789abcdef0123456789abcdef".to_owned();
+    binding.raw_volume_id = Some("0123456789abcdef".to_owned());
+    assert!(!super::super::valid_workspace_root_raw_identity(&binding));
 }
 
 #[cfg(unix)]

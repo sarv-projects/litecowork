@@ -4,13 +4,17 @@
 //! paths. Callers must obtain bytes from the ResourceStore for the exact Workspace,
 //! Resource, revision, and digest. The staged directory and read-only permissions are
 //! conveniences for preparation and preview only; they are not OS confinement, a write
-//! quota, an isolation attestation, or grounds for admitting an Agent or Attempt.
-//! Non-Unix targets fail closed until owner-only staging ACL behavior is qualified.
+//! quota, an isolation attestation, or grounds for admitting an Agent or Attempt. Windows
+//! staging applies a protected current-user/SYSTEM DACL but remains unqualified as an
+//! isolation provider. Other non-Unix targets fail closed.
 
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fmt;
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(unix)]
+use std::fs::OpenOptions;
+#[cfg(unix)]
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -298,33 +302,62 @@ pub fn stage_inputs(
     }
     reject_file_directory_collisions(&paths)?;
 
+    // Verify every immutable input before creating any filesystem state. Besides keeping
+    // the staging operation all-or-nothing, this avoids an invalid later pin causing an
+    // earlier valid file to be materialized before cleanup has to run.
+    for (_, input) in &files {
+        if digest(input.bytes) != input.content_digest {
+            return Err(StagingError::DigestMismatch);
+        }
+    }
+
+    #[cfg(windows)]
+    let (root, root_directory) = create_private_root_verified(staging_parent)?;
+    #[cfg(not(windows))]
     let root = create_private_root(staging_parent)?;
     let mut guard = RootCleanupGuard::new(root.clone());
     let input_root = root.join("inputs");
     let output_root = root.join("outputs");
+    #[cfg(windows)]
+    let input_directory = root_directory
+        .create_new_directory(Path::new("inputs"))
+        .map_err(io_error)?;
+    #[cfg(windows)]
+    let _output_directory = root_directory
+        .create_new_directory(Path::new("outputs"))
+        .map_err(io_error)?;
+    #[cfg(not(windows))]
     create_private_dir(&input_root)?;
+    #[cfg(not(windows))]
     create_private_dir(&output_root)?;
 
     for (relative, input) in files {
-        if digest(input.bytes) != input.content_digest {
-            return Err(StagingError::DigestMismatch);
-        }
-        let destination = input_root.join(relative.path);
-        let parent = destination
-            .parent()
-            .ok_or(StagingError::InvalidRelativePath(
-                input.relative_path.clone(),
-            ))?;
-        create_dir_tree_private(&input_root, parent)?;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&destination)
+        #[cfg(windows)]
+        input_directory
+            .create_new_file(&relative.path, input.bytes)
             .map_err(io_error)?;
-        file.write_all(input.bytes).map_err(io_error)?;
-        file.sync_all().map_err(io_error)?;
-        make_read_only(&destination)?;
+        #[cfg(unix)]
+        {
+            let destination = input_root.join(&relative.path);
+            let parent = destination
+                .parent()
+                .ok_or(StagingError::InvalidRelativePath(
+                    input.relative_path.clone(),
+                ))?;
+            create_dir_tree_private(&input_root, parent)?;
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&destination)
+                .map_err(io_error)?;
+            file.write_all(input.bytes).map_err(io_error)?;
+            file.sync_all().map_err(io_error)?;
+            make_read_only(&destination)?;
+        }
     }
+    #[cfg(windows)]
+    input_directory.set_read_only().map_err(io_error)?;
+    #[cfg(not(windows))]
     make_tree_read_only(&input_root)?;
 
     guard.disarm();
@@ -438,6 +471,7 @@ fn validate_parent(path: &Path) -> Result<(), StagingError> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn create_private_root(parent: &Path) -> Result<PathBuf, StagingError> {
     for _ in 0..128 {
         let nonce = ROOT_NONCE.fetch_add(1, Ordering::Relaxed);
@@ -453,6 +487,27 @@ fn create_private_root(parent: &Path) -> Result<PathBuf, StagingError> {
     ))
 }
 
+#[cfg(windows)]
+fn create_private_root_verified(
+    parent: &Path,
+) -> Result<(PathBuf, windows_local_security::VerifiedDirectory), StagingError> {
+    let verified_parent =
+        windows_local_security::open_directory_path_without_reparse(parent).map_err(io_error)?;
+    for _ in 0..128 {
+        let nonce = ROOT_NONCE.fetch_add(1, Ordering::Relaxed);
+        let leaf = format!("litecowork-stage-{}-{nonce}", std::process::id());
+        match verified_parent.create_new_directory(Path::new(&leaf)) {
+            Ok(directory) => return Ok((parent.join(leaf), directory)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(io_error(error)),
+        }
+    }
+    Err(StagingError::Io(
+        "could not allocate staging root".to_owned(),
+    ))
+}
+
+#[cfg(not(windows))]
 fn create_private_dir(path: &Path) -> Result<(), StagingError> {
     create_dir_private(path).map_err(io_error)
 }
@@ -464,7 +519,7 @@ fn create_dir_private(path: &Path) -> std::io::Result<()> {
     builder.mode(0o700).create(path)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn create_dir_private(path: &Path) -> std::io::Result<()> {
     let _ = path;
     Err(std::io::Error::new(
@@ -473,6 +528,7 @@ fn create_dir_private(path: &Path) -> std::io::Result<()> {
     ))
 }
 
+#[cfg(unix)]
 fn create_dir_tree_private(root: &Path, parent: &Path) -> Result<(), StagingError> {
     let relative = parent
         .strip_prefix(root)
@@ -490,6 +546,9 @@ fn create_dir_tree_private(root: &Path, parent: &Path) -> Result<(), StagingErro
                 if metadata.file_type().is_symlink() || !metadata.is_dir() {
                     return Err(StagingError::InvalidParent);
                 }
+                #[cfg(windows)]
+                windows_local_security::secure_current_user_directory(&current)
+                    .map_err(io_error)?;
             }
             Err(error) => return Err(io_error(error)),
         }
@@ -497,12 +556,14 @@ fn create_dir_tree_private(root: &Path, parent: &Path) -> Result<(), StagingErro
     Ok(())
 }
 
+#[cfg(unix)]
 fn make_read_only(path: &Path) -> Result<(), StagingError> {
     let mut permissions = fs::metadata(path).map_err(io_error)?.permissions();
     permissions.set_readonly(true);
     fs::set_permissions(path, permissions).map_err(io_error)
 }
 
+#[cfg(unix)]
 fn make_tree_read_only(root: &Path) -> Result<(), StagingError> {
     let mut directories = Vec::new();
     collect_directories(root, &mut directories)?;
@@ -736,6 +797,76 @@ mod tests {
         let prepared_root = result.root.clone();
         result.cleanup().unwrap();
         assert!(!prepared_root.exists());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_staging_applies_owner_only_acl_and_separates_outputs() {
+        let temp = tempdir().unwrap();
+        let prepared = stage_inputs(
+            temp.path(),
+            "workspace-1",
+            &[input("docs/README.md", b"hello pinned world")],
+            limits(),
+        )
+        .unwrap();
+
+        assert_eq!(prepared.status, PreparationStatus::PreparedOnly);
+        assert_eq!(
+            fs::read(prepared.input_root.join("docs/README.md")).unwrap(),
+            b"hello pinned world"
+        );
+        assert!(prepared.output_root.is_dir());
+        assert!(
+            prepared
+                .input_root
+                .join("docs/README.md")
+                .metadata()
+                .unwrap()
+                .permissions()
+                .readonly()
+        );
+        let prepared_root = prepared.root.clone();
+        prepared.cleanup().unwrap();
+        assert!(!prepared_root.exists());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_staging_creates_multiple_files_relative_to_verified_input_root() {
+        let temp = tempdir().unwrap();
+        let first = input("docs/README.md", b"readme bytes");
+        let second_bytes = b"guide bytes";
+        let second = PinnedInput {
+            workspace_id: "workspace-1".to_owned(),
+            resource_id: "resource-2".to_owned(),
+            revision_id: "revision-4".to_owned(),
+            content_digest: digest(second_bytes),
+            relative_path: "docs/guide.md".to_owned(),
+            bytes: second_bytes,
+        };
+        let prepared = stage_inputs(temp.path(), "workspace-1", &[first, second], limits())
+            .expect("stage files sharing a nested parent");
+
+        assert_eq!(prepared.input_file_count, 2);
+        assert_eq!(
+            fs::read(prepared.input_root.join("docs/README.md")).unwrap(),
+            b"readme bytes"
+        );
+        assert_eq!(
+            fs::read(prepared.input_root.join("docs/guide.md")).unwrap(),
+            b"guide bytes"
+        );
+        assert!(
+            prepared
+                .input_root
+                .join("docs/README.md")
+                .metadata()
+                .unwrap()
+                .permissions()
+                .readonly()
+        );
+        prepared.cleanup().unwrap();
     }
 
     #[test]
@@ -1169,7 +1300,7 @@ mod tests {
         assert_eq!(mode & 0o022, 0, "cleanup must not grant group/world write");
     }
 
-    #[cfg(not(unix))]
+    #[cfg(all(not(unix), not(windows)))]
     #[test]
     fn non_unix_staging_fails_closed_until_private_acl_is_qualified() {
         let temp = tempdir().unwrap();

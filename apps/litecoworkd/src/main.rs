@@ -1,8 +1,10 @@
+mod agent_credentials_operator;
 mod agents;
 mod attempt_process_scope;
 mod local_filesystem;
 mod operator;
 mod runtime;
+mod workspace_root_cleanup_worker;
 // The evaluator is intentionally compiled but not wired until the atomic
 // CapabilityBroker admission transaction and audit persistence exist.
 #[allow(dead_code)]

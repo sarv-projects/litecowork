@@ -1,0 +1,38 @@
+.worker-performance {
+  grid-column: 1 / -1;
+  margin: 0.15rem 0 0.25rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border-subtle, #d8dce5);
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--surface-raised, #fff) 78%, var(--surface-muted, #f4f5f7));
+  color: var(--text-primary, #20242c);
+}
+.worker-performance__heading,
+.worker-performance__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.worker-performance__toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 0.75rem; border: 0; padding: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.worker-performance__toggle span:first-child { font-size: 0.85rem; font-weight: 650; }
+.worker-performance__toggle span:last-child { color: var(--text-secondary, #626a78); font-size: 0.73rem; }
+.worker-performance__heading h4 { margin: 0; font-size: 0.9rem; }
+.worker-performance__heading label { display: flex; align-items: center; gap: 0.5rem; color: var(--text-secondary, #626a78); font-size: 0.75rem; }
+.worker-performance__heading select { max-width: 12rem; min-height: 2rem; border: 1px solid var(--border-subtle, #d8dce5); border-radius: 0.5rem; padding: 0.25rem 0.5rem; background: var(--surface-raised, #fff); color: inherit; }
+.worker-performance__summary { margin-top: 0.7rem; color: var(--text-secondary, #626a78); font-size: 0.78rem; }
+.worker-performance__summary strong { color: var(--text-primary, #20242c); }
+.worker-performance__confidence { border-radius: 999px; padding: 0.2rem 0.55rem; background: var(--surface-muted, #f1f2f5); color: var(--text-secondary, #626a78); font-size: 0.7rem; font-weight: 650; }
+.worker-performance__confidence.is-high { background: color-mix(in srgb, #20805a 12%, transparent); color: #176543; }
+.worker-performance__confidence.is-medium { background: color-mix(in srgb, #a56a00 13%, transparent); color: #805400; }
+.worker-performance__note,.worker-performance__failures,.worker-performance__state { margin: 0.65rem 0 0; color: var(--text-secondary, #626a78); font-size: 0.75rem; line-height: 1.45; }
+.worker-performance__metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.65rem; margin: 0.8rem 0 0; }
+.worker-performance__metrics div { min-width: 0; }
+.worker-performance__metrics dt { color: var(--text-secondary, #626a78); font-size: 0.7rem; }
+.worker-performance__metrics dd { margin: 0.15rem 0 0; color: var(--text-primary, #20242c); font-size: 0.82rem; font-weight: 600; overflow-wrap: anywhere; }
+.worker-performance__state button { min-height: 2rem; margin-top: 0.4rem; }
+@media (max-width: 600px) {
+  .worker-performance__heading { align-items: flex-start; flex-direction: column; }
+  .worker-performance__heading label { width: 100%; justify-content: space-between; }
+  .worker-performance__heading select { flex: 1; }
+}

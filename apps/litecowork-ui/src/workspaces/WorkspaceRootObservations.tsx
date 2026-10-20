@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import "./workspace-root-observations.css";
 
 export type WorkspaceRootObservation = {
@@ -8,7 +8,7 @@ export type WorkspaceRootObservation = {
   modified_at: string | null;
   observed_at: string;
   freshness: "CURRENT" | "STALE" | "UNKNOWN";
-  resource_id: null;
+  resource_id: string | null;
 };
 
 export type WorkspaceRootObservationPage = {
@@ -56,16 +56,18 @@ export function isWorkspaceRootObservationPage(
       && (item.modified_at === null || typeof item.modified_at === "string")
       && typeof item.observed_at === "string"
       && ["CURRENT", "STALE", "UNKNOWN"].includes(item.freshness)
-      && item.resource_id === null);
+      && (item.resource_id === null || (typeof item.resource_id === "string" && item.resource_id.length > 0)));
 }
 
 export function WorkspaceRootObservations({
   root,
   loadPage,
+  openResource,
   scanUnsupported = false,
 }: {
   root: Root;
   loadPage: (request: WorkspaceRootObservationRequest) => Promise<unknown>;
+  openResource?: (resourceId: string, displayName: string, sizeBytes: number) => void;
   scanUnsupported?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -81,7 +83,7 @@ export function WorkspaceRootObservations({
   const epoch = useRef(0);
   const inFlight = useRef(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     epoch.current += 1;
     inFlight.current = false;
     setItems([]);
@@ -141,7 +143,7 @@ export function WorkspaceRootObservations({
     </button>
     {expanded && <div className="workspace-root-observations-content">
       <p className="workspace-root-observations-note">
-        Names and file metadata only. These are observations under this folder, not files added to the Library; no file content is read.
+        Names and file metadata only. A linked Resource may have no content revision yet; this scan does not read file contents.
       </p>
       {scanUnsupported && <p className="workspace-root-observations-paused" role="status">Metadata scanning is not available on this platform, so this observed-file list cannot be refreshed here.</p>}
       {root.status !== "ACTIVE" && <p className="workspace-root-observations-paused" role="status">This folder is paused. Resume it to refresh observed files.</p>}
@@ -175,7 +177,11 @@ export function WorkspaceRootObservations({
       {busy && items.length === 0 && <p role="status" aria-live="polite">Loading observed files…</p>}
       {busy && items.length > 0 && <p role="status" aria-live="polite">Refreshing observed files…</p>}
       {error && <p className="inline-error" role="alert">{error}</p>}
-      {loaded && !busy && !error && items.length === 0 && <p role="status">No matching metadata observations are currently available. Run Scan folder to refresh this list.</p>}
+      {loaded && !busy && !error && items.length === 0 && <p role="status">
+        {scanUnsupported
+          ? "No matching metadata observations are currently available. Metadata scanning is unsupported on this platform."
+          : "No matching metadata observations are currently available. Run Scan folder to refresh this list."}
+      </p>}
       {items.length > 0 && <ul className="workspace-root-observation-list">
         {items.map((item) => <li key={item.observation_id}>
           <span className="workspace-root-observation-file-icon" aria-hidden="true">▤</span>
@@ -184,6 +190,9 @@ export function WorkspaceRootObservations({
             {item.freshness === "CURRENT" ? "Present in the last complete scan" : item.freshness === "STALE" ? "Not seen on the last complete scan" : "Freshness unknown"}
           </span>
           <span className="workspace-root-observation-size">{formatBytes(item.size_bytes)}</span>
+          {item.resource_id && openResource && <button className="quiet-button" type="button" onClick={() => openResource(item.resource_id!, item.display_name, item.size_bytes)}>
+            Open Resource details
+          </button>}
         </li>)}
       </ul>}
       {nextCursor && <button className="quiet-button" type="button" disabled={busy} onClick={() => void requestPage(nextCursor, true)}>

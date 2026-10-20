@@ -1,13 +1,20 @@
-//! Core-internal Trust policy evaluation tests and implementation.
+//! Core-internal Trust policy evaluation and approval-request production.
 //!
-//! This module is deliberately not an Operator API. Evaluation does not dispatch
-//! providers, issue grants/secrets, persist an audit row, or create an independently
-//! reusable permit. It is a pure decision primitive only; the CapabilityBroker's
-//! atomic admission transaction and audit persistence are not implemented here.
+//! Policy evaluation is a pure decision primitive. The approval producer persists
+//! only an exact Task/Attempt-bound request through the transactional ApprovalStore;
+//! neither path dispatches providers, issues grants/SecretLeases, nor creates an
+//! independently reusable permit. CapabilityBroker admission remains fail-closed
+//! until its authorization/effect/audit transaction is implemented.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use storage_core::{
+    ApprovalActor, ApprovalRecord, ApprovalStore, EventDraft, RequestApprovalCommit, StoreError,
+};
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
+
+const APPROVAL_TTL_MINUTES: i64 = 15;
 
 macro_rules! id_type {
     ($name:ident) => {
@@ -31,9 +38,80 @@ id_type!(RuntimeId);
 id_type!(RuntimeIncarnationId);
 id_type!(InvocationId);
 id_type!(ActivationId);
-id_type!(CapabilityRef);
 id_type!(OperationId);
 id_type!(EffectId);
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub(crate) enum CapabilityIdentityKind {
+    PackageComponent,
+    McpSkill,
+}
+
+/// Canonical CapabilityRef value. Keeping the normalized source/version/digest
+/// identity typed here prevents an approval target from degrading to a display name
+/// or capability ID string.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CapabilityRef {
+    pub(crate) capability_id: String,
+    pub(crate) identity_kind: CapabilityIdentityKind,
+    pub(crate) source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) package_version: Option<String>,
+    pub(crate) digest: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) component: Option<String>,
+}
+
+impl From<&str> for CapabilityRef {
+    fn from(value: &str) -> Self {
+        // Compact test fixture constructor. Production callers supply all fields
+        // observed from the normalized provider/package identity.
+        Self {
+            capability_id: value.to_owned(),
+            identity_kind: CapabilityIdentityKind::PackageComponent,
+            source: "test:litespm".to_owned(),
+            package_version: Some("1.0.0".to_owned()),
+            digest: digest_bytes(b"test package digest"),
+            component: None,
+        }
+    }
+}
+
+impl CapabilityRef {
+    fn validate(&self) -> bool {
+        let valid_text = |value: &str, maximum: usize| {
+            !value.trim().is_empty()
+                && value.len() <= maximum
+                && !value.chars().any(char::is_control)
+        };
+        if !valid_text(&self.capability_id, 256)
+            || !valid_text(&self.source, 1024)
+            || !is_sha256_digest(&self.digest)
+        {
+            return false;
+        }
+        match self.identity_kind {
+            CapabilityIdentityKind::PackageComponent => {
+                self.package_version
+                    .as_deref()
+                    .is_some_and(|value| valid_text(value, 256))
+                    && self
+                        .component
+                        .as_deref()
+                        .is_none_or(|value| valid_text(value, 1024))
+            }
+            CapabilityIdentityKind::McpSkill => {
+                self.package_version.is_none()
+                    && self
+                        .component
+                        .as_deref()
+                        .is_some_and(|value| valid_text(value, 2048))
+            }
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
@@ -151,6 +229,7 @@ pub(crate) enum ReasonCode {
     OperationNotClassified,
     ExecutionMethodUnknown,
     SecretLeaseInvalid,
+    EffectRequiresAttemptScope,
     WorkspacePolicyDenied,
     ApprovalBindingMismatch,
     ApprovalDenied,
@@ -456,6 +535,14 @@ impl PolicyEngine {
                         result(DecisionKind::Deny, ReasonCode::ExecutionMethodNotAllowed),
                     );
                 }
+                if rule.disposition == OperationDisposition::RequireApproval
+                    && request.effect_id.is_none()
+                {
+                    return versioned(
+                        self.bundle.as_ref().expect("bundle verified above"),
+                        result(DecisionKind::Deny, ReasonCode::EffectRequired),
+                    );
+                }
                 if current.coworker_policy_requires_approval {
                     return versioned(
                         self.bundle.as_ref().expect("bundle verified above"),
@@ -499,6 +586,195 @@ struct ActionDigestInput {
     target_digest: String,
     execution_method: ExecutionMethod,
     effect_id: Option<EffectId>,
+}
+
+/// Approval binding is deliberately distinct from the invocation digest. It
+/// binds an exact Task/Attempt, requested operation, target digest and scope.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ApprovalActionDigestInput {
+    task_id: String,
+    attempt_id: Option<String>,
+    action: String,
+    target: serde_json::Value,
+    scope_digest: String,
+}
+
+fn approval_action_digest(request: &AuthorizationRequest) -> Option<String> {
+    let (task_id, attempt_id) = match &request.scope {
+        AuthorizationScope::TaskPlanning { task_id } => (task_id.clone(), None),
+        AuthorizationScope::AttemptExecution {
+            task_id,
+            attempt_id,
+        } => (task_id.clone(), Some(attempt_id.clone())),
+        AuthorizationScope::Conversation { .. } => return None,
+    };
+    let target = serde_json::json!({
+        "capability_ref": request.capability_ref,
+        "target_digest": request.target_digest,
+        "execution_method": request.execution_method,
+        "effect_id": request.effect_id,
+    });
+    let scope_digest = digest_serializable(&ScopeDigestInput {
+        workspace_id: request.workspace_id.clone(),
+        scope: request.scope.clone(),
+    });
+    Some(digest_serializable(&ApprovalActionDigestInput {
+        task_id,
+        attempt_id,
+        action: request.operation.0.clone(),
+        target,
+        scope_digest,
+    }))
+}
+
+/// Trusted Core metadata needed to produce a pending Approval after policy
+/// evaluation. IDs and event clock values are allocated by the caller's Core
+/// command boundary; all authorization-bearing fields are derived below.
+pub(crate) struct ApprovalRequestEnvelope {
+    pub(crate) approval_id: String,
+    pub(crate) request_id: String,
+    pub(crate) event_id: String,
+    pub(crate) hlc_timestamp: String,
+    pub(crate) correlation_id: String,
+    pub(crate) causation_id: Option<String>,
+    pub(crate) requested_at: String,
+}
+
+/// Persist an approval only when the canonical policy evaluator requires one.
+/// This producer records an auditable request; it does not issue authority,
+/// consume an Approval, create a grant/lease, or dispatch an Effect.
+pub(crate) fn request_approval(
+    store: &impl ApprovalStore,
+    policy: &PolicyEngine,
+    request: &AuthorizationRequest,
+    current: &StoredEvaluationContext,
+    envelope: ApprovalRequestEnvelope,
+) -> Result<storage_core::CommittedApproval, StoreError> {
+    let evaluation = policy.evaluate(request, current);
+    if evaluation.decision() != DecisionKind::RequireApproval
+        || !matches!(
+            evaluation.reason_code(),
+            ReasonCode::ApprovalRequired | ReasonCode::ApprovalRequiredByPinnedPolicy
+        )
+    {
+        return Err(StoreError::Invalid(
+            "Trust policy did not require a new Approval for this exact request".to_owned(),
+        ));
+    }
+    let (task_id, attempt_id) = match &request.scope {
+        AuthorizationScope::TaskPlanning { task_id } => (task_id.clone(), None),
+        AuthorizationScope::AttemptExecution {
+            task_id,
+            attempt_id,
+        } => (task_id.clone(), Some(attempt_id.clone())),
+        AuthorizationScope::Conversation { .. } => {
+            return Err(StoreError::Invalid(
+                "Approvals require a Task or Attempt scope".to_owned(),
+            ));
+        }
+    };
+    if current.approval_status.is_some()
+        || current.workspace_owner.kind != PrincipalKind::User
+        || request.principal.kind != PrincipalKind::Agent
+        || request.workspace_id != current.workspace_id
+        || request.principal != current.principal
+    {
+        return Err(StoreError::Invalid(
+            "Approval request actor, owner, scope, or existing decision is invalid".to_owned(),
+        ));
+    }
+    let action_digest = approval_action_digest(request).ok_or_else(|| {
+        StoreError::Invalid("Approval action cannot be bound to a Conversation".to_owned())
+    })?;
+    let target_ref = serde_json::json!({
+        "capability_ref": request.capability_ref,
+        "target_digest": request.target_digest,
+        "execution_method": request.execution_method,
+        "effect_id": request.effect_id,
+    });
+    let risk = if request.operation.0 == "workspace.resource.read" {
+        "SAFE"
+    } else {
+        // Unknown or external operations take the stronger supported assurance.
+        "SENSITIVE"
+    };
+    let required_assurance = if risk == "SAFE" {
+        "APPROVE_SAFE"
+    } else {
+        "APPROVE_SENSITIVE"
+    };
+    let recorded_at = canonical_trust_timestamp(&envelope.requested_at)?;
+    let expires_at = OffsetDateTime::parse(&recorded_at, &Rfc3339)
+        .map_err(|_| StoreError::Invalid("Approval request time is invalid".to_owned()))?
+        .checked_add(Duration::minutes(APPROVAL_TTL_MINUTES))
+        .ok_or_else(|| StoreError::Invalid("Approval expiry is out of range".to_owned()))?
+        .format(&Rfc3339)
+        .map_err(|_| StoreError::Invalid("Approval expiry is invalid".to_owned()))?;
+    let actor_kind = match request.principal.kind {
+        PrincipalKind::Agent => "AGENT",
+        _ => unreachable!("request actor kind was validated above"),
+    };
+    let approval = ApprovalRecord {
+        approval_id: envelope.approval_id.clone(),
+        task_id: task_id.clone(),
+        requested_by_attempt: attempt_id,
+        kind: request.operation.0.clone(),
+        action_summary: format!("Approve operation {}", request.operation.0),
+        target_ref,
+        scope_digest: evaluation.scope_digest().to_owned(),
+        action_digest,
+        risk: risk.to_owned(),
+        required_assurance: required_assurance.to_owned(),
+        status: "PENDING".to_owned(),
+        requested_at: recorded_at.clone(),
+        expires_at: Some(expires_at),
+        resolved_by: None,
+        resolved_at: None,
+        version: 1,
+    };
+    let event = EventDraft {
+        event_id: envelope.event_id,
+        workspace_id: request.workspace_id.0.clone(),
+        entity_type: "approval".to_owned(),
+        entity_id: approval.approval_id.clone(),
+        origin_runtime_id: request.runtime_id.0.clone(),
+        entity_revision: 1,
+        hlc_timestamp: envelope.hlc_timestamp,
+        correlation_id: envelope.correlation_id,
+        causation_id: envelope.causation_id,
+        schema_version: 1,
+        event_type: "approval.requested.v1".to_owned(),
+        payload: serde_json::json!({
+            "approval_id": approval.approval_id,
+            "task_id": task_id,
+            "action_digest": approval.action_digest,
+            "required_assurance": required_assurance,
+            "from": request.principal.principal_id.0,
+            "to": current.workspace_owner.principal_id.0,
+        }),
+        recorded_at,
+    };
+    store.request_approval(RequestApprovalCommit {
+        workspace_id: request.workspace_id.0.clone(),
+        actor: ApprovalActor {
+            principal_id: request.principal.principal_id.0.clone(),
+            principal_kind: actor_kind.to_owned(),
+            owner_principal_id: current.workspace_owner.principal_id.0.clone(),
+            assurance_level: "VIEW_ONLY".to_owned(),
+        },
+        request_id: envelope.request_id,
+        approval,
+        event,
+    })
+}
+
+fn canonical_trust_timestamp(value: &str) -> Result<String, StoreError> {
+    let parsed = OffsetDateTime::parse(value, &Rfc3339)
+        .map_err(|_| StoreError::Invalid("Approval request time is invalid".to_owned()))?;
+    parsed
+        .format(&Rfc3339)
+        .map_err(|_| StoreError::Invalid("Approval request time is invalid".to_owned()))
 }
 
 impl From<&AuthorizationRequest> for ActionDigestInput {
@@ -795,6 +1071,9 @@ impl AuthorizationRequest {
         if self.capability_ref != current.capability_ref {
             return Err(ReasonCode::CapabilityMismatch);
         }
+        if !self.capability_ref.validate() {
+            return Err(ReasonCode::CapabilityMismatch);
+        }
         if current.grant_scope != current.scope
             || current.grant_capability_ref != self.capability_ref
             || !current.grant_allowed_operations.contains(&self.operation)
@@ -820,6 +1099,11 @@ impl AuthorizationRequest {
         }
         if self.effect_id != current.effect_id {
             return Err(ReasonCode::EffectMismatch);
+        }
+        if self.effect_id.is_some()
+            && !matches!(&self.scope, AuthorizationScope::AttemptExecution { .. })
+        {
+            return Err(ReasonCode::EffectRequiresAttemptScope);
         }
         if !is_sha256_digest(&self.request_digest)
             || self.request_digest != current.request_digest
@@ -864,7 +1148,7 @@ impl AuthorizationRequest {
                 .as_deref()
                 .is_none_or(|digest| {
                     !is_sha256_digest(digest)
-                        || digest != digest_serializable(&ActionDigestInput::from(self))
+                        || approval_action_digest(self).as_deref() != Some(digest)
                 })
         {
             return Err(ReasonCode::ApprovalBindingMismatch);
@@ -969,18 +1253,193 @@ fn digest_bytes(bytes: &[u8]) -> String {
 fn is_sha256_digest(value: &str) -> bool {
     value.len() == 71
         && value.starts_with("sha256:")
-        && value[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct CaptureApprovalStore(Mutex<Option<RequestApprovalCommit>>);
+
+    impl ApprovalStore for CaptureApprovalStore {
+        fn request_approval(
+            &self,
+            command: RequestApprovalCommit,
+        ) -> Result<storage_core::CommittedApproval, StoreError> {
+            *self.0.lock().expect("capture mutex") = Some(command);
+            Err(StoreError::Busy)
+        }
+
+        fn get_approval(
+            &self,
+            _owner_principal_id: &str,
+            _workspace_id: &str,
+            _approval_id: &str,
+        ) -> Result<Option<ApprovalRecord>, StoreError> {
+            Ok(None)
+        }
+
+        fn list_approvals_page(
+            &self,
+            _owner_principal_id: &str,
+            _request: storage_core::ApprovalPageRequest,
+        ) -> Result<storage_core::ApprovalPage, StoreError> {
+            Ok(storage_core::ApprovalPage {
+                items: Vec::new(),
+                next_cursor: None,
+            })
+        }
+
+        fn resolve_approval(
+            &self,
+            _command: storage_core::ResolveApprovalCommit,
+        ) -> Result<storage_core::CommittedApproval, StoreError> {
+            Err(StoreError::Busy)
+        }
+    }
 
     fn fixture() -> (PolicyEngine, AuthorizationRequest, StoredEvaluationContext) {
         let engine = PolicyEngine::core_v1();
         let context = StoredEvaluationContext::test_valid();
         let request = context.authorization_request();
         (engine, request, context)
+    }
+
+    fn task_attempt_fixture() -> (PolicyEngine, AuthorizationRequest, StoredEvaluationContext) {
+        let engine = PolicyEngine::core_v1();
+        let mut context = StoredEvaluationContext::test_valid();
+        context.scope = AuthorizationScope::AttemptExecution {
+            task_id: "task-1".into(),
+            attempt_id: "attempt-1".into(),
+        };
+        context.grant_scope = context.scope.clone();
+        context.task_spec_revision = Some(1);
+        context.task_spec_revision_digest = Some(digest_bytes(b"task spec revision"));
+        context.lease_epoch = Some(1);
+        context.effect_id = Some(EffectId::from("effect-1"));
+        context.effect_proposed = true;
+        context.operation = OperationId::from("external.message.send");
+        context
+            .grant_allowed_operations
+            .push(context.operation.clone());
+        let mut request = context.authorization_request();
+        request.request_digest = context.digest_for(&request);
+        context.request_digest = request.request_digest.clone();
+        (engine, request, context)
+    }
+
+    fn approval_envelope() -> ApprovalRequestEnvelope {
+        ApprovalRequestEnvelope {
+            approval_id: "approval-1".to_owned(),
+            request_id: "approval-request-1".to_owned(),
+            event_id: "approval-event-1".to_owned(),
+            hlc_timestamp: "2026-10-17T10:00:00Z".to_owned(),
+            correlation_id: "invocation-1".to_owned(),
+            causation_id: Some("invocation-1".to_owned()),
+            requested_at: "2026-10-17T10:00:00Z".to_owned(),
+        }
+    }
+
+    #[test]
+    fn request_approval_persists_exact_task_attempt_action_and_expiry() {
+        let (policy, request, mut current) = task_attempt_fixture();
+        current.principal.kind = PrincipalKind::Agent;
+        current.principal.principal_id = PrincipalId::from("agent-1");
+        let mut request = request;
+        request.principal = current.principal.clone();
+        request.request_digest = current.digest_for(&request);
+        current.request_digest = request.request_digest.clone();
+        let store = CaptureApprovalStore::default();
+
+        assert!(matches!(
+            request_approval(&store, &policy, &request, &current, approval_envelope()),
+            Err(StoreError::Busy)
+        ));
+        let commit = store.0.lock().expect("capture mutex").take().unwrap();
+        assert_eq!(commit.approval.task_id, "task-1");
+        assert_eq!(
+            commit.approval.requested_by_attempt.as_deref(),
+            Some("attempt-1")
+        );
+        assert_eq!(commit.approval.kind, "external.message.send");
+        assert_eq!(commit.approval.risk, "SENSITIVE");
+        assert_eq!(commit.approval.required_assurance, "APPROVE_SENSITIVE");
+        assert_eq!(commit.approval.status, "PENDING");
+        assert_eq!(commit.approval.version, 1);
+        assert_eq!(
+            commit.approval.action_digest,
+            approval_action_digest(&request).unwrap()
+        );
+        assert_eq!(
+            commit.approval.scope_digest,
+            policy.evaluate(&request, &current).scope_digest()
+        );
+        assert_eq!(
+            commit.approval.target_ref,
+            serde_json::json!({
+                "capability_ref": request.capability_ref,
+                "target_digest": request.target_digest,
+                "execution_method": request.execution_method,
+                "effect_id": request.effect_id,
+            })
+        );
+        assert_eq!(
+            commit.approval.target_ref["capability_ref"],
+            serde_json::to_value(&request.capability_ref).unwrap()
+        );
+        assert_eq!(
+            commit.approval.target_ref["capability_ref"]["identity_kind"],
+            "PACKAGE_COMPONENT"
+        );
+        assert!(commit.approval.target_ref["capability_ref"]["package_version"].is_string());
+        assert_eq!(commit.actor.principal_id, "agent-1");
+        assert_eq!(commit.actor.owner_principal_id, "principal-1");
+        assert_eq!(commit.event.event_type, "approval.requested.v1");
+        assert_eq!(commit.event.payload["from"], "agent-1");
+        assert_eq!(commit.event.payload["to"], "principal-1");
+        assert_eq!(commit.approval.requested_at, "2026-10-17T10:00:00Z");
+        assert_eq!(
+            commit.approval.expires_at.as_deref(),
+            Some("2026-10-17T10:15:00Z")
+        );
+    }
+
+    #[test]
+    fn capability_ref_requires_complete_canonical_identity_and_lowercase_digest() {
+        let mut ref_value = CapabilityRef::from("capability-1");
+        assert!(ref_value.validate());
+        ref_value.package_version = None;
+        assert!(!ref_value.validate());
+
+        let mut skill = CapabilityRef::from("skill-1");
+        skill.identity_kind = CapabilityIdentityKind::McpSkill;
+        skill.package_version = None;
+        skill.component = Some("https://mcp.example.test/skills/exact/SKILL.md".into());
+        assert!(skill.validate());
+        skill.package_version = Some("1.0.0".into());
+        assert!(!skill.validate());
+
+        let mut malformed_digest = CapabilityRef::from("capability-1");
+        malformed_digest.digest = format!("sha256:{}", "A".repeat(64));
+        assert!(!malformed_digest.validate());
+    }
+
+    #[test]
+    fn request_approval_refuses_policy_denial_without_storage_write() {
+        let (policy, request, mut current) = task_attempt_fixture();
+        current.scope_active = false;
+        let store = CaptureApprovalStore::default();
+
+        assert!(matches!(
+            request_approval(&store, &policy, &request, &current, approval_envelope()),
+            Err(StoreError::Invalid(_))
+        ));
+        assert!(store.0.lock().expect("capture mutex").is_none());
     }
 
     fn deny_for_context_mismatch(
@@ -1167,11 +1626,75 @@ mod tests {
     }
 
     #[test]
+    fn consequential_operation_without_a_proposed_effect_is_denied() {
+        let (engine, mut request, mut context) = fixture();
+        request.operation = OperationId::from("external.message.send");
+        context.operation = request.operation.clone();
+        context
+            .grant_allowed_operations
+            .push(request.operation.clone());
+        request.request_digest = context.digest_for(&request);
+        context.request_digest = request.request_digest.clone();
+
+        let result = engine.evaluate(&request, &context);
+        assert_eq!(result.decision(), DecisionKind::Deny);
+        assert_eq!(result.reason_code(), ReasonCode::EffectRequired);
+    }
+
+    #[test]
+    fn task_planning_scope_denies_consequential_operations_before_approval() {
+        let (engine, mut request, mut context) = task_attempt_fixture();
+        request.scope = AuthorizationScope::TaskPlanning {
+            task_id: "task-1".into(),
+        };
+        request.operation = OperationId::from("external.message.send");
+        request.effect_id = Some(EffectId::from("effect-planning-send"));
+        context.scope = request.scope.clone();
+        context.grant_scope = request.scope.clone();
+        context.operation = request.operation.clone();
+        context
+            .grant_allowed_operations
+            .push(request.operation.clone());
+        context.effect_id = request.effect_id.clone();
+        context.effect_proposed = true;
+        context.request_digest = context.digest_for(&request);
+        request.request_digest = context.request_digest.clone();
+
+        let decision = engine.evaluate(&request, &context);
+        assert_eq!(decision.decision(), DecisionKind::Deny);
+        assert_eq!(
+            decision.reason_code(),
+            ReasonCode::EffectRequiresAttemptScope
+        );
+    }
+
+    #[test]
+    fn conversation_scope_cannot_attach_an_effect() {
+        let (engine, mut request, mut context) = fixture();
+        request.operation = OperationId::from("external.message.send");
+        request.effect_id = Some(EffectId::from("effect-conversation-send"));
+        context.operation = request.operation.clone();
+        context
+            .grant_allowed_operations
+            .push(request.operation.clone());
+        context.effect_id = request.effect_id.clone();
+        context.effect_proposed = true;
+        request.request_digest = context.digest_for(&request);
+        context.request_digest = request.request_digest.clone();
+
+        let decision = engine.evaluate(&request, &context);
+        assert_eq!(decision.decision(), DecisionKind::Deny);
+        assert_eq!(
+            decision.reason_code(),
+            ReasonCode::EffectRequiresAttemptScope
+        );
+    }
+
+    #[test]
     fn denied_approval_for_the_exact_action_is_not_treated_as_a_read_allow() {
-        let (engine, request, mut context) = fixture();
+        let (engine, request, mut context) = task_attempt_fixture();
         context.approval_status = Some(ApprovalStatus::Denied);
-        context.approval_action_digest =
-            Some(digest_serializable(&ActionDigestInput::from(&request)));
+        context.approval_action_digest = approval_action_digest(&request);
 
         let result = engine.evaluate(&request, &context);
         assert_eq!(result.decision(), DecisionKind::Deny);
@@ -1180,8 +1703,8 @@ mod tests {
 
     #[test]
     fn expired_or_revoked_approval_for_the_exact_action_is_denied() {
-        let (engine, request, context) = fixture();
-        let approval_action_digest = Some(digest_serializable(&ActionDigestInput::from(&request)));
+        let (engine, request, context) = task_attempt_fixture();
+        let approval_action_digest = approval_action_digest(&request);
 
         for status in [ApprovalStatus::Expired, ApprovalStatus::Revoked] {
             let mut context = context.clone();
@@ -1196,10 +1719,9 @@ mod tests {
 
     #[test]
     fn pending_approval_for_the_exact_action_does_not_become_a_read_allow() {
-        let (engine, request, mut context) = fixture();
+        let (engine, request, mut context) = task_attempt_fixture();
         context.approval_status = Some(ApprovalStatus::Pending);
-        context.approval_action_digest =
-            Some(digest_serializable(&ActionDigestInput::from(&request)));
+        context.approval_action_digest = approval_action_digest(&request);
 
         let result = engine.evaluate(&request, &context);
         assert_eq!(result.decision(), DecisionKind::RequireApproval);
@@ -1208,17 +1730,69 @@ mod tests {
 
     #[test]
     fn cancelled_approval_for_the_exact_action_is_denied() {
-        let (engine, request, mut context) = fixture();
+        let (engine, request, mut context) = task_attempt_fixture();
         context.approval_status = Some(
             serde_json::from_value::<ApprovalStatus>(serde_json::json!("CANCELLED"))
                 .expect("stored CANCELLED approval state must be representable"),
         );
-        context.approval_action_digest =
-            Some(digest_serializable(&ActionDigestInput::from(&request)));
+        context.approval_action_digest = approval_action_digest(&request);
 
         let result = engine.evaluate(&request, &context);
         assert_eq!(result.decision(), DecisionKind::Deny);
         assert_eq!(result.reason_code(), ReasonCode::ApprovalDenied);
+    }
+
+    #[test]
+    fn task_attempt_approval_binds_exact_action_target_and_scope() {
+        let (engine, request, mut context) = task_attempt_fixture();
+        context.approval_status = Some(ApprovalStatus::Approved);
+        let expected =
+            approval_action_digest(&request).expect("Task Attempt has an approval binding");
+        context.approval_action_digest = Some(expected.clone());
+        let accepted = engine.evaluate(&request, &context);
+        assert_eq!(accepted.decision(), DecisionKind::RequireApproval);
+        assert_ne!(accepted.reason_code(), ReasonCode::ApprovalBindingMismatch);
+
+        let mut changed_action = request.clone();
+        changed_action.operation = OperationId::from("external.message.delete");
+        context.operation = changed_action.operation.clone();
+        context
+            .grant_allowed_operations
+            .push(changed_action.operation.clone());
+        changed_action.request_digest = context.digest_for(&changed_action);
+        context.request_digest = changed_action.request_digest.clone();
+        let rejected = engine.evaluate(&changed_action, &context);
+        assert_eq!(rejected.reason_code(), ReasonCode::ApprovalBindingMismatch);
+
+        let (engine, request, mut context) = task_attempt_fixture();
+        context.approval_status = Some(ApprovalStatus::Approved);
+        context.approval_action_digest = approval_action_digest(&request);
+        let mut changed_target = request.clone();
+        changed_target.target_digest = digest_bytes(b"different target revision");
+        context.target_digest = changed_target.target_digest.clone();
+        changed_target.request_digest = context.digest_for(&changed_target);
+        context.request_digest = changed_target.request_digest.clone();
+        assert_eq!(
+            engine.evaluate(&changed_target, &context).reason_code(),
+            ReasonCode::ApprovalBindingMismatch
+        );
+
+        let (engine, request, mut context) = task_attempt_fixture();
+        context.approval_status = Some(ApprovalStatus::Approved);
+        context.approval_action_digest = approval_action_digest(&request);
+        let mut changed_scope = request.clone();
+        changed_scope.scope = AuthorizationScope::AttemptExecution {
+            task_id: "task-2".into(),
+            attempt_id: "attempt-2".into(),
+        };
+        context.scope = changed_scope.scope.clone();
+        context.grant_scope = context.scope.clone();
+        changed_scope.request_digest = context.digest_for(&changed_scope);
+        context.request_digest = changed_scope.request_digest.clone();
+        assert_eq!(
+            engine.evaluate(&changed_scope, &context).reason_code(),
+            ReasonCode::ApprovalBindingMismatch
+        );
     }
 
     #[test]

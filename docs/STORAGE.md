@@ -422,6 +422,7 @@ attempts
 
 delegation_profiles
 delegation_profile_revisions
+delegation_results
 coworkers
 coworker_revisions
 goals
@@ -631,6 +632,16 @@ persists the last committed event sequence for each `(workspace_id, origin_runti
 it advances in the same transaction as the event and aggregate projection, so archival
 cannot cause sequence reuse. Neither table is a replicated Workspace aggregate.
 
+The metadata WorkspaceRoot scan uses that same IMMEDIATE receipt transaction to create or
+reuse FILE Resources by Workspace-scoped keyed identity, upsert path-specific
+`resource_locations`, and replace current Runtime-incarnation `resource_location_bindings`
+and `file_identity_bindings`. The derived observation row receives the resolved canonical
+Resource ID before its scan receipt commits. METADATA mode reads no file contents and creates
+no ResourceRevision; absence from a COMPLETE traversal only marks unseen observations STALE
+and never tombstones Resources. Exact scan receipt replay does not duplicate Resource events
+or bindings. Raw filesystem IDs and relative locators stay in local bindings and are excluded
+from event payloads and Operator responses.
+
 ## Required constraints/indexes
 
 ```text
@@ -652,6 +663,7 @@ UNIQUE replication_receipts(workspace_id, receiver_runtime_id, origin_runtime_id
 UNIQUE automation_revisions(automation_id, revision)
 UNIQUE routine_revisions(routine_id, revision)
 UNIQUE delegation_profile_revisions(delegation_profile_id, revision)
+UNIQUE delegation_results(child_attempt_id)
 UNIQUE non-archived delegation profile name_key(workspace_id, agent_binding_id)
 UNIQUE coworker_revisions(coworker_id, revision)
 UNIQUE goal_revisions(goal_id, revision)
@@ -660,6 +672,19 @@ UNIQUE goal_artifact_links(goal_id, revision, artifact_id, artifact_version)
 UNIQUE goal_routine_links(goal_id, revision, routine_id, routine_revision)
 UNIQUE automation_occurrences(automation_id, trigger_id, occurrence_key)
 `automation_occurrences.version` starts at 1 and advances exactly once per persisted transition; event/snapshot `entity_revision` equals `version`. `claim_epoch` is an independent worker fence and advances only on claim/reclaim.
+
+`delegation_results` is an immutable one-to-one result aggregate for a terminal child
+Attempt. Its bounded canonical ResultEnvelope JSON and digest are committed with
+`delegation.result.published.v1`; the event references the `DELEGATION_RESULT` snapshot
+and contains only child/Task identity, terminal status, pinned starting revision, digest,
+and aggregate version. The Runtime producer must authenticate the exact child
+AgentSession/Runtime incarnation, and the writer rechecks its Task, Workspace, terminal
+Attempt state, and TaskSpec revision in the same transaction. Publishing an identical
+digest for the same child Attempt returns the original committed result/event; a changed
+digest or authenticated publisher session/runtime/incarnation conflicts. The exact
+publisher tuple is retained in the immutable row and foreign-key bound to that child
+Attempt's AgentSession. Parent integration, verification, and parent Step settlement are
+separate transitions and cannot be inferred from publication.
 UNIQUE INDEX uq_suggestions_open_dedupe(workspace_id, dedupe_key) WHERE status = 'PROPOSED'
 INDEX suggestions(workspace_id, dedupe_key, resolved_at DESC) WHERE status = 'DISMISSED' # 30-day exact-key cooldown lookup
 PRIMARY KEY automation_cursors(automation_id, trigger_id)
@@ -1025,7 +1050,7 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   recorded migration name/source checksum and compares the active schema version's
   fingerprint with the current non-internal `sqlite_master` objects; historical
   fingerprints are retained because later migrations intentionally add schema objects.
-  The current schema version is 19, so the v19 fingerprint is checked against the full
+  The current schema version is 25, so the v25 fingerprint is checked against the full
   current schema. Missing migration records, changed source checksums, or changed current
   schema fail closed.
 - a clean install applies migration 1, writes its migration row, and advances
@@ -1034,6 +1059,10 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
 - opening a database with a newer `user_version`, an unversioned non-empty schema, a
   missing migration record, or a checksum mismatch fails closed for explicit recovery.
 - migrations are forward-only in production; rollback is restore/forward-fix.
+- migration 25 makes ResourceEdge provenance records append-only. Its update/delete
+  triggers preserve structural history when an owning Resource later becomes unavailable;
+  resource creation and its edge/event publication are committed in one ResourceStore
+  transaction with the RequestId receipt.
 - runtime refuses to open a database newer than its supported schema major.
 - managed rolling upgrades use expand/migrate/contract pattern.
 - migration 7 adds revision-scoped `resource_text_indexes` and keyed-token projection rows;
@@ -1109,6 +1138,12 @@ Artifact reference becomes visible. Expired temporary chunks are garbage-collect
   size-mismatched, and `DELETING` snapshots; pre-v19 objects without a surviving index
   reference remain undiscoverable. Reopening verifies the v19 migration source checksum and
   compares its stored schema fingerprint with the full current schema.
+- migration 24 adds the immutable, one-per-terminal-child-Attempt ResultEnvelope aggregate
+  and binds its exact publisher AgentSession/Runtime incarnation. Publication stores the
+  canonical bounded envelope, its digest, and `delegation.result.published.v1` atomically;
+  identical exact publisher/content replay returns the original result, while changed
+  content or publisher identity conflicts. Parent Step integration and verification remain
+  distinct transitions.
 
 ### Routine and trigger Workspace integrity
 

@@ -1,7 +1,9 @@
 //! Core persistence port for immutable, revision-pinned VerificationRuns.
 
 use crate::{DomainEvent, StoreError};
-use domain_effects::{VerificationFailureCode, VerificationRunRecord, VerificationRunStatus};
+use domain_effects::{
+    EvidenceRecord, VerificationFailureCode, VerificationRunRecord, VerificationRunStatus,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -43,6 +45,10 @@ pub struct SettleVerificationRunCommit {
     pub expected_version: u64,
     pub next_status: VerificationRunStatus,
     pub evidence_refs: Vec<String>,
+    /// Immutable Evidence emitted by the authenticated verifier in the same
+    /// transaction that settles a passing run. For FAILED/INCONCLUSIVE results
+    /// this must be empty. The store assigns the exact run binding and timestamp.
+    pub verified_evidence: Vec<EvidenceRecord>,
     /// Bounded, typed failure code only. Raw verifier diagnostics are never stored
     /// in events or the shared run projection.
     pub failure_code: Option<VerificationFailureCode>,

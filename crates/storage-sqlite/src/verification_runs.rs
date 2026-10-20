@@ -1,15 +1,13 @@
 //! Durable, revision-pinned VerificationRun transitions.
 //!
-//! This module does not execute verification and cannot mark Evidence VERIFIED by
-//! accepting verifier-supplied JSON. A future authenticated Core service must supply
-//! verifier identity; SQLite binds that declared identity to each run and rechecks
-//! TaskSpec/input heads on writes. PASSED remains rejected until same-run Evidence
-//! provenance is enforceable at this boundary.
+//! This module does not execute verification. It accepts a result only from the
+//! authenticated verifier identity pinned on the run, and commits VERIFIED Evidence
+//! with its exact run binding in the same transaction as a passing result.
 
 use super::*;
 use domain_effects::{
-    VerificationFailureCode, VerificationInput, VerificationResourceRef, VerificationRunRecord,
-    VerificationRunStatus,
+    EvidenceLevel, EvidenceRecord, VerificationFailureCode, VerificationInput,
+    VerificationResourceRef, VerificationRunRecord, VerificationRunStatus,
 };
 use serde::Serialize;
 use storage_core::{
@@ -84,7 +82,17 @@ impl VerificationRunStore for SqliteWorkspaceStore {
         validate_actor(&command.workspace_id, &command.actor, &command.request_id)?;
         if command.expected_version == 0
             || !command.next_status.terminal()
-            || command.next_status == VerificationRunStatus::Passed
+            || (command.next_status == VerificationRunStatus::Passed
+                && (command.verified_evidence.is_empty()
+                    || command.evidence_refs
+                        != command
+                            .verified_evidence
+                            .iter()
+                            .map(|evidence| evidence.evidence_id.clone())
+                            .collect::<Vec<_>>()
+                    || command.failure_code.is_some()))
+            || (command.next_status != VerificationRunStatus::Passed
+                && (!command.verified_evidence.is_empty() || !command.evidence_refs.is_empty()))
             || (matches!(
                 command.next_status,
                 VerificationRunStatus::Failed | VerificationRunStatus::Inconclusive
@@ -93,6 +101,19 @@ impl VerificationRunStore for SqliteWorkspaceStore {
             return Err(StoreError::Invalid(
                 "VerificationRun settlement is invalid or lacks a typed outcome".into(),
             ));
+        }
+        for evidence in &mut command.verified_evidence {
+            if evidence
+                .verification_run_id
+                .as_deref()
+                .is_some_and(|run_id| run_id != command.verification_run_id)
+            {
+                return Err(StoreError::Invalid(
+                    "Verifier Evidence is already bound to a different run".into(),
+                ));
+            }
+            evidence.verification_run_id = Some(command.verification_run_id.clone());
+            evidence.created_at = command.event.recorded_at.clone();
         }
         let workspace = command.workspace_id.clone();
         let run_id = command.verification_run_id.clone();
@@ -108,6 +129,7 @@ impl VerificationRunStore for SqliteWorkspaceStore {
             "expected_version":expected_version,
             "status":command.next_status,
             "evidence_refs":command.evidence_refs,
+            "verified_evidence":command.verified_evidence,
             "failure_code":command.failure_code,
         }))?);
         let probe_workspace = workspace.clone();
@@ -154,6 +176,14 @@ impl VerificationRunStore for SqliteWorkspaceStore {
                 "only the verifier that started this run may settle it".into(),
             ));
         }
+        for evidence in &mut command.verified_evidence {
+            validate_verifier_evidence(&current, &command.actor.verifier_service_id, evidence)?;
+            evidence.created_at = command.event.recorded_at.clone();
+            evidence.verification_run_id = Some(current.verification_run_id.clone());
+            evidence
+                .validate()
+                .map_err(|_| StoreError::Invalid("Verifier Evidence record is invalid".into()))?;
+        }
         let settled = current
             .finish(
                 command.next_status,
@@ -169,8 +199,31 @@ impl VerificationRunStore for SqliteWorkspaceStore {
             "application/vnd.litecowork.verification-run+json",
             settled.version,
         )?;
+        let prepared_evidence = command
+            .verified_evidence
+            .iter()
+            .map(|evidence| {
+                let state_ref = put_state(
+                    self,
+                    &command.workspace_id,
+                    evidence,
+                    "application/vnd.litecow.evidence+json",
+                    1,
+                )?;
+                let context =
+                    verification_evidence_event(&command.workspace_id, evidence, &command.event);
+                Ok((evidence.clone(), state_ref, context))
+            })
+            .collect::<Result<Vec<_>, StoreError>>()?;
         self.run_verification(move |connection| {
-            settle_transaction(connection, command, current, settled, state_ref)
+            settle_transaction(
+                connection,
+                command,
+                current,
+                settled,
+                state_ref,
+                prepared_evidence,
+            )
         })
     }
 
@@ -353,6 +406,7 @@ fn settle_transaction(
     current: VerificationRunRecord,
     settled: VerificationRunRecord,
     state_ref: AggregateStateRef,
+    prepared_evidence: Vec<(EvidenceRecord, AggregateStateRef, EventDraft)>,
 ) -> Result<CommittedVerificationRun, StoreError> {
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -379,6 +433,7 @@ fn settle_transaction(
         "expected_version":command.expected_version,
         "status":command.next_status,
         "evidence_refs":command.evidence_refs,
+        "verified_evidence":command.verified_evidence,
         "failure_code":command.failure_code,
     }))?);
     if let Some(prior) =
@@ -408,6 +463,40 @@ fn settle_transaction(
         &persisted,
         command.failure_code == Some(VerificationFailureCode::TaskCancelled),
     )?;
+    if command.next_status == VerificationRunStatus::Passed {
+        let mut expected = command.evidence_refs.clone();
+        expected.sort();
+        let mut attached = tx
+            .prepare(
+                "SELECT evidence_id FROM evidence WHERE task_id=?1 AND verification_run_id=?2 ORDER BY evidence_id",
+            )
+            .map_err(map_database_error)?
+            .query_map(
+                params![current.task_id, current.verification_run_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(map_database_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_database_error)?;
+        for (evidence, state_ref, event) in &prepared_evidence {
+            if attached.contains(&evidence.evidence_id)
+                || !command.evidence_refs.contains(&evidence.evidence_id)
+            {
+                return Err(StoreError::Invalid(
+                    "VerificationRun Evidence identity is duplicated or unlisted".into(),
+                ));
+            }
+            insert_verification_evidence(&tx, evidence, state_ref, event)?;
+            attached.push(evidence.evidence_id.clone());
+            attached.sort();
+        }
+        attached.sort();
+        if attached != expected {
+            return Err(StoreError::Invalid(
+                "VerificationRun must list exactly its bound VERIFIED Evidence".into(),
+            ));
+        }
+    }
     tx.execute(
         "UPDATE verification_runs SET status=?1,evidence_refs_json=?2,completed_at=?3,version=?4,failure_code=?5 WHERE verification_run_id=?6 AND status='RUNNING' AND version=?7",
         params![
@@ -445,6 +534,122 @@ fn settle_transaction(
     )?;
     tx.commit().map_err(map_database_error)?;
     Ok(result)
+}
+
+fn validate_verifier_evidence(
+    run: &VerificationRunRecord,
+    verifier_service_id: &str,
+    evidence: &EvidenceRecord,
+) -> Result<(), StoreError> {
+    evidence
+        .validate()
+        .map_err(|_| StoreError::Invalid("Verifier Evidence record is invalid".into()))?;
+    let producer_matches = evidence.producer.as_object().is_some_and(|producer| {
+        producer.len() == 1
+            && producer.get("service_id").and_then(Value::as_str) == Some(verifier_service_id)
+    });
+    let subject_matches = if run.subject_refs.is_empty() {
+        evidence.subject_ref == format!("task:{}", run.task_id)
+    } else {
+        run.subject_refs
+            .iter()
+            .any(|subject| evidence.subject_ref == verification_resource_uri(subject))
+    };
+    let payload_ref_matches = evidence.payload_ref.as_ref().is_none_or(|payload_ref| {
+        run.subject_refs
+            .iter()
+            .chain(run.inputs.iter().map(|input| &input.resource_ref))
+            .any(|reference| {
+                payload_ref.get("workspace_id").and_then(Value::as_str)
+                    == Some(reference.workspace_id.as_str())
+                    && payload_ref.get("resource_id").and_then(Value::as_str)
+                        == Some(reference.resource_id.as_str())
+                    && payload_ref.get("revision_id").and_then(Value::as_str)
+                        == Some(reference.revision_id.as_str())
+            })
+    });
+    if evidence.level != EvidenceLevel::Verified
+        || evidence.task_id != run.task_id
+        || !producer_matches
+        || !subject_matches
+        || !payload_ref_matches
+        || evidence
+            .verification_run_id
+            .as_deref()
+            .is_some_and(|run_id| run_id != run.verification_run_id)
+    {
+        return Err(StoreError::Invalid(
+            "Verifier Evidence must match the authenticated verifier, exact Task, subject, and run"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn verification_resource_uri(reference: &VerificationResourceRef) -> String {
+    format!(
+        "resource://{}/{}@{}",
+        reference.workspace_id, reference.resource_id, reference.revision_id
+    )
+}
+
+fn verification_evidence_event(
+    workspace_id: &str,
+    evidence: &EvidenceRecord,
+    context: &VerificationRunEventContext,
+) -> EventDraft {
+    let digest_suffix =
+        digest(format!("{}\0{}", context.event_id, evidence.evidence_id).as_bytes());
+    EventDraft {
+        event_id: format!("event-verification-evidence-{}", &digest_suffix[7..]),
+        workspace_id: workspace_id.to_owned(),
+        entity_type: "Evidence".into(),
+        entity_id: evidence.evidence_id.clone(),
+        origin_runtime_id: context.origin_runtime_id.clone(),
+        entity_revision: 1,
+        hlc_timestamp: context.hlc_timestamp.clone(),
+        correlation_id: context.correlation_id.clone(),
+        causation_id: Some(context.event_id.clone()),
+        schema_version: 1,
+        event_type: "evidence.created.v1".into(),
+        payload: json!({
+            "evidence_id": evidence.evidence_id,
+            "task_id": evidence.task_id,
+            "subject_ref": evidence.subject_ref,
+            "level": evidence.level.as_str(),
+            "kind": evidence.kind,
+            "producer": evidence.producer,
+            "payload_digest": evidence.payload_digest,
+        }),
+        recorded_at: context.recorded_at.clone(),
+    }
+}
+
+fn insert_verification_evidence(
+    tx: &Transaction<'_>,
+    evidence: &EvidenceRecord,
+    state_ref: &AggregateStateRef,
+    event: &EventDraft,
+) -> Result<(), StoreError> {
+    let producer = encode(&evidence.producer)?;
+    let payload_ref = evidence.payload_ref.as_ref().map(encode).transpose()?;
+    tx.execute(
+        "INSERT INTO evidence(evidence_id,task_id,subject_ref,level,kind,producer_json,payload_ref_json,payload_digest,created_at,verification_run_id) VALUES (?1,?2,?3,'VERIFIED',?4,?5,?6,?7,?8,?9)",
+        params![
+            evidence.evidence_id,
+            evidence.task_id,
+            evidence.subject_ref,
+            evidence.kind,
+            producer,
+            payload_ref,
+            evidence.payload_digest,
+            event.recorded_at,
+            evidence.verification_run_id,
+        ],
+    )
+    .map_err(map_database_error)?;
+    insert_domain_event(tx, event, state_ref)?;
+    Ok(())
 }
 
 fn check_task_criterion_and_inputs(
@@ -492,9 +697,68 @@ fn check_task_criterion_and_inputs(
         }
     }
     for subject in &run.subject_refs {
-        validate_resource_ref(tx, workspace, subject)?;
+        if cancelled {
+            // A cancelled run may close against the immutable revision it
+            // originally observed, even after the current head has moved.
+            validate_resource_ref(tx, workspace, subject)?;
+        } else {
+            validate_subject_head(tx, workspace, subject)?;
+        }
     }
     Ok(())
+}
+
+fn validate_subject_head(
+    tx: &Transaction<'_>,
+    workspace: &str,
+    subject: &VerificationResourceRef,
+) -> Result<(), StoreError> {
+    if subject.workspace_id != workspace {
+        return Err(StoreError::Invalid(
+            "cross-Workspace verifier subjects are unsupported".into(),
+        ));
+    }
+    let is_current_head: bool = tx
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1
+                FROM resources resource
+                JOIN resource_revisions revision
+                  ON revision.resource_id=resource.resource_id
+                 AND revision.resource_revision_id=?3
+                WHERE resource.workspace_id=?1
+                  AND resource.resource_id=?2
+                  AND resource.current_revision_id=revision.resource_revision_id
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM resource_revision_parents child
+                    WHERE child.resource_id=revision.resource_id
+                      AND child.parent_revision_id=revision.resource_revision_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM resource_revisions other_head
+                    WHERE other_head.resource_id=resource.resource_id
+                      AND other_head.resource_revision_id<>revision.resource_revision_id
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM resource_revision_parents child
+                        WHERE child.resource_id=other_head.resource_id
+                          AND child.parent_revision_id=other_head.resource_revision_id
+                      )
+                  )
+            )",
+            params![workspace, subject.resource_id, subject.revision_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if is_current_head {
+        Ok(())
+    } else {
+        Err(StoreError::Invalid(
+            "VerificationRun subject is stale, conflicted, or unavailable".into(),
+        ))
+    }
 }
 
 fn validate_input_head(
@@ -507,8 +771,9 @@ fn validate_input_head(
             "cross-Workspace verifier inputs are unsupported".into(),
         ));
     }
-    let observed: Option<Option<String>> = tx.query_row(
-        "SELECT revision.content_digest
+    let observed: Option<Option<String>> = tx
+        .query_row(
+            "SELECT revision.content_digest
          FROM resources resource
          JOIN resource_revisions revision
            ON revision.resource_id=resource.resource_id
@@ -534,9 +799,15 @@ fn validate_input_head(
                    AND child.parent_revision_id=other_head.resource_revision_id
                )
            )",
-        params![workspace, input.resource_ref.resource_id, input.resource_ref.revision_id],
-        |row| row.get(0),
-    ).optional().map_err(map_database_error)?;
+            params![
+                workspace,
+                input.resource_ref.resource_id,
+                input.resource_ref.revision_id
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
     let Some(provider_digest) = observed else {
         return Err(StoreError::Invalid(
             "VerificationRun input is stale or unavailable".into(),
@@ -619,14 +890,19 @@ fn insert_dependency_edges(
     run: &VerificationRunRecord,
     at: &str,
 ) -> Result<(), StoreError> {
-    for input in &run.inputs {
+    let dependencies = run
+        .inputs
+        .iter()
+        .map(|input| &input.resource_ref)
+        .chain(run.subject_refs.iter());
+    for reference in dependencies {
         let edge_id = format!(
             "verification:{}:{}:{}",
-            run.verification_run_id, input.resource_ref.resource_id, input.resource_ref.revision_id
+            run.verification_run_id, reference.resource_id, reference.revision_id
         );
         tx.execute(
-            "INSERT INTO dependency_edges(dependency_edge_id,workspace_id,source_resource_id,source_revision_id,dependent_kind,dependent_ref,artifact_id,artifact_version,verification_run_id,created_at) VALUES (?1,?2,?3,?4,'VERIFICATION_RUN','verification://' || ?5,NULL,NULL,?5,?6)",
-            params![edge_id, workspace, input.resource_ref.resource_id, input.resource_ref.revision_id, run.verification_run_id, at],
+            "INSERT INTO dependency_edges(dependency_edge_id,workspace_id,source_resource_id,source_revision_id,dependent_kind,dependent_ref,artifact_id,artifact_version,verification_run_id,created_at) VALUES (?1,?2,?3,?4,'VERIFICATION_RUN','verification://' || ?5,NULL,NULL,?5,?6) ON CONFLICT(dependency_edge_id) DO NOTHING",
+            params![edge_id, workspace, reference.resource_id, reference.revision_id, run.verification_run_id, at],
         ).map_err(map_database_error)?;
     }
     Ok(())
@@ -1031,6 +1307,344 @@ mod tests {
     }
 
     #[test]
+    fn verifier_evidence_must_bind_to_the_exact_task_run_identity_and_subject() {
+        let subject = VerificationResourceRef {
+            workspace_id: "workspace-1".into(),
+            resource_id: "resource-1".into(),
+            revision_id: "revision-4".into(),
+        };
+        let mut run = running_run();
+        run.subject_refs = vec![subject];
+        let evidence = domain_effects::EvidenceRecord {
+            evidence_id: "evidence-1".into(),
+            task_id: run.task_id.clone(),
+            subject_ref: "resource://workspace-1/resource-1@revision-4".into(),
+            level: domain_effects::EvidenceLevel::Verified,
+            kind: "criterion-check".into(),
+            producer: json!({"service_id":"test-runner"}),
+            payload_ref: Some(json!({
+                "workspace_id":"workspace-1",
+                "resource_id":"resource-1",
+                "revision_id":"revision-4"
+            })),
+            payload_digest: Some(format!("sha256:{}", "b".repeat(64))),
+            verification_run_id: None,
+            created_at: "2026-10-16T11:00:01Z".into(),
+        };
+
+        assert!(validate_verifier_evidence(&run, "test-runner", &evidence).is_ok());
+
+        let mut wrong_task = evidence.clone();
+        wrong_task.task_id = "another-task".into();
+        assert!(validate_verifier_evidence(&run, "test-runner", &wrong_task).is_err());
+
+        let mut wrong_verifier = evidence.clone();
+        wrong_verifier.producer = json!({"service_id":"another-verifier"});
+        assert!(validate_verifier_evidence(&run, "test-runner", &wrong_verifier).is_err());
+
+        let mut wrong_subject = evidence.clone();
+        wrong_subject.subject_ref = "resource://workspace-1/resource-1@other-revision".into();
+        assert!(validate_verifier_evidence(&run, "test-runner", &wrong_subject).is_err());
+
+        let mut wrong_run = evidence;
+        wrong_run.verification_run_id = Some("other-run".into());
+        assert!(validate_verifier_evidence(&run, "test-runner", &wrong_run).is_err());
+
+        let mut wrong_payload = wrong_task.clone();
+        wrong_payload.task_id = run.task_id.clone();
+        wrong_payload.payload_ref = Some(json!({
+            "workspace_id":"workspace-1",
+            "resource_id":"resource-1",
+            "revision_id":"stale-revision"
+        }));
+        assert!(validate_verifier_evidence(&run, "test-runner", &wrong_payload).is_err());
+    }
+
+    #[test]
+    fn passing_run_atomically_commits_verifier_evidence_and_both_events() {
+        let mut connection = verification_settlement_fixture();
+        let criterion = json!({"criterion_id":"criterion-1","description":"check"});
+        let mut run = running_run();
+        run.criterion_digest = digest(&canonical_json(&criterion).unwrap());
+        connection
+            .execute(
+                "UPDATE verification_runs SET criterion_digest=?1 WHERE verification_run_id='verify-1'",
+                [run.criterion_digest.as_str()],
+            )
+            .expect("pin exact criterion digest");
+        let evidence = verifier_evidence(&run);
+        let settled = run
+            .finish(
+                VerificationRunStatus::Passed,
+                vec![evidence.evidence_id.clone()],
+                None,
+                "2026-10-16T11:00:01Z".into(),
+            )
+            .expect("pass run with evidence");
+        let context = verification_event_context("completion-event");
+        let command = SettleVerificationRunCommit {
+            workspace_id: "workspace-1".into(),
+            actor: VerificationRunActor {
+                owner_principal_id: "owner-1".into(),
+                verifier_service_id: "test-runner".into(),
+            },
+            request_id: "settle-request-1".into(),
+            verification_run_id: run.verification_run_id.clone(),
+            expected_version: run.version,
+            next_status: VerificationRunStatus::Passed,
+            evidence_refs: vec![evidence.evidence_id.clone()],
+            verified_evidence: vec![evidence],
+            failure_code: None,
+            event: context,
+        };
+        let run_state_ref = test_state_ref("verification-run", settled.version);
+        let evidence_state_ref = test_state_ref("evidence", 1);
+        let evidence = command.verified_evidence[0].clone();
+        let evidence_event = verification_evidence_event(
+            "workspace-1",
+            &evidence,
+            &verification_event_context("completion-event"),
+        );
+
+        let prepared_evidence = vec![(evidence, evidence_state_ref, evidence_event)];
+        let result = settle_transaction(
+            &mut connection,
+            command.clone(),
+            run.clone(),
+            settled.clone(),
+            run_state_ref.clone(),
+            prepared_evidence.clone(),
+        )
+        .expect("settle verified run");
+
+        assert_eq!(result.run.status, VerificationRunStatus::Passed);
+        let stored: (String, String, String) = connection
+            .query_row(
+                "SELECT level,verification_run_id,producer_json FROM evidence WHERE evidence_id='evidence-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("read committed Evidence");
+        assert_eq!(stored.0, "VERIFIED");
+        assert_eq!(stored.1, "verify-1");
+        assert_eq!(
+            serde_json::from_str::<Value>(&stored.2).unwrap()["service_id"],
+            "test-runner"
+        );
+        let event_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM domain_events", [], |row| row.get(0))
+            .expect("count transaction events");
+        assert_eq!(event_count, 2);
+        let replay = settle_transaction(
+            &mut connection,
+            command,
+            run,
+            settled,
+            run_state_ref,
+            prepared_evidence,
+        )
+        .expect("replay lost settlement response");
+        assert!(replay.replayed);
+        let evidence_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM evidence", [], |row| row.get(0))
+            .expect("count bound Evidence after replay");
+        assert_eq!(evidence_count, 1);
+        let replay_event_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM domain_events", [], |row| row.get(0))
+            .expect("count events after replay");
+        assert_eq!(replay_event_count, 2);
+    }
+
+    #[test]
+    fn cancelled_run_closes_durably_without_verified_evidence() {
+        let mut connection = verification_settlement_fixture();
+        let criterion = json!({"criterion_id":"criterion-1","description":"check"});
+        let mut run = running_run();
+        run.criterion_digest = digest(&canonical_json(&criterion).unwrap());
+        connection
+            .execute(
+                "UPDATE verification_runs SET criterion_digest=?1 WHERE verification_run_id='verify-1'",
+                [run.criterion_digest.as_str()],
+            )
+            .expect("pin exact criterion digest");
+        connection
+            .execute(
+                "UPDATE tasks SET status='CANCEL_REQUESTED' WHERE task_id='task-1'",
+                [],
+            )
+            .expect("request Task cancellation");
+
+        let completed_at = "2026-10-16T11:00:01Z";
+        let settled = run
+            .finish(
+                VerificationRunStatus::Inconclusive,
+                vec![],
+                Some(VerificationFailureCode::TaskCancelled),
+                completed_at.into(),
+            )
+            .expect("close cancelled verifier run with typed outcome");
+        let command = SettleVerificationRunCommit {
+            workspace_id: "workspace-1".into(),
+            actor: VerificationRunActor {
+                owner_principal_id: "owner-1".into(),
+                verifier_service_id: "test-runner".into(),
+            },
+            request_id: "settle-cancelled-request".into(),
+            verification_run_id: run.verification_run_id.clone(),
+            expected_version: run.version,
+            next_status: VerificationRunStatus::Inconclusive,
+            evidence_refs: vec![],
+            verified_evidence: vec![],
+            failure_code: Some(VerificationFailureCode::TaskCancelled),
+            event: verification_event_context("cancelled-completion-event"),
+        };
+        let run_state_ref = test_state_ref("verification-run", settled.version);
+
+        let result = settle_transaction(
+            &mut connection,
+            command.clone(),
+            run.clone(),
+            settled.clone(),
+            run_state_ref.clone(),
+            vec![],
+        )
+        .expect("persist cancelled run closure");
+
+        assert_eq!(result.run.status, VerificationRunStatus::Inconclusive);
+        assert_eq!(
+            result.run.failure_code,
+            Some(VerificationFailureCode::TaskCancelled)
+        );
+        let persisted: (String, Option<String>, Option<String>, i64) = connection
+            .query_row(
+                "SELECT status,failure_code,completed_at,version FROM verification_runs WHERE verification_run_id='verify-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("read settled cancelled run");
+        assert_eq!(
+            persisted,
+            (
+                "INCONCLUSIVE".into(),
+                Some("TASK_CANCELLED".into()),
+                Some(completed_at.into()),
+                3,
+            )
+        );
+        let evidence_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM evidence", [], |row| row.get(0))
+            .expect("count verifier Evidence");
+        assert_eq!(
+            evidence_count, 0,
+            "cancellation cannot create VERIFIED Evidence"
+        );
+        let completion_events: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM domain_events WHERE event_id='cancelled-completion-event' AND type='verification.completed.v2'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count completion event");
+        assert_eq!(completion_events, 1);
+        let receipts: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM request_dedup WHERE principal_id=?1 AND request_id=?2",
+                params![
+                    runtime_principal("runtime-1", "incarnation-1"),
+                    "settle-cancelled-request"
+                ],
+                |row| row.get(0),
+            )
+            .expect("count cancellation receipt");
+        assert_eq!(receipts, 1);
+
+        let replay = settle_transaction(
+            &mut connection,
+            command,
+            run,
+            settled,
+            run_state_ref,
+            vec![],
+        )
+        .expect("replay lost cancellation response");
+        assert!(replay.replayed);
+        let event_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM domain_events", [], |row| row.get(0))
+            .expect("count events after replay");
+        assert_eq!(event_count, 1, "exact replay cannot append another event");
+    }
+
+    fn verification_settlement_fixture() -> Connection {
+        let connection = Connection::open_in_memory().expect("in-memory verification DB");
+        connection
+            .execute_batch(
+                "CREATE TABLE workspaces(workspace_id TEXT, owner_principal_id TEXT, status TEXT);
+                 CREATE TABLE runtimes(runtime_id TEXT, current_incarnation_id TEXT, availability TEXT);
+                 CREATE TABLE runtime_incarnations(runtime_id TEXT, runtime_incarnation_id TEXT, recovery_state TEXT);
+                 CREATE TABLE runtime_workspace_bindings(runtime_id TEXT, workspace_id TEXT, status TEXT, revoked_at TEXT, roles_json TEXT);
+                 CREATE TABLE tasks(task_id TEXT, workspace_id TEXT, status TEXT, current_spec_revision INTEGER);
+                 CREATE TABLE task_spec_revisions(task_id TEXT, workspace_id TEXT, revision INTEGER, acceptance_criteria_json TEXT);
+                 CREATE TABLE verification_runs(verification_run_id TEXT PRIMARY KEY,task_id TEXT,criterion_id TEXT,task_spec_revision INTEGER,criterion_digest TEXT,verifier_kind TEXT,verifier_version TEXT,subject_refs_json TEXT,inputs_json TEXT,status TEXT,evidence_refs_json TEXT,started_at TEXT,completed_at TEXT,version INTEGER,failure_code TEXT);
+                 CREATE TABLE evidence(evidence_id TEXT PRIMARY KEY,task_id TEXT,subject_ref TEXT,level TEXT,kind TEXT,producer_json TEXT,payload_ref_json TEXT,payload_digest TEXT,created_at TEXT);
+                 CREATE TABLE effects(effect_id TEXT PRIMARY KEY,task_id TEXT,state TEXT,verification_ref TEXT);
+                 CREATE TABLE workspace_origin_sequences(workspace_id TEXT,origin_runtime_id TEXT,last_sequence INTEGER,PRIMARY KEY(workspace_id,origin_runtime_id));
+                 CREATE TABLE domain_events(event_id TEXT PRIMARY KEY,workspace_id TEXT,entity_type TEXT,entity_id TEXT,origin_runtime_id TEXT,origin_sequence INTEGER,entity_revision INTEGER,hlc_timestamp TEXT,correlation_id TEXT,causation_id TEXT,schema_version INTEGER,type TEXT,payload_json TEXT,aggregate_state_ref_json TEXT,recorded_at TEXT,payload_digest TEXT);
+                 CREATE TABLE request_dedup(principal_id TEXT,request_id TEXT,request_digest TEXT,response_json TEXT,response_digest TEXT,created_at TEXT,expires_at TEXT,PRIMARY KEY(principal_id,request_id));
+                 INSERT INTO workspaces VALUES ('workspace-1','owner-1','ACTIVE');
+                 INSERT INTO runtimes VALUES ('runtime-1','incarnation-1','ONLINE');
+                 INSERT INTO runtime_incarnations VALUES ('runtime-1','incarnation-1','READY');
+                 INSERT INTO runtime_workspace_bindings VALUES ('runtime-1','workspace-1','ACTIVE',NULL,'[\"EXECUTOR\"]');
+                 INSERT INTO tasks VALUES ('task-1','workspace-1','VERIFYING',7);
+                 INSERT INTO task_spec_revisions VALUES ('task-1','workspace-1',7,'[{\"criterion_id\":\"criterion-1\",\"description\":\"check\"}]');
+                 INSERT INTO verification_runs VALUES ('verify-1','task-1','criterion-1',7,'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','test-runner','1.2.3','[]','[]','RUNNING','[]','2026-10-16T11:00:00Z',NULL,2,NULL);",
+            )
+            .expect("create settlement fixture");
+        connection
+            .execute_batch(SQLITE_V22_DDL)
+            .expect("apply same-run Evidence guards");
+        connection
+    }
+
+    fn verifier_evidence(run: &VerificationRunRecord) -> EvidenceRecord {
+        EvidenceRecord {
+            evidence_id: "evidence-1".into(),
+            task_id: run.task_id.clone(),
+            subject_ref: format!("task:{}", run.task_id),
+            level: EvidenceLevel::Verified,
+            kind: "criterion-check".into(),
+            producer: json!({"service_id":"test-runner"}),
+            payload_ref: None,
+            payload_digest: Some(format!("sha256:{}", "b".repeat(64))),
+            verification_run_id: Some(run.verification_run_id.clone()),
+            created_at: "2026-10-16T11:00:01Z".into(),
+        }
+    }
+
+    fn verification_event_context(event_id: &str) -> VerificationRunEventContext {
+        VerificationRunEventContext {
+            event_id: event_id.into(),
+            origin_runtime_id: "runtime-1".into(),
+            origin_runtime_incarnation_id: "incarnation-1".into(),
+            hlc_timestamp: "2026-10-16T11:00:01Z".into(),
+            correlation_id: "correlation-1".into(),
+            causation_id: None,
+            recorded_at: "2026-10-16T11:00:01Z".into(),
+        }
+    }
+
+    fn test_state_ref(media_type: &str, version: u64) -> AggregateStateRef {
+        AggregateStateRef {
+            blob: storage_core::BlobRef {
+                digest: format!("sha256:{}", "c".repeat(64)),
+                size_bytes: 1,
+                media_type: media_type.into(),
+            },
+            entity_revision: version,
+            record_schema_version: 1,
+        }
+    }
+
+    #[test]
     fn sqlite_v20_trigger_rejects_pass_even_with_a_caller_supplied_evidence_ref() {
         let connection = Connection::open_in_memory().expect("in-memory SQLite");
         connection
@@ -1100,5 +1714,139 @@ mod tests {
         };
 
         assert!(validate_input_head(&tx, "workspace-1", &input).is_err());
+    }
+
+    #[test]
+    fn passed_verification_rejects_stale_subject_but_cancelled_run_can_close() {
+        let mut connection = Connection::open_in_memory().expect("in-memory SQLite");
+        connection
+            .execute_batch(
+                "CREATE TABLE tasks(task_id TEXT, workspace_id TEXT, status TEXT, current_spec_revision INTEGER);
+                 CREATE TABLE task_spec_revisions(task_id TEXT, workspace_id TEXT, revision INTEGER, acceptance_criteria_json TEXT);
+                 CREATE TABLE resources(workspace_id TEXT, resource_id TEXT, current_revision_id TEXT);
+                 CREATE TABLE resource_revisions(resource_revision_id TEXT, resource_id TEXT, content_digest TEXT);
+                 CREATE TABLE resource_revision_parents(resource_id TEXT, child_revision_id TEXT, parent_revision_id TEXT);
+                 INSERT INTO tasks VALUES ('task-1','workspace-1','VERIFYING',7);
+                 INSERT INTO task_spec_revisions VALUES ('task-1','workspace-1',7,'[{\"criterion_id\":\"criterion-1\",\"description\":\"check\"}]');
+                 INSERT INTO resources VALUES ('workspace-1','resource-1','revision-old');
+                 INSERT INTO resource_revisions VALUES ('revision-old','resource-1',NULL);",
+            )
+            .expect("create subject freshness fixture");
+        let criterion = json!({"criterion_id":"criterion-1","description":"check"});
+        let mut run = running_run();
+        run.criterion_digest = digest(&canonical_json(&criterion).expect("canonical criterion"));
+        run.subject_refs = vec![VerificationResourceRef {
+            workspace_id: "workspace-1".into(),
+            resource_id: "resource-1".into(),
+            revision_id: "revision-old".into(),
+        }];
+
+        let tx = connection
+            .transaction()
+            .expect("subject validation transaction");
+        assert!(check_task_criterion_and_inputs(&tx, "workspace-1", &run, false).is_ok());
+        tx.execute(
+            "INSERT INTO resource_revisions VALUES ('revision-current','resource-1',NULL)",
+            [],
+        )
+        .expect("insert new source head");
+        tx.execute(
+            "INSERT INTO resource_revision_parents VALUES ('resource-1','revision-current','revision-old')",
+            [],
+        )
+        .expect("link source revision history");
+        tx.execute(
+            "UPDATE resources SET current_revision_id='revision-current' WHERE resource_id='resource-1'",
+            [],
+        )
+        .expect("move source head");
+
+        assert!(
+            check_task_criterion_and_inputs(&tx, "workspace-1", &run, false).is_err(),
+            "a PASSED run must not settle against a stale subject revision"
+        );
+        run.subject_refs[0].revision_id = "revision-current".into();
+        tx.execute(
+            "INSERT INTO resource_revisions VALUES ('revision-branch','resource-1',NULL)",
+            [],
+        )
+        .expect("insert conflicting source head");
+        assert!(
+            check_task_criterion_and_inputs(&tx, "workspace-1", &run, false).is_err(),
+            "a PASSED run must not settle against a conflicted subject head"
+        );
+        tx.execute(
+            "UPDATE tasks SET status='CANCELLED' WHERE task_id='task-1'",
+            [],
+        )
+        .expect("cancel Task for typed closure");
+        assert!(check_task_criterion_and_inputs(&tx, "workspace-1", &run, true).is_ok());
+    }
+
+    #[test]
+    fn verification_run_dependency_edges_include_subjects_and_inputs() {
+        let mut connection = Connection::open_in_memory().expect("in-memory SQLite");
+        connection
+            .execute_batch(
+                "CREATE TABLE dependency_edges(
+                    dependency_edge_id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    source_resource_id TEXT NOT NULL,
+                    source_revision_id TEXT NOT NULL,
+                    dependent_kind TEXT NOT NULL,
+                    dependent_ref TEXT NOT NULL,
+                    artifact_id TEXT,
+                    artifact_version INTEGER,
+                    verification_run_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(source_resource_id,source_revision_id,dependent_kind,dependent_ref)
+                 );",
+            )
+            .expect("create dependency edge fixture");
+        let input_ref = VerificationResourceRef {
+            workspace_id: "workspace-1".into(),
+            resource_id: "input-resource".into(),
+            revision_id: "input-revision".into(),
+        };
+        let subject_ref = VerificationResourceRef {
+            workspace_id: "workspace-1".into(),
+            resource_id: "subject-resource".into(),
+            revision_id: "subject-revision".into(),
+        };
+        let mut run = running_run();
+        run.inputs = vec![
+            VerificationInput {
+                resource_ref: input_ref,
+                consumed_digest: None,
+            },
+            VerificationInput {
+                resource_ref: subject_ref.clone(),
+                consumed_digest: None,
+            },
+        ];
+        run.subject_refs = vec![subject_ref];
+
+        let tx = connection
+            .transaction()
+            .expect("dependency edge transaction");
+        insert_dependency_edges(&tx, "workspace-1", &run, "2026-10-17T00:00:00Z")
+            .expect("persist all verification dependencies");
+        let edges = tx
+            .prepare(
+                "SELECT source_resource_id,source_revision_id FROM dependency_edges ORDER BY source_resource_id",
+            )
+            .expect("prepare dependency edge query")
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .expect("query dependency edges")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect dependency edges");
+
+        assert_eq!(
+            edges,
+            vec![
+                ("input-resource".into(), "input-revision".into()),
+                ("subject-resource".into(), "subject-revision".into()),
+            ]
+        );
     }
 }

@@ -9,11 +9,11 @@ use storage_core::{
     LocalResourceLocationBindingRecord, ReplicationPolicy, ResourceLocationRecord, ResourceRecord,
     ResourceStore, ResourceUploadSessionRecord, ResourceUploadState, ResourceUploadStore,
     StoreError, Workspace, WorkspaceCreateRequest, WorkspaceInstructionRevisionRecord,
-    WorkspaceRootCreateCommit, WorkspaceRootListRecord, WorkspaceRootRecord,
-    WorkspaceRootResumeCommit, WorkspaceRootScanCandidate, WorkspaceRootScanCommit,
-    WorkspaceRootScanResult, WorkspaceRootFileObservation, WorkspaceRootStatusAction,
-    WorkspaceRootStatusCommit,
-    WorkspaceRootStore, WorkspaceStore, is_sha256_digest,
+    WorkspaceRootCreateCommit, WorkspaceRootFileMembershipCandidate, WorkspaceRootFileObservation,
+    WorkspaceRootListRecord, WorkspaceRootRecord, WorkspaceRootResumeCommit,
+    WorkspaceRootScanCandidate, WorkspaceRootScanCommit, WorkspaceRootScanResult,
+    WorkspaceRootStatusAction, WorkspaceRootStatusCommit, WorkspaceRootStore, WorkspaceStore,
+    is_sha256_digest,
 };
 
 #[cfg(test)]
@@ -522,6 +522,7 @@ where
         command: &ScanWorkspaceRoot,
         result: WorkspaceRootScanResult,
         observations: Vec<WorkspaceRootFileObservation>,
+        memberships: Vec<WorkspaceRootFileMembershipCandidate>,
     ) -> Result<WorkspaceRootScanResult, StoreError> {
         validate_workspace_root_scan_command(command)?;
         if result.workspace_id != command.workspace_id
@@ -531,6 +532,16 @@ where
             || result.entries_examined > storage_core::MAX_WORKSPACE_ROOT_SCAN_ENTRIES
             || result.entries_examined < result.files_observed
             || observations.len() != result.files_observed as usize
+            || (!memberships.is_empty()
+                && (memberships.len() != observations.len()
+                    || memberships
+                        .iter()
+                        .zip(&observations)
+                        .any(|(membership, observation)| {
+                            membership.observation.observation_id != observation.observation_id
+                                || membership.observation.file_identity_digest
+                                    != observation.file_identity_digest
+                        })))
             || (result.status == storage_core::WorkspaceRootScanStatus::Complete
                 && result.partial_reason.is_some())
             || (result.status == storage_core::WorkspaceRootScanStatus::Partial
@@ -550,6 +561,7 @@ where
                 runtime_incarnation_id: command.runtime_incarnation_id.clone(),
                 result,
                 observations,
+                memberships,
             })
     }
 

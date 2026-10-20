@@ -219,6 +219,7 @@ delegation_profile.created.v1
 delegation_profile.revised.v1
 delegation_profile.status.changed.v1
 delegation.admitted.v1
+delegation.result.published.v1
 
 coworker.created.v1
 coworker.revised.v1
@@ -417,7 +418,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `capability.invocation.created` | `invocation_id`, `scope`, `agent_session_id`, `capability_grant_id`, `activation_id`, `operation`, `request_digest`, `execution_method`, `action_batch?`, `aggregate_version` |
 | `capability.invocation.dispatched` | `invocation_id`, `dispatch_ordinal`, `execution_method`, `provider_task_status?`, `provider_task_created_at?`, `provider_task_expires_at?`, `provider_task_ttl_ms?`, `provider_poll_after_ms?`, `dispatched_at`, `aggregate_version` |
 | `capability.invocation.checkpointed` | `invocation_id`, `provider_task_status?`, `provider_task_expires_at?`, `provider_task_ttl_ms?`, `provider_updated_at?`, `provider_poll_after_ms?`, `partial_result_refs[]`, `observed_at`, `aggregate_version` |
-| `capability.invocation.status.changed` | `invocation_id`, `from`, `to` (status values: CREATED, DISPATCHED, WAITING, INPUT_REQUIRED, CANCEL_REQUESTED, SUCCEEDED, FAILED, CANCELLED, AMBIGUOUS), `result_refs[]`, `effect_id?`, `failure_code?`, `aggregate_version` |
+| `capability.invocation.status.changed` | `invocation_id`, `from`, `to` (status values: CREATED, DISPATCHED, WAITING, INPUT_REQUIRED, CANCEL_REQUESTED, SUCCEEDED, FAILED, CANCELLED, AMBIGUOUS), `result_refs[]`, `effect_id?`, `failure_code?`, `provider_observation?`, `aggregate_version` |
 | `usage.observed` | `usage_observation_id`, `task_id?`, `environment_id?`, `attempt_id?`, `invocation_id?`, `metric`, `quantity`, `unit`, `currency?`, `confidence`, `observed_at` (`quantity` is null only when `confidence` is UNKNOWN) |
 | `budget.reservation.changed` | `reservation_id`, `budget_scope`, `task_id?`, `environment_id?`, `attempt_id?`, `metric`, `quantity`, `unit`, `currency?`, `from?`, `to`, `aggregate_version` |
 | `capability.lock.created` | `task_id`, `capability_ref`, `aggregate_version` |
@@ -481,6 +482,7 @@ must not be copied into domain events, ordinary logs, or aggregate snapshots.
 | `delegation_profile.revised` | `delegation_profile_id`, `revision`, `revision_digest`, `authored_by`, `aggregate_version` |
 | `delegation_profile.status.changed` | `delegation_profile_id`, `from`, `to`, `aggregate_version` |
 | `delegation.admitted` | `parent_attempt_id`, `child_attempt_id`, `step_id`, `delegation_profile_id`, `delegation_profile_revision`, `agent_binding_id`, `endpoint_id`, `runtime_id`, `runtime_incarnation_id`, `environment_id`, `descriptor_digest`, `selection_policy`, `eligible_candidate_count`, `candidate_set_digest`, `selection_policy_version`, `budget_reservation_ids[]`, `capability_grant_ids[]`, `aggregate_version` |
+| `delegation.result.published` | `child_attempt_id`, `task_id`, terminal `status`, `revision_at_start`, `result_digest`, `aggregate_version=1`; result body is the immutable DELEGATION_RESULT aggregate state, not event payload |
 | `coworker.created` | `coworker_id`, `workspace_id`, `current_revision`, `status`, `aggregate_version` |
 | `coworker.revised` | `coworker_id`, `revision`, `revision_digest`, `authored_by`, `aggregate_version` |
 | `coworker.status.changed` | `coworker_id`, `from`, `to`, `aggregate_version` |
@@ -573,6 +575,13 @@ creation; `capability.invocation.dispatched.v1` repeats the immutable value. A b
 members repeat the same route and ordered batch digest. `UNKNOWN` remains explicit when
 the provider cannot prove a more specific route; the UI must not infer one from agent text.
 
+`capability.invocation.status.changed.v1` may include a closed-shape
+`provider_observation` object when a trusted adapter reconciles an `AMBIGUOUS` Invocation.
+It contains only the authenticated callback/query source, the bound provider identity
+digest, and observation time. It contains no provider handle, raw response, or credential.
+The event records adapter provenance; the SQLite store does not independently authenticate
+the external provider response.
+
 ### Ownership and replication for responsibility/delegation events
 
 | Event | Owning aggregate / transition owner | Replication rule |
@@ -587,6 +596,7 @@ the provider cannot prove a more specific route; the UI must not infer one from 
 | `agent.session.harness_descriptor.pinned.v1` | AgentSession / AgentSessionSupervisor | Non-secret descriptor/feature/config digests and session scope only; no descriptor contents or handles |
 | `delegation_profile.*.v1` | DelegationProfile / DelegationProfileService | Profile revisions/status replicate; provider-native option values remain opaque, non-secret adapter-owned values |
 | `delegation.admitted.v1` | Task / TaskService admission transaction | Attempt/profile/revision/grant/reservation identity is durable; candidate digest contains no prompts or secret config |
+| `delegation.result.published.v1` | DelegationResult / authenticated child Runtime session | One immutable ResultEnvelope per terminal child Attempt; the event carries only status, revision and digest, while authorized Resource/Artifact/Evidence references remain in the bounded aggregate state |
 | `coworker.*.v1` | Coworker / CoworkerService | Identity and immutable preferences replicate under Workspace policy; no agent session state |
 | `goal.*.v1` | Goal / GoalService | Immutable Goal revision/status and same-Workspace references replicate |
 | `suggestion.*.v1` | Suggestion / SuggestionService owner actions; TaskService atomic admission for TASK acceptance | Proposal digest, provenance refs, status, and result Task ref replicate; source content remains in Resources |

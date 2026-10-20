@@ -175,6 +175,21 @@ fn conversation_turn_creation_replays_atomically_and_survives_reopen() {
     assert_eq!(created.message.turn_id.as_deref(), Some("turn-one"));
     assert_eq!(created.events.len(), 2);
 
+    // A plain Conversation remains a distinct domain flow. In particular, accepting
+    // its durable user message must not implicitly manufacture Task execution state.
+    let connection = Connection::open(state_database(&directory)).expect("inspect chat state");
+    let (tasks, attempts): (i64, i64) = connection
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM tasks WHERE workspace_id='workspace-turn'),
+               (SELECT COUNT(*) FROM attempts a JOIN tasks t ON t.task_id=a.task_id
+                WHERE t.workspace_id='workspace-turn')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read Task and Attempt counts");
+    assert_eq!((tasks, attempts), (0, 0));
+
     drop(adapter);
     drop(store);
     let reopened = test_store(&directory, Duration::from_secs(1));

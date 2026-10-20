@@ -7,6 +7,7 @@ tags:
 - {name: conversations}
 - {name: tasks}
 - {name: approvals}
+- {name: trust}
 - {name: artifacts}
 - {name: automations}
 - {name: routines}
@@ -323,6 +324,7 @@ paths:
         schema: {type: string, minLength: 1}
       - {$ref: '#/components/parameters/IdempotencyKey'}
       - {$ref: '#/components/parameters/IfMatch'}
+      - {$ref: '#/components/parameters/WorkspaceContextHeader'}
       responses:
         '200':
           description: This Runtime's access to this Workspace was revoked. RuntimeMesh first drains/fences its channel hosts; if no eligible replacement exists, it atomically clears the released assignment, and the affected ChannelBinding remains DEGRADED with host_assignment null. Re-fetch affected bindings to observe their new projections; assignment history remains in versioned events.
@@ -643,11 +645,11 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ChangeLeadAgentRequest'}
       responses:
-        '202':
-          description: Lead replacement accepted; active Attempts drain under lease and Effect rules
+        '200':
+          description: Lead changed at a settled Task boundary; immutable TaskSpec and prior admission state are retained
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/CommandReceipt'}
+              schema: {$ref: '#/components/schemas/TaskLeadHandoffReceipt'}
         default: {$ref: '#/components/responses/Error'}
   /tasks/{taskId}/cancel:
     post:
@@ -917,6 +919,55 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Approval'}
+        default: {$ref: '#/components/responses/Error'}
+  /capability-grants:
+    post:
+      tags: [trust]
+      operationId: createCapabilityGrant
+      description: Creates only an owner-authorized, expiring Task-planning grant for workspace.resource.read. The authenticated local owner is the actor; request bodies cannot select actor, assurance, Approval, SecretRefs, scope kind, or operations.
+      parameters:
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateCapabilityGrantRequest'}
+      responses:
+        '201':
+          description: Created grant, or the exact original grant on an idempotent retry
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+            X-Correlation-ID: {required: true, schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CapabilityGrant'}
+        default: {$ref: '#/components/responses/Error'}
+  /capability-grants/{grantId}/revoke:
+    post:
+      tags: [trust]
+      operationId: revokeCapabilityGrant
+      description: Revokes an active grant in the selected Workspace using an expected aggregate version. Exact idempotent retries return the committed revocation.
+      parameters:
+      - name: grantId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      responses:
+        '200':
+          description: Committed revocation receipt
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+            X-Correlation-ID: {required: true, schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CapabilityGrantRevocation'}
         default: {$ref: '#/components/responses/Error'}
   /artifacts:
     get:
@@ -1681,6 +1732,7 @@ paths:
       parameters:
       - {name: agentProfileId, in: path, required: true, schema: {type: string, minLength: 1}}
       - {name: credentialSlotId, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 128}}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
         required: true
         content:
@@ -2672,6 +2724,45 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/QuickImportResourceResponse'}
         default: {$ref: '#/components/responses/Error'}
+  /resources/{resourceId}/archive/preview:
+    post:
+      tags: [resources]
+      operationId: previewResourceArchive
+      description: >-
+        Read-only, metadata-only preview for one exact managed ZIP Resource revision.
+        The authenticated local Runtime verifies the pinned revision and digest, then
+        invokes the bounded isolated ZIP worker. It never extracts members, returns
+        member bytes, creates child Resources, or writes events, Effects, or receipts.
+        The worker is currently source-tree/Linux-development-only; other packaged
+        environments return a typed dependency-unavailable response.
+        Admission allows two concurrent previews per Runtime; saturation returns
+        RATE_LIMITED before Resource content is read and writes no durable state.
+      parameters:
+      - name: resourceId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 160}
+      - {$ref: '#/components/parameters/WorkspaceContextHeader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ArchivePreviewRequest'}
+      responses:
+        '200':
+          description: Safe member metadata for the exact pinned archive revision; no member payloads
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchivePreviewResponse'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '413': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+        '429': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+        default: {$ref: '#/components/responses/Error'}
   /resources/{resourceId}/content:
     get:
       tags: [resources]
@@ -3142,7 +3233,7 @@ paths:
       operationId: scanWorkspaceRoot
       summary: Scan a persistent Workspace folder for a bounded metadata summary
       description: >-
-        Served authenticated local Operator operation for the selected Workspace owner. If-Match supplies the expected WorkspaceRoot version as a plain decimal integer; the current parser also accepts a quoted decimal. This Linux-only summary slice revalidates Workspace ownership/status, WorkspaceRoot status/version, current Runtime incarnation, and local binding records in the final SQLite transaction. The local Runtime revalidates the selected directory after traversal. A request scans metadata only, with maximum traversal depth 32, 1,000 internally budgeted directory entries (known private/generated names consume budget but are neither opened nor reported), and 1 MiB aggregate relative locators. Its cooperative 8-second total deadline starts before the blocking worker is scheduled; traversal stops at 7 seconds to reserve the final second for the mandatory saved-root identity fence. At most two filesystem scan jobs run concurrently. Admission saturation returns 503 SCAN_UNAVAILABLE before filesystem I/O and creates no receipt. Failure to verify required local directory or mount identity metadata returns the same status/code after filesystem work starts and creates no receipt. A Runtime-incarnation fence change returns 503 RUNTIME_UNAVAILABLE without creating a receipt. Transient SQLite busy/locked errors return 503 SCAN_UNAVAILABLE; retry with the same idempotency key so an already committed receipt is replayed. If no receipt exists, current request preconditions are checked and a new bounded scan runs only if the root remains eligible. Filesystem operations run on a bounded blocking worker; an individual kernel call cannot be preempted by the cooperative deadline. Linux candidate paths are opened relative to the selected directory with beneath-root, no-symlink, no-magic-link, and no-cross-mount resolution. The returned entries_examined count includes each non-excluded in-root entry opened with O_PATH and inspected, including directories, final-component symlink objects, regular files, and special entries such as FIFOs; it excludes the selected root and excluded private/generated names. Final-component symlink objects are inspected with O_PATH | O_NOFOLLOW and are never followed. files_observed counts only regular files, and only regular files reach the file visitor. Excluded private/generated names are not opened or reported, but each name consumes one internal directory-entry budget unit. The scan does not read file contents, compute hashes, create index or membership records, search, watch for changes, or infer deletion from missing entries or an incomplete traversal. The response contains Workspace/root/request IDs, requested root version, status, counts, safe partial reason, and completion time; it never contains filesystem paths, file or directory names, filesystem identities, file contents, or membership. Successful responses use Cache-Control: no-store. Exact replay returns the same committed safe summary before filesystem I/O, including after a daemon process restart. The idempotency payload is operation, Workspace ID, root ID, and requested root version; current Runtime identity is a commit-time fence for a new receipt and is not part of caller idempotency identity. Reuse of an Idempotency-Key with changed caller inputs conflicts. A PARTIAL result is final for that key; an explicit retry must use a new key. A new scan attempt on macOS or Windows returns 501 until qualified; an exact committed receipt is replayed before platform support is checked.
+        Served authenticated local Operator operation for the selected Workspace owner. If-Match supplies the expected WorkspaceRoot version as a plain decimal integer; the current parser also accepts a quoted decimal. This Linux-only summary slice revalidates Workspace ownership/status, WorkspaceRoot status/version, current Runtime incarnation, and local binding records in the final SQLite transaction. The local Runtime revalidates the selected directory after traversal. A request scans metadata only, with maximum traversal depth 32, 1,000 internally budgeted directory entries (known private/generated names consume budget but are neither opened nor reported), and 1 MiB aggregate relative locators. Its cooperative 8-second total deadline starts before the blocking worker is scheduled; traversal stops at 7 seconds to reserve the final second for the mandatory saved-root identity fence. At most two filesystem scan jobs run concurrently. Admission saturation returns 503 SCAN_UNAVAILABLE before filesystem I/O and creates no receipt. Failure to verify required local directory or mount identity metadata returns the same status/code after filesystem work starts and creates no receipt. A Runtime-incarnation fence change returns 503 RUNTIME_UNAVAILABLE without creating a receipt. Transient SQLite busy/locked errors return 503 SCAN_UNAVAILABLE; retry with the same idempotency key so an already committed receipt is replayed. If no receipt exists, current request preconditions are checked and a new bounded scan runs only if the root remains eligible. Filesystem operations run on a bounded blocking worker; an individual kernel call cannot be preempted by the cooperative deadline. Linux candidate paths are opened relative to the selected directory with beneath-root, no-symlink, no-magic-link, and no-cross-mount resolution. The returned entries_examined count includes each non-excluded in-root entry opened with O_PATH and inspected, including directories, final-component symlink objects, regular files, and special entries such as FIFOs; it excludes the selected root and excluded private/generated names. Final-component symlink objects are inspected with O_PATH | O_NOFOLLOW and are never followed. files_observed counts only regular files, and only regular files reach the file visitor. Excluded private/generated names are not opened or reported, but each name consumes one internal directory-entry budget unit. The scan does not read file contents or compute content digests. In the same fenced SQLite transaction as the receipt, it updates a private Runtime-incarnation-keyed metadata-observation projection and reconciles canonical FILE Resource/ResourceLocation membership for observed regular files; new Resources and changed locations append resource.created.v1 and resource.location.changed.v1 events as applicable in that transaction. These records are not included in the response. It creates no ResourceRevision and does not infer deletion from missing entries or an incomplete traversal. The response contains Workspace/root/request IDs, requested root version, status, counts, safe partial reason, and completion time; it never contains filesystem paths, file or directory names, filesystem identities, file contents, or membership. Successful responses use Cache-Control: no-store. Exact replay returns the same committed safe summary before filesystem I/O, including after a daemon process restart. The idempotency payload is operation, Workspace ID, root ID, and requested root version; current Runtime identity is a commit-time fence for a new receipt and is not part of caller idempotency identity. Reuse of an Idempotency-Key with changed caller inputs conflicts. A PARTIAL result is final for that key; an explicit retry must use a new key. A new scan attempt on macOS or Windows returns 501 until qualified; an exact committed receipt is replayed before platform support is checked.
       security: [{operatorAuth: [], workspaceContext: []}]
       parameters:
       - name: rootId
@@ -3184,9 +3275,12 @@ paths:
       description: >-
         Owner-only, selected-Workspace metadata search over the current Runtime incarnation's
         bounded WorkspaceRoot scan projection. Searches literal case-insensitive basenames;
-        it reads no file contents and does not create or imply canonical Resource,
-        ResourceRevision, or ResourceLocation aggregates. Results are observed files with
-        resource_id null until a separately authorized canonical Resource producer is wired.
+        it reads no file contents or create ResourceRevision records. A completed scan
+        atomically creates or reuses the canonical FILE Resource and current Runtime-local
+        ResourceLocation for each membership candidate in the same receipt transaction.
+        resource_id identifies that canonical Resource; null is retained only for legacy
+        observation rows created before membership promotion. Results remain metadata-only
+        observations and are not content-search results.
         The active root, Workspace owner, Runtime incarnation, and local identity bindings
         are rechecked for each page. The URL-safe base64 cursor binds the authenticated
         principal, Workspace, root version, Runtime/incarnation, query, freshness, page size,
@@ -3212,7 +3306,7 @@ paths:
         schema: {type: integer, minimum: 1, maximum: 100, default: 50}
       responses:
         '200':
-          description: Deterministic metadata-only observations for the selected root; never a ResourceRef or content-search result.
+          description: Deterministic metadata-only observations for the selected root. A non-null resource_id is a canonical Resource ID and can be opened through Resource detail routes; it is not a ResourceRef and carries no revision or content claim.
           headers:
             Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
@@ -3247,6 +3341,7 @@ paths:
         schema: {type: string}
       - {$ref: '#/components/parameters/IdempotencyKey'}
       - {$ref: '#/components/parameters/IfMatch'}
+      - {$ref: '#/components/parameters/WorkspaceContextHeader'}
       requestBody:
         required: true
         content:
@@ -3255,6 +3350,8 @@ paths:
       responses:
         '200':
           description: Response stored as immutable user input; Task-scoped responses received while PAUSED are queued until explicit resume, while PAUSE_REQUESTED returns CONFLICT
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/UserRequestResponse'}
@@ -3434,6 +3531,7 @@ paths:
         schema: {type: string}
       - {$ref: '#/components/parameters/IdempotencyKey'}
       - {$ref: '#/components/parameters/IfMatch'}
+      - {$ref: '#/components/parameters/WorkspaceContextHeader'}
       responses:
         '202':
           description: Suspension accepted after active use and Effects are reconciled
@@ -3581,12 +3679,15 @@ paths:
         schema: {type: string}
       - {$ref: '#/components/parameters/IdempotencyKey'}
       - {$ref: '#/components/parameters/IfMatch'}
+      - {$ref: '#/components/parameters/WorkspaceContextHeader'}
       responses:
         '200':
-          description: Request dismissed
+          description: Minimal terminal receipt; response schemas, sessions, choice values, and submitted values are omitted
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/UserRequest'}
+              schema: {$ref: '#/components/schemas/UserRequestResolutionReceipt'}
         default: {$ref: '#/components/responses/Error'}
   /notifications:
     get:
@@ -4834,6 +4935,9 @@ components:
             skills: {type: boolean}
             plugins: {type: boolean}
             dynamic_attach: {type: boolean}
+        host_instruction_delivery:
+          type: [string, 'null']
+          enum: [NATIVE_SYSTEM, NATIVE_DEVELOPER, SESSION_GUIDANCE, CONTEXT_ATTACHMENT, UNSUPPORTED, null]
         reporting:
           type: object
           required: [tool_calls, plan, usage, native_subagents, approvals]
@@ -5748,6 +5852,77 @@ components:
           source: {type: string, minLength: 1, description: Host-authenticated MCP server identity}
           digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$', description: Digest of the complete advertised Skill manifest}
           component: {type: string, format: uri, description: Exact advertised SKILL.md URI}
+    GrantResourceRef:
+      type: object
+      additionalProperties: false
+      required: [resource_id]
+      properties:
+        resource_id: {type: string, minLength: 1, maxLength: 512}
+        revision_id: {type: [string, 'null'], minLength: 1, maxLength: 512}
+    CapabilityGrantResourceScope:
+      type: object
+      additionalProperties: false
+      required: [resource_refs, operation_ids, constraints]
+      properties:
+        resource_refs:
+          type: array
+          maxItems: 256
+          items:
+            type: object
+            additionalProperties: false
+            required: [workspace_id, resource_id]
+            properties:
+              workspace_id: {type: string, minLength: 1, maxLength: 512}
+              resource_id: {type: string, minLength: 1, maxLength: 512}
+              revision_id: {type: string, minLength: 1, maxLength: 512}
+        operation_ids:
+          type: array
+          const: [workspace.resource.read]
+          items: {type: string, const: workspace.resource.read}
+        constraints: {type: object, additionalProperties: false}
+    CreateCapabilityGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [task_id, capability_ref, resource_refs, expires_at]
+      properties:
+        task_id: {type: string, minLength: 1, maxLength: 512}
+        capability_ref: {$ref: '#/components/schemas/CapabilityRef'}
+        resource_refs:
+          type: array
+          minItems: 1
+          maxItems: 256
+          items: {$ref: '#/components/schemas/GrantResourceRef'}
+        expires_at: {type: string, format: date-time}
+      description: Expiry must be in the future and no more than 24 hours after issuance. Only same-Workspace Resources are accepted. The only operation granted is workspace.resource.read; SecretRefs and Approval consumption are not supported by this owner path.
+    CapabilityGrant:
+      type: object
+      additionalProperties: false
+      required: [capability_grant_id, scope, capability_ref, allowed_operations, resource_scope, secret_refs, granted_by, expires_at, status, created_at, version]
+      properties:
+        capability_grant_id: {type: string}
+        scope: {$ref: '#/components/schemas/PlanningInvocationScope'}
+        capability_ref: {$ref: '#/components/schemas/CapabilityRef'}
+        allowed_operations:
+          type: array
+          items: {type: string}
+          const: [workspace.resource.read]
+        resource_scope: {$ref: '#/components/schemas/CapabilityGrantResourceScope'}
+        secret_refs: {type: array, maxItems: 0}
+        granted_by: {$ref: '#/components/schemas/PrincipalRef'}
+        expires_at: {type: [string, 'null'], format: date-time}
+        status: {type: string, enum: [ACTIVE, REVOKED, EXPIRED]}
+        created_at: {type: string, format: date-time}
+        version: {type: integer, minimum: 1}
+    CapabilityGrantRevocation:
+      type: object
+      additionalProperties: false
+      required: [capability_grant_id, status, version, replayed, event_id]
+      properties:
+        capability_grant_id: {type: string}
+        status: {type: string, const: REVOKED}
+        version: {type: integer, minimum: 2}
+        replayed: {type: boolean}
+        event_id: {type: string}
     DiscoverItem:
       type: object
       required: [item_ref, kind, display_name, summary, compatibility]
@@ -5817,6 +5992,52 @@ components:
         extraction_enabled: {type: boolean}
         reason_code: {type: string, const: ISOLATED_WORKER_NOT_QUALIFIED}
         reason: {type: string}
+    ArchivePreviewRequest:
+      type: object
+      additionalProperties: false
+      required: [resource_revision_id, content_digest]
+      properties:
+        resource_revision_id: {type: string, minLength: 1, maxLength: 160, description: Exact immutable ResourceRevision to inspect; the Runtime never falls forward to the current head.}
+        content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+    ArchivePreviewLimits:
+      type: object
+      additionalProperties: false
+      required: [max_archive_bytes, max_entries, max_entry_bytes, max_expanded_bytes, max_compression_ratio, max_path_bytes, max_path_depth, max_seconds]
+      properties:
+        max_archive_bytes: {type: integer, const: 16777216}
+        max_entries: {type: integer, const: 2048}
+        max_entry_bytes: {type: integer, const: 8388608}
+        max_expanded_bytes: {type: integer, const: 33554432}
+        max_compression_ratio: {type: integer, const: 100}
+        max_path_bytes: {type: integer, const: 1024}
+        max_path_depth: {type: integer, const: 32}
+        max_seconds: {type: number, const: 10.0}
+    ArchivePreviewEntry:
+      type: object
+      additionalProperties: false
+      required: [entry_index, name_sha256, virtual_path, compressed_bytes, declared_bytes, crc32, status, reason, observed_bytes, content_sha256]
+      properties:
+        entry_index: {type: integer, minimum: 0, maximum: 2047}
+        name_sha256: {type: string, pattern: '^[a-f0-9]{64}$', description: Digest of the original member name; member names are not returned.}
+        virtual_path: {type: [string, 'null'], maxLength: 1024, description: Normalized safe virtual path for a non-conflicting member; never a host path.}
+        compressed_bytes: {type: integer, minimum: 0, maximum: 16777216}
+        declared_bytes: {type: integer, minimum: 0, maximum: 33554432}
+        crc32: {type: integer, minimum: 0, maximum: 4294967295}
+        status: {type: string, enum: [READY, DIRECTORY, REJECTED]}
+        reason: {type: [string, 'null'], pattern: '^[A-Z0-9_]{1,64}$'}
+        observed_bytes: {type: 'null', description: Preview never expands member payloads.}
+        content_sha256: {type: 'null', description: Preview never computes or returns member content digests.}
+    ArchivePreviewResponse:
+      type: object
+      additionalProperties: false
+      required: [resource_ref, source_content_digest, provider_version, archive_bytes, limits, entries]
+      properties:
+        resource_ref: {$ref: '#/components/schemas/PinnedResourceRef'}
+        source_content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        provider_version: {type: string, const: 'litecowork-zip-intake/0.1.0'}
+        archive_bytes: {type: integer, minimum: 0, maximum: 16777216}
+        limits: {$ref: '#/components/schemas/ArchivePreviewLimits'}
+        entries: {type: array, maxItems: 2048, items: {$ref: '#/components/schemas/ArchivePreviewEntry'}}
     ResourceSummary:
       type: object
       additionalProperties: false
@@ -6415,9 +6636,22 @@ components:
     ChangeLeadAgentRequest:
       type: object
       additionalProperties: false
-      required: [agent_binding_id]
+      required: [expected_task_spec_revision, target_agent_binding_id]
       properties:
-        agent_binding_id: {type: string, minLength: 1}
+        expected_task_spec_revision: {type: integer, minimum: 1}
+        target_agent_binding_id: {type: string, minLength: 1}
+    TaskLeadHandoffReceipt:
+      type: object
+      additionalProperties: false
+      required: [task_id, workspace_id, from_agent_binding_id, to_agent_binding_id, task_spec_revision, aggregate_version, replayed]
+      properties:
+        task_id: {type: string, minLength: 1}
+        workspace_id: {type: string, minLength: 1}
+        from_agent_binding_id: {type: string, minLength: 1}
+        to_agent_binding_id: {type: string, minLength: 1}
+        task_spec_revision: {type: integer, minimum: 1}
+        aggregate_version: {type: integer, minimum: 1}
+        replayed: {type: boolean}
     PauseTaskRequest:
       type: object
       additionalProperties: false
@@ -6488,7 +6722,7 @@ components:
         requested_by_attempt: {type: [string, 'null']}
         kind: {type: string}
         action_summary: {type: string}
-        target_ref: {$ref: '#/components/schemas/ResourceRef'}
+        target_ref: {$ref: '#/components/schemas/ApprovalTargetRef'}
         scope_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
         action_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
         risk: {type: string, enum: [SAFE, SENSITIVE, HIGH_IMPACT]}
@@ -6500,6 +6734,18 @@ components:
           oneOf: [{$ref: '#/components/schemas/PrincipalRef'}, {type: 'null'}]
         resolved_at: {type: [string, 'null'], format: date-time}
         version: {type: integer, minimum: 1}
+    ApprovalTargetRef:
+      type: object
+      additionalProperties: false
+      required: [capability_ref, target_digest, execution_method, effect_id]
+      properties:
+        capability_ref:
+          oneOf: [{$ref: '#/components/schemas/CapabilityRef'}, {type: 'null'}]
+        target_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        execution_method:
+          type: [string, 'null']
+          enum: [STRUCTURED_API, STRUCTURED_BROWSER, ACCESSIBILITY_BROWSER, SCREEN_COMPUTER_USE, DETERMINISTIC_LOCAL, NATIVE_AGENT_TOOL, UNKNOWN, null]
+        effect_id: {type: [string, 'null'], minLength: 1}
     Artifact:
       type: object
       required: [artifact_id, workspace_id, resource_id, kind, display_name, current_version, library_status, created_at, version]
@@ -7360,7 +7606,7 @@ components:
         modified_at: {type: [string, 'null'], format: date-time}
         observed_at: {type: string, format: date-time}
         freshness: {type: string, enum: [CURRENT, STALE, UNKNOWN]}
-        resource_id: {type: 'null', description: Canonical Resource creation is not implied by a metadata observation.}
+        resource_id: {type: [string, 'null'], minLength: 1, description: Canonical FILE Resource ID when the scan committed membership atomically; null only for a legacy observation without a canonical membership. This is not a ResourceRef and does not imply a revision or readable content.}
     ResourceSearchResult:
       type: object
       required: [resource_ref, source_content_digest, source_matches, display_name, locations, freshness, match_reasons]
@@ -7574,15 +7820,22 @@ components:
           items: {$ref: '#/components/schemas/UserRequest'}
         next_cursor: {type: [string, 'null']}
     UserRequestResponseInput:
-      type: object
-      additionalProperties: false
-      required: [response]
-      properties:
-        response:
-          description: >-
-            Non-secret form data for FORM requests, or exactly {action: accept|decline|cancel}
-            for EXTERNAL_URL requests. The server enforces the request's interaction mode.
-          $ref: '#/components/schemas/JsonValue'
+      description: >-
+        Submit either non-secret FORM data or a safe choice identifier. Choice identifiers
+        are resolved against the immutable request inside the response transaction; their
+        values and response schema are never returned to the UI. EXTERNAL_URL accepts only
+        the response form with exactly {action: accept|decline|cancel}.
+      oneOf:
+      - type: object
+        additionalProperties: false
+        required: [response]
+        properties:
+          response: {$ref: '#/components/schemas/JsonValue'}
+      - type: object
+        additionalProperties: false
+        required: [choice_id]
+        properties:
+          choice_id: {type: string, minLength: 1, maxLength: 512}
     UserRequestResponse:
       type: object
       required: [request_id, response_digest, responded_by, responded_at]
@@ -7600,6 +7853,19 @@ components:
               channel_binding_id: {type: string}
               provider_event_id: {type: string, minLength: 1}
         responded_at: {type: string, format: date-time}
+    UserRequestResolutionReceipt:
+      type: object
+      additionalProperties: false
+      required: [request_id, workspace_id, status, version, resolved_at, resolved_by, response_digest, event_id]
+      properties:
+        request_id: {type: string, minLength: 1, maxLength: 512}
+        workspace_id: {type: string, minLength: 1, maxLength: 512}
+        status: {type: string, enum: [ANSWERED, DISMISSED]}
+        version: {type: integer, minimum: 1}
+        resolved_at: {type: string, format: date-time}
+        resolved_by: {$ref: '#/components/schemas/PrincipalRef'}
+        response_digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        event_id: {type: string, minLength: 1, maxLength: 512}
     ExternalAuthHandoff:
       type: object
       additionalProperties: false

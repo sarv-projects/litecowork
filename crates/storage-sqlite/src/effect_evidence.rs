@@ -14,6 +14,7 @@ type EvidenceStorageRow = (
     Option<String>,
     Option<String>,
     String,
+    Option<String>,
 );
 use domain_effects::{EffectError, EffectRecord, EffectState, EvidenceLevel, EvidenceRecord};
 use serde::Serialize;
@@ -223,6 +224,11 @@ impl EffectEvidenceStore for SqliteEffectEvidenceStore {
         }
         command.evidence.created_at = canonicalize_utc_timestamp(&command.evidence.created_at)?;
         command.evidence.validate().map_err(map_effect_error)?;
+        if command.evidence.verification_run_id.is_some() {
+            return Err(StoreError::Invalid(
+                "Runtime Evidence cannot attach itself to a VerificationRun".into(),
+            ));
+        }
         if command.evidence.created_at != command.event.recorded_at {
             return Err(StoreError::Invalid(
                 "Evidence timestamp must equal its event transaction time".to_owned(),
@@ -309,7 +315,7 @@ impl EffectEvidenceStore for SqliteEffectEvidenceStore {
         self.run(move |connection| {
             let tx = connection.transaction().map_err(map_database_error)?;
             authorize_task(&tx, &workspace, &task)?;
-            let mut statement = tx.prepare("SELECT e.evidence_id, e.task_id, e.subject_ref, e.level, e.kind, e.producer_json, e.payload_ref_json, e.payload_digest, e.created_at FROM evidence e JOIN tasks t ON t.task_id=e.task_id WHERE t.workspace_id=?1 AND e.task_id=?2 ORDER BY e.created_at ASC, e.evidence_id ASC LIMIT ?3").map_err(map_database_error)?;
+            let mut statement = tx.prepare("SELECT e.evidence_id, e.task_id, e.subject_ref, e.level, e.kind, e.producer_json, e.payload_ref_json, e.payload_digest, e.created_at, e.verification_run_id FROM evidence e JOIN tasks t ON t.task_id=e.task_id WHERE t.workspace_id=?1 AND e.task_id=?2 ORDER BY e.created_at ASC, e.evidence_id ASC LIMIT ?3").map_err(map_database_error)?;
             let rows = statement.query_map(params![workspace, task, limit as i64], read_evidence_row).map_err(map_database_error)?;
             let result = rows.map(|row| row.map_err(map_database_error).and_then(parse_evidence_row)).collect::<Result<Vec<_>, _>>()?;
             drop(statement);
@@ -444,6 +450,7 @@ fn validate_live_fence(
             AND i.task_id=t.task_id AND i.attempt_id=a.attempt_id AND i.status='CREATED' AND i.effect_id IS NULL
             AND i.capability_grant_id IN (SELECT g.capability_grant_id FROM capability_grants g WHERE g.scope_kind='ATTEMPT_EXECUTION'
               AND g.task_id=t.task_id AND g.attempt_id=a.attempt_id AND g.status='ACTIVE' AND (g.expires_at IS NULL OR julianday(g.expires_at)>julianday(?9))
+              AND json(g.capability_ref_json)=json(i.capability_ref_json)
               AND EXISTS(SELECT 1 FROM json_each(g.allowed_operations_json) op WHERE op.value=i.operation))
           WHERE t.workspace_id=?1 AND t.task_id=?2 AND t.status='RUNNING'
         )",
@@ -479,7 +486,7 @@ fn validate_invocation_match(
             |row| row.get(0),
         )
         .map_err(map_database_error)?;
-    let capability: String = connection
+    let capability: Option<String> = connection
         .query_row(
             "SELECT capability_ref_json FROM capability_invocations WHERE invocation_id=?1",
             params![effect.capability_invocation_id],
@@ -487,6 +494,7 @@ fn validate_invocation_match(
         )
         .map_err(map_database_error)?;
     let expected_capability = effect.capability_ref.as_ref().map(encode).transpose()?;
+    let actual_capability = capability.as_deref().map(decode::<Value>).transpose()?;
     if actual_workspace != workspace
         || task != effect.task_id
         || attempt != effect.attempt_id
@@ -494,9 +502,8 @@ fn validate_invocation_match(
         || method != effect.execution_method.as_str()
         || operation != effect.operation
         || key != effect.idempotency_key
-        || expected_capability
-            .as_ref()
-            .is_some_and(|expected| capability != *expected)
+        || expected_capability.is_none()
+        || actual_capability != effect.capability_ref
     {
         return Err(StoreError::Invalid(
             "Effect does not match its exact CapabilityInvocation".to_owned(),
@@ -875,7 +882,7 @@ fn append_evidence_transaction(
         .as_ref()
         .map(encode)
         .transpose()?;
-    tx.execute("INSERT INTO evidence(evidence_id,task_id,subject_ref,level,kind,producer_json,payload_ref_json,payload_digest,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)", params![command.evidence.evidence_id, command.evidence.task_id, command.evidence.subject_ref, command.evidence.level.as_str(), command.evidence.kind, producer, payload_ref, command.evidence.payload_digest, command.event.recorded_at]).map_err(map_database_error)?;
+    tx.execute("INSERT INTO evidence(evidence_id,task_id,subject_ref,level,kind,producer_json,payload_ref_json,payload_digest,created_at,verification_run_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![command.evidence.evidence_id, command.evidence.task_id, command.evidence.subject_ref, command.evidence.level.as_str(), command.evidence.kind, producer, payload_ref, command.evidence.payload_digest, command.event.recorded_at, command.evidence.verification_run_id]).map_err(map_database_error)?;
     let payload = json!({"evidence_id":command.evidence.evidence_id,"task_id":command.evidence.task_id,"subject_ref":command.evidence.subject_ref,"level":command.evidence.level.as_str(),"kind":command.evidence.kind,"producer":command.evidence.producer,"payload_digest":command.evidence.payload_digest});
     let event = write_event(
         &tx,
@@ -1024,6 +1031,11 @@ fn validate_evidence_producer(
     incarnation: &str,
     evidence: &EvidenceRecord,
 ) -> Result<(), StoreError> {
+    if evidence.verification_run_id.is_some() {
+        return Err(StoreError::Invalid(
+            "Runtime Evidence cannot attach itself to a VerificationRun".into(),
+        ));
+    }
     if evidence.level != EvidenceLevel::Reported {
         return Err(StoreError::Invalid("Runtime Evidence admission only supports REPORTED; OBSERVED/VERIFIED require an independently authenticated producer".to_owned()));
     }
@@ -1093,10 +1105,38 @@ fn validate_verification_evidence(
                   AND v.status='PASSED'
                   AND v.task_spec_revision=t.current_spec_revision
                   AND v.verifier_kind=json_extract(e.producer_json,'$.service_id')
+                  AND e.verification_run_id=v.verification_run_id
                   AND EXISTS(
                     SELECT 1
                     FROM json_each(v.evidence_refs_json) ref
                     WHERE ref.value=e.evidence_id
+                  )
+                  AND NOT EXISTS(
+                    SELECT 1
+                    FROM json_each(v.subject_refs_json) pinned_subject
+                    LEFT JOIN resources subject_resource
+                      ON subject_resource.workspace_id=?1
+                     AND subject_resource.resource_id=json_extract(pinned_subject.value,'$.resource_id')
+                    WHERE json_extract(pinned_subject.value,'$.workspace_id') IS NOT ?1
+                       OR subject_resource.current_revision_id IS NULL
+                       OR subject_resource.current_revision_id IS NOT json_extract(pinned_subject.value,'$.revision_id')
+                       OR NOT EXISTS(
+                         SELECT 1
+                         FROM resource_revisions subject_revision
+                         WHERE subject_revision.resource_id=subject_resource.resource_id
+                           AND subject_revision.resource_revision_id=json_extract(pinned_subject.value,'$.revision_id')
+                       )
+                       OR EXISTS(
+                         SELECT 1
+                         FROM resource_revisions other_subject_head
+                         WHERE other_subject_head.resource_id=subject_resource.resource_id
+                           AND NOT EXISTS(
+                             SELECT 1 FROM resource_revision_parents child
+                             WHERE child.resource_id=other_subject_head.resource_id
+                               AND child.parent_revision_id=other_subject_head.resource_revision_id
+                           )
+                           AND other_subject_head.resource_revision_id<>json_extract(pinned_subject.value,'$.revision_id')
+                       )
                   )
                   AND NOT EXISTS(
                     SELECT 1
@@ -1501,6 +1541,7 @@ fn read_evidence_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceStorag
         row.get(6)?,
         row.get(7)?,
         row.get(8)?,
+        row.get(9)?,
     ))
 }
 fn parse_evidence_row(row: EvidenceStorageRow) -> Result<EvidenceRecord, StoreError> {
@@ -1514,6 +1555,7 @@ fn parse_evidence_row(row: EvidenceStorageRow) -> Result<EvidenceRecord, StoreEr
         payload_ref,
         payload_digest,
         created_at,
+        verification_run_id,
     ) = row;
     let evidence = EvidenceRecord {
         evidence_id,
@@ -1525,6 +1567,7 @@ fn parse_evidence_row(row: EvidenceStorageRow) -> Result<EvidenceRecord, StoreEr
         payload_ref: decode_optional(payload_ref)?,
         payload_digest,
         created_at,
+        verification_run_id,
     };
     evidence.validate().map_err(map_effect_error)?;
     Ok(evidence)
@@ -1583,8 +1626,8 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(
             "CREATE TABLE tasks(task_id TEXT, workspace_id TEXT, current_spec_revision INTEGER);
-             CREATE TABLE evidence(evidence_id TEXT, task_id TEXT, level TEXT, subject_ref TEXT, producer_json TEXT);
-             CREATE TABLE verification_runs(task_id TEXT, status TEXT, verifier_kind TEXT, evidence_refs_json TEXT, task_spec_revision INTEGER, inputs_json TEXT);
+             CREATE TABLE evidence(evidence_id TEXT, task_id TEXT, level TEXT, subject_ref TEXT, producer_json TEXT, verification_run_id TEXT);
+             CREATE TABLE verification_runs(verification_run_id TEXT, task_id TEXT, status TEXT, verifier_kind TEXT, evidence_refs_json TEXT, task_spec_revision INTEGER, subject_refs_json TEXT, inputs_json TEXT);
              CREATE TABLE resources(workspace_id TEXT, resource_id TEXT, current_revision_id TEXT);
              CREATE TABLE resource_revisions(resource_revision_id TEXT, resource_id TEXT);
              CREATE TABLE resource_revision_parents(resource_id TEXT, child_revision_id TEXT, parent_revision_id TEXT);",
@@ -1596,7 +1639,7 @@ mod tests {
             )
             .unwrap();
         connection.execute(
-            "INSERT INTO evidence VALUES ('evidence-1', 'task-1', 'VERIFIED', 'effect:effect-1', '{\"service_id\":\"verifier-1\"}')",
+            "INSERT INTO evidence VALUES ('evidence-1', 'task-1', 'VERIFIED', 'effect:effect-1', '{\"service_id\":\"verifier-1\"}', 'run-1')",
             [],
         ).unwrap();
         let inputs = match run_input_revision {
@@ -1611,7 +1654,7 @@ mod tests {
             None => json!([]),
         };
         connection.execute(
-            "INSERT INTO verification_runs VALUES ('task-1', 'PASSED', 'verifier-1', '[\"evidence-1\"]', ?1, ?2)",
+            "INSERT INTO verification_runs VALUES ('run-1', 'task-1', 'PASSED', 'verifier-1', '[\"evidence-1\"]', ?1, '[]', ?2)",
             params![run_spec_revision, inputs.to_string()],
         ).unwrap();
         if let Some(revision) = current_resource_revision {
@@ -1652,6 +1695,89 @@ mod tests {
         let payload = effect_event_payload(&effect(), None, EffectState::Proposed, None);
         assert_eq!(payload["dispatch_ordinal"], 0);
         assert_eq!(payload["capability_invocation_id"], "inv-1");
+    }
+
+    #[test]
+    fn invocation_match_rejects_missing_effect_capability_identity() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE capability_invocations(
+                    invocation_id TEXT, workspace_id TEXT, task_id TEXT, attempt_id TEXT,
+                    request_digest TEXT, execution_method TEXT, idempotency_key TEXT,
+                    operation TEXT, capability_ref_json TEXT
+                 );
+                 INSERT INTO capability_invocations VALUES (
+                    'inv-1','workspace-1','task-1','attempt-1',
+                    'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'DETERMINISTIC_LOCAL','key-1','file.write',
+                    '{\"capability_id\":\"files.write\",\"digest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}'
+                 );",
+            )
+            .unwrap();
+        let mut effect = effect();
+        effect.capability_ref = None;
+
+        let result = validate_invocation_match(&connection, "workspace-1", &effect);
+
+        assert!(
+            result.is_err(),
+            "missing capability identity must fail closed"
+        );
+    }
+
+    #[test]
+    fn live_fence_rejects_attempt_grant_for_another_capability_identity() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE tasks(task_id TEXT, workspace_id TEXT, status TEXT);
+                 CREATE TABLE steps(step_id TEXT, task_id TEXT, current_attempt_id TEXT, status TEXT);
+                 CREATE TABLE attempts(task_id TEXT, attempt_id TEXT, step_id TEXT, status TEXT,
+                    execution_lease_id TEXT, runtime_id TEXT, runtime_incarnation_id TEXT);
+                 CREATE TABLE execution_leases(lease_id TEXT, task_id TEXT, step_id TEXT, attempt_id TEXT,
+                    runtime_id TEXT, runtime_incarnation_id TEXT, epoch INTEGER, fencing_token_digest TEXT,
+                    state TEXT, expires_at TEXT);
+                 CREATE TABLE capability_invocations(invocation_id TEXT, workspace_id TEXT, scope_kind TEXT,
+                    task_id TEXT, attempt_id TEXT, status TEXT, effect_id TEXT, capability_grant_id TEXT,
+                    operation TEXT, capability_ref_json TEXT);
+                 CREATE TABLE capability_grants(capability_grant_id TEXT, scope_kind TEXT, task_id TEXT,
+                    attempt_id TEXT, status TEXT, expires_at TEXT, allowed_operations_json TEXT,
+                    capability_ref_json TEXT);
+                 INSERT INTO tasks VALUES ('task-1','workspace-1','RUNNING');
+                 INSERT INTO steps VALUES ('step-1','task-1','attempt-1','RUNNING');
+                 INSERT INTO attempts VALUES ('task-1','attempt-1','step-1','RUNNING','lease-1','runtime-1','incarnation-1');
+                 INSERT INTO execution_leases VALUES ('lease-1','task-1','step-1','attempt-1','runtime-1','incarnation-1',7,
+                    'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc','ACTIVE','2099-01-01T00:00:00Z');
+                 INSERT INTO capability_invocations VALUES ('inv-1','workspace-1','ATTEMPT_EXECUTION','task-1','attempt-1',
+                    'CREATED',NULL,'grant-1','file.write',
+                    '{\"capability_id\":\"files.write\",\"digest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}');
+                 INSERT INTO capability_grants VALUES ('grant-1','ATTEMPT_EXECUTION','task-1','attempt-1','ACTIVE',NULL,
+                    '[\"file.write\"]',
+                    '{\"capability_id\":\"other.capability\",\"digest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}');",
+            )
+            .unwrap();
+        let fence = EffectFenceBinding {
+            lease_id: "lease-1".to_owned(),
+            epoch: 7,
+            fencing_token_digest: format!("sha256:{}", "c".repeat(64)),
+        };
+
+        let result = validate_live_fence(
+            &connection,
+            "workspace-1",
+            "runtime-1",
+            "incarnation-1",
+            "task-1",
+            "attempt-1",
+            "inv-1",
+            &fence,
+        );
+
+        assert!(
+            result.is_err(),
+            "an operation grant cannot authorize another capability"
+        );
     }
 
     #[test]
@@ -1729,8 +1855,12 @@ mod tests {
             payload_ref: None,
             payload_digest: None,
             created_at: "2026-10-08T00:00:00Z".into(),
+            verification_run_id: None,
         };
         assert!(validate_evidence_producer("runtime-1", "inc-1", &evidence).is_ok());
+        evidence.verification_run_id = Some("verifier-run-1".into());
+        assert!(validate_evidence_producer("runtime-1", "inc-1", &evidence).is_err());
+        evidence.verification_run_id = None;
         evidence.level = EvidenceLevel::Verified;
         assert!(validate_evidence_producer("runtime-1", "inc-1", &evidence).is_err());
         evidence.level = EvidenceLevel::Reported;
@@ -1751,6 +1881,7 @@ mod tests {
                 payload_ref: None,
                 payload_digest: None,
                 created_at: "2026-10-08T00:00:00Z".into(),
+                verification_run_id: None,
             },
             event: storage_core::DomainEvent {
                 event_id: "event-1".into(),
@@ -1782,6 +1913,30 @@ mod tests {
         };
         response.set_replayed();
         assert!(response.replayed);
+    }
+
+    #[test]
+    fn evidence_row_preserves_verification_run_binding() {
+        let connection = Connection::open_in_memory().expect("in-memory SQLite");
+        connection
+            .execute_batch(
+                "CREATE TABLE evidence(evidence_id TEXT, task_id TEXT, subject_ref TEXT, level TEXT, kind TEXT, producer_json TEXT, payload_ref_json TEXT, payload_digest TEXT, created_at TEXT, verification_run_id TEXT);
+                 INSERT INTO evidence VALUES ('evidence-1','task-1','task:task-1','REPORTED','report','{\"service_id\":\"verifier-1\"}',NULL,NULL,'2026-10-08T00:00:00Z','verification-1');",
+            )
+            .expect("evidence row fixture");
+        let row = connection
+            .query_row(
+                "SELECT evidence_id,task_id,subject_ref,level,kind,producer_json,payload_ref_json,payload_digest,created_at,verification_run_id FROM evidence",
+                [],
+                read_evidence_row,
+            )
+            .expect("read Evidence row");
+        let evidence = parse_evidence_row(row).expect("parse Evidence row");
+
+        assert_eq!(
+            evidence.verification_run_id.as_deref(),
+            Some("verification-1")
+        );
     }
 
     #[test]
@@ -1817,9 +1972,66 @@ mod tests {
             Some("revision-current"),
             false,
         );
+        connection
+            .execute(
+                "UPDATE verification_runs SET subject_refs_json=?1 WHERE verification_run_id='run-1'",
+                [json!([{
+                    "workspace_id":"workspace-1",
+                    "resource_id":"resource-1",
+                    "revision_id":"revision-current"
+                }]).to_string()],
+            )
+            .expect("pin current verifier subject");
         assert!(
             validate_verification_evidence(&connection, "workspace-1", &effect(), "evidence-1")
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn evidence_bound_to_another_verification_run_cannot_verify_effect() {
+        let connection = verification_freshness_db(2, 2, None, None, false);
+        connection
+            .execute(
+                "UPDATE evidence SET verification_run_id='other-run' WHERE evidence_id='evidence-1'",
+                [],
+            )
+            .expect("simulate evidence from a different run");
+        assert!(
+            validate_verification_evidence(&connection, "workspace-1", &effect(), "evidence-1")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn stale_verification_subject_cannot_verify_effect() {
+        let connection = verification_freshness_db(2, 2, Some("revision-current"), None, false);
+        connection
+            .execute(
+                "INSERT INTO resource_revisions VALUES ('revision-source-old', 'resource-1')",
+                [],
+            )
+            .expect("old subject revision exists");
+        connection
+            .execute(
+                "INSERT INTO resource_revision_parents VALUES ('resource-1','revision-current','revision-source-old')",
+                [],
+            )
+            .expect("current subject revision descends from old one");
+        connection
+            .execute(
+                "UPDATE verification_runs SET subject_refs_json=?1 WHERE verification_run_id='run-1'",
+                [json!([{
+                    "workspace_id":"workspace-1",
+                    "resource_id":"resource-1",
+                    "revision_id":"revision-source-old"
+                }]).to_string()],
+            )
+            .expect("pin stale verifier subject");
+
+        assert!(
+            validate_verification_evidence(&connection, "workspace-1", &effect(), "evidence-1")
+                .is_err()
         );
     }
 

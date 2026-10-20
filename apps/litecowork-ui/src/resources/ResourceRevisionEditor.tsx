@@ -1117,7 +1117,7 @@ export function ResourceRevisionEditor({ resource: requestedResource, activeWork
       <div className="resource-revision-meta">
         <span><strong>Kind</strong>{detail.kind}</span>
         <span><strong>Resource version</strong>{detail.version}</span>
-        <span><strong>Current revision</strong>{detail.currentRevisionId ?? "Conflicted or unavailable"}</span>
+        <span><strong>Current revision</strong>{detail.currentRevisionId ?? (history.length === 0 ? "None (metadata only)" : "Conflicted or unavailable")}</span>
         <span><strong>Context status</strong>{contextStatus ?? "Not a ContextDocument"}</span>
       </div>
       <section className="resource-location-observations" aria-labelledby="resource-location-observations-title">

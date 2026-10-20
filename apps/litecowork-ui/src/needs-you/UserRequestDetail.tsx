@@ -141,18 +141,43 @@ function displayTime(value: string | null): string {
   return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : "Time unavailable";
 }
 
+type UserRequestActionReceipt = {
+  requestId: string;
+  workspaceId: string;
+  status: "ANSWERED" | "DISMISSED";
+  version: number;
+  resolvedAt: string;
+};
+
+function isActionReceipt(value: unknown, workspaceId: string, requestId: string, expectedVersion: number): value is UserRequestActionReceipt {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const receipt = value as Record<string, unknown>;
+  return receipt.requestId === requestId && receipt.workspaceId === workspaceId
+    && (receipt.status === "ANSWERED" || receipt.status === "DISMISSED")
+    && receipt.version === expectedVersion + 1 && isTimestamp(receipt.resolvedAt);
+}
+
+function createIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export function UserRequestDetail({
   workspaceId,
   requestId,
   operatorReady,
   refreshToken = 0,
   onBack,
+  onResolved,
 }: {
   workspaceId: string;
   requestId: string;
   operatorReady: boolean;
   refreshToken?: number;
   onBack: () => void;
+  onResolved?: (status: "ANSWERED" | "DISMISSED") => void;
 }) {
   const [loadedDetail, setLoadedDetail] = useState<{ workspaceId: string; requestId: string; value: UserRequestDetailView } | null>(null);
   const detail = loadedDetail?.workspaceId === workspaceId && loadedDetail.requestId === requestId ? loadedDetail.value : null;
@@ -161,6 +186,18 @@ export function UserRequestDetail({
   const [retryVersion, setRetryVersion] = useState(0);
   const generation = useRef(0);
   const title = useRef<HTMLHeadingElement>(null);
+  const [choiceId, setChoiceId] = useState("");
+  const [textResponse, setTextResponse] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionFailure, setActionFailure] = useState<string | null>(null);
+  const actionKey = useRef<{ fingerprint: string; key: string } | null>(null);
+
+  useEffect(() => {
+    setChoiceId("");
+    setTextResponse("");
+    setActionFailure(null);
+    actionKey.current = null;
+  }, [workspaceId, requestId]);
 
   useLayoutEffect(() => {
     title.current?.focus();
@@ -204,6 +241,38 @@ export function UserRequestDetail({
 
   const staleOffline = failure === "offline" && detail !== null;
   const retry = () => setRetryVersion(value => value + 1);
+  const canSubmitChoice = detail?.interactionMode === "FORM"
+    && (detail.kind === "DECISION" || detail.kind === "RESOURCE_SELECTION")
+    && detail.choices.length > 0;
+
+  const submitAction = async (action: "respond" | "dismiss", input?: { response?: unknown; choiceId?: string }) => {
+    if (!detail || detail.status !== "PENDING" || !operatorReady || actionBusy) return;
+    const fingerprint = JSON.stringify({ action, workspaceId, requestId, version: detail.version, input });
+    if (actionKey.current?.fingerprint !== fingerprint) actionKey.current = { fingerprint, key: createIdempotencyKey() };
+    const key = actionKey.current.key;
+    setActionBusy(true);
+    setActionFailure(null);
+    try {
+      const receipt = action === "dismiss"
+        ? await invoke<unknown>("dismiss_user_request", {
+            workspaceId, requestId, expectedVersion: detail.version, idempotencyKey: key,
+          })
+        : await invoke<unknown>("respond_user_request", {
+            workspaceId, requestId, expectedVersion: detail.version, idempotencyKey: key,
+            response: input?.response ?? null, choiceId: input?.choiceId ?? null,
+          });
+      if (!isActionReceipt(receipt, workspaceId, requestId, detail.version)) throw new Error("The saved response did not match this request.");
+      setActionFailure(null);
+      setTextResponse("");
+      setChoiceId("");
+      onResolved?.(receipt.status);
+      setRetryVersion(value => value + 1);
+    } catch {
+      setActionFailure("The response could not be confirmed. Refresh the request before trying again.");
+    } finally {
+      setActionBusy(false);
+    }
+  };
 
   return <section className="user-request-detail" aria-labelledby="user-request-detail-title" aria-busy={loading}>
     <div className="user-request-detail-heading">
@@ -237,12 +306,18 @@ export function UserRequestDetail({
       <div className="user-request-detail-prompt" aria-label="Request prompt">{detail.prompt}</div>
       {detail.choices.length > 0 && <section aria-labelledby="user-request-choices-title">
         <h3 id="user-request-choices-title">Choices</h3>
-        <ul className="user-request-choice-list">
+        {canSubmitChoice && detail.status === "PENDING" ? <fieldset className="user-request-choice-list">
+          <legend className="sr-only">Choose one response</legend>
+          {detail.choices.map(choice => <label className="user-request-choice-option" key={choice.choiceId}>
+            <input type="radio" name={`user-request-choice-${requestId}`} value={choice.choiceId} checked={choiceId === choice.choiceId} onChange={() => setChoiceId(choice.choiceId)} disabled={!operatorReady || actionBusy} />
+            <span><strong className="user-request-choice-label">{choice.label}</strong>{choice.description && <span className="user-request-choice-description">{choice.description}</span>}</span>
+          </label>)}
+        </fieldset> : <ul className="user-request-choice-list">
           {detail.choices.map(choice => <li key={choice.choiceId}>
             <strong className="user-request-choice-label">{choice.label}</strong>
             {choice.description && <p>{choice.description}</p>}
           </li>)}
-        </ul>
+        </ul>}
       </section>}
       {detail.interactionMode === "EXTERNAL_URL" && <p className="user-request-detail-notice">{detail.status === "PENDING"
         ? "This request needs an external sign-in handoff. The provider address is kept private and is not shown in this read-only view."
@@ -252,7 +327,22 @@ export function UserRequestDetail({
         <div><dt>Expires</dt><dd>{displayTime(detail.expiresAt)}</dd></div>
         <div><dt>Resolved</dt><dd>{displayTime(detail.resolvedAt)}</dd></div>
       </dl>
-      {detail.status === "PENDING" && <p className="user-request-detail-notice">This view is read-only. No response or dismissal has been sent.</p>}
+      {detail.interactionMode === "FORM" && detail.status === "PENDING" && !canSubmitChoice && <label className="user-request-response-field">
+        <span>Your response</span>
+        <textarea value={textResponse} onChange={event => setTextResponse(event.currentTarget.value)} rows={4} maxLength={65536} disabled={!operatorReady || actionBusy} />
+        <small>Your answer is checked against the request before it is saved. Do not enter passwords, keys, or other credentials.</small>
+      </label>}
+      {detail.status === "PENDING" && actionFailure && <p className="user-request-detail-error" role="alert">{actionFailure}</p>}
+      {detail.status === "PENDING" && <div className="user-request-actions">
+        {detail.interactionMode === "FORM" && <button type="button" className="primary-button" disabled={!operatorReady || actionBusy || (canSubmitChoice ? !choiceId : !textResponse.trim())} onClick={() => void submitAction("respond", canSubmitChoice ? { choiceId } : { response: textResponse })}>{actionBusy ? "Saving…" : "Save response"}</button>}
+        {detail.interactionMode === "EXTERNAL_URL" && <>
+          <p className="user-request-detail-notice">The sign-in handoff is not available from this screen yet. You can decline or cancel this request; the provider address remains private.</p>
+          <button type="button" className="quiet-button" disabled={!operatorReady || actionBusy} onClick={() => void submitAction("respond", { response: { action: "decline" } })}>Decline sign-in</button>
+          <button type="button" className="quiet-button" disabled={!operatorReady || actionBusy} onClick={() => void submitAction("respond", { response: { action: "cancel" } })}>Cancel request</button>
+        </>}
+        <button type="button" className="quiet-button" disabled={!operatorReady || actionBusy} onClick={() => void submitAction("dismiss")}>{actionBusy ? "Saving…" : "Dismiss request"}</button>
+      </div>}
+      {detail.status === "ANSWERED" && <p className="user-request-detail-notice" role="status">Response saved. Provider continuation has not been confirmed.</p>}
     </>}
   </section>;
 }

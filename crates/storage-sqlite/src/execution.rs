@@ -5,7 +5,8 @@
 
 use super::*;
 use storage_core::{
-    AdmitStepAttempt, AttemptAdmissionChecks, AttemptBudgetAdmission, ExecutionCheck,
+    AdmitStepAttempt, AttemptAdmissionChecks, AttemptBudgetAdmission, ChildAttemptAdmissionProofs,
+    ChildAttemptAdmissionSnapshot, DelegationProfileAdmissionProjection, ExecutionCheck,
     ExecutionLeaseCommand, ExecutionLeaseMutationSnapshot, ExpireExecutionLease,
     StepAttemptAdmissionSnapshot, StepAttemptStore,
 };
@@ -47,6 +48,19 @@ impl SqliteStepAttemptStore {
 }
 
 impl StepAttemptStore for SqliteStepAttemptStore {
+    fn child_attempt_admission_snapshot(
+        &self,
+        command: &AdmitStepAttempt,
+    ) -> Result<ChildAttemptAdmissionSnapshot, StoreError> {
+        let command = command.clone();
+        self.run(move |connection| {
+            let tx = connection.transaction().map_err(map_database_error)?;
+            let snapshot = child_attempt_admission_snapshot(&tx, &command)?;
+            tx.commit().map_err(map_database_error)?;
+            Ok(snapshot)
+        })
+    }
+
     fn step_attempt_admission_snapshot(
         &self,
         command: &AdmitStepAttempt,
@@ -67,7 +81,21 @@ impl StepAttemptStore for SqliteStepAttemptStore {
         self.run(move |connection| {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(map_database_error)?;
             let snapshot = admission_snapshot(&tx, &command)?;
+            let child_snapshot = command.parent_attempt_id.as_ref()
+                .map(|_| child_attempt_admission_snapshot(&tx, &command))
+                .transpose()?;
             validate_admission_rows(&tx, &command, &snapshot)?;
+            if let Some(child) = child_snapshot {
+                let missing = storage_core::unproven_child_admission_gates(&child.proofs);
+                if !missing.is_empty() {
+                    return Err(StoreError::Invalid(format!(
+                        "child Attempt admission denied; required durable proofs are missing or unconfirmed: {missing:?}"
+                    )));
+                }
+                return Err(StoreError::Invalid(
+                    "child Attempt admission denied; atomic grant, budget reservation, Attempt, lease, Step, event, and receipt writer is not implemented".to_owned(),
+                ));
+            }
             Err(StoreError::Invalid("Attempt admission unavailable: durable Environment/process containment, Trust grant, budget reservation, and Effect-reconciliation proofs have no integrated producers".to_owned()))
         })
     }
@@ -666,6 +694,300 @@ fn event_draft(
     }
 }
 
+/// Project durable child-admission facts under one SQLite read transaction. This does
+/// not authorize a child or establish the external proofs below; the final writer must
+/// repeat these reads when it eventually commits an admitted Attempt.
+fn child_attempt_admission_snapshot(
+    connection: &Connection,
+    command: &AdmitStepAttempt,
+) -> Result<ChildAttemptAdmissionSnapshot, StoreError> {
+    let (Some(parent_id), Some(profile_id), Some(profile_revision)) = (
+        command.parent_attempt_id.as_deref(),
+        command.delegation_profile_id.as_deref(),
+        command.delegation_profile_revision,
+    ) else {
+        return Err(StoreError::Invalid(
+            "child-admission projection requires a parent Attempt and pinned profile revision"
+                .to_owned(),
+        ));
+    };
+    let base = admission_snapshot(connection, command)?;
+    let task_view = load_task_view(connection, &command.workspace_id, &command.task_id)?
+        .ok_or(StoreError::NotFound)?;
+    let parent_attempt =
+        load_attempt(connection, &command.task_id, parent_id)?.ok_or(StoreError::NotFound)?;
+    let current_plan_steps = list_steps(
+        connection,
+        &command.workspace_id,
+        &command.task_id,
+        task_view.task.current_plan_revision,
+    )?;
+    let parent_step = current_plan_steps
+        .iter()
+        .find(|step| step.step_id == parent_attempt.step_id)
+        .cloned();
+    let parent_session = parent_attempt
+        .agent_session_id
+        .as_deref()
+        .map(|session_id| load_agent_session(connection, &command.workspace_id, session_id))
+        .transpose()?
+        .flatten();
+    let parent_lease = parent_attempt
+        .execution_lease_id
+        .as_deref()
+        .map(|lease_id| load_lease(connection, lease_id))
+        .transpose()?
+        .flatten();
+    let sqlite_now = sqlite_now(connection)?;
+    let parent_lease_current = parent_lease.as_ref().is_some_and(|lease| {
+        lease.state == storage_core::ExecutionLeaseState::Active
+            && timestamp_unix_ms(&lease.expires_at)
+                .ok()
+                .zip(timestamp_unix_ms(&sqlite_now).ok())
+                .is_some_and(|(expires, now)| expires > now)
+    });
+
+    // The lineage is bounded by the platform's maximum depth. Reject cycles and
+    // missing ancestors as integrity errors rather than returning a partial path.
+    let mut parent_ancestry = Vec::new();
+    let mut current = Some(parent_attempt.clone());
+    let mut seen = std::collections::HashSet::new();
+    while let Some(attempt) = current {
+        if !seen.insert(attempt.attempt_id.clone()) || parent_ancestry.len() > 2 {
+            return Err(StoreError::Integrity(
+                "child Attempt ancestry is cyclic or exceeds the platform bound".to_owned(),
+            ));
+        }
+        parent_ancestry.push(attempt.attempt_id.clone());
+        current = match attempt.parent_attempt_id.as_deref() {
+            Some(ancestor_id) => Some(
+                load_attempt(connection, &command.task_id, ancestor_id)?.ok_or_else(|| {
+                    StoreError::Integrity("parent Attempt ancestry has a missing row".to_owned())
+                })?,
+            ),
+            None => None,
+        };
+    }
+    parent_ancestry.reverse();
+    if parent_ancestry.len() > 3 {
+        return Err(StoreError::Invalid(
+            "host delegation depth exceeds the platform maximum".to_owned(),
+        ));
+    }
+
+    let profile_row: Option<(String, String, i64, String, i64, i64, bool)> = connection
+        .query_row(
+            "SELECT p.agent_binding_id, p.status, p.current_revision, r.workspace_id,
+                    r.max_concurrency, r.max_host_delegation_depth, b.enabled
+             FROM delegation_profiles p
+             JOIN agent_bindings b ON b.workspace_id = p.workspace_id AND b.agent_binding_id = p.agent_binding_id
+             JOIN delegation_profile_revisions r
+               ON r.delegation_profile_id = p.delegation_profile_id
+              AND r.revision = ?3 AND r.workspace_id = p.workspace_id
+             WHERE p.workspace_id = ?1 AND p.delegation_profile_id = ?2",
+            params![
+                command.workspace_id,
+                profile_id,
+                to_sql_i64(profile_revision, "DelegationProfile revision")?
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get::<_, i64>(6)? == 1,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((
+        profile_binding,
+        profile_status,
+        current_revision,
+        profile_workspace,
+        profile_concurrency,
+        profile_depth,
+        binding_enabled,
+    )) = profile_row
+    else {
+        return Err(StoreError::NotFound);
+    };
+
+    let (coworker_enabled_profile_ids, coworker_policy_json): (Vec<String>, Option<String>) =
+        if let (Some(coworker_id), Some(coworker_revision)) = (
+            task_view.task.origin_coworker_id.as_deref(),
+            task_view.task.origin_coworker_revision,
+        ) {
+            let row: Option<(String, Option<String>)> = connection
+                .query_row(
+                    "SELECT enabled_delegation_profile_ids_json, delegation_budget_policy_json
+                     FROM coworker_revisions WHERE workspace_id = ?1 AND coworker_id = ?2 AND revision = ?3",
+                    params![
+                        command.workspace_id,
+                        coworker_id,
+                        to_sql_i64(coworker_revision, "Coworker revision")?
+                    ],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(map_database_error)?;
+            let (profiles_json, budget_policy) = row.ok_or_else(|| {
+                StoreError::Integrity("Task's pinned Coworker revision is missing".to_owned())
+            })?;
+            (
+                serde_json::from_str(&profiles_json)
+                    .map_err(|error| StoreError::Integrity(error.to_string()))?,
+                budget_policy,
+            )
+        } else {
+            (Vec::new(), None)
+        };
+    let task_max_concurrency = policy_max_concurrency(
+        task_view
+            .current_spec_revision
+            .delegation_budget_policy
+            .as_ref(),
+    )?;
+    let coworker_max_concurrency = policy_json_max_concurrency(coworker_policy_json.as_deref())?;
+    let active_task_children =
+        count_active_children(connection, &command.workspace_id, &command.task_id, None)?;
+    let active_profile_attempts = count_active_children(
+        connection,
+        &command.workspace_id,
+        &command.task_id,
+        Some(profile_id),
+    )?;
+    let parent_profile_max_delegation_depth = match (
+        parent_attempt.delegation_profile_id.as_deref(),
+        parent_attempt.delegation_profile_revision,
+    ) {
+        (Some(parent_profile_id), Some(parent_profile_revision)) => {
+            let value: Option<i64> = connection
+                .query_row(
+                    "SELECT max_host_delegation_depth FROM delegation_profile_revisions
+                     WHERE workspace_id = ?1 AND delegation_profile_id = ?2 AND revision = ?3",
+                    params![
+                        command.workspace_id,
+                        parent_profile_id,
+                        to_sql_i64(parent_profile_revision, "parent profile revision")?
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_database_error)?;
+            Some(
+                u8::try_from(value.ok_or_else(|| {
+                    StoreError::Integrity("parent profile revision is missing".to_owned())
+                })?)
+                .map_err(|_| StoreError::Integrity("parent profile depth is invalid".to_owned()))?,
+            )
+        }
+        (None, None) => None,
+        _ => {
+            return Err(StoreError::Integrity(
+                "parent Attempt has a partial profile pin".to_owned(),
+            ));
+        }
+    };
+
+    Ok(ChildAttemptAdmissionSnapshot {
+        task: task_view.task,
+        task_spec: task_view.current_spec_revision,
+        plan: base.plan,
+        step: base.step,
+        dependency_steps: base.dependency_steps,
+        parent_attempt,
+        parent_step,
+        parent_session,
+        parent_lease,
+        parent_lease_current,
+        parent_ancestry,
+        parent_profile_max_delegation_depth,
+        candidate_profile: DelegationProfileAdmissionProjection {
+            profile_id: profile_id.to_owned(),
+            workspace_id: profile_workspace,
+            agent_binding_id: profile_binding,
+            current_revision: from_sql_i64(current_revision, "current profile revision")?,
+            requested_revision: profile_revision,
+            status: profile_status,
+            binding_enabled,
+            max_concurrency: u8::try_from(profile_concurrency)
+                .map_err(|_| StoreError::Integrity("profile concurrency is invalid".to_owned()))?,
+            max_host_delegation_depth: u8::try_from(profile_depth)
+                .map_err(|_| StoreError::Integrity("profile depth is invalid".to_owned()))?,
+        },
+        coworker_enabled_profile_ids,
+        task_max_concurrency,
+        coworker_max_concurrency,
+        active_task_child_attempts: active_task_children,
+        active_profile_attempts,
+        // No durable producer currently proves any of these authority checks.
+        proofs: ChildAttemptAdmissionProofs::default(),
+    })
+}
+
+fn policy_max_concurrency(policy: Option<&Value>) -> Result<Option<u8>, StoreError> {
+    let Some(policy) = policy else {
+        return Ok(None);
+    };
+    parse_optional_concurrency(policy.get("max_concurrent_children"))
+}
+
+fn policy_json_max_concurrency(policy_json: Option<&str>) -> Result<Option<u8>, StoreError> {
+    let Some(policy_json) = policy_json else {
+        return Ok(None);
+    };
+    let policy: Value = serde_json::from_str(policy_json).map_err(|error| {
+        StoreError::Integrity(format!("Coworker budget policy JSON is invalid: {error}"))
+    })?;
+    parse_optional_concurrency(policy.get("max_concurrent_children"))
+}
+
+fn parse_optional_concurrency(value: Option<&Value>) -> Result<Option<u8>, StoreError> {
+    let Some(value) = value else { return Ok(None) };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let Some(value) = value.as_u64() else {
+        return Err(StoreError::Integrity(
+            "max_concurrent_children is not an unsigned integer".to_owned(),
+        ));
+    };
+    if !(1..=8).contains(&value) {
+        return Err(StoreError::Integrity(
+            "max_concurrent_children is outside the supported range".to_owned(),
+        ));
+    }
+    Ok(Some(value as u8))
+}
+
+fn count_active_children(
+    connection: &Connection,
+    workspace_id: &str,
+    task_id: &str,
+    profile_id: Option<&str>,
+) -> Result<u8, StoreError> {
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM attempts a JOIN tasks t ON t.task_id = a.task_id
+             WHERE t.workspace_id = ?1 AND a.task_id = ?2 AND a.parent_attempt_id IS NOT NULL
+               AND a.status NOT IN ('COMPLETED','FAILED','ABANDONED','CANCELLED')
+               AND (?3 IS NULL OR a.delegation_profile_id = ?3)",
+            params![workspace_id, task_id, profile_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    u8::try_from(count).map_err(|_| {
+        StoreError::Invalid(
+            "active child Attempt count exceeds the bounded platform limit".to_owned(),
+        )
+    })
+}
+
 fn admission_snapshot(
     connection: &Connection,
     command: &AdmitStepAttempt,
@@ -825,6 +1147,11 @@ fn validate_admission_rows(
     command: &AdmitStepAttempt,
     snapshot: &StepAttemptAdmissionSnapshot,
 ) -> Result<(), StoreError> {
+    validate_parent_profile_tuple(
+        command.parent_attempt_id.as_deref(),
+        command.delegation_profile_id.as_deref(),
+        command.delegation_profile_revision,
+    )?;
     if snapshot.task.version != command.expected_task_version
         || snapshot.step.version != command.expected_step_version
         || snapshot.plan.revision != command.expected_plan_revision
@@ -870,7 +1197,7 @@ fn validate_admission_rows(
             ));
         };
         let parent_eligible: bool = connection.query_row(
-            "SELECT EXISTS(SELECT 1 FROM attempts p JOIN execution_leases l ON l.lease_id = p.execution_lease_id JOIN delegation_profiles dp ON dp.delegation_profile_id = ?4 AND dp.workspace_id = ?1 AND dp.agent_binding_id = ?5 AND dp.status = 'ENABLED' JOIN delegation_profile_revisions dpr ON dpr.delegation_profile_id = dp.delegation_profile_id AND dpr.revision = ?6 AND dpr.workspace_id = ?1 JOIN tasks t ON t.task_id = p.task_id WHERE t.workspace_id = ?1 AND p.task_id = ?2 AND p.attempt_id = ?3 AND p.status = 'RUNNING' AND l.state = 'ACTIVE' AND l.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now') AND (t.origin_coworker_id IS NULL OR EXISTS(SELECT 1 FROM coworker_revisions cr, json_each(cr.enabled_delegation_profile_ids_json) allowed WHERE cr.coworker_id = t.origin_coworker_id AND cr.revision = t.origin_coworker_revision AND allowed.value = ?4)))",
+            "SELECT EXISTS(SELECT 1 FROM attempts p JOIN execution_leases l ON l.lease_id = p.execution_lease_id JOIN delegation_profiles dp ON dp.delegation_profile_id = ?4 AND dp.workspace_id = ?1 AND dp.agent_binding_id = ?5 AND dp.status = 'ENABLED' AND dp.current_revision = ?6 JOIN agent_bindings b ON b.workspace_id = dp.workspace_id AND b.agent_binding_id = dp.agent_binding_id AND b.enabled = 1 JOIN delegation_profile_revisions dpr ON dpr.delegation_profile_id = dp.delegation_profile_id AND dpr.revision = ?6 AND dpr.workspace_id = ?1 JOIN tasks t ON t.task_id = p.task_id WHERE t.workspace_id = ?1 AND p.task_id = ?2 AND p.attempt_id = ?3 AND p.status = 'RUNNING' AND l.state = 'ACTIVE' AND l.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now') AND (t.origin_coworker_id IS NULL OR EXISTS(SELECT 1 FROM coworker_revisions cr, json_each(cr.enabled_delegation_profile_ids_json) allowed WHERE cr.coworker_id = t.origin_coworker_id AND cr.revision = t.origin_coworker_revision AND allowed.value = ?4)))",
             params![command.workspace_id, command.task_id, parent_id, profile_id, command.agent_binding_id,
                 to_sql_i64(profile_revision, "DelegationProfile revision")?], |row| row.get(0),
         ).map_err(map_database_error)?;
@@ -879,7 +1206,7 @@ fn validate_admission_rows(
                 "delegated parent or pinned worker profile is no longer eligible".to_owned(),
             ));
         }
-        return Err(StoreError::Invalid("host delegated child admission remains unavailable until Runner-provided Trust and containment proofs are durable".to_owned()));
+        return Ok(());
     }
     if snapshot.task.lead_agent_binding_id != command.agent_binding_id {
         return Err(StoreError::Invalid("selected lead differs from the Task's durably selected lead; perform an authorized lead handoff first".to_owned()));
@@ -897,6 +1224,19 @@ fn validate_admission_rows(
     // in the current schema, so no database facts can authorize starting a provider.
     let _ = connection;
     Ok(())
+}
+
+fn validate_parent_profile_tuple(
+    parent_attempt_id: Option<&str>,
+    profile_id: Option<&str>,
+    profile_revision: Option<u64>,
+) -> Result<(), StoreError> {
+    match (parent_attempt_id, profile_id, profile_revision) {
+        (None, None, None) | (Some(_), Some(_), Some(_)) => Ok(()),
+        _ => Err(StoreError::Invalid(
+            "parent Attempt and DelegationProfile ID/revision must be supplied together".to_owned(),
+        )),
+    }
 }
 
 fn accepted_plan_matches_steps(
@@ -1145,4 +1485,18 @@ fn timestamp_unix_ms(value: &str) -> Result<u64, StoreError> {
         .map_err(|_| StoreError::Integrity("invalid stored execution timestamp".to_owned()))?;
     u64::try_from(parsed.unix_timestamp_nanos() / 1_000_000)
         .map_err(|_| StoreError::Integrity("execution timestamp predates epoch".to_owned()))
+}
+
+#[cfg(test)]
+mod delegation_admission_tests {
+    use super::*;
+
+    #[test]
+    fn parent_and_profile_pin_must_be_absent_or_complete() {
+        assert!(validate_parent_profile_tuple(None, None, None).is_ok());
+        assert!(validate_parent_profile_tuple(Some("parent"), Some("profile"), Some(1)).is_ok());
+        assert!(validate_parent_profile_tuple(Some("parent"), None, None).is_err());
+        assert!(validate_parent_profile_tuple(None, Some("profile"), Some(1)).is_err());
+        assert!(validate_parent_profile_tuple(Some("parent"), Some("profile"), None).is_err());
+    }
 }

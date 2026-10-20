@@ -1,3 +1,4 @@
+mod agent_registry_cache;
 mod artifacts;
 mod automation_admission;
 mod blob;
@@ -5,6 +6,7 @@ mod context_document_purge;
 mod conversations;
 mod coworkers;
 mod delegation_profiles;
+mod delegation_results;
 mod dependencies;
 mod effect_evidence;
 mod environments;
@@ -18,17 +20,29 @@ mod agent_binding_tests;
 mod context_document_migration_tests;
 #[cfg(test)]
 mod context_document_purge_tests;
+#[cfg(test)]
+mod delegation_result_migration_tests;
 mod execution;
 mod goals;
 mod os_key_provider;
 mod os_principal_binding;
+#[cfg(test)]
+mod resource_edge_migration_tests;
+#[cfg(test)]
+mod resource_edge_tests;
+mod resource_edges;
 mod resource_index;
 mod routines;
 mod runtime_identity;
 mod suggestions;
+mod trust;
 mod user_request_details;
+mod user_request_resolutions;
 mod verification_runs;
 mod workspace_archive;
+mod workspace_root_cleanup;
+#[cfg(test)]
+mod workspace_root_membership_migration_tests;
 #[cfg(all(test, unix))]
 mod workspace_root_scan_tests;
 
@@ -38,9 +52,10 @@ pub use coworkers::{
     AutomationPage, AutomationRevisionPage, CoworkerEventContext, CoworkerPage, SqliteCoworkerStore,
 };
 pub use delegation_profiles::{
-    DelegationProfileEventContext, DelegationProfilePage, DelegationProfileRevisionPage,
-    SqliteDelegationProfileStore,
+    DelegationProfileEventContext, DelegationProfilePage, DelegationProfilePerformanceSample,
+    DelegationProfileRevisionPage, SqliteDelegationProfileStore,
 };
+pub use delegation_results::SqliteDelegationResultStore;
 pub use effect_evidence::SqliteEffectEvidenceStore;
 pub use environments::SqliteEnvironmentStore;
 pub use execution::SqliteStepAttemptStore;
@@ -54,6 +69,8 @@ pub use os_principal_binding::{
 pub use routines::{RoutineEventContext, RoutinePage, RoutineRevisionPage, SqliteRoutineStore};
 pub use runtime_identity::OsRuntimeDeviceIdentityProvider;
 pub use suggestions::{SqliteSuggestionStore, SuggestionEventContext, SuggestionReadError};
+pub use trust::{OsSecretStore, SqliteApprovalStore};
+pub use user_request_resolutions::SqliteUserRequestResolutionStore;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rusqlite::{
@@ -62,7 +79,7 @@ use rusqlite::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -80,14 +97,14 @@ use storage_core::{
     AgentProfileViewRecord, AgentSessionRecord, AgentSessionStore, AggregateStateRef,
     AutomationTaskAdmission, BlobPurpose, BlobRef, BlobStore, CommittedAgentBinding,
     CommittedAgentSession, CommittedContextDocumentStatus, CommittedPlanningActivation,
-    CommittedResource, CommittedResourceUpload, CommittedTaskSpecRevision, CommittedWorkspace,
-    CommittedWorkspaceInstructionRevision, CommittedWorkspaceRoot,
-    CommittedWorkspaceRootRevalidation, CommittedWorkspaceRootStatus, ContextDocumentOwnerStatus,
-    ContextDocumentStatusCommand, ContextDocumentStatusStore, DeviceIdentityRecord, DomainEvent,
-    EventDraft, EventStore, IdempotentWorkspaceStore, LocalAgentEndpointBindingRecord,
-    LocalRuntimeLifecycleSnapshot, LocalRuntimeWorkspaceBindingLookup,
-    LocalRuntimeWorkspaceEnrollmentRequest, MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE,
-    MAX_WORKSPACE_ROOT_SCAN_ENTRIES,
+    CommittedResource, CommittedResourceUpload, CommittedTaskLeadHandoff,
+    CommittedTaskSpecRevision, CommittedWorkspace, CommittedWorkspaceInstructionRevision,
+    CommittedWorkspaceRoot, CommittedWorkspaceRootRevalidation, CommittedWorkspaceRootStatus,
+    ContextDocumentOwnerStatus, ContextDocumentStatusCommand, ContextDocumentStatusStore,
+    DeviceIdentityRecord, DomainEvent, EventDraft, EventStore, IdempotentWorkspaceStore,
+    LocalAgentEndpointBindingRecord, LocalRuntimeLifecycleSnapshot,
+    LocalRuntimeWorkspaceBindingLookup, LocalRuntimeWorkspaceEnrollmentRequest,
+    MAX_WORKSPACE_EVENT_REPLAY_PAGE_SIZE, MAX_WORKSPACE_ROOT_SCAN_ENTRIES,
     MarkStartingAgentSessionLost, PinnedResourceRef, PlanAcceptance, PlanAcceptanceCommit,
     PlanRevisionRecord, PreparedResourceTextIndex, ReplicationPolicy,
     ResourceDependencyPageRequest, ResourceDependencyViewRecord, ResourceLocationRecord,
@@ -96,26 +113,27 @@ use storage_core::{
     ResourceTextIndexRebuildRequest, ResourceTextIndexRebuildResult, ResourceTextIndexSkipReason,
     ResourceTextSearchPage, ResourceTextSearchPosition, ResourceUploadChunkInput,
     ResourceUploadChunkReceiptRequest, ResourceUploadSessionRecord, ResourceUploadState,
-    ResourceUploadStore, RuntimeCapabilityHostPageRequest, RuntimeCapabilityHostRecord,
-    RuntimeCapabilityRef, RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
-    RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeOfferPageRequest,
-    RuntimeOfferRecord, RuntimeRecord, RuntimeWorkspaceBindingRecord, RuntimeWorkspaceBindingStore,
-    StateStore, StepRecord, StoreError, StoredResourceContent, TaskAggregateSnapshot,
-    TaskCreateCommit, TaskPlanningSessionStart, TaskRecord, TaskSpecRevisionCommit,
-    TaskSpecRevisionRecord, TaskStore, TaskSummaryRecord, TaskView, Workspace,
-    WorkspaceCreateRequest, WorkspaceEventReplayEntry, WorkspaceEventReplayPage,
-    WorkspaceInstructionRevisionRecord, WorkspaceRootCreateCommit, WorkspaceRootRecord,
-    WorkspaceRootResumeCommit, WorkspaceRootRevalidationBindings,
-    WorkspaceRootRevalidationCandidate, WorkspaceRootRevalidationCommit,
-    WorkspaceRootRevalidationFailure, WorkspaceRootScanCandidate, WorkspaceRootScanCommit,
-    WorkspaceRootScanResult, WorkspaceRootScanStatus, WorkspaceRootStatusAction,
-    RootObservationScanStatus, WorkspaceRootObservationBatch, WorkspaceRootStatusCommit,
-    WorkspaceRootStore,
+    ResourceUploadStore, RootObservationScanStatus, RuntimeCapabilityHostPageRequest,
+    RuntimeCapabilityHostRecord, RuntimeCapabilityRef, RuntimeIncarnationLocalObservationRecord,
+    RuntimeIncarnationRecord, RuntimeIncarnationStateUpdate, RuntimeLifecycleStore,
+    RuntimeOfferPageRequest, RuntimeOfferRecord, RuntimeRecord, RuntimeWorkspaceBindingRecord,
+    RuntimeWorkspaceBindingStore, StateStore, StepRecord, StoreError, StoredResourceContent,
+    TaskAggregateSnapshot, TaskCreateCommit, TaskLeadHandoffCommit, TaskPlanningSessionStart,
+    TaskRecord, TaskSpecRevisionCommit, TaskSpecRevisionRecord, TaskStore, TaskSummaryRecord,
+    TaskView, Workspace, WorkspaceCreateRequest, WorkspaceEventReplayEntry,
+    WorkspaceEventReplayPage, WorkspaceInstructionRevisionRecord, WorkspaceRootCreateCommit,
+    WorkspaceRootObservationBatch, WorkspaceRootRecord, WorkspaceRootResumeCommit,
+    WorkspaceRootRevalidationBindings, WorkspaceRootRevalidationCandidate,
+    WorkspaceRootRevalidationCommit, WorkspaceRootRevalidationFailure, WorkspaceRootScanCandidate,
+    WorkspaceRootScanCommit, WorkspaceRootScanResult, WorkspaceRootScanStatus,
+    WorkspaceRootStatusAction, WorkspaceRootStatusCommit, WorkspaceRootStore,
 };
 
 #[cfg(unix)]
 const MAX_WORKSPACE_ROOT_PATH_BYTES: usize = 32 * 1024;
 const MAX_WORKSPACE_ROOT_ENCODED_LOCATOR_BYTES: usize = 44 * 1024;
+const WINDOWS_WORKSPACE_ROOT_LOCATOR_PREFIX: &str = "windows-path-u16le-b64:";
+const MAX_WINDOWS_WORKSPACE_ROOT_PATH_UNITS: usize = 16_896;
 const MAX_SHARED_IDEMPOTENCY_KEY_BYTES: usize = 200;
 
 /// Shared HTTP mutation keys are bounded by the canonical Operator contract.
@@ -148,7 +166,11 @@ const SQLITE_V18_DDL: &str = include_str!("../../../docs/schemas/sqlite-v18.sql"
 const SQLITE_V19_DDL: &str = include_str!("../../../docs/schemas/sqlite-v19.sql");
 const SQLITE_V20_DDL: &str = include_str!("../../../docs/schemas/sqlite-v20.sql");
 const SQLITE_V21_DDL: &str = include_str!("../../../docs/schemas/sqlite-v21.sql");
-const SCHEMA_VERSION: i64 = 21;
+const SQLITE_V22_DDL: &str = include_str!("../../../docs/schemas/sqlite-v22.sql");
+const SQLITE_V23_DDL: &str = include_str!("../../../docs/schemas/sqlite-v23.sql");
+const SQLITE_V24_DDL: &str = include_str!("../../../docs/schemas/sqlite-v24.sql");
+const SQLITE_V25_DDL: &str = include_str!("../../../docs/schemas/sqlite-v25.sql");
+const SCHEMA_VERSION: i64 = 25;
 const V3_SCHEMA_VERSION: i64 = 3;
 const V4_SCHEMA_VERSION: i64 = 4;
 const V5_SCHEMA_VERSION: i64 = 5;
@@ -168,6 +190,10 @@ const V18_SCHEMA_VERSION: i64 = 18;
 const V19_SCHEMA_VERSION: i64 = 19;
 const V20_SCHEMA_VERSION: i64 = 20;
 const V21_SCHEMA_VERSION: i64 = 21;
+const V22_SCHEMA_VERSION: i64 = 22;
+const V23_SCHEMA_VERSION: i64 = 23;
+const V24_SCHEMA_VERSION: i64 = 24;
+const V25_SCHEMA_VERSION: i64 = 25;
 
 fn require_task_planning_isolation_admission() -> Result<(), StoreError> {
     // No qualified Runtime-owned admission proof producer is connected in this
@@ -197,6 +223,10 @@ const V18_MIGRATION_NAME: &str = "resource_upload_chunk_purge_registry_v18";
 const V19_MIGRATION_NAME: &str = "resource_index_blob_registry_v19";
 const V20_MIGRATION_NAME: &str = "verification_run_lifecycle_v20";
 const V21_MIGRATION_NAME: &str = "workspace_root_observations_v21";
+const V22_MIGRATION_NAME: &str = "verification_run_evidence_binding_v22";
+const V23_MIGRATION_NAME: &str = "workspace_root_file_membership_cleanup_v23";
+const V24_MIGRATION_NAME: &str = "immutable_delegation_results_v24";
+const V25_MIGRATION_NAME: &str = "immutable_resource_edges_v25";
 #[cfg(test)]
 const MIGRATION_NAME: &str = V1_MIGRATION_NAME; // version-one compatibility for schema baseline assertions
 const STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.aggregate-state+json";
@@ -505,6 +535,9 @@ enum Command {
     DelegationProfileOperation {
         operation: delegation_profiles::WriterOperation,
     },
+    DelegationResultOperation {
+        operation: delegation_results::WriterOperation,
+    },
     GoalOperation {
         operation: goals::WriterOperation,
     },
@@ -523,8 +556,19 @@ enum Command {
     VerificationRunOperation {
         operation: verification_runs::WriterOperation,
     },
+    TrustOperation {
+        operation: trust::WriterOperation,
+    },
+    UserRequestResolutionOperation {
+        operation: user_request_resolutions::WriterOperation,
+    },
     WorkspaceRootObservationOperation {
         operation: resource_index::WorkspaceRootObservationWriterOperation,
+    },
+    ProcessNextWorkspaceRootCleanupBatch {
+        origin_runtime_id: String,
+        now: String,
+        reply: mpsc::Sender<Result<bool, StoreError>>,
     },
     InvocationOperation {
         operation: invocations::WriterOperation,
@@ -601,6 +645,14 @@ enum Command {
         request_digest: String,
         binding: RuntimeWorkspaceBindingRecord,
         reply: mpsc::Sender<Result<RuntimeWorkspaceBindingRecord, StoreError>>,
+    },
+    ReadAgentRegistrySnapshot {
+        source_registry: String,
+        reply: mpsc::Sender<Result<Option<storage_core::AgentRegistryCacheSnapshot>, StoreError>>,
+    },
+    ReplaceAgentRegistrySnapshot {
+        snapshot: storage_core::AgentRegistryCacheSnapshot,
+        reply: mpsc::Sender<Result<(), StoreError>>,
     },
     GetCurrentLocalRuntimeWorkspaceBinding {
         lookup: LocalRuntimeWorkspaceBindingLookup,
@@ -778,10 +830,21 @@ enum Command {
         request_payload: Value,
         reply: mpsc::Sender<Result<Option<CommittedTaskSpecRevision>, StoreError>>,
     },
+    GetTaskLeadHandoffReceipt {
+        request_scope_id: String,
+        request_id: String,
+        request_digest: String,
+        reply: mpsc::Sender<Result<Option<CommittedTaskLeadHandoff>, StoreError>>,
+    },
     ReviseTaskSpec {
         commit: Box<TaskSpecRevisionCommit>,
         state_ref: AggregateStateRef,
         reply: mpsc::Sender<Result<CommittedTaskSpecRevision, StoreError>>,
+    },
+    CommitTaskLeadHandoff {
+        commit: Box<TaskLeadHandoffCommit>,
+        state_ref: AggregateStateRef,
+        reply: mpsc::Sender<Result<CommittedTaskLeadHandoff, StoreError>>,
     },
     AcceptInitialPlan {
         commit: Box<PlanAcceptanceCommit>,
@@ -902,6 +965,11 @@ enum Command {
         workspace_id: String,
         reply: mpsc::Sender<Result<Vec<DomainEvent>, StoreError>>,
     },
+    GetWorkspaceEvent {
+        workspace_id: String,
+        event_id: String,
+        reply: mpsc::Sender<Result<Option<DomainEvent>, StoreError>>,
+    },
     ReadWorkspaceEventPage {
         workspace_id: String,
         origin_runtime_id: String,
@@ -921,6 +989,7 @@ enum Command {
         content_blob: storage_core::BlobRef,
         text_index: Option<PreparedResourceTextIndex>,
         location_id: String,
+        edge: Option<resource_edges::Write>,
         reply: mpsc::Sender<Result<CommittedResource, StoreError>>,
     },
     CreateWorkspaceRoot {
@@ -3075,6 +3144,104 @@ impl TaskStore for SqliteWorkspaceStore {
         )
     }
 
+    fn commit_task_lead_handoff(
+        &self,
+        mut commit: TaskLeadHandoffCommit,
+    ) -> Result<CommittedTaskLeadHandoff, StoreError> {
+        commit.event.recorded_at = canonicalize_utc_timestamp(&commit.event.recorded_at)?;
+        let request_digest = digest(&canonical_json(&commit.request_payload)?);
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        if let Some(mut receipt) = self.execute_command(
+            Command::GetTaskLeadHandoffReceipt {
+                request_scope_id: commit.request_scope_id.clone(),
+                request_id: commit.request_id.clone(),
+                request_digest: request_digest.clone(),
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )? {
+            receipt.replayed = true;
+            return Ok(receipt);
+        }
+
+        // Build an immutable candidate snapshot outside the SQLite writer. The
+        // transaction below fences it against the exact Task version and spec head;
+        // a racing mutation fails CAS and cannot publish this blob as current state.
+        let mut view = self
+            .get_task(&commit.workspace_id, &commit.task_id)?
+            .ok_or(StoreError::NotFound)?;
+        if view.task.version != commit.expected_task_version
+            || view.task.current_spec_revision != commit.expected_task_spec_revision
+        {
+            return Err(StoreError::Conflict {
+                expected: Some(commit.expected_task_version),
+                actual: Some(view.task.version),
+            });
+        }
+        view.task.lead_agent_binding_id = commit.target_agent_binding_id.clone();
+        view.task.version = commit
+            .expected_task_version
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Integrity("Task version exhausted".to_owned()))?;
+        view.task.updated_at = commit.event.recorded_at.clone();
+
+        let current_plan_revision = view
+            .task
+            .current_plan_revision
+            .map(|revision| {
+                self.list_plan_revisions(&commit.workspace_id, &commit.task_id)?
+                    .into_iter()
+                    .find(|plan| plan.revision == revision)
+                    .ok_or_else(|| {
+                        StoreError::Integrity("Task current plan revision is missing".to_owned())
+                    })
+            })
+            .transpose()?;
+        let current_steps = self.list_steps(
+            &commit.workspace_id,
+            &commit.task_id,
+            view.task.current_plan_revision,
+        )?;
+        let snapshot = TaskAggregateSnapshot {
+            task: view.task.clone(),
+            current_spec_revision: view.current_spec_revision,
+            current_plan_revision,
+            current_steps,
+        };
+        let state_bytes = canonical_json(&snapshot)?;
+        let state_blob = self.inner.blobs.put(
+            &commit.workspace_id,
+            BlobPurpose::AggregateState,
+            &state_bytes,
+            TASK_STATE_MEDIA_TYPE,
+        )?;
+        if state_blob.size_bytes != state_bytes.len() as u64
+            || self.inner.blobs.get(
+                &commit.workspace_id,
+                BlobPurpose::AggregateState,
+                &state_blob,
+            )? != state_bytes
+        {
+            return Err(StoreError::Integrity(
+                "Task lead handoff aggregate state failed verification".to_owned(),
+            ));
+        }
+        let state_ref = AggregateStateRef {
+            blob: state_blob,
+            entity_revision: view.task.version,
+            record_schema_version: 1,
+        };
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        self.execute_command(
+            Command::CommitTaskLeadHandoff {
+                commit: Box::new(commit),
+                state_ref,
+                reply: reply_sender,
+            },
+            reply_receiver,
+        )
+    }
+
     fn accept_initial_plan(
         &self,
         mut commit: PlanAcceptanceCommit,
@@ -3366,6 +3533,13 @@ impl SqliteWorkspaceStore {
 }
 
 impl ResourceStore for SqliteWorkspaceStore {
+    fn create_derived_resource(
+        &self,
+        commit: storage_core::DerivedResourceCreateCommit,
+    ) -> Result<storage_core::CommittedDerivedResource, StoreError> {
+        resource_edges::create_derived_resource(self, commit)
+    }
+
     fn create_resource(
         &self,
         request: WorkspaceCreateRequest,
@@ -3518,6 +3692,7 @@ impl ResourceStore for SqliteWorkspaceStore {
                 content_blob,
                 text_index,
                 location_id,
+                edge: None,
                 reply: reply_sender,
             },
             reply_receiver,
@@ -8099,7 +8274,11 @@ fn validate_workspace_root_commit(commit: &WorkspaceRootCreateCommit) -> Result<
                             .is_some_and(|value| !value.is_empty()))
                     || !matches!(
                         identity.get("platform_kind").and_then(Value::as_str),
-                        Some("LINUX_DEVICE_INODE" | "MACOS_DEVICE_INODE")
+                        Some(
+                            "LINUX_DEVICE_INODE"
+                                | "MACOS_DEVICE_INODE"
+                                | "WINDOWS_VOLUME_FILE_ID_128"
+                        )
                     )
             })
         || resource.sensitivity != "PERSONAL"
@@ -8121,7 +8300,7 @@ fn validate_workspace_root_commit(commit: &WorkspaceRootCreateCommit) -> Result<
         || location.observed_digest.is_some()
         || binding.private_locator.trim().is_empty()
         || binding.private_locator.len()
-            > MAX_WORKSPACE_ROOT_ENCODED_LOCATOR_BYTES + "unix-path-b64:".len()
+            > MAX_WORKSPACE_ROOT_ENCODED_LOCATOR_BYTES + WINDOWS_WORKSPACE_ROOT_LOCATOR_PREFIX.len()
         || binding.private_locator.contains('\0')
         || binding.location_id != location.location_id
         || binding.locator_ref_id != location.locator_ref_id
@@ -8146,10 +8325,7 @@ fn validate_workspace_root_commit(commit: &WorkspaceRootCreateCommit) -> Result<
             .raw_generation
             .as_ref()
             .is_some_and(|value| value.len() > 128 || value.contains('\0'))
-        || !matches!(
-            identity_binding.platform_kind.as_str(),
-            "LINUX_DEVICE_INODE" | "MACOS_DEVICE_INODE"
-        )
+        || !valid_workspace_root_raw_identity(identity_binding)
         || identity_binding.observed_at != location.observed_at
         || root.workspace_id != resource.workspace_id
         || root.resource_id != resource.resource_id
@@ -8542,7 +8718,7 @@ fn create_workspace_root_transaction(
             StoreError::Integrity("WorkspaceRoot private locator is unavailable".to_owned())
         })?;
         let existing_path = workspace_root_private_path(&locator)?;
-        if proposed_path.starts_with(&existing_path) || existing_path.starts_with(&proposed_path) {
+        if workspace_root_paths_overlap(&proposed_path, &existing_path)? {
             return Err(StoreError::Conflict {
                 expected: None,
                 actual: None,
@@ -8618,7 +8794,35 @@ fn create_workspace_root_transaction(
     Ok(result)
 }
 
+#[cfg(windows)]
+fn workspace_root_paths_overlap(left: &Path, right: &Path) -> Result<bool, StoreError> {
+    windows_local_security::windows_absolute_paths_overlap(left, right).map_err(|_| {
+        StoreError::Integrity("WorkspaceRoot private locator cannot be compared safely".to_owned())
+    })
+}
+
+#[cfg(not(windows))]
+fn workspace_root_paths_overlap(left: &Path, right: &Path) -> Result<bool, StoreError> {
+    Ok(left.starts_with(right) || right.starts_with(left))
+}
+
 fn workspace_root_private_path(locator: &str) -> Result<PathBuf, StoreError> {
+    if locator.starts_with(WINDOWS_WORKSPACE_ROOT_LOCATOR_PREFIX) {
+        let units = decode_windows_workspace_root_locator(locator)?;
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            return Ok(PathBuf::from(std::ffi::OsString::from_wide(&units)));
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = units;
+            return Err(StoreError::Integrity(
+                "WorkspaceRoot private locator is unsupported".to_owned(),
+            ));
+        }
+    }
+
     let encoded = locator.strip_prefix("unix-path-b64:").ok_or_else(|| {
         StoreError::Integrity("WorkspaceRoot private locator is unsupported".to_owned())
     })?;
@@ -8680,6 +8884,102 @@ fn workspace_root_private_path(locator: &str) -> Result<PathBuf, StoreError> {
         Err(StoreError::Integrity(
             "WorkspaceRoot private locator is unsupported".to_owned(),
         ))
+    }
+}
+
+fn decode_windows_workspace_root_locator(locator: &str) -> Result<Vec<u16>, StoreError> {
+    let encoded = locator
+        .strip_prefix(WINDOWS_WORKSPACE_ROOT_LOCATOR_PREFIX)
+        .ok_or_else(|| {
+            StoreError::Integrity("WorkspaceRoot private locator is unsupported".to_owned())
+        })?;
+    if encoded.is_empty() || encoded.len() > MAX_WORKSPACE_ROOT_ENCODED_LOCATOR_BYTES {
+        return Err(StoreError::Integrity(
+            "WorkspaceRoot private locator exceeds its size limit".to_owned(),
+        ));
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).map_err(|_| {
+        StoreError::Integrity("WorkspaceRoot private locator is malformed".to_owned())
+    })?;
+    if bytes.len() % 2 != 0
+        || bytes.len() > MAX_WINDOWS_WORKSPACE_ROOT_PATH_UNITS * 2
+        || URL_SAFE_NO_PAD.encode(&bytes) != encoded
+    {
+        return Err(StoreError::Integrity(
+            "WorkspaceRoot private locator is malformed".to_owned(),
+        ));
+    }
+    let units = bytes
+        .chunks_exact(2)
+        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+        .collect::<Vec<_>>();
+    let path = String::from_utf16(&units).map_err(|_| {
+        StoreError::Integrity("WorkspaceRoot private locator is malformed".to_owned())
+    })?;
+    if !canonical_windows_workspace_root_path(&path) {
+        return Err(StoreError::Integrity(
+            "WorkspaceRoot private locator is malformed".to_owned(),
+        ));
+    }
+    Ok(units)
+}
+
+fn canonical_windows_workspace_root_path(path: &str) -> bool {
+    let units = path.encode_utf16().collect::<Vec<_>>();
+    if units.len() < 3
+        || units.len() > MAX_WINDOWS_WORKSPACE_ROOT_PATH_UNITS
+        || !(u16::from(b'A')..=u16::from(b'Z')).contains(&units[0])
+            && !(u16::from(b'a')..=u16::from(b'z')).contains(&units[0])
+        || units[1] != b':' as u16
+        || units[2] != b'\\' as u16
+        || units.contains(&0)
+    {
+        return false;
+    }
+
+    // Keep one canonical drive-rooted spelling. This excludes UNC/device paths,
+    // drive-relative paths, alternate separators, dot segments and ambiguous
+    // trailing separators before any path comparison or OS reopen is attempted.
+    let tail = &path[3..];
+    if tail.is_empty() {
+        return true;
+    }
+    if tail.ends_with('\\') {
+        return false;
+    }
+    tail.split('\\').all(|component| {
+        !component.is_empty()
+            && component != "."
+            && component != ".."
+            && !component.ends_with(' ')
+            && !component.ends_with('.')
+            && !component.chars().any(|character| {
+                character.is_control()
+                    || matches!(character, '/' | '<' | '>' | ':' | '"' | '|' | '?' | '*')
+            })
+    })
+}
+
+fn valid_workspace_root_raw_identity(
+    identity: &storage_core::LocalFileIdentityBindingRecord,
+) -> bool {
+    match identity.platform_kind.as_str() {
+        "LINUX_DEVICE_INODE" | "MACOS_DEVICE_INODE" => true,
+        "WINDOWS_VOLUME_FILE_ID_128" => {
+            identity.raw_filesystem_instance_id.len() == 16
+                && identity
+                    .raw_filesystem_instance_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                && identity.raw_volume_id.is_none()
+                && identity.raw_file_id.len() == 32
+                && identity
+                    .raw_file_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+                && identity.raw_generation.is_none()
+        }
+        _ => false,
     }
 }
 
@@ -9364,6 +9664,12 @@ fn update_workspace_root_status_transaction(
         });
     }
     if commit.action == WorkspaceRootStatusAction::Revoke {
+        resource_index::workspace_root_membership::fence_revoked_workspace_root_file_locations(
+            &tx,
+            &commit.root.workspace_id,
+            &commit.root.workspace_root_id,
+            &commit.root.updated_at,
+        )?;
         tx.execute(
             "UPDATE resource_locations SET availability = 'REVOKED', writable = 0 WHERE location_id = ?1 AND resource_id = ?2",
             params![commit.root.location_id, commit.root.resource_id],
@@ -9501,10 +9807,42 @@ fn validate_workspace_root_scan_commit(commit: &WorkspaceRootScanCommit) -> Resu
         || payload_version != commit.expected_root_version
         || commit.observations.len() != commit.result.files_observed as usize
         || commit.observations.len() > MAX_WORKSPACE_ROOT_SCAN_ENTRIES as usize
+        || commit.memberships.len() > commit.observations.len()
     {
         return Err(StoreError::Invalid(
             "WorkspaceRoot scan commit does not match its receipt request".to_owned(),
         ));
+    }
+    let observations_by_id: HashMap<_, _> = commit
+        .observations
+        .iter()
+        .map(|observation| (observation.observation_id.as_str(), observation))
+        .collect();
+    if observations_by_id.len() != commit.observations.len() {
+        return Err(StoreError::Invalid(
+            "WorkspaceRoot scan contains duplicate observation identities".to_owned(),
+        ));
+    }
+    let mut membership_ids = HashSet::with_capacity(commit.memberships.len());
+    for membership in &commit.memberships {
+        let candidate = &membership.observation;
+        let Some(observation) = observations_by_id.get(candidate.observation_id.as_str()) else {
+            return Err(StoreError::Invalid(
+                "WorkspaceRoot membership has no matching scan observation".to_owned(),
+            ));
+        };
+        if !membership_ids.insert(candidate.observation_id.as_str())
+            || candidate.file_identity_digest != observation.file_identity_digest
+            || candidate.display_name != observation.display_name
+            || candidate.size_bytes != observation.size_bytes
+            || candidate.modified_at != observation.modified_at
+            || candidate.observed_at != observation.observed_at
+            || candidate.private_relative_locator != observation.private_relative_locator
+        {
+            return Err(StoreError::Invalid(
+                "WorkspaceRoot membership does not match its scan observation".to_owned(),
+            ));
+        }
     }
     validate_workspace_root_scan_result(
         &commit.result,
@@ -9694,7 +10032,8 @@ fn get_workspace_root_scan_receipt(
 
 fn commit_workspace_root_scan_transaction(
     connection: &mut Connection,
-    commit: WorkspaceRootScanCommit,
+    blobs: &dyn BlobStore,
+    mut commit: WorkspaceRootScanCommit,
 ) -> Result<WorkspaceRootScanResult, StoreError> {
     validate_workspace_root_scan_commit(&commit)?;
     let tx = connection
@@ -9863,6 +10202,156 @@ fn commit_workspace_root_scan_transaction(
         return Err(StoreError::NotFound);
     }
     workspace_root_private_path(&locator.private_locator).map_err(|_| StoreError::NotFound)?;
+
+    let mut resource_states: HashMap<String, (ResourceRecord, AggregateStateRef)> = HashMap::new();
+    for candidate in commit.memberships {
+        let observation_id = candidate.observation.observation_id.clone();
+        let mutation = resource_index::workspace_root_membership::reconcile_file_membership(
+            &tx,
+            &commit.workspace_id,
+            &commit.workspace_root_id,
+            &commit.runtime_id,
+            &commit.runtime_incarnation_id,
+            resource_index::workspace_root_membership::WorkspaceRootFileMembershipCandidate {
+                observation: candidate.observation,
+                resource: candidate.resource,
+                location: candidate.location,
+                locator_binding: candidate.locator_binding,
+                file_identity_binding: candidate.file_identity_binding,
+            },
+        )?;
+        let resource_id = mutation.resource.resource_id.clone();
+        let state_ref = if mutation.resource_created || mutation.location_created_or_rebound {
+            Some(
+                if let Some((cached_resource, state_ref)) = resource_states.get(&resource_id) {
+                    if cached_resource != &mutation.resource {
+                        return Err(StoreError::Integrity(
+                            "FILE Resource changed while one root scan was committing".to_owned(),
+                        ));
+                    }
+                    state_ref.clone()
+                } else {
+                    let state_bytes = canonical_json(&mutation.resource)?;
+                    let blob = blobs.put(
+                        &mutation.resource.workspace_id,
+                        BlobPurpose::AggregateState,
+                        &state_bytes,
+                        "application/vnd.litecow.resource+json",
+                    )?;
+                    if blobs.get(
+                        &mutation.resource.workspace_id,
+                        BlobPurpose::AggregateState,
+                        &blob,
+                    )? != state_bytes
+                    {
+                        return Err(StoreError::Integrity(
+                            "FILE Resource state blob failed verification".to_owned(),
+                        ));
+                    }
+                    let state_ref = AggregateStateRef {
+                        blob,
+                        entity_revision: mutation.resource.version,
+                        record_schema_version: 1,
+                    };
+                    resource_states.insert(
+                        resource_id.clone(),
+                        (mutation.resource.clone(), state_ref.clone()),
+                    );
+                    state_ref
+                },
+            )
+        } else {
+            None
+        };
+        if mutation.resource_created {
+            let event_seed = canonical_json(&json!({
+                "request_id": commit.request.request_id,
+                "resource_id": resource_id,
+                "event_type": "resource.created.v1",
+            }))?;
+            let event = EventDraft {
+                event_id: format!(
+                    "workspace-root-scan-{}",
+                    digest(&event_seed).trim_start_matches("sha256:")
+                ),
+                workspace_id: mutation.resource.workspace_id.clone(),
+                entity_type: "Resource".to_owned(),
+                entity_id: resource_id.clone(),
+                origin_runtime_id: commit.runtime_id.clone(),
+                entity_revision: mutation.resource.version,
+                hlc_timestamp: commit.result.completed_at.clone(),
+                correlation_id: commit.request.request_id.clone(),
+                causation_id: Some(commit.request.request_id.clone()),
+                schema_version: 1,
+                event_type: "resource.created.v1".to_owned(),
+                payload: json!({
+                    "resource_id": mutation.resource.resource_id,
+                    "workspace_id": mutation.resource.workspace_id,
+                    "kind": "FILE",
+                    "provenance": mutation.resource.provenance,
+                    "aggregate_version": mutation.resource.version,
+                }),
+                recorded_at: commit.result.completed_at.clone(),
+            };
+            insert_domain_event(
+                &tx,
+                &event,
+                state_ref.as_ref().ok_or_else(|| {
+                    StoreError::Integrity("FILE Resource event has no state reference".to_owned())
+                })?,
+            )?;
+        }
+        if mutation.location_created_or_rebound {
+            let event_seed = canonical_json(&json!({
+                "request_id": commit.request.request_id,
+                "resource_id": resource_id,
+                "location_id": mutation.location.location_id,
+                "event_type": "resource.location.changed.v1",
+            }))?;
+            let event = EventDraft {
+                event_id: format!(
+                    "workspace-root-scan-{}",
+                    digest(&event_seed).trim_start_matches("sha256:")
+                ),
+                workspace_id: mutation.resource.workspace_id.clone(),
+                entity_type: "Resource".to_owned(),
+                entity_id: resource_id.clone(),
+                origin_runtime_id: commit.runtime_id.clone(),
+                entity_revision: mutation.resource.version,
+                hlc_timestamp: commit.result.completed_at.clone(),
+                correlation_id: commit.request.request_id.clone(),
+                causation_id: Some(commit.request.request_id.clone()),
+                schema_version: 1,
+                event_type: "resource.location.changed.v1".to_owned(),
+                payload: json!({
+                    "location_id": mutation.location.location_id,
+                    "resource_id": resource_id,
+                    "availability": mutation.location.availability,
+                    "observed_at": mutation.location.observed_at,
+                }),
+                recorded_at: commit.result.completed_at.clone(),
+            };
+            insert_domain_event(
+                &tx,
+                &event,
+                state_ref.as_ref().ok_or_else(|| {
+                    StoreError::Integrity(
+                        "ResourceLocation event has no state reference".to_owned(),
+                    )
+                })?,
+            )?;
+        }
+        let Some(observation) = commit
+            .observations
+            .iter_mut()
+            .find(|observation| observation.observation_id == observation_id)
+        else {
+            return Err(StoreError::Integrity(
+                "WorkspaceRoot membership observation disappeared before commit".to_owned(),
+            ));
+        };
+        observation.resource_id = Some(resource_id);
+    }
 
     resource_index::workspace_root_observations::reconcile_workspace_root_observations_in_transaction(
         &tx,
@@ -10810,6 +11299,15 @@ fn list_resource_location_views(
               AND revision.resource_revision_id = resource.current_revision_id
              LEFT JOIN resource_locations location
                ON location.resource_id = resource.resource_id
+              AND NOT EXISTS (
+                SELECT 1
+                FROM workspace_root_file_locations membership
+                JOIN workspace_roots root
+                  ON root.workspace_id = membership.workspace_id
+                 AND root.workspace_root_id = membership.workspace_root_id
+                WHERE membership.location_id = location.location_id
+                  AND root.status <> 'ACTIVE'
+              )
              WHERE resource.workspace_id = ?1 AND resource.resource_id = ?2
              ORDER BY location.location_id ASC",
         )
@@ -10991,7 +11489,17 @@ fn load_resource_location_record(
         .query_row(
             "SELECT resource_id, runtime_id, locator_ref_id, provider_ref, availability, writable,
                 observed_revision_id, observed_digest, observed_at
-         FROM resource_locations WHERE location_id = ?1 AND resource_id = ?2",
+         FROM resource_locations location
+         WHERE location.location_id = ?1 AND location.resource_id = ?2
+           AND NOT EXISTS (
+             SELECT 1
+             FROM workspace_root_file_locations membership
+             JOIN workspace_roots root
+               ON root.workspace_id = membership.workspace_id
+              AND root.workspace_root_id = membership.workspace_root_id
+             WHERE membership.location_id = location.location_id
+               AND root.status <> 'ACTIVE'
+           )",
             params![location_id, resource_id],
             |row| {
                 Ok((
@@ -11174,10 +11682,23 @@ fn create_resource_transaction(
     upload_commit: Option<UploadCommit>,
     context_document: Option<Value>,
     request_alias: Option<WorkspaceCreateRequest>,
+    edge: Option<resource_edges::Write>,
 ) -> Result<CommittedResource, StoreError> {
     let tx = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(map_database_error)?;
+    if edge.as_ref().is_some_and(|write| {
+        write.edge.workspace_id != resource.workspace_id
+            || write.edge.to_resource_id != resource.resource_id
+            || write.edge.to_revision_id.as_deref() != Some(revision.resource_revision_id.as_str())
+            || write.edge.relation != "DERIVED_FROM"
+            || write.edge.from_revision_id.is_none()
+    }) {
+        return Err(StoreError::Invalid(
+            "derived Resource edge must pin the same-Workspace source and child revisions"
+                .to_owned(),
+        ));
+    }
     let request_digest = digest(&canonical_json(&request.request_payload)?);
     if let Some(alias) = request_alias.as_ref() {
         if alias.principal_id != request.principal_id
@@ -11553,6 +12074,9 @@ fn create_resource_transaction(
         "INSERT INTO domain_events(event_id, workspace_id, entity_type, entity_id, origin_runtime_id, origin_sequence, entity_revision, hlc_timestamp, correlation_id, causation_id, schema_version, type, payload_json, aggregate_state_ref_json, recorded_at, payload_digest) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![event.event_id, event.workspace_id, event.entity_type, event.entity_id, event.origin_runtime_id, to_sql_i64(event.origin_sequence, "origin sequence")?, to_sql_i64(event.entity_revision, "event revision")?, event.hlc_timestamp, event.correlation_id, event.causation_id, i64::from(event.schema_version), event.event_type, payload_json, String::from_utf8(canonical_json(&event.aggregate_state_ref)?).map_err(|e| StoreError::Invalid(e.to_string()))?, event.recorded_at, event.payload_digest],
     ).map_err(map_database_error)?;
+    if let Some(edge) = edge {
+        resource_edges::insert(&tx, &edge.edge, edge.event, edge.state_ref)?;
+    }
     if let Some(upload_commit) = upload_commit {
         insert_upload_domain_event(&tx, upload_commit.status_event, upload_commit.state_ref)?;
     }
@@ -13374,10 +13898,6 @@ fn validate_task_spec_revision_commit(commit: &TaskSpecRevisionCommit) -> Result
             .get("principal_id")
             .and_then(Value::as_str)
             != Some(commit.request.principal_id.as_str())
-        || revision
-            .preferred_lead_agent_binding_id
-            .as_deref()
-            .is_some_and(|binding| binding != commit.task.lead_agent_binding_id)
         || commit.event.workspace_id != revision.workspace_id
         || commit.event.entity_type != "Task"
         || commit.event.entity_id != revision.task_id
@@ -13445,6 +13965,231 @@ fn validate_task_spec_revision_commit(commit: &TaskSpecRevisionCommit) -> Result
         ));
     }
     Ok(())
+}
+
+fn load_task_lead_handoff_receipt(
+    connection: &Connection,
+    request_scope_id: &str,
+    request_id: &str,
+    request_digest: &str,
+) -> Result<Option<CommittedTaskLeadHandoff>, StoreError> {
+    let prior: Option<(String, Option<String>, Option<String>)> = connection
+        .query_row(
+            "SELECT request_digest, response_json, response_digest FROM request_dedup WHERE principal_id = ?1 AND request_id = ?2",
+            params![request_scope_id, request_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((prior_digest, response_json, response_digest)) = prior else {
+        return Ok(None);
+    };
+    if prior_digest != request_digest {
+        return Err(StoreError::IdempotencyConflict);
+    }
+    let response_json = response_json.ok_or_else(|| {
+        StoreError::Integrity("Task lead handoff receipt is incomplete".to_owned())
+    })?;
+    if response_digest.as_deref() != Some(digest(response_json.as_bytes()).as_str()) {
+        return Err(StoreError::Integrity(
+            "Task lead handoff receipt digest does not match".to_owned(),
+        ));
+    }
+    serde_json::from_str(&response_json)
+        .map(Some)
+        .map_err(|error| StoreError::Integrity(error.to_string()))
+}
+
+fn commit_task_lead_handoff_transaction(
+    connection: &mut Connection,
+    commit: TaskLeadHandoffCommit,
+    state_ref: AggregateStateRef,
+) -> Result<CommittedTaskLeadHandoff, StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let request_digest = digest(&canonical_json(&commit.request_payload)?);
+    if let Some(mut receipt) = load_task_lead_handoff_receipt(
+        &transaction,
+        &commit.request_scope_id,
+        &commit.request_id,
+        &request_digest,
+    )? {
+        receipt.replayed = true;
+        return Ok(receipt);
+    }
+
+    let request_is_canonical = commit.request_payload
+        == json!({
+            "workspace_id": commit.workspace_id,
+            "task_id": commit.task_id,
+            "request_scope_id": commit.request_scope_id,
+            "expected_task_version": commit.expected_task_version,
+            "expected_task_spec_revision": commit.expected_task_spec_revision,
+            "target_agent_binding_id": commit.target_agent_binding_id,
+            "cause": commit.cause,
+            "trigger_observation": commit.trigger_observation,
+        });
+    let next_version = commit.expected_task_version.checked_add(1);
+    let expected_event_payload = json!({
+        "task_id": commit.task_id,
+        "to_agent_binding_id": commit.target_agent_binding_id,
+        "cause": commit.cause,
+        "actor": commit.actor,
+        "task_spec_revision": commit.expected_task_spec_revision,
+        "aggregate_version": next_version,
+        "trigger_observation": commit.trigger_observation,
+    });
+    let mut expected_payload_keys = vec![
+        "task_id",
+        "to_agent_binding_id",
+        "cause",
+        "actor",
+        "task_spec_revision",
+        "aggregate_version",
+    ];
+    if commit.trigger_observation.is_some() {
+        expected_payload_keys.push("trigger_observation");
+    }
+    let event_payload_is_template =
+        payload_has_exact_keys(&commit.event.payload, &expected_payload_keys)
+            && expected_payload_keys
+                .iter()
+                .all(|key| commit.event.payload.get(*key) == expected_event_payload.get(*key));
+    if !request_is_canonical
+        || commit.workspace_id.trim().is_empty()
+        || commit.task_id.trim().is_empty()
+        || commit.request_scope_id.trim().is_empty()
+        || commit.request_id.trim().is_empty()
+        || commit.expected_task_version == 0
+        || commit.expected_task_spec_revision == 0
+        || commit.target_agent_binding_id.trim().is_empty()
+        || commit.cause != "OWNER_REQUEST"
+        || commit.trigger_observation.is_some()
+        || commit.actor != json!({"principal_id": commit.request_scope_id, "kind": "USER"})
+        || !event_payload_is_template
+        || commit.event.workspace_id != commit.workspace_id
+        || commit.event.entity_type != "Task"
+        || commit.event.entity_id != commit.task_id
+        || commit.event.entity_revision != next_version.unwrap_or_default()
+        || commit.event.schema_version != 1
+        || commit.event.event_type != "task.lead_agent.changed.v1"
+        || state_ref.entity_revision != next_version.unwrap_or_default()
+        || state_ref.record_schema_version != 1
+    {
+        return Err(StoreError::Invalid(
+            "Task lead handoff commit contract is inconsistent".to_owned(),
+        ));
+    }
+
+    let workspace: Option<(String, String)> = transaction
+        .query_row(
+            "SELECT owner_principal_id, status FROM workspaces WHERE workspace_id = ?1",
+            [&commit.workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    match workspace {
+        Some((owner, status)) if owner == commit.request_scope_id && status == "ACTIVE" => {}
+        Some((owner, _)) if owner != commit.request_scope_id => return Err(StoreError::NotFound),
+        Some(_) | None => return Err(StoreError::NotFound),
+    }
+
+    let current = load_task_view(&transaction, &commit.workspace_id, &commit.task_id)?
+        .ok_or(StoreError::NotFound)?;
+    if current.task.version != commit.expected_task_version {
+        return Err(StoreError::Conflict {
+            expected: Some(commit.expected_task_version),
+            actual: Some(current.task.version),
+        });
+    }
+    if current.task.current_spec_revision != commit.expected_task_spec_revision {
+        return Err(StoreError::Invalid("STALE_SPEC_REVISION".to_owned()));
+    }
+    if current.task.status != "READY"
+        || current.task.current_plan_revision.is_some()
+        || current.task.completed_at.is_some()
+        || current.task.lead_agent_binding_id == commit.target_agent_binding_id
+    {
+        return Err(StoreError::Invalid(
+            "Task is outside the safe lead handoff boundary".to_owned(),
+        ));
+    }
+    let previous_lead_agent_binding_id = current.task.lead_agent_binding_id.clone();
+    let live_planning: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE workspace_id = ?1 AND task_id = ?2 AND scope_kind = 'TASK_PLANNING' AND status IN ('STARTING', 'ACTIVE', 'INTERRUPTING', 'CLOSING'))",
+        params![commit.workspace_id, commit.task_id],
+        |row| row.get(0),
+    ).map_err(map_database_error)?;
+    let active_attempt: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM attempts WHERE task_id = ?1 AND status NOT IN ('COMPLETED', 'FAILED', 'ABANDONED', 'CANCELLED'))",
+        [&commit.task_id],
+        |row| row.get(0),
+    ).map_err(map_database_error)?;
+    let unresolved_effect: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM effects WHERE task_id = ?1 AND state NOT IN ('OBSERVED', 'VERIFIED', 'FAILED'))",
+        [&commit.task_id],
+        |row| row.get(0),
+    ).map_err(map_database_error)?;
+    if live_planning || active_attempt || unresolved_effect {
+        return Err(StoreError::Invalid(
+            "Task lead handoff requires settled planning, Attempts, and Effects".to_owned(),
+        ));
+    }
+
+    let target_eligible: bool = transaction.query_row(
+        "SELECT EXISTS(SELECT 1 FROM agent_bindings WHERE workspace_id = ?1 AND agent_binding_id = ?2 AND enabled = 1 AND lead_eligible = 1)",
+        params![commit.workspace_id, commit.target_agent_binding_id],
+        |row| row.get(0),
+    ).map_err(map_database_error)?;
+    if !target_eligible {
+        return Err(StoreError::Invalid(
+            "target AgentBinding is not enabled and lead-eligible in this Workspace".to_owned(),
+        ));
+    }
+
+    let next_version =
+        next_version.ok_or_else(|| StoreError::Integrity("Task version exhausted".to_owned()))?;
+    let changed = transaction.execute(
+        "UPDATE tasks SET lead_agent_binding_id = ?1, updated_at = ?2, version = ?3 WHERE workspace_id = ?4 AND task_id = ?5 AND version = ?6 AND current_spec_revision = ?7 AND status = 'READY' AND current_plan_revision IS NULL",
+        params![commit.target_agent_binding_id, commit.event.recorded_at,
+            to_sql_i64(next_version, "Task version")?, commit.workspace_id, commit.task_id,
+            to_sql_i64(commit.expected_task_version, "Task version")?,
+            to_sql_i64(commit.expected_task_spec_revision, "TaskSpec revision")?],
+    ).map_err(map_database_error)?;
+    if changed != 1 {
+        return Err(StoreError::Conflict {
+            expected: Some(commit.expected_task_version),
+            actual: None,
+        });
+    }
+
+    let mut task = current.task;
+    task.lead_agent_binding_id = commit.target_agent_binding_id.clone();
+    task.updated_at = commit.event.recorded_at.clone();
+    task.version = next_version;
+    let recorded_at = commit.event.recorded_at.clone();
+    let mut event = commit.event;
+    event.payload["from_agent_binding_id"] = Value::String(previous_lead_agent_binding_id.clone());
+    let _event = insert_domain_event(&transaction, &event, &state_ref)?;
+    let committed = CommittedTaskLeadHandoff {
+        task,
+        previous_lead_agent_binding_id,
+        target_agent_binding_id: commit.target_agent_binding_id,
+        task_spec_revision: commit.expected_task_spec_revision,
+        aggregate_version: next_version,
+        replayed: false,
+    };
+    let response_json = String::from_utf8(canonical_json(&committed)?)
+        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    transaction.execute(
+        "INSERT INTO request_dedup(principal_id, request_id, request_digest, response_json, response_digest, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+        params![commit.request_scope_id, commit.request_id, request_digest, response_json,
+            digest(response_json.as_bytes()), recorded_at],
+    ).map_err(map_database_error)?;
+    transaction.commit().map_err(map_database_error)?;
+    Ok(committed)
 }
 
 fn load_task_spec_revision_receipt(
@@ -17709,6 +18454,7 @@ fn writer_loop(
                 match command {
                     Command::CoworkerOperation { operation } => operation(&mut connection),
                     Command::DelegationProfileOperation { operation } => operation(&mut connection),
+                    Command::DelegationResultOperation { operation } => operation(&mut connection),
                     Command::GoalOperation { operation } => operation(&mut connection),
                     Command::SuggestionOperation { operation } => operation(&mut connection),
                     Command::RoutineOperation { operation } => operation(&mut connection),
@@ -17718,8 +18464,31 @@ fn writer_loop(
                     Command::ConversationOperation { operation } => operation(&mut connection),
                     Command::EffectEvidenceOperation { operation } => operation(&mut connection),
                     Command::VerificationRunOperation { operation } => operation(&mut connection),
+                    Command::TrustOperation { operation } => operation(&mut connection),
+                    Command::UserRequestResolutionOperation { operation } => {
+                        operation(&mut connection)
+                    }
                     Command::WorkspaceRootObservationOperation { operation } => {
                         operation(&mut connection)
+                    }
+                    Command::ProcessNextWorkspaceRootCleanupBatch {
+                        origin_runtime_id,
+                        now,
+                        reply,
+                    } => {
+                        let result = (|| {
+                            let transaction = connection
+                                .transaction_with_behavior(TransactionBehavior::Immediate)
+                                .map_err(map_database_error)?;
+                            let processed = workspace_root_cleanup::process_next_pending_batch(
+                                &transaction,
+                                &origin_runtime_id,
+                                &now,
+                            )?;
+                            transaction.commit().map_err(map_database_error)?;
+                            Ok(processed)
+                        })();
+                        let _ = reply.send(result);
                     }
                     Command::InvocationOperation { operation } => operation(&mut connection),
                     Command::ArtifactOperation { operation } => operation(&mut connection),
@@ -18002,6 +18771,21 @@ fn writer_loop(
                             &connection,
                             &runtime_id,
                             &expected_incarnation_id,
+                        ));
+                    }
+                    Command::ReadAgentRegistrySnapshot {
+                        source_registry,
+                        reply,
+                    } => {
+                        let _ = reply.send(agent_registry_cache::read_snapshot(
+                            &connection,
+                            &source_registry,
+                        ));
+                    }
+                    Command::ReplaceAgentRegistrySnapshot { snapshot, reply } => {
+                        let _ = reply.send(agent_registry_cache::replace_snapshot(
+                            &mut connection,
+                            snapshot,
                         ));
                     }
                     Command::ListWorkspaces { reply } => {
@@ -18397,12 +19181,36 @@ fn writer_loop(
                             &request_payload,
                         ));
                     }
+                    Command::GetTaskLeadHandoffReceipt {
+                        request_scope_id,
+                        request_id,
+                        request_digest,
+                        reply,
+                    } => {
+                        let _ = reply.send(load_task_lead_handoff_receipt(
+                            &connection,
+                            &request_scope_id,
+                            &request_id,
+                            &request_digest,
+                        ));
+                    }
                     Command::ReviseTaskSpec {
                         commit,
                         state_ref,
                         reply,
                     } => {
                         let _ = reply.send(revise_task_spec_transaction(
+                            &mut connection,
+                            *commit,
+                            state_ref,
+                        ));
+                    }
+                    Command::CommitTaskLeadHandoff {
+                        commit,
+                        state_ref,
+                        reply,
+                    } => {
+                        let _ = reply.send(commit_task_lead_handoff_transaction(
                             &mut connection,
                             *commit,
                             state_ref,
@@ -18597,7 +19405,11 @@ fn writer_loop(
                         let _ =
                             reply.send(needs_you::list_needs_you_page(&mut connection, request));
                     }
-                    Command::GetUserRequestDetail { workspace_id, request_id, reply } => {
+                    Command::GetUserRequestDetail {
+                        workspace_id,
+                        request_id,
+                        reply,
+                    } => {
                         let _ = reply.send(user_request_details::get_user_request_detail(
                             &connection,
                             &workspace_id,
@@ -18647,6 +19459,14 @@ fn writer_loop(
                     } => {
                         let _ = reply.send(read_workspace_events(&connection, &workspace_id));
                     }
+                    Command::GetWorkspaceEvent {
+                        workspace_id,
+                        event_id,
+                        reply,
+                    } => {
+                        let _ =
+                            reply.send(read_workspace_event(&connection, &workspace_id, &event_id));
+                    }
                     Command::ReadWorkspaceEventPage {
                         workspace_id,
                         origin_runtime_id,
@@ -18677,6 +19497,7 @@ fn writer_loop(
                         content_blob,
                         text_index,
                         location_id,
+                        edge,
                         reply,
                     } => {
                         let result = create_resource_transaction(
@@ -18692,6 +19513,7 @@ fn writer_loop(
                             None,
                             None,
                             None,
+                            edge,
                         );
                         let _ = reply.send(result);
                     }
@@ -18818,6 +19640,7 @@ fn writer_loop(
                     Command::CommitWorkspaceRootScan { commit, reply } => {
                         let _ = reply.send(commit_workspace_root_scan_transaction(
                             &mut connection,
+                            blobs.as_ref(),
                             commit,
                         ));
                     }
@@ -19019,6 +19842,7 @@ fn writer_loop(
                             upload_commit,
                             context_document,
                             request_alias,
+                            None,
                         );
                         let _ = reply.send(result);
                     }
@@ -19222,7 +20046,11 @@ fn migrate_with_failpoint(
         verify_migration_record(connection, 18, V18_MIGRATION_NAME, SQLITE_V18_DDL, false)?;
         verify_migration_record(connection, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL, false)?;
         verify_migration_record(connection, 20, V20_MIGRATION_NAME, SQLITE_V20_DDL, false)?;
-        verify_migration_record(connection, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL, true)?;
+        verify_migration_record(connection, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL, false)?;
+        verify_migration_record(connection, 22, V22_MIGRATION_NAME, SQLITE_V22_DDL, false)?;
+        verify_migration_record(connection, 23, V23_MIGRATION_NAME, SQLITE_V23_DDL, false)?;
+        verify_migration_record(connection, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL, false)?;
+        verify_migration_record(connection, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL, true)?;
         return Ok(());
     }
 
@@ -19430,6 +20258,36 @@ fn migrate_with_failpoint(
                 schema_version == V21_SCHEMA_VERSION,
             )?;
         }
+        if schema_version >= 22 {
+            verify_migration_record(connection, 22, V22_MIGRATION_NAME, SQLITE_V22_DDL, false)?;
+        }
+        if schema_version >= 23 {
+            verify_migration_record(
+                connection,
+                23,
+                V23_MIGRATION_NAME,
+                SQLITE_V23_DDL,
+                schema_version == V23_SCHEMA_VERSION,
+            )?;
+        }
+        if schema_version >= 24 {
+            verify_migration_record(
+                connection,
+                24,
+                V24_MIGRATION_NAME,
+                SQLITE_V24_DDL,
+                schema_version == V24_SCHEMA_VERSION,
+            )?;
+        }
+        if schema_version >= 25 {
+            verify_migration_record(
+                connection,
+                25,
+                V25_MIGRATION_NAME,
+                SQLITE_V25_DDL,
+                schema_version == V25_SCHEMA_VERSION,
+            )?;
+        }
         if schema_version == 1 {
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -19570,7 +20428,49 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V20_SCHEMA_VERSION {
         migrate_workspace_root_observations(connection, failpoint)?;
-    } else if current_version != V21_SCHEMA_VERSION {
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V21_SCHEMA_VERSION {
+        migrate_verification_run_evidence_binding(connection, failpoint)?;
+    } else if !matches!(
+        current_version,
+        V22_SCHEMA_VERSION | V23_SCHEMA_VERSION | V24_SCHEMA_VERSION | V25_SCHEMA_VERSION
+    ) {
+        return Err(StoreError::CorruptSchema(format!(
+            "migration stopped at unexpected schema version {current_version}"
+        )));
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V22_SCHEMA_VERSION {
+        migrate_workspace_root_file_membership(connection, failpoint)?;
+    } else if !matches!(
+        current_version,
+        V23_SCHEMA_VERSION | V24_SCHEMA_VERSION | V25_SCHEMA_VERSION
+    ) {
+        return Err(StoreError::CorruptSchema(format!(
+            "migration stopped at unexpected schema version {current_version}"
+        )));
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V23_SCHEMA_VERSION {
+        migrate_delegation_results(connection, failpoint)?;
+    } else if !matches!(current_version, V24_SCHEMA_VERSION | V25_SCHEMA_VERSION) {
+        return Err(StoreError::CorruptSchema(format!(
+            "migration stopped at unexpected schema version {current_version}"
+        )));
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V24_SCHEMA_VERSION {
+        migrate_resource_edges(connection, failpoint)?;
+    } else if current_version != V25_SCHEMA_VERSION {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -19953,6 +20853,92 @@ fn migrate_workspace_root_observations(
     record_migration(&transaction, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL)?;
     transaction
         .pragma_update(None, "user_version", V21_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+fn migrate_verification_run_evidence_binding(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V22_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV22Migration)?;
+    record_migration(&transaction, 22, V22_MIGRATION_NAME, SQLITE_V22_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V22_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version twenty-three promotes scanned FILE locations into an explicit WorkspaceRoot
+/// membership relation and a bounded, restart-safe revoke cleanup cursor.
+fn migrate_workspace_root_file_membership(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V23_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV23Migration)?;
+    record_migration(&transaction, 23, V23_MIGRATION_NAME, SQLITE_V23_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V23_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version twenty-four stores immutable bounded ResultEnvelopes as child-result
+/// aggregates, committed atomically with their publication event.
+fn migrate_delegation_results(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V24_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV24Migration)?;
+    record_migration(&transaction, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V24_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
+}
+
+/// Version twenty-five makes ResourceEdge provenance append-only. Edges remain present
+/// when an owning Resource is revoked or otherwise made unavailable.
+fn migrate_resource_edges(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V25_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV25Migration)?;
+    record_migration(&transaction, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V25_SCHEMA_VERSION)
         .map_err(map_database_error)?;
     validate_schema(&transaction)?;
     transaction.commit().map_err(map_database_error)?;
@@ -20558,6 +21544,10 @@ enum Failpoint {
     DuringV19Migration,
     DuringV20Migration,
     DuringV21Migration,
+    DuringV22Migration,
+    DuringV23Migration,
+    DuringV24Migration,
+    DuringV25Migration,
     AfterAggregate,
     AfterSequence,
     AfterEvent,
@@ -21454,6 +22444,46 @@ fn read_workspace_events(
         });
     }
     Ok(events)
+}
+
+fn read_workspace_event(
+    connection: &Connection,
+    workspace_id: &str,
+    event_id: &str,
+) -> Result<Option<DomainEvent>, StoreError> {
+    let raw: Option<(String, String, String, String, String, i64, i64, String, String, Option<String>, i64, String, String, String, String, String)> = connection.query_row(
+        "SELECT event_id, workspace_id, entity_type, entity_id, origin_runtime_id, origin_sequence, entity_revision, hlc_timestamp, correlation_id, causation_id, schema_version, type, payload_json, aggregate_state_ref_json, recorded_at, payload_digest FROM domain_events WHERE workspace_id = ?1 AND event_id = ?2",
+        params![workspace_id, event_id],
+        |row| Ok((
+            row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?,
+            row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
+            row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?,
+        )),
+    ).optional().map_err(map_database_error)?;
+    raw.map(|row| {
+        Ok(DomainEvent {
+            event_id: row.0,
+            workspace_id: row.1,
+            entity_type: row.2,
+            entity_id: row.3,
+            origin_runtime_id: row.4,
+            origin_sequence: from_sql_i64(row.5, "origin sequence")?,
+            entity_revision: from_sql_i64(row.6, "event revision")?,
+            hlc_timestamp: row.7,
+            correlation_id: row.8,
+            causation_id: row.9,
+            schema_version: u32::try_from(row.10)
+                .map_err(|_| StoreError::Integrity("event schema version is invalid".to_owned()))?,
+            event_type: row.11,
+            payload: serde_json::from_str(&row.12)
+                .map_err(|error| StoreError::Integrity(error.to_string()))?,
+            aggregate_state_ref: serde_json::from_str(&row.13)
+                .map_err(|error| StoreError::Integrity(error.to_string()))?,
+            recorded_at: row.14,
+            payload_digest: row.15,
+        })
+    })
+    .transpose()
 }
 
 fn read_workspace_origin_frontier(

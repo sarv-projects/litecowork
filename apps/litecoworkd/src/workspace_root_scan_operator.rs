@@ -10,7 +10,10 @@ use domain_workspace::{ScanWorkspaceRoot, WorkspaceRootService};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 #[cfg(target_os = "linux")]
-use storage_core::WorkspaceRootFileObservation;
+use storage_core::{
+    LocalFileIdentityBindingRecord, LocalResourceLocationBindingRecord, ResourceLocationRecord,
+    ResourceRecord, WorkspaceRootFileMembershipCandidate, WorkspaceRootFileObservation,
+};
 use storage_core::{
     RootObservationFreshness, RootObservationSearchRequest, WorkspaceRootObservationStore,
 };
@@ -91,7 +94,7 @@ struct RootObservationItem {
     modified_at: Option<String>,
     observed_at: String,
     freshness: &'static str,
-    /// Null until canonical Resource aggregates are explicitly produced and linked.
+    /// Canonical FILE Resource ID when the scan committed membership atomically.
     resource_id: Option<String>,
 }
 
@@ -201,7 +204,7 @@ async fn search_workspace_root_observations(
             modified_at: record.modified_at,
             observed_at: record.observed_at,
             freshness: record.freshness.as_str(),
-            resource_id: None,
+            resource_id: record.resource_id,
         })
         .collect();
     let mut response = Json(RootObservationPage {
@@ -523,6 +526,10 @@ async fn scan_linux_root(
                 "Folder scan response could not be prepared",
             )
         })?;
+    let membership_workspace_id = command.workspace_id.clone();
+    let membership_workspace_root_id = command.workspace_root_id.clone();
+    let membership_runtime_id = command.runtime_id.clone();
+    let membership_runtime_incarnation_id = command.runtime_incarnation_id.clone();
     let blocking = run_blocking_filesystem_work(move || {
         let _scan_permit = scan_permit;
         ensure_before_scan_deadline(deadlines.final_identity_fence)?;
@@ -552,6 +559,7 @@ async fn scan_linux_root(
         }
         let mut progress = LocalFileScanSummary::default();
         let mut observations = Vec::new();
+        let mut memberships = Vec::new();
         let result = visit_regular_files_with_progress(
             &selection,
             limits,
@@ -575,22 +583,114 @@ async fn scan_linux_root(
                         entry.relative_locator(),
                     )
                 );
-                observations.push(WorkspaceRootFileObservation {
-                    observation_id,
-                    file_identity_digest,
-                    resource_id: None,
+                let relative_locator = entry.relative_locator().to_vec();
+                let display_basename = entry.display_basename().to_owned();
+                let modified_at = entry.modified_at().map(str::to_owned);
+                let resource_material = format!("{membership_workspace_id}:{file_identity_digest}");
+                let resource_id = format!(
+                    "res_file_{}",
+                    runtime_identity.keyed_pseudonym(
+                        "litecowork.local-filesystem.workspace-root-resource.v1",
+                        resource_material.as_bytes(),
+                    )
+                );
+                let location_pseudonym = root_file_location_pseudonym(
+                    &runtime_identity,
+                    &membership_workspace_root_id,
+                    &file_identity_digest,
+                    entry.relative_locator(),
+                );
+                let location_id = format!("loc_{location_pseudonym}");
+                let locator_ref_id = format!("locref_{location_pseudonym}");
+                let observation = WorkspaceRootFileObservation {
+                    observation_id: observation_id.clone(),
+                    file_identity_digest: file_identity_digest.clone(),
+                    resource_id: Some(resource_id.clone()),
                     display_name: entry.display_basename().to_owned(),
                     size_bytes: entry.size_bytes(),
-                    modified_at: None,
+                    modified_at: modified_at.clone(),
                     observed_at: observed_at.clone(),
-                    private_relative_locator: entry.relative_locator().to_vec(),
+                    private_relative_locator: relative_locator.clone(),
+                };
+                observations.push(WorkspaceRootFileObservation {
+                    observation_id,
+                    file_identity_digest: file_identity_digest.clone(),
+                    resource_id: None,
+                    display_name: display_basename.clone(),
+                    size_bytes: entry.size_bytes(),
+                    modified_at,
+                    observed_at: observed_at.clone(),
+                    private_relative_locator: relative_locator.clone(),
+                });
+                let resource = ResourceRecord {
+                    resource_id: resource_id.clone(),
+                    workspace_id: membership_workspace_id.clone(),
+                    kind: "FILE".to_owned(),
+                    provider_identity: serde_json::json!({
+                        "provider_instance_id": "litecowork.local_filesystem",
+                        "stable_object_id": file_identity_digest,
+                        "confidence": "FILESYSTEM_ID",
+                    }),
+                    identity_digest: Some(file_identity_digest.clone()),
+                    display_name: display_basename.clone(),
+                    current_revision_id: None,
+                    sensitivity: "PRIVATE".to_owned(),
+                    provenance: serde_json::json!({
+                        "kind": "WORKSPACE_ROOT_SCAN",
+                        "workspace_root_id": membership_workspace_root_id,
+                    }),
+                    created_at: observed_at.clone(),
+                    updated_at: observed_at.clone(),
+                    version: 1,
+                };
+                let location = ResourceLocationRecord {
+                    location_id: location_id.clone(),
+                    resource_id: resource_id.clone(),
+                    runtime_id: membership_runtime_id.clone(),
+                    locator_ref_id: locator_ref_id.clone(),
+                    provider_ref: "litecowork.local_filesystem".to_owned(),
+                    availability: "AVAILABLE".to_owned(),
+                    writable: false,
+                    observed_revision_id: None,
+                    observed_digest: None,
+                    observed_at: observed_at.clone(),
+                };
+                let locator_binding = LocalResourceLocationBindingRecord {
+                    location_id: location_id.clone(),
+                    locator_ref_id,
+                    runtime_id: membership_runtime_id.clone(),
+                    runtime_incarnation_id: membership_runtime_incarnation_id.clone(),
+                    private_locator: format!(
+                        "workspace-root-relative-v1:{}:{}",
+                        membership_workspace_root_id,
+                        URL_SAFE_NO_PAD.encode(&relative_locator),
+                    ),
+                    observed_at: observed_at.clone(),
+                };
+                let file_identity_binding = LocalFileIdentityBindingRecord {
+                    location_id,
+                    runtime_id: membership_runtime_id.clone(),
+                    runtime_incarnation_id: membership_runtime_incarnation_id.clone(),
+                    raw_filesystem_instance_id: file_identity.device_id().to_string(),
+                    raw_volume_id: None,
+                    raw_file_id: file_identity.file_id().to_string(),
+                    raw_generation: None,
+                    platform_kind: "LINUX_DEVICE_INODE".to_owned(),
+                    observed_at: observed_at.clone(),
+                };
+                memberships.push(WorkspaceRootFileMembershipCandidate {
+                    observation,
+                    resource,
+                    location,
+                    locator_binding,
+                    file_identity_binding,
                 });
                 Ok(())
             },
             |snapshot| progress = snapshot,
         );
         let result = finalize_scan_result(&selection, deadlines, result)?;
-        Ok((result, progress, observations))
+        Ok((result, progress, observations, memberships))
     })
     .await
     .map_err(|_| {
@@ -600,7 +700,7 @@ async fn scan_linux_root(
             "Folder scan could not be completed",
         )
     })?;
-    let (scan_result, progress, observations) = blocking.map_err(|error| match error {
+    let (scan_result, progress, observations, memberships) = blocking.map_err(|error| match error {
         ScanBlockingError::Directory(error) => map_local_directory_error(error),
         ScanBlockingError::DeadlineExceeded => super::operator_error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -684,9 +784,30 @@ async fn scan_linux_root(
         completed_at,
     };
     let committed = service
-        .commit_scan(&command, result, observations)
+        .commit_scan(&command, result, observations, memberships)
         .map_err(map_store_error)?;
     Ok(no_store_json(committed))
+}
+
+#[cfg(target_os = "linux")]
+fn root_file_location_pseudonym(
+    runtime_identity: &impl crate::local_filesystem::RuntimeIdentityKey,
+    workspace_root_id: &str,
+    file_identity_digest: &str,
+    relative_locator: &[u8],
+) -> String {
+    let material = [
+        workspace_root_id.as_bytes(),
+        b"\0",
+        file_identity_digest.as_bytes(),
+        b"\0",
+        relative_locator,
+    ]
+    .concat();
+    runtime_identity.keyed_pseudonym(
+        "litecowork.local-filesystem.workspace-root-location.v1",
+        &material,
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -954,6 +1075,46 @@ mod blocking_worker_tests {
             .await
             .expect("blocking task join")
             .expect("worker completes");
+    }
+
+    #[test]
+    fn root_file_location_identity_changes_when_a_path_is_replaced() {
+        struct TestIdentity;
+        impl crate::local_filesystem::RuntimeIdentityKey for TestIdentity {
+            fn keyed_pseudonym(&self, namespace: &str, material: &[u8]) -> String {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                namespace.hash(&mut hasher);
+                material.hash(&mut hasher);
+                format!("{:016x}", hasher.finish())
+            }
+        }
+
+        let identity = TestIdentity;
+        let first = super::root_file_location_pseudonym(
+            &identity,
+            "root-a",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"docs/plan.md",
+        );
+        let exact_retry = super::root_file_location_pseudonym(
+            &identity,
+            "root-a",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"docs/plan.md",
+        );
+        let replacement = super::root_file_location_pseudonym(
+            &identity,
+            "root-a",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"docs/plan.md",
+        );
+
+        assert_eq!(first, exact_retry, "retries preserve the location identity");
+        assert_ne!(
+            first, replacement,
+            "a replacement file never rebinds the old ResourceLocation"
+        );
     }
 }
 

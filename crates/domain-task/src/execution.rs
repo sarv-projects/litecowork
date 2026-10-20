@@ -1,6 +1,7 @@
 //! Advisory decisions and the atomic durable execution command boundary. Eligibility
 //! is not a committed Attempt, lease, AgentSession, or proof of native execution.
 
+use crate::{ChildAdmissionDecision, preview_child_attempt_admission};
 use storage_core::{
     AdmitStepAttempt, AttemptBudgetAdmission, AttemptState, CommittedExecutionLeaseMutation,
     CommittedStepAttempt, ExecutionBudgetReservationState, ExecutionBudgetScope, ExecutionCheck,
@@ -582,6 +583,15 @@ impl<S: StepAttemptStore> StepAttemptCoordinator<S> {
     ) -> Result<ExecutionDecision<u64>, StoreError> {
         let snapshot = self.store.step_attempt_admission_snapshot(command)?;
         Ok(decide_attempt_admission(command, &snapshot))
+    }
+    /// Read exact durable parent/profile pins and report whether a hosted child is
+    /// policy-eligible. Missing Trust, Environment, containment, Effect, or budget
+    /// proofs remain a denial; this preview never invokes the Attempt writer.
+    pub fn preview_delegated_admission(
+        &self,
+        command: &AdmitStepAttempt,
+    ) -> Result<ChildAdmissionDecision, StoreError> {
+        preview_child_attempt_admission(&self.store, command)
     }
     /// The transaction checks the authenticated idempotency receipt before mutable
     /// admission checks. A lost-response replay must recover the committed pair.

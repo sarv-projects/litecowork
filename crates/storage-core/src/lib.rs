@@ -13,6 +13,20 @@ pub use execution::{
     StepAttemptAdmissionSnapshot, StepAttemptStore,
 };
 
+mod agent_registry_cache;
+pub use agent_registry_cache::{
+    AGENT_REGISTRY_CACHE_MAX_ENTRIES, AGENT_REGISTRY_CACHE_MAX_SNAPSHOT_BYTES,
+    AgentRegistryCacheEntry, AgentRegistryCacheSnapshot, AgentRegistryCacheStore,
+    validate_agent_registry_cache_snapshot,
+};
+
+mod delegation_admission;
+pub use delegation_admission::{
+    ChildAttemptAdmissionBlocker, ChildAttemptAdmissionProofs, ChildAttemptAdmissionSnapshot,
+    DelegationProfileAdmissionProjection, first_unproven_child_admission_gate,
+    unproven_child_admission_gates,
+};
+
 mod artifact;
 pub use artifact::{
     ArtifactAppendHeads, ArtifactContentRecord, ArtifactLibraryAction, ArtifactLibraryCommand,
@@ -24,6 +38,10 @@ mod dependency;
 pub use dependency::{
     DependencyEdgeRecord, DependencyFreshness, ResourceDependencyPageRequest,
     ResourceDependencyReadStore, ResourceDependencyViewRecord,
+};
+mod resource_edge;
+pub use resource_edge::{
+    CommittedDerivedResource, DerivedResourceCreateCommit, ResourceEdgeRecord,
 };
 pub mod conversation;
 pub use conversation::{
@@ -40,13 +58,32 @@ pub use effect_evidence::{
 };
 mod capability_invocation;
 pub use capability_invocation::{
-    CapabilityInvocationEventContext, CapabilityInvocationStore,
-    CapabilityInvocationTransitionCommit, CommittedCapabilityInvocation,
+    CapabilityInvocationEventContext, CapabilityInvocationPageRequest,
+    CapabilityInvocationProviderObservation, CapabilityInvocationReconciliationCommit,
+    CapabilityInvocationRecord, CapabilityInvocationStore, CapabilityInvocationTransitionCommit,
+    CommittedCapabilityInvocation, InvocationProviderObservationSource, InvocationStatus,
 };
 mod verification_run;
 pub use verification_run::{
     CommittedVerificationRun, SettleVerificationRunCommit, StartVerificationRunCommit,
     VerificationRunActor, VerificationRunEventContext, VerificationRunStore,
+};
+mod trust;
+pub use trust::{
+    ApprovalActor, ApprovalCursor, ApprovalDecision, ApprovalPage, ApprovalPageRequest,
+    ApprovalRecord, ApprovalStore, CapabilityGrantRecord, CapabilityGrantRevocationCommit,
+    CapabilityGrantScope, CapabilityGrantStatus, CapabilityGrantStore, CommittedApproval,
+    CommittedCapabilityGrant, CommittedCapabilityGrantRevocation, CommittedSecretLease,
+    IssueCapabilityGrantCommit, IssueSecretLeaseCommit, RequestApprovalCommit,
+    ResolveApprovalCommit, RevokeSecretLeaseCommit, SecretKind, SecretLeaseRecord,
+    SecretLeaseStore, SecretPlacement, SecretRef, SecretStore,
+};
+mod user_request_resolutions;
+pub use user_request_resolutions::{
+    DismissUserRequestCommit, RespondUserRequestCommit, USER_REQUEST_IDEMPOTENCY_KEY_MAX_BYTES,
+    USER_REQUEST_RESPONSE_MAX_BYTES, UserRequestResolutionActor, UserRequestResolutionReceipt,
+    UserRequestResolutionStore, UserRequestResponseChannelRef, UserRequestResponseInput,
+    UserRequestResponseRecord,
 };
 mod workspace_root_observations;
 pub use workspace_root_observations::{
@@ -86,6 +123,18 @@ pub use environment::{
     PinnedSourceResource, PrincipalId, ProcessIsolation, ProviderBindingCommit, ResourceId,
     ResourceLimits, ResourceRevisionId, ResourceScope, RuntimeId, RuntimeIncarnationId, TaskId,
     WorkspaceId,
+};
+mod environment_control_lease;
+pub use environment_control_lease::{
+    CommittedEnvironmentControlLease, EnvironmentControlLeaseAcquire, EnvironmentControlLeaseEnd,
+    EnvironmentControlLeaseEndState, EnvironmentControlLeaseRecord, EnvironmentControlLeaseState,
+    EnvironmentControlLeaseStore, EnvironmentControlLeaseTakeover, EnvironmentControlOwner,
+    HumanPrincipalKind,
+};
+mod delegation_result;
+pub use delegation_result::{
+    CommittedDelegationResult, DelegationResultPublishCommit, DelegationResultReadQuery,
+    DelegationResultStore,
 };
 // Domain command values and their transactional write port are defined with the
 // domain service; storage-core re-exports the port as the adapter boundary.
@@ -1159,6 +1208,40 @@ pub struct TaskSpecRevisionCommit {
     pub event: EventDraft,
 }
 
+/// Receipt-backed owner command to change a Task's assigned lead without rewriting its
+/// immutable TaskSpec preference or any admitted Attempt/session/lease state. The
+/// storage transaction supplies `from_agent_binding_id` from the current Task after
+/// replay lookup and fills that field into the canonical event payload.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskLeadHandoffCommit {
+    pub workspace_id: String,
+    pub task_id: String,
+    pub request_scope_id: String,
+    pub request_id: String,
+    pub request_payload: Value,
+    pub expected_task_version: u64,
+    pub expected_task_spec_revision: u64,
+    pub target_agent_binding_id: String,
+    pub cause: String,
+    pub actor: Value,
+    pub trigger_observation: Option<Value>,
+    /// Event payload template excludes `from_agent_binding_id`; storage fills it from
+    /// the transactionally read Task after receipt replay has been checked.
+    pub event: EventDraft,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CommittedTaskLeadHandoff {
+    pub task: TaskRecord,
+    pub previous_lead_agent_binding_id: String,
+    pub target_agent_binding_id: String,
+    pub task_spec_revision: u64,
+    pub aggregate_version: u64,
+    pub replayed: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommittedTaskSpecRevision {
@@ -1269,6 +1352,15 @@ pub trait TaskStore: Send + Sync {
         &self,
         commit: TaskSpecRevisionCommit,
     ) -> Result<CommittedTaskSpecRevision, StoreError>;
+
+    /// Atomically changes the Task's assigned lead and writes its canonical event and
+    /// exact idempotency receipt. Implementations must replay the receipt before reading
+    /// mutable Task/policy/eligibility state and must fail closed outside the supported
+    /// safe handoff boundary.
+    fn commit_task_lead_handoff(
+        &self,
+        commit: TaskLeadHandoffCommit,
+    ) -> Result<CommittedTaskLeadHandoff, StoreError>;
 
     fn accept_initial_plan(
         &self,
@@ -2034,6 +2126,8 @@ pub struct WorkspaceRootScanCandidate {
 }
 
 /// Fenced, idempotent receipt commit after filesystem traversal has completed.
+/// Membership candidates are Runtime-private inputs to the same receipt transaction;
+/// their locator and raw OS identity fields must never cross the Operator/API boundary.
 pub struct WorkspaceRootScanCommit {
     pub request: WorkspaceCreateRequest,
     pub workspace_id: String,
@@ -2044,6 +2138,22 @@ pub struct WorkspaceRootScanCommit {
     pub result: WorkspaceRootScanResult,
     /// Derived file observations are committed atomically with this scan receipt.
     pub observations: Vec<WorkspaceRootFileObservation>,
+    /// Canonical FILE Resource/Location proposals paired with observations. SQLite
+    /// revalidates identity and current-incarnation bindings before persisting them.
+    pub memberships: Vec<WorkspaceRootFileMembershipCandidate>,
+}
+
+/// Runtime-private candidate for atomically linking one root observation to its
+/// canonical FILE Resource and path-specific ResourceLocation.
+///
+/// This type intentionally has no Serde or Debug implementation: it contains the
+/// relative locator and raw filesystem identity tuple used only by the local store.
+pub struct WorkspaceRootFileMembershipCandidate {
+    pub observation: WorkspaceRootFileObservation,
+    pub resource: ResourceRecord,
+    pub location: ResourceLocationRecord,
+    pub locator_binding: LocalResourceLocationBindingRecord,
+    pub file_identity_binding: LocalFileIdentityBindingRecord,
 }
 
 /// One atomic startup decision for a root. The caller includes fresh private bindings
@@ -2569,6 +2679,17 @@ pub struct CommittedWorkspaceInstructionRevision {
 }
 
 pub trait ResourceStore: Send + Sync {
+    /// Creates a child Resource and immutable provenance edge in one storage transaction.
+    /// RequestId replay returns the original committed Resource and edge event.
+    fn create_derived_resource(
+        &self,
+        _commit: DerivedResourceCreateCommit,
+    ) -> Result<CommittedDerivedResource, StoreError> {
+        Err(StoreError::Invalid(
+            "atomic derived Resource publication is unavailable".to_owned(),
+        ))
+    }
+
     fn create_resource(
         &self,
         request: WorkspaceCreateRequest,

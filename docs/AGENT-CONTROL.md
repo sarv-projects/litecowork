@@ -143,6 +143,7 @@ AgentModuleManifest {
   display_name: string
   distribution_kinds: AgentDistributionKind[]
   supported_os: OperatingSystem[]
+  supported_architectures: OperatingArchitecture[]
 
   lifecycle_features: {
     discover_installation: bool
@@ -585,7 +586,11 @@ function refresh_registry(force):
     verified = validate_registry_schema_and_size(payload)
 
     for entry in verified.entries:
-        module = AgentModuleRegistry.match(entry.registry_agent_id)
+        module = AgentModuleRegistry.match(
+            entry.registry_agent_id,
+            runtime.os,
+            runtime.architecture
+        )
         project only safe descriptive distribution metadata
         annotate module support as SUPPORTED | NO_ADAPTER | UNSUPPORTED_OS
 
@@ -593,8 +598,10 @@ function refresh_registry(force):
     return snapshot
 ```
 
-Registry fetch failure leaves the last non-expired cached snapshot visible with a stale
-banner; it never changes installed/binding/auth state.
+Registry fetch failure leaves the last completely validated cached snapshot visible with a
+stale banner, including after its freshness deadline. The cache holds one bounded snapshot
+per source; successful refresh atomically replaces it. Expiry changes freshness labeling,
+not retention or authority, and cached metadata never changes installed/binding/auth state.
 
 ### 9.2 AgentModuleRegistry
 
@@ -643,7 +650,7 @@ function install(agent_id, distribution_id, expected_registry_revision, request_
     entry = AgentRegistryService.get(agent_id)
     require entry.revision == expected_registry_revision
 
-    module = AgentModuleRegistry.match(agent_id)
+    module = AgentModuleRegistry.match(agent_id, runtime.os, runtime.architecture)
       or fail AGENT_UNAVAILABLE
 
     distribution = exact entry.distributions[distribution_id]
@@ -754,7 +761,13 @@ function submit_secret(workspace_id, agent_id, slot_id, secret_bytes):
 ```
 
 The ordinary Operator JSON API MUST NOT echo the secret. Desktop IPC should use a
-no-log/no-cache privileged command body with strict size limits.
+no-log/no-cache privileged command body with strict size limits. Credential submission
+requires the shared `Idempotency-Key` header (1–200 printable ASCII bytes). The
+credential write route remains unavailable until it can durably replay the original
+SecretRef after a lost response or daemon restart, reject the same key with a changed
+request, and do so without retaining secret bytes or an offline verifier. Exact replay
+must return before re-reading mutable descriptor/profile state; new requests must validate
+the current descriptor and Workspace owner before touching SecretStore.
 
 ### 9.6 Composer projection
 

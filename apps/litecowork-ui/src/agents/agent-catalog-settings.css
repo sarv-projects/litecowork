@@ -15,6 +15,14 @@
 .agent-catalog__installations, .agent-catalog__bindings { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .agent-catalog__registry-state { display: grid; gap: 3px; padding: 10px 12px; border-left: 3px solid var(--color-border-strong, #c8ccd4); background: var(--color-surface-muted, #f7f8fa); font-size: 11px; line-height: 1.45; }
 .agent-catalog__registry-state > span { color: var(--color-text-subtle); }
+.agent-catalog__registry-state > button { justify-self: start; margin-top: 5px; }
+.agent-catalog__registry-results { display: grid; gap: 10px; margin-top: 18px; }
+.agent-catalog__registry-search { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.agent-catalog__registry-search label { flex-basis: 100%; color: var(--color-text-subtle); font-size: 11px; }
+.agent-catalog__registry-search input { flex: 1 1 240px; min-width: 0; }
+.agent-catalog__registry-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.agent-catalog__registry-list > li { display: grid; gap: 7px; padding: 12px; border: 1px solid var(--color-border-subtle); border-radius: 10px; background: var(--color-surface); }
+.agent-catalog__registry-list p { margin: 0; color: var(--color-text-subtle); font-size: 12px; line-height: 1.45; }
 .agent-catalog__candidates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 18px; margin: 0; padding: 0; list-style: none; }
 .agent-catalog__candidates > li { display: grid; align-content: start; gap: 5px; min-width: 0; padding: 12px 2px; border-bottom: 1px solid var(--color-border); }
 .agent-catalog__candidate-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }

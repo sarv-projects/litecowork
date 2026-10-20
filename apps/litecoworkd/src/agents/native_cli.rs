@@ -1,6 +1,4 @@
-use super::{
-    AgentInstallation, AuthenticationReadiness, InstallationState, SessionReadiness,
-};
+use super::{AgentInstallation, AuthenticationReadiness, InstallationState, SessionReadiness};
 
 #[derive(Clone, Copy)]
 pub(super) struct NativeCliCandidate {
@@ -11,6 +9,7 @@ pub(super) struct NativeCliCandidate {
     version_prefix: &'static str,
     trailing_period: bool,
     timeout_seconds: u64,
+    script_interpreters: &'static [&'static str],
 }
 
 pub(super) const CLAUDE_CODE: NativeCliCandidate = NativeCliCandidate {
@@ -21,6 +20,7 @@ pub(super) const CLAUDE_CODE: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &["node"],
 };
 
 pub(super) const GEMINI_CLI: NativeCliCandidate = NativeCliCandidate {
@@ -31,6 +31,7 @@ pub(super) const GEMINI_CLI: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &["node"],
 };
 
 pub(super) const QWEN_CODE: NativeCliCandidate = NativeCliCandidate {
@@ -41,6 +42,7 @@ pub(super) const QWEN_CODE: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &["node"],
 };
 
 pub(super) const CURSOR_CLI: NativeCliCandidate = NativeCliCandidate {
@@ -51,6 +53,7 @@ pub(super) const CURSOR_CLI: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &["node"],
 };
 
 pub(super) const KIRO_CLI: NativeCliCandidate = NativeCliCandidate {
@@ -61,6 +64,7 @@ pub(super) const KIRO_CLI: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &[],
 };
 
 pub(super) const GOOSE: NativeCliCandidate = NativeCliCandidate {
@@ -71,6 +75,7 @@ pub(super) const GOOSE: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &[],
 };
 
 pub(super) const MISTRAL_VIBE: NativeCliCandidate = NativeCliCandidate {
@@ -81,6 +86,7 @@ pub(super) const MISTRAL_VIBE: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &["python", "python3"],
 };
 
 pub(super) const JUNIE_CLI: NativeCliCandidate = NativeCliCandidate {
@@ -91,6 +97,7 @@ pub(super) const JUNIE_CLI: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &[],
 };
 
 pub(super) const GITHUB_COPILOT_CLI: NativeCliCandidate = NativeCliCandidate {
@@ -103,6 +110,7 @@ pub(super) const GITHUB_COPILOT_CLI: NativeCliCandidate = NativeCliCandidate {
     // A cold self-extracting installation took ~6.7s in the Linux inventory
     // environment, so keep this probe bounded without falsely hiding it.
     timeout_seconds: 10,
+    script_interpreters: &["node"],
 };
 
 pub(super) const KIMI_CODE_CLI: NativeCliCandidate = NativeCliCandidate {
@@ -113,6 +121,7 @@ pub(super) const KIMI_CODE_CLI: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &["python", "python3"],
 };
 
 pub(super) const FACTORY_DROID: NativeCliCandidate = NativeCliCandidate {
@@ -123,6 +132,7 @@ pub(super) const FACTORY_DROID: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &[],
 };
 
 pub(super) const AUGGIE_CLI: NativeCliCandidate = NativeCliCandidate {
@@ -133,6 +143,7 @@ pub(super) const AUGGIE_CLI: NativeCliCandidate = NativeCliCandidate {
     version_prefix: "",
     trailing_period: false,
     timeout_seconds: 2,
+    script_interpreters: &["node"],
 };
 
 pub(super) const INVENTORY_CANDIDATES: [NativeCliCandidate; 12] = [
@@ -198,12 +209,13 @@ fn map_bounded<T: Send>(
 }
 
 pub(super) fn discover(candidate: NativeCliCandidate) -> AgentInstallation {
-    let (installation, version) = super::discover_version_with_args(
+    let (installation, version) = super::discover_version_with_interpreters(
         candidate.executable,
         candidate.version_args,
         candidate.version_prefix,
         candidate.trailing_period,
         std::time::Duration::from_secs(candidate.timeout_seconds),
+        candidate.script_interpreters,
     );
     AgentInstallation {
         agent_id: candidate.agent_id,

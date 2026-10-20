@@ -1,4 +1,4 @@
-use super::{operator_client, read_bounded_response, AppHandle};
+use super::{AppHandle, operator_client, read_bounded_response};
 use serde::{Deserialize, Serialize};
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
@@ -96,10 +96,14 @@ fn parse_observation_page(
                 .as_deref()
                 .is_some_and(|timestamp| !super::is_rfc3339_timestamp(timestamp))
             || !matches!(item.freshness.as_str(), "CURRENT" | "STALE" | "UNKNOWN")
-            || item.resource_id.is_some()
+            || item
+                .resource_id
+                .as_deref()
+                .is_some_and(|resource_id| !valid_resource_id(resource_id))
         {
             return Err("Local Runtime returned an invalid observed-file entry".to_owned());
         }
+        let resource_id = item.resource_id;
         items.push(WorkspaceRootObservationView {
             observation_id: item.observation_id,
             display_name: item.display_name,
@@ -107,7 +111,7 @@ fn parse_observation_page(
             modified_at: item.modified_at,
             observed_at: item.observed_at,
             freshness: item.freshness,
-            resource_id: None,
+            resource_id,
         });
     }
     Ok(WorkspaceRootObservationPageView {
@@ -116,6 +120,14 @@ fn parse_observation_page(
         items,
         next_cursor: wire.next_cursor,
     })
+}
+
+fn valid_resource_id(value: &str) -> bool {
+    value.len() == 73
+        && value.starts_with("res_file_")
+        && value[9..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn valid_digest_id(value: &str) -> bool {
@@ -201,10 +213,10 @@ pub(super) async fn search_workspace_root_observations(
 #[cfg(test)]
 mod tests {
     use super::{
-        observation_operator_error, parse_observation_page, valid_observation_request,
-        WorkspaceRootObservationPageView,
+        WorkspaceRootObservationPageView, observation_operator_error, parse_observation_page,
+        valid_observation_request,
     };
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     fn page() -> Value {
         json!({
@@ -315,10 +327,26 @@ mod tests {
         assert_eq!(serialized["workspace_id"], "workspace-1");
         assert_eq!(serialized["items"][0]["display_name"], "Résumé.txt");
         assert_eq!(serialized["items"][0]["resource_id"], Value::Null);
-        assert!(serialized["items"][0]
-            .get("private_relative_locator")
-            .is_none());
+        assert!(
+            serialized["items"][0]
+                .get("private_relative_locator")
+                .is_none()
+        );
         assert!(serialized["items"][0].get("file_identity_digest").is_none());
+    }
+
+    #[test]
+    fn preserves_canonical_resource_id_for_opening_resource_details() {
+        let mut linked = page();
+        let resource_id = format!("res_file_{}", "a".repeat(64));
+        linked["items"][0]["resource_id"] = json!(resource_id);
+
+        let result = parse(linked).expect("canonical FILE Resource link is accepted");
+        let serialized = serde_json::to_value(result).expect("Tauri response serializes");
+        assert_eq!(
+            serialized["items"][0]["resource_id"],
+            format!("res_file_{}", "a".repeat(64))
+        );
     }
 
     #[test]
@@ -332,8 +360,32 @@ mod tests {
         assert!(parse(unknown).is_err());
 
         let mut noncanonical = page();
-        noncanonical["items"][0]["resource_id"] = json!("resource-1");
+        noncanonical["items"][0]["resource_id"] = json!("resource id");
         assert!(parse(noncanonical).is_err());
+
+        let mut invalid_characters = page();
+        invalid_characters["items"][0]["resource_id"] = json!("res_file/secret");
+        assert!(parse(invalid_characters).is_err());
+
+        let mut oversized_resource_id = page();
+        oversized_resource_id["items"][0]["resource_id"] =
+            json!(format!("res_file_{}", "a".repeat(65)));
+        assert!(parse(oversized_resource_id).is_err());
+
+        let mut wrong_prefix = page();
+        wrong_prefix["items"][0]["resource_id"] =
+            json!(format!("resource_{}", "a".repeat(64)));
+        assert!(parse(wrong_prefix).is_err());
+
+        let mut wrong_digest_length = page();
+        wrong_digest_length["items"][0]["resource_id"] =
+            json!(format!("res_file_{}", "a".repeat(63)));
+        assert!(parse(wrong_digest_length).is_err());
+
+        let mut uppercase_digest = page();
+        uppercase_digest["items"][0]["resource_id"] =
+            json!(format!("res_file_{}A", "a".repeat(63)));
+        assert!(parse(uppercase_digest).is_err());
 
         let mut bad_cursor = page();
         bad_cursor["next_cursor"] = json!("");

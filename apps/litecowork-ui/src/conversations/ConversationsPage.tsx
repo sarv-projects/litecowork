@@ -4,8 +4,9 @@ import { listen } from "@tauri-apps/api/event";
 import { RichResponseView } from "../presentation/RichResponseView";
 import { parseRichPresentationResponse, type ValidatedRichPresentation } from "../presentation/rich-presentation";
 import type { PresentationStreamState, TransientTurn } from "../presentation/presentation-stream";
-import { appendConversationListPage, appendConversationPage, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
+import { appendConversationListPage, appendConversationPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationListPage, parseConversationList, parseConversationSnapshot, richPresentationCacheKey, type ConversationMessageView, type ConversationSnapshotView, type ConversationSummary, type PendingConversationCreate } from "./conversation-view";
 import { ConversationStreamController, type ConversationStreamDriver, type StreamEnvelope } from "./conversation-stream";
+import { deriveConversationAgentSurface } from "./conversation-agent-surface";
 import { firstUseConversationGuidance } from "./first-use-guidance";
 import "./conversations-page.css";
 
@@ -129,6 +130,7 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   const [listCursor, setListCursor] = useState<string | null>(null);
   const [loadingMoreConversations, setLoadingMoreConversations] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [conversationDrafts, setConversationDrafts] = useState<Record<string, string>>({});
   const [snapshot, setSnapshot] = useState<ConversationSnapshotView | null>(null);
   const [richPresentationEpochs, setRichPresentationEpochs] = useState<Map<string, number>>(() => new Map());
   const [title, setTitle] = useState("");
@@ -154,7 +156,22 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
   const mounted = useRef(false);
   const activeWorkspace = useRef(workspaceId);
   activeWorkspace.current = workspaceId;
-  const selectionKey = workspaceId && selectedId ? `${workspaceId}\u0000${selectedId}` : null;
+  const selectionKey = workspaceId && selectedId ? conversationDraftScope(workspaceId, selectedId) : null;
+  const composerDraftKey = selectionKey;
+  const composerDraft = composerDraftKey ? conversationDrafts[composerDraftKey] ?? "" : draft;
+  const composerSurface = deriveConversationAgentSurface({
+    workspaceId,
+    conversationId: selectedId ?? "",
+    agentBindingId: "",
+    descriptor: null,
+    descriptorObservedAt: "",
+    enabled: true,
+    leadEligible: true,
+    draft: composerDraft,
+    attachments: [],
+    nativeTokens: [],
+    selectedOptions: {},
+  }, Date.now());
 
   useLayoutEffect(() => {
     conversationWorkspaceSelections.select(workspaceId);
@@ -552,7 +569,24 @@ export function ConversationsPage({ workspaceId, workspaceName, operatorReady, d
               </article>)}
             </div>
               : <div className="conversation-empty"><h2>This conversation is ready</h2><p>Conversation records and messages are durable. Sending messages is not available yet because native agent turn execution is not connected.</p></div>}
-        {selected && <div className="conversation-composer"><textarea aria-label="Message" placeholder="Messaging will be available when agent execution is connected" disabled value="" readOnly /><button className="primary-button" type="button" disabled>Send</button><small>Read-only until a real agent session can be admitted safely.</small></div>}
+        {selected && <div className="conversation-composer">
+          <textarea
+            aria-label="Message draft"
+            placeholder="Write a message to keep as a draft…"
+            value={composerDraft}
+            onChange={event => {
+              if (!composerDraftKey) return;
+              setConversationDrafts(current => ({ ...current, [composerDraftKey]: event.target.value }));
+            }}
+            rows={4}
+          />
+          <button className="primary-button" type="button" disabled>Send</button>
+          <small role="status" aria-live="polite">
+            {composerDraft.trim()
+              ? `Draft only. ${composerSurface.blockers[0] ?? "An admitted native session is required before sending."}`
+              : `Sending is unavailable until a native session is admitted safely. ${composerSurface.blockers[0] ?? ""}`}
+          </small>
+        </div>}
       </section>
     </div>}
   </div>;

@@ -364,6 +364,11 @@ impl AttemptProcessScopeJournal {
             file.persist(&path)
                 .map_err(|error| AttemptProcessScopeError::Io(error.error))?;
         }
+        // Unix filesystems allow fsync on an open directory to make the new name
+        // durable. Windows rejects opening a directory with std::fs::File::open;
+        // the record bytes themselves were already flushed above. Do not turn a
+        // successfully persisted journal entry into an apparent failure there.
+        #[cfg(unix)]
         File::open(&self.directory)?.sync_all()?;
         Ok(())
     }

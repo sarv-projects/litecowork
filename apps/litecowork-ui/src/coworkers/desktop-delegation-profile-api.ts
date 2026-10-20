@@ -28,6 +28,21 @@ function desktopTransport(workspaceId: string): DelegationProfileTransport {
         cursor: url.searchParams.get("cursor"),
       });
     } else if ((operation.method ?? "GET") === "GET"
+      && /^\/v1\/delegation-profiles\/[^/]+\/performance$/.test(url.pathname)
+      && [...url.searchParams.keys()].every(key => key === "task_category")
+      && url.searchParams.getAll("task_category").length <= 1
+      && !operation.requestId && operation.expectedVersion === undefined && operation.body === undefined) {
+      const profileId = decodeURIComponent(url.pathname.split("/")[3] ?? "");
+      if (!profileId || profileId.length > 256 || /[\u0000-\u001f\u007f]/.test(profileId)) {
+        throw new Error("Worker profile identifier is invalid.");
+      }
+      const taskCategory = url.searchParams.get("task_category");
+      response = await invoke<BridgeResponse>("get_delegation_profile_performance", {
+        workspaceId,
+        profileId,
+        taskCategory,
+      });
+    } else if ((operation.method ?? "GET") === "GET"
       && /^\/v1\/delegation-profiles\/[^/]+\/revisions$/.test(url.pathname)
       && [...url.searchParams.keys()].every(key => key === "limit" || key === "cursor")
       && url.searchParams.get("limit") === "200"

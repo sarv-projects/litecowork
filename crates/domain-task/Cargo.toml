@@ -6,9 +6,11 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+domain-responsibility = { path = "../domain-responsibility" }
 domain-workspace = { path = "../domain-workspace" }
 getrandom = "0.3"
 hex = "0.4"
+serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10"
 serde_json = "1.0"
 serde_json_canonicalizer = "0.3.2"

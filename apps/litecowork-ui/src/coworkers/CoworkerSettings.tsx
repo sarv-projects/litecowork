@@ -5,6 +5,7 @@ import type {
   WorkspacePrimaryReceipt,
 } from "./coworker-api";
 import { appendCoworkerRosterPage, CoworkerRosterRequestEpoch, isCoworkerDetailRequestCurrent, validateQuickCoworkerIdentity } from "./coworker-roster-request-epoch";
+import { excludeCurrentLeadFallbacks, isValidLeadFailoverDraft, moveFallbackLead } from "./lead-failover-order";
 import "./coworker-settings.css";
 
 export type CoworkerLeadBindingOption = {
@@ -523,10 +524,10 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
   const currentWorkerIds = form.enabled_delegation_profile_ids;
   const knownWorkerIds = new Set(workerProfiles?.map(item => item.delegation_profile_id) ?? []);
   const unavailableAssignedWorkers = currentWorkerIds.filter(id => !knownWorkerIds.has(id));
+  const failoverValid = isValidLeadFailoverDraft(currentFailover, form.default_lead_agent_binding_id);
   const formValid = form.name.trim().length > 0 && form.name.trim().length <= 120 && form.role_description.length <= 2000
     && (mode === "edit" || form.role_description.trim().length > 0)
-    && (currentFailover.mode === "DISABLED" || currentFailover.triggers.length > 0)
-    && (currentFailover.mode !== "ALLOW_LISTED" || (currentFailover.fallback_agent_binding_ids.length > 0 && currentFailover.max_lead_changes > 0));
+    && failoverValid;
 
   return <form className="coworker-editor" onSubmit={onSubmit}>
     <div className="coworker-editor-heading"><div><span className="coworker-profile-avatar" aria-hidden="true">{initial(form.name || "?")}</span></div><div><p className="coworker-settings-kicker">{mode === "create" ? "New identity" : "New revision"}</p><h2>{mode === "create" ? "Create a Coworker" : `Edit ${form.name}`}</h2><p>{mode === "create" ? "Give it a name and describe what it helps with. Connections, agents and advanced setup are optional and can be changed later." : "Changes apply to future work. Existing Tasks keep their saved specification."}</p></div></div>
@@ -540,7 +541,13 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
     <details className="coworker-advanced coworker-customize"><summary>Customize agent, workers and access (optional)</summary>
     <section className="coworker-form-section"><h3>Lead and worker profiles</h3>
       {leadBindings === undefined ? <div className="coworker-field"><span>Lead agent</span><p className="coworker-helper">{form.default_lead_agent_binding_id ? `Saved binding ${form.default_lead_agent_binding_id} is preserved.` : "Use the Workspace default."} Agent bindings are managed in Settings → Agents.</p></div>
-        : <label className="coworker-field">Lead agent<select value={form.default_lead_agent_binding_id ?? ""} onChange={event => onChange("default_lead_agent_binding_id", event.currentTarget.value || null)}><option value="">Use Workspace default</option>{form.default_lead_agent_binding_id && !eligibleLeadBindings.some(item => item.agent_binding_id === form.default_lead_agent_binding_id) && <option value={form.default_lead_agent_binding_id}>Saved binding · revalidation required</option>}{eligibleLeadBindings.map(item => <option key={item.agent_binding_id} value={item.agent_binding_id}>{item.display_name}</option>)}</select><small>Only enabled, lead-eligible bindings are offered.</small></label>}
+        : <label className="coworker-field">Lead agent<select value={form.default_lead_agent_binding_id ?? ""} onChange={event => {
+          const bindingId = event.currentTarget.value || null;
+          onChange("default_lead_agent_binding_id", bindingId);
+          if (bindingId && currentFailover.fallback_agent_binding_ids.includes(bindingId)) {
+            updateFailover({ ...currentFailover, fallback_agent_binding_ids: excludeCurrentLeadFallbacks(currentFailover.fallback_agent_binding_ids, bindingId) });
+          }
+        }}><option value="">Use Workspace default</option>{form.default_lead_agent_binding_id && !eligibleLeadBindings.some(item => item.agent_binding_id === form.default_lead_agent_binding_id) && <option value={form.default_lead_agent_binding_id}>Saved binding · revalidation required</option>}{eligibleLeadBindings.map(item => <option key={item.agent_binding_id} value={item.agent_binding_id}>{item.display_name}</option>)}</select><small>Only enabled, lead-eligible bindings are offered.</small></label>}
       <label className="coworker-field">Delegation strategy<select value={form.delegation_strategy} onChange={event => onChange("delegation_strategy", event.currentTarget.value as CoworkerDelegationStrategy)}><option value="NATIVE_DEFAULT">Use the lead’s native behavior</option><option value="BALANCED">Balanced</option><option value="COST_SAVER">Prefer lower-cost suitable workers</option><option value="HOST_DELEGATION_ONLY">Host-delegated workers only when supported</option></select></label>
       {workerProfiles === undefined ? <div className="coworker-field"><span>Allowed worker profiles</span><p className="coworker-helper">{workerProfilesError ?? `${currentWorkerIds.length ? `${currentWorkerIds.length} assignment${currentWorkerIds.length === 1 ? " is" : "s are"} preserved.` : "No worker profiles assigned."} Enable profiles separately in Settings → Agents. Enabling a profile does not start it.`}</p></div>
         : <fieldset className="coworker-check-group"><legend>Allowed worker profiles</legend><p className="coworker-helper">Only enabled profiles may be assigned. Assignment does not start an agent, grant app access, or override Trust.</p>
@@ -567,8 +574,28 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
         }}><option value="DISABLED">Stop and tell me</option><option value="ASK">Ask before choosing a new lead</option><option value="ALLOW_LISTED">Use one of my listed leads automatically</option></select></label>
         {currentFailover.mode !== "DISABLED" && <fieldset className="coworker-check-group"><legend>When to ask or switch</legend>{FAILOVER_TRIGGERS.map(trigger => <label key={trigger}><input type="checkbox" checked={currentFailover.triggers.includes(trigger)} onChange={event => updateTrigger(trigger, event.currentTarget.checked)} /><span>{triggerLabel(trigger)}</span></label>)}</fieldset>}
         {currentFailover.mode === "ALLOW_LISTED" && <>
-          <fieldset className="coworker-check-group"><legend>Fallback lead order (up to 3)</legend>{eligibleLeadBindings.filter(item => item.agent_binding_id !== form.default_lead_agent_binding_id).map(binding => <label key={binding.agent_binding_id}><input type="checkbox" checked={currentFailover.fallback_agent_binding_ids.includes(binding.agent_binding_id)} disabled={!currentFailover.fallback_agent_binding_ids.includes(binding.agent_binding_id) && currentFailover.fallback_agent_binding_ids.length >= 3} onChange={event => updateFallback(binding.agent_binding_id, event.currentTarget.checked)} /><span>{binding.display_name}</span></label>)}{currentFailover.fallback_agent_binding_ids.filter(id => !eligibleLeadBindings.some(item => item.agent_binding_id === id)).map(id => <label className="coworker-stale-option" key={id}><input type="checkbox" checked onChange={() => updateFallback(id, false)} /><span>Unavailable binding · remove {id}</span></label>)}</fieldset>
+          <section className="coworker-fallback-order" aria-labelledby="fallback-lead-order-title">
+            <h4 id="fallback-lead-order-title">Fallback lead order</h4>
+            <p className="coworker-helper">LiteCowork tries these listed leads in order, after checking current access and readiness.</p>
+            {currentFailover.fallback_agent_binding_ids.length === 0
+              ? <p className="coworker-helper">Choose up to three fallback leads below.</p>
+              : <ol aria-label="Automatic lead fallback priority">
+                {currentFailover.fallback_agent_binding_ids.map((bindingId, index) => {
+                  const binding = eligibleLeadBindings.find(item => item.agent_binding_id === bindingId);
+                  const label = binding?.display_name ?? `Unavailable binding ${bindingId}`;
+                  return <li key={bindingId}>
+                    <span>{label}</span>
+                    <div>
+                      <button type="button" className="coworker-secondary-action" aria-label={`Move ${label} up`} disabled={index === 0} onClick={() => updateFailover({ ...currentFailover, fallback_agent_binding_ids: moveFallbackLead(currentFailover.fallback_agent_binding_ids, bindingId, -1) })}>Move up</button>
+                      <button type="button" className="coworker-secondary-action" aria-label={`Move ${label} down`} disabled={index === currentFailover.fallback_agent_binding_ids.length - 1} onClick={() => updateFailover({ ...currentFailover, fallback_agent_binding_ids: moveFallbackLead(currentFailover.fallback_agent_binding_ids, bindingId, 1) })}>Move down</button>
+                    </div>
+                  </li>;
+                })}
+              </ol>}
+            <fieldset><legend>Available fallback leads (up to 3)</legend>{eligibleLeadBindings.filter(item => item.agent_binding_id !== form.default_lead_agent_binding_id).map(binding => <label key={binding.agent_binding_id}><input type="checkbox" checked={currentFailover.fallback_agent_binding_ids.includes(binding.agent_binding_id)} disabled={!currentFailover.fallback_agent_binding_ids.includes(binding.agent_binding_id) && currentFailover.fallback_agent_binding_ids.length >= 3} onChange={event => updateFallback(binding.agent_binding_id, event.currentTarget.checked)} /><span>{binding.display_name}</span></label>)}{currentFailover.fallback_agent_binding_ids.filter(id => id === form.default_lead_agent_binding_id || !eligibleLeadBindings.some(item => item.agent_binding_id === id)).map(id => <label className="coworker-stale-option" key={id}><input type="checkbox" checked onChange={() => updateFallback(id, false)} /><span>{id === form.default_lead_agent_binding_id ? "Current lead cannot be its own fallback" : `Unavailable binding · remove ${id}`}</span></label>)}</fieldset>
+          </section>
           <label className="coworker-field">Maximum lead changes<input type="number" min={1} max={3} value={currentFailover.max_lead_changes} onChange={event => updateFailover({ ...currentFailover, max_lead_changes: Number(event.currentTarget.value) })} /></label>
+          {!failoverValid && <p className="coworker-notice" role="alert">Choose up to three distinct fallback leads and set the change limit no higher than the number listed.</p>}
         </>}
       </section>
       <section className="coworker-form-section"><h3>Context</h3><fieldset className="coworker-check-group"><legend>Context this Coworker may retrieve</legend>{CONTEXT_OPTIONS.map(option => <label key={option.value}><input type="checkbox" checked={form.context_policy.allowed_context_kinds.includes(option.value)} onChange={event => onChange("context_policy", { ...form.context_policy, allowed_context_kinds: event.currentTarget.checked ? [...form.context_policy.allowed_context_kinds, option.value] : form.context_policy.allowed_context_kinds.filter(item => item !== option.value) })} /><span>{option.label}</span></label>)}</fieldset>

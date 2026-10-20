@@ -425,7 +425,7 @@
       "epic": "E03",
       "title": "AgentModule registry and ACP discovery",
       "gate": "G1",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E03-S01"
       ],
@@ -438,7 +438,7 @@
         "docs/SECURITY.md",
         "implementation/AGENT-PORTFOLIO-2026-10-16.md"
       ],
-      "implementation": "Track all 15 entries in the owner-directed local V1 portfolio as distinct candidates, independent of remote ACP Registry results, local installation, and auth/readiness. Candidate or registry presence is not module implementation or support. Implement AgentModuleRegistry plus bounded ACP Registry client/cache. Replace brand-conditioned discovery fanout with module matching by registry identity and descriptor API. Registry metadata is descriptive/untrusted and may not define arbitrary executable install/auth actions. Add list/refresh Operator APIs and Agent Registry UI rail. Current Codex/OpenCode hard-coded inventory remains transitional until migrated.",
+        "implementation": "Partial 2026-10-17 source: a bounded AgentModule manifest matcher requires exact ACP identity, Runtime OS, Runtime architecture, and compatible descriptor API. A bounded ACP metadata parser discards registry-supplied commands, arguments, and environment maps; its standalone tests pass 4/4. The parser is wired to a fixed-origin HTTPS fetcher, process-local 15-minute stale-aware cache, authenticated list/search/pagination/refresh routes, and Settings UI. The route suite passes 3/3, but live outage/restart and rendered UI interaction evidence remain pending. The cache is not durable, the complete independent 15-candidate projection is not wired, and module matching is not connected to concrete AgentModule lifecycle/runtime adapters. Keep all 15 entries independent from remote Registry, installation, and auth/readiness; registry presence is not module implementation or support. Registry metadata may not define arbitrary executable install/auth actions. Current Codex/OpenCode hard-coded inventory remains transitional until migrated.",
       "acceptance": "All 15 portfolio entries appear as candidates even when absent from the remote registry or not installed. Live/cached registry renders independently from installation/auth/readiness; discovery, profile observation, module implementation, protocol handshake, and qualified support remain distinct; module support is explicit; ambiguous module matches fail closed; registry outage does not break already installed agents; no registry action creates a binding/session/task.",
       "negative_cases": "Duplicate registry IDs, oversized/malformed registry, malicious command text, no adapter, two adapters claim same ID, stale cache, registry redirect/origin drift, unsupported OS/architecture.",
       "demo": "Refresh registry, show supported and unsupported entries, disconnect network and prove cached metadata is labeled stale while an already installed agent remains usable.",
@@ -867,7 +867,7 @@
       "epic": "E05",
       "title": "Child admission and isolation",
       "gate": "G2",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E05-S01"
       ],
@@ -878,7 +878,7 @@
         "docs/TRUST.md",
         "docs/OBSERVABILITY.md"
       ],
-      "implementation": "Accepted-Step host delegation, parent-child provenance, depth/concurrency reservations, TaskPacket/ResultEnvelope validation, private worktrees.",
+      "implementation": "Partial E05-S02 source: domain-task defines strict bounded TaskPacket and ResultEnvelope types and validators, an exported pure child-admission policy over exact Task/Plan/Step/parent Attempt/session/lease/profile/Coworker projections, and canonical bounded TaskPacket preparation over caller-resolved source allowsets. Focused envelope, admission and preparation tests pass 7/7, 7/7 and 4/4 respectively. Delegated parents without an immutable profile pin fail closed; unpinned roots remain subject to platform depth. None is yet consumed by the SQLite Attempt admission transaction or a TaskPacket producer; no child Attempt is admitted/dispatched and lease/grant/budget reservation, native session transport, ResultEnvelope consumption, private-worktree integration, SYSTEM and USER evidence remain pending.",
       "acceptance": "No child Attempt for native children; host child has own lease/grants/budget; shared writers denied by default.",
       "negative_cases": "Recursion, admission race, parent cancel, cross-Task packet, conflicting worktree diff.",
       "demo": "Lead delegates repository scan/edit to second harness and same-harness worker.",
@@ -898,7 +898,7 @@
       "epic": "E05",
       "title": "Routing and measured cost",
       "gate": "G2",
-      "status": "PLANNED",
+      "status": "IN_PROGRESS",
       "depends_on": [
         "E05-S02"
       ],
@@ -909,7 +909,7 @@
         "docs/TRUST.md",
         "docs/OBSERVABILITY.md"
       ],
-      "implementation": "Hard-filter then deterministic rank; unknown-cost semantics, BudgetReservations, quota observations, performance projection and explicit profile preference.",
+      "implementation": "Partial source: domain-task now deterministically ranks caller-qualified WorkerCandidate projections by explicit REQUIRE/PREFER/AUTOMATIC selection and QUALITY_FIRST/BALANCED/COST_FIRST/LATENCY_FIRST. It honors a minimum qualified verification-rate floor, omits unknown or incomparable cost rather than treating it as zero, rejects unknown/incomparable cost under a hard ceiling unless the provider-enforced ceiling satisfies it, and emits a versioned rule plus stable IDs. No live eligibility producer, cost/quota observations, BudgetReservation transaction, admission integration, or B83 benefit decision is wired; CODE/SYSTEM/USER remain pending.",
       "acceptance": "Unknown != zero; explicit profile never silently substitutes; quality floor constrains cheap-first; reproducible rank reasons.\n\n2026-10-13 reconciliation: B83 qualified benefit/confidence thresholds required before enabling automatic worth-based delegation; absent evidence default stay with current lead, unknown cost never zero or claimed cheaper.",
       "negative_cases": "Cost estimate stale, quota unknown, exhausted account, tied candidates, budget reservation race.",
       "demo": "Compare low-cost and quality-first choices on same bounded task.",

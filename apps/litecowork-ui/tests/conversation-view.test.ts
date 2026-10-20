@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { appendConversationPage, appendConversationListPage, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationList, parseConversationListPage, parseConversationSnapshot, richPresentationCacheKey } from "../src/conversations/conversation-view.ts";
+import { appendConversationPage, appendConversationListPage, conversationDraftScope, ConversationCreateRequestCache, ConversationRequestEpochs, ConversationWorkspaceSelectionEpochs, mergeConversationStreamSnapshot, parseConversationList, parseConversationListPage, parseConversationSnapshot, richPresentationCacheKey } from "../src/conversations/conversation-view.ts";
+
+test("unsent conversation drafts are scoped to one Workspace and Conversation", () => {
+  const first = conversationDraftScope("workspace-a", "conversation-a");
+  assert.notEqual(first, conversationDraftScope("workspace-a", "conversation-b"));
+  assert.notEqual(first, conversationDraftScope("workspace-b", "conversation-a"));
+});
 
 test("late Conversation create response is discarded after an A to B to A Workspace switch", async () => {
   const selections = new ConversationWorkspaceSelectionEpochs();

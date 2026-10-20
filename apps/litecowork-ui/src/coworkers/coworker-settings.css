@@ -128,6 +128,15 @@
 .coworker-check-inline input { margin-top: 3px; accent-color: var(--color-primary); }
 .coworker-check-group label span { display: grid; }
 .coworker-check-group label small { color: var(--color-text-subtle); font-size: 11px; }
+.coworker-fallback-order { display: grid; gap: 8px; padding: 11px; border: 1px solid var(--color-border); border-radius: 8px; }
+.coworker-fallback-order h4 { margin: 0; color: var(--color-text-muted); font-size: 12px; font-weight: 650; }
+.coworker-fallback-order ol { display: grid; gap: 7px; margin: 0; padding-left: 24px; }
+.coworker-fallback-order ol > li { padding-left: 3px; font-size: 12px; }
+.coworker-fallback-order ol > li > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.coworker-fallback-order fieldset { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 9px; border: 1px solid var(--color-border); border-radius: 7px; }
+.coworker-fallback-order fieldset legend { padding: 0 4px; color: var(--color-text-muted); font-size: 12px; font-weight: 600; }
+.coworker-fallback-order fieldset label { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
+.coworker-fallback-order fieldset input { margin-top: 3px; accent-color: var(--color-primary); }
 .coworker-check-inline { display: flex; align-items: flex-start; gap: 8px; color: var(--color-text-muted); font-size: 12px; }
 .coworker-stale-option { color: #805817; }
 .coworker-advanced { padding: 11px 12px; border: 1px solid var(--color-border); border-radius: 8px; }

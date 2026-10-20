@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[features]
+default = []
+# Development-only ZIP preview bridge. Release sidecars intentionally build without it.
+source-zip-worker = []
+
 [[bin]]
 name = "litecoworkd"
 path = "src/main.rs"
@@ -21,6 +26,7 @@ futures-util = "0.3"
 getrandom = "0.3"
 hex = "0.4"
 http-body = "1.0"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls", "stream"] }
 linux-process-scope = { path = "../../crates/linux-process-scope" }
 operator-ipc = { path = "../../crates/operator-ipc" }
 serde = { version = "1.0", features = ["derive"] }
@@ -33,14 +39,19 @@ tempfile = "3.20"
 time = { version = "0.3.41", features = ["formatting", "parsing"] }
 tokio = { version = "1.44", features = ["rt-multi-thread", "net", "sync", "time"] }
 tower = { version = "0.5", features = ["util"] }
+unicode-casefold = "0.2"
+unicode-normalization = "0.1"
+zeroize = "1.8"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1", features = ["fs", "process"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-local-security = { path = "../../crates/windows-local-security" }
+
 [dev-dependencies]
 rusqlite = { version = "0.40.2", default-features = false }
 storage-sqlite = { path = "../../crates/storage-sqlite", features = ["test-support"] }
-zeroize = "1.8"
 
 [lints]
 workspace = true

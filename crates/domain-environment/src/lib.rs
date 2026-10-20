@@ -6,6 +6,15 @@
 //! enforce the supplied version/status compare-and-set and immutable-config checks.
 
 use std::fmt;
+mod browser_control;
+pub use browser_control::{
+    BrowserControlActor, BrowserControlError, BrowserControlLease, BrowserObservation,
+};
+mod browser_pointer;
+pub use browser_pointer::{
+    BrowserFrameGeometry, BrowserPointerError, BrowserViewport, BrowserViewportPosition,
+    PaneBounds, PointerClientPosition, transform_browser_pointer,
+};
 use storage_core::{
     BudgetEnforcement, BudgetEnforcementPolicy, EnvironmentConfig, EnvironmentHealth,
     EnvironmentIdentity, EnvironmentLifetime, EnvironmentRecord, EnvironmentSharingScope,

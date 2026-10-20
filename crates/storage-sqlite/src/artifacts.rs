@@ -1708,16 +1708,25 @@ fn validate_source_inputs(
             .ok_or_else(|| {
                 StoreError::Invalid("Artifact provenance input has no revision_id".to_owned())
             })?;
-        if let Some(observed_digest) = input.get("observed_digest").and_then(Value::as_str) {
-            let source_digest: Option<String> = tx.query_row(
+        if let Some(observed_digest_value) = input.get("observed_digest") {
+            let observed_digest = observed_digest_value.as_str().ok_or_else(|| {
+                StoreError::Invalid(
+                    "Artifact provenance input observed_digest must be a SHA-256 digest string"
+                        .to_owned(),
+                )
+            })?;
+            if !storage_core::is_sha256_digest(observed_digest) {
+                return Err(StoreError::Invalid(
+                    "Artifact provenance input observed_digest must be a SHA-256 digest string"
+                        .to_owned(),
+                ));
+            }
+            let source_digest: Option<Option<String>> = tx.query_row(
                 "SELECT rr.content_digest FROM resources r JOIN resource_revisions rr ON rr.resource_id = r.resource_id WHERE r.workspace_id = ?1 AND r.resource_id = ?2 AND rr.resource_revision_id = ?3",
                 params![source_workspace, source_resource, source_revision],
                 |row| row.get(0),
             ).optional().map_err(map_database_error)?;
-            if source_digest
-                .as_deref()
-                .is_some_and(|digest| digest != observed_digest)
-            {
+            if source_digest.as_ref().and_then(Option::as_deref) != Some(observed_digest) {
                 return Err(StoreError::Integrity(
                     "Artifact provenance input digest does not match its pinned ResourceRevision"
                         .to_owned(),

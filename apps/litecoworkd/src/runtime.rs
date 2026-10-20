@@ -2,6 +2,7 @@ use crate::{
     attempt_process_scope::AttemptProcessScopeJournal,
     local_filesystem::{LocalDirectoryError, RuntimeIdentityKey, reopen_saved_directory},
     operator::{OperatorServer, RuntimeLifecycleBlocker},
+    workspace_root_cleanup_worker::WorkspaceRootCleanupWorker,
 };
 use domain_task::StepAttemptCoordinator;
 use domain_workspace::{EventContext, ResumeWorkspaceRoot, WorkspaceRootService};
@@ -45,6 +46,9 @@ mod revalidation_tests;
 #[cfg(all(test, unix, debug_assertions))]
 #[path = "runtime_process_tests.rs"]
 mod runtime_process_tests;
+#[cfg(all(test, windows))]
+#[path = "runtime_windows_security_tests.rs"]
+mod runtime_windows_security_tests;
 #[cfg(all(test, unix, debug_assertions))]
 #[path = "runtime_workspace_replay_process_tests.rs"]
 mod runtime_workspace_replay_process_tests;
@@ -376,6 +380,18 @@ fn run_with_identity_providers(
             );
         }
     };
+    let root_cleanup_worker =
+        match WorkspaceRootCleanupWorker::start(storage.store.clone(), state.runtime_id.clone()) {
+            Ok(worker) => worker,
+            Err(_) => {
+                return fail_startup(
+                    data_directory,
+                    &mut state,
+                    "WORKSPACE_ROOT_CLEANUP_WORKER_START_FAILED",
+                    "Workspace folder access cleanup worker failed to start",
+                );
+            }
+        };
     state.transition(
         RuntimeState::Degraded,
         blockers
@@ -395,6 +411,9 @@ fn run_with_identity_providers(
     // Stop accepting new Operator commands before publishing DRAINING. Existing
     // admitted handlers may finish under the bounded server drain below.
     operator.stop_admission()?;
+    root_cleanup_worker
+        .stop()
+        .map_err(|_| "Workspace folder access cleanup worker failed to stop cleanly".to_owned())?;
     state.transition(RuntimeState::Draining, shutdown_blockers.clone());
     persist_incarnation_transition(
         &storage.store,
@@ -1080,10 +1099,10 @@ fn local_directory_failure(error: LocalDirectoryError) -> WorkspaceRootRevalidat
         LocalDirectoryError::UnsupportedPlatform => {
             WorkspaceRootRevalidationFailure::UnsupportedPlatform
         }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         LocalDirectoryError::InvalidSelection => WorkspaceRootRevalidationFailure::InvalidLocator,
         LocalDirectoryError::IdentityChanged => WorkspaceRootRevalidationFailure::IdentityChanged,
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         LocalDirectoryError::NotDirectory | LocalDirectoryError::OpenFailed => {
             WorkspaceRootRevalidationFailure::IdentityUnavailable
         }
@@ -1382,16 +1401,27 @@ fn is_runtime_running(data_directory: &Path) -> Result<bool, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(_) => return Err("could not inspect Runtime process lock".to_owned()),
     };
-    restrict_file_permissions(&file)?;
+    restrict_file_permissions(&lock_path, &file)?;
     match file.try_lock_exclusive() {
         Ok(()) => {
             FileExt::unlock(&file)
                 .map_err(|_| "could not release Runtime status probe lock".to_owned())?;
             Ok(false)
         }
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(true),
+        Err(error) if is_instance_lock_contention_error(&error) => Ok(true),
         Err(_) => Err("could not determine whether Runtime is running".to_owned()),
     }
+}
+
+/// `fs2` reports `WouldBlock` for the Unix lock sentinel, but Windows exposes
+/// `ERROR_LOCK_VIOLATION` with a different `io::ErrorKind`. Compare its documented
+/// platform-specific contention error as well so a competing Runtime is reported
+/// consistently without treating unrelated permission or I/O errors as ownership.
+fn is_instance_lock_contention_error(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock
+        || error.raw_os_error().is_some_and(|raw_os_error| {
+            fs2::lock_contended_error().raw_os_error() == Some(raw_os_error)
+        })
 }
 
 fn print_state(state: &RuntimeLocalState) -> Result<(), String> {
@@ -1416,9 +1446,9 @@ impl InstanceLock {
         reject_symlink_if_present(&path)?;
         let file = open_runtime_lock_file(&path)
             .map_err(|_| "could not open the Runtime single-instance lock".to_owned())?;
-        restrict_file_permissions(&file)?;
+        restrict_file_permissions(&path, &file)?;
         file.try_lock_exclusive().map_err(|error| {
-            if error.kind() == std::io::ErrorKind::WouldBlock {
+            if is_instance_lock_contention_error(&error) {
                 "another LiteCowork Runtime already owns this state directory".to_owned()
             } else {
                 "could not acquire the Runtime single-instance lock".to_owned()
@@ -1440,6 +1470,10 @@ fn read_state(path: &Path) -> Result<Option<RuntimeLocalState>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(_) => return Err("could not read Runtime lifecycle state".to_owned()),
     };
+    validate_current_user_regular_file(&file, "Runtime lifecycle state")?;
+    #[cfg(windows)]
+    windows_local_security::secure_current_user_file(path)
+        .map_err(|_| "could not restrict Runtime lifecycle state access".to_owned())?;
     validate_private_regular_file(&file, "Runtime lifecycle state")?;
     let mut bytes = Vec::new();
     file.take(1024 * 1024)
@@ -1462,6 +1496,9 @@ fn persist_state(data_directory: &Path, state: &RuntimeLocalState) -> Result<(),
         .write_all(&bytes)
         .and_then(|()| temporary.as_file().sync_all())
         .map_err(|_| "could not durably write Runtime lifecycle state".to_owned())?;
+    #[cfg(windows)]
+    windows_local_security::secure_current_user_file(temporary.path())
+        .map_err(|_| "could not restrict Runtime lifecycle state access".to_owned())?;
     let destination = data_directory.join(STATE_FILE);
     temporary
         .persist(&destination)
@@ -1476,7 +1513,7 @@ fn ensure_private_state_directory(path: &Path) -> Result<(), String> {
         .map_err(|_| "could not create the Runtime state directory".to_owned())?;
     let metadata = fs::symlink_metadata(path)
         .map_err(|_| "could not inspect the Runtime state directory".to_owned())?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+    if metadata_is_reparse_point(&metadata) || !metadata.is_dir() {
         return Err("Runtime state path must be a real directory".to_owned());
     }
     #[cfg(unix)]
@@ -1494,10 +1531,20 @@ fn ensure_private_state_directory(path: &Path) -> Result<(), String> {
                 .map_err(|_| "could not restrict Runtime state directory permissions".to_owned())?;
         }
     }
+    #[cfg(windows)]
+    {
+        windows_local_security::secure_current_user_directory(path)
+            .map_err(|_| "could not restrict Runtime state directory access".to_owned())?;
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|_| "could not inspect the Runtime state directory".to_owned())?;
+        if metadata_is_reparse_point(&metadata) || !metadata.is_dir() {
+            return Err("Runtime state path must be a real directory".to_owned());
+        }
+    }
     Ok(())
 }
 
-fn restrict_file_permissions(file: &File) -> Result<(), String> {
+fn restrict_file_permissions(path: &Path, file: &File) -> Result<(), String> {
     validate_current_user_regular_file(file, "Runtime lock")?;
     #[cfg(unix)]
     {
@@ -1511,6 +1558,9 @@ fn restrict_file_permissions(file: &File) -> Result<(), String> {
         file.set_permissions(fs::Permissions::from_mode(0o600))
             .map_err(|_| "could not restrict Runtime lock permissions".to_owned())?;
     }
+    #[cfg(windows)]
+    windows_local_security::secure_current_user_file(path)
+        .map_err(|_| "could not restrict Runtime lock access".to_owned())?;
     Ok(())
 }
 
@@ -1539,11 +1589,14 @@ fn open_runtime_lock_file(path: &Path) -> Result<File, std::io::Error> {
     }
     #[cfg(not(unix))]
     {
+        use std::os::windows::fs::OpenOptionsExt;
+
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
             .open(path)?;
         validate_current_user_regular_file(&file, "Runtime lock").map_err(|_| {
             std::io::Error::new(
@@ -1570,7 +1623,12 @@ fn open_runtime_state_file(path: &Path) -> Result<File, std::io::Error> {
     }
     #[cfg(not(unix))]
     {
-        File::open(path)
+        use std::os::windows::fs::OpenOptionsExt;
+
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
     }
 }
 
@@ -1596,6 +1654,9 @@ fn validate_current_user_regular_file(file: &File, label: &str) -> Result<(), St
     if !metadata.is_file() {
         return Err(format!("{label} must be a regular file"));
     }
+    if metadata_is_reparse_point(&metadata) {
+        return Err(format!("{label} must not be a reparse point"));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -1608,12 +1669,31 @@ fn validate_current_user_regular_file(file: &File, label: &str) -> Result<(), St
 
 fn reject_symlink_if_present(path: &Path) -> Result<(), String> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+        Ok(metadata) if metadata_is_reparse_point(&metadata) || !metadata.is_file() => {
             Err("Runtime lock path must be a regular file".to_owned())
         }
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(_) => Err("could not inspect Runtime lock path".to_owned()),
+    }
+}
+
+#[cfg(windows)]
+const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+fn metadata_is_reparse_point(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 
@@ -2120,6 +2200,19 @@ mod bootstrap_state_tests {
 
         drop(first);
         assert!(InstanceLock::acquire(directory.path()).is_ok());
+    }
+
+    #[test]
+    fn instance_lock_classifies_the_platform_contention_error() {
+        assert!(super::is_instance_lock_contention_error(
+            &fs2::lock_contended_error()
+        ));
+        assert!(!super::is_instance_lock_contention_error(
+            &std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "unrelated lock failure",
+            )
+        ));
     }
 
     #[test]

@@ -409,7 +409,11 @@ async fn native_workspace_root_selection_is_private_owner_scoped_and_idempotent(
     assert_eq!(first_page["workspace_root_id"], root_id);
     assert_eq!(first_page["items"].as_array().unwrap().len(), 1);
     assert_eq!(first_page["items"][0]["display_name"], "private-name.txt");
-    assert_eq!(first_page["items"][0]["resource_id"], Value::Null);
+    assert!(
+        first_page["items"][0]["resource_id"]
+            .as_str()
+            .is_some_and(|resource_id| !resource_id.is_empty())
+    );
     let cursor = first_page["next_cursor"]
         .as_str()
         .expect("first page has a continuation cursor")
@@ -442,6 +446,11 @@ async fn native_workspace_root_selection_is_private_owner_scoped_and_idempotent(
         serde_json::from_slice(&next_page_body).expect("continuation page is JSON");
     assert_eq!(next_page["items"].as_array().unwrap().len(), 1);
     assert_eq!(next_page["items"][0]["display_name"], "second-private.txt");
+    assert!(
+        next_page["items"][0]["resource_id"]
+            .as_str()
+            .is_some_and(|resource_id| !resource_id.is_empty())
+    );
     assert!(next_page["next_cursor"].is_null());
 
     let scoped_cursor_path =
@@ -507,6 +516,33 @@ async fn native_workspace_root_selection_is_private_owner_scoped_and_idempotent(
     assert_eq!(partial_json["files_observed"], 1_000);
     assert_eq!(partial_json["partial_reason"], "SCAN_BUDGET_REACHED");
     assert!(!partial_json.to_string().contains("scan-private-name-"));
+
+    let partial_observations_path = format!(
+        "/v1/workspace-roots/{root_id}/observations?q=scan-private-name&freshness=UNKNOWN&limit=1"
+    );
+    let partial_observations = router_for(store.clone(), OWNER)
+        .oneshot(observation_request(&partial_observations_path, Some("1")))
+        .await
+        .expect("partial-only observations remain searchable as unknown");
+    assert_eq!(partial_observations.status(), StatusCode::OK);
+    let partial_observations_body = to_bytes(partial_observations.into_body(), 8192)
+        .await
+        .expect("bounded partial observation page");
+    let partial_observations_json: Value =
+        serde_json::from_slice(&partial_observations_body).expect("partial observations are JSON");
+    assert_eq!(
+        partial_observations_json["items"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        partial_observations_json["items"][0]["freshness"],
+        "UNKNOWN"
+    );
+    assert!(
+        partial_observations_json["items"][0]["resource_id"]
+            .as_str()
+            .is_some_and(|resource_id| !resource_id.is_empty())
+    );
 
     fs::rename(
         &selected_directory,

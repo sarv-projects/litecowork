@@ -404,6 +404,7 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
       return;
     }
     const identity = workspaceId + "\u0000" + taskId;
+    let progressRefreshTimer: number | undefined;
     const driver: TaskSnapshotStreamDriver = {
       listen: async callback => listen<unknown>("task-presentation-stream", event => callback(event.payload as TaskStreamEnvelope)),
       start: input => invoke<void>("subscribe_task_stream", input),
@@ -418,6 +419,7 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
         return;
       }
       if (state.workspaceId !== workspaceId || state.taskId !== taskId) return;
+      const shouldRefreshProgress = hasSnapshot.current || requestInFlight.current;
       streamSnapshotEpoch.current += 1;
       setItems(state.items);
       setInvalidItemCount(0);
@@ -427,10 +429,24 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
       setSavedSnapshotNotice(null);
       setSavedSnapshotIdentity(identity);
       hasSnapshot.current = true;
+      // The resumable stream carries presentation items while work lanes and
+      // Evidence timestamps come from the separately committed progress projection.
+      // Refresh that projection after a burst of stream updates so the panel does not
+      // announce live Task changes beside lanes that remain frozen until the poll.
+      if (shouldRefreshProgress) {
+        if (progressRefreshTimer !== undefined) window.clearTimeout(progressRefreshTimer);
+        progressRefreshTimer = window.setTimeout(() => {
+          progressRefreshTimer = undefined;
+          if (snapshotIdentity.current === identity) refreshNow.current?.();
+        }, 250);
+      }
     }, setStreamStatus);
     controller.start();
     setStreamStatus(controller.status);
-    return () => { void controller.dispose(); };
+    return () => {
+      if (progressRefreshTimer !== undefined) window.clearTimeout(progressRefreshTimer);
+      void controller.dispose();
+    };
   }, [workspaceId, taskId, operatorReady]);
 
   const selectedIdentity = `${workspaceId}\u0000${taskId}`;

@@ -343,7 +343,7 @@ pub(crate) fn reconcile_workspace_root_observations_in_transaction(
     for observation in &batch.observations {
         let observation_generation = match batch.status {
             RootObservationScanStatus::Complete => new_generation,
-            RootObservationScanStatus::Partial => old_generation,
+            RootObservationScanStatus::Partial => 0,
         };
         transaction
             .execute(
@@ -363,7 +363,10 @@ pub(crate) fn reconcile_workspace_root_observations_in_transaction(
                     size_bytes = excluded.size_bytes,
                     modified_at = excluded.modified_at,
                     observed_at = excluded.observed_at,
-                    completed_generation = excluded.completed_generation,
+                    completed_generation = MAX(
+                      workspace_root_observations.completed_generation,
+                      excluded.completed_generation
+                    ),
                     last_scan_request_id = excluded.last_scan_request_id,
                     freshness = CASE
                       WHEN excluded.completed_generation > workspace_root_observations.completed_generation
@@ -747,6 +750,7 @@ mod tests {
                 vec![
                     observation("b", "one.txt", b"one.txt"),
                     observation("c", "two.txt", b"two.txt"),
+                    observation("e", "three.txt", b"three.txt"),
                 ],
             ),
         )
@@ -760,9 +764,24 @@ mod tests {
             &tx,
             &batch(
                 "scan-2",
+                RootObservationScanStatus::Complete,
+                vec![observation("b", "one.txt", b"one.txt")],
+            ),
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        reconcile_workspace_root_observations_in_transaction(
+            &tx,
+            &batch(
+                "scan-3",
                 RootObservationScanStatus::Partial,
                 vec![
                     observation("b", "one.txt", b"one.txt"),
+                    observation("c", "two.txt", b"two.txt"),
                     observation("d", "partial-only.txt", b"partial-only.txt"),
                 ],
             ),
@@ -778,14 +797,22 @@ mod tests {
             )
             .unwrap();
         assert_eq!(seen_in_partial, "CURRENT");
+        let stale_seen_in_partial: (String, i64) = connection
+            .query_row(
+                "SELECT freshness, completed_generation FROM workspace_root_observations WHERE display_name = 'two.txt'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stale_seen_in_partial, ("STALE".to_owned(), 1));
         let unseen: String = connection
             .query_row(
-                "SELECT freshness FROM workspace_root_observations WHERE display_name = 'two.txt'",
+                "SELECT freshness FROM workspace_root_observations WHERE display_name = 'three.txt'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(unseen, "CURRENT");
+        assert_eq!(unseen, "STALE");
         let partial_only: (String, i64) = connection
             .query_row(
                 "SELECT freshness, completed_generation FROM workspace_root_observations WHERE display_name = 'partial-only.txt'",
@@ -801,7 +828,7 @@ mod tests {
         reconcile_workspace_root_observations_in_transaction(
             &tx,
             &batch(
-                "scan-3",
+                "scan-4",
                 RootObservationScanStatus::Complete,
                 vec![observation("d", "partial-only.txt", b"partial-only.txt")],
             ),
@@ -815,7 +842,7 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(promoted, ("CURRENT".to_owned(), 2));
+        assert_eq!(promoted, ("CURRENT".to_owned(), 3));
         let absent_after_complete: String = connection
             .query_row(
                 "SELECT freshness FROM workspace_root_observations WHERE display_name = 'one.txt'",

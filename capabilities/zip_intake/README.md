@@ -12,7 +12,9 @@ There is no generic provider registry, LiteSPM wire protocol, or Core parsing se
 `Manifest`. `READY` means metadata admitted; it does not mean extracted, indexed,
 searchable, trusted, or authorized. `extract(SourceRevision, bytes)` repeats admission
 and returns `ExtractionResult`: an updated manifest plus immutable in-memory payloads
-for successfully extracted entries. Only the exact SHA-256 checked immutable input is
+for successfully extracted entries. The production isolation boundary is
+`ZipWorker.preview()` / `ZipWorker.extract()`; do not invoke the provider directly on
+untrusted bytes in a Runtime process. Only the exact SHA-256 checked immutable input is
 used. The original bytes are unchanged. Both results preserve the Workspace, Resource,
 revision, input digest, provider version, and limits; each entry retains its archive index,
 raw-name digest, safe virtual path when available, sizes, CRC, and status/reason. Successful
@@ -56,26 +58,37 @@ no payload. Individual failures produce `REJECTED` entries; safe siblings can su
 Metadata preview cannot certify body integrity or nested content, so extraction reopens
 and rechecks the archive. No preview result can be used as an admission token.
 
-`ZipIntakeProvider` itself is a library, not a process sandbox. Its new `ZipWorker` boundary
-is a Linux-only metadata-preview runner: it starts the fixed `worker.py` entry point using
+`ZipIntakeProvider` itself is a library, not a process sandbox. Its `ZipWorker` boundary
+is a Linux-only preview/extraction runner: it starts the fixed `worker.py` entry point using
 Bubblewrap and `/usr/bin/prlimit`, passes a pinned source identity and bounded archive bytes
-over stdin, and returns only a bounded metadata manifest. Bubblewrap gives the worker private
+over stdin, and returns a bounded metadata manifest or bounded in-memory payloads. Bubblewrap gives the worker private
 user/PID/network/IPC/UTS/mount namespaces, a read-only runtime and code view, no host home or
 workspace mount, and a 1 MiB private `/tmp`. Inherited limits bound CPU to 8 seconds,
 address space to 512 MiB, file size to zero, file descriptors to 32, and the parent kills
-the process group after 12 seconds. The parent streams at most 24 MiB of request JSON and
-reads at most 8 MiB plus one sentinel byte from stdout before killing an over-producing
-child; stderr is discarded because it is not part of the safe protocol. The worker uses no
-filesystem extraction path. `qualified()`
+the process group after 12 seconds. The parent streams at most 24 MiB of request JSON; it
+reads at most 8 MiB plus one sentinel byte for preview or 48 MiB plus one sentinel byte for
+extraction before killing an over-producing child. Stderr is discarded because it is not
+part of the safe protocol. The worker uses no filesystem extraction path. `qualified()`
 executes a real round-trip probe and returns false if required Linux commands, mounts,
 namespace, or parser execution fail.
 
+Both worker calls accept an optional thread-safe cancellation event. The parent checks it
+while pumping the bounded pipes, kills the worker process group, and raises
+`WorkerCancelled`; cancellation does not create partial extraction state because the
+capability writes no files or database rows. The Runtime route and Library do not yet pass
+such a token, so the product exposes no cancel control for ZIP processing.
+
 This boundary has only been exercised on the current Ubuntu development host (Bubblewrap
 0.9.0, system Python 3.12, util-linux `prlimit`). It does not establish support for other
-distributions or desktop operating systems. The worker is not packaged or called by
-`litecoworkd`; the authenticated Runtime readiness route continues to report ZIP unavailable.
-The Python provider's `extract()` method remains unsafe to call in-process for untrusted
-archives. There is no ZIP preview Operator endpoint, sandboxed member extraction, explicit
+distributions or desktop operating systems. The worker now supports both metadata preview
+and bounded in-memory member extraction. Extraction output is bounded to 48 MiB including
+base64 and manifest overhead; the total unencoded expansion remains bounded to 32 MiB and
+each entry to 8 MiB. Parent-side decoding checks the exact source revision, every member's
+path/index/length/digest, and manifest consistency. The end-to-end `qualified()` probe tests
+both preview and extraction. A fixed source-build-only preview CLI calls the supervised
+provider from `litecoworkd`; neither the CLI nor provider is packaged in the desktop
+Runtime, and daemon extraction is not wired. The authenticated Runtime readiness route
+continues to report ZIP unavailable. There is no extraction Operator command, product
 cancellation command, or Core child-Resource/provenance/deletion transaction. Do not expose
 extracted payloads or enable ZIP readiness until those integrations and platform
 qualification are complete.
@@ -96,9 +109,12 @@ acceptance gates remain incomplete. The current desktop upload/search path still
 ZIPs as opaque Resources, as specified in [WORLD-RESOURCES](../../docs/WORLD-RESOURCES.md).
 
 The current LiteCowork boundary is explicit: the daemon router mounts
-`GET /v1/capabilities/zip-intake`, the Tauri command handler registers the readiness bridge,
-and the Library mounts the notice. The route reports
-`UNAVAILABLE / ISOLATED_WORKER_NOT_QUALIFIED` without passing bytes to this provider. These
-status surfaces do not make the parser production-safe or extraction available; ZIP upload
-continues to preserve an opaque Resource and archive members are not exposed to indexing,
-Task context, or Artifact publication.
+`GET /v1/capabilities/zip-intake` and the Linux source-build-only
+`POST /v1/resources/{resource_id}/archive/preview`; the Tauri command handler registers the
+readiness bridge and the Library mounts the notice. The readiness route reports
+`UNAVAILABLE / ISOLATED_WORKER_NOT_QUALIFIED`. The preview route accepts an exact managed
+Resource revision, calls the fixed isolated CLI, and returns metadata only. It does not
+enable extraction or change the opaque Resource behavior: archive members are not exposed
+to indexing, Task context, or Artifact publication. Packaged and non-Linux preview remains
+unavailable. No extraction command, Core child-Resource/provenance/deletion transaction, or
+product cancellation flow is implemented.

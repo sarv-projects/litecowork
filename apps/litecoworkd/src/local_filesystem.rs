@@ -7,10 +7,14 @@
 
 use std::fmt;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::path::{Component, Path, PathBuf};
+use std::path::Component;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use std::path::{Path, PathBuf};
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
 use storage_core::LocalFileIdentityBindingRecord;
 use storage_sqlite::RuntimeOsPrincipalIdentity;
 
@@ -50,30 +54,132 @@ const MAX_SCAN_ENTRIES: usize = 10_000;
 #[cfg(target_os = "linux")]
 const MAX_SCAN_LOCATOR_BYTES: usize = 16 * 1024 * 1024;
 
+// Windows entries marked as reparse points (symlinks, junctions, mount points, and other
+// providers) are never eligible for traversal. This predicate is intentionally separate
+// from a Windows scanner: traversal remains unsupported until the daemon has a qualified
+// handle-relative open API that can enforce this check without a path-replacement race.
+#[cfg(any(target_os = "windows", test))]
+const WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_directory_entry_is_traversable(file_attributes: u32) -> bool {
+    const DIRECTORY: u32 = 0x0000_0010;
+    file_attributes & DIRECTORY != 0 && file_attributes & WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT == 0
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum NativeDirectoryIdentity {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    Unix {
+        filesystem_instance_id: u64,
+        file_id: u64,
+        platform_kind: &'static str,
+    },
+    #[cfg(target_os = "windows")]
+    Windows {
+        volume_serial_number: u64,
+        file_id: [u8; 16],
+    },
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(crate) struct RawDirectoryIdentity {
-    filesystem_instance_id: u64,
-    file_id: u64,
-    platform_kind: &'static str,
+    native: NativeDirectoryIdentity,
 }
 
 impl RawDirectoryIdentity {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    const fn unix(filesystem_instance_id: u64, file_id: u64, platform_kind: &'static str) -> Self {
+        Self {
+            native: NativeDirectoryIdentity::Unix {
+                filesystem_instance_id,
+                file_id,
+                platform_kind,
+            },
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn windows(identity: windows_local_security::DirectoryIdentity) -> Self {
+        Self {
+            native: NativeDirectoryIdentity::Windows {
+                volume_serial_number: identity.volume_serial_number(),
+                file_id: identity.file_id(),
+            },
+        }
+    }
+
+    fn platform_kind(&self) -> &'static str {
+        match self.native {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            NativeDirectoryIdentity::Unix { platform_kind, .. } => platform_kind,
+            #[cfg(target_os = "windows")]
+            NativeDirectoryIdentity::Windows { .. } => "WINDOWS_VOLUME_FILE_ID_128",
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    const fn unix_ids(&self) -> (u64, u64) {
+        match self.native {
+            NativeDirectoryIdentity::Unix {
+                filesystem_instance_id,
+                file_id,
+                ..
+            } => (filesystem_instance_id, file_id),
+        }
+    }
+
     pub(crate) fn matches_binding(&self, binding: &LocalFileIdentityBindingRecord) -> bool {
-        binding.raw_filesystem_instance_id == self.filesystem_instance_id.to_string()
-            && binding.raw_volume_id.is_none()
-            && binding.raw_file_id == self.file_id.to_string()
-            && binding.raw_generation.is_none()
-            && binding.platform_kind == self.platform_kind
+        match self.native {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            NativeDirectoryIdentity::Unix {
+                filesystem_instance_id,
+                file_id,
+                platform_kind,
+            } => {
+                binding.raw_filesystem_instance_id == filesystem_instance_id.to_string()
+                    && binding.raw_volume_id.is_none()
+                    && binding.raw_file_id == file_id.to_string()
+                    && binding.raw_generation.is_none()
+                    && binding.platform_kind == platform_kind
+            }
+            #[cfg(target_os = "windows")]
+            NativeDirectoryIdentity::Windows {
+                volume_serial_number,
+                file_id,
+            } => {
+                binding.raw_filesystem_instance_id == format!("{volume_serial_number:016x}")
+                    && binding.raw_volume_id.is_none()
+                    && binding.raw_file_id == hex::encode(file_id)
+                    && binding.raw_generation.is_none()
+                    && binding.platform_kind == self.platform_kind()
+            }
+        }
     }
 
     pub(crate) fn keyed_projection(
         &self,
         runtime_identity: &impl RuntimeIdentityKey,
     ) -> (String, serde_json::Value) {
-        let filesystem_bytes = self.filesystem_instance_id.to_be_bytes();
-        let mut file_material = Vec::with_capacity(16);
+        let (filesystem_bytes, file_bytes): ([u8; 8], Vec<u8>) = match self.native {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            NativeDirectoryIdentity::Unix {
+                filesystem_instance_id,
+                file_id,
+                ..
+            } => (
+                filesystem_instance_id.to_be_bytes(),
+                file_id.to_be_bytes().to_vec(),
+            ),
+            #[cfg(target_os = "windows")]
+            NativeDirectoryIdentity::Windows {
+                volume_serial_number,
+                file_id,
+            } => (volume_serial_number.to_be_bytes(), file_id.to_vec()),
+        };
+        let mut file_material = Vec::with_capacity(filesystem_bytes.len() + file_bytes.len());
         file_material.extend_from_slice(&filesystem_bytes);
-        file_material.extend_from_slice(&self.file_id.to_be_bytes());
+        file_material.extend_from_slice(&file_bytes);
         let digest = format!(
             "sha256:{}",
             runtime_identity.keyed_pseudonym(
@@ -92,7 +198,7 @@ impl RawDirectoryIdentity {
             "volume_id": null,
             "file_id": format!("sha256:{file_pseudonym}"),
             "generation": null,
-            "platform_kind": self.platform_kind,
+            "platform_kind": self.platform_kind(),
         });
         (digest, identity)
     }
@@ -104,15 +210,28 @@ impl RawDirectoryIdentity {
         runtime_incarnation_id: String,
         observed_at: String,
     ) -> LocalFileIdentityBindingRecord {
+        let (raw_filesystem_instance_id, raw_file_id) = match self.native {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            NativeDirectoryIdentity::Unix {
+                filesystem_instance_id,
+                file_id,
+                ..
+            } => (filesystem_instance_id.to_string(), file_id.to_string()),
+            #[cfg(target_os = "windows")]
+            NativeDirectoryIdentity::Windows {
+                volume_serial_number,
+                file_id,
+            } => (format!("{volume_serial_number:016x}"), hex::encode(file_id)),
+        };
         LocalFileIdentityBindingRecord {
             location_id,
             runtime_id,
             runtime_incarnation_id,
-            raw_filesystem_instance_id: self.filesystem_instance_id.to_string(),
+            raw_filesystem_instance_id,
             raw_volume_id: None,
-            raw_file_id: self.file_id.to_string(),
+            raw_file_id,
             raw_generation: None,
-            platform_kind: self.platform_kind.to_owned(),
+            platform_kind: self.platform_kind().to_owned(),
             observed_at,
         }
     }
@@ -128,6 +247,14 @@ pub(crate) struct OpenedDirectorySelection {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     private_locator: String,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    display_name: String,
+    #[cfg(target_os = "windows")]
+    handle: windows_local_security::VerifiedDirectory,
+    #[cfg(target_os = "windows")]
+    canonical_path: PathBuf,
+    #[cfg(target_os = "windows")]
+    private_locator: String,
+    #[cfg(target_os = "windows")]
     display_name: String,
     identity: RawDirectoryIdentity,
 }
@@ -154,6 +281,16 @@ impl OpenedDirectorySelection {
         &self.display_name
     }
 
+    #[cfg(target_os = "windows")]
+    pub(crate) fn private_locator(&self) -> &str {
+        &self.private_locator
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(crate) fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
     pub(crate) const fn identity(&self) -> RawDirectoryIdentity {
         self.identity
     }
@@ -166,7 +303,17 @@ impl OpenedDirectorySelection {
         {
             self.revalidate_with_cancel(|| false)
         }
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(target_os = "windows")]
+        {
+            self.handle
+                .revalidate_path(&self.canonical_path)
+                .map_err(|_| LocalDirectoryError::IdentityChanged)?;
+            if RawDirectoryIdentity::windows(self.handle.identity()) != self.identity {
+                return Err(LocalDirectoryError::IdentityChanged);
+            }
+            Ok(())
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         {
             Err(LocalDirectoryError::UnsupportedPlatform)
         }
@@ -207,11 +354,11 @@ pub(crate) enum LocalDirectoryError {
     // Keep the fail-closed error for targets without qualified native handle identity.
     #[allow(dead_code)]
     UnsupportedPlatform,
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     InvalidSelection,
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     NotDirectory,
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     OpenFailed,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     ScanDeadlineExceeded,
@@ -223,11 +370,11 @@ impl fmt::Display for LocalDirectoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::UnsupportedPlatform => "persistent folder access is unsupported on this platform",
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             Self::InvalidSelection => "selected folder is invalid",
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             Self::NotDirectory => "selected item is not a folder",
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             Self::OpenFailed => "selected folder could not be opened safely",
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             Self::ScanDeadlineExceeded => "folder scan deadline elapsed during identity checking",
@@ -295,21 +442,54 @@ pub(crate) fn open_selected_directory(
             canonical_path,
             private_locator,
             display_name,
-            identity: RawDirectoryIdentity {
-                filesystem_instance_id: metadata.st_dev as u64,
-                file_id: metadata.st_ino as u64,
-                platform_kind: if cfg!(target_os = "macos") {
+            identity: RawDirectoryIdentity::unix(
+                metadata.st_dev as u64,
+                metadata.st_ino as u64,
+                if cfg!(target_os = "macos") {
                     "MACOS_DEVICE_INODE"
                 } else {
                     "LINUX_DEVICE_INODE"
                 },
-            },
+            ),
         })
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         Err(LocalDirectoryError::UnsupportedPlatform)
     }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn open_selected_directory(
+    selected_path: &Path,
+) -> Result<OpenedDirectorySelection, LocalDirectoryError> {
+    let handle = windows_local_security::open_directory_path_without_reparse(selected_path)
+        .map_err(|_| LocalDirectoryError::OpenFailed)?;
+    let canonical_path = selected_path.to_path_buf();
+    let wide: Vec<u16> = canonical_path.as_os_str().encode_wide().collect();
+    validate_windows_path_units(&wide)?;
+    let display_name = canonical_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "Filesystem root".to_owned());
+    validate_display_name(&display_name)?;
+    let path_bytes = utf16le_bytes(&wide);
+    let private_locator = format!(
+        "windows-path-u16le-b64:{}",
+        URL_SAFE_NO_PAD.encode(path_bytes)
+    );
+    handle
+        .revalidate_path(&canonical_path)
+        .map_err(|_| LocalDirectoryError::IdentityChanged)?;
+    let identity = RawDirectoryIdentity::windows(handle.identity());
+    Ok(OpenedDirectorySelection {
+        handle,
+        canonical_path,
+        private_locator,
+        display_name,
+        identity,
+    })
 }
 
 /// Reopens a persisted Runtime-local locator without canonicalizing or following any
@@ -323,7 +503,48 @@ pub(crate) fn reopen_saved_directory(
     {
         reopen_saved_directory_with_cancel(private_locator, display_name, || false)
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        let encoded = private_locator
+            .strip_prefix("windows-path-u16le-b64:")
+            .ok_or(LocalDirectoryError::InvalidSelection)?;
+        if encoded.is_empty() || encoded.len() > 45_056 {
+            return Err(LocalDirectoryError::InvalidSelection);
+        }
+        let bytes = URL_SAFE_NO_PAD
+            .decode(encoded.as_bytes())
+            .map_err(|_| LocalDirectoryError::InvalidSelection)?;
+        if bytes.is_empty()
+            || bytes.len() > 33_792
+            || bytes.len() % 2 != 0
+            || URL_SAFE_NO_PAD.encode(&bytes) != encoded
+        {
+            return Err(LocalDirectoryError::InvalidSelection);
+        }
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+            .collect();
+        validate_windows_path_units(&units)?;
+        let path_string =
+            String::from_utf16(&units).map_err(|_| LocalDirectoryError::InvalidSelection)?;
+        let path = PathBuf::from(path_string);
+        validate_display_name(display_name)?;
+        let handle = windows_local_security::open_directory_path_without_reparse(&path)
+            .map_err(|_| LocalDirectoryError::OpenFailed)?;
+        handle
+            .revalidate_path(&path)
+            .map_err(|_| LocalDirectoryError::IdentityChanged)?;
+        let identity = RawDirectoryIdentity::windows(handle.identity());
+        Ok(OpenedDirectorySelection {
+            handle,
+            canonical_path: path,
+            private_locator: private_locator.to_owned(),
+            display_name: display_name.to_owned(),
+            identity,
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         let _ = (private_locator, display_name);
         Err(LocalDirectoryError::UnsupportedPlatform)
@@ -380,17 +601,49 @@ where
             canonical_path: path,
             private_locator: private_locator.to_owned(),
             display_name: display_name.to_owned(),
-            identity: RawDirectoryIdentity {
-                filesystem_instance_id: metadata.st_dev as u64,
-                file_id: metadata.st_ino as u64,
-                platform_kind: if cfg!(target_os = "macos") {
+            identity: RawDirectoryIdentity::unix(
+                metadata.st_dev as u64,
+                metadata.st_ino as u64,
+                if cfg!(target_os = "macos") {
                     "MACOS_DEVICE_INODE"
                 } else {
                     "LINUX_DEVICE_INODE"
                 },
-            },
+            ),
         })
     }
+}
+
+#[cfg(target_os = "windows")]
+fn validate_windows_path_units(units: &[u16]) -> Result<(), LocalDirectoryError> {
+    if units.is_empty()
+        || units.len() > 16_896
+        || units.contains(&0)
+        || String::from_utf16(units).is_err()
+    {
+        return Err(LocalDirectoryError::InvalidSelection);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn utf16le_bytes(units: &[u16]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(units.len() * 2);
+    for unit in units {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(target_os = "windows")]
+fn validate_display_name(display_name: &str) -> Result<(), LocalDirectoryError> {
+    if display_name.trim().is_empty()
+        || display_name.chars().any(char::is_control)
+        || display_name.len() > 255
+    {
+        return Err(LocalDirectoryError::InvalidSelection);
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -521,6 +774,7 @@ pub(crate) struct LocalFileScanEntry {
     identity: RawLocalFileIdentity,
     mount_id: u64,
     size_bytes: u64,
+    modified_at: Option<String>,
     #[cfg(target_os = "linux")]
     file_handle: rustix::fd::OwnedFd,
 }
@@ -545,6 +799,10 @@ impl LocalFileScanEntry {
 
     pub(crate) const fn size_bytes(&self) -> u64 {
         self.size_bytes
+    }
+
+    pub(crate) fn modified_at(&self) -> Option<&str> {
+        self.modified_at.as_deref()
     }
 }
 
@@ -797,9 +1055,10 @@ where
     )
     .map_err(|_| LocalFileScanError::OpenFailed)?;
     let root_stat = fstat(&root_handle).map_err(|_| LocalFileScanError::OpenFailed)?;
+    let (root_filesystem_instance_id, root_file_id) = selection.identity.unix_ids();
     if root_stat.st_mode & DIRECTORY_TYPE_MASK != DIRECTORY_TYPE
-        || root_stat.st_dev as u64 != selection.identity.filesystem_instance_id
-        || root_stat.st_ino as u64 != selection.identity.file_id
+        || root_stat.st_dev as u64 != root_filesystem_instance_id
+        || root_stat.st_ino as u64 != root_file_id
     {
         return Err(LocalFileScanError::RootChanged);
     }
@@ -816,7 +1075,7 @@ where
         &root_handle,
         &[],
         0,
-        selection.identity.filesystem_instance_id,
+        root_filesystem_instance_id,
         root_mount_id,
         &limits,
         is_cancelled,
@@ -1046,6 +1305,7 @@ where
             },
             mount_id: entry_mount_id,
             size_bytes: metadata.st_size as u64,
+            modified_at: file_modified_at(metadata.st_mtime, metadata.st_mtime_nsec),
             file_handle: inspected,
         })?;
     }
@@ -1056,6 +1316,20 @@ where
         root_mount_id,
     )?;
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn file_modified_at(seconds: i64, nanoseconds: u64) -> Option<String> {
+    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+    if nanoseconds >= 1_000_000_000 {
+        return None;
+    }
+    let timestamp = i128::from(seconds) * 1_000_000_000 + i128::from(nanoseconds);
+    OffsetDateTime::from_unix_timestamp_nanos(timestamp)
+        .ok()?
+        .format(&Rfc3339)
+        .ok()
 }
 
 /// Re-resolves each directory from the selected root with Linux `openat2` resolution
@@ -1381,9 +1655,10 @@ fn open_entry_parent(
     )
     .map_err(|_| LocalFileScanError::EntryChanged)?;
     let root_stat = fstat(&current).map_err(|_| LocalFileScanError::RootChanged)?;
+    let (root_filesystem_instance_id, root_file_id) = selection.identity.unix_ids();
     if root_stat.st_mode & DIRECTORY_TYPE_MASK != DIRECTORY_TYPE
-        || root_stat.st_dev as u64 != selection.identity.filesystem_instance_id
-        || root_stat.st_ino as u64 != selection.identity.file_id
+        || root_stat.st_dev as u64 != root_filesystem_instance_id
+        || root_stat.st_ino as u64 != root_file_id
     {
         return Err(LocalFileScanError::RootChanged);
     }
@@ -1714,6 +1989,61 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].relative_locator, b"inside.txt");
         assert_eq!(entries[0].display_basename, "inside.txt");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn metadata_scan_preserves_file_modification_time_without_reading_content() {
+        use std::time::UNIX_EPOCH;
+        use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+        let root = tempdir().expect("temporary directory");
+        let selected = root.path().join("selected");
+        fs::create_dir(&selected).expect("create selected directory");
+        let file_path = selected.join("observed.txt");
+        fs::write(&file_path, b"metadata only").expect("write test file");
+        let metadata = fs::metadata(&file_path).expect("read filesystem metadata");
+        let duration = metadata
+            .modified()
+            .expect("file modification time")
+            .duration_since(UNIX_EPOCH)
+            .expect("temporary file timestamp is after the epoch");
+        let expected = OffsetDateTime::from_unix_timestamp_nanos(duration.as_nanos() as i128)
+            .expect("timestamp fits the supported range")
+            .format(&Rfc3339)
+            .expect("timestamp serializes");
+        let opened = open_selected_directory(&selected).expect("open selected directory");
+        let mut observed = None;
+        super::visit_regular_files(
+            &opened,
+            LocalFileScanLimits::new(4, 20, 4096),
+            || false,
+            |entry| {
+                observed = Some((entry.size_bytes(), entry.modified_at().map(str::to_owned)));
+                Ok(())
+            },
+        )
+        .expect("scan selected directory");
+
+        assert_eq!(
+            observed,
+            Some((b"metadata only".len() as u64, Some(expected)))
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn file_modified_at_checks_nanosecond_range_and_handles_pre_epoch_times() {
+        assert_eq!(
+            super::file_modified_at(-1, 500_000_000).as_deref(),
+            Some("1969-12-31T23:59:59.5Z")
+        );
+        assert_eq!(
+            super::file_modified_at(1, 999_999_999).as_deref(),
+            Some("1970-01-01T00:00:01.999999999Z")
+        );
+        assert_eq!(super::file_modified_at(1, 1_000_000_000), None);
+        assert_eq!(super::file_modified_at(i64::MAX, 0), None);
     }
 
     #[cfg(target_os = "linux")]
@@ -2347,5 +2677,117 @@ mod tests {
             scan_regular_files(&opened, LocalFileScanLimits::new(2, 10, 1024)),
             Err(LocalFileScanError::UnsupportedPlatform)
         ));
+    }
+}
+
+#[cfg(test)]
+mod windows_reparse_guard_tests {
+    use super::windows_directory_entry_is_traversable;
+
+    #[test]
+    fn windows_root_walker_never_traverses_reparse_points() {
+        const DIRECTORY: u32 = 0x0000_0010;
+        const REPARSE_POINT: u32 = 0x0000_0400;
+
+        assert!(windows_directory_entry_is_traversable(DIRECTORY));
+        assert!(!windows_directory_entry_is_traversable(
+            DIRECTORY | REPARSE_POINT
+        ));
+        assert!(!windows_directory_entry_is_traversable(REPARSE_POINT));
+        assert!(!windows_directory_entry_is_traversable(0));
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_workspace_root_revalidation_tests {
+    use super::{open_selected_directory, reopen_saved_directory};
+    use base64::Engine as _;
+    use std::fs;
+    use std::os::windows::ffi::OsStrExt;
+
+    #[test]
+    fn windows_workspace_root_selection_and_restart_reopen_preserve_identity() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let selected = temporary.path().join("selected");
+        fs::create_dir(&selected).expect("create selected folder");
+
+        let opened = open_selected_directory(&selected)
+            .expect("open a local Windows folder through a verified handle");
+        let identity = opened.identity();
+        assert_eq!(identity.platform_kind(), "WINDOWS_VOLUME_FILE_ID_128");
+        let binding = identity.binding_record(
+            "root-1".to_owned(),
+            "runtime-1".to_owned(),
+            "incarnation-1".to_owned(),
+            "2026-10-17T00:00:00Z".to_owned(),
+        );
+        assert_eq!(binding.platform_kind, "WINDOWS_VOLUME_FILE_ID_128");
+        assert_eq!(binding.raw_filesystem_instance_id.len(), 16);
+        assert!(
+            binding
+                .raw_filesystem_instance_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        );
+        assert_eq!(binding.raw_file_id.len(), 32);
+        assert!(
+            binding
+                .raw_file_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        );
+        assert!(binding.raw_volume_id.is_none());
+        assert!(binding.raw_generation.is_none());
+        assert!(identity.matches_binding(&binding));
+        let encoded_path = opened
+            .private_locator()
+            .strip_prefix("windows-path-u16le-b64:")
+            .expect("Windows locator prefix");
+        let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded_path)
+            .expect("canonical base64url locator");
+        let expected: Vec<u8> = selected
+            .as_os_str()
+            .encode_wide()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        assert_eq!(decoded, expected);
+        opened
+            .revalidate()
+            .expect("the selected folder still resolves to the open identity");
+        let reopened = reopen_saved_directory(opened.private_locator(), opened.display_name())
+            .expect("restart reopen uses the private no-reparse locator");
+        assert!(reopened.identity() == identity);
+        assert!(reopened.identity().matches_binding(&binding));
+    }
+
+    #[test]
+    fn windows_workspace_root_revalidation_rejects_path_replacement() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let selected = temporary.path().join("selected");
+        let moved = temporary.path().join("moved");
+        fs::create_dir(&selected).expect("create selected folder");
+        let opened = open_selected_directory(&selected).expect("open selected folder");
+        fs::rename(&selected, &moved).expect("move the original directory");
+        fs::create_dir(&selected).expect("replace selected path");
+        assert!(opened.revalidate().is_err());
+        let replacement = open_selected_directory(&selected).expect("open replacement folder");
+        assert!(opened.identity() != replacement.identity());
+    }
+
+    #[test]
+    fn windows_workspace_root_locator_rejects_noncanonical_and_invalid_utf16() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let selected = temporary.path().join("selected");
+        fs::create_dir(&selected).expect("create selected folder");
+        let opened = open_selected_directory(&selected).expect("open selected folder");
+        let name = opened.display_name();
+        for locator in [
+            "windows-path-u16le-b64:AA==", // padded/noncanonical base64url
+            "windows-path-u16le-b64:AA",   // odd UTF-16 byte count
+            "windows-path-u16le-b64:AAE",  // malformed UTF-16 path
+        ] {
+            assert!(reopen_saved_directory(locator, name).is_err());
+        }
     }
 }

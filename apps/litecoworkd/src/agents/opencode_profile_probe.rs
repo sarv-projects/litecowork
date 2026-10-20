@@ -2,10 +2,10 @@
 //!
 //! This operation starts only the owned local `opencode serve` process, reads the
 //! documented provider status/catalog routes, projects a strict non-secret DTO,
-//! then stops the direct child. It never starts a session or performs inference.
-//! OpenCode descendants are not contained by this probe, so the resulting offer is
-//! deliberately incompatible with Task/worker admission until that lifecycle is
-//! qualified separately.
+//! then cleans up the launch scope. Windows Job Objects terminate the assigned
+//! process tree; Unix process-group cleanup cannot prevent an adversarial child
+//! from escaping. It never starts a session or performs inference. Environment
+//! writer quiescence and Task/worker admission remain separate qualifications.
 
 use std::{path::Path, time::Duration};
 
@@ -188,11 +188,11 @@ fn read_opencode_version(
     path: Option<&std::ffi::OsStr>,
     system_root: Option<&std::ffi::OsStr>,
 ) -> Option<String> {
+    #[cfg(not(unix))]
+    use std::thread;
     use std::{
         io::Read,
         process::{Command, Stdio},
-        sync::mpsc,
-        thread,
         time::Instant,
     };
     let mut command = Command::new(executable);
@@ -206,34 +206,78 @@ fn read_opencode_version(
     }
     #[cfg(not(windows))]
     let _ = system_root;
-    let mut child = command
+    command
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+        .stderr(Stdio::null());
+    let mut child = super::AgentChild::spawn(command).ok()?;
+    let started_at = Instant::now();
+    child.resume().ok()?;
+    let deadline = started_at + Duration::from_secs(2);
+    let mut stdout = child.take_stdout().ok()??;
+    #[cfg(unix)]
+    let mut bytes = {
+        use rustix::fs::fcntl_setfl;
+
+        let flags = rustix::fs::fcntl_getfl(&stdout).ok()?;
+        fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK).ok()?;
+        Vec::with_capacity(32)
+    };
+    #[cfg(unix)]
+    let mut read_failed = false;
+    #[cfg(not(unix))]
+    let reader = thread::Builder::new()
+        .name("opencode-version-output".to_owned())
+        .spawn(move || {
+            let mut bytes = Vec::with_capacity(32);
+            let _ = stdout.by_ref().take(129).read_to_end(&mut bytes);
+            bytes
+        })
         .ok()?;
-    let mut stdout = child.stdout.take()?;
-    let (tx, rx) = mpsc::sync_channel(1);
-    let _reader = thread::spawn(move || {
-        let mut bytes = Vec::with_capacity(32);
-        let _ = stdout.by_ref().take(129).read_to_end(&mut bytes);
-        let _ = tx.send(bytes);
-    });
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) if status.success() => break,
-            Ok(Some(_)) | Err(_) => return None,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
+    let status = loop {
+        #[cfg(unix)]
+        {
+            use std::io::ErrorKind;
+
+            while bytes.len() < 129 {
+                let mut buffer = [0_u8; 129];
+                let buffer = &mut buffer[..129 - bytes.len()];
+                match stdout.read(buffer) {
+                    Ok(0) => break,
+                    Ok(read) => bytes.extend_from_slice(&buffer[..read]),
+                    Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                    Err(_) => {
+                        read_failed = true;
+                        break;
+                    }
+                }
             }
         }
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Err(_) => break None,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => break None,
+        }
+    };
+    let _ = child.kill_tree();
+    if status.is_none() {
+        let _ = child.wait();
     }
-    let bytes = rx.recv_timeout(Duration::from_millis(100)).ok()?;
+    drop(child);
+    #[cfg(unix)]
+    drop(stdout);
+    #[cfg(unix)]
+    if read_failed {
+        return None;
+    }
+    #[cfg(not(unix))]
+    let bytes = reader.join().ok()?;
+    if !status.is_some_and(|status| status.success()) {
+        return None;
+    }
     if bytes.len() > 128 {
         return None;
     }
@@ -254,6 +298,7 @@ fn parse_opencode_version_output(output: &str) -> Option<String> {
     valid.then(|| value.to_owned())
 }
 
+#[cfg(test)]
 fn is_supported_opencode_version(version: &str) -> bool {
     qualified_opencode_protocol(version).is_some()
 }
@@ -482,6 +527,54 @@ mod tests {
         assert_eq!(
             read_opencode_version(&executable, Some(bin.as_os_str()), None),
             Some("2.0.28".to_owned())
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn version_probe_does_not_wait_for_a_descendant_that_escaped_its_process_group() {
+        use std::{
+            fs,
+            os::unix::fs::PermissionsExt,
+            process::Command,
+            time::{Duration, Instant},
+        };
+
+        let temporary = tempfile::tempdir().expect("create isolated OpenCode probe directory");
+        let executable = temporary.path().join("opencode");
+        let descendant_pid = temporary.path().join("escaped-descendant.pid");
+        fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nsetsid /bin/sh -c 'exec sleep 30' &\nprintf '%s\\n' \"$!\" > '{}'\nprintf '%s\\n' 'opencode v2.0.28'\n",
+                descendant_pid.display()
+            ),
+        )
+        .expect("write OpenCode fixture with escaped stdout descendant");
+        let mut permissions = fs::metadata(&executable)
+            .expect("read OpenCode fixture metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&executable, permissions).expect("make fixture executable");
+
+        let started = Instant::now();
+        let version = read_opencode_version(&executable, None, None);
+        let elapsed = started.elapsed();
+
+        let pid = fs::read_to_string(&descendant_pid)
+            .expect("escaped child wrote its PID")
+            .trim()
+            .parse::<u32>()
+            .expect("escaped child PID is valid");
+        let _ = Command::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .output();
+
+        assert_eq!(version.as_deref(), Some("2.0.28"));
+        assert!(
+            elapsed < Duration::from_millis(1500),
+            "escaped descendant extended the version probe to {elapsed:?}"
         );
     }
 

@@ -3713,6 +3713,32 @@
             "type": "string",
             "minLength": 1
           },
+          "provider_observation": {
+            "type": "object",
+            "required": [
+              "source",
+              "provider_identity_digest",
+              "observed_at"
+            ],
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "AUTHENTICATED_CALLBACK",
+                  "AUTHENTICATED_QUERY"
+                ]
+              },
+              "provider_identity_digest": {
+                "type": "string",
+                "pattern": "^sha256:[a-f0-9]{64}$"
+              },
+              "observed_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          },
           "aggregate_version": {
             "type": "integer",
             "minimum": 1
@@ -8886,6 +8912,49 @@
             }
           }
         ]
+      },
+      "delegation_result_published": {
+        "type": "object",
+        "required": [
+          "child_attempt_id",
+          "task_id",
+          "status",
+          "revision_at_start",
+          "result_digest",
+          "aggregate_version"
+        ],
+        "properties": {
+          "child_attempt_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "COMPLETED",
+              "FAILED",
+              "BLOCKED",
+              "CANCELLED"
+            ]
+          },
+          "revision_at_start": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "result_digest": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          },
+          "aggregate_version": {
+            "type": "integer",
+            "const": 1
+          }
+        },
+        "additionalProperties": false
       }
     },
     "provenance_transformation": {
@@ -11546,6 +11615,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/payloads/delegation_admitted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "delegation.result.published.v1"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/payloads/delegation_result_published"
           }
         }
       }

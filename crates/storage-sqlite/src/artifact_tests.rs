@@ -6,6 +6,10 @@ use storage_core::{
     TaskPresentationReadStore,
 };
 use storage_core::{ArtifactLibraryAction, ArtifactLibraryCommand, ArtifactLibraryWriteStore};
+use storage_core::{
+    ArtifactRecord, ArtifactVersionAppendCommit, ArtifactVersionRecord, EventDraft,
+    ResourceRevisionRecord, WorkspaceCreateRequest,
+};
 
 fn library_request(
     action: ArtifactLibraryAction,
@@ -411,6 +415,352 @@ fn publish_fixture_with_inputs(
         .commit()
         .expect("fixture commits with full constraints");
     blob
+}
+
+fn user_text_append_commit(
+    store: &SqliteWorkspaceStore,
+    content: &[u8],
+    request_id: &str,
+) -> ArtifactVersionAppendCommit {
+    use storage_core::{ArtifactContentRecord, ArtifactVersionWriteStore};
+
+    let heads = store
+        .get_artifact_append_heads("workspace-artifact", "artifact-report")
+        .expect("read append heads")
+        .expect("Artifact exists");
+    let parent_revision_id = heads
+        .resource
+        .current_revision_id
+        .clone()
+        .expect("current Resource head");
+    let blob = store
+        .stage_text_content(
+            "owner-local",
+            "workspace-artifact",
+            "artifact-report",
+            content,
+        )
+        .expect("stage verified user text");
+    let now = "2026-10-17T12:00:00.000000000Z".to_owned();
+    let revision_id = format!("artifact-revision-{request_id}");
+    let provenance = json!({
+        "source_inputs": [],
+        "transformations": [{"operation":"user.text_edit", "inputs":[]}],
+        "tool_reports": []
+    });
+    let authored_by = json!({"principal_id":"owner-local", "kind":"USER"});
+    let next_content_version = heads.artifact.current_version + 1;
+    let next_artifact_version = heads.artifact.version + 1;
+    let next_resource_version = heads.resource.version + 1;
+    let artifact = ArtifactRecord {
+        current_version: next_content_version,
+        version: next_artifact_version,
+        ..heads.artifact.clone()
+    };
+    let resource = storage_core::ResourceRecord {
+        current_revision_id: Some(revision_id.clone()),
+        updated_at: now.clone(),
+        version: next_resource_version,
+        ..heads.resource.clone()
+    };
+    let resource_revision = ResourceRevisionRecord {
+        resource_revision_id: revision_id.clone(),
+        resource_id: resource.resource_id.clone(),
+        parent_revision_ids: vec![parent_revision_id.clone()],
+        provider_revision: None,
+        content_digest: Some(blob.digest.clone()),
+        size_bytes: Some(blob.size_bytes),
+        media_type: Some("text/plain".to_owned()),
+        observed_at: now.clone(),
+        created_by: authored_by.clone(),
+    };
+    let version = ArtifactVersionRecord {
+        artifact_id: artifact.artifact_id.clone(),
+        version: next_content_version,
+        resource_revision_id: revision_id.clone(),
+        input_refs: Vec::new(),
+        content: ArtifactContentRecord::ManagedBlob {
+            storage_ref: blob.clone(),
+            content_digest: blob.digest.clone(),
+            media_type: "text/plain".to_owned(),
+            size_bytes: blob.size_bytes,
+        },
+        provenance: provenance.clone(),
+        created_by_attempt: None,
+        verification_refs: Vec::new(),
+        created_at: now.clone(),
+    };
+    let request_payload = json!({
+        "workspace_id":"workspace-artifact",
+        "artifact_id":"artifact-report",
+        "expected_artifact_version":heads.artifact.version,
+        "expected_content_version":heads.artifact.current_version,
+        "expected_resource_version":heads.resource.version,
+        "expected_parent_resource_revision_id":parent_revision_id,
+        "resource_revision_id":revision_id,
+        "content_digest":blob.digest,
+        "content_media_type":"text/plain",
+        "content_size_bytes":blob.size_bytes,
+        "input_refs":[],
+        "provenance":provenance,
+        "verification_refs":[],
+        "created_by_attempt":null,
+        "authored_by":authored_by,
+    });
+    let resource_event = EventDraft {
+        event_id: format!("resource-event-{request_id}"),
+        workspace_id: "workspace-artifact".to_owned(),
+        entity_type: "Resource".to_owned(),
+        entity_id: resource.resource_id.clone(),
+        origin_runtime_id: "runtime-local".to_owned(),
+        entity_revision: resource.version,
+        hlc_timestamp: now.clone(),
+        correlation_id: format!("correlation-{request_id}"),
+        causation_id: None,
+        schema_version: 1,
+        event_type: "resource.revision.observed.v1".to_owned(),
+        payload: json!({
+            "resource_id":resource.resource_id,
+            "resource_revision_id":revision_id,
+            "parent_revision_ids":[parent_revision_id],
+            "content_digest":blob.digest,
+            "observed_at":now,
+        }),
+        recorded_at: now.clone(),
+    };
+    let artifact_event = EventDraft {
+        event_id: format!("artifact-event-{request_id}"),
+        workspace_id: "workspace-artifact".to_owned(),
+        entity_type: "Artifact".to_owned(),
+        entity_id: artifact.artifact_id.clone(),
+        origin_runtime_id: "runtime-local".to_owned(),
+        entity_revision: artifact.version,
+        hlc_timestamp: now.clone(),
+        correlation_id: format!("correlation-{request_id}"),
+        causation_id: None,
+        schema_version: 1,
+        event_type: "artifact.version.created.v1".to_owned(),
+        payload: json!({
+            "artifact_id":artifact.artifact_id,
+            "version":version.version,
+            "resource_id":artifact.resource_id,
+            "resource_revision_id":version.resource_revision_id,
+            "input_refs":[],
+            "content_kind":"MANAGED_BLOB",
+            "content_digest":blob.digest,
+            "storage_ref":blob,
+            "aggregate_version":artifact.version,
+        }),
+        recorded_at: now.clone(),
+    };
+    ArtifactVersionAppendCommit {
+        request: WorkspaceCreateRequest {
+            principal_id: "owner-local".to_owned(),
+            request_id: request_id.to_owned(),
+            request_payload,
+        },
+        workspace_id: "workspace-artifact".to_owned(),
+        artifact_id: "artifact-report".to_owned(),
+        expected_artifact_version: heads.artifact.version,
+        expected_content_version: heads.artifact.current_version,
+        expected_resource_version: heads.resource.version,
+        expected_parent_resource_revision_id: parent_revision_id,
+        artifact,
+        version,
+        resource,
+        resource_revision,
+        resource_event,
+        artifact_event,
+    }
+}
+
+#[test]
+fn artifact_append_commits_resource_then_artifact_and_replays_exact_receipt() {
+    use storage_core::{ArtifactReadStore, ArtifactVersionWriteStore};
+
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-artifact");
+    publish_fixture(&store, &directory, 1, b"first version");
+    let commit = user_text_append_commit(&store, b"second immutable version", "append-v2");
+
+    let appended = store
+        .append_artifact_version(commit.clone())
+        .expect("append through the production write boundary");
+    assert!(!appended.replayed);
+    assert_eq!(appended.artifact.current_version, 2);
+    assert_eq!(appended.artifact.version, 2);
+    assert_eq!(appended.resource.version, 2);
+    assert_eq!(
+        appended.resource.current_revision_id.as_deref(),
+        Some("artifact-revision-append-v2")
+    );
+    assert_eq!(
+        appended.events[0].event_type,
+        "resource.revision.observed.v1"
+    );
+    assert_eq!(appended.events[1].event_type, "artifact.version.created.v1");
+    assert_eq!(appended.events[0].entity_revision, 2);
+    assert_eq!(appended.events[1].entity_revision, 2);
+    assert_eq!(
+        store
+            .read_artifact_content_bounded("workspace-artifact", "artifact-report", 2, 100)
+            .expect("read committed content")
+            .expect("version 2 exists"),
+        b"second immutable version"
+    );
+
+    let replay = store
+        .append_artifact_version(commit)
+        .expect("identical request returns its durable receipt");
+    assert!(replay.replayed);
+    assert_eq!(replay.artifact, appended.artifact);
+    assert_eq!(replay.version, appended.version);
+    assert_eq!(replay.resource, appended.resource);
+    assert_eq!(replay.events, appended.events);
+
+    let connection = Connection::open(state_database(&directory)).expect("inspect committed state");
+    let counts: (i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM artifact_versions WHERE artifact_id = 'artifact-report' AND version = 2), (SELECT COUNT(*) FROM resource_revisions WHERE resource_revision_id = 'artifact-revision-append-v2'), (SELECT COUNT(*) FROM domain_events WHERE event_id IN ('resource-event-append-v2', 'artifact-event-append-v2')), (SELECT COUNT(*) FROM request_dedup WHERE principal_id = 'owner-local' AND request_id = 'append-v2')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("count durable append side effects");
+    assert_eq!(counts, (1, 1, 2, 1));
+}
+
+#[test]
+fn artifact_append_event_conflict_rolls_back_both_heads_and_receipt() {
+    use storage_core::{ArtifactReadStore, ArtifactVersionWriteStore};
+
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-artifact");
+    publish_fixture(&store, &directory, 1, b"first version");
+    let before = store
+        .get_artifact_append_heads("workspace-artifact", "artifact-report")
+        .expect("read initial heads")
+        .expect("Artifact exists");
+    let mut commit = user_text_append_commit(&store, b"must roll back", "append-conflict");
+    // Workspace creation already owns this event ID, forcing the second insert in the
+    // Artifact append transaction to fail after its Resource/Artifact writes began.
+    commit.artifact_event.event_id = "event-create".to_owned();
+
+    assert!(store.append_artifact_version(commit).is_err());
+    let after = store
+        .get_artifact_append_heads("workspace-artifact", "artifact-report")
+        .expect("read heads after rollback")
+        .expect("Artifact still exists");
+    assert_eq!(after, before);
+
+    let connection = Connection::open(state_database(&directory)).expect("inspect rollback");
+    let counts: (i64, i64, i64, i64) = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM artifact_versions WHERE artifact_id = 'artifact-report' AND version = 2), (SELECT COUNT(*) FROM resource_revisions WHERE resource_revision_id = 'artifact-revision-append-conflict'), (SELECT COUNT(*) FROM domain_events WHERE event_id IN ('resource-event-append-conflict', 'artifact-event-append-conflict')), (SELECT COUNT(*) FROM request_dedup WHERE principal_id = 'owner-local' AND request_id = 'append-conflict')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("count rolled-back append side effects");
+    assert_eq!(counts, (0, 0, 0, 0));
+}
+
+#[test]
+fn artifact_append_rejects_unverifiable_or_malformed_source_input_digest() {
+    use storage_core::ArtifactVersionWriteStore;
+
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = test_store(&directory, Duration::from_secs(1));
+    create_workspace(&store, "workspace-artifact");
+    publish_fixture(&store, &directory, 1, b"first version");
+    let mut connection = Connection::open(state_database(&directory)).expect("fixture connection");
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("enable fixture constraints");
+    let transaction = connection
+        .transaction()
+        .expect("source fixture transaction");
+    transaction
+        .execute(
+            "INSERT INTO resources(resource_id,workspace_id,kind,provider_identity_json,display_name,current_revision_id,sensitivity,provenance_json,created_at,updated_at,version)
+             VALUES ('source-resource','workspace-artifact','CONNECTOR_OBJECT','{}','Source','source-r1','PERSONAL','{}','2026-10-17T11:00:00Z','2026-10-17T11:00:00Z',1)",
+            [],
+        )
+        .expect("source Resource");
+    transaction
+        .execute(
+            "INSERT INTO resource_revisions(resource_revision_id,resource_id,provider_revision,content_digest,size_bytes,media_type,observed_at,created_by_json)
+             VALUES ('source-r1','source-resource','provider-revision-1',NULL,NULL,NULL,'2026-10-17T11:00:00Z','{}')",
+            [],
+        )
+        .expect("source revision has no provider-observed digest");
+    transaction.commit().expect("source fixture is consistent");
+    drop(connection);
+
+    let mut commit = user_text_append_commit(&store, b"derived output", "append-unverified-digest");
+    let input_ref = json!({
+        "workspace_id":"workspace-artifact",
+        "resource_id":"source-resource",
+        "revision_id":"source-r1"
+    });
+    let claimed_digest = format!("sha256:{}", "d".repeat(64));
+    commit.version.input_refs = vec![input_ref.clone()];
+    commit.version.provenance = json!({
+        "source_inputs":[{"resource_ref":input_ref,"observed_digest":claimed_digest}],
+        "transformations":[{"operation":"derive","inputs":[]}],
+        "tool_reports":[]
+    });
+    commit.request.request_payload["input_refs"] = json!(commit.version.input_refs);
+    commit.request.request_payload["provenance"] = commit.version.provenance.clone();
+    commit.artifact_event.payload["input_refs"] = json!(commit.version.input_refs);
+
+    let result = store.append_artifact_version(commit);
+    assert!(
+        matches!(&result, Err(StoreError::Integrity(_))),
+        "claimed digest should be rejected as an integrity mismatch, got {result:?}"
+    );
+
+    let mut malformed =
+        user_text_append_commit(&store, b"malformed digest", "append-malformed-digest");
+    malformed.version.input_refs = vec![input_ref.clone()];
+    malformed.version.provenance = json!({
+        "source_inputs":[{"resource_ref":input_ref,"observed_digest":7}],
+        "transformations":[{"operation":"derive","inputs":[]}],
+        "tool_reports":[]
+    });
+    malformed.request.request_payload["input_refs"] = json!(malformed.version.input_refs);
+    malformed.request.request_payload["provenance"] = malformed.version.provenance.clone();
+    malformed.artifact_event.payload["input_refs"] = json!(malformed.version.input_refs);
+
+    let malformed_result = store.append_artifact_version(malformed);
+    assert!(
+        matches!(&malformed_result, Err(StoreError::Invalid(_))),
+        "non-string observed_digest must be rejected by the schema boundary, got {malformed_result:?}"
+    );
+
+    let mut malformed_format = user_text_append_commit(
+        &store,
+        b"malformed digest format",
+        "append-malformed-digest-format",
+    );
+    malformed_format.version.input_refs = vec![input_ref.clone()];
+    malformed_format.version.provenance = json!({
+        "source_inputs":[{"resource_ref":input_ref,"observed_digest":"sha256:not-a-digest"}],
+        "transformations":[{"operation":"derive","inputs":[]}],
+        "tool_reports":[]
+    });
+    malformed_format.request.request_payload["input_refs"] =
+        json!(malformed_format.version.input_refs);
+    malformed_format.request.request_payload["provenance"] =
+        malformed_format.version.provenance.clone();
+    malformed_format.artifact_event.payload["input_refs"] =
+        json!(malformed_format.version.input_refs);
+
+    let malformed_format_result = store.append_artifact_version(malformed_format);
+    assert!(
+        matches!(&malformed_format_result, Err(StoreError::Invalid(_))),
+        "malformed observed_digest text must be rejected by the schema boundary, got {malformed_format_result:?}"
+    );
 }
 
 #[test]

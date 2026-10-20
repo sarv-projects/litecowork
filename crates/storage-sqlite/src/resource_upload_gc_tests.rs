@@ -1456,7 +1456,22 @@ fn downgrade_resource_content_schema_to_v16(connection: &Connection) {
 fn downgrade_resource_index_schema_to_v18(connection: &Connection) {
     connection
         .execute_batch(
-            "DROP TRIGGER IF EXISTS workspace_root_observations_delete_private_binding;
+            "DROP TRIGGER IF EXISTS delegation_results_immutable_update;
+             DROP TRIGGER IF EXISTS delegation_results_immutable_delete;
+             DROP TABLE IF EXISTS delegation_results;
+             DELETE FROM schema_migrations WHERE version = 24;
+             DROP INDEX IF EXISTS idx_workspace_root_file_locations_cleanup;
+             DROP TABLE IF EXISTS workspace_root_file_locations;
+             DROP TABLE IF EXISTS workspace_root_cleanup_outbox;
+             DELETE FROM schema_migrations WHERE version = 23;
+             DROP TRIGGER IF EXISTS effect_verified_requires_bound_evidence_v22;
+             DROP TRIGGER IF EXISTS verification_run_pass_requires_bound_evidence;
+             DROP TRIGGER IF EXISTS evidence_verification_run_binding_insert_guard;
+             DROP INDEX IF EXISTS evidence_verification_run;
+             ALTER TABLE evidence DROP COLUMN verification_run_id;
+             DELETE FROM schema_migrations WHERE version = 22;
+             PRAGMA user_version = 21;
+             DROP TRIGGER IF EXISTS workspace_root_observations_delete_private_binding;
              DROP TABLE IF EXISTS workspace_root_observation_batch_receipts;
              DROP TABLE IF EXISTS workspace_root_observation_bindings;
              DROP TABLE IF EXISTS workspace_root_observations;
@@ -2576,11 +2591,23 @@ fn resource_content_v17_migration_rejects_missing_managed_history_metadata_atomi
         )
         .expect("model a legacy managed historical revision with missing exact blob metadata");
 
-    assert!(matches!(
-        migrate(&mut connection),
-        Err(StoreError::CorruptSchema(message))
-            if message == "managed Resource revision is missing exact blob metadata"
-    ));
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .expect("inspect exact v16 migration boundary");
+    assert_eq!(version, 16, "fixture must stop before the v17 migration");
+    verify_migration_record(&connection, 16, V16_MIGRATION_NAME, SQLITE_V16_DDL, true)
+        .expect("downgraded fixture must match its applied v16 schema fingerprint");
+
+    let migration_error = migrate(&mut connection)
+        .expect_err("v17 rejects managed history without exact blob metadata");
+    assert!(
+        matches!(
+            &migration_error,
+            StoreError::CorruptSchema(message)
+                if message == "managed Resource revision is missing exact blob metadata"
+        ),
+        "unexpected v17 migration error: {migration_error:?}"
+    );
     assert_v17_migration_was_not_partially_applied(&connection);
 }
 

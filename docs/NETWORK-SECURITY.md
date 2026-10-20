@@ -189,16 +189,18 @@ changed, mismatched or unsupported identities receive no replacement binding and
 location UNAVAILABLE; an ACTIVE root becomes UNAVAILABLE while a PAUSED root remains
 PAUSED. Exact later recovery can reactivate only a previously UNAVAILABLE root and never
 resumes a PAUSED root. No path substitution or broader-root fallback is permitted. These
-failures are root-local and do not block unrelated Runtime services. Current source support
-for this root-revalidation path is Linux/macOS only and is not OS-qualified. Windows
-named-pipe IPC and ConPTY support do **not** establish Windows WorkspaceRoot identity
-revalidation. Until a handle-based root-identity/reparse-point and restart-rebind
-implementation passes Windows-specific tests, affected roots MUST remain UNAVAILABLE
-for indexed reads or mutable Task capabilities (no permissive path fallback). The UI
-must surface the root-specific unsupported/qualification status while unrelated Operator
-services remain available. Windows V1 release qualification must cover junctions,
-reparse-point races, case/volume changes, replacement roots, reboot/reconnect, the WSL
-boundary and revocation. The separate
+failures are root-local and do not block unrelated Runtime services. Source includes
+handle-based Windows root reopen and identity comparison, and focused Windows helper
+tests now cover exact identity, replacement rejection, and malformed locators. This is
+partial CODE evidence only; it does not qualify Runtime startup,
+restart-rebind, indexed reads, or Task filesystem capabilities on Windows. Windows
+named-pipe IPC and ConPTY support are separate evidence. Until the complete Windows
+Runtime path is qualified, it must fail closed on any missing, changed, unsupported, or
+ambiguous identity and must never use permissive path fallback. The UI must surface the
+root-specific unsupported or unavailable state while unrelated Operator services remain
+available. Windows V1 release qualification must still cover junctions, reparse-point
+races, case/volume changes, replacement roots, reboot/reconnect, the WSL boundary, and
+revocation. The separate
 OS-principal credential validation occurs before storage open; if that key is unavailable,
 startup fails closed before root revalidation, so this specific key-loss case does not yet
 persist UNAVAILABLE root transitions.

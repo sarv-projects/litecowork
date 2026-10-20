@@ -471,13 +471,17 @@ is REVOKED.
 explicit, owner-authenticated Linux metadata census with exact request replay and final
 Workspace/root/Runtime binding fences. It reports the requested Workspace/root/version,
 bounded entry/file counts, COMPLETE/PARTIAL status, safe partial reason, and completion
-time. It returns no path, file name, or filesystem identity. The scan atomically updates a
-Runtime-keyed derived observation projection, and the owner-only
+time. It returns no path, file name, or filesystem identity. In the same receipt transaction,
+the scan creates or reuses canonical FILE Resources by Workspace-scoped keyed file identity,
+upserts the path-specific ResourceLocation, and writes raw identity/private locator only to
+current Runtime-incarnation local bindings. METADATA scans read no file bytes and create no
+ResourceRevision. The scan also updates a Runtime-keyed derived observation projection, and the owner-only
 `GET /v1/workspace-roots/{id}/observations` route provides literal basename search with
-root-version-bound keyset pagination. These rows are observed-file metadata, not canonical
-Resource/Revision/Location aggregates or Resource membership. A complete scan may mark
-unseen observations stale; a partial scan preserves unseen observations without inferring
-deletion. Watchers, canonical Resource promotion, content search, and deletion
+root-version-bound keyset pagination. These rows remain observed metadata, not content search;
+when membership was committed, `resource_id` links to the canonical Resource. Legacy rows may
+retain a null `resource_id`. A complete scan may mark unseen observations stale; a partial scan
+preserves unseen observations without inferring deletion, and root omission never tombstones
+Resources. Watchers, content search, and deletion
 reconciliation described in the full target flow remain unserved. At most two Linux scan
 jobs run at once; an occupied-capacity response does no filesystem work and creates no
 receipt, so the same request identity can be retried. These served slices therefore do not

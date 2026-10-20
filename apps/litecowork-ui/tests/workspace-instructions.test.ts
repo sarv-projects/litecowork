@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   WorkspaceInstructionDraftCache,
   canApplyWorkspaceInstructionResponse,
+  clearWorkspaceInstructionSave,
   getOrCreateInstructionSave,
+  getOrCreateWorkspaceInstructionSave,
   instructionSaveFailureKind,
   instructionSaveRefreshKind,
   workspaceInstructionByteLength,
@@ -57,6 +59,31 @@ test("unchanged instruction retries retain both idempotency keys and pinned vers
   assert.equal(retry.resourceRequestId, "resource-1");
   assert.equal(retry.expectedVersion, 7);
   assert.deepEqual(retry.parentRevisions, [3]);
+});
+
+test("ambiguous instruction save identities remain isolated across Workspace saves", () => {
+  const pending = new Map<string, import("../src/workspaces/workspace-instructions.ts").PendingWorkspaceInstructionSave>();
+  const ids = ["a-revision", "a-resource", "b-revision", "b-resource"];
+  const createId = () => ids.shift()!;
+  const firstA = getOrCreateWorkspaceInstructionSave(pending, {
+    workspaceId: "workspace-a", text: "A draft", expectedVersion: 3, parentRevisions: [1],
+  }, createId);
+  pending.set(firstA.workspaceId, firstA);
+  const firstB = getOrCreateWorkspaceInstructionSave(pending, {
+    workspaceId: "workspace-b", text: "B draft", expectedVersion: 8, parentRevisions: [5],
+  }, createId);
+  pending.set(firstB.workspaceId, firstB);
+
+  const retryA = getOrCreateWorkspaceInstructionSave(pending, {
+    workspaceId: "workspace-a", text: "A draft", expectedVersion: 4, parentRevisions: [2],
+  }, () => "unexpected-id");
+  assert.equal(retryA.requestId, "a-revision");
+  assert.equal(retryA.resourceRequestId, "a-resource");
+  assert.equal(retryA.expectedVersion, 3);
+  assert.equal(pending.get("workspace-b")?.requestId, "b-revision");
+  assert.equal(clearWorkspaceInstructionSave(pending, "workspace-a", "stale-request"), false);
+  assert.equal(clearWorkspaceInstructionSave(pending, "workspace-a", "a-revision"), true);
+  assert.equal(pending.get("workspace-b")?.requestId, "b-revision");
 });
 
 test("changed instruction drafts receive fresh identities and current concurrency pins", () => {

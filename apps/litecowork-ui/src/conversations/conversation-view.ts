@@ -54,6 +54,11 @@ export type ConversationWorkspaceSelection = {
   epoch: number;
 };
 
+/** Draft keys bind unsent text to one Workspace and one saved Conversation. */
+export function conversationDraftScope(workspaceId: string, conversationId: string): string {
+  return `${workspaceId}\u0000${conversationId}`;
+}
+
 /** Fence async UI projections to the current Workspace selection, including A→B→A. */
 export class ConversationWorkspaceSelectionEpochs {
   private workspaceId: string | null = null;

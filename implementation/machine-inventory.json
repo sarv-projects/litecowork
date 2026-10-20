@@ -351,7 +351,7 @@
     },
     {
       "name": "capability_invocation_status_changed",
-      "sha256": "653b295184e6d3cfab7904c360d3dc3120ef9833f9f2646964a9f93677f7642a"
+      "sha256": "6fc15a1ed7b55ddd13eca7f35e37ffa0492fcb7e9d4e488f48602d0b78f0cb27"
     },
     {
       "name": "capability_lock_created",
@@ -444,6 +444,10 @@
     {
       "name": "delegation_profile_status_changed",
       "sha256": "11833bb95726bd46b9a8ddabec98333ab30d0cf426850045c1d1eb1456696e24"
+    },
+    {
+      "name": "delegation_result_published",
+      "sha256": "562dfd78779dbae4b84621f93db74a16bd128f7ae36f5b331ac82383c4f501b0"
     },
     {
       "name": "demonstration_status_changed",
@@ -734,6 +738,10 @@
       "sha256": "99fd9c0b1577b160d6ab1720d3f091551bcb4e5bfe44bb29dd4a775c585ffbd4"
     },
     {
+      "name": "verification_completed_v2",
+      "sha256": "af7fea3af783c1c87f835f5a1b2310e52e735a23419dddd3e2ed21d87885ad06"
+    },
+    {
       "name": "verification_started",
       "sha256": "bae15c0b69dd3bf8b27979f3cb4288b4b2ffbd7067fe3fc260bdf6124639b090"
     },
@@ -813,7 +821,7 @@
     },
     {
       "name": "payloads",
-      "sha256": "85080509acef5e94d21b369b466757b8dff6e94c85480bc8b5e96dfd59327ee1"
+      "sha256": "68fe64d7d443b0291301c0d52f9f6b52d2d998b31a602c8172d996dbd533d268"
     },
     {
       "name": "pinned_resource_ref",
@@ -946,6 +954,7 @@
     "delegation_profile_created",
     "delegation_profile_revised",
     "delegation_profile_status_changed",
+    "delegation_result_published",
     "demonstration_status_changed",
     "effect_acknowledged",
     "effect_ambiguous",
@@ -1018,6 +1027,7 @@
     "user_request_created",
     "user_request_resolved",
     "verification_completed",
+    "verification_completed_v2",
     "verification_started",
     "workspace_archived",
     "workspace_created",
@@ -1088,6 +1098,7 @@
     "coworker.revised.v1",
     "coworker.status.changed.v1",
     "delegation.admitted.v1",
+    "delegation.result.published.v1",
     "delegation_profile.created.v1",
     "delegation_profile.revised.v1",
     "delegation_profile.status.changed.v1",
@@ -1263,7 +1274,7 @@
       "method": "POST",
       "operationId": "submitAgentCredential",
       "path": "/agent-profiles/{agentProfileId}/credentials/{credentialSlotId}",
-      "sha256": "449e617427bfdd74143fe84df030e9aea87b7c6cda91747486369fda5dac5192"
+      "sha256": "7873568aefdee5c140823ea3f4bda8585dcc85ca9e15001ae289000fc55df672"
     },
     {
       "method": "POST",
@@ -1444,6 +1455,18 @@
       "operationId": "testCapabilityConnection",
       "path": "/capabilities/{capabilityId}/test",
       "sha256": "d482290ebfb4a7f32d38578e1a7d53e9c0ba5a5e93e018a813623d1c4495eaf0"
+    },
+    {
+      "method": "POST",
+      "operationId": "createCapabilityGrant",
+      "path": "/capability-grants",
+      "sha256": "9d26fdf9fe1ca5daaefa920e3a80cef529ea5699785ab4968e7c2ddd46d748ad"
+    },
+    {
+      "method": "POST",
+      "operationId": "revokeCapabilityGrant",
+      "path": "/capability-grants/{grantId}/revoke",
+      "sha256": "3950bdcba62b772b08ac26aa75493b6c747028f30b2f573cc6b40b821b2a0283"
     },
     {
       "method": "GET",
@@ -1818,6 +1841,12 @@
       "sha256": "146faa0e1865440ab8b8cfed55631da59ab147828e7a8bf80d12df8fd1ab3e56"
     },
     {
+      "method": "POST",
+      "operationId": "previewResourceArchive",
+      "path": "/resources/{resourceId}/archive/preview",
+      "sha256": "564e0976742fecc0bd1c4b635ed7c39269fe8c0aa51c0acb2b94f6c4c5468078"
+    },
+    {
       "method": "GET",
       "operationId": "readLocalResourceContent",
       "path": "/resources/{resourceId}/content",
@@ -2097,7 +2126,7 @@
       "method": "POST",
       "operationId": "changeTaskLeadAgent",
       "path": "/tasks/{taskId}/lead-agent",
-      "sha256": "1eac011b6792f0882acfa743cdd98b8dbfb2dd3cce6975b79c2a1d5a165c75e2"
+      "sha256": "a9815120865ab15ed0dcb544ff503b01b9b1041c1d779d085d4f512d33de5b13"
     },
     {
       "method": "POST",
@@ -2211,7 +2240,7 @@
       "method": "POST",
       "operationId": "dismissUserRequest",
       "path": "/user-requests/{requestId}/dismiss",
-      "sha256": "16e64e831f841129a2e1b1361ae35e8c8df523179492623e0a5cd24a3b1eb1c4"
+      "sha256": "6d6650ff7e32feb9828d7ad69ee8aca5532484796d5118e293fe01c76b7917b5"
     },
     {
       "method": "POST",
@@ -2223,7 +2252,7 @@
       "method": "POST",
       "operationId": "respondToUserRequest",
       "path": "/user-requests/{requestId}/respond",
-      "sha256": "5ae6f8f6fb8f87a90e9b8a7c40039e0b8e372621c5c2f808dcca199d2767b092"
+      "sha256": "ae623cec9cb7f70e36f3cd0a56090f763a7c80317dc53ce09858c52f27b4c2e3"
     },
     {
       "method": "GET",
@@ -2242,6 +2271,12 @@
       "operationId": "updateWorkspaceRoot",
       "path": "/workspace-roots/{rootId}",
       "sha256": "ecae5d8c70f1c97632d884a4a93aea84303c39d8c96e3d4cc8281ee07a41d424"
+    },
+    {
+      "method": "GET",
+      "operationId": "searchWorkspaceRootObservations",
+      "path": "/workspace-roots/{rootId}/observations",
+      "sha256": "64ca47222baaa21abb3bdeaf44fbf369121b7343cd71160219828f60d39d16ed"
     },
     {
       "method": "POST",
@@ -2265,7 +2300,7 @@
       "method": "POST",
       "operationId": "scanWorkspaceRoot",
       "path": "/workspace-roots/{rootId}/scan",
-      "sha256": "b860596f124254f2d784b38e5173b2e1cd8c2d6b1127c946a5d5136955648586"
+      "sha256": "a95a1b659e7c5daaf349e0f755293116e27b3550963cd6749f419029e2836d4a"
     },
     {
       "method": "GET",
@@ -2367,7 +2402,7 @@
       "method": "POST",
       "operationId": "suspendWorkspaceEnvironment",
       "path": "/workspaces/{workspaceId}/environments/{environmentId}/suspend",
-      "sha256": "0494fce461b95e9d131e137c32ea3f0c4f3982dde1c3e9c699b2360ce066aa45"
+      "sha256": "3885eb74f52a0a5c072b4e9a83c1bba95060faeaa51e3c43fe125bfb783eefcd"
     },
     {
       "method": "GET",
@@ -2409,7 +2444,7 @@
       "method": "POST",
       "operationId": "revokeWorkspaceRuntimeBinding",
       "path": "/workspaces/{workspaceId}/runtime-bindings/{bindingId}/revoke",
-      "sha256": "1808373b4e7b17e6405a6faebd4139b0aa5a8622234c6a7a79ad7050639c4078"
+      "sha256": "aa26415653385018d5520c31ea720ee5ecb212ae1c3056e3d1ea44da9aa758ab"
     },
     {
       "method": "GET",
@@ -2650,6 +2685,16 @@
       "method": "POST",
       "operationId": "testCapabilityConnection",
       "path": "/capabilities/{capabilityId}/test"
+    },
+    {
+      "method": "POST",
+      "operationId": "createCapabilityGrant",
+      "path": "/capability-grants"
+    },
+    {
+      "method": "POST",
+      "operationId": "revokeCapabilityGrant",
+      "path": "/capability-grants/{grantId}/revoke"
     },
     {
       "method": "GET",
@@ -2960,6 +3005,11 @@
       "method": "GET",
       "operationId": "getResource",
       "path": "/resources/{resourceId}"
+    },
+    {
+      "method": "POST",
+      "operationId": "previewResourceArchive",
+      "path": "/resources/{resourceId}/archive/preview"
     },
     {
       "method": "GET",
@@ -3317,6 +3367,11 @@
       "path": "/workspace-roots/{rootId}"
     },
     {
+      "method": "GET",
+      "operationId": "searchWorkspaceRootObservations",
+      "path": "/workspace-roots/{rootId}/observations"
+    },
+    {
       "method": "POST",
       "operationId": "pauseWorkspaceRoot",
       "path": "/workspace-roots/{rootId}/pause"
@@ -3506,7 +3561,7 @@
     },
     {
       "name": "AgentCapabilities",
-      "sha256": "df63c720159fc8587772c7e0dd17255c6f6d88b039187f6a181dc9b804fdd4c1"
+      "sha256": "a32345ef2c76e179debf126d03b7459301a46ca552525c097855c105422a0b23"
     },
     {
       "name": "AgentConfigurationDescriptor",
@@ -3558,7 +3613,7 @@
     },
     {
       "name": "AgentInstallation",
-      "sha256": "556c7ae74f3ef16b801328a50a6277d4c4dbad1e66b67a4415d577a7112bf5b7"
+      "sha256": "a3cbcde4198149924b0ccd064f197e7b27cfe45c17d1abfb6f06a364382407c6"
     },
     {
       "name": "AgentInstallationObservation",
@@ -3630,7 +3685,7 @@
     },
     {
       "name": "Approval",
-      "sha256": "6a1891d07e087425530abac896fa11b7bb43fa6c84b6edb5e2503bf3b958cc82"
+      "sha256": "83b178704831b403ce17f9804e4baf679c0972eefb866fff780fcbdda776ed0a"
     },
     {
       "name": "ApprovalPage",
@@ -3639,6 +3694,26 @@
     {
       "name": "ApprovalRequirement",
       "sha256": "ca2fb8d3618b398d686aac2f01974400ab245f4d0c4af4175f21dbdcac3d28d8"
+    },
+    {
+      "name": "ApprovalTargetRef",
+      "sha256": "fa87381dea39c95f862d1466ca7b7cbdd0ff5f94dcb6b1ae7e32a4f86613c91d"
+    },
+    {
+      "name": "ArchivePreviewEntry",
+      "sha256": "21a703ec9735494f593303bcd0a670e8bf44368552b7a07307816a4de97e64fe"
+    },
+    {
+      "name": "ArchivePreviewLimits",
+      "sha256": "74e9dcb3d458f749ad53cd5796727bfc196eac9152b451ca045477a040aa9b0e"
+    },
+    {
+      "name": "ArchivePreviewRequest",
+      "sha256": "a9aec8d7bb384184dea09e06b5f3faec8c846ac5bb461a1f33e1469cc8e94b10"
+    },
+    {
+      "name": "ArchivePreviewResponse",
+      "sha256": "f98efdc814f31530a8c834d59bd74f1e998b30160726b9be86d8784b32e0ae41"
     },
     {
       "name": "Artifact",
@@ -3721,6 +3796,18 @@
       "sha256": "105d4aa970c46857b20406ac5812930f909f39dc4d49c341f9d0df563e1d30b7"
     },
     {
+      "name": "CapabilityGrant",
+      "sha256": "1aace0c4786ae892993d5378a67bb1e3452340f38e1b4404be400a7469065b9e"
+    },
+    {
+      "name": "CapabilityGrantResourceScope",
+      "sha256": "5c28b7e38824e4750b6f11613bbc0ad6e2555a0f2c105ecf5f0936e4968cc346"
+    },
+    {
+      "name": "CapabilityGrantRevocation",
+      "sha256": "ac9bf3cea2bfb8ad6a60e596f3328288c74991689b81f5652beb44f9d2e60697"
+    },
+    {
       "name": "CapabilityHealthResult",
       "sha256": "e0fa50fc02fdc5892eb4df18b0f6de4265dae3a192eeb433ffee2ceb33a035ab"
     },
@@ -3758,7 +3845,7 @@
     },
     {
       "name": "ChangeLeadAgentRequest",
-      "sha256": "b58e3cbcd570035b8ef3a598fe8336343634e7bef9fa4ff04c238b3594891034"
+      "sha256": "e059795e9bbaa1e99cc6d3e5e016d48e6cc448793dd4a3256883f20d3637bbfd"
     },
     {
       "name": "ChannelBinding",
@@ -3927,6 +4014,10 @@
     {
       "name": "CreateAutomationRequest",
       "sha256": "0a89b1572187ba9b9c35ad71c1f4549a433456a558ab5779c8324dbb51437ec8"
+    },
+    {
+      "name": "CreateCapabilityGrantRequest",
+      "sha256": "3440ca894bd79bfda6c0fce86f15b7b4c1bb287d49c88697e705da73b51210db"
     },
     {
       "name": "CreateConversationRequest",
@@ -4151,6 +4242,10 @@
     {
       "name": "GoalTaskContribution",
       "sha256": "c413ef7ff97bb22bc0c8121a667dc1f191b0d8fbcebc6aa116072e1dad59d766"
+    },
+    {
+      "name": "GrantResourceRef",
+      "sha256": "c581d9f57a5fe401813e1033db75e7006a13c479d36310355477587b3f39e762"
     },
     {
       "name": "InstallAgentRequest",
@@ -4669,6 +4764,10 @@
       "sha256": "dee2aaf9df011f0c43f05b2151445d2faa4951f7e8ae668639ad01f437b28f29"
     },
     {
+      "name": "TaskLeadHandoffReceipt",
+      "sha256": "2923a35a1eb6717bcc8f00b01a826fc174acacba2f8023abe91055d5d61e1831"
+    },
+    {
       "name": "TaskPage",
       "sha256": "42e1d4fd7b5281e391ad71e6d0204890d110cdb23583bfd7bf8e076876230d93"
     },
@@ -4785,12 +4884,16 @@
       "sha256": "22ea626ea43f6ad876472100cfdca68bc8f22f0aa60886a238eb8238addf803a"
     },
     {
+      "name": "UserRequestResolutionReceipt",
+      "sha256": "ec3159d4dcdd974af0a9e10d6fc4cd0382df0e107e6f059c9dcf38891cceae00"
+    },
+    {
       "name": "UserRequestResponse",
       "sha256": "f3b038f15347528ba84c250fcf1b23d4201e2bccab374f538ae6b30829786093"
     },
     {
       "name": "UserRequestResponseInput",
-      "sha256": "25f09ae10815eb4ad9400147d2a44989b2be7e11850117afc1445325e5f8cc35"
+      "sha256": "7642f70fc71aa06cf425e72297f77395465f5a56a78a984f506942b6f7106d8e"
     },
     {
       "name": "VerificationRun",
@@ -4839,6 +4942,14 @@
     {
       "name": "WorkspaceRoot",
       "sha256": "dc22fa21eddcc5417e2c360e85a4cbe21c50c8dbbf858557bc1435f6a552e728"
+    },
+    {
+      "name": "WorkspaceRootObservationPage",
+      "sha256": "7e60ee1bf90eb0f119628a0579e3e2ede8a363c5913032ae5e48616975f77061"
+    },
+    {
+      "name": "WorkspaceRootObservationView",
+      "sha256": "7abe412db44724e8f57d56573520328e031b5f570a9b61ffa9238fbfafb89fa3"
     },
     {
       "name": "WorkspaceRootPage",
@@ -4905,6 +5016,11 @@
     "Approval",
     "ApprovalPage",
     "ApprovalRequirement",
+    "ApprovalTargetRef",
+    "ArchivePreviewEntry",
+    "ArchivePreviewLimits",
+    "ArchivePreviewRequest",
+    "ArchivePreviewResponse",
     "Artifact",
     "ArtifactContent",
     "ArtifactPage",
@@ -4925,6 +5041,9 @@
     "BlobRef",
     "Blocker",
     "BudgetSpec",
+    "CapabilityGrant",
+    "CapabilityGrantResourceScope",
+    "CapabilityGrantRevocation",
     "CapabilityHealthResult",
     "CapabilityHostInstancePage",
     "CapabilityHostInstanceView",
@@ -4977,6 +5096,7 @@
     "CoworkerStatusRequest",
     "CreateAgentBindingRequest",
     "CreateAutomationRequest",
+    "CreateCapabilityGrantRequest",
     "CreateConversationRequest",
     "CreateCoworkerRequest",
     "CreateDelegationProfileRequest",
@@ -5033,6 +5153,7 @@
     "GoalRevisionInput",
     "GoalStatusRequest",
     "GoalTaskContribution",
+    "GrantResourceRef",
     "InstallAgentRequest",
     "InvalidationPage",
     "InvalidationRecord",
@@ -5162,6 +5283,7 @@
     "Task",
     "TaskEventTrigger",
     "TaskInputBinding",
+    "TaskLeadHandoffReceipt",
     "TaskPage",
     "TaskPlanningReadiness",
     "TaskPresentationItem",
@@ -5191,6 +5313,7 @@
     "UserRequestDetailChoice",
     "UserRequestDetailScope",
     "UserRequestPage",
+    "UserRequestResolutionReceipt",
     "UserRequestResponse",
     "UserRequestResponseInput",
     "VerificationRun",
@@ -5205,6 +5328,8 @@
     "WorkspaceInstructionRevisionPage",
     "WorkspacePage",
     "WorkspaceRoot",
+    "WorkspaceRootObservationPage",
+    "WorkspaceRootObservationView",
     "WorkspaceRootPage",
     "WorkspaceRootScanRequest",
     "WorkspaceRootScanSummary",

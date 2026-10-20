@@ -18,6 +18,10 @@ use std::{
 use tauri::{AppHandle, Manager};
 
 mod artifact_bridge;
+mod agent_control_bridge;
+mod agent_quota_bridge;
+mod agent_registry_bridge;
+mod approval_bridge;
 mod automation_bridge;
 mod conversation_bridge;
 mod conversation_create_journal;
@@ -5358,6 +5362,11 @@ pub fn run() {
             get_runtime_status,
             runtime_lifecycle_bridge::get_runtime_lifecycle,
             list_agent_installations,
+            agent_control_bridge::get_agent_control_descriptor,
+            agent_control_bridge::refresh_agent_control_descriptor,
+            agent_quota_bridge::get_agent_quota_observation,
+            agent_registry_bridge::list_agent_registry,
+            agent_registry_bridge::refresh_agent_registry,
             list_agent_profiles,
             probe_agent_profile,
             list_agent_bindings,
@@ -5376,7 +5385,11 @@ pub fn run() {
             resume_workspace_root,
             list_tasks,
             needs_you_bridge::list_needs_you,
+            approval_bridge::get_approval_detail,
+            approval_bridge::resolve_approval,
             user_request_bridge::get_user_request_detail,
+            user_request_bridge::respond_user_request,
+            user_request_bridge::dismiss_user_request,
             create_task,
             get_task,
             list_task_spec_revisions,
@@ -5427,6 +5440,7 @@ pub fn run() {
             coworker_bridge::coworker_request,
             delegation_profile_bridge::list_delegation_profiles,
             delegation_profile_bridge::list_delegation_profile_revisions,
+            delegation_profile_bridge::get_delegation_profile_performance,
             delegation_profile_write_bridge::create_delegation_profile,
             delegation_profile_write_bridge::revise_delegation_profile,
             delegation_profile_write_bridge::duplicate_delegation_profile,
