@@ -8759,3 +8759,150 @@ note in its review packet. Exact route behavior and limitations are in
 [E03-S01 review](reviews/E03-S01.md).
 This remains CODE evidence, not packaged/provider/OS or owner USER evidence. E03-S01 stays
 `IN_PROGRESS`.
+
+## 2026-10-18 — active implementation lanes and Resource membership guard
+
+E02 WorkspaceRoot FILE membership now rejects malformed keyed identity digests with the
+canonical SHA-256 validator before writing any Resource. The regression failed before the
+guard; afterward it passed **1/1**, and the full membership unit module passed **6/6** on
+Linux WSL2 x86_64 with Rust/Cargo `1.98.1`. Exact commands and the CODE-only boundary are
+recorded in [E02-S03](reviews/E02-S03.md#file-membership-identity-digest-validation--2026-10-18).
+No story status is promoted.
+
+Concurrent lanes are implementing E03 Conversation/AgentModule flows, E05 Delegation and
+profile/quota consumers, and the full E06 Documents/RAG epic from accepted contracts. E03's
+authenticated descriptor route tests passed **2/2**; E05's latest profile read/performance
+route tests passed **4/4**; E06's bounded ZIP provider suite passed **62/62** after fixing
+directory-marker validation and rejecting payload metadata on non-extracted entries. E04's
+Artifact source-input digest validation passed its regression **1/1** and Artifact module
+**16/16**. These are independent CODE slices, not completed epics or release gates.
+
+The single shared Cargo target is being scheduled serially; one Git worktree is active and
+no task-created branch/worktree was added. Existing UI browser MCP processes, user test
+copy, and the shared Rust cache are retained. No owner data or unrelated regenerable output
+was pruned.
+
+Native Windows qualification also ran the same E02 membership module from the authorized
+copy under `C:\Users\sonali\Desktop\testing\LiteCowork testing\qualification-2026-10-18`.
+Windows 11 Home Single Language `10.0.26200` build `26200`, PowerShell `5.1.26100.9711`,
+Rust/Cargo `1.98.1`: `cargo test --locked --offline -p storage-sqlite --lib
+resource_index::workspace_root_membership::tests -- --nocapture --test-threads=1` passed
+**6/6**. This is native-Windows storage CODE evidence only; WorkspaceRoot traversal remains
+fail-closed/unsupported on Windows. The task-created Windows Cargo target measured
+`1,508,070,702` bytes and is retained for reuse by further Windows checks; C: had
+`31,552,720,896` bytes free at measurement. No Windows package or daemon SYSTEM run is
+claimed. Details are in the [E02-S03 review packet](reviews/E02-S03.md#native-windows-file-membership-regression-2026-10-18).
+
+The authorized Windows copy also built the complete `litecoworkd` test binary, then ran
+208 daemon tests on Windows 11. Result: **208 passed, 0 failed, 1 ignored** in 235.54
+seconds. The preceding run exposed five staged attempt-journal writes trying to open/fsync
+a directory, which Windows rejects; the directory fsync is now Unix-only while record
+bytes remain flushed before publication. The focused Windows journal module passed **6/6**.
+OpenCode test paths now follow the host platform while relative-path rejection remains
+covered. Runtime lock handling recognizes `fs2::lock_contended_error()` on Windows and
+retains the unrelated-permission negative case. Focused reruns passed: Runtime lock **3/3**
+and OpenCode path/config **2/2**. The full suite used the copied Windows tree and source
+snapshot current through the Conversation-turn route changes, before the newest credential
+route/registry work. This is native daemon CODE evidence, not packaged Runtime/SYSTEM or
+owner USER acceptance. One explicit OpenCode profile smoke remains ignored pending its
+isolated installed executable, and Windows WorkspaceRoot census remains fail-closed.
+
+## 2026-10-20 — session handoff and live worktree inventory
+
+The detailed resume packet is [NEXT-SESSION-HANDOFF-2026-10-20.md](NEXT-SESSION-HANDOFF-2026-10-20.md).
+It records the backlog snapshot, currently inactive workers and their last owned surfaces,
+exact next checks, Windows/WSL test locations, current limitations, and a copy-ready prompt.
+This entry is the short operational index; the backlog and epic contracts remain the
+authority for scope and status.
+
+At this snapshot, `implementation/backlog.json` contains 67 stories: **1 IN_REVIEW, 22
+IN_PROGRESS, 44 PLANNED**. Desktop/local V1 (E01–E10 and E13) contains 60 stories: **1
+IN_REVIEW, 22 IN_PROGRESS, 37 PLANNED, 0 ACCEPTED**. E11/E12 (7 stories) are post-V1.
+No epic or V1 release is complete. Current status by local epic:
+
+| Epic | Current backlog statuses |
+|---|---|
+| E01 | S01 IN_REVIEW; S02–S04 IN_PROGRESS |
+| E02 | S01–S04 IN_PROGRESS |
+| E03 | S01, S03, S06 IN_PROGRESS; remaining 8 PLANNED |
+| E04 | S01–S06 PLANNED |
+| E05 | S01–S03 IN_PROGRESS; S04–S05 PLANNED |
+| E06 | S01–S05 PLANNED |
+| E07 | S00–S01 IN_PROGRESS; S02–S05 PLANNED |
+| E08 | S02–S04, S07–S08 IN_PROGRESS; S01, S05–S06 PLANNED |
+| E09 | S02, S05 IN_PROGRESS; S01, S03–S04 PLANNED |
+| E10 | S01–S02 PLANNED |
+| E13 | S01–S04 PLANNED |
+
+There is **one shared worktree** at `/home/sarvesh/business_Dev/litecowork`, branch
+`main`; no live implementation subagents, extra worktrees, or task branches were found.
+The last E01 (`/root/e01_windows`), E02 (`/root/e02_workspace`), and E05
+(`/root/e05_workforce`) workers are inactive. They edited this shared tree rather than
+isolated trees, so file lists in the handoff are last-known responsibility areas, not
+clean authorship boundaries. Preserve the pre-existing owner architecture/docs pass,
+`.aider-desk/`, `.aider.input.history`, and all unrelated dirty or untracked files. The
+inventory before adding this handoff was 138 tracked modified paths, 103 untracked paths,
+and zero staged paths; recount before any staging. Nothing was committed or pushed for this
+handoff because the tree contains mixed owner and implementation changes.
+
+### Current test locations and remaining results
+
+- Linux/WSL source tree: `/home/sarvesh/business_Dev/litecowork`. The E02 Tauri bridge
+  test ran here with Rust/Cargo `1.98.1` and offline dependencies:
+  `cargo test --locked --offline --manifest-path apps/litecowork-ui/src-tauri/Cargo.toml --lib workspace_root_observation_bridge::tests -- --nocapture --test-threads=1`.
+  It checks parsing/serialization of Resource IDs against the producer form
+  `res_file_` + 64 lowercase hex characters, rejection of malformed IDs, and scoped page
+  behavior. Result: **5 passed, 0 failed, 116 filtered**, in 4m39s after compiling the
+  Linux Tauri dependencies. The freshly built `src-tauri/target/` is retained as a shared
+  cache. This is CODE evidence only; no packaged IPC/UI flow is claimed.
+- Native Windows qualification copy: `C:\Users\sonali\Desktop\testing\LiteCowork testing\qualification-2026-10-18`.
+  Use Windows PowerShell and its existing `target-windows` cache for E01/E02 follow-ups.
+  This is a dated source snapshot, not automatically the current WSL source: compare hashes
+  for every changed source file, copy only the intended current files, and then record the
+  exact Windows version/Rust/Cargo versions and command. Do not claim the earlier Windows
+  daemon result qualifies code added after that snapshot. C: free-space and cache-size
+  readings are historical in the individual review packets and must be refreshed before a
+  new build.
+- UI rendered E02 tests live under `apps/litecowork-ui/tests/` and should run from
+  `apps/litecowork-ui` on pinned Node `24.21.0`. The recorded Chrome 149 run failed before
+  application mount because DevToolsActivePort was not published before timeout; it is no
+  rendered-test evidence. A Node 22 pass is diagnostic only, outside the pinned toolchain.
+- E04-S05's evidence-bounded evaluator suite was rerun after its projection/digest bounds
+  changes: `cargo test --locked --offline -p domain-effects -- --nocapture
+  --test-threads=1` passed **14/14**, plus zero doc tests, on Linux WSL2 with Rust/Cargo
+  `1.98.1`. This verifies the pure domain evaluator only; it remains a helper not consumed
+  by TaskService, and authoritative storage sourcing/transactional source-head rechecks
+  remain open. Details: `implementation/reviews/E04-S05.md` in the current dirty worktree.
+- E05 last reported Linux code results: `cargo test --locked --offline -p domain-task`
+  **100/100**, `delegation_benchmark::tests` **6/6**, and duplicate-replay/profile
+  lifecycle/profile-performance SQLite checks **1/1 each**. Review packet records scope;
+  these do not demonstrate full child dispatch or multi-agent provider qualification.
+
+### Handoff worker ledger and immediate order
+
+The E01/E02/E05 worker last-known paths, exact outputs, caveats, and next action are in the
+handoff table. Their broad V1 epic work was not completed. The lead's partial E04-S05 and
+E08-S04 changes are also itemized there. E02 bridge and E04 domain-effects reruns are
+complete and recorded in their review packets. Next: (1) synchronize and rerun the pending
+E01 file-symlink regression in the authorized Windows copy; (2) re-read the live
+backlog/source and assign dependency-ready epic owners on distinct write sets; (3) continue
+all runnable local V1 implementation and preserve owner-only USER/SYSTEM gates as PENDING.
+Do not mistake a review packet, test suite, or package build for a finished epic.
+
+Handoff documentation checks passed: `.venv/bin/python scripts/audit_v1_markdown.py`
+(193 Markdown files, zero broken links); `.venv/bin/python
+scripts/validate_implementation_coverage.py --write` (103 documents, 6,744 traceability
+rows); `.venv/bin/python scripts/validate_implementation_plan.py` (67 stories and 6,744
+coverage rows); `.venv/bin/python scripts/validate_architecture.py` (145 typed events and
+schema/API/SQLite/Gateway/name/link checks); and `git diff --check`. Plan validation first
+reported stale generated coverage and passed after refreshing it. These checks do not
+qualify runtime or release behavior.
+
+Final storage/process snapshot: one worktree at repository root, 26 local branches, 139
+tracked modified paths, 104 untracked paths, zero staged paths; Linux had 849 GB free and
+Windows C: 57 GB free. Reusable Rust caches retained: `apps/litecowork-ui/src-tauri/target/`
+2.5 GB and root `target/` 103 MB. The E02 and E04 test processes exited successfully; no
+active Cargo test/rustc process remained. No owner caches, historical files, or unrelated
+untracked data were deleted. This checkpoint stages only the new handoff, its README
+pointer, and the isolated current-run handoff entry; the mixed owner/implementation snapshot
+remains unstaged and is not part of this commit.
