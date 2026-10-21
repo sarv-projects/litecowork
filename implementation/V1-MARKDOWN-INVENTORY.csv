@@ -107,7 +107,7 @@ implementation/AGENT-PORTFOLIO-2026-10-16.md,156,26139,c3c53ff30e9068100cd1659a2
 implementation/ARCHITECTURE-COVERAGE.md,177,15970,0a7b922779ae30313f513d509b08c740f4ddf4a7d3c2d7f54262bb08029c1039,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/AUDIT.md,155,13284,a55491d4245364ded199718d9b6fdf513f531dc5ae4281fd95b1260bd8b8dc25,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/COVERAGE.md,33,2007,de61a91ec685c9bbfc359346fedbd14be20066ffbc2ace750bf0ceb29e60e945,rendering,True
-implementation/CURRENT-RUN.md,9629,706529,609b6d67b684651c32314dfe898616415d0bbbe472c392b9210e0ef91397aec8,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
+implementation/CURRENT-RUN.md,9629,706529,c75c0810bc9098f5e7be30efe7c6cec838edad587958562ee45c03fd58831554,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/DOC-AUDIT-2026-10-10.md,173,18626,ff27abd7e23a2a34fde65ae200540a04bdc376cd3a9527f07304e2790345bc1c,shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/NEXT-SESSION-HANDOFF-2026-10-13.md,316,19422,938e000f5933e0edaa3d08009202b5b9fc8a13f10128b939e6f732ffb488eaa0,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
 implementation/NEXT-SESSION-HANDOFF-2026-10-20.md,149,13440,2bf8dbc19b03276796ef59bd749ac044666b109cc178bacbe30388ef81aedcfa,browser/computer;rendering;workflow/recovery;trust/security,True

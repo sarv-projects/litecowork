@@ -120,7 +120,7 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/ARCHITECTURE-COVERAGE.md | 177 | 0a7b922779ae | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/AUDIT.md | 155 | a55491d42453 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/COVERAGE.md | 33 | de61a91ec685 | rendering |
-| implementation/CURRENT-RUN.md | 9629 | 609b6d67b684 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/CURRENT-RUN.md | 9629 | c75c0810bc90 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/DOC-AUDIT-2026-10-10.md | 173 | ff27abd7e23a | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/NEXT-SESSION-HANDOFF-2026-10-13.md | 316 | 938e000f5933 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/NEXT-SESSION-HANDOFF-2026-10-20.md | 149 | 2bf8dbc19b03 | browser/computer;rendering;workflow/recovery;trust/security |
