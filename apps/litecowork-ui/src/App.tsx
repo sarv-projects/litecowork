@@ -14,6 +14,8 @@ import type { DelegationProfileCatalogItem } from "./coworkers/delegation-profil
 import type { Coworker, WorkspacePrimaryReceipt } from "./coworkers/coworker-api";
 import { GoalsPage } from "./goals/GoalsPage";
 import { desktopGoalApi } from "./goals/desktop-goal-api";
+import { NotificationsPage } from "./notifications/NotificationsPage";
+import { maybeDesktopNotificationApi } from "./notifications/desktop-notification-api";
 import { SuggestionsPage } from "./suggestions/SuggestionsPage";
 import { TaskPresentationPanel } from "./presentation/TaskPresentationPanel";
 import { TaskSpecRevisionHistory } from "./tasks/TaskSpecRevisionHistory";
@@ -119,7 +121,7 @@ import {
   type PendingWorkspaceCreate,
 } from "./workspaces/workspace-onboarding.ts";
 
-type Page = "Home" | "Conversations" | "Work" | "Library" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Routines" | "Automations" | "Settings";
+type Page = "Home" | "Conversations" | "Work" | "Library" | "Needs You" | "Ideas" | "Coworkers" | "Goals" | "Notifications" | "Routines" | "Automations" | "Settings";
 type RuntimeStatus = {
   state: string;
   runtimeId: string | null;
@@ -339,6 +341,7 @@ const navigation: { label: Page; icon: string; group?: string }[] = [
   { label: "Automations", icon: "◷" },
   { label: "Routines", icon: "↻" },
   { label: "Goals", icon: "◎" },
+  { label: "Notifications", icon: "◔" },
   { label: "Ideas", icon: "✦" },
   { label: "Settings", icon: "⚙", group: "Manage" },
 ];
@@ -611,6 +614,7 @@ function App() {
   const coworkerApi = useMemo(() => desktopCoworkerApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const delegationProfileApi = useMemo(() => desktopDelegationProfileCatalogApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const goalApi = useMemo(() => desktopGoalApi(selectedWorkspaceId), [selectedWorkspaceId]);
+  const notificationApi = useMemo(() => maybeDesktopNotificationApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const suggestionApi = useMemo(() => maybeDesktopSuggestionApi(selectedWorkspaceId), [selectedWorkspaceId]);
   const rootStatusRequestKeys = useRef(new Map<string, string>());
   const selectedWorkspaceIdRef = useRef(selectedWorkspaceId);
@@ -2124,6 +2128,12 @@ function App() {
             setOpenedTask({ workspaceId: selectedWorkspaceId, taskId });
             requestPageNavigation("Work");
           }} />
+        ) : page === "Notifications" && !selectedWorkspaceId ? (
+          <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE SIGNALS</div><h1>Notifications</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">◔</div><h2>Select a Workspace</h2><p>Choose a Workspace to read its notification delivery history and policies.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Workspace settings <span aria-hidden="true">→</span></button></section></div>
+        ) : page === "Notifications" && runtime?.operatorReady !== true ? (
+          <div className="page-content subpage-content"><div className="eyebrow">WORKSPACE SIGNALS</div><h1>Notifications</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">◔</div><h2>Local Operator unavailable</h2><p>Start the local Runtime to read notification deliveries and policies. This view never sends a notification.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Runtime settings <span aria-hidden="true">→</span></button></section></div>
+        ) : page === "Notifications" && notificationApi ? (
+          <NotificationsPage key={selectedWorkspaceId} api={notificationApi} workspaceId={selectedWorkspaceId} />
         ) : page === "Ideas" && !selectedWorkspaceId ? (
           <div className="page-content subpage-content"><div className="eyebrow">IDEAS</div><h1>Ideas</h1><section className="subpage-panel empty-panel"><div className="empty-icon" aria-hidden="true">✦</div><h2>Select a Workspace</h2><p>Create or select a Workspace in Settings to view saved Suggestions.</p><button className="text-button" type="button" onClick={() => requestPageNavigation("Settings")}>Open Workspace settings <span aria-hidden="true">→</span></button></section></div>
         ) : page === "Ideas" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
@@ -3152,6 +3162,7 @@ function PlaceholderPage({ page, onSettings }: { page: Page; onSettings: () => v
     Ideas: { title: "Ideas", description: "Read-only proposals from approved Suggestion producers. Viewing an idea never starts work." },
     Coworkers: { title: "Coworkers", description: "Workspace assistants and their saved settings." },
     Goals: { title: "Goals", description: "Workspace outcomes and their linked, evidence-based progress." },
+    Notifications: { title: "Notifications", description: "Local delivery history and the policies that decide whether a settled outcome is announced." },
     Routines: { title: "Routines", description: "Reusable work definitions. Saving a Routine does not schedule or run it." },
     Automations: { title: "Automations", description: "Saved trigger definitions. Trigger hosting and Task creation are not available yet." },
     Settings: { title: "Settings", description: "Local Runtime status and startup are available in the desktop shell." },
