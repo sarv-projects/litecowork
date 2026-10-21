@@ -1961,6 +1961,12 @@ NotificationPreference {
   version: u64
 }
 
+A `NotificationDelivery` exists only because a persisted Automation outcome exists. The
+Automation notification policy, the Workspace event-class preference, the owner-configured
+quiet window, the dedupe key, and local channel availability decide whether a delivery row
+is written; a suppressed outcome writes nothing. The row records that a delivery is
+outstanding (`PENDING`) and never asserts that the work it reports succeeded.
+
 NotificationDelivery {
   delivery_id: DeliveryId
   workspace_id: WorkspaceId

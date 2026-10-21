@@ -1927,6 +1927,13 @@ POST /v1/skill-proposals/{id}/approve
 POST /v1/skill-proposals/{id}/reject
 ```
 
+A notification delivery row is created only because a persisted Automation outcome
+exists. The Automation's own notification policy, the Workspace event-class preference, the
+owner-configured quiet window, the dedupe key, and local channel availability decide
+whether a delivery is recorded; a suppressed outcome never becomes a delivery, and a
+recorded delivery stays `PENDING` until a local consumer proves it. A delivery is not a Task
+outcome and is never evidence that work succeeded.
+
 UserRequest responses are validated against the pinned response schema and appended as
 immutable records. For `DECISION` and `RESOURCE_SELECTION` requests, the owner may submit a
 safe `choice_id`; the source Runtime resolves it against immutable stored choices inside

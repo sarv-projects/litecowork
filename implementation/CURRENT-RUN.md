@@ -1,3 +1,27 @@
+## 2026-10-21 — E09-S04 first notification producer
+
+- **Producer.** A persisted Automation outcome now records at most one local delivery row in
+  the same transaction as the outcome. `crates/storage-sqlite/src/notification.rs` reads the
+  Automation notification policy, the Workspace event-class preference, the persisted quiet
+  window, the dedupe key, and local channel availability, and hands them to the domain
+  decision layer. A suppressed outcome never becomes a delivery, a duplicate outcome records
+  nothing, and a delivery never claims that a Task completed.
+- **First wired outcome.** A skipped due slot (a bounded misfire) is recorded by
+  `crates/storage-sqlite/src/automation_host.rs` in the same transaction as the occurrence
+  event, so the delivery references the event that caused it. `GET /v1/notifications` is no
+  longer structurally empty.
+- **Contract reconciliation.** The domain quiet-window parser now reads the persisted owner
+  preference shape (`timezone`, `weekdays`, `start_local_time`, `end_local_time`), an
+  overnight window belongs to the weekday it starts on, an unparsable window fails closed,
+  and `ON_FAILURE` addresses a skipped occurrence because a slot that never ran is a
+  failure to run.
+- **Evidence.** Storage notification suite 17/17; automation host suite 25/25 (three
+  skipped slots produce exactly three distinct `PENDING` deliveries); domain 96/96. The full
+  storage suite result is recorded below.
+- **Still open.** The delivery attempt state machine, the `notification.delivery.changed.v1`
+  producer, the local OS notification provider, deep links, and Task-outcome notifications
+  (which need a served Task terminal transition). E09-S04 is `IN_PROGRESS`.
+
 ## 2026-10-21 — Audit follow-up: contract honesty fixes
 
 - **Error-code registry.** 31 codes the daemon already emitted (and the five
