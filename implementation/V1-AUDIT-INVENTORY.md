@@ -3,8 +3,8 @@
 This script read every line of every included first-party Markdown file and checked literal Markdown relative link targets. **Mechanical coverage does not imply that each statement was semantically audited, implemented or runtime-qualified.**
 
 - Files read: 212
-- Lines read: 76675
-- Bytes read: 5383445
+- Lines read: 76807
+- Bytes read: 5393215
 - Broken relative links: 0
 - Excluded: dependency/cache/output worktrees and generated audit reports; CSV inventory includes SHA-256 for every read Markdown source.
 
@@ -24,7 +24,7 @@ This script read every line of every included first-party Markdown file and chec
 | assets/host-skills/rich-response-design/SKILL.md | 111 | 7f6287aab3db | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | capabilities/zip_intake/README.md | 137 | 40487540c996 | workflow/recovery;trust/security |
 | crates/domain-responsibility/README.md | 141 | 0e9811b3c3f5 | shell/settings/motion;workflow/recovery;trust/security |
-| docs/AGENT-CONTROL.md | 1214 | fcdb41568e25 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
+| docs/AGENT-CONTROL.md | 1271 | 1c2d214af8c2 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/AGENT-FABRIC.md | 448 | 2cedd7c44a35 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/API.md | 2230 | 74e1c1554de8 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/ARTIFACTS-EVIDENCE.md | 355 | 005fa9ba7aa7 | shell/settings/motion;workflow/recovery;trust/security |
@@ -117,23 +117,23 @@ This script read every line of every included first-party Markdown file and chec
 | docs/adr/README.md | 39 | 54afa5933f64 | agent/composer;workflow/recovery;trust/security |
 | implementation/AGENT-MODULE-AUDIT.md | 532 | 1c5170ee9a65 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | implementation/AGENT-PORTFOLIO-2026-10-16.md | 161 | ab0120c7cfb6 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
-| implementation/AGENT-PORTFOLIO-2026-10-21.md | 96 | 8db9417d7cf4 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
-| implementation/ARCHITECTURE-COVERAGE.md | 177 | f42db1bfe227 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/AGENT-PORTFOLIO-2026-10-21.md | 121 | 600a17244933 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
+| implementation/ARCHITECTURE-COVERAGE.md | 177 | a4e930e6f971 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/AUDIT.md | 155 | a55491d42453 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/CODEBASE-AUDIT-2026-10-21.md | 284 | 4aaf4a2cf5b2 | browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | implementation/COVERAGE.md | 33 | de61a91ec685 | rendering |
-| implementation/CURRENT-RUN.md | 9778 | 23a196f2900b | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/CURRENT-RUN.md | 9804 | 61e4fcc7e230 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/DOC-AUDIT-2026-10-10.md | 173 | ff27abd7e23a | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/NEXT-SESSION-HANDOFF-2026-10-13.md | 316 | 938e000f5933 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/NEXT-SESSION-HANDOFF-2026-10-20.md | 149 | 7636e87ae6a4 | browser/computer;rendering;workflow/recovery;trust/security |
 | implementation/PROCESS.md | 99 | 9ec104a4a710 | shell/settings/motion;workflow/recovery;trust/security |
-| implementation/QUALIFICATION-MATRIX.md | 225 | 7ef92cb1c471 | browser/computer;workflow/recovery;trust/security |
+| implementation/QUALIFICATION-MATRIX.md | 243 | 1b5f7c89c5da | browser/computer;workflow/recovery;trust/security |
 | implementation/RAG.md | 120 | eebd30eaeeb7 | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/README.md | 85 | 37326cf30b73 | agent/composer;browser/computer;workflow/recovery |
 | implementation/RELEASE-RUNBOOK.md | 256 | b17a8cc68d9d | workflow/recovery;trust/security |
 | implementation/RELEASE.md | 77 | 18df5c3b605e | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | implementation/ROADMAP.md | 175 | fbe5a1fd3ced | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| implementation/SCOPE.md | 138 | bc086bee6868 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
+| implementation/SCOPE.md | 144 | 9d858e21abb6 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | implementation/SOURCES.md | 134 | 7cc8ad920d2f | browser/computer;rendering;workflow/recovery;trust/security |
 | implementation/STACK.md | 140 | c866f1d4b5f2 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | implementation/TESTING.md | 181 | 9643bb926700 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |

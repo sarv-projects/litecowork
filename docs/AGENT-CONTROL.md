@@ -1212,3 +1212,60 @@ The editor and local control functions required for true native parity are in NA
 ## Agent card, auto-discovery and logo qualification — V1
 
 [V1 Agent Discovery & Catalog LLD](V1-AGENT-DISCOVERY-AND-CATALOG-LLD.md) extends the AgentModule discovery/observation UI with distinct DETECTED, INSTALLED, CONFIGURED, AUTHENTICATED and READY axes; versioned safe multi-OS/WSL/PATH/package probes; user-picked exact path only as fallback; offline reviewed logos/attribution; and accessibility/repair actions. An OAuth account, ACP registry record or routing-gateway model catalog never proves that a native agent binary is installed or qualified. Native config is preserved and not silently modified; actual session/model/command support still requires provider conformance. TLM-013–023 are target tests.
+
+## Hosted agent providers — V1
+
+The agent surface has **two axes**, and a Task may use either.
+
+- **Axis A — local harness module.** LiteCowork launches a versioned local binary
+  (`AgentModule` + `AgentControlDescriptor`), owns the session, and owns the workspace. The
+  roster in
+  [`implementation/AGENT-PORTFOLIO-2026-10-21.md`](../implementation/AGENT-PORTFOLIO-2026-10-21.md)
+  covers this axis.
+- **Axis B — hosted agent provider.** The owner connects a provider account, and the
+  provider runs the agent **in the provider's own environment**. LiteCowork never launches
+  its binary, never holds its session internals, and never treats provider state as local
+  authority. This axis is the one most users actually buy, so it is V1 scope.
+
+A hosted agent provider is reached only through the existing `Connection` /
+`ChannelBinding` / `CapabilityGrant` machinery, with these additional rules:
+
+1. **Account and credential ownership.** The provider account is a `Connection`. Provider
+   credentials are `SecretRef` with placement `CLOUD_AVAILABLE` (LiteCowork holds a
+   Task/Attempt-scoped `SecretLease` and delivers the bytes only to the provider
+   boundary) or `EXTERNAL_AGENT_OWNED` (LiteCowork never copies or leases the credential
+   and the agent's own session owns it). A provider key is never mixed with an unrelated
+   `Connection` credential.
+2. **Authorization.** `TrustService.authorize` still decides every step, in the documented
+   order, and the default stays DENY when a fact is unknown. The provider is an
+   untrusted peer: it does not decide, approve, or widen scope. An approval binds the exact
+   action, target, and provider capability.
+3. **Egress.** The brokered egress policy applies to the provider endpoints exactly as it
+   applies to any other external dependency: an explicit destination/protocol exception per
+   provider capability, DNS pinning and revalidation, redirect caps, no arbitrary
+   agent-supplied URLs, and no metadata/private-range destinations. Context that leaves the
+   device (workspace content, prompts, diffs) is a **disclosed owner-approved boundary**,
+   recorded per provider capability; the provider's own retention is disclosed, not
+   assumed.
+4. **Effects and reconciliation.** A hosted agent's edits are not Core effects by default.
+   They land only as `Artifact`/`Resource` revisions with digests, and as `Effect`/
+   `Evidence` only where the provider exposes an **equivalent contract** (session identity,
+   file/patch results, and effect receipts we can reconcile). Where the provider exposes no
+   equivalent contract, the run's outcome is **unproven** and the UI, the ledger, and the
+   Task status must say so — the same rule that already applies to direct native agent
+   effects.
+5. **Provider-private state.** Provider session identifiers, remote workspaces, and
+   provider URLs stay provider-private. LiteCowork stores an opaque, non-secret binding
+   reference and a digest, exactly as it does for `channel_reply_targets` and provider
+   input bindings. The provider's own sandbox is not a LiteCowork `Environment`, and its
+   side effects are not silently imported.
+6. **Qualification.** Support is claimed per exact **provider × capability × plan/OS**, not
+   per agent brand, and never from a marketing page or a chat completion test. The
+   qualification matrix carries a hosted-provider axis next to the local-harness axis.
+7. **Not post-V1.** This is *using someone else's cloud* from the desktop product. It is
+   distinct from the post-V1 cloud work, which moves **our Runtime** into the cloud
+   (`E11-S01`..`E11-S05`) and adds pairing, replication, fencing, and handoff.
+
+Rule of thumb for implementers: if LiteCowork can start it, it is Axis A; if the provider
+starts it, it is Axis B. Both must satisfy the same Trust, egress, secret, and effect
+truthfulness rules.

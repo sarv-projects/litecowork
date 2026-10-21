@@ -1,3 +1,29 @@
+## 2026-10-21 — The missing agent axis: hosted providers (cloud agents)
+
+- **The gap the owner exposed.** `docs/AGENT-CONTROL.md`, `docs/CAPABILITY-FABRIC.md`,
+  `docs/CHANNELS.md`, and `docs/CAPABILITY-INVOCATIONS.md` contained **zero** occurrences of
+  "cloud", and the only "remote execution" mention in the repo was post-V1. The contracts
+  therefore modelled one agent axis — a locally launched, versioned harness — while the
+  market's volume is hosted agents the provider runs in its own cloud.
+- **New Axis B contract.** `docs/AGENT-CONTROL.md` now defines hosted agent providers:
+  an owner `Connection` whose account is a provider, `SecretRef` placement
+  `CLOUD_AVAILABLE` (Task/Attempt-scoped lease) or `EXTERNAL_AGENT_OWNED` (we never hold the
+  credential), the same `TrustService.authorize` order with DENY-by-default, brokered egress
+  limited to declared provider endpoints, context egress disclosed per capability, provider
+  session state kept private, and effects landing only where the provider exposes an
+  **equivalent contract** — otherwise the outcome is unproven and must be labelled so. This is
+  "using someone else's cloud" and is distinct from the post-V1 cloud Runtime work.
+- **Scope correction.** `implementation/SCOPE.md` now separates the two meanings of
+  "cloud": moving **our Runtime** to the cloud is post-V1; using a **hosted agent** is V1 work
+  that was missing.
+- **Portfolio and matrix.** `implementation/AGENT-PORTFOLIO-2026-10-21.md` now carries Axis B
+  (hosted provider tiers and what each qualification needs) next to Axis A (the 25 local
+  harnesses), and `implementation/QUALIFICATION-MATRIX.md` gained a hosted-provider axis with
+  no passing row, so the matrix is complete on both axes.
+- **Still open.** No hosted provider is qualified. The next buildable increment is one
+  provider's hosted-session contract (session identity, artifact/patch return, effect
+  receipts) behind the existing Connection and capability machinery.
+
 ## 2026-10-21 — Agent portfolio revision (25 entries) and per-roster qualification matrix
 
 - **Owner direction applied.** Gemini CLI is dropped from the roster (Google moved the

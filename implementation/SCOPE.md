@@ -5,7 +5,13 @@
 User alone reviews; coding agents implement. No additional developer, QA team,
 product manager, or security engineer is assumed. Reviewer bandwidth is a release resource.
 V1 is a complete, production-qualified **desktop/local product**. Cloud continuation and
-remote Runtime are post-V1 releases and do not block the V1 launch. Cloud follows V1;
+remote Runtime are post-V1 releases and do not block the V1 launch. "Cloud" here means
+moving **our Runtime** into the cloud. It does **not** mean the agent must run locally:
+an owner-connected **hosted agent provider** (Claude Code, Codex, Copilot, Cursor, Devin,
+Grok Build, Antigravity, Kimi, MiniMax, Qwen, Muse and similar cloud tiers) is a V1 agent
+backend reached through `Connection` + `CapabilityGrant` + a Task-scoped `SecretLease`
+under the Trust and egress rules in [`../docs/AGENT-CONTROL.md`](../docs/AGENT-CONTROL.md)
+§Hosted agent providers, and it carries its own qualification axis. Cloud follows V1;
 remote Runtime follows cloud. All finalized local contract features remain in scope,
 including non-coding office, research,
 personal-assistant, browser, and automation workflows. A coding-agent implementation team

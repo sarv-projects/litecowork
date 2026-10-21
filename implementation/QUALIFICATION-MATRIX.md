@@ -6,7 +6,7 @@ This file is generated. Do not edit it by hand: run the command below to regener
 .venv/bin/python scripts/v1_platform_matrix.py --out implementation/QUALIFICATION-MATRIX.md --evidence-out /tmp/litecowork-release-evidence
 ```
 
-- Generated at: `2026-10-21T19:18:31Z`
+- Generated at: `2026-10-21T19:31:43Z`
 - Probing host: `Linux 6.18.54.1-microsoft-standard-WSL2 x86_64` (python 3.13.12)
 - A cell is `PASSED` only when the probe actually ran on this host and observed success. Every other cell carries the reason it is not a pass.
 - `NOT RUN` means the probe exists but was not executed here.
@@ -137,8 +137,8 @@ no org.freedesktop.secrets service is registered
 - Observation:
 
 ```
-warning: `storage-sqlite` (lib) generated 12 warnings (7 duplicates)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 2m 21s
+warning: `storage-sqlite` (lib test) generated 9 warnings (7 duplicates) (run `cargo fix --lib -p storage-sqlite --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.59s
      Running unittests src/lib.rs (target/debug/deps/storage_sqlite-67974cd58333153e)
      Running tests/agent_registry_cache.rs (target/debug/deps/agent_registry_cache-0129b60b8c5171a0)
      Running tests/linux_secret_service.rs (target/debug/deps/linux_secret_service-f423a68f2ff2610d)
@@ -201,6 +201,24 @@ An agent is only supported when its exact version passes the native harness conf
 | opencode | `opencode` | `opencode v2.1.2` | PRESENT |
 | pi | `pi` | `1.3.0` | PRESENT |
 | qwen | `qwen` | `0.21.3` | PRESENT |
+
+## Hosted agent provider matrix
+
+A hosted agent provider runs the agent in the provider's own environment. LiteCowork connects the owner account, leases the authority it needs, and receives only what the provider exposes. Support is claimed per exact provider, capability, and plan, never per brand.
+
+| Provider | State | Reason |
+|---|---|---|
+| anthropic-claude-code-hosted | NOT QUALIFIED | no provider conformance record |
+| cognition-devin-hosted | NOT QUALIFIED | no provider conformance record |
+| cursor-hosted | NOT QUALIFIED | no provider conformance record |
+| github-copilot-cloud | NOT QUALIFIED | no provider conformance record |
+| google-antigravity-hosted | NOT QUALIFIED | no provider conformance record |
+| meta-muse-code-hosted | NOT QUALIFIED | no provider conformance record |
+| minimax-code-hosted | NOT QUALIFIED | no provider conformance record |
+| moonshot-kimi-hosted | NOT QUALIFIED | no provider conformance record |
+| openai-codex-hosted | NOT QUALIFIED | no provider conformance record |
+| qwen-code-hosted | NOT QUALIFIED | no provider conformance record |
+| xai-grok-build-hosted | NOT QUALIFIED | no provider conformance record |
 
 ## Browser matrix
 

@@ -62,6 +62,31 @@ evidence). An entry in this roster is an implementation target, never a support 
 | 24 | MiniMax Code | Native CLI with Agent Client Protocol support. | The ACP Registry lists MiniMax Code with ACP support (0.2.7 in the checked snapshot). Treat the registry entry as discovery metadata; qualify the native launch mode, auth (MiniMax account or API key), model/session options, and cancellation before any support claim. Sources: [ACP Registry](https://agentclientprotocol.com/get-started/registry) |
 | 25 | Amp (Sourcegraph) | Native `amp` CLI plus IDE; the registry ships an **ACP wrapper** (0.9.0) rather than a native ACP mode. | Amp is Sourcegraph's frontier coding agent with a CLI and IDE surface and a "deep mode" autonomous research path. The registry entry is a wrapper module, so the adapter path is the native CLI/IDE surface and the ACP wrapper is a separate module, as with the other wrapper entries. Sources: [ACP Registry](https://agentclientprotocol.com/get-started/registry) |
 
+## Axis B — hosted agent providers (the cloud volume)
+
+The table above is **Axis A**: harnesses LiteCowork launches locally. Most users
+actually buy **Axis B**: a provider that runs the agent in its own cloud. LiteCowork
+connects the owner's account, leases the authority it needs, sends only what the owner
+approved, and receives only what the provider exposes
+([`../docs/AGENT-CONTROL.md`](../docs/AGENT-CONTROL.md) §Hosted agent providers). A
+hosted provider is never a local `AgentModule` and never gets a local session locator.
+
+| Provider tier | What LiteCowork would need to qualify it | Notes |
+|---|---|---|
+| Anthropic Claude Code (hosted) | account `Connection`, model/plan selection, hosted session + stream contract, file/patch return, and an effect-receipt contract equal to our own | Local `claude` CLI is Axis A; the hosted tier is a separate qualification |
+| OpenAI Codex (hosted) | hosted task/session contract, artifact return, receipt equivalence | Local `codex` CLI / App Server is Axis A |
+| GitHub Copilot cloud agents | connection, agent selection, async task/result contract | Local `copilot --acp` is Axis A |
+| Cursor (cloud Composer/agents) | connection, agent/task contract, diff/artifact return | Local `cursor-agent acp` is Axis A |
+| Cognition Devin (cloud) | connection, session/handoff contract, PR/artifact return, receipt equivalence | Devin CLI is Axis A with a cloud handoff |
+| xAI Grok Build (hosted) | connection, model/plan selection, remote run contract | Data boundary applies to the hosted tier too |
+| Google Antigravity (hosted) | connection, subagent/plan contract, artifact return | Local `agy` CLI is Axis A |
+| Moonshot Kimi, MiniMax Code, Qwen Code (hosted) | connection, model selection, session contract | Each provider is qualified separately |
+| Meta Muse Code (hosted) | connection, model selection, background-agent contract | Local `muse` CLI is Axis A |
+
+Axis B is **not** yet qualified for any provider: no provider conformance record exists, so
+the qualification matrix carries a hosted-provider axis with no passing row. That is a
+build target, not a support claim.
+
 ## Checked, considered, and not added
 
 These were checked during this revision and deliberately stay out of the roster. They remain
