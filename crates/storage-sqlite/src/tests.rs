@@ -41,6 +41,8 @@ mod environment_tests;
 mod evidence_run_binding_migration_tests;
 #[path = "goal_tests.rs"]
 mod goal_tests;
+#[path = "routine_admission_tests.rs"]
+mod routine_admission_tests;
 #[path = "routine_tests.rs"]
 mod routine_tests;
 use domain_workspace::{
