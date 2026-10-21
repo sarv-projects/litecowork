@@ -1,3 +1,35 @@
+## 2026-10-21 — E09-S04 versioned notification preference write
+
+- **Served.** `PUT /v1/notification-preferences/{event_class}` records one event-class
+  policy. It requires `Idempotency-Key` and `If-Match` (`0` for the first write), matching
+  the other versioned preference route. The policy row, its request receipt, and a
+  `notification.preference.changed.v1` event commit in one `IMMEDIATE` transaction, so a
+  crash between them cannot leave a policy without its event or a replayable receipt
+  without its row.
+- **Event payload is the contract shape.** Exactly `workspace_id`, `event_class`,
+  `policy`, `preferred_channels`, and `aggregate_version`; the schema sets
+  `additionalProperties: false`, so a future private field cannot leak into the event.
+- **Archive and authority.** The route uses `authorized_data_workspace` (owner-scoped Core
+  data), and the storage transaction calls `require_write_access`, so an ARCHIVED Workspace
+  is refused with `409 WORKSPACE_ARCHIVED` before any row, event, or receipt is written. A
+  foreign principal receives `NOT_FOUND` from the storage check.
+- **Idempotency and versioning.** A replay with the same key and canonical request returns
+  the committed record without a second event; the same key with a different policy is
+  `StoreError::IdempotencyConflict`; a stale `If-Match` is
+  `StoreError::Conflict { expected, actual }` with the prior row untouched.
+- **Validation before write.** Policy token, channel strings, IANA-style timezone text,
+  weekday enum with no duplicates, and `HH:MM` local times are validated before the Blob
+  is written. The fixed-offset time parser guards `is_ascii`, so a five-byte non-ASCII
+  value is a validation error rather than a slice panic.
+- **Tests.** `storage-sqlite --lib notification_tests` 15/15: the row/event/receipt commit,
+  the exact event keys, stale-version conflict, idempotent replay without a second event,
+  key reuse conflict, archived refusal with nothing recorded, foreign owner, quiet-window
+  persistence, and invalid policy/quiet-hours cases. `litecoworkd --bin litecoworkd
+  notification_operator` 6/6 adds `If-Match` parsing (bare, quoted, missing, non-decimal).
+- **Still open (not claimed).** The delivery pipeline that writes `notification_deliveries`
+  and its `notification.delivery.changed.v1` transition events, the OS notification
+  provider, the desktop surface, and the deep link. E09-S04 stays `PLANNED`.
+
 ## 2026-10-21 — E09-S04 notification read surface on the canonical tables
 
 - **Corrected blocker.** E09-S04 was recorded as `BLOCKED on a lead-owned migration` with

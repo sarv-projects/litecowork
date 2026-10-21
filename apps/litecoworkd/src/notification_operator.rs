@@ -1,29 +1,33 @@
-//! Authenticated local Operator reads for notification delivery and policy.
+//! Authenticated local Operator reads and preference writes for notifications.
 //!
 //! Authority: [`docs/API.md`](../../../docs/API.md) "User requests and
 //! notifications", [`docs/DATA-MODEL.md`](../../../docs/DATA-MODEL.md)
 //! "Notifications", and the `Notification` / `NotificationPage` /
-//! `NotificationPreference` OpenAPI components.
+//! `NotificationPreference` / `UpdateNotificationPreferenceRequest` OpenAPI
+//! components.
 //!
 //! These routes read what the canonical `notification_deliveries` and
-//! `notification_preferences` tables already contain. They do not decide whether
-//! a notification is due; that is the domain `NotificationService`. A `SENT`
-//! status is transport acknowledgement only and is never presented as Task
-//! completion.
+//! `notification_preferences` tables already contain, and the write route records
+//! one versioned policy with its `notification.preference.changed.v1` event.
+//! Nothing here decides whether a notification is due; that is the domain
+//! `NotificationService`. A `SENT` status is transport acknowledgement only and is
+//! never presented as Task completion.
 //!
-//! Both routes are owner-scoped Core data, not Workspace-scoped execution, so
-//! they use `authorized_data_workspace` and stay readable after the Workspace is
-//! archived.
+//! Every route is owner-scoped Core data, not Workspace-scoped execution, so they
+//! use `authorized_data_workspace` and stay readable after the Workspace is
+//! archived. The write route refuses an archived Workspace inside the storage
+//! transaction, because a policy change is a mutation.
 
 // Route handlers intentionally return full Axum Responses to preserve status, body, and headers.
 #![allow(clippy::result_large_err)]
 
 use super::*;
 use serde::{Deserialize, Serialize};
-use storage_core::{NotificationPreferenceRecord, NotificationRecord};
+use storage_core::{NotificationPreferenceRecord, NotificationRecord, QuietHours};
 
 const DEFAULT_PAGE_LIMIT: usize = 50;
 const MAX_PAGE_LIMIT: usize = 200;
+const MAX_PREFERENCE_BODY_BYTES: usize = 8 * 1024;
 
 pub(super) fn routes() -> Router<ApiState> {
     Router::new()
@@ -31,6 +35,10 @@ pub(super) fn routes() -> Router<ApiState> {
         .route(
             "/v1/notification-preferences",
             get(list_notification_preferences),
+        )
+        .route(
+            "/v1/notification-preferences/{event_class}",
+            put(set_notification_preference),
         )
 }
 
@@ -55,6 +63,20 @@ struct DeliveryCursor {
     workspace_id: String,
     created_at: String,
     delivery_id: String,
+}
+
+/// Exactly the OpenAPI `UpdateNotificationPreferenceRequest` shape.
+///
+/// `PUT` replaces the whole policy, so an absent `quiet_hours` and an explicit
+/// `null` both clear any stored window. There is no partial-update semantics on
+/// this route.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateNotificationPreferenceBody {
+    policy: String,
+    preferred_channels: Vec<String>,
+    #[serde(default)]
+    quiet_hours: Option<QuietHours>,
 }
 
 async fn list_notifications(
@@ -115,6 +137,72 @@ async fn list_notification_preferences(
     Ok(no_store(Json(preferences).into_response()))
 }
 
+/// Records one versioned event-class policy.
+///
+/// `If-Match` is required, matching the other versioned preference route in this
+/// Operator: `0` means "no policy persisted yet", and any other value must equal
+/// the persisted version. The write and its event commit in one storage
+/// transaction; a replay with the same `Idempotency-Key` and the same canonical
+/// request returns the committed record without writing a second event.
+async fn set_notification_preference(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(event_class): Path<String>,
+    body: Bytes,
+) -> Result<Response, Response> {
+    let workspace = authorized_data_workspace(&state, &headers)?;
+    if body.len() > MAX_PREFERENCE_BODY_BYTES {
+        return Err(payload_too_large());
+    }
+    let body: UpdateNotificationPreferenceBody =
+        serde_json::from_slice(&body).map_err(|_| invalid())?;
+    let request_id = idempotency_key(&headers)?;
+    let expected_version = expected_version(&headers)?;
+    let context = event_context(&state.runtime_id, &request_id).map_err(|_| unavailable())?;
+    let preference = state
+        .store
+        .set_notification_preference(
+            &state.principal_id,
+            &workspace.workspace_id,
+            &event_class,
+            &body.policy,
+            &body.preferred_channels,
+            body.quiet_hours.as_ref(),
+            expected_version,
+            &request_id,
+            &storage_sqlite::NotificationEventContext {
+                event_id: context.event_id,
+                origin_runtime_id: context.origin_runtime_id,
+                hlc_timestamp: context.hlc_timestamp,
+                correlation_id: context.correlation_id,
+                causation_id: context.causation_id,
+                recorded_at: context.recorded_at,
+            },
+        )
+        .map_err(store_error)?;
+    Ok(no_store(Json(preference).into_response()))
+}
+
+/// Parses the contract's `If-Match` version, accepting an optionally quoted
+/// decimal. Unlike a stale-version check, a syntactically invalid value is a
+/// request error, not a conflict.
+fn expected_version(headers: &HeaderMap) -> Result<u64, Response> {
+    let text = headers
+        .get(header::IF_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(invalid)?
+        .trim();
+    let text = if text.starts_with('"') && text.ends_with('"') && text.len() >= 2 {
+        &text[1..text.len() - 1]
+    } else {
+        text
+    };
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(invalid());
+    }
+    text.parse::<u64>().map_err(|_| invalid())
+}
+
 fn encode_cursor(
     workspace_id: &str,
     created_at: &str,
@@ -158,6 +246,14 @@ fn invalid() -> Response {
     )
 }
 
+fn payload_too_large() -> Response {
+    operator_error(
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "INVALID_ARGUMENT",
+        "Notification preference request exceeds the local body limit",
+    )
+}
+
 fn unavailable() -> Response {
     operator_error(
         StatusCode::SERVICE_UNAVAILABLE,
@@ -180,6 +276,23 @@ fn store_error(error: storage_core::StoreError) -> Response {
             StatusCode::NOT_FOUND,
             "NOT_FOUND",
             "Notification history is unavailable",
+        ),
+        storage_core::StoreError::Invalid(message) if message == "WORKSPACE_ARCHIVED" => {
+            operator_error(
+                StatusCode::CONFLICT,
+                "WORKSPACE_ARCHIVED",
+                "Workspace is archived and rejects new notification policies",
+            )
+        }
+        storage_core::StoreError::Conflict { .. } => operator_error(
+            StatusCode::CONFLICT,
+            "CONFLICT",
+            "Notification preference version conflicts with current state",
+        ),
+        storage_core::StoreError::IdempotencyConflict => operator_error(
+            StatusCode::CONFLICT,
+            "CONFLICT",
+            "Idempotency-Key was reused for a different Notification preference",
         ),
         storage_core::StoreError::Invalid(_) => invalid(),
         _ => unavailable(),
@@ -248,5 +361,32 @@ mod tests {
         .expect("cursor serializes");
         let encoded = URL_SAFE_NO_PAD.encode(bytes);
         assert!(decode_cursor(&encoded, "workspace-1").is_err());
+    }
+
+    fn if_match(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::IF_MATCH,
+            HeaderValue::from_str(value).expect("header value"),
+        );
+        headers
+    }
+
+    #[test]
+    fn if_match_accepts_a_bare_or_quoted_decimal() {
+        assert_eq!(expected_version(&if_match("0")).expect("zero is valid"), 0);
+        assert_eq!(
+            expected_version(&if_match("\"3\"")).expect("quoted is valid"),
+            3
+        );
+    }
+
+    #[test]
+    fn a_missing_or_non_decimal_if_match_is_a_request_error() {
+        assert!(expected_version(&HeaderMap::new()).is_err());
+        assert!(expected_version(&if_match("abc")).is_err());
+        assert!(expected_version(&if_match("\"\"")).is_err());
+        assert!(expected_version(&if_match("-1")).is_err());
+        assert!(expected_version(&if_match("1 2")).is_err());
     }
 }

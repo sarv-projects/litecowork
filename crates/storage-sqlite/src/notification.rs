@@ -14,7 +14,7 @@
 //! repeat or skip a delivery whose timestamp ties with the last row.
 
 use super::*;
-use crate::workspace_access::require_read_access;
+use crate::workspace_access::{require_read_access, require_write_access};
 use storage_core::{NotificationPreferenceRecord, NotificationRecord, QuietHours};
 
 /// The OpenAPI `Limit` maximum is 200. The route asks for one extra row to
@@ -224,4 +224,341 @@ impl SqliteWorkspaceStore {
             Ok(preferences)
         })
     }
+
+    /// Writes one versioned event-class policy and its
+    /// `notification.preference.changed.v1` event atomically.
+    ///
+    /// `expected_version` is `0` for the first write. A replay with the same
+    /// `Idempotency-Key` and the same canonical request returns the committed
+    /// record; reusing the key for a different request is
+    /// [`StoreError::IdempotencyConflict`]. A different version is
+    /// [`StoreError::Conflict`]. An ARCHIVED Workspace is refused with
+    /// `WORKSPACE_ARCHIVED`, because this is a domain mutation.
+    pub fn set_notification_preference(
+        &self,
+        owner_principal_id: &str,
+        workspace_id: &str,
+        event_class: &str,
+        policy: &str,
+        preferred_channels: &[String],
+        quiet_hours: Option<&QuietHours>,
+        expected_version: u64,
+        request_id: &str,
+        context: &NotificationEventContext,
+    ) -> Result<NotificationPreferenceRecord, StoreError> {
+        if invalid_identifier(owner_principal_id, 256)
+            || invalid_identifier(workspace_id, 256)
+            || invalid_identifier(event_class, 128)
+            || !NOTIFICATION_POLICIES.contains(&policy)
+            || preferred_channels.len() > 64
+            || preferred_channels
+                .iter()
+                .any(|channel| invalid_identifier(channel, 256))
+            || quiet_hours.is_some_and(|quiet| !valid_quiet_hours(quiet))
+            || request_id.is_empty()
+            || request_id.len() > 200
+            || context.event_id.is_empty()
+            || context.origin_runtime_id.is_empty()
+            || context.correlation_id.is_empty()
+            || context.recorded_at.is_empty()
+        {
+            return Err(StoreError::Invalid(
+                "Notification preference request is invalid".to_owned(),
+            ));
+        }
+        let version = expected_version.checked_add(1).ok_or_else(|| {
+            StoreError::Invalid("Notification preference version overflowed".to_owned())
+        })?;
+        let record = NotificationPreferenceRecord {
+            workspace_id: workspace_id.to_owned(),
+            event_class: event_class.to_owned(),
+            policy: policy.to_owned(),
+            preferred_channels: preferred_channels.to_vec(),
+            quiet_hours: quiet_hours.cloned(),
+            version,
+        };
+        let state_bytes = canonical_json(&record)?;
+        let blob = self.inner.blobs.put(
+            workspace_id,
+            BlobPurpose::AggregateState,
+            &state_bytes,
+            NOTIFICATION_PREFERENCE_MEDIA_TYPE,
+        )?;
+        if blob.size_bytes != state_bytes.len() as u64
+            || self.inner.blobs.get(
+                workspace_id,
+                BlobPurpose::AggregateState,
+                &blob,
+            )? != state_bytes
+        {
+            return Err(StoreError::Integrity(
+                "notification preference aggregate state failed BlobStore verification".to_owned(),
+            ));
+        }
+        let fingerprint = digest(&canonical_json(&json!({
+            "workspace_id": workspace_id,
+            "event_class": event_class,
+            "policy": policy,
+            "preferred_channels": preferred_channels,
+            "quiet_hours": quiet_hours,
+            "expected_version": expected_version,
+        }))?);
+        let principal = owner_principal_id.to_owned();
+        let workspace = workspace_id.to_owned();
+        let event_class = event_class.to_owned();
+        let request_id = request_id.to_owned();
+        let context = context.clone();
+        run(self, move |connection| {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_database_error)?;
+            require_write_access(&tx, &workspace, &principal)?;
+            if let Some(prior) =
+                preference_receipt(&tx, &principal, &request_id, &fingerprint, &workspace, &event_class)?
+            {
+                return Ok(prior);
+            }
+            let current: Option<i64> = tx
+                .query_row(
+                    "SELECT version FROM notification_preferences \
+                     WHERE workspace_id = ?1 AND event_class = ?2",
+                    params![workspace, event_class],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(map_database_error)?;
+            let current = current.unwrap_or(0);
+            if u64::try_from(current).ok() != Some(expected_version) {
+                return Err(StoreError::Conflict {
+                    expected: Some(expected_version),
+                    actual: u64::try_from(current).ok(),
+                });
+            }
+            let channels_json = encode(&record.preferred_channels)?;
+            let quiet_hours_json = record
+                .quiet_hours
+                .as_ref()
+                .map(encode)
+                .transpose()?;
+            tx.execute(
+                "INSERT INTO notification_preferences(workspace_id, event_class, policy, \
+                     preferred_channels_json, quiet_hours_json, version) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(workspace_id, event_class) DO UPDATE SET \
+                     policy = excluded.policy, \
+                     preferred_channels_json = excluded.preferred_channels_json, \
+                     quiet_hours_json = excluded.quiet_hours_json, \
+                     version = excluded.version",
+                params![
+                    workspace,
+                    event_class,
+                    record.policy,
+                    channels_json,
+                    quiet_hours_json,
+                    i64::try_from(version).map_err(|_| StoreError::Integrity(
+                        "notification preference version does not fit SQLite".to_owned()
+                    ))?
+                ],
+            )
+            .map_err(map_database_error)?;
+            write_preference_event(&tx, &workspace, &context, &record, blob)?;
+            let response = encode(&record)?;
+            tx.execute(
+                "INSERT INTO request_dedup(principal_id, request_id, request_digest, \
+                     response_json, response_digest, created_at, expires_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL)",
+                params![
+                    principal,
+                    request_id,
+                    fingerprint,
+                    response,
+                    digest(response.as_bytes()),
+                    context.recorded_at
+                ],
+            )
+            .map_err(map_database_error)?;
+            tx.commit().map_err(map_database_error)?;
+            Ok(record)
+        })
+    }
+}
+
+/// Event context supplied by the Operator caller.
+///
+/// Kept separate from the domain service context so the storage port does not
+/// depend on a feature crate's private event shape.
+#[derive(Clone, Debug)]
+pub struct NotificationEventContext {
+    pub event_id: String,
+    pub origin_runtime_id: String,
+    pub hlc_timestamp: String,
+    pub correlation_id: String,
+    pub causation_id: Option<String>,
+    pub recorded_at: String,
+}
+
+fn preference_receipt(
+    tx: &Transaction<'_>,
+    owner: &str,
+    request_id: &str,
+    fingerprint: &str,
+    workspace: &str,
+    event_class: &str,
+) -> Result<Option<NotificationPreferenceRecord>, StoreError> {
+    let prior: Option<(String, Option<String>, Option<String>)> = tx
+        .query_row(
+            "SELECT request_digest, response_json, response_digest FROM request_dedup \
+             WHERE principal_id = ?1 AND request_id = ?2",
+            params![owner, request_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((actual, response, response_digest)) = prior else {
+        return Ok(None);
+    };
+    if actual != fingerprint {
+        return Err(StoreError::IdempotencyConflict);
+    }
+    let response = response.ok_or_else(|| {
+        StoreError::Integrity("notification preference receipt has no response".to_owned())
+    })?;
+    if response_digest.as_deref() != Some(digest(response.as_bytes()).as_str()) {
+        return Err(StoreError::Integrity(
+            "notification preference receipt digest does not match its response".to_owned(),
+        ));
+    }
+    let preference: NotificationPreferenceRecord =
+        serde_json::from_str(&response).map_err(|_| {
+            StoreError::Integrity(
+                "notification preference receipt response is unreadable".to_owned(),
+            )
+        })?;
+    if preference.workspace_id != workspace || preference.event_class != event_class {
+        return Err(StoreError::Integrity(
+            "notification preference receipt belongs to another aggregate".to_owned(),
+        ));
+    }
+    Ok(Some(preference))
+}
+
+fn write_preference_event(
+    tx: &Transaction<'_>,
+    workspace: &str,
+    context: &NotificationEventContext,
+    record: &NotificationPreferenceRecord,
+    blob: BlobRef,
+) -> Result<(), StoreError> {
+    tx.execute(
+        "INSERT INTO workspace_origin_sequences(workspace_id, origin_runtime_id, last_sequence) \
+         VALUES (?1, ?2, 1) \
+         ON CONFLICT(workspace_id, origin_runtime_id) DO UPDATE SET last_sequence = last_sequence + 1",
+        params![workspace, context.origin_runtime_id],
+    )
+    .map_err(map_database_error)?;
+    let sequence: i64 = tx
+        .query_row(
+            "SELECT last_sequence FROM workspace_origin_sequences \
+             WHERE workspace_id = ?1 AND origin_runtime_id = ?2",
+            params![workspace, context.origin_runtime_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let payload = json!({
+        "workspace_id": record.workspace_id,
+        "event_class": record.event_class,
+        "policy": record.policy,
+        "preferred_channels": record.preferred_channels,
+        "aggregate_version": record.version,
+    });
+    let payload_json = encode(&payload)?;
+    let state_ref = AggregateStateRef {
+        blob,
+        entity_revision: record.version,
+        record_schema_version: 1,
+    };
+    tx.execute(
+        "INSERT INTO domain_events(event_id, workspace_id, entity_type, entity_id, \
+             origin_runtime_id, origin_sequence, entity_revision, hlc_timestamp, \
+             correlation_id, causation_id, schema_version, type, payload_json, \
+             aggregate_state_ref_json, recorded_at, payload_digest) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            context.event_id,
+            workspace,
+            "NotificationPreference",
+            record.event_class,
+            context.origin_runtime_id,
+            sequence,
+            i64::try_from(record.version).map_err(|_| StoreError::Integrity(
+                "notification preference event revision does not fit SQLite".to_owned()
+            ))?,
+            context.hlc_timestamp,
+            context.correlation_id,
+            context.causation_id,
+            NOTIFICATION_PREFERENCE_EVENT_TYPE,
+            payload_json,
+            encode(&state_ref)?,
+            context.recorded_at,
+            digest(payload_json.as_bytes()),
+        ],
+    )
+    .map_err(map_database_error)?;
+    Ok(())
+}
+
+const NOTIFICATION_POLICIES: [&str; 5] = [
+    "ALWAYS",
+    "ON_SUCCESS",
+    "ON_FAILURE",
+    "ON_CONDITION",
+    "SILENT",
+];
+
+const NOTIFICATION_PREFERENCE_MEDIA_TYPE: &str =
+    "application/vnd.litecow.notification-preference+json";
+
+const NOTIFICATION_PREFERENCE_EVENT_TYPE: &str = "notification.preference.changed.v1";
+
+const WEEKDAYS: [&str; 7] = [
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
+];
+
+fn valid_quiet_hours(quiet: &QuietHours) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    !quiet.timezone.trim().is_empty()
+        && quiet.timezone.len() <= 64
+        && !quiet.timezone.chars().any(char::is_control)
+        && !quiet.weekdays.is_empty()
+        && quiet.weekdays.len() <= WEEKDAYS.len()
+        && quiet
+            .weekdays
+            .iter()
+            .all(|day| WEEKDAYS.contains(&day.as_str()) && seen.insert(day))
+        && valid_local_time(&quiet.start_local_time)
+        && valid_local_time(&quiet.end_local_time)
+}
+
+fn valid_local_time(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    value.is_ascii()
+        && bytes.len() == 5
+        && bytes[2] == b':'
+        && bytes[1].is_ascii_digit()
+        && bytes[3].is_ascii_digit()
+        && bytes[4].is_ascii_digit()
+        && value[0..2].parse::<u8>().is_ok_and(|hour| hour < 24)
+        && value[3..5].parse::<u8>().is_ok_and(|minute| minute < 60)
+}
+
+fn encode<T: serde::Serialize>(value: &T) -> Result<String, StoreError> {
+    let bytes = canonical_json(value)?;
+    String::from_utf8(bytes)
+        .map_err(|_| StoreError::Integrity("notification preference is not UTF-8".to_owned()))
 }

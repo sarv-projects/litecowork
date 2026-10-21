@@ -21,6 +21,7 @@ mod lead_handoff_boundary;
 mod lead_failover_choice_request;
 mod needs_you;
 mod notification;
+pub use notification::NotificationEventContext;
 mod rich_presentations;
 pub use rich_presentations::SqliteRichPresentationStore;
 #[cfg(test)]
