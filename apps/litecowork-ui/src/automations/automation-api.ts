@@ -126,6 +126,7 @@ export interface AutomationApi {
   createDefinition(input: AutomationDefinitionInput, requestId: string): Promise<Automation>;
   reviseDefinition(automationId: string, expectedVersion: number, input: AutomationDefinitionInput, requestId: string): Promise<Automation>;
   pause(automationId: string, expectedVersion: number, requestId: string): Promise<Automation>;
+  resume(automationId: string, expectedVersion: number, requestId: string): Promise<Automation>;
   disable(automationId: string, expectedVersion: number, requestId: string): Promise<Automation>;
   run(automation: Automation, revision: AutomationRevision, inputs: Record<string, unknown>, requestId: string): Promise<MaterializedAutomationTask>;
   testRun(automation: Automation, revision: AutomationRevision, inputs: Record<string, unknown>, requestId: string): Promise<MaterializedAutomationTestTask>;
@@ -144,7 +145,9 @@ export class AutomationApiError extends Error {
         : status === 404
           ? "The Automation service or selected definition is not available yet."
           : status === 503 || status === 502
-            ? "The local Automation service is unavailable. Start or reconnect the Runtime, then retry."
+            ? code === "DEPENDENCY_UNAVAILABLE"
+              ? "Automation activation needs this Runtime to hold the trigger-host binding. Reconnect or repair the Runtime, then retry."
+              : "The local Automation service is unavailable. Start or reconnect the Runtime, then retry."
             : "The Automation request could not be completed.");
     this.name = "AutomationApiError";
   }
@@ -432,7 +435,7 @@ function decodeOccurrence(value: unknown): AutomationOccurrence {
     }
     return response;
   };
-  const statusRequest = async (automationId: string, action: "pause" | "disable", expectedVersion: number, requestId: string) => {
+  const statusRequest = async (automationId: string, action: "pause" | "resume" | "disable", expectedVersion: number, requestId: string) => {
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new Error("Automation version is invalid.");
     const body = object(await (await request(`/v1/automations/${encodeURIComponent(automationId)}/${action}`, {
       method: "POST",
@@ -542,6 +545,7 @@ function decodeOccurrence(value: unknown): AutomationOccurrence {
       return decodeAutomation(body, workspaceId);
     },
     pause: (automationId, expectedVersion, requestId) => statusRequest(automationId, "pause", expectedVersion, requestId),
+    resume: (automationId, expectedVersion, requestId) => statusRequest(automationId, "resume", expectedVersion, requestId),
     disable: (automationId, expectedVersion, requestId) => statusRequest(automationId, "disable", expectedVersion, requestId),
     async run(automation, revision, inputs, requestId) {
       // Do not pre-reject a disabled/stale snapshot here: a retry after an ambiguous

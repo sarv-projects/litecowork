@@ -247,7 +247,7 @@ pub(crate) async fn automation_request(
                         "routine_revision": routine_revision, "triggers": triggers, "execution_policy": policy,
                         "coworker_ref": coworker_ref }))
             }
-            "pause" | "disable" => {
+            "pause" | "resume" | "disable" => {
                 let id = automation_id.as_deref().ok_or_else(|| "Automation selection is invalid".to_owned())?;
                 let request_id = request_id.as_deref().filter(|value| valid_request_id(value))
                     .ok_or_else(|| "Automation request identity is invalid".to_owned())?;

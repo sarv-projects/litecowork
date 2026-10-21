@@ -213,7 +213,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
     }
   };
 
-  const transition = async (action: "pause" | "disable") => {
+  const transition = async (action: "pause" | "resume" | "disable") => {
     if (!selected || selected.workspace_id !== workspaceId || busy) return;
     const signature = JSON.stringify([workspaceId, selected.automation_id, selected.version, action]);
     let pending = requestIds.current.get(signature);
@@ -227,11 +227,17 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
     try {
       const updated = action === "pause"
         ? await api.pause(selected.automation_id, selected.version, pending.id)
-        : await api.disable(selected.automation_id, selected.version, pending.id);
+        : action === "resume"
+          ? await api.resume(selected.automation_id, selected.version, pending.id)
+          : await api.disable(selected.automation_id, selected.version, pending.id);
       requestIds.current.delete(signature);
       setSelected(updated);
       setItems(current => current.map(item => item.automation_id === updated.automation_id ? updated : item));
-      setMessage(action === "pause" ? "Automation paused. This only changes its stored status; trigger execution is not available in this build." : "Automation disabled. Existing history is retained.");
+      setMessage(action === "pause"
+        ? "Automation paused. This only changes its stored status; trigger execution is not available in this build."
+        : action === "resume"
+          ? "Automation resumed. It runs only while this Runtime holds the trigger-host binding."
+          : "Automation disabled. Existing history is retained.");
     } catch (error) {
       setActionError(errorText(error));
     } finally { setBusy(false); }
@@ -468,6 +474,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
               {confirmDisable && <div className="automation-confirm" role="group" aria-label="Confirm permanent disable"><p>Disable this definition permanently? This keeps the record but cannot be undone from this screen.</p><button type="button" className="quiet-button" disabled={busy} onClick={() => setConfirmDisable(false)}>Keep it</button><button type="button" className="danger-button" disabled={busy} onClick={() => void transition("disable")}>{busy ? "Disabling…" : "Confirm disable"}</button></div>}
               {selected.status !== "DISABLED" && <div className="automation-actions">
                 {selected.status === "PAUSED" && <button className="quiet-button" type="button" disabled={busy || revisionLoading} onClick={() => void startRevision()}>{revisionLoading ? "Loading pinned revision…" : "Edit definition"}</button>}
+                {selected.status === "PAUSED" && <button className="quiet-button" type="button" disabled={busy || revisionLoading} onClick={() => void transition("resume")}>{busy ? "Enabling…" : "Enable definition"}</button>}
                 {selected.status === "ENABLED" && <button className="quiet-button" type="button" disabled={busy} onClick={() => void transition("pause")}>{busy ? "Pausing…" : "Pause definition"}</button>}
                 {!confirmDisable && <button className="danger-button" type="button" disabled={busy} onClick={() => { setActionError(null); setConfirmDisable(true); }}>Disable permanently</button>}
               </div>}

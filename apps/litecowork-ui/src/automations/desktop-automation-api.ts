@@ -26,7 +26,7 @@ function desktopTransport(workspaceId: string): AutomationTransport {
     let automationRevision: number | null = null;
     let inputs: Record<string, unknown> | null = null;
     let expectedVersion: number | null = null;
-    const automationMatch = /^\/v1\/automations(?:\/([^/]+)(?:\/(pause|disable|revisions|run|test-runs|health|occurrences))?)?$/.exec(url.pathname);
+    const automationMatch = /^\/v1\/automations(?:\/([^/]+)(?:\/(pause|resume|disable|revisions|run|test-runs|health|occurrences))?)?$/.exec(url.pathname);
     const routineMatch = /^\/v1\/routines(?:\/([^/]+)(?:\/(revisions|health))?)?$/.exec(url.pathname);
     const coworkerMatch = /^\/v1\/coworkers(?:\/([^/]+))?$/.exec(url.pathname);
     if (automationMatch) {
@@ -38,7 +38,7 @@ function desktopTransport(workspaceId: string): AutomationTransport {
       else if (method === "GET" && automationId !== null && suffix === "revisions") operation = "list_automation_revisions";
       else if (method === "GET" && automationId !== null && suffix === "health") operation = "automation_health";
       else if (method === "GET" && automationId !== null && suffix === "occurrences") operation = "automation_occurrences";
-      else if (method === "POST" && automationId !== null && (suffix === "pause" || suffix === "disable")) operation = suffix;
+      else if (method === "POST" && automationId !== null && (suffix === "pause" || suffix === "resume" || suffix === "disable")) operation = suffix;
       else if (method === "POST" && automationId !== null && (suffix === "run" || suffix === "test-runs")) {
         operation = suffix === "run" ? "run" : "test_run";
         const body = parseObject(init.body);

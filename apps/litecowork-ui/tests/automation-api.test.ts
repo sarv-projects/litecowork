@@ -87,6 +87,25 @@ test("manual Run sends the pinned revision and returns a validated READY Task re
   });
 });
 
+test("resume posts the exact automation version and decodes the enabled record", async () => {
+  const requests: Array<{ path: string; init: RequestInit }> = [];
+  const api = createAutomationApi("workspace-1", async (path, init) => {
+    requests.push({ path, init });
+    return Response.json({ ...automation, status: "ENABLED", version: 4 });
+  });
+
+  const resumed = await api.resume("automation-1", 3, "resume-request-1");
+
+  assert.equal(resumed.status, "ENABLED");
+  assert.equal(resumed.version, 4);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].path, "/v1/automations/automation-1/resume");
+  assert.equal(requests[0].init.method, "POST");
+  const headers = new Headers(requests[0].init.headers);
+  assert.equal(headers.get("Idempotency-Key"), "resume-request-1");
+  assert.equal(headers.get("If-Match"), '"3"');
+});
+
 test("manual Run rejects a receipt that claims planning started instead of READY", async () => {
   const api = createAutomationApi("workspace-1", async () => Response.json(readyReceipt("PLANNING"), { status: 201 }));
   await assert.rejects(

@@ -33,6 +33,7 @@ const ROUTINE: &str = "routine-1";
 const RUN_PATH: &str = "/v1/routines/routine-1/run";
 const AUTOMATION: &str = "automation-1";
 const TEST_RUN_PATH: &str = "/v1/automations/automation-1/test-runs";
+const RESUME_PATH: &str = "/v1/automations/automation-1/resume";
 
 #[derive(Clone)]
 struct RoutineRunTestKeys;
@@ -216,7 +217,7 @@ fn fixture() -> (tempfile::TempDir, SqliteWorkspaceStore, axum::Router) {
     .expect("fixture Automation");
     tx.execute(
         "INSERT INTO automation_revisions(workspace_id, automation_id, revision, routine_id, routine_revision, coworker_id, coworker_revision, triggers_json, execution_policy_json, authored_by_json, created_at)
-         VALUES (?1, ?2, 1, ?3, 1, NULL, NULL, '[]', '{\"placement_preference\":\"AUTO\",\"max_concurrent_occurrences\":1,\"overlap_policy\":\"SKIP\",\"retry_policy\":{\"max_attempts\":1,\"initial_backoff_ms\":100,\"max_backoff_ms\":100,\"multiplier\":1.0,\"jitter\":false,\"retryable_error_codes\":[]},\"budget_ceiling\":null,\"notification_policy\":\"ON_FAILURE\",\"wake_policy\":\"NEVER\"}', '{\"principal_id\":\"owner-local\",\"kind\":\"USER\"}', '2026-10-20T08:00:00Z')",
+         VALUES (?1, ?2, 1, ?3, 1, NULL, NULL, '[{\"trigger_id\":\"manual\",\"placement\":\"AUTO\",\"runtime_id\":null,\"trigger\":{\"kind\":\"MANUAL\"}}]', '{\"placement_preference\":\"AUTO\",\"max_concurrent_occurrences\":1,\"overlap_policy\":\"SKIP\",\"retry_policy\":{\"max_attempts\":1,\"initial_backoff_ms\":100,\"max_backoff_ms\":100,\"multiplier\":1.0,\"jitter\":false,\"retryable_error_codes\":[]},\"budget_ceiling\":null,\"notification_policy\":\"ON_FAILURE\",\"wake_policy\":\"NEVER\"}', '{\"principal_id\":\"owner-local\",\"kind\":\"USER\"}', '2026-10-20T08:00:00Z')",
         params![WORKSPACE, AUTOMATION, ROUTINE],
     )
     .expect("fixture Automation revision");
@@ -694,4 +695,114 @@ async fn automation_test_run_creates_one_ready_task_without_occurrence_or_cursor
     assert_eq!(stored.1, None);
     assert_eq!(stored.2, None);
     assert!(stored.3.is_some());
+}
+
+
+fn status_request(
+    path: &str,
+    workspace_id: &str,
+    idempotency_key: Option<&str>,
+    if_match: Option<&str>,
+    authenticated: bool,
+) -> Request<Body> {
+    let mut builder = Request::post(path).header("x-workspace-id", workspace_id);
+    if let Some(key) = idempotency_key {
+        builder = builder.header("idempotency-key", key);
+    }
+    if let Some(version) = if_match {
+        builder = builder.header("if-match", version);
+    }
+    let mut request = builder.body(Body::empty()).expect("Automation status request");
+    if authenticated {
+        request.extensions_mut().insert(AuthenticatedLocalPeer);
+    }
+    request
+}
+
+#[tokio::test]
+async fn resume_route_enables_a_paused_automation_with_the_local_trigger_host() {
+    let (directory, _store, router) = fixture();
+    let key = "automation-resume-key";
+
+    let (status, _) = send(
+        &router,
+        status_request(RESUME_PATH, WORKSPACE, Some(key), Some("1"), false),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = send(
+        &router,
+        status_request(RESUME_PATH, "another-workspace", Some(key), Some("1"), true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = send(
+        &router,
+        status_request(RESUME_PATH, WORKSPACE, None, Some("1"), true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = send(
+        &router,
+        status_request(RESUME_PATH, WORKSPACE, Some(key), None, true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, first) = send(
+        &router,
+        status_request(RESUME_PATH, WORKSPACE, Some(key), Some("1"), true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["status"], "ENABLED");
+    assert_eq!(first["version"], 2);
+
+    let (status, replay) = send(
+        &router,
+        status_request(RESUME_PATH, WORKSPACE, Some(key), Some("1"), true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replay, first);
+
+    let (status, _) = send(
+        &router,
+        status_request(
+            RESUME_PATH,
+            WORKSPACE,
+            Some("automation-resume-stale-key"),
+            Some("1"),
+            true,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let connection =
+        Connection::open(directory.path().join("state.sqlite3")).expect("state database opens");
+    let (stored_status, stored_version): (String, i64) = connection
+        .query_row(
+            "SELECT status, version FROM automations WHERE automation_id = 'automation-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("stored Automation");
+    assert_eq!(stored_status, "ENABLED");
+    assert_eq!(stored_version, 2);
+    let cursor_trigger: String = connection
+        .query_row(
+            "SELECT trigger_id FROM automation_cursors WHERE workspace_id = 'routine-run-route-workspace'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the enabled Manual trigger is registered to this host");
+    assert_eq!(cursor_trigger, "manual");
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM automation_occurrences WHERE workspace_id = 'routine-run-route-workspace'"
+        ),
+        0
+    );
 }

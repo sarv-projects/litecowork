@@ -57,6 +57,10 @@ pub(super) fn router() -> Router<ApiState> {
             post(pause_automation),
         )
         .route(
+            "/v1/automations/{automation_id}/resume",
+            post(resume_automation),
+        )
+        .route(
             "/v1/automations/{automation_id}/disable",
             post(disable_automation),
         )
@@ -1013,6 +1017,14 @@ async fn pause_automation(
     Path(id): Path<String>,
 ) -> Result<Response, Response> {
     change_status(&state, &headers, id, AutomationStatus::Paused).await
+}
+
+async fn resume_automation(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Response, Response> {
+    change_status(&state, &headers, id, AutomationStatus::Enabled).await
 }
 
 async fn disable_automation(
