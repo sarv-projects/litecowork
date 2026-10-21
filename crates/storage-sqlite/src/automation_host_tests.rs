@@ -870,6 +870,176 @@ fn a_repeated_settlement_of_the_same_slot_never_creates_a_second_task() {
 }
 
 #[test]
+fn a_repeated_settlement_replays_before_mutable_automation_checks() {
+    let fixture = enabled_schedule_fixture();
+    let slot = first_slot();
+    let key = slot_identity("trigger-daily", slot);
+    let commit = scheduled_task_commit(
+        "task-automation-1",
+        "occurrence-automation-1",
+        &key,
+        "trigger-daily",
+        slot,
+        1,
+        2,
+    );
+    let first = fixture
+        .store
+        .create_task(commit.clone())
+        .expect("the due slot materializes");
+    coworker_command(
+        &fixture.store,
+        "pause-after-materialization",
+        ResponsibilityCommand::SetAutomationStatus {
+            automation_id: "automation-1".into(),
+            expected_version: 2,
+            status: AutomationStatus::Paused,
+        },
+    )
+    .expect("the owner pauses the Automation after its Task exists");
+
+    // The exact replay is resolved from the committed receipt before the
+    // mutable pinned-definition and host checks run. If admission ran first,
+    // pausing the definition would turn a successful retry into a conflict.
+    let replay = fixture
+        .store
+        .create_task(commit)
+        .expect("the exact replay resolves from its receipt before mutable admission");
+    assert_eq!(first.view.task.task_id, replay.view.task.task_id);
+    assert_eq!(first.event.event_id, replay.event.event_id);
+
+    // A different slot is genuinely new work and is still refused while the
+    // definition is paused.
+    let next_slot = slot + 86_400_000;
+    let blocked = scheduled_task_commit(
+        "task-automation-2",
+        "occurrence-automation-2",
+        &slot_identity("trigger-daily", next_slot),
+        "trigger-daily",
+        next_slot,
+        1,
+        2,
+    );
+    assert!(matches!(
+        fixture.store.create_task(blocked),
+        Err(StoreError::Conflict { .. })
+    ));
+
+    let connection = Connection::open(state_database(&fixture.directory)).unwrap();
+    let (tasks, occurrences): (i64, i64) = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM tasks WHERE automation_id = 'automation-1'), (SELECT COUNT(*) FROM automation_occurrences WHERE automation_id = 'automation-1')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((tasks, occurrences), (1, 1));
+}
+
+#[test]
+fn a_reused_task_request_key_with_a_changed_payload_is_a_conflict() {
+    let fixture = enabled_schedule_fixture();
+    let slot = first_slot();
+    let key = slot_identity("trigger-daily", slot);
+    let commit = scheduled_task_commit(
+        "task-automation-1",
+        "occurrence-automation-1",
+        &key,
+        "trigger-daily",
+        slot,
+        1,
+        2,
+    );
+    let first = fixture
+        .store
+        .create_task(commit.clone())
+        .expect("the due slot materializes");
+
+    let mut changed = commit.clone();
+    changed.request.request_payload["constraints"] =
+        serde_json::json!(["A different instruction after the receipt"]);
+    changed.idempotency_payload = Some(changed.request.request_payload.clone());
+    assert!(matches!(
+        fixture.store.create_task(changed),
+        Err(StoreError::Conflict { .. })
+    ));
+
+    // The conflict never replaces the receipt of the committed request.
+    let replay = fixture
+        .store
+        .create_task(commit)
+        .expect("the original request still replays its committed receipt");
+    assert_eq!(first.view.task.task_id, replay.view.task.task_id);
+
+    let connection = Connection::open(state_database(&fixture.directory)).unwrap();
+    let (tasks, occurrences): (i64, i64) = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM tasks WHERE automation_id = 'automation-1'), (SELECT COUNT(*) FROM automation_occurrences WHERE automation_id = 'automation-1')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((tasks, occurrences), (1, 1));
+}
+
+#[test]
+fn a_failed_materialization_leaves_no_occurrence_or_request_receipt() {
+    let fixture = enabled_schedule_fixture();
+    let slot = first_slot();
+    let key = slot_identity("trigger-daily", slot);
+    fixture
+        .store
+        .create_task(scheduled_task_commit(
+            "task-automation-1",
+            "occurrence-automation-1",
+            &key,
+            "trigger-daily",
+            slot,
+            1,
+            2,
+        ))
+        .expect("the first slot materializes");
+
+    // The occurrence claim runs before the Task insert inside one transaction.
+    // Reusing the materialized Task identity forces the insert to fail after the
+    // claim, so the claim must roll back rather than leave a CLAIMED occurrence
+    // that no Task owns.
+    let next_slot = slot + 86_400_000;
+    let mut collision = scheduled_task_commit(
+        "task-automation-1",
+        "occurrence-collision",
+        &slot_identity("trigger-daily", next_slot),
+        "trigger-daily",
+        next_slot,
+        1,
+        2,
+    );
+    collision.request.request_id = "automation-host:collision-request".into();
+    assert!(fixture.store.create_task(collision).is_err());
+
+    let connection = Connection::open(state_database(&fixture.directory)).unwrap();
+    let (collision_occurrences, tasks, receipts): (i64, i64, i64) = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM automation_occurrences WHERE occurrence_id = 'occurrence-collision'), (SELECT COUNT(*) FROM tasks), (SELECT COUNT(*) FROM request_dedup WHERE request_id = 'automation-host:collision-request')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!((collision_occurrences, tasks, receipts), (0, 1, 0));
+    let (occurrence_status, occurrence_version): (String, i64) = connection
+        .query_row(
+            "SELECT status, version FROM automation_occurrences WHERE occurrence_id = 'occurrence-automation-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        (occurrence_status.as_str(), occurrence_version),
+        ("STARTED", 3)
+    );
+}
+
+#[test]
 fn a_slot_before_the_persisted_cursor_deadline_is_rejected() {
     let fixture = enabled_schedule_fixture();
     // The persisted cursor already names 2026-03-01 as the earliest slot that
