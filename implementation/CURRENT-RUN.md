@@ -1,3 +1,28 @@
+## 2026-10-21 — E09-S05 injected late-failure rollback evidence
+
+- **No new route.** This closes the remaining storage CODE gate without changing the served
+  `/run` path.
+- **Event-insert failure.** A test-only SQLite trigger aborts the `domain_events` insert for
+  `ev-routine-task-routine-atomic` after the Task and TaskSpec inserts. The commit fails and
+  the counts for Task, TaskSpec, `task.created.v1`, origin sequence, and receipt all stay
+  zero.
+- **Receipt-insert failure.** A second trigger aborts the `request_dedup` insert after the
+  Task, TaskSpec, event, and `workspace_origin_sequences` write. The commit fails and all
+  counts stay at the prior committed values.
+- **No poisoned key.** After each trigger is removed, the same commit and request key
+  succeeds normally: one complete aggregate, then two after the second scenario.
+- **Command.** `cargo test --locked --offline --jobs 2 -p storage-sqlite --lib
+  routine_admission_tests::` — 9/9 passed, 36.90 s after cached compile.
+- **Scope note.** The Task aggregate-state blob is written before the transaction; a failed
+  commit can leave an unreferenced content-addressed blob. No Task or receipt record is
+  visible, and blob garbage collection owns that orphan. The test asserts the database
+  boundary, not blob deletion.
+- **Still open (not claimed).** Route-through-UI ResourceRef selection, the packaged Tauri
+  SYSTEM run, and owner USER acceptance. E09-S05 stays `IN_PROGRESS`.
+- **Cleanup/disk.** One worktree, 26 branches, no agent processes. `target` 29 GB, Tauri
+  target 2.6 GB, `/tmp/opencode` 28 KB; 818 GB free. The focused test log is removed after
+  this entry.
+
 ## 2026-10-21 — E09-S05 ResourceRef pin and refusal evidence
 
 - **No new route.** The served `/run` route already passes bounded `routine_inputs` through
