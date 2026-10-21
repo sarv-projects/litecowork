@@ -142,7 +142,7 @@ implementation/epics/E05.md,236,19466,8d314206d68a4a9093a9faa6919bd2075de28a1e25
 implementation/epics/E06.md,186,20974,75cdf18283fdc04c85d62d7b5dc87be9fca085100a75e487ea66e256a1177f63,agent/composer;workflow/recovery;trust/security,True
 implementation/epics/E07.md,302,23489,554c6d69fc2408b4ceecd4bd19f66b67f674c1db26a726fe6e64a9a3a18411f7,agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/epics/E08.md,556,51818,9adeb2ebee42e3264969c5764b05151c3e55f13160099ea4a9aedd313699e9b1,agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security,True
-implementation/epics/E09.md,253,21036,1c07f46f53513aaa4b686e66e37086bb655efe73fc7d6cfa764f96f20dde309d,shell/settings/motion;workflow/recovery;trust/security,True
+implementation/epics/E09.md,255,21213,7fb26d0071bbfe22e12f284321e304e64f6f45a988195556010f62ff4536ba4d,shell/settings/motion;workflow/recovery;trust/security,True
 implementation/epics/E10.md,149,9630,0f43a2360e2432ab2d697c0f4762cbebbdebdfae3fafb0717f086e112792aa37,browser/computer;workflow/recovery;trust/security,True
 implementation/epics/E11.md,98,7973,2e45acbcb389240196dba57e6298d45ad6e9b3d90c4a2602b7e2c6c13d08ebc0,browser/computer;workflow/recovery;trust/security,True
 implementation/epics/E12.md,44,3364,0519a349a2ae7dfa8ae4a2d5ef2552b6be20ac519221143c9e9ac0a5b1329857,workflow/recovery;trust/security,True
@@ -193,9 +193,9 @@ implementation/reviews/E08-S05.md,109,6708,db1adb8cc769834a077a6e1fad82c42fbf0b9
 implementation/reviews/E08-S06.md,169,11134,3b4076bdc8b0e367859c11b1e2c352820c3fbc353eaceb8c8e6048fbe072b98d,agent/composer;browser/computer;rendering;workflow/recovery;trust/security,True
 implementation/reviews/E08-S07.md,134,8332,13920b5203b276d4aed9f106d2b15fe46e3a6f73aaacafe906f71e5daab55b78,shell/settings/motion;rendering,True
 implementation/reviews/E08-S08.md,183,11787,b6bb622b9d28208dee247dced00fb7478b1f5b9ef5de73d289356208cabd8b18,browser/computer;shell/settings/motion;rendering;workflow/recovery,True
-implementation/reviews/E09-S02.md,148,8805,2636b867cd75c7433d1a46076368a25795b7caea256983d866a8a320f205c995,browser/computer;shell/settings/motion;workflow/recovery,True
-implementation/reviews/E09-S03.md,168,8943,4d63b129b41d22ca9cf4e35d981303d295d49c61ebd86e4fa265803173262ec7,shell/settings/motion;workflow/recovery,True
-implementation/reviews/E09-S04.md,112,5181,3fe00a55fe74aa6f7570eb380cddfe5f4de45e1b9cda551dea12c235220158ff,shell/settings/motion;workflow/recovery;trust/security,True
+implementation/reviews/E09-S02.md,160,9031,d6e6bc9fb7e12b7f79463bb2a434163ec58382f48bcea9e7e6bfdff806f7ad1d,browser/computer;shell/settings/motion;rendering;workflow/recovery,True
+implementation/reviews/E09-S03.md,180,9169,9c097445ad024477b805d162b59b7ae5b554c60ffc8ea9b0fe5a606b7f9154b8,shell/settings/motion;rendering;workflow/recovery,True
+implementation/reviews/E09-S04.md,98,5505,935f52fb8d7b31c6346ea8e2b315815f690ac3fba900b4afe7a0ade869a0379a,shell/settings/motion;workflow/recovery;trust/security,True
 implementation/reviews/E09-S05.md,111,6706,b4b5b4ff18ad9ae610b960f8feae6dbaa09cc5ddb7a1ca928b10aa769a20e0ed,shell/settings/motion;workflow/recovery;trust/security,True
 implementation/reviews/E10-S01.md,178,14090,6d9900fd6cab1eedd2153bbb221dd54e8052dc955e8ae28376a992c40299953d,browser/computer;shell/settings/motion;workflow/recovery;trust/security,True
 implementation/reviews/E10-S02.md,156,12143,b2ff1b13ee71dcd9f9f8bbd6cb7cd36d29ccdec948d8cac4b9dd83e2085271fa,browser/computer;workflow/recovery;trust/security,True
