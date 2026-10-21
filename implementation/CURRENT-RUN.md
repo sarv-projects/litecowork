@@ -1,3 +1,19 @@
+## 2026-10-21 — E09-S03 truthful setup-progress checklist
+
+- **UI only.** The Automation detail now derives Review/Test/Enable setup states from the
+  saved revision, pinned Routine status, observed `host_ready`, and whether the current
+  page created a test Task. Missing/archived definitions, disabled state, and an observed
+  missing trigger host are `BLOCKED`; unknown host readiness is an explicit recheck, not a
+  success claim.
+- **No authority.** The checklist is informational only; every action still calls the
+  authenticated route and the server rechecks status, version, host binding, Routine,
+  Coworker, and inputs atomically.
+- **Evidence.** Pure setup-state tests 5/5; full UI `497/497`; `tsc --noEmit`; Vite build.
+- **Still open.** Full rendered/browser interaction evidence and owner USER acceptance;
+  drift repair proposal remains blocked on its review/publication path. E09-S03 stays
+  `IN_PROGRESS`.
+- **Cleanup/disk.** No schema, worktree, branch, or process change; logs removed.
+
 ## 2026-10-21 — E09-S02 owner Automation resume/enable
 
 - **Route.** `POST /v1/automations/{automation_id}/resume` now uses the existing owner
@@ -14,7 +30,7 @@
   enabled claim.
 - **Evidence.** Real-router resume test 1/1 (401/403/400, 200 ENABLED v2, exact replay,
   409 stale version, Manual cursor registered, zero occurrences); UI API 13/13; full UI
-  `492/492`; Tauri bridge 4/4; full daemon `524/524` (1 ignored); Vite build; tsc.
+  `497/497`; Tauri bridge 4/4; full daemon `524/524` (1 ignored); Vite build; tsc.
 - **Contract/docs.** API and Automation docs now state the resume prerequisites and atomic
   cursor behavior; Experience requires a precise blocker rather than a false enabled state.
 - **Still open (not claimed).** Provider-hosted triggers, trigger-host handoff, sleep/wake,
@@ -59,7 +75,8 @@
   schema-reopen fast-path 1/1; full storage `--lib` 581 passed with one stale migration-list
   assertion (fixed to include v27, focused rerun 1/1); domain-task 138/138; storage-core
   27/27; local-environment-staging 107/107; real-router `automation_test_run_` 1/1; Tauri
-  bridge 4/4; daemon full `523/523` (1 ignored); UI API 12/12; full UI `491/491`;
+  bridge 4/4; daemon full `523/523` (1 ignored); UI API 12/12; setup checklist 5/5;
+  full UI `497/497`;
   `tsc --noEmit`; `api:check`; Vite build; workspace check clean. Architecture validator
   145 events and OpenAPI 225 operations;
   contract audit errors=0; Markdown broken_links=0; `git diff --check` clean.

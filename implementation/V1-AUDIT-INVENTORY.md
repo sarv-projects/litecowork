@@ -3,8 +3,8 @@
 This script read every line of every included first-party Markdown file and checked literal Markdown relative link targets. **Mechanical coverage does not imply that each statement was semantically audited, implemented or runtime-qualified.**
 
 - Files read: 210
-- Lines read: 76012
-- Bytes read: 5320452
+- Lines read: 76032
+- Bytes read: 5321802
 - Broken relative links: 0
 - Excluded: dependency/cache/output worktrees and generated audit reports; CSV inventory includes SHA-256 for every read Markdown source.
 
@@ -120,7 +120,7 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/ARCHITECTURE-COVERAGE.md | 177 | 0a7b922779ae | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/AUDIT.md | 155 | a55491d42453 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/COVERAGE.md | 33 | de61a91ec685 | rendering |
-| implementation/CURRENT-RUN.md | 9629 | c75c0810bc90 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/CURRENT-RUN.md | 9646 | ab24f75b85a2 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/DOC-AUDIT-2026-10-10.md | 173 | ff27abd7e23a | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/NEXT-SESSION-HANDOFF-2026-10-13.md | 316 | 938e000f5933 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/NEXT-SESSION-HANDOFF-2026-10-20.md | 149 | 2bf8dbc19b03 | browser/computer;rendering;workflow/recovery;trust/security |
@@ -155,7 +155,7 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/epics/E06.md | 186 | 75cdf18283fd | agent/composer;workflow/recovery;trust/security |
 | implementation/epics/E07.md | 302 | 554c6d69fc24 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | implementation/epics/E08.md | 556 | 9adeb2ebee42 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| implementation/epics/E09.md | 298 | 44c801dd2ae0 | shell/settings/motion;workflow/recovery;trust/security |
+| implementation/epics/E09.md | 299 | bf87cd2de19a | shell/settings/motion;workflow/recovery;trust/security |
 | implementation/epics/E10.md | 149 | 0f43a2360e24 | browser/computer;workflow/recovery;trust/security |
 | implementation/epics/E11.md | 98 | 2e45acbcb389 | browser/computer;workflow/recovery;trust/security |
 | implementation/epics/E12.md | 44 | 0519a349a2ae | workflow/recovery;trust/security |
@@ -206,8 +206,8 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/reviews/E08-S06.md | 169 | 3b4076bdc8b0 | agent/composer;browser/computer;rendering;workflow/recovery;trust/security |
 | implementation/reviews/E08-S07.md | 134 | 13920b5203b2 | shell/settings/motion;rendering |
 | implementation/reviews/E08-S08.md | 183 | b6bb622b9d28 | browser/computer;shell/settings/motion;rendering;workflow/recovery |
-| implementation/reviews/E09-S02.md | 218 | 722a435f9dbe | browser/computer;shell/settings/motion;rendering;workflow/recovery |
-| implementation/reviews/E09-S03.md | 210 | 77a6bfbbee69 | shell/settings/motion;rendering;workflow/recovery |
+| implementation/reviews/E09-S02.md | 218 | 3e71aa27eed1 | browser/computer;shell/settings/motion;rendering;workflow/recovery |
+| implementation/reviews/E09-S03.md | 212 | 7a2b40f474e6 | shell/settings/motion;rendering;workflow/recovery |
 | implementation/reviews/E09-S04.md | 209 | 13a7d695fbf0 | shell/settings/motion;workflow/recovery;trust/security |
 | implementation/reviews/E09-S05.md | 200 | 372479ef30ce | shell/settings/motion;workflow/recovery;trust/security |
 | implementation/reviews/E10-S01.md | 178 | 6d9900fd6cab | browser/computer;shell/settings/motion;workflow/recovery;trust/security |
