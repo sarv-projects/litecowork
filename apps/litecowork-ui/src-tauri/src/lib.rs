@@ -32,6 +32,7 @@ mod delegation_profile_bridge;
 mod delegation_profile_write_bridge;
 mod goal_bridge;
 mod needs_you_bridge;
+mod notification_bridge;
 mod user_request_bridge;
 mod presentation_bridge;
 mod resource_location_bridge;
@@ -5447,6 +5448,7 @@ pub fn run() {
             delegation_profile_write_bridge::disable_delegation_profile,
             delegation_profile_write_bridge::archive_delegation_profile,
             goal_bridge::goal_request,
+            notification_bridge::notification_request,
             suggestions_bridge::list_suggestions,
             suggestions_bridge::suggestion_owner_action,
             suggestions_bridge::accept_suggestion_task,
