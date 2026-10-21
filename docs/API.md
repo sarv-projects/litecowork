@@ -669,8 +669,14 @@ field is invalid, so a revision explicitly preserves, changes, or clears its Cow
 The daemon rechecks the referenced Coworker revision and Workspace in the same write
 boundary as the Automation revision. Creation persists `PAUSED`; revision requires the current Automation to be
 `PAUSED` and preserves that state. Revising an `ENABLED` Automation returns
-`AUTOMATION_NOT_PAUSED` (409), and a `DISABLED` Automation remains terminal. This route does not expose Automation resume;
-manual occurrence runs and exact-revision test runs use their separate routes.
+`AUTOMATION_NOT_PAUSED` (409), and a `DISABLED` Automation remains terminal. Resume is
+`POST /v1/automations/{id}/resume` with the selected Workspace, `Idempotency-Key`, and
+`If-Match` version. It requires a `PAUSED` Automation, an active local `TRIGGER_HOST`
+Workspace binding, an active pinned Routine/Coworker, and locally reconcilable Manual or
+Schedule triggers. It atomically records `ENABLED` and registers the exact trigger-host
+cursor ownership; an exact retry replays the committed response. A disabled Automation
+cannot resume. Manual occurrence runs and exact-revision test runs use their separate
+routes.
 
 The local trigger host owns recurring schedule settlement. `POST /v1/automations/host/settle`
 is an authenticated, selected-Workspace command that requires the local Runtime to hold an

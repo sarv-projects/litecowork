@@ -339,6 +339,14 @@ never-enabled PAUSED Automation has no recurring cursor and is not implicitly ac
 `STARTED` means the occurrence and READY Task link were committed; it does not claim that
 planning, agent execution, or uninterrupted Task work has started.
 
+`POST /v1/automations/{id}/resume` changes one `PAUSED` Automation to `ENABLED` under the
+same owner and expected-version rules. It requires an active local `TRIGGER_HOST` Workspace
+binding, an active current pinned Routine (and Coworker, when pinned), and only locally
+reconcilable Manual or Schedule triggers. The status change and exact trigger-host cursor
+registration commit atomically, and an exact retry replays the receipt. `DISABLED` is
+terminal. Enabling does not run existing definitions until their due or explicit triggers
+fire.
+
 Canonical encoding is ASCII prefix `LiteCowork/AutomationOccurrence/v2`, NUL, then each
 ordered UTF-8 field as a four-byte unsigned big-endian byte length and bytes. Hash the
 complete byte sequence with SHA-256. Fields:

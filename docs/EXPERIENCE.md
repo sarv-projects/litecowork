@@ -519,6 +519,9 @@ no ManualTrigger; it uses the same bounded inputs, creates one ordinary READY Ta
 explicit test provenance and the exact Automation/Routine pins, and creates no occurrence
 or cursor. It is available while the definition is PAUSED or ENABLED and is refused when
 DISABLED; the UI says plainly that the test Task performs real work and is not a dry run.
+`Enable definition` is offered for a PAUSED Automation and requires this Runtime to hold
+the trigger-host binding, an active pinned Routine/Coworker, and locally reconcilable
+triggers; otherwise the UI reports the precise blocker instead of claiming it is enabled.
 
 ## Discover
 

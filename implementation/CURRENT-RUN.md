@@ -1,3 +1,28 @@
+## 2026-10-21 — E09-S02 owner Automation resume/enable
+
+- **Route.** `POST /v1/automations/{automation_id}/resume` now uses the existing owner
+  status command with `Idempotency-Key` and `If-Match`. It accepts only a `PAUSED`
+  Automation and requires an active local `TRIGGER_HOST` Workspace binding, an active
+  pinned Routine/Coworker, and locally reconcilable Manual or Schedule triggers.
+- **Atomic effect.** The status transition and exact trigger-host cursor registration
+  commit in one transaction. Enabling a Manual trigger registers its host-owned cursor but
+  creates no occurrence; Schedule ownership becomes active. Exact retry replays the
+  committed response; stale versions conflict; `DISABLED` remains terminal.
+- **Desktop.** The Automation detail exposes `Enable definition` for a paused Automation.
+  The API uses `/resume` with the exact version, the Tauri bridge accepts the finite
+  `resume` operation, and a host/reconciliation blocker is reported instead of a false
+  enabled claim.
+- **Evidence.** Real-router resume test 1/1 (401/403/400, 200 ENABLED v2, exact replay,
+  409 stale version, Manual cursor registered, zero occurrences); UI API 13/13; full UI
+  `492/492`; Tauri bridge 4/4; full daemon `524/524` (1 ignored); Vite build; tsc.
+- **Contract/docs.** API and Automation docs now state the resume prerequisites and atomic
+  cursor behavior; Experience requires a precise blocker rather than a false enabled state.
+- **Still open (not claimed).** Provider-hosted triggers, trigger-host handoff, sleep/wake,
+  packaged SYSTEM/USER acceptance. E09-S02 stays `IN_PROGRESS`.
+- **Cleanup/disk.** No schema, worktree, branch, or agent process change; temporary logs
+  removed after verification. `target` 29 GB, Tauri target 4.7 GB, `/tmp/opencode` 20 KB;
+  815 GB free.
+
 ## 2026-10-21 — E09-S03 exact-revision Automation test run
 
 - **Owner decision recorded.** The nullable `tasks.automation_test_run_id` plus
