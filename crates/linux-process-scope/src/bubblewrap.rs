@@ -365,13 +365,6 @@ fn arg(value: impl Into<OsString>) -> OsString {
     value.into()
 }
 
-/// Runtime capability probe. The user-visible result must remain unavailable unless a
-/// separate Environment integration also proves output limits, egress, authority, and
-/// durable recovery.
-pub fn bubblewrap_binary_is_trusted(path: &Path) -> bool {
-    trusted_bubblewrap(path).is_ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

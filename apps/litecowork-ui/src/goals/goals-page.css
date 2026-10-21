@@ -86,8 +86,9 @@
 .goal-link-picker li strong { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; }
 .goal-link-picker li small { color: var(--color-text-subtle); font-size: 10px; }
 .goal-editor-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 3px; }
-.goal-spinner { width: 20px; height: 20px; margin: auto; border: 2px solid var(--lc-neutral-200); border-top-color: var(--color-primary); border-radius: 50%; animation: goal-spin .8s linear infinite; }
-@keyframes goal-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .goal-spinner { animation: none; border-color: var(--color-primary); } }
+/* MOTION.md: indeterminate work is a static label with an accessible busy state,
+   never a decorative looping animation. */
+.goal-busy-mark { display: inline-block; width: 10px; height: 10px; margin-bottom: 10px; border: 2px solid var(--color-primary); border-radius: 50%; }
+@media (prefers-reduced-motion: reduce) { .goal-busy-mark { border-color: var(--color-primary); } }
 @media (max-width: 860px) { .goals-page { padding: 28px 20px 48px; } .goals-layout { grid-template-columns: 1fr; } .goals-roster ul { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); } }
 @media (max-width: 560px) { .goals-page { padding: 22px 14px 36px; } .goals-heading { flex-direction: column; } .goal-detail-heading { flex-direction: column; } .goal-detail-heading > button { align-self: flex-start; } .goals-roster-item { grid-template-columns: minmax(0, 1fr) auto; } }

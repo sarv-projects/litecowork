@@ -45,3 +45,17 @@ test("lead failover draft validation enforces bounded and internally consistent 
   assert.equal(policyOrder.isValidLeadFailoverDraft({ ...allowed, triggers: [] }, "lead"), false);
   assert.equal(policyOrder.isValidLeadFailoverDraft({ ...allowed, fallback_agent_binding_ids: ["a", "b", "c", "d"] }, "lead"), false);
 });
+
+test("ask mode keeps its ordered fallback choices and never allows an automatic change", () => {
+  // `ASK` presents the ordered fallback list as the owner's choices, so the list is
+  // required even though no automatic lead change is permitted.
+  const ask = {
+    mode: "ASK",
+    triggers: ["AGENT_UNAVAILABLE"],
+    fallback_agent_binding_ids: ["binding-a", "binding-b"],
+    max_lead_changes: 0,
+  };
+  assert.equal(policyOrder.isValidLeadFailoverDraft(ask, "lead"), true);
+  assert.equal(policyOrder.isValidLeadFailoverDraft({ ...ask, fallback_agent_binding_ids: [] }, "lead"), false);
+  assert.equal(policyOrder.isValidLeadFailoverDraft({ ...ask, max_lead_changes: 1 }, "lead"), false);
+});

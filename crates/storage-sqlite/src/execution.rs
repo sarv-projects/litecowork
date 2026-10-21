@@ -11,7 +11,6 @@ use storage_core::{
     StepAttemptAdmissionSnapshot, StepAttemptStore,
 };
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 struct ExpiryStateRefs {
     task: AggregateStateRef,
@@ -37,7 +36,7 @@ impl SqliteStepAttemptStore {
     {
         let (reply, receive) = mpsc::channel();
         self.store.execute_command(
-            Command::ExecutionOperation {
+            Command::Operation {
                 operation: Box::new(move |db| {
                     let _ = reply.send(operation(db));
                 }),

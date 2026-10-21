@@ -23,12 +23,12 @@ fn resource_edge_migration_is_atomic_and_adds_immutable_guards() {
     assert_eq!(rolled_back_trigger, 0);
 
     migrate(&mut connection).expect("apply ResourceEdge migration");
-    verify_migration_record(&connection, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL, true)
+    verify_migration_record(&connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, true)
         .expect("verify migration receipt");
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read current schema version");
-    assert_eq!(version, 25);
+    assert_eq!(version, 26);
 
     for trigger in [
         "resource_edges_immutable_update",

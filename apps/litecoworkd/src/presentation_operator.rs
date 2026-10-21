@@ -3819,9 +3819,42 @@ mod rich_presentation_read_tests {
         assert_eq!(body["items"][0]["linked_items"], json!([]));
     }
 
-    #[test]
-    fn conversation_snapshot_uses_the_same_nondisclosing_owner_boundary() {
+    #[tokio::test]
+    async fn reading_a_presentation_snapshot_journals_no_transient_item() {
         let fixture = fixture();
+        let before = fixture
+            .store
+            .read_workspace_events(WORKSPACE)
+            .expect("the Workspace journal is readable")
+            .len();
+
+        for _ in 0..3 {
+            let response = conversation_presentation_response(
+                &fixture.store,
+                OWNER,
+                RUNTIME,
+                WORKSPACE,
+                "rich-read-conversation",
+                None,
+                50,
+            )
+            .expect("the owner can read the bounded snapshot");
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        let after = fixture
+            .store
+            .read_workspace_events(WORKSPACE)
+            .expect("the Workspace journal is readable")
+            .len();
+        assert_eq!(
+            before, after,
+            "a transient presentation read must not append a domain event"
+        );
+    }
+
+    #[test]
+    fn conversation_snapshot_uses_the_same_nondisclosing_owner_boundary() {        let fixture = fixture();
         let denied = conversation_presentation_response(
             &fixture.store,
             "foreign-principal",

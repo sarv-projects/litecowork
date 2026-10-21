@@ -385,7 +385,7 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
         </li>)}</ul>
       </section>}
       {!workspaceId && <section className="goal-state"><h2>Select a Workspace</h2><p>Goals belong to a Workspace and are only shown after one is selected.</p></section>}
-      {workspaceId && loading && <section className="goal-state" role="status"><span className="goal-spinner" aria-hidden="true" /><p>Loading Goals…</p></section>}
+      {workspaceId && loading && <section className="goal-state" role="status" aria-busy="true"><span className="goal-busy-mark" aria-hidden="true" /><p>Loading Goals…</p></section>}
       {workspaceId && !loading && listFailure && <section className="goal-state goal-state-error" role="alert"><h2>Goals couldn’t be loaded</h2><p>{listFailure}</p><button className="goal-secondary-action" type="button" onClick={retryLoad}>Reload Goals</button></section>}
       {workspaceId && !loading && !listFailure && items.length === 0 && mode !== "create" && (
         <section className="goal-state"><div className="goal-empty-mark" aria-hidden="true">◎</div><h2>No Goals yet</h2><p>Add a Goal to describe what you want to achieve. It organizes related work; it never starts Tasks by itself.</p><button className="goal-primary-action" type="button" onClick={beginCreate}>Create your first Goal</button></section>
@@ -402,7 +402,7 @@ export function GoalsPage({ api, workspaceId, coworkerIds = [], onOpenTask }: Pr
           <section className="goal-detail" aria-label={mode === "create" ? "Create Goal" : mode === "edit" ? "Edit Goal" : "Goal details"} aria-busy={detailLoading || busy}>
             {mode === "create" || mode === "edit" ? (
               <GoalEditor mode={mode} draft={draft!} coworkerIds={coworkerIds} taskOptions={taskOptions} artifactOptions={artifactOptions} catalogBusy={catalogBusy} catalogFailure={catalogFailure} hasMoreCatalog={Boolean(taskCursor || artifactCursor)} onLoadMoreCatalog={() => void loadRelatedCatalog(true)} busy={busy} message={message} failure={failure} onChange={setDraft} onSave={() => void save()} onCancel={cancelEdit} />
-            ) : detailLoading ? <div className="goal-detail-loading"><span className="goal-spinner" aria-hidden="true" /><p>Loading Goal…</p></div> : selected ? <>
+            ) : detailLoading ? <div className="goal-detail-loading" role="status" aria-busy="true"><span className="goal-busy-mark" aria-hidden="true" /><p>Loading Goal…</p></div> : selected ? <>
               <div className="goal-detail-heading"><div><span className={statusClass(selected.status)}>{STATUS_LABEL[selected.status]}</span><h2>{selected.revision.objective}</h2><p>Updated {new Date(selected.updated_at).toLocaleString()}</p></div>
                 {selected.status !== "ARCHIVED" && <button className="goal-secondary-action" type="button" disabled={busy} onClick={beginEdit}>Edit Goal</button>}
               </div>

@@ -1607,19 +1607,21 @@ mod tests {
 
     #[test]
     fn consequential_operation_requires_approval_and_never_becomes_allow() {
-        let (engine, mut request, mut context) = fixture();
-        request.operation = OperationId::from("external.message.send");
-        request.effect_id = Some(EffectId::from("effect-1"));
-        context.operation = request.operation.clone();
-        context.effect_id = request.effect_id.clone();
-        context.effect_proposed = true;
-        context
-            .grant_allowed_operations
-            .push(request.operation.clone());
-        request.request_digest = context.digest_for(&request);
-        context.request_digest = request.request_digest.clone();
+        // A proposed Effect is only admissible inside an admitted Attempt scope:
+        // Conversation- and planning-scoped grants are read-only, so a request that
+        // attaches an Effect outside `ATTEMPT_EXECUTION` is denied earlier with
+        // `EffectRequiresAttemptScope` (see
+        // `conversation_scope_cannot_attach_an_effect`). Evaluating the policy
+        // disposition therefore has to happen in the scope where the Effect is
+        // legal, otherwise the scope gate answers before the disposition does.
+        let (engine, request, context) = task_attempt_fixture();
 
         let result = engine.evaluate(&request, &context);
+        assert_ne!(
+            result.decision(),
+            DecisionKind::Allow,
+            "a consequential operation must never become an allow"
+        );
         assert_eq!(result.decision(), DecisionKind::RequireApproval);
         assert_eq!(result.reason_code(), ReasonCode::ApprovalRequired);
         assert_eq!(result.effect_id(), request.effect_id.as_ref());

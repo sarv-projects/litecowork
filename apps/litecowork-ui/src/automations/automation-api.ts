@@ -1,3 +1,5 @@
+import { validIdempotencyKey } from "../api/idempotency-key.ts";
+
 export type AutomationStatus = "ENABLED" | "PAUSED" | "DISABLED";
 
 export type Automation = {
@@ -31,6 +33,45 @@ export type MaterializedAutomationTask = {
   occurrence_id: string;
 };
 export type CoworkerRevisionRef = { coworker_id: string; revision: number };
+export type DriftState = "HEALTHY" | "WARNING" | "DRIFTED" | "UNKNOWN";
+export type DependencyHealthState = "HEALTHY" | "DEGRADED" | "UNHEALTHY" | "UNKNOWN";
+export type DependencyHealth = {
+  subject_ref: Record<string, unknown>; state: DependencyHealthState;
+  observed_at: string | null; reason_code: string | null;
+};
+export type ObservedCost = { quantity: number; unit: string; currency: string | null; confidence: "EXACT" | "ESTIMATED" };
+export type RoutineHealth = {
+  routine_id: string; current_revision: number;
+  last_run_at: string | null; last_success_at: string | null;
+  recent_success_rate: number | null; sample_size: number; average_duration_ms: number | null;
+  observed_costs: ObservedCost[]; required_dependency_health: DependencyHealth[];
+  drift_state: DriftState; drift_evidence_refs: string[];
+};
+export type OccurrenceCounts = {
+  pending: number; claimed: number; waiting_dependency: number; started: number;
+  completed: number; skipped: number; failed: number;
+};
+export type AutomationHealth = {
+  automation_id: string; current_revision: number; status: AutomationStatus;
+  host_ready: boolean; blockers: string[];
+  next_occurrence_at: string | null; last_occurrence_at: string | null;
+  nonterminal_occurrences: number; occurrence_counts: OccurrenceCounts;
+  routine_health: RoutineHealth; drift_state: DriftState; drift_evidence_refs: string[];
+};
+export type AutomationOccurrence = {
+  occurrence_id: string; automation_id: string; automation_revision: number;
+  routine_id: string; routine_revision: number; trigger_id: string;
+  trigger_host_runtime_id: string; occurrence_key: string;
+  version: number; claim_epoch: number; claim_expires_at: string | null;
+  status: "PENDING" | "CLAIMED" | "WAITING_DEPENDENCY" | "STARTED" | "COMPLETED" | "SKIPPED" | "FAILED";
+  task_id: string | null; scheduled_for: string | null;
+  covered_misfire_range: { from: string; to: string; count: number } | null;
+  trigger_input_ref: Record<string, unknown> | null;
+  trigger_payload_digest: string | null;
+  blockers: Record<string, unknown>[];
+  created_at: string; updated_at: string;
+};
+export type AutomationOccurrencePage = { items: AutomationOccurrence[]; next_cursor: string | null };
 export type AutomationCoworker = {
   coworker_id: string; workspace_id: string; current_revision: number; name: string;
   status: "ACTIVE" | "PAUSED" | "ARCHIVED";
@@ -58,10 +99,6 @@ export type AutomationDefinitionInput = {
 };
 export type AutomationTransport = (path: string, init: RequestInit) => Promise<Response>;
 
-function validIdempotencyKey(value: string): boolean {
-  return /^[\x21-\x7e]{1,200}$/.test(value);
-}
-
 export interface AutomationApi {
   list(cursor?: string, signal?: AbortSignal): Promise<AutomationPage>;
   get(automationId: string, signal?: AbortSignal): Promise<Automation>;
@@ -73,6 +110,8 @@ export interface AutomationApi {
   listCoworkers(cursor?: string, signal?: AbortSignal): Promise<{ items: AutomationCoworker[]; next_cursor: string | null }>;
   getCoworker(coworkerId: string, signal?: AbortSignal): Promise<AutomationCoworker>;
   listRevisions(automationId: string, cursor?: string, signal?: AbortSignal): Promise<RevisionPage<AutomationRevision>>;
+  getHealth(automationId: string, signal?: AbortSignal): Promise<AutomationHealth>;
+  listOccurrences(automationId: string, signal?: AbortSignal): Promise<AutomationOccurrencePage>;
   createDefinition(input: AutomationDefinitionInput, requestId: string): Promise<Automation>;
   reviseDefinition(automationId: string, expectedVersion: number, input: AutomationDefinitionInput, requestId: string): Promise<Automation>;
   pause(automationId: string, expectedVersion: number, requestId: string): Promise<Automation>;
@@ -223,8 +262,117 @@ function decodeAutomationRevision(value: unknown, automationId: string): Automat
   };
 }
 
-/** Finite Workspace-scoped contract for the currently available Automation routes. */
-export function createAutomationApi(workspaceId: string, transport: AutomationTransport): AutomationApi {
+function optionalText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") throw new Error("Invalid Automation API response.");
+  return value;
+}
+function nonNegativeInteger(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error("Invalid Automation API response.");
+  return value;
+}
+function optionalRate(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) throw new Error("Invalid Automation API response.");
+  return value;
+}
+function driftState(value: unknown): DriftState {
+  const state = text(value) as DriftState;
+  if (state !== "HEALTHY" && state !== "WARNING" && state !== "DRIFTED" && state !== "UNKNOWN") {
+    throw new Error("Invalid Automation drift state.");
+  }
+  return state;
+}
+function decodeDependencyHealth(value: unknown): DependencyHealth {
+  const row = object(value);
+  const state = text(row.state) as DependencyHealthState;
+  if (state !== "HEALTHY" && state !== "DEGRADED" && state !== "UNHEALTHY" && state !== "UNKNOWN") {
+    throw new Error("Invalid Automation dependency health.");
+  }
+  return {
+    subject_ref: object(row.subject_ref), state,
+    observed_at: optionalText(row.observed_at), reason_code: optionalText(row.reason_code),
+  };
+}
+function decodeRoutineHealth(value: unknown): RoutineHealth {
+  const row = object(value);
+  if (!Array.isArray(row.observed_costs) || !Array.isArray(row.required_dependency_health)
+    || !Array.isArray(row.drift_evidence_refs)) throw new Error("Invalid Automation API response.");
+  return {
+    routine_id: text(row.routine_id), current_revision: positiveInteger(row.current_revision),
+    last_run_at: optionalText(row.last_run_at), last_success_at: optionalText(row.last_success_at),
+    recent_success_rate: optionalRate(row.recent_success_rate), sample_size: nonNegativeInteger(row.sample_size),
+    average_duration_ms: row.average_duration_ms === null || row.average_duration_ms === undefined
+      ? null : nonNegativeInteger(row.average_duration_ms),
+    observed_costs: row.observed_costs.map(item => {
+      const cost = object(item);
+      const confidence = text(cost.confidence);
+      if (confidence !== "EXACT" && confidence !== "ESTIMATED") throw new Error("Invalid Automation observed cost.");
+      return {
+        quantity: typeof cost.quantity === "number" && Number.isFinite(cost.quantity) ? cost.quantity : 0,
+        unit: text(cost.unit), currency: optionalText(cost.currency), confidence,
+      };
+    }),
+    required_dependency_health: row.required_dependency_health.map(decodeDependencyHealth),
+    drift_state: driftState(row.drift_state),
+    drift_evidence_refs: row.drift_evidence_refs.map(item => text(item)),
+  };
+}
+function decodeAutomationHealth(value: unknown, automationId: string): AutomationHealth {
+  const row = object(value);
+  if (text(row.automation_id) !== automationId) throw new Error("Automation health belongs to a different definition.");
+  const status = text(row.status) as AutomationStatus;
+  if (status !== "ENABLED" && status !== "PAUSED" && status !== "DISABLED") throw new Error("Invalid Automation status.");
+  if (typeof row.host_ready !== "boolean") throw new Error("Invalid Automation API response.");
+  if (!Array.isArray(row.blockers) || !Array.isArray(row.drift_evidence_refs)) throw new Error("Invalid Automation API response.");
+  const counts = object(row.occurrence_counts);
+  const routineHealth = decodeRoutineHealth(row.routine_health);
+  return {
+    automation_id: automationId, current_revision: positiveInteger(row.current_revision), status,
+    host_ready: row.host_ready, blockers: row.blockers.map(item => text(item)),
+    next_occurrence_at: optionalText(row.next_occurrence_at), last_occurrence_at: optionalText(row.last_occurrence_at),
+    nonterminal_occurrences: nonNegativeInteger(row.nonterminal_occurrences),
+    occurrence_counts: {
+      pending: nonNegativeInteger(counts.pending), claimed: nonNegativeInteger(counts.claimed),
+      waiting_dependency: nonNegativeInteger(counts.waiting_dependency), started: nonNegativeInteger(counts.started),
+      completed: nonNegativeInteger(counts.completed), skipped: nonNegativeInteger(counts.skipped),
+      failed: nonNegativeInteger(counts.failed),
+    },
+    routine_health: routineHealth,
+    drift_state: driftState(row.drift_state),
+    drift_evidence_refs: row.drift_evidence_refs.map(item => text(item)),
+  };
+}
+function decodeOccurrence(value: unknown): AutomationOccurrence {
+  const row = object(value);
+  const status = text(row.status) as AutomationOccurrence["status"];
+  if (!["PENDING", "CLAIMED", "WAITING_DEPENDENCY", "STARTED", "COMPLETED", "SKIPPED", "FAILED"].includes(status)) {
+    throw new Error("Invalid Automation occurrence status.");
+  }
+  if (!/^[a-f0-9]{64}$/.test(text(row.occurrence_key))) {
+    throw new Error("Invalid Automation occurrence key.");
+  }
+  const covered = row.covered_misfire_range == null ? null : object(row.covered_misfire_range);
+  return {
+    occurrence_id: text(row.occurrence_id), automation_id: text(row.automation_id),
+    automation_revision: positiveInteger(row.automation_revision),
+    routine_id: text(row.routine_id), routine_revision: positiveInteger(row.routine_revision),
+    trigger_id: text(row.trigger_id), trigger_host_runtime_id: text(row.trigger_host_runtime_id),
+    occurrence_key: text(row.occurrence_key),
+    version: positiveInteger(row.version), claim_epoch: nonNegativeInteger(row.claim_epoch),
+    claim_expires_at: optionalText(row.claim_expires_at), status,
+    task_id: optionalText(row.task_id), scheduled_for: optionalText(row.scheduled_for),
+    covered_misfire_range: covered
+      ? { from: text(covered.from), to: text(covered.to), count: positiveInteger(covered.count) }
+      : null,
+    trigger_input_ref: row.trigger_input_ref == null ? null : object(row.trigger_input_ref),
+    trigger_payload_digest: optionalText(row.trigger_payload_digest),
+    blockers: Array.isArray(row.blockers) ? row.blockers.map(item => object(item)) : [],
+    created_at: text(row.created_at), updated_at: text(row.updated_at),
+  };
+}
+
+/** Finite Workspace-scoped contract for the currently available Automation routes. */export function createAutomationApi(workspaceId: string, transport: AutomationTransport): AutomationApi {
   const request = async (path: string, init: RequestInit = {}) => {
     if (!workspaceId) throw new Error("Select a Workspace before loading Automations.");
     const headers = new Headers(init.headers);
@@ -317,6 +465,17 @@ export function createAutomationApi(workspaceId: string, transport: AutomationTr
       const page = decodePage(await (await revisionRequest(automationId, cursor, signal)).json(), value => decodeAutomationRevision(value, automationId));
       if (page.items.some(item => item.automation_id !== automationId)) throw new Error("Automation revision page identity mismatch.");
       return page;
+    },
+    async getHealth(automationId, signal) {
+      const body = object(await (await request(`/v1/automations/${encodeURIComponent(automationId)}/health`, { signal })).json());
+      return decodeAutomationHealth(body, automationId);
+    },
+    async listOccurrences(automationId, signal) {
+      const body = object(await (await request(`/v1/automations/${encodeURIComponent(automationId)}/occurrences?limit=50`, { signal })).json());
+      if (!Array.isArray(body.items)) throw new Error("Invalid Automation occurrence page.");
+      const next = body.next_cursor;
+      if (next !== null && next !== undefined && typeof next !== "string") throw new Error("Invalid Automation occurrence cursor.");
+      return { items: body.items.map(decodeOccurrence), next_cursor: (next as string | null | undefined) ?? null };
     },
     async createDefinition(input, requestId) {
       if (input.triggers.length < 1 || input.triggers.length > 10) throw new Error("Automation trigger count is out of bounds.");

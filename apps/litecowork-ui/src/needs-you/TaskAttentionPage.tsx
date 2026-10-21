@@ -1,10 +1,13 @@
-import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  EMPTY_NEEDS_YOU_MOTION_BASELINE,
   isValidNeedsYouPage,
   mergeNeedsYouPage,
+  nextNeedsYouMotionBaseline,
   taskAttentionLoadReducer,
   type NeedsYouItemView,
+  type NeedsYouMotionBaseline,
   type NeedsYouPage,
   type NeedsYouStatus,
 } from "./task-attention-state";
@@ -133,14 +136,15 @@ export function NeedsYouFilter({ status, onChange }: {
   </fieldset>;
 }
 
-export function NeedsYouItemCard({ item, onOpenTask, onOpenUserRequest, onOpenApproval }: {
+export function NeedsYouItemCard({ item, onOpenTask, onOpenUserRequest, onOpenApproval, entering = false }: {
   item: NeedsYouItemView;
   onOpenTask: (taskId: string) => void;
   onOpenUserRequest: (requestId: string, trigger: HTMLButtonElement) => void;
   onOpenApproval: (approvalId: string, trigger: HTMLButtonElement) => void;
+  entering?: boolean;
 }) {
   const canOpenTask = item.kind === "TASK_BLOCKER" && item.taskId !== null;
-  return <article className="needs-you-card">
+  return <article className={`needs-you-card${entering ? " needs-you-card-entering" : ""}`}>
     <div className="needs-you-card-meta">
       <span className={`needs-you-kind kind-${item.kind.toLowerCase()}`}>{kindLabel(item.kind)}</span>
       <span className={`needs-you-status status-${item.status.toLowerCase()}`}>{item.status === "OPEN" ? "Open" : "Resolved"}</span>
@@ -202,6 +206,8 @@ export function TaskAttentionPage({
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadedWorkspace, setLoadedWorkspace] = useState<string | null>(null);
   const [loadedStatus, setLoadedStatus] = useState<NeedsYouStatus | null>(null);
+  const [enteringItemIds, setEnteringItemIds] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const motionBaseline = useRef<NeedsYouMotionBaseline>(EMPTY_NEEDS_YOU_MOTION_BASELINE);
   const [busy, setBusy] = useState(Boolean(workspaceId));
   const [loadState, dispatchLoadState] = useReducer(taskAttentionLoadReducer, { generation: 0, loadingMore: false });
   const loadingMore = loadState.loadingMore;
@@ -223,6 +229,28 @@ export function TaskAttentionPage({
     paginationGate.current.invalidate(current);
     dispatchLoadState({ type: "invalidate", generation: current });
   }, [workspaceId, status, operatorReady, refreshToken]);
+
+  /** Records which committed items newly appeared, so only a genuinely new card animates. */
+  const recordMotion = useCallback((scopeKey: string, rendered: readonly NeedsYouItemView[]) => {
+    const previous = motionBaseline.current;
+    const motion = nextNeedsYouMotionBaseline(
+      previous,
+      scopeKey,
+      rendered.map((item) => item.itemId),
+    );
+    motionBaseline.current = motion.baseline;
+    if (previous.scopeKey !== scopeKey) {
+      // A new scope renders the current state without replaying a transition.
+      setEnteringItemIds(new Set<string>());
+      return;
+    }
+    // An emphasis already running is not cut short by a refresh that returns the same card.
+    setEnteringItemIds((current) => (
+      motion.entering.length === 0
+        ? current
+        : new Set([...current, ...motion.entering])
+    ));
+  }, []);
 
   useEffect(() => {
     const current = generation.current;
@@ -256,6 +284,7 @@ export function TaskAttentionPage({
       setLoadedWorkspace(workspaceId);
       setLoadedStatus(status);
       setFailure(null);
+      recordMotion(`${workspaceId}|${status}`, page.items);
     }).catch(() => {
       if (!active || generation.current !== current) return;
       setFailure("refresh");
@@ -284,6 +313,7 @@ export function TaskAttentionPage({
       const merged = mergeNeedsYouPage(items, page);
       setItems(merged.items);
       setNextCursor(merged.nextCursor);
+      recordMotion(`${workspaceId}|${status}`, merged.items);
     } catch {
       if (generation.current === current) setFailure("more");
     } finally {
@@ -353,6 +383,7 @@ export function TaskAttentionPage({
       : <ul className="task-attention-list needs-you-list">{visibleItems.map(item => <li key={item.itemId}>
         <NeedsYouItemCard
           item={item}
+          entering={enteringItemIds.has(item.itemId)}
           onOpenTask={onOpenTask}
           onOpenUserRequest={(requestId, trigger) => {
             itemOpener.current = trigger;

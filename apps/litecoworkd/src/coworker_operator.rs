@@ -165,28 +165,6 @@ fn domain_error(error: DomainError) -> Response {
     }
 }
 
-fn authorized_workspace(state: &ApiState, headers: &HeaderMap) -> Result<Workspace, Response> {
-    let workspace_id = selected_workspace(headers)?;
-    let workspace = ensure_workspace_owner(state, &workspace_id)?;
-    let binding = state
-        .store
-        .get_current_local_binding(LocalRuntimeWorkspaceBindingLookup {
-            owner_principal_id: state.principal_id.clone(),
-            workspace_id,
-            runtime_id: state.runtime_id.clone(),
-            runtime_incarnation_id: state.local_incarnation_id.clone(),
-        })
-        .map_err(|_| unavailable())?;
-    if !binding.is_some_and(|binding| binding.status == "ACTIVE") {
-        return Err(operator_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Local Runtime Workspace access is unavailable",
-        ));
-    }
-    Ok(workspace)
-}
-
 fn adapter(state: &ApiState) -> Result<(SqliteCoworkerStore, String), Response> {
     let correlation = new_id("cor").map_err(|_| unavailable())?;
     adapter_with_correlation(state, correlation)

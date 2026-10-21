@@ -1130,6 +1130,40 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/automations/{automationId}/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only health projection of one Automation over persisted facts. It adds the trigger-host readiness, the next and last observed slot, the occurrence counters, and the drift state of the pinned Routine revision to the contracted RoutineHealth projection. A projection never repairs, never re-enables, and never advances a cursor. The absence of an observation is UNKNOWN, never HEALTHY, and a failed Task alone is WARNING, never DRIFTED. */
+        get: operations["getAutomationHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/automations/host/settle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Runs one bounded local trigger-host settlement pass for the selected Workspace. The command requires the local Runtime to hold an ACTIVE TRIGGER_HOST Workspace binding. It settles every due slot of the Automation triggers this Runtime owns, materializes each permitted slot as one ordinary READY Task, records every elapsed slot as a bounded SKIPPED occurrence with a typed reason, and advances the persisted cursor. It creates no Plan, Step, AgentSession, Attempt, lease, Environment, Effect, or capability grant. The route and the supervised trigger-host worker never produce a second occurrence or a second Task for one logical slot, because the occurrence identity is derived from the trigger and the resolved slot instant. */
+        post: operations["settleAutomationTriggers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/automations/{automationId}/pause": {
         parameters: {
             query?: never;
@@ -1961,7 +1995,25 @@ export type paths = {
         };
         get?: never;
         put?: never;
+        /** @description Starts one bounded semantic demonstration capture in a single Environment. Semantic capture requires explicit owner consent. The capture policy caps the duration, the number of recorded steps, and the recorded trace bytes, names the Environment class the capture may run in, and selects what happens when a sensitive region is detected. The capture Environment must be owned by the Task whose workflow is demonstrated, because a SkillProposal always names its source Task. */
         post: operations["startDemonstration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/demonstrations/{demonstrationId}/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Appends one observed semantic step to a running capture. This is the capture-provider path: the observation must come from the qualified capture provider inside this Runtime, and it must name the very Environment the capture runs in. The stored step keeps the semantics of the action and drops the observed value and the pointer hint when the observation lands in a sensitive region; a raw coordinate is never the sole authority for a step. The capture duration, action, and trace-byte caps and the sensitive-region policy are re-checked in the same transaction, and a sensitive-region detection under the PAUSE_ON_DETECTION policy pauses the capture durably there and then. */
+        post: operations["appendDemonstrationAction"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1977,6 +2029,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
+        /** @description Converts one capture session into a draft SkillProposal. The captured procedure is redacted before it is stored; a body that still carries forbidden content is refused and never persisted. The resulting proposal is a DRAFT or REVIEW item that an owner must review: it never enables itself, never activates a Skill, and never installs a package. */
         post: operations["completeDemonstration"];
         delete?: never;
         options?: never;
@@ -1993,6 +2046,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
+        /** @description Pauses one capture session. A paused session records nothing until an explicit owner resume. A capture that detects a sensitive region under the PAUSE_ON_DETECTION policy is paused durably in the same transaction that observed it. */
         post: operations["pauseDemonstration"];
         delete?: never;
         options?: never;
@@ -2009,6 +2063,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
+        /** @description Resumes one paused capture session. Resuming does not relax the capture policy: the duration, action, and trace-byte caps and the sensitive-region policy still apply. */
         post: operations["resumeDemonstration"];
         delete?: never;
         options?: never;
@@ -2025,6 +2080,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
+        /** @description Aborts one capture session. The captured steps are retained but the session never becomes a SkillProposal. A finished session cannot be aborted. */
         post: operations["abortDemonstration"];
         delete?: never;
         options?: never;
@@ -2151,6 +2207,7 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
+        /** @description Authenticated local Workspace owner read. Returns a bounded page of user-facing Discover candidates and the owning provider's truthfulness. A catalog row is a projection, never authority: it never asserts that an entry is installed, authenticated, assigned, or authorized, and it never carries a credential or a provider handle. The LiteSPM package service is not qualified, so package_service_qualified is false and the installable package catalog is empty until that contract is published. The Runtime's observed capability hosts are reported separately as observations, not as installable catalog rows. */
         get: operations["searchDiscover"];
         put?: never;
         post?: never;
@@ -2167,6 +2224,7 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
+        /** @description Authenticated local Workspace owner read. Returns one bounded catalog entry with its bounded operation summaries. The detail never contains a provider tool schema, a provider handle, or a credential. */
         get: operations["describeDiscoverItem"];
         put?: never;
         post?: never;
@@ -2185,6 +2243,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
+        /** @description Requests the connection or installation of one capability. LiteSPM owns package discovery, verification, and installation, and its wire contract is not published, so the command currently reports DEPENDENCY_UNAVAILABLE with reason LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED. It never invents a package endpoint and never claims that a package was installed. */
         post: operations["connectOrInstallCapability"];
         delete?: never;
         options?: never;
@@ -2201,6 +2260,7 @@ export type paths = {
         };
         get?: never;
         put?: never;
+        /** @description Reads the bounded connection health of one capability. The LiteSPM package service is not qualified, so no provider is contacted and the result reports UNKNOWN with the reason; it never fabricates a health value. */
         post: operations["testCapabilityConnection"];
         delete?: never;
         options?: never;
@@ -2421,6 +2481,63 @@ export type paths = {
          * @description METADATA (default) searches display-name/media-type fields. ON_DEMAND_CONTENT scans bounded current managed Resource bytes in memory. INDEXED_CONTENT searches the revision-scoped encrypted local text index using deterministic AND token matching. Neither mode searches ZIP members, rich documents, or persistent WorkspaceRoots; results are not automatically attached to a Task.
          */
         get: operations["searchResources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/capabilities/local-models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only local model inventory observation. Local models are inventory only and there is no global Providers feature; a local model becomes selectable only through an Agent whose AgentModule reports compatibility for that exact model. The operation never probes an endpoint, never accepts an Agent- or document-supplied URL, never returns a credential, and never claims that an engine present on the machine is connected. Until a qualified local provider is registered it reports NOT_CONFIGURED with an empty inventory. */
+        get: operations["getLocalModelAvailability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resources/retrieval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retrieve authorized Resource segments bound to an exact revision
+         * @description Authenticated local Workspace owner read. The request selects the authorized Resource scope; an absent scope means every ACTIVE Resource of the selected Workspace and an explicit empty scope is refused. The response carries segments that name the exact resourceId, resourceRevisionId and contentDigest of the immutable revision they were read from, plus an exact UTF-8 byte locator. A request with no authorized evidence returns status INSUFFICIENT_EVIDENCE with a typed reason and no citation; there is no response that reports a claim without a source reference. The served provider is the deterministic local lexical index over the Core-owned encrypted local text index. It is not semantic retrieval, embeddings, vector recall, or reranking, and it never compares segments produced by a different parser generation. Retrieved content is untrusted data and is never an instruction. The operation appends no event, receipt, Effect, or Artifact and changes no Resource history.
+         */
+        post: operations["groundedRetrieval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/resources/{resourceId}/index-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the owner-visible index state of one managed Resource
+         * @description Authenticated local Workspace owner read. Reports READY, STALE, ABSENT, or NOT_INDEXABLE for the current revision of the Resource. READY means the local index matches the current revision and its content digest. STALE means an index exists for an older revision; the stale projection is never served. ABSENT means the Resource is uploaded but not searchable. The response contains no extracted text, no term token, and no blob digest.
+         */
+        get: operations["getResourceIndexState"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2935,6 +3052,76 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Authenticated local Workspace owner read. Lists the bounded Skill definitions LiteCowork holds for the selected Workspace. A Skill definition is procedural text: listing one is never proof that it is installed, authenticated, granted, or authorized to run. */
+        get: operations["listSkills"];
+        put?: never;
+        /** @description Authenticated local Workspace owner write. Creates one Skill definition and its first immutable revision. The definition is always created as DRAFT: a Skill becomes loadable only through a scoped CapabilityGrant bound to the exact capability reference and the exact manifest digest, so no API path can promote a definition into the loadable state. The request body never carries a status. */
+        post: operations["createSkill"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/skills/{skillId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Authenticated local Workspace owner read. Returns one Skill definition and its current immutable revision. The instruction content is never inlined: the revision names the Resource revision that holds it. */
+        get: operations["getSkill"];
+        /** @description Authenticated local Workspace owner write. Appends one new immutable revision to an existing Skill definition. A revision may only narrow the lifecycle (ACTIVE to SUSPENDED or REVOKED); it can never widen it. The new revision has its own manifest digest, so a CapabilityGrant that pinned the previous revision stops matching and the Skill is no longer loadable until it is reviewed again. */
+        put: operations["reviseSkill"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-apps/frames": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Issues one host-owned MCP App frame and its sandbox contract. The App's server identity, resource URI, and content digest are resolved from the MCP capability host this Runtime already observes, never from the request body, so a client cannot claim another server's identity. The frame origin is host-assigned, the iframe sandbox never carries allow-same-origin, forms, popups, downloads, or top navigation, and the Content-Security-Policy applies default-src 'none' with only the exact declared domains. An absent or invalid declaration blocks every external connection and resource; the host never invents a fallback domain. The response carries the host-issued per-frame nonce that the desktop injects into the isolated frame. This route issues the frame contract only: it fetches no App bytes and dispatches no tool call. */
+        post: operations["issueMcpAppFrame"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/mcp-apps/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Validates one App bridge message against the host-issued frame. The frame identity, the exact origin, the host-issued nonce, the bridge method allowlist, the payload size bound, and the credential check are all enforced before anything is accepted. A forged message, a CORS escape, a replayed nonce, an unknown method, or a payload that carries a credential is refused. The route validates and normalizes the message only; a tool call is dispatched solely through the CapabilityInvocation path with its own grant, Effect, and audit. */
+        post: operations["validateMcpAppMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/skill-proposals": {
         parameters: {
             query?: never;
@@ -3278,12 +3465,6 @@ export type components = {
         /** @description Bounded inline JSON Schema 2020-12 schema; remote references are forbidden. */
         JsonSchema: {
             [key: string]: unknown;
-        };
-        Choice: {
-            choice_id: string;
-            label: string;
-            description?: string;
-            value: components["schemas"]["JsonValue"];
         };
         QuietHours: {
             /** @description IANA time zone identifier */
@@ -4472,10 +4653,61 @@ export type components = {
             compatibility_reason?: string | null;
             /** @default false */
             requires_user_action: boolean;
+            /**
+             * @description The user-visible availability of the entry. NOT_QUALIFIED means the owning provider is not qualified, so the entry cannot be used at all.
+             * @enum {string}
+             */
+            availability: "AVAILABLE" | "NEEDS_AUTH" | "UNSUPPORTED" | "ERROR" | "NOT_QUALIFIED";
+            /** @description Stable reason code for the reported availability. */
+            availability_reason: string;
+            /** @enum {string} */
+            install_state: "NOT_INSTALLED" | "INSTALLED" | "INSTALL_PENDING" | "UNKNOWN";
+            /** @enum {string} */
+            auth_state: "NOT_REQUIRED" | "REQUIRED" | "AUTHENTICATED" | "UNKNOWN";
+            /** @enum {string} */
+            source: "LITE_SPM_PACKAGE" | "MCP_SERVER" | "LITECOWORK_LOCAL";
+            publisher?: string | null;
+            version?: string | null;
+            digest?: string | null;
+            /** @description Names of the grants the entry would need. Names only, never authority. */
+            grants_required: string[];
+            /**
+             * @description Always false. A catalog entry is never an authorization.
+             * @constant
+             */
+            authoritative: false;
+        };
+        DiscoverProviderStatus: {
+            /**
+             * @description Always false until the LiteSPM package contract is published and qualified.
+             * @constant
+             */
+            package_service_qualified: false;
+            reason_code: string;
+            message: string;
         };
         DiscoverItemPage: {
             items: components["schemas"]["DiscoverItem"][];
             next_cursor?: string | null;
+            provider_status: components["schemas"]["DiscoverProviderStatus"];
+            /** @description The Runtime's observed capability hosts. Observations, not installable catalog rows. */
+            runtime_capabilities: components["schemas"]["DiscoverItem"][];
+        };
+        DiscoverItemDetail: {
+            item: components["schemas"]["DiscoverItem"];
+            /** @description Bounded operation summaries. Never a full provider tool schema. */
+            capabilities: components["schemas"]["DiscoverCapabilitySummary"][];
+            provider_note?: string | null;
+        };
+        DiscoverCapabilitySummary: {
+            capability_id: string;
+            display_name: string;
+            /**
+             * @description The provider-declared class only. TrustService keeps its own classification.
+             * @enum {string}
+             */
+            operation_class: "READ" | "WRITE" | "SEND" | "DELETE" | "PURCHASE_LIKE" | "ADMIN";
+            required_scopes: string[];
         };
         CapabilitySetupReceipt: {
             operation_id: string;
@@ -5518,6 +5750,69 @@ export type components = {
             /** Format: date-time */
             updated_at: string;
         };
+        AutomationOccurrenceCounts: {
+            pending: number;
+            claimed: number;
+            waiting_dependency: number;
+            started: number;
+            completed: number;
+            skipped: number;
+            failed: number;
+        };
+        AutomationHealth: {
+            automation_id: string;
+            current_revision: number;
+            /** @enum {string} */
+            status: "ENABLED" | "PAUSED" | "DISABLED";
+            /** @description True when this Runtime currently owns an active trigger host binding for the Automation's triggers. */
+            host_ready: boolean;
+            blockers: string[];
+            /** Format: date-time */
+            next_occurrence_at: string | null;
+            /** Format: date-time */
+            last_occurrence_at: string | null;
+            nonterminal_occurrences: number;
+            occurrence_counts: components["schemas"]["AutomationOccurrenceCounts"];
+            routine_health: components["schemas"]["RoutineHealth"];
+            /** @enum {string} */
+            drift_state: "HEALTHY" | "WARNING" | "DRIFTED" | "UNKNOWN";
+            drift_evidence_refs: string[];
+        };
+        AutomationHostSettlement: {
+            runtime_id: string;
+            /** Format: date-time */
+            checked_at: string;
+            triggers: components["schemas"]["AutomationHostTriggerSettlement"][];
+        };
+        AutomationHostTriggerSettlement: {
+            automation_id: string;
+            automation_revision: number;
+            trigger_id: string;
+            /** Format: date-time */
+            next_scheduled_at: string | null;
+            materialized: components["schemas"]["AutomationHostMaterialization"][];
+            skipped: components["schemas"]["AutomationHostSkip"][];
+            deferred: components["schemas"]["AutomationHostDeferral"][];
+            blockers: string[];
+        };
+        AutomationHostMaterialization: {
+            occurrence_id: string;
+            /** Format: date-time */
+            scheduled_for: string;
+            task_id: string;
+            task_status: string;
+        };
+        AutomationHostSkip: {
+            /** Format: date-time */
+            scheduled_for: string;
+            reason: string;
+            occurrence_recorded: boolean;
+        };
+        AutomationHostDeferral: {
+            /** Format: date-time */
+            scheduled_for: string;
+            reason: string;
+        };
         AutomationRevision: {
             automation_id: string;
             revision: number;
@@ -5825,6 +6120,104 @@ export type components = {
              */
             reason: "UNSUPPORTED_TYPE" | "OVER_SIZE_LIMIT" | "INVALID_UTF8" | "CONTROL_CHARACTERS" | "TERM_LIMIT_EXCEEDED" | null;
         };
+        GroundedRetrievalRequest: {
+            query: string;
+            scope?: components["schemas"]["AuthorizedResourceRef"][];
+            maxResults?: number;
+            requestId?: string;
+        };
+        AuthorizedResourceRef: {
+            resourceId: string;
+            resourceRevisionId?: string;
+            contentDigest?: string;
+        };
+        GroundedRetrievalResponse: {
+            requestId: string;
+            workspaceId: string;
+            /** @enum {string} */
+            status: "GROUNDED" | "INSUFFICIENT_EVIDENCE" | "PROVIDER_UNAVAILABLE";
+            provider: components["schemas"]["RetrievalProviderStatus"];
+            citations: components["schemas"]["GroundedRetrievalCitation"][];
+            /** @enum {string|null} */
+            insufficientReason?: "NO_AUTHORIZED_MATCH" | "PINNED_REVISION_NOT_INDEXED" | "EMPTY_SCOPE" | "ALL_CANDIDATES_REVOKED" | null;
+            scannedCandidates: number;
+            truncated: boolean;
+        };
+        GroundedRetrievalCitation: {
+            citationId: string;
+            resourceId: string;
+            resourceRevisionId: string;
+            contentDigest: string;
+            locator: components["schemas"]["RetrievalSegmentLocator"];
+            matchedSpans?: components["schemas"]["RetrievalTextSpan"][];
+            excerpt: string;
+            providerId: string;
+            providerVersion: string;
+            warnings?: ("EMBEDDED_INSTRUCTION_DETECTED" | "EXCERPT_TRUNCATED" | "INCOMPATIBLE_INDEX_GENERATION")[];
+        };
+        RetrievalSegmentLocator: {
+            /** @constant */
+            kind: "TEXT_SPAN";
+            span: components["schemas"]["RetrievalTextSpan"];
+        } | {
+            /** @constant */
+            kind: "PAGE";
+            pageNumber: number;
+        };
+        RetrievalTextSpan: {
+            startUtf8Byte: number;
+            endUtf8ByteExclusive: number;
+        };
+        RetrievalProviderStatus: {
+            providerId: string;
+            providerVersion: string;
+            /** @enum {string} */
+            availability: "QUALIFIED" | "NOT_CONFIGURED" | "UNAVAILABLE" | "INCOMPATIBLE";
+            /** @enum {string} */
+            retrievalMode: "LEXICAL_ONLY" | "HYBRID";
+            /** @enum {string} */
+            placement: "LOCAL" | "CLOUD";
+            reasonCode?: string | null;
+            reason?: string | null;
+        };
+        ResourceIndexStateResponse: {
+            workspaceId: string;
+            resourceId: string;
+            /** @enum {string} */
+            state: "READY" | "STALE" | "ABSENT" | "NOT_INDEXABLE";
+            /** @enum {string|null} */
+            reason?: "UNSUPPORTED_TYPE" | "OVER_SIZE_LIMIT" | "INVALID_UTF8" | "CONTROL_CHARACTERS" | "TERM_LIMIT_EXCEEDED" | null;
+            currentRevisionId?: string | null;
+            contentDigest?: string | null;
+            indexedRevisionId?: string | null;
+            indexedAt?: string | null;
+            parserId?: string | null;
+            supersededIndexCount: number;
+        };
+        LocalModelAvailability: {
+            /** @constant */
+            capabilityId: "litecowork.local-models";
+            /** @enum {string} */
+            status: "NOT_CONFIGURED" | "UNAVAILABLE" | "AVAILABLE";
+            reasonCode: string;
+            reason: string;
+            /** @constant */
+            inventoryOnly: true;
+            /** @constant */
+            surface: "AGENT_SCOPED";
+            /** @constant */
+            agentBindingPolicy: "AGENT_MODULE_COMPATIBILITY_REQUIRED";
+            models: {
+                modelId: string;
+                engineId: string;
+                displayName: string;
+                /** @enum {string} */
+                state: "INVENTORY_ONLY" | "AGENT_COMPATIBLE" | "AGENT_INCOMPATIBLE" | "UNAVAILABLE";
+                contextWindowTokens?: number;
+                agentModuleId?: string | null;
+                reasonCode?: string | null;
+            }[];
+        };
         ResourceContentScan: {
             candidates_scanned: number;
             text_resources_checked: number;
@@ -5861,8 +6254,9 @@ export type components = {
             /** @enum {string} */
             interaction_mode: "FORM" | "EXTERNAL_URL";
             prompt: string;
-            response_schema?: components["schemas"]["JsonSchema"] | null;
-            choices: components["schemas"]["Choice"][];
+            /** @description Always null in this projection. The pinned response schema is never returned to the UI, matching the choice value rule. */
+            response_schema?: null;
+            choices: components["schemas"]["UserRequestDetailChoice"][];
             /** @enum {string} */
             status: "PENDING" | "ANSWERED" | "DISMISSED" | "EXPIRED" | "CANCELLED";
             /** Format: date-time */
@@ -6155,6 +6549,11 @@ export type components = {
         SkillProposal: {
             skill_proposal_id: string;
             workspace_id: string;
+            /**
+             * @description Where the proposal came from. A demonstrated workflow and a learning candidate are both proposals, never approvals.
+             * @enum {string}
+             */
+            source: "DEMONSTRATION" | "LEARNING_CANDIDATE" | "OWNER_AUTHORED";
             source_task_id: string;
             source_artifact_id: string;
             draft_resource_ref: components["schemas"]["ResourceRef"];
@@ -6165,11 +6564,145 @@ export type components = {
             status: "DRAFT" | "REVIEW" | "APPROVED" | "REJECTED" | "PUBLISHED";
             approved_by?: components["schemas"]["PrincipalRef"] | null;
             published_capability_ref?: components["schemas"]["CapabilityRef"] | null;
+            /** @description Typed placeholders that replaced task-specific values in the captured procedure. */
+            placeholders: components["schemas"]["SkillPlaceholder"][];
+            /** @description Capability names the procedure asks for. A request, never authority. */
+            declared_capabilities: string[];
+            drift?: components["schemas"]["SkillDrift"] | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
             version: number;
+        };
+        SkillPlaceholder: {
+            name: string;
+            /** @enum {string} */
+            kind: "PATH" | "URL" | "IDENTIFIER" | "LITERAL";
+            /** @description A non-secret example of the observed shape. Never the original secret. */
+            sample?: string | null;
+        };
+        SkillDrift: {
+            expected_manifest_digest: string;
+            observed_manifest_digest: string;
+            /** @description URIs whose digest changed. Names only, never content. */
+            drifted_resources: string[];
+            /** Format: date-time */
+            detected_at: string;
+        };
+        SkillCapabilityRef: {
+            capability_id: string;
+            identity_kind: string;
+            source: string;
+            package_version?: string | null;
+            digest: string;
+            component: string;
+        };
+        SkillRevision: {
+            revision: number;
+            title: string;
+            summary: string;
+            manifest_digest: string;
+            content_digest: string;
+            /** @description Resource reference holding the instruction content. Never inline text. */
+            content_ref: string;
+            declared_capabilities: string[];
+            declared_requirements: string[];
+            /** Format: date-time */
+            created_at: string;
+            created_by: string;
+        };
+        Skill: {
+            skill_id: string;
+            workspace_id: string;
+            /** @enum {string} */
+            kind: "LOCAL_PROCEDURE" | "MCP_SKILL" | "PACKAGE_COMPONENT";
+            /**
+             * @description ACTIVE means the definition may be loaded, never that it is authorized. Loading still requires a scoped CapabilityGrant bound to the exact capability reference and manifest digest.
+             * @enum {string}
+             */
+            status: "DRAFT" | "ACTIVE" | "SUSPENDED" | "REVOKED";
+            capability_ref: components["schemas"]["SkillCapabilityRef"];
+            current_revision: number;
+            revision?: components["schemas"]["SkillRevision"] | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            version: number;
+        };
+        SkillPage: {
+            items: components["schemas"]["Skill"][];
+            next_cursor?: string | null;
+        };
+        WriteSkillRequest: {
+            /** @description Optional stable identity. The host derives one when it is absent. */
+            skill_id?: string | null;
+            /** @enum {string} */
+            kind: "LOCAL_PROCEDURE" | "MCP_SKILL" | "PACKAGE_COMPONENT";
+            capability_ref: components["schemas"]["SkillCapabilityRef"];
+            revision: components["schemas"]["SkillRevisionInput"];
+        };
+        SkillRevisionInput: {
+            title: string;
+            summary: string;
+            manifest_digest: string;
+            content_digest: string;
+            content_ref: string;
+            declared_capabilities: string[];
+            declared_requirements: string[];
+        };
+        McpAppCsp: {
+            /** @description The exact origins the App declared. An absent or invalid declaration blocks every external connection. */
+            connect_domains: string[];
+            resource_domains: string[];
+        };
+        CreateMcpAppFrameRequest: {
+            /** @description The Runtime-observed MCP capability host that publishes the App. The server identity, resource URI, and content digest are resolved from this observation, never from the request body. */
+            host_instance_id: string;
+            csp: components["schemas"]["McpAppCsp"];
+            task_id?: string | null;
+            ttl_seconds: number;
+        };
+        McpAppFrame: {
+            frame_id: string;
+            workspace_id: string;
+            /** @description The host-assigned exact origin the frame is served from. A client never declares it. */
+            origin: string;
+            /** @description The iframe sandbox attribute. Never contains allow-same-origin, forms, popups, downloads, or top navigation. */
+            sandbox: string[];
+            /** @description The computed Content-Security-Policy value. It applies default-src 'none' with only the exact declared domains. */
+            csp: string;
+            connect_domains: string[];
+            resource_domains: string[];
+            /** @description The only bridge methods the App may call. */
+            bridge_methods: string[];
+            server_identity: string;
+            resource_uri: string;
+            content_digest: string;
+            package_version?: string | null;
+            task_id?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+            /** @description The host-issued per-frame nonce the desktop injects into the isolated frame. It is bound to exactly one frame instance. */
+            nonce: string;
+        };
+        McpAppBridgeMessage: {
+            frame_id: string;
+            origin: string;
+            nonce: string;
+            /** @enum {string} */
+            method: "tool.invoke" | "resource.read" | "navigation.request" | "app.ready";
+            payload: {
+                [key: string]: unknown;
+            };
+        };
+        McpAppBridgeRequest: {
+            frame_id: string;
+            method: string;
+            payload: {
+                [key: string]: unknown;
+            };
         };
         SkillProposalPage: {
             items: components["schemas"]["SkillProposal"][];
@@ -6735,6 +7268,21 @@ export type components = {
             allowed_environment_class: "BROWSER" | "DESKTOP";
             /** @enum {string} */
             sensitive_region_policy: "PAUSE_ON_DETECTION" | "OMIT_SENSITIVE_FIELDS";
+        };
+        AppendDemonstrationActionRequest: {
+            /** @description The capture Environment the observation came from. It must be the session's own Environment. */
+            environment_id: string;
+            sequence: number;
+            /** @description The semantic kind of the observed step. */
+            kind: string;
+            /** @description The semantic target of the observed step. */
+            target: string;
+            /** @description The observed value, when the action produced one. It is dropped when the observation lands in a sensitive region. */
+            value?: string | null;
+            /** @description True when the observation landed in a sensitive region. */
+            sensitive: boolean;
+            /** @description Optional pointer hint. Never the sole authority for the step. */
+            coordinate_hint?: string | null;
         };
         DemonstrationSession: {
             demonstration_session_id: string;
@@ -9008,6 +9556,52 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getAutomationHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                automationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rebuildable health projection for the current immutable AutomationRevision */
+            200: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationHealth"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    settleAutomationTriggers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bounded settlement result for this Runtime */
+            200: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationHostSettlement"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     pauseAutomation: {
         parameters: {
             query?: never;
@@ -9463,7 +10057,9 @@ export interface operations {
     submitAgentCredential: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
             path: {
                 agentProfileId: string;
                 credentialSlotId: string;
@@ -10513,6 +11109,35 @@ export interface operations {
             /** @description User-consented semantic capture started in the selected Environment */
             201: {
                 headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemonstrationSession"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    appendDemonstrationAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                demonstrationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppendDemonstrationActionRequest"];
+            };
+        };
+        responses: {
+            /** @description The capture session with the recorded step */
+            200: {
+                headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
@@ -10540,6 +11165,7 @@ export interface operations {
             /** @description Capture finalized and converted to a reviewable SkillProposal */
             200: {
                 headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
@@ -10567,6 +11193,7 @@ export interface operations {
             /** @description Capture is paused; no further observations are appended until explicit resume. */
             200: {
                 headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
@@ -10594,6 +11221,7 @@ export interface operations {
             /** @description Capture resumes after consent, Environment, and remaining limits are revalidated. */
             200: {
                 headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
@@ -10621,6 +11249,7 @@ export interface operations {
             /** @description Capture stopped; partial trace follows Resource retention policy */
             200: {
                 headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
@@ -10853,9 +11482,11 @@ export interface operations {
     };
     searchDiscover: {
         parameters: {
-            query: {
-                q: string;
+            query?: {
+                q?: string;
                 kind?: "APP" | "CAPABILITY" | "SKILL" | "AGENT";
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
             };
             header?: never;
             path?: never;
@@ -10866,6 +11497,7 @@ export interface operations {
             /** @description Bounded user-facing candidates; package details remain LiteSPM-owned */
             200: {
                 headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
@@ -10889,10 +11521,11 @@ export interface operations {
             /** @description Normalized user-facing capability/agent description */
             200: {
                 headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DiscoverItem"];
+                    "application/json": components["schemas"]["DiscoverItemDetail"];
                 };
             };
             default: components["responses"]["Error"];
@@ -10947,6 +11580,7 @@ export interface operations {
             /** @description Bounded connection health result; no package-manager internals are returned */
             200: {
                 headers: {
+                    "Cache-Control": "no-store";
                     [name: string]: unknown;
                 };
                 content: {
@@ -11394,6 +12028,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResourceSearchPage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getLocalModelAvailability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Local model inventory and Agent-scoped selection policy */
+            200: {
+                headers: {
+                    /** @example no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocalModelAvailability"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    groundedRetrieval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroundedRetrievalRequest"];
+            };
+        };
+        responses: {
+            /** @description Grounded citations, explicit insufficient evidence, or an unavailable provider */
+            200: {
+                headers: {
+                    /** @example no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroundedRetrievalResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getResourceIndexState: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                resourceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The index state of the Resource */
+            200: {
+                headers: {
+                    /** @example no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceIndexStateResponse"];
                 };
             };
             default: components["responses"]["Error"];
@@ -12347,6 +13056,169 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NotificationPreference"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listSkills: {
+        parameters: {
+            query?: {
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bounded page of Skill definitions */
+            200: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillPage"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createSkill: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WriteSkillRequest"];
+            };
+        };
+        responses: {
+            /** @description The Skill definition and its first revision */
+            201: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getSkill: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                skillId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Skill definition */
+            200: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    reviseSkill: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                skillId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WriteSkillRequest"];
+            };
+        };
+        responses: {
+            /** @description The revised Skill definition */
+            200: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Skill"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    issueMcpAppFrame: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMcpAppFrameRequest"];
+            };
+        };
+        responses: {
+            /** @description The issued frame, its sandbox contract, and its nonce */
+            201: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAppFrame"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    validateMcpAppMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["McpAppBridgeMessage"];
+            };
+        };
+        responses: {
+            /** @description The accepted bridge message */
+            200: {
+                headers: {
+                    "Cache-Control": "no-store";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpAppBridgeRequest"];
                 };
             };
             default: components["responses"]["Error"];

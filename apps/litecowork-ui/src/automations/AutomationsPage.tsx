@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Automation, AutomationApi, AutomationRevision, AutomationStatus, MaterializedAutomationTask, Routine, RoutineRevision } from "./automation-api";
+import type { Automation, AutomationApi, AutomationHealth, AutomationOccurrence, AutomationRevision, AutomationStatus, MaterializedAutomationTask, Routine, RoutineRevision } from "./automation-api";
 import { pinnedResourceOptionKey, routineInputFields, type ResourceOption } from "../routines/routine-inputs";
 import { AutomationEditor } from "./AutomationEditor";
 import "./automations-page.css";
@@ -66,6 +66,29 @@ function triggerLabels(revision: AutomationRevision | null): string[] {
     return typeof definition?.kind === "string" ? definition.kind.replaceAll("_", " ") : "Unknown trigger";
   }) ?? [];
 }
+function driftLabel(state: AutomationHealth["drift_state"]): string {
+  switch (state) {
+    case "HEALTHY": return "Healthy";
+    case "WARNING": return "Warning";
+    case "DRIFTED": return "Drifted";
+    default: return "Unknown";
+  }
+}
+function successRateLabel(rate: number | null, sampleSize: number): string {
+  if (rate === null) return sampleSize > 0 ? "Not enough runs yet" : "No terminal runs yet";
+  return `${Math.round(rate * 100)}%`;
+}
+function occurrenceStatusLabel(status: AutomationOccurrence["status"]): string {
+  switch (status) {
+    case "PENDING": return "Pending";
+    case "CLAIMED": return "Claimed";
+    case "WAITING_DEPENDENCY": return "Waiting for a dependency";
+    case "STARTED": return "Started";
+    case "COMPLETED": return "Completed";
+    case "SKIPPED": return "Skipped";
+    default: return "Failed";
+  }
+}
 
 /** This page manages definitions and explicit one-shot ManualTrigger Task creation; it never hosts automatic triggers. */
 export function AutomationsPage({ api, workspaceId, resources, resourcesNextCursor, resourcesPageBusy, onLoadMoreResources, onOpenTask }: Props) {
@@ -92,6 +115,10 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
   const [runInputs, setRunInputs] = useState<Record<string, unknown>>({});
   const [runResult, setRunResult] = useState<MaterializedAutomationTask | null>(null);
   const [unresolvedRuns, setUnresolvedRuns] = useState<PendingRun[]>([]);
+  const [health, setHealth] = useState<AutomationHealth | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [occurrences, setOccurrences] = useState<AutomationOccurrence[]>([]);
+  const [occurrencesError, setOccurrencesError] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [detailReload, setDetailReload] = useState(0);
   const listGeneration = useRef(0);
@@ -121,10 +148,11 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
   }, [api, workspaceId, reload]);
 
   useEffect(() => {
-    if (!selectedId) { setSelected(null); setSelectedRevision(null); setPinnedRoutine(null); setPinnedRoutineRevision(null); setDetailLoading(false); return; }
+    if (!selectedId) { setSelected(null); setSelectedRevision(null); setPinnedRoutine(null); setPinnedRoutineRevision(null); setHealth(null); setHealthError(null); setOccurrences([]); setOccurrencesError(null); setDetailLoading(false); return; }
     const controller = new AbortController();
     const generation = ++detailGeneration.current;
     setSelected(null); setSelectedRevision(null); setPinnedRoutine(null); setPinnedRoutineRevision(null); setRunInputs({}); setRunResult(null); setDetailError(null); setConfirmDisable(false); setDetailLoading(true);
+    setHealth(null); setHealthError(null); setOccurrences([]); setOccurrencesError(null);
     void (async () => {
       const found = await api.get(selectedId, controller.signal);
       if (found.automation_id !== selectedId || found.workspace_id !== workspaceId) throw new Error("Automation detail identity or Workspace does not match the selection.");
@@ -141,6 +169,22 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
       if (!controller.signal.aborted && generation === detailGeneration.current) setDetailError(errorText(error));
     }).finally(() => {
       if (!controller.signal.aborted && generation === detailGeneration.current) setDetailLoading(false);
+    });
+    // The health projection and the run history are separate reads. A failing
+    // projection never hides the saved definition, and it never claims a state
+    // that was not read.
+    void api.getHealth(selectedId, controller.signal).then(projection => {
+      if (controller.signal.aborted || generation !== detailGeneration.current) return;
+      if (projection.automation_id !== selectedId) throw new Error("The health projection belongs to a different definition.");
+      setHealth(projection);
+    }).catch(error => {
+      if (!controller.signal.aborted && generation === detailGeneration.current) setHealthError(errorText(error));
+    });
+    void api.listOccurrences(selectedId, controller.signal).then(page => {
+      if (controller.signal.aborted || generation !== detailGeneration.current) return;
+      setOccurrences(page.items);
+    }).catch(error => {
+      if (!controller.signal.aborted && generation === detailGeneration.current) setOccurrencesError(errorText(error));
     });
     return () => controller.abort();
   }, [api, selectedId, workspaceId, detailReload]);
@@ -308,9 +352,9 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
       </header>
 
       <section className="automation-capability-note" role="note" aria-label="Automation execution status">
-        <strong>Schedules are saved but are not hosted in this desktop build.</strong>
+        <strong>Schedules run only while this local Runtime hosts them.</strong>
+        <span>An Enabled schedule fires from this device when it holds the trigger-host binding. A paused or disabled definition, a revoked binding, or an unavailable Runtime leaves the slot unrun and records it honestly.</span>
         <span>A Manual trigger can create one ordinary READY Task. This does not start planning or an agent; review the Task in Work.</span>
-        <span>Saving creates or leaves the Automation paused. Manual runs require the local Runtime and an active local trigger-host binding.</span>
       </section>
 
       {unresolvedRuns.map(pending => <section className="automation-run-retry" role="alert" key={pending.key}>
@@ -359,8 +403,8 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
                 <div><dt>Updated</dt><dd>{dateText(selected.updated_at)}</dd></div>
                 <div><dt>Record version</dt><dd>{selected.version}</dd></div>
               </dl>
-              {selectedRevision && <p className="automation-state-note">Triggers in this revision: {triggerLabels(selectedRevision).join(" · ") || "None"}. Only Manual runs are available here.</p>}
-              {selected.status === "ENABLED" && <p className="automation-state-warning">Stored status is Enabled, but recurring trigger hosting is unavailable here. Manual Run now remains an explicit one-shot action.</p>}
+              {selectedRevision && <p className="automation-state-note">Triggers in this revision: {triggerLabels(selectedRevision).join(" · ") || "None"}.</p>}
+              {selected.status === "ENABLED" && <p className="automation-state-warning">Stored status is Enabled. The schedule only fires while this Runtime holds the trigger-host binding; a Manual Run now remains an explicit one-shot action.</p>}
               {selected.status === "PAUSED" && <p className="automation-state-note">Paused definition. Recurring triggers remain off. A Manual trigger can still create one Task when you choose Run now.</p>}
               {selected.status === "DISABLED" && <p className="automation-state-note">Disabled permanently. The definition remains available for history.</p>}
               {selectedRevision && manualTriggerCount(selectedRevision) > 1 && <p className="automation-state-warning">Run unavailable: this revision has multiple Manual triggers. Revise it to keep one unambiguous Manual trigger.</p>}
@@ -385,7 +429,32 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
                 {selected.status === "ENABLED" && <button className="quiet-button" type="button" disabled={busy} onClick={() => void transition("pause")}>{busy ? "Pausing…" : "Pause definition"}</button>}
                 {!confirmDisable && <button className="danger-button" type="button" disabled={busy} onClick={() => { setActionError(null); setConfirmDisable(true); }}>Disable permanently</button>}
               </div>}
-              {selected.status === "ENABLED" && <p className="automation-policy-note">Pause this stored definition before revising it. Recurring trigger hosting is not available in this desktop build.</p>}
+              {selected.status === "ENABLED" && <p className="automation-policy-note">Pause this stored definition before revising it. Revising an enabled definition changes the pinned revision without resetting the logical trigger cursor.</p>}
+              {healthError && <p className="automation-inline-error" role="alert">Health could not be read: {healthError}</p>}
+              {health && <section className="automation-health" aria-labelledby="automation-health-heading">
+                <h3 id="automation-health-heading">Health</h3>
+                <dl className="automation-facts">
+                  <div><dt>Trigger host</dt><dd>{health.host_ready ? "This Runtime hosts the schedule" : "Not hosted by this Runtime"}</dd></div>
+                  <div><dt>Next occurrence</dt><dd>{health.next_occurrence_at ? dateText(health.next_occurrence_at) : "No future slot"}</dd></div>
+                  <div><dt>Last observation</dt><dd>{health.last_occurrence_at ? dateText(health.last_occurrence_at) : "No observation yet"}</dd></div>
+                  <div><dt>Nonterminal occurrences</dt><dd>{health.nonterminal_occurrences}</dd></div>
+                  <div><dt>Routine success rate</dt><dd>{successRateLabel(health.routine_health.recent_success_rate, health.routine_health.sample_size)}</dd></div>
+                  <div><dt>Drift</dt><dd>{driftLabel(health.drift_state)}</dd></div>
+                </dl>
+                {health.blockers.length > 0 && <ul className="automation-health-blockers">{health.blockers.map(blocker => <li key={blocker}>{blocker.replaceAll("_", " ")}</li>)}</ul>}
+                {health.routine_health.sample_size < 3 && <p className="automation-state-note">Fewer than three terminal runs of Routine revision {health.routine_health.current_revision} exist. A percentage is not shown yet.</p>}
+                {health.drift_state !== "HEALTHY" && health.drift_state !== "WARNING" && <p className="automation-state-note">Drift state {driftLabel(health.drift_state)}: the pinned revision has no fresh incompatibility observation. Repair requires a reviewed new revision.</p>}
+              </section>}
+              {occurrencesError && <p className="automation-inline-error" role="alert">Run history could not be read: {occurrencesError}</p>}
+              <section className="automation-runs" aria-labelledby="automation-runs-heading">
+                <h3 id="automation-runs-heading">Runs</h3>
+                {occurrences.length === 0 ? <p className="automation-state-note">No occurrence has been recorded for this definition.</p> : <ul className="automation-run-list">{occurrences.map(occurrence => <li key={occurrence.occurrence_id}>
+                  <span className="automation-run-status">{occurrenceStatusLabel(occurrence.status)}</span>
+                  <span>{occurrence.scheduled_for ? dateText(occurrence.scheduled_for) : dateText(occurrence.created_at)}</span>
+                  <small>{occurrence.task_id ? `Task ${occurrence.task_id}` : "No Task linked"}</small>
+                </li>)}</ul>}
+                <p className="automation-state-note">A completed schedule is not evidence that its Tasks succeeded. Each run keeps its own Task outcome.</p>
+              </section>
               <p className="automation-provenance">Created {dateText(selected.created_at)} · {selected.automation_id}</p>
             </> : <div className="automation-empty"><p>Select a definition to review its stored state.</p></div>}
           </section>

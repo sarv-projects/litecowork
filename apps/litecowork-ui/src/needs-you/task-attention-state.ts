@@ -96,3 +96,37 @@ export function taskAttentionLoadReducer(
       return state.generation === action.generation ? { ...state, loadingMore: false } : state;
   }
 }
+
+/**
+ * Motion baseline for the Needs You inbox.
+ *
+ * The contract allows a newly appearing approval or blocker card to use one 280ms border
+ * emphasis, and only after the committed projection already contains it. Historical
+ * hydration, a cursor resync, and the first page load render the current state without
+ * replaying that transition, so the baseline is scoped: when the scope changes the
+ * previously rendered identities are dropped and nothing is emphasised.
+ */
+export type NeedsYouMotionBaseline = {
+  scopeKey: string | null;
+  itemIds: ReadonlySet<string>;
+};
+
+export const EMPTY_NEEDS_YOU_MOTION_BASELINE: NeedsYouMotionBaseline = {
+  scopeKey: null,
+  itemIds: new Set<string>(),
+};
+
+export function nextNeedsYouMotionBaseline(
+  baseline: NeedsYouMotionBaseline,
+  scopeKey: string,
+  itemIds: readonly string[],
+): { baseline: NeedsYouMotionBaseline; entering: string[] } {
+  const next = new Set(itemIds);
+  if (baseline.scopeKey !== scopeKey) {
+    // A new scope (Workspace or status filter) is a fresh projection, not new work.
+    return { baseline: { scopeKey, itemIds: next }, entering: [] };
+  }
+  const entering = itemIds.filter((itemId) => !baseline.itemIds.has(itemId));
+  for (const itemId of baseline.itemIds) next.add(itemId);
+  return { baseline: { scopeKey, itemIds: next }, entering };
+}

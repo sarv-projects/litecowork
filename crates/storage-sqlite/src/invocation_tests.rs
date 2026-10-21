@@ -15,11 +15,13 @@ fn seed_runtime_and_invocation(directory: &tempfile::TempDir, invocation_status:
         .pragma_update(None, "foreign_keys", false)
         .expect("disable fixture foreign keys");
     // These persistence tests exercise transitions on an already-admitted Invocation.
-    // The atomic creator is intentionally unavailable, so seed this existing row past
-    // the admission-only insert guard without adding a production creation path.
+    // The fixture seeds that historical row directly, so the version one scope and
+    // authority trigger is relaxed for the seed only. No production creation path is
+    // added: the combined Trust, ApprovalUse, Invocation and Effect writer is the
+    // only way an Invocation is admitted.
     connection
-        .execute_batch("DROP TRIGGER capability_invocation_admission_matches_scope; DROP TRIGGER capability_invocation_creation_admission_closed;")
-        .expect("bypass unavailable creator for admitted-row fixture");
+        .execute_batch("DROP TRIGGER capability_invocation_admission_matches_scope;")
+        .expect("seed an already-admitted Invocation row");
     connection.execute(
         "INSERT INTO workspaces(workspace_id,name,owner_principal_id,replication_policy,status,created_at,updated_at,version) VALUES('ws','Workspace','owner','LOCAL_ONLY','ACTIVE',?1,?1,1)",
         [AT],
@@ -52,9 +54,6 @@ fn seed_runtime_and_invocation(directory: &tempfile::TempDir, invocation_status:
         "INSERT INTO capability_invocations(invocation_id,workspace_id,scope_kind,conversation_id,agent_session_id,activation_id,capability_ref_json,operation,request_digest,execution_method,capability_grant_id,status,partial_result_refs_json,result_refs_json,created_at,updated_at,version) VALUES('inv-1','ws','CONVERSATION','conv-1','session-1','activation-1','{\"package_id\":\"pkg\"}','read',?1,'DETERMINISTIC_LOCAL','grant-1',?2,'[]','[]',?3,?3,1)",
         params![format!("sha256:{}", "a".repeat(64)), invocation_status, AT],
     ).expect("seed invocation for transition writer");
-    // Restore the production fail-closed INSERT guard after seeding a historical row.
-    connection.execute_batch("CREATE TRIGGER capability_invocation_creation_admission_closed BEFORE INSERT ON capability_invocations BEGIN SELECT RAISE(ABORT, 'INVOCATION_CREATION_ADMISSION_UNAVAILABLE'); END;")
-        .expect("restore the creation admission guard");
 }
 
 fn seed_authorized_peer_runtime(directory: &tempfile::TempDir) {
@@ -156,8 +155,7 @@ fn owner_scoped_invocation_reads_return_bounded_task_history_and_hide_foreign_ow
         .expect("seed Task for Invocation history");
     connection
         .execute_batch(
-            "DROP TRIGGER capability_invocation_creation_admission_closed;
-             INSERT INTO capability_invocations(
+            "INSERT INTO capability_invocations(
                invocation_id,workspace_id,scope_kind,task_id,agent_session_id,activation_id,
                capability_ref_json,operation,request_digest,execution_method,capability_grant_id,
                status,partial_result_refs_json,result_refs_json,created_at,updated_at,version)
@@ -174,11 +172,7 @@ fn owner_scoped_invocation_reads_return_bounded_task_history_and_hide_foreign_ow
                '{\"package_id\":\"pkg\"}','workspace.resource.read',
                'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
                'DETERMINISTIC_LOCAL','grant-1','WAITING','[]','[]','2026-10-09T10:01:00Z',
-               '2026-10-09T10:01:00Z',1);
-             CREATE TRIGGER capability_invocation_creation_admission_closed
-             BEFORE INSERT ON capability_invocations BEGIN
-               SELECT RAISE(ABORT, 'INVOCATION_CREATION_ADMISSION_UNAVAILABLE');
-             END;",
+               '2026-10-09T10:01:00Z',1);",
         )
         .expect("seed already-admitted Task invocation");
 
@@ -644,15 +638,31 @@ fn sqlite_trigger_rejects_direct_status_rewrite_and_dispatch() {
     let _store = test_store(&directory, Duration::from_secs(1));
     seed_runtime_and_invocation(&directory, "CREATED");
     let connection = Connection::open(state_database(&directory)).expect("inspect store");
-    assert!(connection.execute("UPDATE capability_invocations SET status='DISPATCHED',version=2 WHERE invocation_id='inv-1'", []).is_err());
+    // A direct status rewrite is refused by the transition guard.
     assert!(connection.execute("UPDATE capability_invocations SET status='SUCCEEDED',version=2 WHERE invocation_id='inv-1'", []).is_err());
+    // A direct dispatch is refused because the version twenty-six guard requires the
+    // exact Effect to be bound to a consumed approval. Only the combined Trust,
+    // ApprovalUse, Invocation and Effect writer may dispatch, and it records that
+    // ApprovalUse in the same transaction.
+    let dispatch_error = connection
+        .execute("UPDATE capability_invocations SET status='DISPATCHED',version=2 WHERE invocation_id='inv-1'", [])
+        .expect_err("a dispatch without a consumed approval must be refused");
+    let dispatch_message = dispatch_error.to_string();
+    assert!(
+        dispatch_message.contains("INVOCATION_DISPATCH_REQUIRES_CONSUMED_APPROVAL")
+            || dispatch_message.contains("INVOCATION_OWNER_NOT_LIVE_AT_DISPATCH"),
+        "unexpected database rejection: {dispatch_message}"
+    );
 }
 
 #[test]
-fn sqlite_trigger_rejects_invocation_creation_until_combined_admission_exists() {
+fn sqlite_trigger_rejects_invocation_creation_without_live_authorized_authority() {
     let directory = tempfile::tempdir().expect("temporary store");
     let _store = test_store(&directory, Duration::from_secs(1));
-    seed_runtime_and_invocation(&directory, "CREATED");
+    // The shipped authority trigger is the thing under test here, so no fixture row is
+    // seeded and no trigger is dropped. Version twenty-six removed the blanket creation
+    // block, which means the version one scope and authority trigger is now the only
+    // thing that can refuse an unauthorized Invocation.
     let connection = Connection::open(state_database(&directory)).expect("inspect store");
     // Exercise the authorization trigger rather than a missing-fixture FK constraint.
     connection
@@ -674,7 +684,7 @@ fn sqlite_trigger_rejects_invocation_creation_until_combined_admission_exists() 
     assert!(
         error
             .to_string()
-            .contains("INVOCATION_CREATION_ADMISSION_UNAVAILABLE"),
+            .contains("INVOCATION_SCOPE_OR_AUTHORIZATION_MISMATCH"),
         "unexpected database rejection: {error}"
     );
     let count: i64 = connection
@@ -682,5 +692,5 @@ fn sqlite_trigger_rejects_invocation_creation_until_combined_admission_exists() 
             row.get(0)
         })
         .expect("count unchanged invocations");
-    assert_eq!(count, 1);
+    assert_eq!(count, 0);
 }

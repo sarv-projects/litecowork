@@ -471,8 +471,87 @@ def current_inventory() -> dict[str, object]:
     }
 
 
+# Tables introduced after `sqlite-v1.sql`. The schema inventory below introspects the v1
+# baseline only, so a table added by a later migration would otherwise appear in no
+# coverage row and no story would own its schema, guards or tests. Each such table
+# therefore declares its owning story here, and `check_later_migration_tables_are_owned`
+# refuses a later migration that adds one without a declaration.
+MIGRATION_TABLE_STORY: dict[str, str] = {
+    "agent_binding_configurations": "E03-S01",
+    "agent_control_descriptors": "E03-S08",
+    "agent_installation_observations": "E03-S07",
+    "agent_lifecycle_operations": "E03-S07",
+    "agent_registry_cache": "E03-S06",
+    "channel_host_continuity_proofs": "E11-S04",
+    "channel_host_drain_proofs": "E11-S04",
+    "channel_host_lease_releases": "E11-S04",
+    "delegation_results": "E05-S01",
+    "goal_artifact_links": "E08-S02",
+    "resource_content_blob_registry": "E06-S01",
+    "resource_index_blob_registry": "E06-S01",
+    "resource_text_index_terms": "E06-S01",
+    "resource_text_indexes": "E06-S01",
+    "resource_upload_blob_gc_fences": "E06-S01",
+    "resource_upload_blob_reservations": "E06-S01",
+    "resource_upload_chunk_blob_registry": "E06-S01",
+    "resource_upload_chunk_requests": "E06-S01",
+    "rich_presentations": "E08-S08",
+    "runtime_workspace_bindings": "E11-S02",
+    "workspace_root_cleanup_outbox": "E02-S03",
+    "workspace_root_file_locations": "E02-S03",
+    "workspace_root_observation_batch_receipts": "E02-S03",
+    "workspace_root_observation_bindings": "E02-S03",
+    "workspace_root_observation_generations": "E02-S03",
+    "workspace_root_observations": "E02-S03",
+}
+
+
+def later_migration_tables() -> dict[str, str]:
+    """Return every table a migration after v1 creates, mapped to its migration file.
+
+    Table-rebuild artifacts (`<name>_v<N>`) are excluded: they are transient names used
+    while a migration rebuilds a table, not contract objects.
+    """
+    baseline = {
+        match.group(1)
+        for match in re.finditer(
+            r"CREATE TABLE(?: IF NOT EXISTS)?\s+[`\"\[]?(\w+)[`\"\]]?\s*\(",
+            (ROOT / "docs/schemas/sqlite-v1.sql").read_text(),
+            re.I,
+        )
+    }
+    created: dict[str, str] = {}
+    for path in sorted(
+        (ROOT / "docs" / "schemas").glob("sqlite-v[0-9]*.sql"),
+        key=lambda item: int(re.search(r"sqlite-v(\d+)\.sql$", item.name).group(1)),
+    ):
+        if path.name == "sqlite-v1.sql":
+            continue
+        for match in re.finditer(
+            r"CREATE TABLE(?: IF NOT EXISTS)?\s+[`\"\[]?(\w+)[`\"\]]?\s*\(",
+            path.read_text(),
+            re.I,
+        ):
+            name = match.group(1)
+            if name in baseline or re.search(r"_v\d+$", name):
+                continue
+            created.setdefault(name, path.name)
+    return created
+
+
+def check_later_migration_tables_are_owned() -> None:
+    undeclared = sorted(set(later_migration_tables()) - set(MIGRATION_TABLE_STORY))
+    if undeclared:
+        fail(
+            "later migrations create tables with no declared owning story: "
+            f"{undeclared}; add them to MIGRATION_TABLE_STORY"
+        )
+
+
 def table_story(table: str) -> str:
     name = table.lower()
+    if name in MIGRATION_TABLE_STORY:
+        return MIGRATION_TABLE_STORY[name]
     if name.startswith(("delegation_profile", "delegation_budget")):
         return "E05-S01"
     if name.startswith(("suggestion", "goal", "coworker", "context_document")):
@@ -1220,6 +1299,7 @@ def main() -> None:
     parser.add_argument("--write", action="store_true", help="refresh generated coverage and inventory")
     args = parser.parse_args()
     previous = old_rows()
+    check_later_migration_tables_are_owned()
     inventory = current_inventory()
     rows = build_coverage(previous, inventory)
     outputs = {

@@ -27,11 +27,15 @@ exists.
 Workspace-scoped `GET /v1/needs-you` projection through the native Tauri bridge. It lists
 persisted Approval and UserRequest sources with safe summaries, plus current blockers from
 `BLOCKED` and `NEEDS_USER` Tasks; linked blockers deduplicate to their source record. It
-supports OPEN/RESOLVED history and bounded cursor paging. The page is read-only: an unlinked
-Task blocker opens current Task detail, and a UserRequest opens its exact selected-Workspace
-read-only detail. Neither action resolves anything. Approval details/actions, UserRequest
-response/dismissal, blocker resolution, notifications, and deep links remain unconnected.
-The UI never infers an empty result from a failed or unavailable read.
+supports OPEN/RESOLVED history and bounded cursor paging. An Approval opens its exact
+selected-Workspace detail and can be approved or denied against the loaded version, and a
+UserRequest opens its exact selected-Workspace detail and can be answered or dismissed;
+each decision is saved against its source version, and resolving a source removes exactly
+that one open item and keeps it in the resolved history. An unlinked Task blocker still
+opens current Task detail only: it is resolved through its owning source, not from the
+inbox, and the inbox never claims the blocker is resolved. Blocker resolution, notifications,
+and deep links remain unconnected. The UI never infers an empty result from a failed or
+unavailable read.
 
 ## V1 client scope
 
@@ -115,8 +119,10 @@ States:
 - reconnecting
 - cloud unavailable
 
-Home includes a persistent “Needs you” inbox entry/count and notification history as well
-as the first-class Needs You destination.
+Home includes a persistent “Needs you” inbox entry and the first-class Needs You
+destination. The pending count and notification history are not connected yet: the Needs
+You page reports its own loading, unavailable, and empty states, and no count is inferred
+from an unread inbox.
 
 Composer:
 

@@ -74,7 +74,7 @@ fn saturated_writer_drains_abandoned_replies_before_shutdown_and_replay() {
         store
             .inner
             .sender
-            .send(Command::ConversationOperation {
+            .send(Command::Operation {
                 operation: Box::new(move |_| {
                     writer_started.send(()).expect("signal writer entered gate");
                     release_writer_receiver

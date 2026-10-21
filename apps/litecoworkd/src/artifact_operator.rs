@@ -265,7 +265,7 @@ async fn get_text_edit_head(
     headers: HeaderMap,
     Path(artifact_id): Path<String>,
 ) -> Result<Response, Response> {
-    let workspace_id = authorized_workspace(&state, &headers)?;
+    let workspace_id = authorized_data_workspace(&state, &headers)?.workspace_id;
     let heads = state
         .store
         .get_artifact_append_heads(&workspace_id, &artifact_id)
@@ -313,7 +313,7 @@ async fn append_text_version(
     Path(artifact_id): Path<String>,
     Json(body): Json<AppendTextVersionRequest>,
 ) -> Result<Response, Response> {
-    let workspace_id = authorized_workspace(&state, &headers)?;
+    let workspace_id = authorized_data_workspace(&state, &headers)?.workspace_id;
     let expected_artifact_version = parse_if_match(&headers)?;
     let expected_content_version = body.expected_content_version;
     let expected_resource_version = body.expected_resource_version;
@@ -584,12 +584,6 @@ fn append_response(
     no_store(response)
 }
 
-fn authorized_workspace(state: &ApiState, headers: &HeaderMap) -> Result<String, Response> {
-    let workspace_id = selected_workspace(headers)?;
-    ensure_workspace_owner(state, &workspace_id)?;
-    Ok(workspace_id)
-}
-
 fn no_store(mut response: Response) -> Response {
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -671,9 +665,9 @@ async fn list_artifacts(
     headers: HeaderMap,
     Query(query): Query<ArtifactQuery>,
 ) -> Result<Response, Response> {
-    let workspace = authorized_workspace(&state, &headers)?;
+    let workspace = authorized_data_workspace(&state, &headers)?;
     Ok(no_store(
-        artifact_page(&state, &workspace, query)?.into_response(),
+        artifact_page(&state, &workspace.workspace_id, query)?.into_response(),
     ))
 }
 
@@ -682,10 +676,10 @@ async fn list_library(
     headers: HeaderMap,
     Query(mut query): Query<ArtifactQuery>,
 ) -> Result<Response, Response> {
-    let workspace = authorized_workspace(&state, &headers)?;
+    let workspace = authorized_data_workspace(&state, &headers)?;
     query.library_status = Some("SAVED".to_owned());
     Ok(no_store(
-        artifact_page(&state, &workspace, query)?.into_response(),
+        artifact_page(&state, &workspace.workspace_id, query)?.into_response(),
     ))
 }
 
@@ -694,10 +688,10 @@ async fn get_artifact(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response, Response> {
-    let workspace = authorized_workspace(&state, &headers)?;
+    let workspace = authorized_data_workspace(&state, &headers)?;
     let artifact = state
         .store
-        .get_artifact(&workspace, &id)
+        .get_artifact(&workspace.workspace_id, &id)
         .map_err(artifact_error)?
         .ok_or_else(|| artifact_error(StoreError::NotFound))?;
     Ok(no_store(Json(artifact).into_response()))
@@ -708,10 +702,10 @@ async fn get_artifact_version(
     headers: HeaderMap,
     Path((id, version)): Path<(String, u64)>,
 ) -> Result<Response, Response> {
-    let workspace = authorized_workspace(&state, &headers)?;
+    let workspace = authorized_data_workspace(&state, &headers)?;
     let artifact_version = state
         .store
-        .get_artifact_version(&workspace, &id, version)
+        .get_artifact_version(&workspace.workspace_id, &id, version)
         .map_err(artifact_error)?
         .ok_or_else(|| artifact_error(StoreError::NotFound))?;
     Ok(no_store(Json(artifact_version).into_response()))
@@ -722,17 +716,17 @@ async fn download_artifact_version(
     headers: HeaderMap,
     Path((id, version)): Path<(String, u64)>,
 ) -> Result<Response, Response> {
-    let workspace = authorized_workspace(&state, &headers)?;
+    let workspace = authorized_data_workspace(&state, &headers)?;
     let (bytes, media_type) = tokio::task::spawn_blocking(move || {
         let metadata = state
             .store
-            .get_artifact_version(&workspace, &id, version)
+            .get_artifact_version(&workspace.workspace_id, &id, version)
             .map_err(artifact_error)?
             .ok_or_else(|| artifact_error(StoreError::NotFound))?;
         let bytes = state
             .store
             .read_artifact_content_bounded(
-                &workspace,
+                &workspace.workspace_id,
                 &id,
                 version,
                 MAX_OPERATOR_RESPONSE_BYTES as u64,
@@ -740,7 +734,7 @@ async fn download_artifact_version(
             .map_err(artifact_error)?
             .ok_or_else(|| artifact_error(StoreError::NotFound))?;
         // Recheck authority after resolving bytes. Archived Workspaces retain reads.
-        ensure_workspace_owner(&state, &workspace)?;
+        ensure_workspace_owner(&state, &workspace.workspace_id)?;
         let media_type = match metadata.content {
             storage_core::ArtifactContentRecord::ManagedBlob { media_type, .. } => media_type,
             _ => {
@@ -776,10 +770,10 @@ async fn list_task_artifacts(
     headers: HeaderMap,
     Path(task_id): Path<String>,
 ) -> Result<Response, Response> {
-    let workspace = authorized_workspace(&state, &headers)?;
+    let workspace = authorized_data_workspace(&state, &headers)?;
     if state
         .store
-        .get_task(&workspace, &task_id)
+        .get_task(&workspace.workspace_id, &task_id)
         .map_err(artifact_error)?
         .is_none()
     {
@@ -787,7 +781,7 @@ async fn list_task_artifacts(
     }
     let items = state
         .store
-        .list_artifacts_page(&workspace, None, Some(&task_id), None, None, 201)
+        .list_artifacts_page(&workspace.workspace_id, None, Some(&task_id), None, None, 201)
         .map_err(artifact_error)?;
     if items.len() > 200 {
         return Err(operator_error(

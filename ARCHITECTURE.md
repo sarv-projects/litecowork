@@ -169,12 +169,13 @@ user's Task.
 |---|---|
 | Workspace | User-owned durable boundary for Conversations, Tasks, policy, and replication scope. |
 | Conversation | User-visible exchange across surfaces. An ordinary question need not create a Task. |
-| AgentSession | Scoped external-agent interaction: conversation, task planning, or one Attempt. |
+| AgentSession | One agent-specific reasoning context scoped to a Conversation, Task planning, or an Attempt; optional native session handles are optimizations, not Task truth. |
 | Task | Durable outcome the user wants, owned by the Task Runtime. |
 | TaskSpecRevision | Immutable revision of objective, constraints, outputs, criteria, approvals, and budget. |
 | PlanRevision | Agent-proposed, versioned plan stored by Core; Core validates shape and policy but does not invent strategy. Promotion and Step materialization commit atomically. |
 | Step | Semantic unit from the current plan. |
 | Attempt | One worker's execution of one Step, admitted and tracked by the Task Runtime. |
+| Agent | External reasoning worker that owns its model choice, reasoning, and native tools; not a Model and not a Task authority. |
 | AgentProfile / AgentBinding | Discovered agent and its negotiated host binding, owned by Agent Fabric. |
 | AgentModule | Independently versioned agent-specific lifecycle/runtime adapter bundle; it owns install/update/auth/config projection and protocol translation for one or more registry agent identities. |
 | AgentRegistryEntry | Cached descriptive ACP/distribution metadata used for discovery; it is not readiness, authentication, capability, or authorization truth. |
@@ -188,8 +189,7 @@ user's Task.
 | RichPresentation | Immutable optional rendering enhancement bound to one committed ConversationMessage and its semantic-content digest. |
 | HostSkill | Bundled immutable guidance asset with no capability, authority, network, or secret access. |
 | PresentationIntent | Turn-bound, bounded Agent proposal describing a useful layout; never a trusted system projection. |
-| AgentSession | Agent-specific reasoning session; optional native session handles are optimizations, not Task truth. |
-| Runtime | A running `litecoworkd` instance, with identity, role, presence, and resource offers. |
+| Runtime | Installation-scoped stable identity for one installed `litecoworkd`, not one Workspace; process-bound state belongs to its RuntimeIncarnation. |
 | RuntimeIncarnation | One daemon process lifetime under a persistent Runtime identity; process-bound state is scoped to it. |
 | AgentHostInstance | Runtime-operational endpoint/process attachment created or attached lazily for AgentSessions; it is not Task truth. |
 | Environment | The actual place an Attempt acts: local workspace, worktree, container, VM, browser, desktop, or remote sandbox. |
@@ -197,6 +197,7 @@ user's Task.
 | TriggerHost | Runtime/provider placement that observes one Automation trigger and creates its occurrence; separate from Task execution placement. |
 | ChannelHostAssignment | One fenced Runtime assignment for a ChannelBinding's inbound processing and outbound delivery; RuntimeMesh owns its host epoch. |
 | CapabilityRef | Internal normalized identity for a package component or MCP Skill, pinned by its exact content/manifest digest. |
+| Capability | Versioned operation or set of operations an authorized Attempt can use through a provider, an agent-native integration, or the LiteCowork Gateway; not a permission or a package listing. |
 | CapabilityInvocation | Durable lifecycle for one capability operation; it may be read-only, asynchronous, or linked to an Effect. |
 | CapabilityGrant | Conversation, planning, or Attempt-scoped authorization for an exact capability and operation; Conversation/planning grants are read-only. |
 | Resource / ResourceLocation | Stable logical identity and one independently available location/revision observation. |

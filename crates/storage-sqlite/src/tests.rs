@@ -27,6 +27,8 @@ mod writer_shutdown_tests;
 use super::*;
 #[path = "artifact_tests.rs"]
 mod artifact_tests;
+#[path = "automation_host_tests.rs"]
+mod automation_host_tests;
 #[path = "coworker_tests.rs"]
 mod coworker_tests;
 #[path = "delegation_profile_tests.rs"]
@@ -1734,7 +1736,7 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
     assert!(agent_registry_exists);
     assert!(!resource_index_exists);
 
-    migrate(&mut connection).expect("apply migrations v14 through v25 in order");
+    migrate(&mut connection).expect("apply migrations v14 through v26 in order");
 
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
@@ -1747,7 +1749,7 @@ fn upgrades_schema_v13_through_resource_index_registry_v19() {
         .expect("query applied migrations")
         .collect::<Result<_, _>>()
         .expect("collect migration versions");
-    assert_eq!(applied, [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]);
+    assert_eq!(applied, [14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]);
 }
 
 #[test]
@@ -1793,7 +1795,7 @@ fn v21_workspace_root_observation_migration_rolls_back_atomically_and_replays() 
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read replayed schema version");
-    assert_eq!(version, 25);
+    assert_eq!(version, SCHEMA_VERSION);
     verify_migration_record(&connection, 21, V21_MIGRATION_NAME, SQLITE_V21_DDL, false)
         .expect("verify replayed v21 migration receipt");
     verify_migration_record(&connection, 22, V22_MIGRATION_NAME, SQLITE_V22_DDL, false)
@@ -1802,8 +1804,8 @@ fn v21_workspace_root_observation_migration_rolls_back_atomically_and_replays() 
         .expect("verify v23 migration receipt");
     verify_migration_record(&connection, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL, false)
         .expect("verify historical v24 migration receipt");
-    verify_migration_record(&connection, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL, true)
-        .expect("verify latest v25 migration receipt");
+    verify_migration_record(&connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, true)
+        .expect("verify latest v26 migration receipt");
 }
 
 #[test]
@@ -1947,7 +1949,21 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
 
     connection
         .execute_batch(
-            "DROP TRIGGER IF EXISTS delegation_results_immutable_update;
+            "DROP TRIGGER IF EXISTS capability_invocation_dispatch_requires_consumed_approval;
+             DROP TRIGGER IF EXISTS capability_invocation_status_transition_guard;
+             DELETE FROM schema_migrations WHERE version = 26;
+             PRAGMA user_version = 25;",
+        )
+        .expect("restore the v26 migration boundary");
+    connection
+        .execute_batch(SQLITE_V15_DDL)
+        .expect("restore the v15 invocation guards");
+    connection
+        .execute_batch(
+            "DROP TRIGGER IF EXISTS resource_edges_immutable_update;
+             DROP TRIGGER IF EXISTS resource_edges_immutable_delete;
+             DELETE FROM schema_migrations WHERE version = 25;
+             DROP TRIGGER IF EXISTS delegation_results_immutable_update;
              DROP TRIGGER IF EXISTS delegation_results_immutable_delete;
              DROP TABLE IF EXISTS delegation_results;
              DELETE FROM schema_migrations WHERE version = 24;
@@ -2024,7 +2040,7 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read replayed v19 version");
-    assert_eq!(version, 24);
+    assert_eq!(version, V26_SCHEMA_VERSION);
     verify_migration_record(&connection, 19, V19_MIGRATION_NAME, SQLITE_V19_DDL, false)
         .expect("verify replayed v19 receipt");
     verify_migration_record(&connection, 20, V20_MIGRATION_NAME, SQLITE_V20_DDL, false)
@@ -2035,7 +2051,9 @@ fn v19_resource_index_migration_rolls_back_atomically_and_replays() {
         .expect("verify replayed v22 receipt");
     verify_migration_record(&connection, 23, V23_MIGRATION_NAME, SQLITE_V23_DDL, false)
         .expect("verify replayed v23 receipt");
-    verify_migration_record(&connection, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL, true)
+    verify_migration_record(&connection, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL, false)
+        .expect("verify v24 receipt after v25 replay");
+    verify_migration_record(&connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, true)
         .expect("verify latest migration receipt");
 
     let (registry_count, size_bytes, state, reference_count): (i64, i64, String, i64) = connection
@@ -3417,7 +3435,7 @@ fn sqlite_full_through_writer_actor_preserves_state_and_allows_retry() {
     let (page_count_sender, page_count_receiver) = mpsc::channel();
     let page_count = store
         .execute_command(
-            Command::ConversationOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let _ = page_count_sender.send(
                         connection
@@ -3433,7 +3451,7 @@ fn sqlite_full_through_writer_actor_preserves_state_and_allows_retry() {
     let (cap_sender, cap_receiver) = mpsc::channel();
     let applied_cap = store
         .execute_command(
-            Command::ConversationOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let result = connection
                         .pragma_update(None, "max_page_count", page_count)
@@ -3499,7 +3517,7 @@ fn sqlite_full_through_writer_actor_preserves_state_and_allows_retry() {
     let (restore_sender, restore_receiver) = mpsc::channel();
     store
         .execute_command(
-            Command::ConversationOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let current_pages = connection
                         .pragma_query_value(None, "page_count", |row| row.get::<_, u32>(0))
@@ -3545,7 +3563,7 @@ fn sqlite_full_workspace_policy_command_rolls_back_idempotency_receipt_and_retri
     let (page_count_sender, page_count_receiver) = mpsc::channel();
     let page_count = store
         .execute_command(
-            Command::ConversationOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let _ = page_count_sender.send(
                         connection
@@ -3561,7 +3579,7 @@ fn sqlite_full_workspace_policy_command_rolls_back_idempotency_receipt_and_retri
     let (cap_sender, cap_receiver) = mpsc::channel();
     let applied_cap = store
         .execute_command(
-            Command::ConversationOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let result = connection
                         .pragma_update(None, "max_page_count", page_count)
@@ -3662,7 +3680,7 @@ fn sqlite_full_workspace_policy_command_rolls_back_idempotency_receipt_and_retri
     let (restore_sender, restore_receiver) = mpsc::channel();
     store
         .execute_command(
-            Command::ConversationOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let current_pages = connection
                         .pragma_query_value(None, "page_count", |row| row.get::<_, u32>(0))

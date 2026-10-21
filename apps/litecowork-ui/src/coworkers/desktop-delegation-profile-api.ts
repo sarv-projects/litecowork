@@ -1,17 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
+import { type OperatorBridgeResponse as BridgeResponse, operatorBridgeResponse } from "../api/operator-bridge.ts";
 import {
   createDelegationProfileCatalogApi,
   type DelegationProfileOperation,
   type DelegationProfileTransport,
 } from "./delegation-profile-api";
-
-type BridgeResponse = { status: number; contentType: string; bodyBase64: string };
-
-function decodeBase64(encoded: string): Uint8Array {
-  if (encoded.length > 2 * 1024 * 1024) throw new Error("Worker profile response exceeded its size limit.");
-  const binary = atob(encoded);
-  return Uint8Array.from(binary, character => character.charCodeAt(0));
-}
 
 function desktopTransport(workspaceId: string): DelegationProfileTransport {
   return async (operation: DelegationProfileOperation, signal) => {
@@ -127,10 +120,7 @@ function desktopTransport(workspaceId: string): DelegationProfileTransport {
       || typeof response.contentType !== "string" || typeof response.bodyBase64 !== "string") {
       throw new Error("The local worker profile service returned an invalid response.");
     }
-    return new Response(decodeBase64(response.bodyBase64), {
-      status: response.status,
-      headers: { "Content-Type": response.contentType },
-    });
+    return operatorBridgeResponse(response, { maxEncodedLength: 2 * 1024 * 1024 });
   };
 }
 

@@ -1391,6 +1391,12 @@
       "sha256": "50970669b318314f169b5cc8219d53335d3e7a1ce0953095f3a577961618ef29"
     },
     {
+      "method": "POST",
+      "operationId": "settleAutomationTriggers",
+      "path": "/automations/host/settle",
+      "sha256": "4346eb3741c39c3542d8040f149c54ea373349011f49d6a3b24397afb9f4f5d7"
+    },
+    {
       "method": "GET",
       "operationId": "getAutomation",
       "path": "/automations/{automationId}",
@@ -1407,6 +1413,12 @@
       "operationId": "disableAutomation",
       "path": "/automations/{automationId}/disable",
       "sha256": "146bfe5c68469973bf8afa032fe500bdef240b123334443d5b431226371b65df"
+    },
+    {
+      "method": "GET",
+      "operationId": "getAutomationHealth",
+      "path": "/automations/{automationId}/health",
+      "sha256": "a6c044826d173096487d9836524d84338079c406bc61929209199c53e3bcc341"
     },
     {
       "method": "GET",
@@ -1440,6 +1452,12 @@
     },
     {
       "method": "GET",
+      "operationId": "getLocalModelAvailability",
+      "path": "/capabilities/local-models",
+      "sha256": "767fde4893ae5a0a69cda9225970f064b189d81b89cbe360a665d10222ac2740"
+    },
+    {
+      "method": "GET",
       "operationId": "getZipIntakeReadiness",
       "path": "/capabilities/zip-intake",
       "sha256": "3df6ba917dcba97e2b186265dc77c00bf9425697fb8252609d86dd08f856588e"
@@ -1448,13 +1466,13 @@
       "method": "POST",
       "operationId": "connectOrInstallCapability",
       "path": "/capabilities/{capabilityId}/connect-or-install",
-      "sha256": "7d929a8ce383cf2b2cb7ad7ad7680c1eedaf580de63dbf640e6533223ebdae8a"
+      "sha256": "7614242eb9afa1029c34ee69d804fc7f3bc57d59e4a72e29de488fbb0a6dec55"
     },
     {
       "method": "POST",
       "operationId": "testCapabilityConnection",
       "path": "/capabilities/{capabilityId}/test",
-      "sha256": "d482290ebfb4a7f32d38578e1a7d53e9c0ba5a5e93e018a813623d1c4495eaf0"
+      "sha256": "56e98879c766b603542bb766460af54642f4c1eb8cb643505858b51d4ff7e5cc"
     },
     {
       "method": "POST",
@@ -1676,31 +1694,37 @@
       "method": "POST",
       "operationId": "startDemonstration",
       "path": "/demonstrations",
-      "sha256": "e322b76ded07c777b017608f513ad0b215e4f5b3e308b69bfd668dc7ed027dfe"
+      "sha256": "9dbe49633119af6bdf63d5286959416cd6c5161968ca239a54321d8b05caeaeb"
     },
     {
       "method": "POST",
       "operationId": "abortDemonstration",
       "path": "/demonstrations/{demonstrationId}/abort",
-      "sha256": "0e63010473179f67e5b94a0dcf4fff9ad5b20e895eab8fd0283ae1246c57ec18"
+      "sha256": "415374f29c878c680afb8cb470b21b05cc011a180446f48c1ac6fae0cc797f84"
+    },
+    {
+      "method": "POST",
+      "operationId": "appendDemonstrationAction",
+      "path": "/demonstrations/{demonstrationId}/actions",
+      "sha256": "ef76364740f7318caeb74ce7728233063c1d27c6f0c73e2e6c1952c5ad48d768"
     },
     {
       "method": "POST",
       "operationId": "completeDemonstration",
       "path": "/demonstrations/{demonstrationId}/complete",
-      "sha256": "728e3d316a4051de7b3aa3690009788507cd03b09379ddedeb3fdef3d1504c85"
+      "sha256": "ca744b0c9410ccdba51b2bccf9aa86af7a65e9ff66baba3e1f019599c6deb493"
     },
     {
       "method": "POST",
       "operationId": "pauseDemonstration",
       "path": "/demonstrations/{demonstrationId}/pause",
-      "sha256": "f22a60790d8eb7156055481a9fb7a42c3d6ca89a2e90df7735de6c61ece98a63"
+      "sha256": "c0a553bfdcce85ab758bcc23a60d6f315a5af5740dfc315ed2df72a5d0fa74ea"
     },
     {
       "method": "POST",
       "operationId": "resumeDemonstration",
       "path": "/demonstrations/{demonstrationId}/resume",
-      "sha256": "5e3b42a96a5d207c1cd0c1700f743c78d1879ce65e6109e459dc48b43a90f68b"
+      "sha256": "696147ff2d19a57f725ef95a6e62b086f62c35189cb329ac6094d983a72451ff"
     },
     {
       "method": "GET",
@@ -1712,13 +1736,13 @@
       "method": "GET",
       "operationId": "describeDiscoverItem",
       "path": "/discover/items/{itemId}",
-      "sha256": "ba3293ce225236a561de6fe8d9daf070b67a9a81a22b2e6540eae54aaeff44dc"
+      "sha256": "5ae55046a21752a58d9727149b6fdc5c683b969be86419366ffd3d3d8518237d"
     },
     {
       "method": "GET",
       "operationId": "searchDiscover",
       "path": "/discover/search",
-      "sha256": "633c69c4ea2ff3cbb9a8b313d6a1e2ec24d516223faef0a3cd68b4e61a6e71ed"
+      "sha256": "fb030b12fa75f4abd6baaa623053b1d325bec7db8b93e537617a9a06c90d7a48"
     },
     {
       "method": "GET",
@@ -1755,6 +1779,18 @@
       "operationId": "listLibrary",
       "path": "/library",
       "sha256": "b8a731e094116cbc10434d97f9593678add9e417b3433661ec0f371dcf6a3e96"
+    },
+    {
+      "method": "POST",
+      "operationId": "issueMcpAppFrame",
+      "path": "/mcp-apps/frames",
+      "sha256": "7ffff3c217f49051bb43c619d38f7f48643a1d596f582cf968b7b564d71889ae"
+    },
+    {
+      "method": "POST",
+      "operationId": "validateMcpAppMessage",
+      "path": "/mcp-apps/messages",
+      "sha256": "d0b2dfc0a361a1f0c0fac7fb8c24d4940bf1997cb745204b8237cd92b012cf81"
     },
     {
       "method": "GET",
@@ -1803,6 +1839,12 @@
       "operationId": "quickImportResource",
       "path": "/resources/quick-import",
       "sha256": "3dba582ba13c8e8241dad46b1d77f285421beec6450bc1cc0f72e9ee3c222c5e"
+    },
+    {
+      "method": "POST",
+      "operationId": "groundedRetrieval",
+      "path": "/resources/retrieval",
+      "sha256": "37e54034abfdc6c263fd696191f867abfdbe13d8e6c50a215d0425e2d931d733"
     },
     {
       "method": "GET",
@@ -1875,6 +1917,12 @@
       "operationId": "listResourceDependents",
       "path": "/resources/{resourceId}/dependents",
       "sha256": "b6c0fd993a945d41bce63afad96b007216e3534fa3de1c779eff02b10958510f"
+    },
+    {
+      "method": "GET",
+      "operationId": "getResourceIndexState",
+      "path": "/resources/{resourceId}/index-state",
+      "sha256": "9cb11a0b5ccd53c30b5ec73c4c90087d6db24c577ddbbbab8ef35c87fd2b6a7f"
     },
     {
       "method": "GET",
@@ -2037,6 +2085,30 @@
       "operationId": "rejectSkillProposal",
       "path": "/skill-proposals/{proposalId}/reject",
       "sha256": "67fd1995faf4913e1d416d80034f9878330dfe431ce4da6e79a90c3d1a146f52"
+    },
+    {
+      "method": "GET",
+      "operationId": "listSkills",
+      "path": "/skills",
+      "sha256": "79e37e666b7b7737a00ebe889bd283d1110f07fe61d8d8715d3b0949693e3652"
+    },
+    {
+      "method": "POST",
+      "operationId": "createSkill",
+      "path": "/skills",
+      "sha256": "d2db4f107906a542efbcb5f7a6137e88d66d96f7a917698c00b7ebf7712a8a17"
+    },
+    {
+      "method": "GET",
+      "operationId": "getSkill",
+      "path": "/skills/{skillId}",
+      "sha256": "09e1995036bade6212c10179c5e1313096d93e7a12dc09c11b26e910b917e199"
+    },
+    {
+      "method": "PUT",
+      "operationId": "reviseSkill",
+      "path": "/skills/{skillId}",
+      "sha256": "aaf8b91a4603c52c2e259aec2db620db73443820015729ce6a272338fea99bed"
     },
     {
       "method": "GET",
@@ -2632,6 +2704,11 @@
       "path": "/automations"
     },
     {
+      "method": "POST",
+      "operationId": "settleAutomationTriggers",
+      "path": "/automations/host/settle"
+    },
+    {
       "method": "GET",
       "operationId": "getAutomation",
       "path": "/automations/{automationId}"
@@ -2645,6 +2722,11 @@
       "method": "POST",
       "operationId": "disableAutomation",
       "path": "/automations/{automationId}/disable"
+    },
+    {
+      "method": "GET",
+      "operationId": "getAutomationHealth",
+      "path": "/automations/{automationId}/health"
     },
     {
       "method": "GET",
@@ -2670,6 +2752,11 @@
       "method": "POST",
       "operationId": "runAutomationNow",
       "path": "/automations/{automationId}/run"
+    },
+    {
+      "method": "GET",
+      "operationId": "getLocalModelAvailability",
+      "path": "/capabilities/local-models"
     },
     {
       "method": "GET",
@@ -2878,6 +2965,11 @@
     },
     {
       "method": "POST",
+      "operationId": "appendDemonstrationAction",
+      "path": "/demonstrations/{demonstrationId}/actions"
+    },
+    {
+      "method": "POST",
       "operationId": "completeDemonstration",
       "path": "/demonstrations/{demonstrationId}/complete"
     },
@@ -2937,6 +3029,16 @@
       "path": "/library"
     },
     {
+      "method": "POST",
+      "operationId": "issueMcpAppFrame",
+      "path": "/mcp-apps/frames"
+    },
+    {
+      "method": "POST",
+      "operationId": "validateMcpAppMessage",
+      "path": "/mcp-apps/messages"
+    },
+    {
       "method": "GET",
       "operationId": "listNeedsYou",
       "path": "/needs-you"
@@ -2975,6 +3077,11 @@
       "method": "POST",
       "operationId": "quickImportResource",
       "path": "/resources/quick-import"
+    },
+    {
+      "method": "POST",
+      "operationId": "groundedRetrieval",
+      "path": "/resources/retrieval"
     },
     {
       "method": "GET",
@@ -3035,6 +3142,11 @@
       "method": "GET",
       "operationId": "listResourceDependents",
       "path": "/resources/{resourceId}/dependents"
+    },
+    {
+      "method": "GET",
+      "operationId": "getResourceIndexState",
+      "path": "/resources/{resourceId}/index-state"
     },
     {
       "method": "GET",
@@ -3170,6 +3282,26 @@
       "method": "POST",
       "operationId": "rejectSkillProposal",
       "path": "/skill-proposals/{proposalId}/reject"
+    },
+    {
+      "method": "GET",
+      "operationId": "listSkills",
+      "path": "/skills"
+    },
+    {
+      "method": "POST",
+      "operationId": "createSkill",
+      "path": "/skills"
+    },
+    {
+      "method": "GET",
+      "operationId": "getSkill",
+      "path": "/skills/{skillId}"
+    },
+    {
+      "method": "PUT",
+      "operationId": "reviseSkill",
+      "path": "/skills/{skillId}"
     },
     {
       "method": "GET",
@@ -3680,6 +3812,10 @@
       "sha256": "f27a06fd89af0a85cb1bd04be971962ef465748637fb8dfc5d04a668562b3789"
     },
     {
+      "name": "AppendDemonstrationActionRequest",
+      "sha256": "993c8f6c145c359c886efe5d548c22c354884503cd812de10e71d26c463c4d18"
+    },
+    {
       "name": "AppendMessageRequest",
       "sha256": "e11622c31cbfd7c6d710ca437c83626228597dc5cd582efe00df39cc5aa2afec"
     },
@@ -3752,6 +3888,10 @@
       "sha256": "a5c5ce92a0876324ae1d4be162c10995b0be5d399767168f975a31b8abcd7fd5"
     },
     {
+      "name": "AuthorizedResourceRef",
+      "sha256": "23af09b5fcbcd29c36973398651b48672479b41839ef2bb6f4f377c88ce969ce"
+    },
+    {
       "name": "Automation",
       "sha256": "cdea2633566837a83b2ac41ba6b65e42419ab40906b26ec3d0b2ed7451abda04"
     },
@@ -3760,8 +3900,36 @@
       "sha256": "e372fad3cd1073c964577721695c5eb9ec72e2319624a3231bf1079f63820747"
     },
     {
+      "name": "AutomationHealth",
+      "sha256": "b7c38c8308f81aab1030b2e3062d8f51f976d7f9a128be3ccb0397ad5712ffe1"
+    },
+    {
+      "name": "AutomationHostDeferral",
+      "sha256": "018f9490f844f41992ffb4e50dceaf09cd36430894407537a477e4ef2ac1838c"
+    },
+    {
+      "name": "AutomationHostMaterialization",
+      "sha256": "f1e4cd283e3d34bfa74ac33960a3b8dd1ff691c01da059aff40d3a503ba66ea2"
+    },
+    {
+      "name": "AutomationHostSettlement",
+      "sha256": "27117d96e09ed19334aec0133245061dee4c13254f74e9af31e8beb21fc67b2b"
+    },
+    {
+      "name": "AutomationHostSkip",
+      "sha256": "de206a64a06a3622e4cda36c560fa4ef843c17907cfaec37c6cb2465388e6c2e"
+    },
+    {
+      "name": "AutomationHostTriggerSettlement",
+      "sha256": "658e606c559969808488782c47deb9fd40d2fa4eaa660c6534e5135d5c1da3ad"
+    },
+    {
       "name": "AutomationOccurrence",
       "sha256": "ae14ca338158b0b9bb773d7e33c997d7bfe46f3affda09ed8311f4cc68554c97"
+    },
+    {
+      "name": "AutomationOccurrenceCounts",
+      "sha256": "7a5b7320430f1b1e5387a6dd31dec1e860e43ba5d1bb3b6cea011f67c461b696"
     },
     {
       "name": "AutomationOccurrencePage",
@@ -3874,10 +4042,6 @@
     {
       "name": "ChannelIngressGapDecision",
       "sha256": "3695be83d10b9f2372ad34f225fa9e0897b219708cb1f90893558f80e4a278b1"
-    },
-    {
-      "name": "Choice",
-      "sha256": "ffc455ed50b88b27dbad1ed890e270ffb804cd1ed0c058f0e736fcfb3daabcd7"
     },
     {
       "name": "CommandExitTrigger",
@@ -4036,6 +4200,10 @@
       "sha256": "5b3c66a583a8ee0b8925e989730d981194de21532c0ba327525921a5aec4e685"
     },
     {
+      "name": "CreateMcpAppFrameRequest",
+      "sha256": "278e773f358a15f79e31fa187e4236e30ea8c56e2288cd96a65386344c0897b8"
+    },
+    {
       "name": "CreatePairingTokenRequest",
       "sha256": "f6f6abc498cc96dd383367111ea486ee151cb0966bbd8b3e34d63635bd068835"
     },
@@ -4136,12 +4304,24 @@
       "sha256": "c07d5a18017676e1d5abef5327bf7a8ac1a6ae657ac2673e544e8f1baadee329"
     },
     {
+      "name": "DiscoverCapabilitySummary",
+      "sha256": "c3a952a400449ebf38acc88f523c700277bd79b53202153fd59ce7e1f12e3c2f"
+    },
+    {
       "name": "DiscoverItem",
-      "sha256": "f7598c13d7e6f91d82df93a66659edf9b43d0178ba329ba04ce90f03c085e96e"
+      "sha256": "98b3a924bdec38dd02e0bc29a50e02d2dbd4c44f880b7711de44b91d53d25eb0"
+    },
+    {
+      "name": "DiscoverItemDetail",
+      "sha256": "56a5da34fc61fc724f6d1bd493424b81cf87a671bb85d070190354a181c5cd9f"
     },
     {
       "name": "DiscoverItemPage",
-      "sha256": "aeb7cc91b8a0b830580fbcc6494a9444c4662eff0a2c21a03708c6560aecf928"
+      "sha256": "000ee4396b215ed3171b4e6d808797fbe80701fb4acd7e16c332d51082e8c1e1"
+    },
+    {
+      "name": "DiscoverProviderStatus",
+      "sha256": "d2eaf90c7cfaba5cc5c0084c994070e59b6c3d1e8fb2ea2e99d4c2d6a55a8c98"
     },
     {
       "name": "DuplicateDelegationProfileRequest",
@@ -4248,6 +4428,18 @@
       "sha256": "c581d9f57a5fe401813e1033db75e7006a13c479d36310355477587b3f39e762"
     },
     {
+      "name": "GroundedRetrievalCitation",
+      "sha256": "dbd879efc5644460010a15505e6cec9a78d40cfa83c3ecbeab4130117a197f4a"
+    },
+    {
+      "name": "GroundedRetrievalRequest",
+      "sha256": "17fc0a43c1a1cc09afaf51d9270284e119edb83be2db8f5deb3f6dc6e8462dbb"
+    },
+    {
+      "name": "GroundedRetrievalResponse",
+      "sha256": "03a11ab58ac6315dbcdadb34fe53a0138e98ceeb5170a0d15c14a0b2f7d6673a"
+    },
+    {
       "name": "InstallAgentRequest",
       "sha256": "b662c3d63586ccc822247a06c61556dc01be9c08efb084954fab8a65929ed1dd"
     },
@@ -4276,6 +4468,10 @@
       "sha256": "749ba5de2cdefdde962441aac9469b4149b116d3e0ef1536da07e57cb4ecad1b"
     },
     {
+      "name": "LocalModelAvailability",
+      "sha256": "88f793defdfcb4e128461865e40d47fe9844126774164013e5d239342af45dab"
+    },
+    {
       "name": "LocalOperatorReadiness",
       "sha256": "713a6691c03f8dea8cec48f003a1387671613625043fb20a7116013ad02f2a4e"
     },
@@ -4294,6 +4490,22 @@
     {
       "name": "ManualTrigger",
       "sha256": "62ddecec2d49118f3f709ec904f9c59bed50e435b9008833633956ebd343ddb1"
+    },
+    {
+      "name": "McpAppBridgeMessage",
+      "sha256": "049c36d0aef42f50c479f116f8efdf6858fcc5d04d0e7f62b0d8a6a06edcb1ad"
+    },
+    {
+      "name": "McpAppBridgeRequest",
+      "sha256": "53a1f8543c240c90f9cdf00afbe41ec2315b2bf5438157b50856e7a590f0d024"
+    },
+    {
+      "name": "McpAppCsp",
+      "sha256": "ca2d8f65189f45661768921599bf4ed161d466c05fa5b9fcda24323a4738ad18"
+    },
+    {
+      "name": "McpAppFrame",
+      "sha256": "0cef088b97e08e3a71b52b7dfb70fd5297a74930186235ceb334d10c880aba47"
     },
     {
       "name": "MessageContentBlock",
@@ -4492,6 +4704,10 @@
       "sha256": "cf17a77a58d1ffa405072b5797517014f89c54bef9d7856e9a6c13b54f78dd6e"
     },
     {
+      "name": "ResourceIndexStateResponse",
+      "sha256": "441d916b9ccddd20103de26405abdcd516b8f0dfacb0bbb19285cd0e7c0be07c"
+    },
+    {
       "name": "ResourceInput",
       "sha256": "84363bab2edec7fcc436ffd796aef3e1ffff247deb29b8779f7c937f984c7b6b"
     },
@@ -4562,6 +4778,18 @@
     {
       "name": "RestoreWorkspaceBackupRequest",
       "sha256": "7e1278368d79a8018c2088cb0dbe50d5e3b4a7492d83778e579029e154424242"
+    },
+    {
+      "name": "RetrievalProviderStatus",
+      "sha256": "8156832d7e50681eff68f11d37020962b0cfb8e6b96d22c1e50e0997ba0b447d"
+    },
+    {
+      "name": "RetrievalSegmentLocator",
+      "sha256": "6f8461f066f7de6866a610a08e1ddb977a768b5ed4470779544306f47db552f1"
+    },
+    {
+      "name": "RetrievalTextSpan",
+      "sha256": "1dc2a1365c71be9788c285dd3bb6e9e4d7d1561cf8b2cc6d73ff52ac1ee20d5f"
     },
     {
       "name": "RetryPolicy",
@@ -4692,12 +4920,40 @@
       "sha256": "dee7c35eb8a9162a51e615191347b762c742ac8509d0e8b1a05423ee8e2a849e"
     },
     {
+      "name": "Skill",
+      "sha256": "8aaad3064e26442faae04b1bbd06862d3d5c03311997df79955e7ac819267d07"
+    },
+    {
+      "name": "SkillCapabilityRef",
+      "sha256": "55034432f69458aac3bd871cd0a8153abe2751a341072011d5dbfac7c2dd872f"
+    },
+    {
+      "name": "SkillDrift",
+      "sha256": "b18142b24f8a388a9ee89f862d7b9849985987ae622ee3bb123a5ecf78abd4ee"
+    },
+    {
+      "name": "SkillPage",
+      "sha256": "709c66c987ffc5e15855e136ca49445a766bd75634cbed2bb508f34421ac4eca"
+    },
+    {
+      "name": "SkillPlaceholder",
+      "sha256": "61d66c0a31a3a3081fb70b51ccdb5719a05ceae7fd68372ef985d860ea4b1c6d"
+    },
+    {
       "name": "SkillProposal",
-      "sha256": "9feb1ad96ed7631f411822e4e02991afdc485f81af6888c31d2450f12c63397c"
+      "sha256": "597fd2610f402dfa008dc667248abd4d1706a6b41d6a35b3b781559dc6ab4f03"
     },
     {
       "name": "SkillProposalPage",
       "sha256": "84986dd532755c63d8812c5e119735448c9087ebc9c6597e80e2b107bd859f7f"
+    },
+    {
+      "name": "SkillRevision",
+      "sha256": "a3a7bc7bd6727b1dc54af4e80ef7415d40ea03ca8ace4e8a71602de78823dca8"
+    },
+    {
+      "name": "SkillRevisionInput",
+      "sha256": "2faeb51986b462ca2478562b8fb983d315dfeb710a466e0df6bd68acae8e4016"
     },
     {
       "name": "SnoozeSuggestionRequest",
@@ -4865,7 +5121,7 @@
     },
     {
       "name": "UserRequest",
-      "sha256": "10c9967acb25a1097ac3f03a9dc786acffc9861e3b91711c57529d0de6601fed"
+      "sha256": "faef3b5115cae67ed0b9f5528ba5a6380c847c241765fb13c258ee3a23c0a24d"
     },
     {
       "name": "UserRequestDetail",
@@ -4968,6 +5224,10 @@
       "sha256": "d9adb48e9e9a665ded38c85934e878d628d8ebe2b6134a5650a58e3aa783d1c4"
     },
     {
+      "name": "WriteSkillRequest",
+      "sha256": "8f5ead797c60c9a77dc6937382674ae5b55bb8ed4f36ae055a010718c8f9d0cf"
+    },
+    {
       "name": "ZipIntakeReadiness",
       "sha256": "5d61015f15d5d2eb7e539f0fc454b9f8a486563ebee26dbeda0b2d600364a170"
     }
@@ -5012,6 +5272,7 @@
     "AgentSessionOptions",
     "ApiError",
     "AppendArtifactTextVersionRequest",
+    "AppendDemonstrationActionRequest",
     "AppendMessageRequest",
     "Approval",
     "ApprovalPage",
@@ -5030,9 +5291,17 @@
     "ArtifactVersionRef",
     "Attempt",
     "AttemptInvocationScope",
+    "AuthorizedResourceRef",
     "Automation",
     "AutomationExecutionPolicy",
+    "AutomationHealth",
+    "AutomationHostDeferral",
+    "AutomationHostMaterialization",
+    "AutomationHostSettlement",
+    "AutomationHostSkip",
+    "AutomationHostTriggerSettlement",
     "AutomationOccurrence",
+    "AutomationOccurrenceCounts",
     "AutomationOccurrencePage",
     "AutomationPage",
     "AutomationRevision",
@@ -5061,7 +5330,6 @@
     "ChannelHostContinuityProofRef",
     "ChannelHostDrainProofRef",
     "ChannelIngressGapDecision",
-    "Choice",
     "CommandExitTrigger",
     "CommandReceipt",
     "CommittedResource",
@@ -5101,6 +5369,7 @@
     "CreateCoworkerRequest",
     "CreateDelegationProfileRequest",
     "CreateGoalRequest",
+    "CreateMcpAppFrameRequest",
     "CreatePairingTokenRequest",
     "CreatePersistentEnvironmentRequest",
     "CreateResourceRevisionUploadRequest",
@@ -5126,8 +5395,11 @@
     "DependencyFreshness",
     "DependencyHealth",
     "DestroyEnvironmentRequest",
+    "DiscoverCapabilitySummary",
     "DiscoverItem",
+    "DiscoverItemDetail",
     "DiscoverItemPage",
+    "DiscoverProviderStatus",
     "DuplicateDelegationProfileRequest",
     "Effect",
     "EndpointSelectionPolicy",
@@ -5154,6 +5426,9 @@
     "GoalStatusRequest",
     "GoalTaskContribution",
     "GrantResourceRef",
+    "GroundedRetrievalCitation",
+    "GroundedRetrievalRequest",
+    "GroundedRetrievalResponse",
     "InstallAgentRequest",
     "InvalidationPage",
     "InvalidationRecord",
@@ -5161,11 +5436,16 @@
     "JsonSchema",
     "JsonValue",
     "LeadFailoverPolicy",
+    "LocalModelAvailability",
     "LocalOperatorReadiness",
     "ManagedBlobContent",
     "ManualAutomationRunRequest",
     "ManualAutomationRunResponse",
     "ManualTrigger",
+    "McpAppBridgeMessage",
+    "McpAppBridgeRequest",
+    "McpAppCsp",
+    "McpAppFrame",
     "MessageContentBlock",
     "MessagePage",
     "MisfirePolicy",
@@ -5215,6 +5495,7 @@
     "ResourceDependencyView",
     "ResourceEventTrigger",
     "ResourceFreshness",
+    "ResourceIndexStateResponse",
     "ResourceInput",
     "ResourceLimits",
     "ResourceLocationFreshness",
@@ -5233,6 +5514,9 @@
     "ResourceUploadSession",
     "RestoreReceipt",
     "RestoreWorkspaceBackupRequest",
+    "RetrievalProviderStatus",
+    "RetrievalSegmentLocator",
+    "RetrievalTextSpan",
     "RetryPolicy",
     "ReturnEnvironmentControlRequest",
     "ReviseTaskSpecRequest",
@@ -5265,8 +5549,15 @@
     "SetPrimaryCoworkerRequest",
     "SetSuggestionPreferenceRequest",
     "SetWorkspaceDefaultAgentBindingRequest",
+    "Skill",
+    "SkillCapabilityRef",
+    "SkillDrift",
+    "SkillPage",
+    "SkillPlaceholder",
     "SkillProposal",
     "SkillProposalPage",
+    "SkillRevision",
+    "SkillRevisionInput",
     "SnoozeSuggestionRequest",
     "StartDemonstrationRequest",
     "SteerTaskRequest",
@@ -5334,6 +5625,7 @@
     "WorkspaceRootScanRequest",
     "WorkspaceRootScanSummary",
     "WorkspaceRootView",
+    "WriteSkillRequest",
     "ZipIntakeReadiness"
   ],
   "shared_schema_definitions": [

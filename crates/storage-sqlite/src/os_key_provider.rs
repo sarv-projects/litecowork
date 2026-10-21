@@ -1038,4 +1038,79 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    /// Runs a child test process with a hard time limit so a credential-service
+    /// probe can never hang the suite.
+    #[cfg(target_os = "linux")]
+    fn run_child_with_timeout(
+        mut command: Command,
+        limit: std::time::Duration,
+    ) -> Result<std::process::ExitStatus, String> {
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("could not start the child probe: {error}"))?;
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return Ok(status),
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err("the child probe exceeded its time limit".to_owned());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                Err(error) => return Err(format!("the child probe failed: {error}")),
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unreachable_credential_service_fails_closed_without_a_local_fallback() {
+        const PROBE_MARKER: &str = "LITECOWORK_UNREACHABLE_CREDENTIAL_SERVICE_PROBE";
+        if std::env::var_os(PROBE_MARKER).is_some() {
+            // The probe runs with an unreachable session bus. The provider must
+            // report the missing credential service instead of inventing a
+            // local key or an empty key.
+            let result = OsWorkspaceBlobKeyProvider.current_key(
+                "workspace-unreachable-credential-service",
+                BlobPurpose::Artifact,
+            );
+            match result {
+                Err(StoreError::Blob(message)) => {
+                    assert!(
+                        message.contains("OS credential store"),
+                        "unexpected credential-store failure: {message}"
+                    );
+                }
+                Err(other) => panic!("unexpected error kind: {other:?}"),
+                Ok(_) => panic!("an unreachable credential service must fail closed"),
+            }
+            return;
+        }
+
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "os_key_provider::tests::unreachable_credential_service_fails_closed_without_a_local_fallback",
+                "--nocapture",
+            ])
+            .env(PROBE_MARKER, "1")
+            .env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                "unix:path=/litecowork-no-such-credential-service-bus",
+            )
+            .env_remove("XDG_RUNTIME_DIR");
+        let status = run_child_with_timeout(command, std::time::Duration::from_secs(60))
+            .expect("the unreachable-credential-service probe completes");
+        assert!(status.success(), "the child probe must pass");
+    }
+
+    // Platform qualification against a live Linux Secret Service lives in
+    // `crates/storage-sqlite/tests/linux_secret_service.rs`. It uses only the
+    // public provider surface and is run explicitly by
+    // `scripts/qualify-os-credential-store.sh`.
 }

@@ -9,7 +9,6 @@ use storage_core::{
     TaskPresentationReadModel, TaskPresentationReadStore,
 };
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 impl ArtifactLibraryWriteStore for SqliteWorkspaceStore {
     fn change_artifact_library(
@@ -40,7 +39,7 @@ impl ArtifactLibraryWriteStore for SqliteWorkspaceStore {
         let blobs = Arc::clone(&self.inner.blobs);
         let (reply, receive) = mpsc::channel();
         self.execute_command(
-            Command::ArtifactOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let result = library_command_transaction(connection, &blobs, command);
                     let _ = reply.send(result);
@@ -862,7 +861,7 @@ impl ArtifactVersionWriteStore for SqliteWorkspaceStore {
 
         let (reply, receive) = mpsc::channel();
         self.execute_command(
-            Command::ArtifactOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let result = append_artifact_version_transaction(
                         connection,

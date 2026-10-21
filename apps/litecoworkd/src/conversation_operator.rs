@@ -4,9 +4,13 @@
 #![allow(clippy::result_large_err)]
 
 use super::*;
-use storage_core::conversation::request_payload_value;
+use storage_core::conversation::{
+    CONVERSATION_SESSION_ADMISSION_UNAVAILABLE, ConversationTurn, ConversationTurnStatus,
+    PresentationPreference, TurnCommand, request_payload_value,
+};
 use storage_core::{
-    ConversationRecord, ConversationStore, CreateConversationCommit, WorkspaceCreateRequest,
+    ConversationMessageRecord, ConversationRecord, ConversationStore, ConversationTurnStore,
+    CreateConversationCommit, CreateConversationTurnCommit, EventDraft, WorkspaceCreateRequest,
 };
 use storage_sqlite::SqliteConversationStore;
 
@@ -36,7 +40,7 @@ struct SubmitConversationTurnBody {
     presentation_preference: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 enum ConversationTurnContentBlock {
     #[serde(rename = "TEXT")]
@@ -49,7 +53,7 @@ enum ConversationTurnContentBlock {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ConversationTurnResourceRef {
     workspace_id: String,
@@ -245,14 +249,289 @@ async fn submit_conversation_turn(
     headers: HeaderMap,
     Json(body): Json<SubmitConversationTurnBody>,
 ) -> Result<Response, Response> {
-    let _request_id = idempotency_key(&headers)?;
+    let request_id = idempotency_key(&headers)?;
     let workspace_id = selected_workspace(&headers)?;
     validate_turn_request(&body, &workspace_id)?;
-    ensure_conversation_available(&state, &headers, &conversation_id).await?;
-    // Native Conversation sessions are not yet admitted through a qualified
-    // AgentModule + Trust + Environment path. Do not persist an OPEN turn or user
-    // message that has no provider capable of settling it.
-    Err(turn_dispatch_unavailable())
+    let conversation =
+        load_authorized_conversation(&state, &workspace_id, &conversation_id).await?;
+    // The Conversation's admitted AgentBinding selection is resolved before any
+    // write: the explicit Conversation override first, then the Workspace default.
+    // The first configured selection is authoritative; a missing or ineligible
+    // selection is refused with `AGENT_UNAVAILABLE` and an unchanged draft rather
+    // than silently falling through to a lower-precedence binding.
+    let agent_binding_id = resolve_turn_agent_binding(&state, &workspace_id, &conversation)?;
+    // A caller-supplied AgentBinding is compared for identity only; it never
+    // rewrites the Conversation and never overrides the resolved selection.
+    if body
+        .agent_binding_id
+        .as_deref()
+        .is_some_and(|requested| requested != agent_binding_id)
+    {
+        return Err(agent_unavailable());
+    }
+    let presentation_preference =
+        parse_presentation_preference(body.presentation_preference.as_deref())?;
+    let content = serde_json::to_value(&body.content).map_err(|_| invalid_turn_request())?;
+    let resource_refs =
+        serde_json::to_value(&body.resource_refs).map_err(|_| invalid_turn_request())?;
+    let content_digest = canonical_digest(&content)?;
+    let principal_id = state.principal_id.clone();
+    let author = json!({"kind":"USER","principal_id":principal_id});
+    // Entity identity is derived from the authenticated principal and request key so an
+    // exact retry rebuilds the same canonical request payload instead of conflicting.
+    let message_id = idempotent_id(
+        "msg",
+        &principal_id,
+        &request_id,
+        "conversation-turn-message",
+    );
+    let turn_id = idempotent_id("turn", &principal_id, &request_id, "conversation-turn");
+    let correlation_id = idempotent_id("cor", &principal_id, &request_id, "conversation-turn");
+    let created = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+    let turn_created = event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+    let next_conversation_revision = conversation.version.checked_add(1).ok_or_else(internal)?;
+    let message = ConversationMessageRecord {
+        message_id: message_id.clone(),
+        conversation_id: conversation_id.clone(),
+        author: author.clone(),
+        role: "USER".to_owned(),
+        agent_session_id: None,
+        agent_binding_id: None,
+        turn_id: Some(turn_id.clone()),
+        content: content.clone(),
+        resource_refs: resource_refs.clone(),
+        source_channel_ref: None,
+        created_at: created.recorded_at.clone(),
+    };
+    let turn = ConversationTurn {
+        turn_id: turn_id.clone(),
+        conversation_id: conversation_id.clone(),
+        user_message_id: message_id.clone(),
+        agent_session_id: None,
+        status: ConversationTurnStatus::Open,
+        retry_ordinal: 0,
+        presentation_preference,
+        created_at: created.recorded_at.clone(),
+        settled_at: None,
+        version: 1,
+    };
+    let commit = CreateConversationTurnCommit {
+        request: WorkspaceCreateRequest {
+            principal_id: principal_id.clone(),
+            request_id: request_id.clone(),
+            request_payload: json!({
+                "operation": "conversation.turn.create.v1",
+                "workspace_id": workspace_id,
+                "conversation_id": conversation_id,
+                "turn_id": turn_id,
+                "message_id": message_id,
+                "author": author,
+                "content": content,
+                "resource_refs": resource_refs,
+                "presentation_preference": serde_json::to_value(presentation_preference)
+                    .map_err(|_| invalid_turn_request())?,
+            }),
+        },
+        principal_id: principal_id.clone(),
+        workspace_id: workspace_id.clone(),
+        message,
+        turn,
+        message_event: EventDraft {
+            event_id: created.event_id,
+            workspace_id: workspace_id.clone(),
+            entity_type: "Conversation".to_owned(),
+            entity_id: conversation_id.clone(),
+            origin_runtime_id: created.origin_runtime_id,
+            entity_revision: next_conversation_revision,
+            hlc_timestamp: created.hlc_timestamp,
+            correlation_id: created.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.message.added.v1".to_owned(),
+            payload: json!({
+                "message_id": message_id,
+                "conversation_id": conversation_id,
+                "author": author,
+                "content_digest": content_digest,
+                "resource_refs": resource_refs,
+            }),
+            recorded_at: created.recorded_at,
+        },
+        turn_event: EventDraft {
+            event_id: turn_created.event_id,
+            workspace_id: workspace_id.clone(),
+            entity_type: "ConversationTurn".to_owned(),
+            entity_id: turn_id.clone(),
+            origin_runtime_id: turn_created.origin_runtime_id,
+            entity_revision: 1,
+            hlc_timestamp: turn_created.hlc_timestamp,
+            correlation_id: turn_created.correlation_id,
+            causation_id: None,
+            schema_version: 1,
+            event_type: "conversation.turn.created.v2".to_owned(),
+            payload: json!({
+                "turn_id": turn_id,
+                "conversation_id": conversation_id,
+                "user_message_id": message_id,
+                "agent_binding_id": agent_binding_id,
+                "aggregate_version": 1,
+                "presentation_preference": serde_json::to_value(presentation_preference)
+                    .map_err(|_| invalid_turn_request())?,
+            }),
+            recorded_at: turn_created.recorded_at,
+        },
+    };
+    // The durable USER message, OPEN turn, Conversation version bump, both canonical
+    // events, and the idempotency receipt commit atomically before any admission try.
+    let store = state.store.clone();
+    let committed = tokio::task::spawn_blocking(move || {
+        SqliteConversationStore::new(store).create_conversation_turn(commit)
+    })
+    .await
+    .map_err(|_| internal())?
+    .map_err(map_store_error)?;
+
+    // Admission is still closed: no qualified native AgentModule + Trust + Environment
+    // path exists. The storage transition gate is the authoritative refusal; the route
+    // only settles the durable turn when that exact gate returns its typed reason.
+    let expected_turn_version = committed.turn.version;
+    let expected_turn_revision = expected_turn_version.checked_add(1).ok_or_else(internal)?;
+    let admission_context =
+        event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+    let candidate_session_id = idempotent_id(
+        "session",
+        &principal_id,
+        &request_id,
+        "conversation-turn-admission",
+    );
+    let admission_event = EventDraft {
+        event_id: admission_context.event_id,
+        workspace_id: workspace_id.clone(),
+        entity_type: "ConversationTurn".to_owned(),
+        entity_id: committed.turn.turn_id.clone(),
+        origin_runtime_id: admission_context.origin_runtime_id,
+        entity_revision: expected_turn_revision,
+        hlc_timestamp: admission_context.hlc_timestamp,
+        correlation_id: admission_context.correlation_id,
+        causation_id: None,
+        schema_version: 1,
+        event_type: "conversation.turn.status.changed.v1".to_owned(),
+        payload: json!({
+            "turn_id": committed.turn.turn_id,
+            "from": "OPEN",
+            "to": "RUNNING",
+            "reason_code": "SESSION_READY",
+            "aggregate_version": expected_turn_revision,
+        }),
+        recorded_at: admission_context.recorded_at,
+    };
+    let admission = run_turn_transition(
+        state.store.clone(),
+        principal_id.clone(),
+        workspace_id.clone(),
+        conversation_id.clone(),
+        committed.turn.turn_id.clone(),
+        expected_turn_version,
+        TurnCommand::Start {
+            agent_session_id: candidate_session_id,
+        },
+        admission_event,
+    )
+    .await;
+    match admission {
+        Err(StoreError::Invalid(reason))
+            if reason == CONVERSATION_SESSION_ADMISSION_UNAVAILABLE => {}
+        Err(StoreError::Conflict {
+            expected: Some(expected),
+            actual: Some(actual),
+        }) if expected == expected_turn_version && actual > expected_turn_version => {
+            // This exact durable request was already advanced past the stored OPEN
+            // receipt by an earlier or concurrent attempt. A replay writes nothing.
+            return Err(turn_admission_unavailable());
+        }
+        // Starting the real Conversation-scoped AgentSession is E03-S01 work. Removing
+        // the storage gate alone must not turn this handler into a silent dispatch path.
+        Ok(_) | Err(_) => return Err(internal()),
+    }
+
+    // Second transaction: settle the same durable turn FAILED so no OPEN turn can be
+    // stranded by an unavailable admission.
+    let settled_context =
+        event_context(&state.runtime_id, &correlation_id).map_err(|_| internal())?;
+    let settled_at = settled_context.recorded_at.clone();
+    let settled_event = EventDraft {
+        event_id: settled_context.event_id,
+        workspace_id: workspace_id.clone(),
+        entity_type: "ConversationTurn".to_owned(),
+        entity_id: committed.turn.turn_id.clone(),
+        origin_runtime_id: settled_context.origin_runtime_id,
+        entity_revision: expected_turn_revision,
+        hlc_timestamp: settled_context.hlc_timestamp,
+        correlation_id: settled_context.correlation_id,
+        causation_id: None,
+        schema_version: 1,
+        event_type: "conversation.turn.settled.v1".to_owned(),
+        payload: json!({
+            "turn_id": committed.turn.turn_id,
+            "from": "OPEN",
+            "to": "FAILED",
+            "reason_code": CONVERSATION_SESSION_ADMISSION_UNAVAILABLE,
+            "aggregate_version": expected_turn_revision,
+        }),
+        recorded_at: settled_context.recorded_at,
+    };
+    let settled = run_turn_transition(
+        state.store.clone(),
+        principal_id,
+        workspace_id,
+        conversation_id,
+        committed.turn.turn_id.clone(),
+        expected_turn_version,
+        TurnCommand::Fail { settled_at },
+        settled_event,
+    )
+    .await;
+    match settled {
+        Ok(turn) if turn.status == ConversationTurnStatus::Failed => {
+            Err(turn_admission_unavailable())
+        }
+        Ok(_) => Err(settlement_inconsistent()),
+        // Only the failure settlement above advances an OPEN turn of this build. A
+        // replay or a concurrent duplicate that finds the settled version writes nothing.
+        Err(StoreError::Conflict {
+            expected: Some(expected),
+            actual: Some(actual),
+        }) if expected == expected_turn_version && actual > expected_turn_version => {
+            Err(turn_admission_unavailable())
+        }
+        Err(_) => Err(turn_settlement_failed()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_turn_transition(
+    store: SqliteWorkspaceStore,
+    principal_id: String,
+    workspace_id: String,
+    conversation_id: String,
+    turn_id: String,
+    expected_version: u64,
+    command: TurnCommand,
+    event: EventDraft,
+) -> Result<ConversationTurn, StoreError> {
+    tokio::task::spawn_blocking(move || {
+        SqliteConversationStore::new(store).transition_conversation_turn(
+            &principal_id,
+            &workspace_id,
+            &conversation_id,
+            &turn_id,
+            expected_version,
+            command,
+            event,
+        )
+    })
+    .await
+    .unwrap_or(Err(StoreError::ExecutorStopped))
 }
 
 async fn retry_conversation_turn(
@@ -270,7 +549,7 @@ async fn retry_conversation_turn(
         ));
     }
     ensure_conversation_available(&state, &headers, &conversation_id).await?;
-    Err(turn_dispatch_unavailable())
+    Err(turn_command_unavailable())
 }
 
 async fn cancel_conversation_turn(
@@ -288,7 +567,7 @@ async fn cancel_conversation_turn(
         ));
     }
     ensure_conversation_available(&state, &headers, &conversation_id).await?;
-    Err(turn_dispatch_unavailable())
+    Err(turn_command_unavailable())
 }
 
 async fn ensure_conversation_available(
@@ -297,6 +576,59 @@ async fn ensure_conversation_available(
     conversation_id: &str,
 ) -> Result<(), Response> {
     let workspace_id = selected_workspace(headers)?;
+    load_authorized_conversation(state, &workspace_id, conversation_id)
+        .await
+        .map(|_| ())
+}
+
+/// Resolve the AgentBinding a new Conversation turn is admitted against.
+///
+/// Precedence follows the accepted Conversation admission contract: the explicit
+/// Conversation override first, then the Workspace default. The first configured
+/// selection is authoritative, so an override that is no longer enabled or
+/// lead-eligible is refused instead of silently falling through to the Workspace
+/// default. This performs no write; the storage transaction resolves and rechecks
+/// the same selection before it persists anything.
+fn resolve_turn_agent_binding(
+    state: &ConversationApiState,
+    workspace_id: &str,
+    conversation: &ConversationRecord,
+) -> Result<String, Response> {
+    let workspace = state
+        .store
+        .get_workspace(workspace_id)
+        .map_err(|_| internal())?;
+    let Some(workspace) = workspace else {
+        return Err(not_found());
+    };
+    if workspace.owner_principal_id != state.principal_id {
+        return Err(not_found());
+    }
+    // An archived Workspace rejects every domain mutation. The storage transaction
+    // answers the same way, so the route must not report a binding problem first.
+    if workspace.status != "ACTIVE" {
+        return Err(not_found());
+    }
+    let selected = conversation
+        .active_agent_binding_id
+        .clone()
+        .or_else(|| workspace.default_agent_binding_id.clone());
+    let Some(selected) = selected else {
+        return Err(agent_unavailable());
+    };
+    // The bound matches what the durable turn commit itself requires, so the route
+    // never refuses a selection the storage would admit.
+    if selected.trim().is_empty() || selected.chars().any(char::is_control) {
+        return Err(agent_unavailable());
+    }
+    Ok(selected)
+}
+
+async fn load_authorized_conversation(
+    state: &ConversationApiState,
+    workspace_id: &str,
+    conversation_id: &str,
+) -> Result<ConversationRecord, Response> {
     if !valid_task_query_id(conversation_id) {
         return Err(error(
             StatusCode::BAD_REQUEST,
@@ -306,6 +638,7 @@ async fn ensure_conversation_available(
     }
     let store = state.store.clone();
     let principal_id = state.principal_id.clone();
+    let workspace_id = workspace_id.to_owned();
     let conversation_id = conversation_id.to_owned();
     let conversation = tokio::task::spawn_blocking(move || {
         SqliteConversationStore::new(store).get_conversation(
@@ -317,7 +650,7 @@ async fn ensure_conversation_available(
     .await
     .map_err(|_| internal())?
     .map_err(map_store_error)?;
-    conversation.map(|_| ()).ok_or_else(not_found)
+    conversation.ok_or_else(not_found)
 }
 
 fn validate_turn_request(
@@ -392,12 +725,69 @@ fn validate_turn_resource_ref(
     Ok(())
 }
 
-fn turn_dispatch_unavailable() -> Response {
-    let mut response = error(
+fn parse_presentation_preference(value: Option<&str>) -> Result<PresentationPreference, Response> {
+    match value {
+        None | Some("AUTO") => Ok(PresentationPreference::Auto),
+        Some("SIMPLE") => Ok(PresentationPreference::Simple),
+        Some("RICH") => Ok(PresentationPreference::Rich),
+        Some(_) => Err(invalid_turn_request()),
+    }
+}
+
+fn canonical_digest(value: &Value) -> Result<String, Response> {
+    let bytes = serde_json_canonicalizer::to_vec(value).map_err(|_| invalid_turn_request())?;
+    Ok(sha256_digest(&bytes))
+}
+
+fn invalid_turn_request() -> Response {
+    error(
+        StatusCode::BAD_REQUEST,
+        "INVALID_ARGUMENT",
+        "Conversation turn request is invalid",
+    )
+}
+
+fn agent_unavailable() -> Response {
+    error(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "AGENT_UNAVAILABLE",
+        "Choose and enable a lead agent for this Conversation before sending a message",
+    )
+}
+
+fn turn_command_unavailable() -> Response {
+    no_store(error(
         StatusCode::SERVICE_UNAVAILABLE,
         "DEPENDENCY_UNAVAILABLE",
         "Qualified native Conversation session admission is unavailable; the message was not sent",
-    );
+    ))
+}
+
+fn turn_admission_unavailable() -> Response {
+    no_store(error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "DEPENDENCY_UNAVAILABLE",
+        "The message was saved, but qualified native Conversation session admission is unavailable; it was not sent to an agent",
+    ))
+}
+
+fn turn_settlement_failed() -> Response {
+    no_store(error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "INTERNAL",
+        "The durable Conversation turn could not be settled after admission was unavailable; retry with the same Idempotency-Key",
+    ))
+}
+
+fn settlement_inconsistent() -> Response {
+    no_store(error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "INTERNAL",
+        "The Conversation turn did not reach its unavailable-admission settlement state",
+    ))
+}
+
+fn no_store(mut response: Response) -> Response {
     response.headers_mut().insert(
         header::CACHE_CONTROL,
         header::HeaderValue::from_static("no-store"),
@@ -493,6 +883,7 @@ fn map_store_error(error_value: StoreError) -> Response {
             "CONFLICT",
             "Idempotency key was already used for another Conversation request",
         ),
+        StoreError::Invalid(message) if message == "AGENT_UNAVAILABLE" => agent_unavailable(),
         StoreError::Invalid(message) if message == "WORKSPACE_ARCHIVED" => error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "WORKSPACE_ARCHIVED",

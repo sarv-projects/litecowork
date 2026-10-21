@@ -5,6 +5,7 @@
 //! with its exact run binding in the same transaction as a passing result.
 
 use super::*;
+use crate::workspace_access::{require_read_access, require_write_access};
 use domain_effects::{
     EvidenceLevel, EvidenceRecord, VerificationFailureCode, VerificationInput,
     VerificationResourceRef, VerificationRunRecord, VerificationRunStatus,
@@ -15,7 +16,6 @@ use storage_core::{
     VerificationRunActor, VerificationRunEventContext, VerificationRunStore,
 };
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 impl VerificationRunStore for SqliteWorkspaceStore {
     fn start_verification_run(
@@ -59,7 +59,7 @@ impl VerificationRunStore for SqliteWorkspaceStore {
         )?;
         let (reply, receive) = mpsc::channel();
         self.execute_command(
-            Command::VerificationRunOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let _ = reply.send(start_transaction(connection, command, running, state_ref));
                 }),
@@ -246,7 +246,7 @@ impl VerificationRunStore for SqliteWorkspaceStore {
                 ));
             }
             let tx = connection.transaction().map_err(map_database_error)?;
-            authorize_owner(&tx, &workspace, &owner)?;
+            authorize_owner_for_read(&tx, &workspace, &owner)?;
             let run = load_run(&tx, &workspace, &run_id)?;
             tx.commit().map_err(map_database_error)?;
             Ok(run)
@@ -258,12 +258,17 @@ impl VerificationRunStore for SqliteWorkspaceStore {
         owner_principal_id: &str,
         workspace_id: &str,
         task_id: &str,
+        after_started_at: Option<&str>,
+        after_verification_run_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<VerificationRunRecord>, StoreError> {
         if !(1..=200).contains(&limit)
             || invalid_identifier(owner_principal_id, 256)
             || invalid_identifier(workspace_id, 256)
             || invalid_identifier(task_id, 256)
+            || after_started_at.is_some() != after_verification_run_id.is_some()
+            || after_started_at.is_some_and(|value| invalid_identifier(value, 64))
+            || after_verification_run_id.is_some_and(|value| invalid_identifier(value, 256))
         {
             return Err(StoreError::Invalid(
                 "VerificationRun page query is invalid".into(),
@@ -272,21 +277,47 @@ impl VerificationRunStore for SqliteWorkspaceStore {
         let owner = owner_principal_id.to_owned();
         let workspace = workspace_id.to_owned();
         let task = task_id.to_owned();
+        let after = after_started_at
+            .zip(after_verification_run_id)
+            .map(|(started_at, run_id)| (started_at.to_owned(), run_id.to_owned()));
         self.run_verification(move |connection| {
             let tx = connection.transaction().map_err(map_database_error)?;
-            authorize_task(&tx, &owner, &workspace, &task)?;
-            let mut statement = tx.prepare(
-                "SELECT verification_run_id FROM verification_runs WHERE task_id=?1 ORDER BY started_at DESC, verification_run_id DESC LIMIT ?2",
-            ).map_err(map_database_error)?;
-            let ids = statement.query_map(params![task, limit as i64], |row| row.get::<_, String>(0))
-                .map_err(map_database_error)?
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .map_err(map_database_error)?;
-            drop(statement);
-            let mut runs = Vec::with_capacity(ids.len());
-            for id in ids {
-                if let Some(run) = load_run(&tx, &workspace, &id)? {
-                    runs.push(run);
+            authorize_task_for_read(&tx, &owner, &workspace, &task)?;
+            let mut runs = Vec::new();
+            match after {
+                Some((started_at, run_id)) => {
+                    let mut statement = tx.prepare(
+                        "SELECT verification_run_id FROM verification_runs WHERE task_id=?1 AND (started_at<?2 OR (started_at=?2 AND verification_run_id<?3)) ORDER BY started_at DESC, verification_run_id DESC LIMIT ?4",
+                    ).map_err(map_database_error)?;
+                    let ids = statement
+                        .query_map(params![task, started_at, run_id, limit as i64], |row| {
+                            row.get::<_, String>(0)
+                        })
+                        .map_err(map_database_error)?
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                        .map_err(map_database_error)?;
+                    drop(statement);
+                    for id in ids {
+                        if let Some(run) = load_run(&tx, &workspace, &id)? {
+                            runs.push(run);
+                        }
+                    }
+                }
+                None => {
+                    let mut statement = tx.prepare(
+                        "SELECT verification_run_id FROM verification_runs WHERE task_id=?1 ORDER BY started_at DESC, verification_run_id DESC LIMIT ?2",
+                    ).map_err(map_database_error)?;
+                    let ids = statement
+                        .query_map(params![task, limit as i64], |row| row.get::<_, String>(0))
+                        .map_err(map_database_error)?
+                        .collect::<rusqlite::Result<Vec<_>>>()
+                        .map_err(map_database_error)?;
+                    drop(statement);
+                    for id in ids {
+                        if let Some(run) = load_run(&tx, &workspace, &id)? {
+                            runs.push(run);
+                        }
+                    }
                 }
             }
             tx.commit().map_err(map_database_error)?;
@@ -303,7 +334,7 @@ impl SqliteWorkspaceStore {
     {
         let (reply, receive) = mpsc::channel();
         self.execute_command(
-            Command::VerificationRunOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let _ = reply.send(operation(connection));
                 }),
@@ -999,17 +1030,18 @@ fn validate_actor(
     Ok(())
 }
 
+/// Owner check for a mutation: an ARCHIVED Workspace reports `WORKSPACE_ARCHIVED`.
 fn authorize_owner(tx: &Transaction<'_>, workspace: &str, owner: &str) -> Result<(), StoreError> {
-    let authorized: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM workspaces WHERE workspace_id=?1 AND owner_principal_id=?2 AND status='ACTIVE')",
-        params![workspace, owner],
-        |row| row.get(0),
-    ).map_err(map_database_error)?;
-    if authorized {
-        Ok(())
-    } else {
-        Err(StoreError::NotFound)
-    }
+    require_write_access(tx, workspace, owner)
+}
+
+/// Owner check for a read: an ARCHIVED Workspace stays readable.
+fn authorize_owner_for_read(
+    tx: &Transaction<'_>,
+    workspace: &str,
+    owner: &str,
+) -> Result<(), StoreError> {
+    require_read_access(tx, workspace, owner)
 }
 
 fn authorize_task(
@@ -1018,10 +1050,38 @@ fn authorize_task(
     workspace: &str,
     task: &str,
 ) -> Result<(), StoreError> {
+    authorize_task_with_workspace_policy(tx, owner, workspace, task, true)
+}
+
+fn authorize_task_for_read(
+    tx: &Transaction<'_>,
+    owner: &str,
+    workspace: &str,
+    task: &str,
+) -> Result<(), StoreError> {
+    authorize_task_with_workspace_policy(tx, owner, workspace, task, false)
+}
+
+/// Apply the Workspace archive policy first, then scope the Task to that Workspace.
+///
+/// Keeping the two facts separate preserves the contractual error code for an
+/// archived Workspace while still refusing a Task that belongs elsewhere.
+fn authorize_task_with_workspace_policy(
+    tx: &Transaction<'_>,
+    owner: &str,
+    workspace: &str,
+    task: &str,
+    require_active: bool,
+) -> Result<(), StoreError> {
+    if require_active {
+        require_write_access(tx, workspace, owner)?;
+    } else {
+        require_read_access(tx, workspace, owner)?;
+    }
     let authorized: bool = tx
         .query_row(
-            "SELECT EXISTS(SELECT 1 FROM tasks task JOIN workspaces workspace ON workspace.workspace_id=task.workspace_id WHERE task.task_id=?3 AND task.workspace_id=?2 AND workspace.owner_principal_id=?1 AND workspace.status='ACTIVE')",
-            params![owner, workspace, task],
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE task_id=?1 AND workspace_id=?2)",
+            params![task, workspace],
             |row| row.get(0),
         )
         .map_err(map_database_error)?;
@@ -1572,6 +1632,162 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM domain_events", [], |row| row.get(0))
             .expect("count events after replay");
         assert_eq!(event_count, 1, "exact replay cannot append another event");
+    }
+
+    #[test]
+    fn completion_evaluator_rejects_unbound_or_stale_verifier_results() {
+        use domain_effects::{
+            CompletionBlocker, RequiredVerificationCriterion, assess_completion_with_evidence,
+        };
+
+        fn assert_criterion_blocked(assessment: domain_effects::CompletionAssessment) {
+            assert!(!assessment.eligible);
+            assert_eq!(
+                assessment.blockers,
+                vec![CompletionBlocker::CriterionUnverified(
+                    "criterion-1".to_owned()
+                )]
+            );
+        }
+
+        let criterion = RequiredVerificationCriterion {
+            criterion_id: "criterion-1".to_owned(),
+            task_spec_revision: 7,
+            criterion_digest: format!("sha256:{}", "a".repeat(64)),
+        };
+        let run = VerificationRunRecord {
+            verification_run_id: "verification-run-1".to_owned(),
+            task_id: "task-1".to_owned(),
+            criterion_id: criterion.criterion_id.clone(),
+            task_spec_revision: criterion.task_spec_revision,
+            criterion_digest: criterion.criterion_digest.clone(),
+            verifier_kind: "test-runner".to_owned(),
+            verifier_version: "1.2.3".to_owned(),
+            subject_refs: vec![VerificationResourceRef {
+                workspace_id: "workspace-1".to_owned(),
+                resource_id: "resource-1".to_owned(),
+                revision_id: "revision-1".to_owned(),
+            }],
+            inputs: vec![],
+            status: VerificationRunStatus::Passed,
+            evidence_refs: vec!["evidence-1".to_owned()],
+            started_at: Some("2026-10-20T10:00:00Z".to_owned()),
+            completed_at: Some("2026-10-20T10:00:01Z".to_owned()),
+            version: 3,
+            failure_code: None,
+        };
+        let evidence = EvidenceRecord {
+            evidence_id: "evidence-1".to_owned(),
+            task_id: "task-1".to_owned(),
+            subject_ref: "resource://workspace-1/resource-1@revision-1".to_owned(),
+            level: EvidenceLevel::Verified,
+            kind: "criterion-check".to_owned(),
+            producer: json!({"service_id": "test-runner"}),
+            payload_ref: None,
+            payload_digest: None,
+            verification_run_id: Some("verification-run-1".to_owned()),
+            created_at: "2026-10-20T10:00:01Z".to_owned(),
+        };
+
+        let accepted = assess_completion_with_evidence(
+            "task-1",
+            &[criterion.clone()],
+            &[run.clone()],
+            &[evidence.clone()],
+            0,
+            0,
+            0,
+        );
+        assert!(
+            accepted.eligible,
+            "exact PASSED run plus bound VERIFIED Evidence satisfies the criterion"
+        );
+        assert!(accepted.blockers.is_empty());
+
+        // An agent report or a still-running verifier cannot satisfy a criterion.
+        let mut not_passed = run.clone();
+        not_passed.status = VerificationRunStatus::Running;
+        not_passed.evidence_refs.clear();
+        not_passed.completed_at = None;
+        not_passed.version = 2;
+        assert_criterion_blocked(assess_completion_with_evidence(
+            "task-1",
+            &[criterion.clone()],
+            &[not_passed],
+            &[evidence.clone()],
+            0,
+            0,
+            0,
+        ));
+
+        // The run must be pinned to the current criterion digest, not a stale revision.
+        let mut stale_criterion = criterion.clone();
+        stale_criterion.criterion_digest = format!("sha256:{}", "b".repeat(64));
+        assert_criterion_blocked(assess_completion_with_evidence(
+            "task-1",
+            &[stale_criterion.clone()],
+            &[run.clone()],
+            &[evidence.clone()],
+            0,
+            0,
+            0,
+        ));
+
+        // Only VERIFIED Evidence counts; REPORTED or OBSERVED cannot close completion.
+        for level in [EvidenceLevel::Reported, EvidenceLevel::Observed] {
+            let mut unverified = evidence.clone();
+            unverified.level = level;
+            assert_criterion_blocked(assess_completion_with_evidence(
+                "task-1",
+                &[criterion.clone()],
+                &[run.clone()],
+                &[unverified],
+                0,
+                0,
+                0,
+            ));
+        }
+
+        // Evidence bound to another run cannot be reused for this run.
+        let mut other_run = evidence.clone();
+        other_run.verification_run_id = Some("verification-run-other".to_owned());
+        assert_criterion_blocked(assess_completion_with_evidence(
+            "task-1",
+            &[criterion.clone()],
+            &[run.clone()],
+            &[other_run],
+            0,
+            0,
+            0,
+        ));
+
+        // Evidence must name a subject the run actually pinned.
+        let mut unpinned_subject = evidence.clone();
+        unpinned_subject.subject_ref =
+            "resource://workspace-1/resource-1@revision-other".to_owned();
+        assert_criterion_blocked(assess_completion_with_evidence(
+            "task-1",
+            &[criterion.clone()],
+            &[run.clone()],
+            &[unpinned_subject],
+            0,
+            0,
+            0,
+        ));
+
+        // Binding must be exact: extra Evidence attached to the run but not listed
+        // in its evidence_refs rejects the run instead of being silently ignored.
+        let mut extra_bound = evidence.clone();
+        extra_bound.evidence_id = "evidence-2".to_owned();
+        assert_criterion_blocked(assess_completion_with_evidence(
+            "task-1",
+            &[criterion.clone()],
+            &[run.clone()],
+            &[evidence.clone(), extra_bound],
+            0,
+            0,
+            0,
+        ));
     }
 
     fn verification_settlement_fixture() -> Connection {

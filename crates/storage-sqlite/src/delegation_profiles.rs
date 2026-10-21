@@ -14,7 +14,6 @@ use domain_responsibility::{
 use serde::Serialize;
 use serde_json::{Value, json};
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 type DelegationProfileHeadRow = (
     String,
@@ -145,7 +144,7 @@ impl SqliteDelegationProfileStore {
         let (reply, receive) = mpsc::channel();
         self.store
             .execute_command(
-                Command::DelegationProfileOperation {
+                Command::Operation {
                     operation: Box::new(move |connection| {
                         let _ = reply.send(Ok(operation(connection)));
                     }),
@@ -188,7 +187,7 @@ impl SqliteDelegationProfileStore {
         let after = after.map(|(time, id)| (time.to_owned(), id.to_owned()));
         let (reply, receive) = mpsc::channel();
         self.store.execute_command(
-            Command::DelegationProfileOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let result = (|| {
                         let tx = connection.transaction().map_err(map_database_error)?;
@@ -267,7 +266,7 @@ impl SqliteDelegationProfileStore {
         let workspace = workspace_id.to_owned();
         let id = profile_id.to_owned();
         let (reply, receive) = mpsc::channel();
-        self.store.execute_command(Command::DelegationProfileOperation { operation: Box::new(move |connection| {
+        self.store.execute_command(Command::Operation { operation: Box::new(move |connection| {
             let result = (|| {
                 let tx = connection.transaction().map_err(map_database_error)?;
                 let owned: bool = tx.query_row(
@@ -306,7 +305,7 @@ impl SqliteDelegationProfileStore {
         let before_revision = before_revision.map(|revision| revision as i64);
         let (reply, receive) = mpsc::channel();
         self.store.execute_command(
-            Command::DelegationProfileOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let result = (|| {
                         let tx = connection.transaction().map_err(map_database_error)?;

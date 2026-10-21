@@ -2589,6 +2589,65 @@ def check_storage_constraints(path: Path) -> None:
         backups.close()
 
 
+def check_canonical_concepts() -> None:
+    """Keep the canonical concept table and the glossary from drifting apart.
+
+    ARCHITECTURE.md and GLOSSARY.md are both authority documents. A concept defined
+    twice in the canonical table, a load-bearing distinction declared by AGENTS.md but
+    absent from the table, or two documents disagreeing about Runtime identity are
+    normative contradictions rather than wording preferences.
+    """
+    architecture = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    heading = re.search(r"^## 3\. Canonical concepts and ownership\s*$", architecture, re.M)
+    if not heading:
+        fail("ARCHITECTURE.md: canonical concepts section is missing")
+        return
+    remainder = architecture[heading.end():]
+    following = re.search(r"^## ", remainder, re.M)
+    section = remainder[: following.start()] if following else remainder
+    rows: dict[str, str] = {}
+    for line in section.splitlines():
+        if not line.startswith("| "):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) != 2 or not cells[0] or cells[0] == "Concept" or set(cells[0]) <= set("-"):
+            continue
+        concept, meaning = cells
+        if concept in rows:
+            fail(f"ARCHITECTURE.md: canonical concept {concept!r} is defined more than once")
+        rows[concept] = meaning
+    if not rows:
+        fail("ARCHITECTURE.md: canonical concepts table defines no concepts")
+        return
+
+    names = {part.strip() for concept in rows for part in concept.split("/") if part.strip()}
+    required = (
+        "Conversation", "Task", "TaskSpecRevision", "PlanRevision", "Step", "Attempt",
+        "Agent", "AgentSession", "Runtime", "Environment", "Capability", "Effect",
+        "Artifact", "Evidence", "ExecutionLease",
+    )
+    missing = [concept for concept in required if concept not in names]
+    if missing:
+        fail(f"ARCHITECTURE.md: canonical concepts omitted AGENTS.md distinction(s): {missing}")
+
+    runtime_meaning = rows.get("Runtime", "")
+    if "installation-scoped" not in runtime_meaning.lower():
+        fail("ARCHITECTURE.md: Runtime must be defined as installation-scoped identity")
+    if "RuntimeIncarnation" not in runtime_meaning:
+        fail("ARCHITECTURE.md: Runtime must scope process-bound state to RuntimeIncarnation")
+    if re.search(r"Runtime \| A running `litecoworkd` instance", architecture):
+        fail("ARCHITECTURE.md: Runtime must not be redefined as a running process")
+
+    glossary = (ROOT / "GLOSSARY.md").read_text(encoding="utf-8")
+    glossary_runtime = re.search(r"\*\*Runtime\*\*:\s*\n(.*?)(?:\n_Avoid_|\n\*\*)", glossary, re.S)
+    if not glossary_runtime:
+        fail("GLOSSARY.md: Runtime entry is missing")
+    else:
+        body = glossary_runtime.group(1)
+        if "installed" not in body or "RuntimeIncarnation" not in body:
+            fail("GLOSSARY.md: Runtime must agree that Runtime is installed identity with incarnation-scoped process state")
+
+
 def check_gateway_and_names() -> None:
     path = DOCS / "CAPABILITY-FABRIC.md"
     text = path.read_text(encoding="utf-8")
@@ -3380,6 +3439,7 @@ def main() -> int:
     check_openapi()
     check_storage()
     check_attempt_lease_contract()
+    check_canonical_concepts()
     check_gateway_and_names()
     check_markdown_links()
     if ERRORS:
@@ -3392,7 +3452,7 @@ def main() -> int:
         r"Minimum v1 registry:\s*```\s*(.*?)```", registry_text, re.S
     )
     event_count = len(re.findall(r"^([a-z][a-z0-9_.-]+\.v\d+)(?:\s*(?:#|—).*)?$", registry_block.group(1), re.M))
-    print(f"Architecture validation passed: JSON Schemas, {event_count} typed events, error codes, OpenAPI, SQLite, Gateway names, product naming, and Markdown links.")
+    print(f"Architecture validation passed: JSON Schemas, {event_count} typed events, error codes, OpenAPI, SQLite, Gateway names, canonical concepts, product naming, and Markdown links.")
     return 0
 
 

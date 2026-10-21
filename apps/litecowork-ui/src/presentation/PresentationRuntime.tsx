@@ -1,11 +1,17 @@
 import type { ReactNode } from "react";
-import { orderPresentationItems, type PresentationItem, type PresentationKind } from "./presentation-types";
+import {
+  projectPresentationEntries,
+  type PresentationItem,
+  type PresentationKind,
+  type PresentationSourceRef,
+  type RejectedPresentationItem,
+} from "./presentation-types";
 import "./presentation-runtime.css";
 
 export type RendererContext = {
   openTask?: (taskId: string) => void;
   openArtifact?: (artifactId: string, version: number) => void;
-  openSource?: (source: PresentationItem["source_refs"][number]) => void;
+  openSource?: (source: PresentationSourceRef) => void;
 };
 
 export type PresentationRenderer = (item: PresentationItem, context: RendererContext) => ReactNode;
@@ -54,7 +60,47 @@ export const builtinRendererRegistry: RendererRegistry = new Map<PresentationKin
   ["TERMINAL", (item) => item.kind === "TERMINAL" ? <details className="presentation-details"><summary>{item.payload.title}</summary><pre className="presentation-code"><code>{item.payload.text}</code></pre></details> : null],
   ["MCP_APP", (item) => item.kind === "MCP_APP" ? <article className="presentation-card"><strong>{item.payload.display_name}</strong><p>Interactive app content is unavailable in this renderer.</p></article> : null],
   ["ERROR", (item) => item.kind === "ERROR" ? <article className="presentation-error"><strong>{item.payload.code}</strong><p>{item.payload.message}</p>{item.payload.recovery_hint && <small>{item.payload.recovery_hint}</small>}</article> : null],
+  ["UNSUPPORTED", (item) => item.kind === "UNSUPPORTED" ? <div className="presentation-fallback" role="note"><strong>{item.label ?? "Unsupported content"}</strong><p>This saved item cannot be displayed by this version of LiteCowork. The saved response text is unchanged.</p></div> : null],
 ]);
+
+function sourceLabel(source: PresentationSourceRef): string {
+  return source.kind.replaceAll("_", " ");
+}
+
+/** Known source identities stay reviewable when the item around them cannot be rendered. */
+function SourceDisclosure({ sources, context }: { sources: readonly PresentationSourceRef[]; context: RendererContext }) {
+  if (sources.length === 0) return null;
+  return <details className="presentation-sources">
+    <summary>Sources ({sources.length})</summary>
+    <ul>{sources.map((source, i) => <li key={`${source.kind}:${source.id}:${i}`}>
+      {context.openSource
+        ? <button type="button" onClick={() => context.openSource?.(source)}>{sourceLabel(source)} · {source.id}</button>
+        : <span>{sourceLabel(source)} · {source.id}</span>}
+    </li>)}</ul>
+  </details>;
+}
+
+/** A saved item that failed validation is named and explained, never rendered or dropped. */
+function RejectedItem({ rejected }: { rejected: RejectedPresentationItem }) {
+  const identity = rejected.reportedKind
+    ? `${rejected.reportedKind}${rejected.reportedVersion === null ? "" : ` (version ${rejected.reportedVersion})`} content`
+    : "This saved item";
+  return <div className="presentation-fallback" role="note">
+    <strong>Content not shown</strong>
+    <p>{identity} could not be displayed safely, so nothing from it was rendered. The rest of the response is unchanged.</p>
+  </div>;
+}
+
+/** Resolve a validated item to its registered renderer, or an explicit safe fallback. */
+function renderEntry(item: PresentationItem, renderers: RendererRegistry, context: RendererContext): ReactNode {
+  const renderer = item.payload_version === 1 ? renderers.get(item.kind) : undefined;
+  return renderer
+    ? renderer(item, context)
+    : <div className="presentation-fallback">
+      <strong>{item.label ?? item.kind.replaceAll("_", " ")}</strong>
+      <p>No compatible renderer is enabled. Its source remains available for review.</p>
+    </div>;
+}
 
 export function PresentationRuntime({ items, renderers = builtinRendererRegistry, context = {}, ariaLabel = "Conversation content" }: {
   items: readonly unknown[];
@@ -62,16 +108,19 @@ export function PresentationRuntime({ items, renderers = builtinRendererRegistry
   context?: RendererContext;
   ariaLabel?: string;
 }) {
-  const ordered = orderPresentationItems(items);
+  const projection = projectPresentationEntries(items);
   return <section className="presentation-runtime" aria-label={ariaLabel}>
-    {ordered.map((item) => {
-      const renderer = item.payload_version === 1 ? renderers.get(item.kind) : undefined;
-      return <article className="presentation-item" key={item.item_key} data-freshness={item.freshness}>
-        {item.freshness !== "CURRENT" && <p className="presentation-freshness" role="note">Source freshness {item.freshness.toLowerCase()}.</p>}
-        {renderer ? renderer(item, context) : <div className="presentation-fallback"><strong>{item.label ?? item.kind.replaceAll("_", " ")}</strong><p>No compatible renderer is enabled. Its source remains available for review.</p></div>}
-        {item.source_refs.length > 0 && <details className="presentation-sources"><summary>Sources ({item.source_refs.length})</summary><ul>{item.source_refs.map((source, i) => <li key={`${source.kind}:${source.id}:${i}`}>{context.openSource ? <button type="button" onClick={() => context.openSource?.(source)}>{source.kind.replaceAll("_", " ")} · {source.id}</button> : <span>{source.kind.replaceAll("_", " ")} · {source.id}</span>}</li>)}</ul></details>}
-      </article>;
-    })}
-    {ordered.length === 0 && <p className="presentation-empty">No presentation items are available.</p>}
+    {projection.entries.map((entry) => entry.entry === "REJECTED"
+      ? <article className="presentation-item" key={entry.key} data-freshness="UNKNOWN">
+        <RejectedItem rejected={entry.rejected} />
+        <SourceDisclosure sources={entry.rejected.sourceRefs} context={context} />
+      </article>
+      : <article className="presentation-item" key={entry.key} data-freshness={entry.item.freshness}>
+        {entry.item.freshness !== "CURRENT" && <p className="presentation-freshness" role="note">Source freshness {entry.item.freshness.toLowerCase()}.</p>}
+        {renderEntry(entry.item, renderers, context)}
+        <SourceDisclosure sources={entry.item.source_refs} context={context} />
+      </article>)}
+    {projection.omittedCount > 0 && <p className="presentation-empty" role="note">{projection.omittedCount} more saved {projection.omittedCount === 1 ? "item is" : "items are"} not shown because this projection exceeded the display limit.</p>}
+    {projection.entries.length === 0 && projection.omittedCount === 0 && <p className="presentation-empty">No presentation items are available.</p>}
   </section>;
 }

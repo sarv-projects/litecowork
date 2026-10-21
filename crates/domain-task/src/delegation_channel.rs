@@ -2,7 +2,11 @@
 //! The Runtime must construct the scope from its authenticated parent session; the
 //! storage adapter independently verifies ownership and the exact parent/child pins.
 
-use crate::{ChildResultReadContext, DelegationResultService, ResultEnvelope};
+use crate::{
+    ChildResultReadContext, DelegationResultService, EscalationBlocker, EscalationCandidate,
+    EscalationDecision, EscalationPolicy, EscalationRequest, ResultEnvelope,
+    decide_delegation_escalation,
+};
 use storage_core::{DelegationResultStore, StoreError};
 
 /// Read authority captured from the current authenticated parent AgentSession.
@@ -83,6 +87,39 @@ impl<S: DelegationResultStore> DelegationChannelResultReader<S> {
             task_spec_revision: self.parent.task_spec_revision,
         })
     }
+
+    /// Apply the bounded escalation policy to the durable child result. The decision is
+    /// advisory: it proposes a new immutable Attempt but cannot admit, start, or mutate
+    /// one. A result pinned to a different TaskSpec revision is stale and never escalates.
+    pub fn recovery_decision(
+        &self,
+        child_attempt_id: &str,
+        policy: &EscalationPolicy,
+        request: &EscalationRequest,
+        candidates: &[EscalationCandidate],
+    ) -> Result<EscalationDecision, StoreError> {
+        let result = self.result(child_attempt_id)?.ok_or(StoreError::NotFound)?;
+        Ok(decide_child_recovery(&result, policy, request, candidates))
+    }
+}
+
+/// Pure applicability guard shared by the channel consumer and its callers. The child
+/// result must have started on the same TaskSpec revision the policy is evaluated
+/// against; a later TaskSpec revision makes the old result inapplicable for automatic
+/// escalation.
+pub fn decide_child_recovery(
+    result: &ResultEnvelope,
+    policy: &EscalationPolicy,
+    request: &EscalationRequest,
+    candidates: &[EscalationCandidate],
+) -> EscalationDecision {
+    if result.revision_at_start != request.task_spec_revision_at_start
+        || result.revision_at_start != request.current_task_spec_revision
+        || request.task_spec_revision_at_start != request.current_task_spec_revision
+    {
+        return EscalationDecision::Blocked(EscalationBlocker::TaskSpecChanged);
+    }
+    decide_delegation_escalation(policy, request, candidates)
 }
 
 fn invalid_identifier(value: &str) -> bool {
@@ -166,5 +203,115 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    fn result_envelope(revision_at_start: u64) -> ResultEnvelope {
+        ResultEnvelope {
+            child_attempt_id: "child-attempt-1".into(),
+            status: crate::DelegationResultStatus::Failed,
+            summary: "bounded failure report".into(),
+            output_refs: vec![],
+            artifact_refs: vec![],
+            evidence_refs: vec![],
+            changed_resource_refs: vec![],
+            unresolved: vec![],
+            blockers: vec![],
+            usage: None,
+            confidence: None,
+            verification_hints: vec![],
+            revision_at_start,
+        }
+    }
+
+    fn escalation_policy() -> EscalationPolicy {
+        EscalationPolicy {
+            max_worker_attempts: 3,
+            fallback_profile_ids: vec!["profile-fast".into()],
+        }
+    }
+
+    fn escalation_request(task_spec_revision: u64) -> EscalationRequest {
+        EscalationRequest {
+            outcome: crate::EscalationAttemptOutcome::RecoverableVerificationFailure,
+            admitted_attempt_count: 1,
+            attempted_profile_ids: vec!["profile-initial".into()],
+            current_task_version: 7,
+            task_spec_revision_at_start: task_spec_revision,
+            current_task_spec_revision: task_spec_revision,
+            task_attempt_ceiling: 3,
+            active_sibling_children: 0,
+            effective_max_concurrency: 2,
+            effects_reconciled: true,
+            step_recoverable: true,
+        }
+    }
+
+    fn escalation_candidate() -> EscalationCandidate {
+        EscalationCandidate {
+            profile_id: "profile-fast".into(),
+            readiness: crate::EscalationCandidateReadiness::Qualified,
+            checked_task_version: 7,
+            checked_task_spec_revision: 3,
+        }
+    }
+
+    #[test]
+    fn recovery_decision_uses_the_durable_result_and_recommends_the_next_attempt() {
+        let decision = decide_child_recovery(
+            &result_envelope(3),
+            &escalation_policy(),
+            &escalation_request(3),
+            &[escalation_candidate()],
+        );
+        assert_eq!(
+            decision,
+            EscalationDecision::RecommendNewAttempt {
+                profile_id: "profile-fast".into(),
+                attempt_number: 2,
+                expected_task_version: 7,
+                task_spec_revision: 3,
+                expected_active_sibling_children: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn stale_child_result_revision_never_escalates() {
+        assert_eq!(
+            decide_child_recovery(
+                &result_envelope(2),
+                &escalation_policy(),
+                &escalation_request(3),
+                &[escalation_candidate()],
+            ),
+            EscalationDecision::Blocked(EscalationBlocker::TaskSpecChanged)
+        );
+        let mut changed_after_start = escalation_request(3);
+        changed_after_start.current_task_spec_revision = 4;
+        assert_eq!(
+            decide_child_recovery(
+                &result_envelope(3),
+                &escalation_policy(),
+                &changed_after_start,
+                &[escalation_candidate()],
+            ),
+            EscalationDecision::Blocked(EscalationBlocker::TaskSpecChanged)
+        );
+    }
+
+    #[test]
+    fn missing_durable_result_is_not_found_and_channel_recovery_stays_bound() {
+        let store = ReadCaptureStore::default();
+        let reader = DelegationChannelResultReader::new(store.clone(), parent_scope());
+        assert!(matches!(
+            reader.recovery_decision(
+                "child-attempt-1",
+                &escalation_policy(),
+                &escalation_request(7),
+                &[escalation_candidate()],
+            ),
+            Err(StoreError::NotFound)
+        ));
+        assert_eq!(store.reads.lock().expect("query lock").len(), 1);
     }
 }

@@ -5,6 +5,14 @@ import type {
   WorkspacePrimaryReceipt,
 } from "./coworker-api";
 import { appendCoworkerRosterPage, CoworkerRosterRequestEpoch, isCoworkerDetailRequestCurrent, validateQuickCoworkerIdentity } from "./coworker-roster-request-epoch";
+import {
+  coworkerStatusText,
+  isCoworkerEditorDirty,
+  resolveCoworkerEscape,
+  resolveCoworkerFocus,
+  type CoworkerFocusEvent,
+  type CoworkerFocusTarget,
+} from "./coworker-focus-plan";
 import { excludeCurrentLeadFallbacks, isValidLeadFailoverDraft, moveFallbackLead } from "./lead-failover-order";
 import "./coworker-settings.css";
 
@@ -126,6 +134,36 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
   activeCoworker.current = selectedId;
   const requestKeys = useRef(new Map<string, { signature: string; requestId: string }>());
   const detailGeneration = useRef(0);
+  // Keyboard focus management for the Coworker surface. The pure rules live in
+  // `coworker-focus-plan.ts`; this component only applies them.
+  const [focusTarget, setFocusTarget] = useState<CoworkerFocusTarget | null>(null);
+  const createActionRef = useRef<HTMLButtonElement | null>(null);
+  const detailHeadingRef = useRef<HTMLHeadingElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const archiveConfirmRef = useRef<HTMLButtonElement | null>(null);
+  const archiveTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const rosterItemRefs = useRef(new Map<string, HTMLButtonElement>());
+  const editorBaseline = useRef<CoworkerRevisionInput | null>(null);
+  const editingCoworkerId = useRef<string | null>(null);
+  const editorDirty = form !== null
+    && editorBaseline.current !== null
+    && isCoworkerEditorDirty(editorBaseline.current, form);
+
+  function moveFocus(event: CoworkerFocusEvent) {
+    setFocusTarget(resolveCoworkerFocus(event));
+  }
+
+  useEffect(() => {
+    if (!focusTarget) return;
+    const target = focusTarget;
+    setFocusTarget(null);
+    if (target.kind === "coworker-name-input") nameInputRef.current?.focus();
+    else if (target.kind === "coworker-detail-heading") detailHeadingRef.current?.focus();
+    else if (target.kind === "coworker-create-action") createActionRef.current?.focus();
+    else if (target.kind === "coworker-roster-item") rosterItemRefs.current.get(target.coworkerId)?.focus();
+    else if (target.kind === "coworker-archive-confirm") archiveConfirmRef.current?.focus();
+    else if (target.kind === "coworker-archive-trigger") archiveTriggerRef.current?.focus();
+  }, [focusTarget]);
 
   useEffect(() => setWorkspaceVersionLocal(workspaceVersion), [workspaceVersion]);
 
@@ -228,14 +266,18 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
     setSelected(null);
     setPresence(null);
     setMode("create");
-    setForm(newRevision());
+    const draft = newRevision();
+    editorBaseline.current = draft;
+    editingCoworkerId.current = null;
+    setForm(draft);
     setFormMessage(null);
     setDetailFailure(null);
     setArchiveConfirm(false);
+    moveFocus({ type: "quick-create-opened" });
   }
   function startEdit() {
     if (!selected || selected.status === "ARCHIVED") return;
-    setForm({
+    const draft = {
       ...selected.revision,
       enabled_delegation_profile_ids: [...selected.revision.enabled_delegation_profile_ids],
       interaction_policy: { ...selected.revision.interaction_policy },
@@ -247,17 +289,33 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
         fallback_agent_binding_ids: [...selected.revision.lead_failover_policy.fallback_agent_binding_ids],
       } : null,
       delegation_budget_policy: selected.revision.delegation_budget_policy ? { ...selected.revision.delegation_budget_policy } : null,
-    });
+    };
+    editorBaseline.current = draft;
+    editingCoworkerId.current = selected.coworker_id;
+    setForm(draft);
     setMode("edit");
     setFormMessage(null);
     setDetailFailure(null);
     setArchiveConfirm(false);
+    moveFocus({ type: "edit-opened" });
   }
   function cancelEdit() {
+    const editing = editingCoworkerId.current;
+    editingCoworkerId.current = null;
+    editorBaseline.current = null;
     setMode("view");
     setForm(null);
     setFormMessage(null);
     setDetailFailure(null);
+    moveFocus({ type: "editor-cancelled", editingCoworkerId: editing });
+  }
+  function handleEditorEscape() {
+    const outcome = resolveCoworkerEscape(editorDirty);
+    if (outcome.kind === "keep-draft") {
+      setFormMessage(outcome.message);
+      return;
+    }
+    cancelEdit();
   }
   function changeForm<K extends keyof CoworkerRevisionInput>(key: K, value: CoworkerRevisionInput[K]) {
     setForm(current => current ? { ...current, [key]: value } : current);
@@ -301,6 +359,9 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
       setSelectedId(saved.coworker_id);
       setSelected(saved);
       setMode("view"); setForm(null); setFormMessage(mode === "create" ? "Coworker created." : `Saved as revision ${saved.current_revision}.`);
+      editingCoworkerId.current = null;
+      editorBaseline.current = null;
+      moveFocus({ type: "editor-saved" });
     } catch (error) {
       if (!isCurrent()) return;
       setDetailFailure(displayError(error));
@@ -428,7 +489,7 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
   return <main className="coworker-settings" aria-labelledby="coworker-settings-title">
     <header className="coworker-settings-header">
       <div><p className="coworker-settings-kicker">Workspace settings</p><h1 id="coworker-settings-title">Coworkers</h1><p>Optional specialized assistants for ongoing work. Create one in seconds, then personalize it when needed. Ordinary conversations do not require a Coworker.</p></div>
-      <button className="coworker-primary-action" type="button" onClick={startCreate} disabled={!workspaceId || mode === "create"}>+ New Coworker</button>
+      <button className="coworker-primary-action" type="button" ref={createActionRef} onClick={startCreate} disabled={!workspaceId || mode === "create"}>+ New Coworker</button>
     </header>
 
     {!workspaceId ? <section className="coworker-empty"><h2>Select a Workspace</h2><p>Choose a Workspace before setting up its Coworkers.</p></section> : <div className="coworker-settings-layout">
@@ -438,9 +499,9 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
         {listFailure && <div className="coworker-error" role="alert"><p>{listFailure}</p><button type="button" onClick={() => setReloadKey(value => value + 1)}>Retry</button></div>}
         {!listLoading && !listFailure && items.length === 0 && <div className="coworker-roster-empty"><p>No Coworkers yet.</p><button type="button" onClick={startCreate}>Create the first one</button></div>}
         <ul>{items.map(item => <li key={item.coworker_id}>
-          <button type="button" className={`coworker-roster-item${selectedId === item.coworker_id && mode !== "create" ? " is-selected" : ""}`} aria-current={selectedId === item.coworker_id && mode !== "create" ? "page" : undefined} onClick={() => { if (operation !== "primary") setOperation(null); setMode("view"); setForm(null); setFormMessage(null); setDetailFailure(null); setArchiveConfirm(false); activeCoworker.current = item.coworker_id; setSelectedId(item.coworker_id); }}>
+          <button type="button" ref={node => { if (node) rosterItemRefs.current.set(item.coworker_id, node); else rosterItemRefs.current.delete(item.coworker_id); }} className={`coworker-roster-item${selectedId === item.coworker_id && mode !== "create" ? " is-selected" : ""}`} aria-current={selectedId === item.coworker_id && mode !== "create" ? "page" : undefined} onClick={() => { if (operation !== "primary") setOperation(null); setMode("view"); setForm(null); setFormMessage(null); setDetailFailure(null); setArchiveConfirm(false); editingCoworkerId.current = null; editorBaseline.current = null; activeCoworker.current = item.coworker_id; setSelectedId(item.coworker_id); moveFocus({ type: "roster-item-selected", coworkerId: item.coworker_id }); }}>
             <span className="coworker-roster-avatar" aria-hidden="true">{initial(item.revision.name)}</span>
-            <span className="coworker-roster-copy"><strong>{item.revision.name}</strong><small>{item.status === "ACTIVE" ? "Active" : item.status === "PAUSED" ? "Paused" : "Archived"}{item.is_primary ? " · Primary" : ""}</small></span>
+            <span className="coworker-roster-copy"><strong>{item.revision.name}</strong><small>{coworkerStatusText(item.status, item.is_primary)}</small></span>
             <span className={`coworker-status-dot status-${item.status.toLowerCase()}`} aria-hidden="true" />
           </button>
         </li>)}</ul>
@@ -448,13 +509,13 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
       </nav>
 
       <section className="coworker-detail" aria-label={mode === "create" ? "Create Coworker" : "Coworker details"}>
-        {mode === "create" && activeForm ? <CoworkerEditor form={activeForm} mode="create" leadBindings={leadBindings} eligibleLeadBindings={eligibleLeadBindings} workerProfiles={workerProfiles} workerProfilesError={workerProfilesError} busy={operation === "save"} message={formMessage} onChange={changeForm} onInteractionChange={updatePolicy} onCancel={cancelEdit} onSubmit={saveRevision} />
-          : mode === "edit" && activeForm && selected ? <CoworkerEditor form={activeForm} mode="edit" leadBindings={leadBindings} eligibleLeadBindings={eligibleLeadBindings} workerProfiles={workerProfiles} workerProfilesError={workerProfilesError} busy={operation === "save"} message={formMessage} onChange={changeForm} onInteractionChange={updatePolicy} onCancel={cancelEdit} onSubmit={saveRevision} />
+        {mode === "create" && activeForm ? <CoworkerEditor form={activeForm} mode="create" nameInputRef={nameInputRef} leadBindings={leadBindings} eligibleLeadBindings={eligibleLeadBindings} workerProfiles={workerProfiles} workerProfilesError={workerProfilesError} busy={operation === "save"} message={formMessage} onChange={changeForm} onInteractionChange={updatePolicy} onCancel={cancelEdit} onEscapeKey={handleEditorEscape} onSubmit={saveRevision} />
+          : mode === "edit" && activeForm && selected ? <CoworkerEditor form={activeForm} mode="edit" nameInputRef={nameInputRef} leadBindings={leadBindings} eligibleLeadBindings={eligibleLeadBindings} workerProfiles={workerProfiles} workerProfilesError={workerProfilesError} busy={operation === "save"} message={formMessage} onChange={changeForm} onInteractionChange={updatePolicy} onCancel={cancelEdit} onEscapeKey={handleEditorEscape} onSubmit={saveRevision} />
             : selectedId ? detailLoading && !selected ? <p role="status" className="coworker-muted">Loading Coworker…</p>
               : selected ? <>
                 <div className="coworker-identity">
                   <span className="coworker-profile-avatar" aria-hidden="true">{initial(selected.revision.name)}</span>
-                  <div className="coworker-identity-copy"><div className="coworker-title-row"><h2>{selected.revision.name}</h2>{selected.is_primary && <span className="coworker-primary-badge">Primary</span>}</div><p>{selected.revision.role_description || "No role description yet."}</p><small>Revision {selected.current_revision} · Saved {new Date(selected.updated_at).toLocaleString()}</small></div>
+                  <div className="coworker-identity-copy"><div className="coworker-title-row"><h2 ref={detailHeadingRef} tabIndex={-1}>{selected.revision.name}</h2>{selected.is_primary && <span className="coworker-primary-badge">Primary</span>}</div><p>{selected.revision.role_description || "No role description yet."}</p><small>Revision {selected.current_revision} · Saved {new Date(selected.updated_at).toLocaleString()}</small></div>
                   <div className="coworker-identity-actions">
                     {selected.status !== "ARCHIVED" && <button type="button" className="coworker-secondary-action" onClick={startEdit} disabled={operation !== null}>Edit</button>}
                     <button type="button" className="coworker-overflow-action" aria-label="Refresh Coworker" title="Refresh" onClick={() => void reloadSelected()} disabled={detailLoading || operation !== null}>↻</button>
@@ -492,8 +553,8 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
                   <p>{selected.status === "ACTIVE" ? "Pausing stops new proactive and scheduled work. Existing Tasks continue under their own policy." : "Resuming allows future proactive work and scheduled admissions after dependency checks."}</p>
                   {selected.status === "ACTIVE" ? <button type="button" className="coworker-secondary-action" disabled={operation !== null} onClick={() => void transition("PAUSED")}>{operation === "pause" ? "Pausing…" : "Pause Coworker"}</button>
                     : <button type="button" className="coworker-secondary-action" disabled={operation !== null} onClick={() => void transition("ACTIVE")}>{operation === "resume" ? "Resuming…" : "Resume Coworker"}</button>}
-                  {!archiveConfirm ? <button type="button" className="coworker-danger-action" disabled={operation !== null || selected.is_primary} title={selected.is_primary ? "Clear the primary selection before archiving." : undefined} onClick={() => setArchiveConfirm(true)}>Archive</button>
-                    : <div className="coworker-archive-confirm" role="group" aria-label="Confirm archive"><p>Archiving retains history. Active Coworker Automations or Tasks can block this action.</p><button type="button" className="coworker-secondary-action" onClick={() => setArchiveConfirm(false)} disabled={operation !== null}>Keep Coworker</button><button type="button" className="coworker-danger-action" onClick={() => void transition("ARCHIVED")} disabled={operation !== null}>{operation === "archive" ? "Archiving…" : "Confirm archive"}</button></div>}
+                  {!archiveConfirm ? <button type="button" className="coworker-danger-action" ref={archiveTriggerRef} disabled={operation !== null || selected.is_primary} title={selected.is_primary ? "Clear the primary selection before archiving." : undefined} onClick={() => { setArchiveConfirm(true); moveFocus({ type: "archive-confirm-opened" }); }}>Archive</button>
+                    : <div className="coworker-archive-confirm" role="group" aria-label="Confirm archive" onKeyDown={event => { if (event.key !== "Escape") return; event.preventDefault(); setArchiveConfirm(false); moveFocus({ type: "archive-confirm-cancelled" }); }}><p>Archiving retains history. Active Coworker Automations or Tasks can block this action.</p><button type="button" className="coworker-secondary-action" onClick={() => { setArchiveConfirm(false); moveFocus({ type: "archive-confirm-cancelled" }); }} disabled={operation !== null}>Keep Coworker</button><button type="button" className="coworker-danger-action" ref={archiveConfirmRef} onClick={() => void transition("ARCHIVED")} disabled={operation !== null}>{operation === "archive" ? "Archiving…" : "Confirm archive"}</button></div>}
                 </section>}
               </> : detailFailure ? <div className="coworker-error" role="alert"><p>{detailFailure}</p><button type="button" onClick={() => void reloadSelected()}>Retry</button></div> : <p className="coworker-muted">Coworker details are unavailable.</p>
               : <p className="coworker-muted">Choose a Coworker to view its settings.</p>
@@ -503,11 +564,11 @@ export function CoworkerSettings({ api, workspaceId, workspaceVersion, leadBindi
   </main>;
 }
 
-function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, workerProfiles, workerProfilesError, busy, message, onChange, onInteractionChange, onCancel, onSubmit }: {
-  form: CoworkerRevisionInput; mode: "create" | "edit"; leadBindings?: CoworkerLeadBindingOption[]; eligibleLeadBindings: CoworkerLeadBindingOption[]; workerProfiles?: CoworkerWorkerProfileOption[]; workerProfilesError?: string | null; busy: boolean; message: string | null;
+function CoworkerEditor({ form, mode, nameInputRef, leadBindings, eligibleLeadBindings, workerProfiles, workerProfilesError, busy, message, onChange, onInteractionChange, onCancel, onEscapeKey, onSubmit }: {
+  form: CoworkerRevisionInput; mode: "create" | "edit"; nameInputRef: React.RefObject<HTMLInputElement | null>; leadBindings?: CoworkerLeadBindingOption[]; eligibleLeadBindings: CoworkerLeadBindingOption[]; workerProfiles?: CoworkerWorkerProfileOption[]; workerProfilesError?: string | null; busy: boolean; message: string | null;
   onChange: <K extends keyof CoworkerRevisionInput>(key: K, value: CoworkerRevisionInput[K]) => void;
   onInteractionChange: (key: keyof CoworkerRevisionInput["interaction_policy"], value: CoworkerInteractionDefault) => void;
-  onCancel: () => void; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onCancel: () => void; onEscapeKey: () => void; onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
 }) {
   const currentFailover = form.lead_failover_policy ?? { mode: "DISABLED" as const, triggers: [], fallback_agent_binding_ids: [], max_lead_changes: 0 };
   function updateFailover(next: LeadFailoverPolicy) { onChange("lead_failover_policy", next); }
@@ -529,11 +590,17 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
     && (mode === "edit" || form.role_description.trim().length > 0)
     && failoverValid;
 
-  return <form className="coworker-editor" onSubmit={onSubmit}>
+  return <form className="coworker-editor" onSubmit={onSubmit} onKeyDown={event => {
+    if (event.key !== "Escape") return;
+    // Escape closes only a safe dialog; the parent decides whether the draft is dirty.
+    event.preventDefault();
+    event.stopPropagation();
+    onEscapeKey();
+  }}>
     <div className="coworker-editor-heading"><div><span className="coworker-profile-avatar" aria-hidden="true">{initial(form.name || "?")}</span></div><div><p className="coworker-settings-kicker">{mode === "create" ? "New identity" : "New revision"}</p><h2>{mode === "create" ? "Create a Coworker" : `Edit ${form.name}`}</h2><p>{mode === "create" ? "Give it a name and describe what it helps with. Connections, agents and advanced setup are optional and can be changed later." : "Changes apply to future work. Existing Tasks keep their saved specification."}</p></div></div>
 
     <section className="coworker-form-section"><h3>Identity</h3>
-      <label className="coworker-field">Name<input autoFocus={mode === "create"} maxLength={120} required value={form.name} onChange={event => onChange("name", event.currentTarget.value)} placeholder="Assistant" /></label>
+      <label className="coworker-field">Name<input ref={nameInputRef} maxLength={120} required value={form.name} onChange={event => onChange("name", event.currentTarget.value)} placeholder="Assistant" /></label>
       <label className="coworker-field">What should this Coworker help with?<textarea maxLength={2000} required={mode === "create"} value={form.role_description} onChange={event => onChange("role_description", event.currentTarget.value)} placeholder="For example: compare reliable sources and summarize the key findings." /></label>
       {form.avatar_ref && <p className="coworker-helper">An avatar Resource revision is already pinned and will be preserved. Avatar selection is not available in this editor.</p>}
     </section>
@@ -569,14 +636,16 @@ function CoworkerEditor({ form, mode, leadBindings, eligibleLeadBindings, worker
         <label className="coworker-field">If the lead becomes unavailable<select value={currentFailover.mode} onChange={event => {
           const mode = event.currentTarget.value as LeadFailoverPolicy["mode"];
           updateFailover(mode === "DISABLED" ? { mode, triggers: [], fallback_agent_binding_ids: [], max_lead_changes: 0 }
-            : mode === "ASK" ? { mode, triggers: currentFailover.triggers.length ? currentFailover.triggers : ["AGENT_UNAVAILABLE"], fallback_agent_binding_ids: [], max_lead_changes: 0 }
+            : mode === "ASK" ? { mode, triggers: currentFailover.triggers.length ? currentFailover.triggers : ["AGENT_UNAVAILABLE"], fallback_agent_binding_ids: [...currentFailover.fallback_agent_binding_ids], max_lead_changes: 0 }
               : { mode, triggers: currentFailover.triggers.length ? currentFailover.triggers : ["AGENT_UNAVAILABLE"], fallback_agent_binding_ids: [...currentFailover.fallback_agent_binding_ids], max_lead_changes: Math.max(1, currentFailover.max_lead_changes) });
         }}><option value="DISABLED">Stop and tell me</option><option value="ASK">Ask before choosing a new lead</option><option value="ALLOW_LISTED">Use one of my listed leads automatically</option></select></label>
         {currentFailover.mode !== "DISABLED" && <fieldset className="coworker-check-group"><legend>When to ask or switch</legend>{FAILOVER_TRIGGERS.map(trigger => <label key={trigger}><input type="checkbox" checked={currentFailover.triggers.includes(trigger)} onChange={event => updateTrigger(trigger, event.currentTarget.checked)} /><span>{triggerLabel(trigger)}</span></label>)}</fieldset>}
-        {currentFailover.mode === "ALLOW_LISTED" && <>
+        {currentFailover.mode !== "DISABLED" && <>
           <section className="coworker-fallback-order" aria-labelledby="fallback-lead-order-title">
             <h4 id="fallback-lead-order-title">Fallback lead order</h4>
-            <p className="coworker-helper">LiteCowork tries these listed leads in order, after checking current access and readiness.</p>
+            <p className="coworker-helper">{currentFailover.mode === "ASK"
+              ? "LiteCowork offers these listed leads, in this order, when it asks you to choose a new lead."
+              : "LiteCowork tries these listed leads in order, after checking current access and readiness."}</p>
             {currentFailover.fallback_agent_binding_ids.length === 0
               ? <p className="coworker-helper">Choose up to three fallback leads below.</p>
               : <ol aria-label="Automatic lead fallback priority">

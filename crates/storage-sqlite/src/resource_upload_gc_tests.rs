@@ -1454,9 +1454,25 @@ fn downgrade_resource_content_schema_to_v16(connection: &Connection) {
 }
 
 fn downgrade_resource_index_schema_to_v18(connection: &Connection) {
+    // Version 26 redefined the v15 invocation guards, so a downgrade must restore the
+    // v15 text before the fingerprint of any earlier version can match.
     connection
         .execute_batch(
-            "DROP TRIGGER IF EXISTS delegation_results_immutable_update;
+            "DROP TRIGGER IF EXISTS capability_invocation_dispatch_requires_consumed_approval;
+             DROP TRIGGER IF EXISTS capability_invocation_status_transition_guard;
+             DELETE FROM schema_migrations WHERE version = 26;
+             PRAGMA user_version = 25;",
+        )
+        .expect("restore the v26 migration boundary");
+    connection
+        .execute_batch(SQLITE_V15_DDL)
+        .expect("restore the v15 invocation guards");
+    connection
+        .execute_batch(
+            "DROP TRIGGER IF EXISTS resource_edges_immutable_update;
+             DROP TRIGGER IF EXISTS resource_edges_immutable_delete;
+             DELETE FROM schema_migrations WHERE version = 25;
+             DROP TRIGGER IF EXISTS delegation_results_immutable_update;
              DROP TRIGGER IF EXISTS delegation_results_immutable_delete;
              DROP TABLE IF EXISTS delegation_results;
              DELETE FROM schema_migrations WHERE version = 24;

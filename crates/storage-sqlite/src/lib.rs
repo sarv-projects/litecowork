@@ -1,16 +1,24 @@
+mod workspace_access;
 mod agent_registry_cache;
 mod artifacts;
+mod backup;
 mod automation_admission;
+mod automation_host;
 mod blob;
+mod capability_dispatch;
 mod context_document_purge;
 mod conversations;
 mod coworkers;
+mod delegation_failover;
 mod delegation_profiles;
 mod delegation_results;
 mod dependencies;
+mod discover;
 mod effect_evidence;
 mod environments;
 mod invocations;
+mod lead_handoff_boundary;
+mod lead_failover_choice_request;
 mod needs_you;
 mod rich_presentations;
 pub use rich_presentations::SqliteRichPresentationStore;
@@ -22,6 +30,10 @@ mod context_document_migration_tests;
 mod context_document_purge_tests;
 #[cfg(test)]
 mod delegation_result_migration_tests;
+#[cfg(test)]
+mod invocation_dispatch_migration_tests;
+#[cfg(test)]
+mod skill_tests;
 mod execution;
 mod goals;
 mod os_key_provider;
@@ -32,8 +44,12 @@ mod resource_edge_migration_tests;
 mod resource_edge_tests;
 mod resource_edges;
 mod resource_index;
+#[cfg(test)]
+mod rag_retrieval_tests;
+pub mod rag_retrieval;
 mod routines;
 mod runtime_identity;
+mod skill;
 mod suggestions;
 mod trust;
 mod user_request_details;
@@ -46,7 +62,15 @@ mod workspace_root_membership_migration_tests;
 #[cfg(all(test, unix))]
 mod workspace_root_scan_tests;
 
+pub use automation_host::{
+    AutomationHealthFacts, AutomationHostContext, DueSchedule, OccurrencePageItem,
+    SkippedOccurrence, SqliteAutomationHostStore, TriggerHostWorkspace,
+};
+pub use backup::{
+    BackupCreateRequest, BackupPassphrase, LocalBackupService, MINIMUM_SUPPORTED_SCHEMA_VERSION,
+};
 pub use blob::{FileBlobStore, WorkspaceBlobKey, WorkspaceBlobKeyProvider};
+pub use capability_dispatch::SqliteCapabilityDispatchStore;
 pub use conversations::SqliteConversationStore;
 pub use coworkers::{
     AutomationPage, AutomationRevisionPage, CoworkerEventContext, CoworkerPage, SqliteCoworkerStore,
@@ -56,18 +80,35 @@ pub use delegation_profiles::{
     DelegationProfileRevisionPage, SqliteDelegationProfileStore,
 };
 pub use delegation_results::SqliteDelegationResultStore;
+pub use discover::{
+    DiscoverCatalogPage, DiscoverProviderStatus, SqliteDiscoverStore,
+    PACKAGE_SERVICE_NOT_QUALIFIED,
+};
 pub use effect_evidence::SqliteEffectEvidenceStore;
 pub use environments::SqliteEnvironmentStore;
 pub use execution::SqliteStepAttemptStore;
 pub use goals::{GoalEventContext, GoalPage, SqliteGoalStore};
 pub use invocations::SqliteCapabilityInvocationStore;
+pub use lead_failover_choice_request::{
+    LeadFailoverChoiceRequestCommit, LeadFailoverChoiceRequestReceipt,
+};
 pub use os_key_provider::OsWorkspaceBlobKeyProvider;
 pub use os_principal_binding::{
     OsRuntimePrincipalBindingProvider, RuntimeOsPlatform, RuntimeOsPrincipal,
     RuntimeOsPrincipalBinding, RuntimeOsPrincipalIdentity, UnixPrincipalId,
 };
-pub use routines::{RoutineEventContext, RoutinePage, RoutineRevisionPage, SqliteRoutineStore};
+pub use routines::{
+    RoutineEventContext, RoutineHealthFacts, RoutinePage, RoutineRevisionPage, RoutineTaskOutcome,
+    SqliteRoutineStore,
+};
 pub use runtime_identity::OsRuntimeDeviceIdentityProvider;
+pub use skill::{
+    AppFrameCreateRequest, CommittedAppFrame, CommittedDemonstrationSession, CommittedSkill,
+    CommittedSkillProposal, DemonstrationAppendOutcome, DemonstrationAppendRequest,
+    DemonstrationCreateRequest, DemonstrationSessionPage, DemonstrationTransition,
+    DemonstrationTransitionRequest, SkillEventContext, SkillMutationRequest, SkillPage,
+    SkillProposalCreateRequest, SkillProposalPage, SkillProposalReviewRequest, SqliteSkillStore,
+};
 pub use suggestions::{SqliteSuggestionStore, SuggestionEventContext, SuggestionReadError};
 pub use trust::{OsSecretStore, SqliteApprovalStore};
 pub use user_request_resolutions::SqliteUserRequestResolutionStore;
@@ -170,7 +211,8 @@ const SQLITE_V22_DDL: &str = include_str!("../../../docs/schemas/sqlite-v22.sql"
 const SQLITE_V23_DDL: &str = include_str!("../../../docs/schemas/sqlite-v23.sql");
 const SQLITE_V24_DDL: &str = include_str!("../../../docs/schemas/sqlite-v24.sql");
 const SQLITE_V25_DDL: &str = include_str!("../../../docs/schemas/sqlite-v25.sql");
-const SCHEMA_VERSION: i64 = 25;
+const SQLITE_V26_DDL: &str = include_str!("../../../docs/schemas/sqlite-v26.sql");
+const SCHEMA_VERSION: i64 = 26;
 const V3_SCHEMA_VERSION: i64 = 3;
 const V4_SCHEMA_VERSION: i64 = 4;
 const V5_SCHEMA_VERSION: i64 = 5;
@@ -194,6 +236,7 @@ const V22_SCHEMA_VERSION: i64 = 22;
 const V23_SCHEMA_VERSION: i64 = 23;
 const V24_SCHEMA_VERSION: i64 = 24;
 const V25_SCHEMA_VERSION: i64 = 25;
+const V26_SCHEMA_VERSION: i64 = 26;
 
 fn require_task_planning_isolation_admission() -> Result<(), StoreError> {
     // No qualified Runtime-owned admission proof producer is connected in this
@@ -227,6 +270,7 @@ const V22_MIGRATION_NAME: &str = "verification_run_evidence_binding_v22";
 const V23_MIGRATION_NAME: &str = "workspace_root_file_membership_cleanup_v23";
 const V24_MIGRATION_NAME: &str = "immutable_delegation_results_v24";
 const V25_MIGRATION_NAME: &str = "immutable_resource_edges_v25";
+const V26_MIGRATION_NAME: &str = "invocation_dispatch_admission_v26";
 #[cfg(test)]
 const MIGRATION_NAME: &str = V1_MIGRATION_NAME; // version-one compatibility for schema baseline assertions
 const STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.aggregate-state+json";
@@ -433,6 +477,14 @@ static RESOURCE_INDEX_WRITE_CONTENTION_OBSERVERS: OnceLock<
 > = OnceLock::new();
 
 enum Command {
+    /// Feature-owned write executed on the writer connection.
+    ///
+    /// A new durable aggregate adds no central variant and no writer-loop branch:
+    /// its store submits this variant with a closure that owns the transaction.
+    /// Prefer this over adding an `XOperation` variant per feature.
+    Operation {
+        operation: Box<dyn FnOnce(&mut Connection) + Send>,
+    },
     ReserveResourceIndexBlob {
         workspace_id: String,
         blob: BlobRef,
@@ -489,6 +541,11 @@ enum Command {
         source_digest: String,
         reply: mpsc::Sender<Result<bool, StoreError>>,
     },
+    GetResourceIndexState {
+        workspace_id: String,
+        resource_id: String,
+        reply: mpsc::Sender<Result<Option<rag_retrieval::ResourceIndexStateRow>, StoreError>>,
+    },
     #[allow(dead_code)]
     // Reserved writer command; there is no producer in the local V1 surface yet.
     ReplaceResourceTextIndex {
@@ -529,61 +586,10 @@ enum Command {
         index: Option<PreparedResourceTextIndex>,
         reply: mpsc::Sender<Result<ResourceTextIndexRebuildResult, StoreError>>,
     },
-    CoworkerOperation {
-        operation: coworkers::WriterOperation,
-    },
-    DelegationProfileOperation {
-        operation: delegation_profiles::WriterOperation,
-    },
-    DelegationResultOperation {
-        operation: delegation_results::WriterOperation,
-    },
-    GoalOperation {
-        operation: goals::WriterOperation,
-    },
-    SuggestionOperation {
-        operation: suggestions::WriterOperation,
-    },
-    RoutineOperation {
-        operation: routines::WriterOperation,
-    },
-    ExecutionOperation {
-        operation: execution::WriterOperation,
-    },
-    EffectEvidenceOperation {
-        operation: effect_evidence::WriterOperation,
-    },
-    VerificationRunOperation {
-        operation: verification_runs::WriterOperation,
-    },
-    TrustOperation {
-        operation: trust::WriterOperation,
-    },
-    UserRequestResolutionOperation {
-        operation: user_request_resolutions::WriterOperation,
-    },
-    WorkspaceRootObservationOperation {
-        operation: resource_index::WorkspaceRootObservationWriterOperation,
-    },
     ProcessNextWorkspaceRootCleanupBatch {
         origin_runtime_id: String,
         now: String,
         reply: mpsc::Sender<Result<bool, StoreError>>,
-    },
-    InvocationOperation {
-        operation: invocations::WriterOperation,
-    },
-    ArtifactOperation {
-        operation: artifacts::WriterOperation,
-    },
-    RichPresentationOperation {
-        operation: rich_presentations::WriterOperation,
-    },
-    ConversationOperation {
-        operation: conversations::WriterOperation,
-    },
-    EnvironmentOperation {
-        operation: environments::WriterOperation,
     },
     AuthorizeArtifactAppend {
         workspace_id: String,
@@ -802,9 +808,6 @@ enum Command {
         command: ContextDocumentStatusCommand,
         blobs: Arc<dyn BlobStore>,
         reply: mpsc::Sender<Result<CommittedContextDocumentStatus, StoreError>>,
-    },
-    ContextDocumentPurgeOperation {
-        operation: context_document_purge::WriterOperation,
     },
     ListWorkspaceInstructionRevisions {
         workspace_id: String,
@@ -3454,6 +3457,30 @@ impl TaskStore for SqliteWorkspaceStore {
 }
 
 impl SqliteWorkspaceStore {
+    /// Commit the durable owner-choice request that a pinned `ASK` lead-failover
+    /// policy requires. The transaction re-reads the policy, the current lead, the
+    /// observation freshness and the fallback eligibility before it writes the
+    /// `UserRequest`, its `user.request.created.v1` event and the replay receipt.
+    pub fn commit_lead_failover_choice_request(
+        &self,
+        commit: LeadFailoverChoiceRequestCommit,
+    ) -> Result<LeadFailoverChoiceRequestReceipt, StoreError> {
+        let (reply_sender, reply_receiver) = mpsc::channel();
+        let blobs = Arc::clone(&self.inner.blobs);
+        self.execute_command(
+            Command::Operation {
+                operation: Box::new(move |connection| {
+                    let _ = reply_sender.send(lead_failover_choice_request::commit_transaction(
+                        connection,
+                        blobs.as_ref(),
+                        commit,
+                    ));
+                }),
+            },
+            reply_receiver,
+        )
+    }
+
     fn read_resource_content_with_limit(
         &self,
         workspace_id: &str,
@@ -13605,10 +13632,25 @@ pub(crate) fn create_task_in_transaction(
     Ok(committed)
 }
 
+/// The persisted `scheduled_for` instant of an occurrence. Only a schedule
+/// occurrence carries one; every other trigger kind records `NULL`.
+fn automation_scheduled_for(
+    admission: &AutomationTaskAdmission,
+) -> Result<Option<String>, StoreError> {
+    admission
+        .scheduled_epoch_ms
+        .map(|instant| {
+            domain_responsibility::format_instant(instant)
+                .map_err(|error| StoreError::Invalid(error.to_string()))
+        })
+        .transpose()
+}
+
 fn build_automation_occurrence_snapshots(
     admission: &AutomationTaskAdmission,
     task: &TaskRecord,
 ) -> Result<Vec<Value>, StoreError> {
+    let scheduled_for = automation_scheduled_for(admission)?;
     let states = [
         ("PENDING", 1_u64, 0_u64, None),
         ("CLAIMED", 2, 1, None),
@@ -13630,8 +13672,8 @@ fn build_automation_occurrence_snapshots(
             "claim_epoch": claim_epoch,
             "claim_expires_at": if claim_epoch == 0 { Value::Null } else { json!(admission.claim_expires_at) },
             "task_id": task_id,
-            "scheduled_for": Value::Null,
-            "covered_misfire_range": Value::Null,
+            "scheduled_for": scheduled_for,
+            "covered_misfire_range": admission.covered_misfire_range,
             "trigger_input_ref": Value::Null,
             "trigger_payload_digest": Value::Null,
             "blockers": [],
@@ -13659,6 +13701,14 @@ fn begin_automation_occurrence_claim(
             "AutomationOccurrence snapshots are missing".to_owned(),
         ));
     };
+    let scheduled_for = automation_scheduled_for(admission)?;
+    let covered_misfire_range_json = match admission.covered_misfire_range.as_ref() {
+        Some(value) => Some(
+            String::from_utf8(canonical_json(value)?)
+                .map_err(|error| StoreError::Invalid(error.to_string()))?,
+        ),
+        None => None,
+    };
     let occurrence = json!({
         "workspace_id": commit.task.workspace_id,
         "occurrence_id": admission.occurrence_id,
@@ -13669,8 +13719,8 @@ fn begin_automation_occurrence_claim(
         "trigger_id": admission.trigger_id,
         "trigger_host_runtime_id": admission.trigger_host_runtime_id,
         "occurrence_key": admission.occurrence_key,
-        "scheduled_for": Value::Null,
-        "covered_misfire_range_json": Value::Null,
+        "scheduled_for": scheduled_for,
+        "covered_misfire_range_json": covered_misfire_range_json,
         "trigger_input_ref_json": Value::Null,
         "trigger_payload_digest": Value::Null,
         "blockers_json": "[]",
@@ -13692,12 +13742,12 @@ fn begin_automation_occurrence_claim(
     }
     tx.execute(
         "INSERT INTO automation_occurrences(workspace_id, occurrence_id, automation_id, automation_revision, routine_id, routine_revision, trigger_id, trigger_host_runtime_id, occurrence_key, scheduled_for, covered_misfire_range_json, trigger_input_ref_json, trigger_payload_digest, blockers_json, claim_epoch, claim_expires_at, task_id, status, created_at, updated_at, version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, NULL, NULL, NULL, '[]', 0, NULL, NULL, 'PENDING', ?10, ?10, 1)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, NULL, '[]', 0, NULL, NULL, 'PENDING', ?12, ?12, 1)",
         params![commit.task.workspace_id, admission.occurrence_id, admission.automation_id,
             to_sql_i64(admission.automation_revision, "Automation revision")?, admission.routine_id,
             to_sql_i64(admission.routine_revision, "Routine revision")?,
             admission.trigger_id, admission.trigger_host_runtime_id, admission.occurrence_key,
-            commit.task.created_at],
+            scheduled_for, covered_misfire_range_json, commit.task.created_at],
     ).map_err(map_database_error)?;
     insert_automation_occurrence_event(
         tx,
@@ -13720,7 +13770,15 @@ fn begin_automation_occurrence_claim(
             actual: None,
         });
     }
-    let claimed = build_occurrence_state(admission, &commit.task, "CLAIMED", 2, 1, None);
+    let claimed = build_occurrence_state(
+        admission,
+        &commit.task,
+        "CLAIMED",
+        2,
+        1,
+        None,
+        scheduled_for.as_deref(),
+    );
     insert_automation_occurrence_event(
         tx,
         commit,
@@ -13746,6 +13804,7 @@ fn settle_automation_occurrence_materialization(
     let refs = state_refs.ok_or_else(|| {
         StoreError::Integrity("AutomationOccurrence snapshots are missing".to_owned())
     })?;
+    let scheduled_for = automation_scheduled_for(admission)?;
     let changed = tx.execute(
         "UPDATE automation_occurrences SET status = 'STARTED', task_id = ?1, updated_at = ?2, version = 3 WHERE workspace_id = ?3 AND occurrence_id = ?4 AND status = 'CLAIMED' AND claim_epoch = 1 AND version = 2 AND claim_expires_at = ?5",
         params![commit.task.task_id, commit.task.created_at, commit.task.workspace_id, admission.occurrence_id, admission.claim_expires_at],
@@ -13763,6 +13822,7 @@ fn settle_automation_occurrence_materialization(
         3,
         1,
         Some(&commit.task.task_id),
+        scheduled_for.as_deref(),
     );
     insert_automation_occurrence_event(
         tx,
@@ -13784,6 +13844,7 @@ fn build_occurrence_state(
     version: u64,
     claim_epoch: u64,
     task_id: Option<&str>,
+    scheduled_for: Option<&str>,
 ) -> Value {
     json!({
         "workspace_id": task.workspace_id,
@@ -13800,7 +13861,7 @@ fn build_occurrence_state(
         "claim_epoch": claim_epoch,
         "claim_expires_at": admission.claim_expires_at,
         "task_id": task_id,
-        "scheduled_for": Value::Null,
+        "scheduled_for": scheduled_for,
         "covered_misfire_range": Value::Null,
         "trigger_input_ref": Value::Null,
         "trigger_payload_digest": Value::Null,
@@ -14019,6 +14080,18 @@ fn commit_task_lead_handoff_transaction(
         return Ok(receipt);
     }
 
+    let policy_observation = if commit.cause == delegation_failover::POLICY_FAILOVER_CAUSE {
+        let value = commit.trigger_observation.as_ref().ok_or_else(|| {
+            StoreError::Invalid(
+                "policy failover requires a trigger observation".to_owned(),
+            )
+        })?;
+        Some(delegation_failover::StoredFailoverObservation::parse(
+            value,
+        )?)
+    } else {
+        None
+    };
     let request_is_canonical = commit.request_payload
         == json!({
             "workspace_id": commit.workspace_id,
@@ -14056,6 +14129,19 @@ fn commit_task_lead_handoff_transaction(
             && expected_payload_keys
                 .iter()
                 .all(|key| commit.event.payload.get(*key) == expected_event_payload.get(*key));
+    let expected_actor = if policy_observation.is_some() {
+        json!({"service_id": commit.request_scope_id})
+    } else {
+        json!({"principal_id": commit.request_scope_id, "kind": "USER"})
+    };
+    let observation_matches_cause = match commit.cause.as_str() {
+        "OWNER_REQUEST" => commit.trigger_observation.is_none(),
+        delegation_failover::POLICY_FAILOVER_CAUSE => policy_observation.is_some(),
+        _ => false,
+    };
+    let observation_source_matches_scope = policy_observation
+        .as_ref()
+        .is_none_or(|observation| observation.source_service_id() == commit.request_scope_id);
     if !request_is_canonical
         || commit.workspace_id.trim().is_empty()
         || commit.task_id.trim().is_empty()
@@ -14064,9 +14150,9 @@ fn commit_task_lead_handoff_transaction(
         || commit.expected_task_version == 0
         || commit.expected_task_spec_revision == 0
         || commit.target_agent_binding_id.trim().is_empty()
-        || commit.cause != "OWNER_REQUEST"
-        || commit.trigger_observation.is_some()
-        || commit.actor != json!({"principal_id": commit.request_scope_id, "kind": "USER"})
+        || !observation_matches_cause
+        || !observation_source_matches_scope
+        || commit.actor != expected_actor
         || !event_payload_is_template
         || commit.event.workspace_id != commit.workspace_id
         || commit.event.entity_type != "Task"
@@ -14091,8 +14177,9 @@ fn commit_task_lead_handoff_transaction(
         .optional()
         .map_err(map_database_error)?;
     match workspace {
-        Some((owner, status)) if owner == commit.request_scope_id && status == "ACTIVE" => {}
-        Some((owner, _)) if owner != commit.request_scope_id => return Err(StoreError::NotFound),
+        Some((owner, status))
+            if status == "ACTIVE"
+                && (policy_observation.is_some() || owner == commit.request_scope_id) => {}
         Some(_) | None => return Err(StoreError::NotFound),
     }
 
@@ -14107,35 +14194,39 @@ fn commit_task_lead_handoff_transaction(
     if current.task.current_spec_revision != commit.expected_task_spec_revision {
         return Err(StoreError::Invalid("STALE_SPEC_REVISION".to_owned()));
     }
-    if current.task.status != "READY"
-        || current.task.current_plan_revision.is_some()
-        || current.task.completed_at.is_some()
-        || current.task.lead_agent_binding_id == commit.target_agent_binding_id
-    {
-        return Err(StoreError::Invalid(
-            "Task is outside the safe lead handoff boundary".to_owned(),
-        ));
-    }
     let previous_lead_agent_binding_id = current.task.lead_agent_binding_id.clone();
-    let live_planning: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE workspace_id = ?1 AND task_id = ?2 AND scope_kind = 'TASK_PLANNING' AND status IN ('STARTING', 'ACTIVE', 'INTERRUPTING', 'CLOSING'))",
-        params![commit.workspace_id, commit.task_id],
-        |row| row.get(0),
-    ).map_err(map_database_error)?;
-    let active_attempt: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM attempts WHERE task_id = ?1 AND status NOT IN ('COMPLETED', 'FAILED', 'ABANDONED', 'CANCELLED'))",
-        [&commit.task_id],
-        |row| row.get(0),
-    ).map_err(map_database_error)?;
-    let unresolved_effect: bool = transaction.query_row(
-        "SELECT EXISTS(SELECT 1 FROM effects WHERE task_id = ?1 AND state NOT IN ('OBSERVED', 'VERIFIED', 'FAILED'))",
-        [&commit.task_id],
-        |row| row.get(0),
-    ).map_err(map_database_error)?;
-    if live_planning || active_attempt || unresolved_effect {
-        return Err(StoreError::Invalid(
-            "Task lead handoff requires settled planning, Attempts, and Effects".to_owned(),
-        ));
+    let cause = if policy_observation.is_some() {
+        lead_handoff_boundary::LeadHandoffCause::PolicyFailover
+    } else {
+        lead_handoff_boundary::LeadHandoffCause::OwnerRequest
+    };
+    lead_handoff_boundary::validate_lead_handoff_boundary(
+        &transaction,
+        &commit.workspace_id,
+        &commit.task_id,
+        &current.task.status,
+        current.task.current_plan_revision,
+        current.task.completed_at.as_deref(),
+        &previous_lead_agent_binding_id,
+        &commit.target_agent_binding_id,
+        cause,
+    )?;
+
+    if let Some(observation) = policy_observation.as_ref() {
+        let ordered_target = delegation_failover::validate_policy_failover_admission(
+            &transaction,
+            &commit.workspace_id,
+            &commit.task_id,
+            commit.expected_task_spec_revision,
+            &previous_lead_agent_binding_id,
+            &commit.event.recorded_at,
+            observation,
+        )?;
+        if ordered_target != commit.target_agent_binding_id {
+            return Err(StoreError::Invalid(
+                "LEAD_FAILOVER_TARGET_NOT_NEXT_ELIGIBLE_FALLBACK".to_owned(),
+            ));
+        }
     }
 
     let target_eligible: bool = transaction.query_row(
@@ -14151,8 +14242,18 @@ fn commit_task_lead_handoff_transaction(
 
     let next_version =
         next_version.ok_or_else(|| StoreError::Integrity("Task version exhausted".to_owned()))?;
+    // An owner-requested handoff applies to a Task that has not started work. An
+    // automatic failover may replace the lead of a Task that is already running; its
+    // active Attempts keep their own AgentBinding and ExecutionLease.
+    let status_predicate = if policy_observation.is_some() {
+        "status IN ('READY', 'RUNNING')"
+    } else {
+        "status = 'READY' AND current_plan_revision IS NULL"
+    };
     let changed = transaction.execute(
-        "UPDATE tasks SET lead_agent_binding_id = ?1, updated_at = ?2, version = ?3 WHERE workspace_id = ?4 AND task_id = ?5 AND version = ?6 AND current_spec_revision = ?7 AND status = 'READY' AND current_plan_revision IS NULL",
+        &format!(
+            "UPDATE tasks SET lead_agent_binding_id = ?1, updated_at = ?2, version = ?3 WHERE workspace_id = ?4 AND task_id = ?5 AND version = ?6 AND current_spec_revision = ?7 AND {status_predicate}"
+        ),
         params![commit.target_agent_binding_id, commit.event.recorded_at,
             to_sql_i64(next_version, "Task version")?, commit.workspace_id, commit.task_id,
             to_sql_i64(commit.expected_task_version, "Task version")?,
@@ -18452,25 +18553,7 @@ fn writer_loop(
             }
             while let Ok(command) = receiver.recv() {
                 match command {
-                    Command::CoworkerOperation { operation } => operation(&mut connection),
-                    Command::DelegationProfileOperation { operation } => operation(&mut connection),
-                    Command::DelegationResultOperation { operation } => operation(&mut connection),
-                    Command::GoalOperation { operation } => operation(&mut connection),
-                    Command::SuggestionOperation { operation } => operation(&mut connection),
-                    Command::RoutineOperation { operation } => operation(&mut connection),
-                    Command::ExecutionOperation { operation } => operation(&mut connection),
-                    Command::EnvironmentOperation { operation } => operation(&mut connection),
-                    Command::RichPresentationOperation { operation } => operation(&mut connection),
-                    Command::ConversationOperation { operation } => operation(&mut connection),
-                    Command::EffectEvidenceOperation { operation } => operation(&mut connection),
-                    Command::VerificationRunOperation { operation } => operation(&mut connection),
-                    Command::TrustOperation { operation } => operation(&mut connection),
-                    Command::UserRequestResolutionOperation { operation } => {
-                        operation(&mut connection)
-                    }
-                    Command::WorkspaceRootObservationOperation { operation } => {
-                        operation(&mut connection)
-                    }
+                    Command::Operation { operation } => operation(&mut connection),
                     Command::ProcessNextWorkspaceRootCleanupBatch {
                         origin_runtime_id,
                         now,
@@ -18490,8 +18573,8 @@ fn writer_loop(
                         })();
                         let _ = reply.send(result);
                     }
-                    Command::InvocationOperation { operation } => operation(&mut connection),
-                    Command::ArtifactOperation { operation } => operation(&mut connection),
+                    Command::Operation { operation } => operation(&mut connection),
+                    Command::Operation { operation } => operation(&mut connection),
                     Command::AuthorizeArtifactAppend {
                         workspace_id,
                         artifact_id,
@@ -18931,6 +19014,18 @@ fn writer_loop(
                         );
                         let _ = reply.send(result);
                     }
+                    Command::GetResourceIndexState {
+                        workspace_id,
+                        resource_id,
+                        reply,
+                    } => {
+                        let result = rag_retrieval::read_index_state(
+                            &connection,
+                            &workspace_id,
+                            &resource_id,
+                        );
+                        let _ = reply.send(result);
+                    }
                     Command::ReplaceResourceTextIndex {
                         workspace_id,
                         resource_id,
@@ -19125,9 +19220,6 @@ fn writer_loop(
                             command,
                         );
                         let _ = reply.send(result);
-                    }
-                    Command::ContextDocumentPurgeOperation { operation } => {
-                        operation(&mut connection);
                     }
                     Command::ListWorkspaceInstructionRevisions {
                         workspace_id,
@@ -20050,7 +20142,8 @@ fn migrate_with_failpoint(
         verify_migration_record(connection, 22, V22_MIGRATION_NAME, SQLITE_V22_DDL, false)?;
         verify_migration_record(connection, 23, V23_MIGRATION_NAME, SQLITE_V23_DDL, false)?;
         verify_migration_record(connection, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL, false)?;
-        verify_migration_record(connection, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL, true)?;
+        verify_migration_record(connection, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL, false)?;
+        verify_migration_record(connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, true)?;
         return Ok(());
     }
 
@@ -20288,6 +20381,15 @@ fn migrate_with_failpoint(
                 schema_version == V25_SCHEMA_VERSION,
             )?;
         }
+        if schema_version >= 26 {
+            verify_migration_record(
+                connection,
+                26,
+                V26_MIGRATION_NAME,
+                SQLITE_V26_DDL,
+                schema_version == V26_SCHEMA_VERSION,
+            )?;
+        }
         if schema_version == 1 {
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -20436,7 +20538,11 @@ fn migrate_with_failpoint(
         migrate_verification_run_evidence_binding(connection, failpoint)?;
     } else if !matches!(
         current_version,
-        V22_SCHEMA_VERSION | V23_SCHEMA_VERSION | V24_SCHEMA_VERSION | V25_SCHEMA_VERSION
+        V22_SCHEMA_VERSION
+            | V23_SCHEMA_VERSION
+            | V24_SCHEMA_VERSION
+            | V25_SCHEMA_VERSION
+            | V26_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -20449,7 +20555,7 @@ fn migrate_with_failpoint(
         migrate_workspace_root_file_membership(connection, failpoint)?;
     } else if !matches!(
         current_version,
-        V23_SCHEMA_VERSION | V24_SCHEMA_VERSION | V25_SCHEMA_VERSION
+        V23_SCHEMA_VERSION | V24_SCHEMA_VERSION | V25_SCHEMA_VERSION | V26_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -20460,7 +20566,7 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V23_SCHEMA_VERSION {
         migrate_delegation_results(connection, failpoint)?;
-    } else if !matches!(current_version, V24_SCHEMA_VERSION | V25_SCHEMA_VERSION) {
+    } else if !matches!(current_version, V24_SCHEMA_VERSION | V25_SCHEMA_VERSION | V26_SCHEMA_VERSION) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -20470,12 +20576,47 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V24_SCHEMA_VERSION {
         migrate_resource_edges(connection, failpoint)?;
-    } else if current_version != V25_SCHEMA_VERSION {
+    } else if !matches!(current_version, V25_SCHEMA_VERSION | V26_SCHEMA_VERSION) {
+        return Err(StoreError::CorruptSchema(format!(
+            "migration stopped at unexpected schema version {current_version}"
+        )));
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V25_SCHEMA_VERSION {
+        migrate_invocation_dispatch_admission(connection, failpoint)?;
+    } else if current_version != V26_SCHEMA_VERSION {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
     }
     Ok(())
+}
+
+/// Version twenty-six opens Invocation creation to the combined Trust, ApprovalUse,
+/// Invocation and Effect admission writer. The version fifteen blanket creation block
+/// is dropped and the transition guard learns the CREATED to DISPATCHED step. Scope,
+/// grant, activation and live session authority stay enforced by the version one
+/// boundary triggers, and a dispatch is revalidated against live authority.
+fn migrate_invocation_dispatch_admission(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V26_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV26Migration)?;
+    record_migration(&transaction, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V26_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
 }
 
 /// Version twelve adds the optional immutable RichPresentation enhancement. Semantic
@@ -21548,6 +21689,7 @@ enum Failpoint {
     DuringV23Migration,
     DuringV24Migration,
     DuringV25Migration,
+    DuringV26Migration,
     AfterAggregate,
     AfterSequence,
     AfterEvent,

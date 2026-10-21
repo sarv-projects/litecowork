@@ -1,3 +1,217 @@
+## 2026-10-21 — Architecture review: seven candidates resolved in code and gates
+
+A cross-analysis of `ARCHITECTURE.md`, the contract corpus, and the current source produced
+seven candidates. Six were implemented; one was measured and rejected. No contract, schema,
+`SCHEMA_VERSION`, or migration was changed by this work.
+
+- **C1 central `Command` growth (implemented).** `storage-sqlite` had 139 `Command` variants
+  and 21 existed only so a feature store could hand a closure to the writer loop. They are
+  replaced by one `Command::Operation { operation }` variant
+  (`Box<dyn FnOnce(&mut Connection) + Send>`), so a new durable aggregate adds no central
+  variant and no writer-loop branch. Every construction site kept its syntax; only the
+  variant name changed. The 21 now-unused per-module `WriterOperation` aliases were deleted.
+  139 -> 119 variants.
+- **C2 Workspace archive policy (implemented, with the review's polarity corrected).** The
+  first version of this finding was inverted: `docs/API.md` says an archived Workspace
+  *remains readable* and *rejects mutations*. Two paths did the opposite. Re-verification
+  found two real defects in the other direction (a read over-restriction and a wrong error
+  code on writes), both fixed. `crates/storage-sqlite/src/workspace_access.rs` is the single
+  authority (`require_read_access`, `require_write_access`, `workspace_status`,
+  `WORKSPACE_ARCHIVED`). `verification_runs` admits archived reads and answers
+  `WORKSPACE_ARCHIVED` on every mutation; the route test
+  `archived_workspace_keeps_its_verification_runs_readable` passes.
+- **C3 Workspace authorization (implemented).** Eight Operator modules each hand-wrote the
+  same three-step check (selected Workspace -> owner -> ACTIVE
+  `RuntimeWorkspaceBinding`), and the Artifact copy silently omitted the binding step.
+  `apps/litecoworkd/src/operator.rs` now owns two named policies: `authorized_workspace`
+  (execution-adjacent; requires the ACTIVE binding, per the `docs/SERVICES.md` clause that
+  scopes `require_active` to execution, resource-root access, replication, and Runtime-host
+  assignment) and `authorized_data_workspace` (owner-scoped Core data; no binding). The
+  Artifact Library uses the data policy explicitly, so its exception is a recorded decision
+  rather than an apparently missing guard. All eight local copies are gone; the daemon route
+  tests are unchanged and pass.
+- **C4 migration ownership (implemented as a ratchet).** The coverage generator cannot replay
+  the full migration chain in Python, so `scripts/validate_implementation_coverage.py` now
+  carries an explicit `MIGRATION_TABLE_STORY` map for the 26 later-migration tables plus
+  `check_later_migration_tables_are_owned()`, which fails a new table with no owning story.
+  Coverage regenerated: 103 documents, 7040 rows.
+- **C5 Operator bridge seam (implemented).** Seven desktop transports duplicated the bridge
+  envelope, base64 decoding, the `Idempotency-Key` grammar, and `Response` construction; the
+  response size limit existed in one copy only. `apps/litecowork-ui/src/api/operator-bridge.ts`
+  and `apps/litecowork-ui/src/api/idempotency-key.ts` now own those rules
+  (`decodeBase64`, `operatorBridgeResponse`, `validIdempotencyKey`). No manual `atob` remains
+  under `apps/litecowork-ui/src/`. `tsc --noEmit` passes and the full non-browser UI suite is
+  478/478.
+- **C6 canonical concepts (implemented).** `ARCHITECTURE.md` had a duplicate `AgentSession`
+  row, no `Agent` or `Capability` row, and a Runtime row that read as per-incarnation.
+  `scripts/validate_architecture.py` gained `check_canonical_concepts()`, which fails on a
+  duplicate concept row, on any of the fifteen `AGENTS.md` distinctions missing from the
+  table, on a Runtime row that is not installation-scoped, and on a GLOSSARY disagreement.
+  Negative-tested against all four regressions.
+- **C7 shared revision pinning (measured, rejected).** The four delegation modules pin
+  different aggregates (`delegation_admission` -> plan revision; `delegation_recovery` ->
+  task version plus spec revision; `lead_failover` -> runtime incarnation observation;
+  `delegation_selection` -> none). A shared "revision pinning" module would be a false
+  abstraction and a second authority, so it was not built.
+- **Migration fixtures repaired while verifying C4.** The v26 migration redefines a v15
+  trigger, so every downgrade fixture now restores `SQLITE_V15_DDL` and resets `user_version`
+  before replaying history; fingerprint assertions were updated to v26 and the applied
+  `[14..26]` list. `upgrades_schema_v13` and `v19_resource_index_migration` pass.
+- **Verification for this entry.** `cargo check --tests -p litecoworkd` passes; the daemon
+  suite is 515 passed / 0 failed / 1 ignored; the full `storage-sqlite` lib suite is
+  545 passed / 0 failed (baseline `0b98c21` was 534 / 7, and all seven were fixed: six
+  v17/v19 fingerprint fixtures and one stale v26 dispatch test); the full non-browser UI
+  suite is 478/478; `validate_architecture.py`, `validate_implementation_plan.py`,
+  `validate_design_owner_consistency.py`, `audit_v1_contracts.py --strict --write-report`
+  (errors=0, 224 operations, 158 UI cases), and `audit_v1_markdown.py` (210 files, 0 broken
+  links) all pass; `git diff --check` is clean.
+
+## 2026-10-20 — E10 Connectors, Skills, Discover: Core contract, storage, routes, desktop projection
+
+- **E10-S01 and E10-S02 are `IN_PROGRESS`.** The Core-owned contract, storage, Operator
+  routes, and desktop projection are implemented; the LiteSPM package path and the isolated
+  skill test fixture are blocked on contracts that are not published. Review packets:
+  [implementation/reviews/E10-S01.md](reviews/E10-S01.md) and
+  [implementation/reviews/E10-S02.md](reviews/E10-S02.md).
+- **MCP App sandbox (E10-S01).** `POST /v1/mcp-apps/frames` issues a host-owned frame: the
+  frame origin is host-assigned, the iframe sandbox is exactly `allow-scripts`, and the CSP
+  applies `default-src 'none'` with only the exact declared domains, so an absent or invalid
+  declaration blocks every external connection and resource. The App's server identity,
+  resource URI, and content digest are resolved from the MCP capability host this Runtime
+  already observes, never from the request body. `POST /v1/mcp-apps/messages` validates a
+  bridge message against the host-issued frame and its host-issued per-frame nonce, and
+  refuses a wrong origin, a replayed nonce, an unknown method, an oversized payload, and a
+  payload that carries a credential. The App never receives an Operator credential.
+- **Skill definition and revision (E10-S01).** `GET/POST /v1/skills` and
+  `GET/PUT /v1/skills/{id}` are served with a fail-closed lifecycle guard: a new definition
+  is always `DRAFT`, a revision may only narrow the lifecycle, and a Skill is loadable only
+  through a scoped CapabilityGrant bound to the exact capability reference and manifest
+  digest. A revision changes the manifest digest, so a grant that pinned the previous
+  revision stops matching and the Skill needs a fresh review.
+- **Discover projection (E10-S01).** The catalog is a read-only projection over capabilities
+  LiteCowork already owns. A catalog row is never authority (`authoritative` is always
+  `false` and the validator rejects a row that claims it), install/auth/compatibility are
+  reported as observed, an unknown state is an error rather than "available", an MCP Skill
+  host is projected as a `SKILL` row, and the Runtime's observed capability hosts stay a
+  separate observation stream. The desktop disables every row whose availability is not
+  `AVAILABLE`.
+- **Demonstration capture and SkillProposal (E10-S02).** A capture requires explicit owner
+  consent and an immutable policy that caps the duration, the recorded steps, and the
+  recorded trace bytes. A sensitive observation drops the observed value and the pointer hint
+  and keeps only the semantic step; the derived draft replaces an observed path, URL, or
+  identifier with a typed placeholder, and a body that still carries forbidden content is
+  refused and never stored. A draft never enables itself: an approval records the decision
+  only, and a service, runtime, or agent principal may never approve a proposal.
+- **LiteSPM is not invented.** `docs/CAPABILITY-FABRIC.md` publishes only the service base
+  URL and defers the API, authentication, manifests, package taxonomy, and installation, so
+  the catalog reports `package_service_qualified = false` with reason
+  `LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED`, `connect-or-install` returns
+  `DEPENDENCY_UNAVAILABLE`, and the capability test returns health `UNKNOWN` without
+  contacting any provider. The contract that must be published is the LiteSPM package
+  API/authentication/manifest section of `docs/CAPABILITY-FABRIC.md`.
+- **No migration.** The Skill, SkillProposal, demonstration, and MCP App frame aggregates
+  reuse the existing `aggregate_snapshots` / `domain_events` / `idempotency_receipts` /
+  `audit_records` projection, so `SCHEMA_VERSION` is unchanged.
+- **Two half-applied contract gaps were closed** so the shared documentation gates pass:
+  the OpenAPI had no path for the already-served `POST /v1/demonstrations/{id}/actions`,
+  `GET /v1/automations/{id}/health`, and `POST /v1/automations/host/settle` while
+  `docs/API.md` already documented all three, and the `DiscoverItem.digest` property was
+  missing the canonical `Sha256Digest` pattern.
+
+## 2026-10-20 — Epic parallel delivery, v26 invocation-admission migration, contract corrections
+
+- **Epic-level parallel delivery.** Each in-scope epic was given a whole-epic owner rather
+  than a single slice, with disjoint write surfaces and a shared Cargo lock
+  (`/tmp/opencode/cargo-lock.sh`) so builds serialize on this 4-core, 7 GB host instead of
+  thrashing. Completed this session: **E02, E03, E04, E05, E06, E07, E08** (each reported
+  per-story implementation, exact test counts and remaining blockers). Running: **E09, E10,
+  E13, E01** (Linux reference host; the lead keeps the native Windows lane). E11/E12 remain
+  post-V1 per `implementation/SCOPE.md`.
+- **Two real defects found and fixed at the committed baseline `0b98c21`, which was red:**
+  - `trust::tests::consequential_operation_requires_approval_and_never_becomes_allow` was a
+    **stale fixture**, not a product defect: `0b98c21` added the `EffectRequiresAttemptScope`
+    guard, so a Conversation-scoped request carrying an `effect_id` is denied by the scope
+    gate before the policy disposition. The test now exercises the rule in Attempt scope
+    where an Effect is admissible, with the same assertions plus an explicit
+    `assert_ne!(Allow)`. No production code changed; the contract rule in `docs/TRUST.md:72`
+    is unchanged and is now proven.
+  - `agents::cline::tests::cline_inventory_*` was a **real lost-output race** in
+    `apps/litecoworkd/src/agents/mod.rs`: the version probe polled the child's stdout
+    nonblocking and then called `try_wait()`, so a CLI that wrote its version and exited in
+    between was projected as `VersionUnavailable` for an installed, working agent. The probe
+    now drains the remaining pipe bytes after the child exits. This affects **every** native
+    version probe, not only Cline. Two related defects were fixed at the same time:
+    `find_on_path` no longer stops at the first existing-but-unexecutable PATH entry, and the
+    Cline npm fast path now uses the same canonicalize-then-execute-bit rule as the probe,
+    so the inventory can no longer describe a different binary than a launch would execute.
+- **`sqlite-v26.sql` migration applied by the lead** (E04-S03 requested it). It drops the
+  version fifteen blanket `capability_invocations` creation block, re-creates the status
+  transition guard with the same version rule and transition table plus `CREATED ->
+  DISPATCHED`, and **adds a new guard the request did not contain**:
+  `capability_invocation_dispatch_requires_consumed_approval`, which refuses a dispatch
+  unless the exact Effect is already bound to a consumed `approval_uses` row whose approval
+  is `APPROVED` for the same Task. Without that guard, dropping the blanket block would have
+  let the direct transition writer dispatch without the Trust decision or the ApprovalUse.
+  The combined writer now records the ApprovalUse before it advances the Invocation so the
+  guard observes it in the same transaction. The version one scope, identity and live
+  authority triggers remain in force. See the E04-S03 review packet for the full boundary.
+- **Contract correction: the UserRequest list projection would have disclosed persisted
+  choice values and the pinned response schema.** `docs/API.md` states that the choice value
+  and response schema are never returned to the UI, and the served detail route already
+  omits them, but the OpenAPI `UserRequest` schema — used by `UserRequestPage.items` —
+  required a `Choice` with a `value` and exposed `response_schema`. The list item now uses
+  the same bounded choice shape as the detail route (`choice_id`, `label`, `description`) and
+  carries `response_schema` as an explicit null, and `docs/API.md` now states the list rule.
+  The unreferenced `Choice` schema was removed. The desktop generated client was regenerated
+  and `pnpm run api:check` passes.
+- **Documentation gates:** `.venv/bin/python scripts/validate_architecture.py` passes with the
+  new schema file and the corrected OpenAPI.
+
+## 2026-10-20 — Windows source resynchronization and E01/E02 native re-qualification
+
+- **Windows copy provenance fixed first.** The authorized qualification copy at
+  `C:\Users\sonali\Desktop\testing\LiteCowork testing\qualification-2026-10-18` was
+  **93 files stale** against `HEAD 0b98c21` (74 modified, 19 missing). Synchronized the
+  source tree (excluding `.git`, `target*`, `node_modules`, `dist`, `.venv`,
+  `.pytest_cache`, `__pycache__`, `.aider*`) and verified with a recursive SHA-256
+  manifest: **790 source files / 790 copy files, 0 mismatched, 0 extra**. `Cargo.lock`
+  was already byte-identical. No Windows result from before this sync is being reused as
+  current-source evidence.
+- **E01-S03 Windows Runtime security: 3/3 passed** on the current source. Windows 11 Home
+  Single Language build 26200, PowerShell 5.1.26100.9711, Rust/Cargo 1.98.1
+  (`x86_64-pc-windows-msvc`):
+  `cargo test --locked --offline --target-dir target-windows -p litecoworkd --bin
+  litecoworkd runtime::runtime_windows_security_tests:: -- --nocapture --test-threads=1`.
+  Cases: protected owner/SYSTEM DACL on the state directory and lifecycle files; junction
+  reparse-point rejection; and `runtime_state_reader_rejects_file_symlink_without_changing_its_target_acl`,
+  the file-symlink regression the 2026-10-20 handoff recorded as **unverified**. It now
+  passes natively (the privilege-denied branch was not taken), so the state reader rejects
+  a reparse-point state file instead of following it and leaves the link target's ACL
+  unchanged.
+- **E02-S03 Windows WorkspaceRoot revalidation: 3/3 passed** on the current source with
+  the same toolchain:
+  `cargo test --locked --offline --jobs 2 --target-dir target-windows -p litecoworkd --bin
+  litecoworkd windows_workspace_root_revalidation_tests -- --nocapture --test-threads=1`
+  (exact selection/reopen, path-replacement rejection, malformed-locator rejection).
+- These are **CODE evidence on a real Windows host** for those two bounded modules. They
+  do not qualify packaged Tauri+daemon startup, production OS credential providers, the
+  Windows concrete AgentModule path, SYSTEM/provider end-to-end behavior, or the owner
+  USER gate. Story statuses are unchanged by these runs alone.
+- **E07 Windows helper suites: 36/36 and 14/14 passed** on the same synchronized source
+  and toolchain: `cargo test --locked --offline --jobs 2 --target-dir target-windows
+  -p windows-local-security` → **36 passed, 0 failed** (nested handle-relative creation,
+  protected owner/SYSTEM DACL, reparse/junction rejection, replacement detection,
+  contained-child Job Object cases), and `-p local-environment-staging` → **14 passed,
+  0 failed** (nested input staging relative to verified directory handles, per-file DACLs,
+  pre-mutation digest rejection). These are helper-crate CODE results; they do not
+  qualify packaged process isolation, daemon-side containment, or the E07 SYSTEM/USER
+  gates, and the E07 owner must fold them into the story packet rather than treating them
+  as epic completion.
+- Environment: Windows C: free fell from 59.86 GB to 48.47 GB and `target-windows` measured
+  9.24 GB after the daemon test build (7m 47s for the first incremental build). Linux root
+  `target/` measured 507 MB and 848 GB remained free. One worktree, no task-created
+  branches; the qualification copy is user-authorized and retained.
+
 ## 2026-10-18 — Windows native CI introduction and source corrections
 
 - Added the `windows-latest` CI job in commit `25ea383` and pushed it to `main`. It runs

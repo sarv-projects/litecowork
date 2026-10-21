@@ -84,11 +84,18 @@ pub trait VerificationRunStore: Send + Sync {
         verification_run_id: &str,
     ) -> Result<Option<VerificationRunRecord>, StoreError>;
 
+    /// Bounded newest-first page for one Task. `after_started_at` and
+    /// `after_verification_run_id` are a single keyset cursor from the previous item
+    /// (either both set or both absent), so a page boundary stays stable as new runs
+    /// are appended. A Task that is absent from the selected owned Workspace is
+    /// reported as `NotFound`, never as an empty page.
     fn list_verification_runs(
         &self,
         owner_principal_id: &str,
         workspace_id: &str,
         task_id: &str,
+        after_started_at: Option<&str>,
+        after_verification_run_id: Option<&str>,
         limit: usize,
     ) -> Result<Vec<VerificationRunRecord>, StoreError>;
 }

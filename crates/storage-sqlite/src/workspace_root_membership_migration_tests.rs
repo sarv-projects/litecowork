@@ -16,7 +16,7 @@ fn workspace_root_membership_migration_is_atomic_and_recorded() {
     assert_eq!(version, SCHEMA_VERSION);
     verify_migration_record(&connection, 23, V23_MIGRATION_NAME, SQLITE_V23_DDL, false)
         .expect("verify migration receipt");
-    verify_migration_record(&connection, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL, true)
+    verify_migration_record(&connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, true)
         .expect("verify latest migration receipt");
 
     for table in [
@@ -75,7 +75,7 @@ fn workspace_root_membership_migration_rolls_back_and_replays_atomically() {
         .expect("verify replayed v23 migration receipt");
     verify_migration_record(&connection, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL, false)
         .expect("verify historical v24 migration receipt");
-    verify_migration_record(&connection, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL, true)
+    verify_migration_record(&connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, true)
         .expect("verify latest migration receipt");
 }
 

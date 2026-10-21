@@ -28,6 +28,7 @@ pub(super) fn routes() -> Router<ApiState> {
         )
         .route("/v1/routines/{routine_id}/run", post(run_routine))
         .route("/v1/routines/{routine_id}/archive", post(archive_routine))
+        .route("/v1/routines/{routine_id}/health", get(get_routine_health))
         .layer(DefaultBodyLimit::max(MAX_ROUTINE_BODY_BYTES))
 }
 
@@ -151,28 +152,6 @@ fn domain_error(error: RoutineError) -> Response {
             unavailable()
         }
     }
-}
-
-fn authorized_workspace(state: &ApiState, headers: &HeaderMap) -> Result<Workspace, Response> {
-    let workspace_id = selected_workspace(headers)?;
-    let workspace = ensure_workspace_owner(state, &workspace_id)?;
-    let binding = state
-        .store
-        .get_current_local_binding(LocalRuntimeWorkspaceBindingLookup {
-            owner_principal_id: state.principal_id.clone(),
-            workspace_id,
-            runtime_id: state.runtime_id.clone(),
-            runtime_incarnation_id: state.local_incarnation_id.clone(),
-        })
-        .map_err(|_| unavailable())?;
-    if !binding.is_some_and(|binding| binding.status == "ACTIVE") {
-        return Err(operator_error(
-            StatusCode::FORBIDDEN,
-            "FORBIDDEN",
-            "Local Runtime Workspace access is unavailable",
-        ));
-    }
-    Ok(workspace)
 }
 
 fn adapter(state: &ApiState, correlation_id: &str) -> Result<SqliteRoutineStore, Response> {
@@ -360,6 +339,116 @@ async fn get_routine(
         .ok_or_else(|| domain_error(RoutineError::NotFound))?;
     ensure_workspace_owner(&state, &workspace.workspace_id)?;
     Ok(no_store(Json(routine).into_response()))
+}
+
+/// Reads the read-only health projection of one Routine.
+///
+/// The projection never repairs, never re-enables, and never creates a Task. It
+/// reports the persisted run outcomes of the current revision and the drift
+/// state that the durable evidence supports. The absence of an observation is
+/// `UNKNOWN`, never `HEALTHY`.
+async fn get_routine_health(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(routine_id): Path<String>,
+) -> Result<Response, Response> {
+    let workspace = authorized_workspace(&state, &headers)?;
+    if !valid_id(&routine_id) {
+        return Err(invalid());
+    }
+    ensure_workspace_owner(&state, &workspace.workspace_id)?;
+    let correlation = new_id("cor").map_err(|_| unavailable())?;
+    let store = adapter(&state, &correlation)?;
+    let facts = store
+        .health_facts(&state.principal_id, &workspace.workspace_id, &routine_id)
+        .map_err(domain_error)?
+        .ok_or_else(|| domain_error(RoutineError::NotFound))?;
+    // The contracted RoutineHealth projection carries no status field. The stored
+    // status is still validated so an unknown token never produces a projection.
+    match facts.status.as_str() {
+        "ACTIVE" | "ARCHIVED" => {}
+        _ => return Err(unavailable()),
+    }
+    let mut eligible = 0_u32;
+    let mut successes = 0_u32;
+    let mut durations: Vec<u64> = Vec::new();
+    let mut last_run_at: Option<String> = None;
+    let mut last_success_at: Option<String> = None;
+    let mut transient_failures = 0_u32;
+    for outcome in &facts.tasks {
+        match outcome.status.as_str() {
+            "COMPLETED" => {
+                eligible += 1;
+                successes += 1;
+                last_success_at = outcome.completed_at.clone().or(last_success_at);
+                if let Some(duration) = routine_task_duration_ms(outcome) {
+                    durations.push(duration);
+                }
+            }
+            "FAILED" | "INCOMPLETE" => {
+                eligible += 1;
+                transient_failures += 1;
+                if let Some(duration) = routine_task_duration_ms(outcome) {
+                    durations.push(duration);
+                }
+            }
+            // CANCELLED runs are excluded from the rate and from the duration.
+            _ => continue,
+        }
+        last_run_at = Some(
+            outcome
+                .completed_at
+                .clone()
+                .unwrap_or_else(|| outcome.created_at.clone()),
+        );
+    }
+    let recent_success_rate = if eligible < 3 {
+        None
+    } else {
+        Some(f64::from(successes) / f64::from(eligible))
+    };
+    let average_duration_ms = if durations.is_empty() {
+        None
+    } else {
+        Some(
+            durations
+                .iter()
+                .copied()
+                .sum::<u64>()
+                .checked_div(durations.len() as u64)
+                .unwrap_or_default(),
+        )
+    };
+    let drift_state = domain_responsibility::evaluate_drift_state(
+        &domain_responsibility::DriftInputs {
+            explicit_drift_evidence: Vec::new(),
+            transient_failures,
+            dependencies: Vec::new(),
+        },
+    );
+    Ok(no_store(
+        Json(domain_responsibility::RoutineHealth {
+            routine_id: facts.routine_id.clone(),
+            current_revision: facts.current_revision,
+            last_run_at,
+            last_success_at,
+            recent_success_rate,
+            sample_size: eligible,
+            average_duration_ms,
+            observed_costs: Vec::new(),
+            required_dependency_health: Vec::new(),
+            drift_state,
+            drift_evidence_refs: Vec::new(),
+        })
+        .into_response(),
+    ))
+}
+
+/// The elapsed milliseconds of one terminal Task, when both instants parse.
+fn routine_task_duration_ms(outcome: &storage_sqlite::RoutineTaskOutcome) -> Option<u64> {
+    let created = domain_responsibility::parse_instant(&outcome.created_at)?;
+    let completed = domain_responsibility::parse_instant(outcome.completed_at.as_ref()?)?;
+    u64::try_from(completed.checked_sub(created)?).ok()
 }
 
 async fn list_revisions(

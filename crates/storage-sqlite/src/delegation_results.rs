@@ -24,7 +24,6 @@ const RESULT_EVENT_PAYLOAD_KEYS: [&str; 6] = [
     "aggregate_version",
 ];
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 #[derive(Clone)]
 pub struct SqliteDelegationResultStore {
@@ -42,7 +41,7 @@ impl SqliteDelegationResultStore {
     ) -> Result<T, StoreError> {
         let (reply, receive) = mpsc::channel();
         self.store.execute_command(
-            Command::DelegationResultOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let _ = reply.send(operation(connection));
                 }),

@@ -13,7 +13,6 @@ use storage_core::{
     InvocationProviderObservationSource,
 };
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 #[derive(Clone)]
 pub struct SqliteCapabilityInvocationStore {
@@ -31,7 +30,7 @@ impl SqliteCapabilityInvocationStore {
     ) -> Result<T, StoreError> {
         let (reply, receive) = mpsc::channel();
         self.store.execute_command(
-            Command::InvocationOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let _ = reply.send(operation(connection));
                 }),

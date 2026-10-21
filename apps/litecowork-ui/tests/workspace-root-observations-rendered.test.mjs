@@ -52,7 +52,9 @@ function observation(name, idChar) {
     modified_at: null,
     observed_at: "2026-10-17T10:00:00.000Z",
     freshness: "CURRENT",
-    resource_id: "resource-file-a",
+    // The producer commits a canonical FILE Resource ID as `res_file_` plus 64 lowercase
+    // hexadecimal characters. The desktop decoder rejects any other Resource identity.
+    resource_id: `res_file_${idChar.repeat(64)}`,
   };
 }
 

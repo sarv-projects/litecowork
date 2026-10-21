@@ -37,6 +37,11 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 #[cfg(test)]
 #[path = "runtime_recovery_tests.rs"]
 mod recovery_tests;
+// Shutdown-boundary tests cover the durable rules that keep a failed or forced
+// stop from being reported as a clean shutdown.
+#[cfg(test)]
+#[path = "runtime_shutdown_tests.rs"]
+mod shutdown_tests;
 // Root revalidation fixtures exercise Unix directory identity/openat semantics. The
 // production Windows implementation has a distinct handle-based path and must not
 // import the Unix-only test helper.

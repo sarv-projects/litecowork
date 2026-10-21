@@ -1,14 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { validIdempotencyKey } from "../api/idempotency-key.ts";
+import { type OperatorBridgeResponse as BridgeResponse, operatorBridgeResponse } from "../api/operator-bridge.ts";
 import { createAutomationApi, type AutomationTransport } from "./automation-api";
-
-type BridgeResponse = { status: number; contentType: string; bodyBase64: string };
-function validIdempotencyKey(value: string): boolean {
-  return /^[\x21-\x7e]{1,200}$/.test(value);
-}
-function decodeBase64(encoded: string): Uint8Array {
-  const binary = atob(encoded);
-  return Uint8Array.from(binary, character => character.charCodeAt(0));
-}
 
 /** Finite Automation routes over authenticated native Operator IPC. */
 function desktopTransport(workspaceId: string): AutomationTransport {
@@ -33,8 +26,8 @@ function desktopTransport(workspaceId: string): AutomationTransport {
     let automationRevision: number | null = null;
     let inputs: Record<string, unknown> | null = null;
     let expectedVersion: number | null = null;
-    const automationMatch = /^\/v1\/automations(?:\/([^/]+)(?:\/(pause|disable|revisions|run))?)?$/.exec(url.pathname);
-    const routineMatch = /^\/v1\/routines(?:\/([^/]+)(?:\/(revisions))?)?$/.exec(url.pathname);
+    const automationMatch = /^\/v1\/automations(?:\/([^/]+)(?:\/(pause|disable|revisions|run|health|occurrences))?)?$/.exec(url.pathname);
+    const routineMatch = /^\/v1\/routines(?:\/([^/]+)(?:\/(revisions|health))?)?$/.exec(url.pathname);
     const coworkerMatch = /^\/v1\/coworkers(?:\/([^/]+))?$/.exec(url.pathname);
     if (automationMatch) {
       automationId = automationMatch[1] ? decodeURIComponent(automationMatch[1]) : null;
@@ -43,6 +36,8 @@ function desktopTransport(workspaceId: string): AutomationTransport {
       if (method === "GET" && automationId === null && suffix === null) operation = "list";
       else if (method === "GET" && automationId !== null && suffix === null) operation = "get";
       else if (method === "GET" && automationId !== null && suffix === "revisions") operation = "list_automation_revisions";
+      else if (method === "GET" && automationId !== null && suffix === "health") operation = "automation_health";
+      else if (method === "GET" && automationId !== null && suffix === "occurrences") operation = "automation_occurrences";
       else if (method === "POST" && automationId !== null && (suffix === "pause" || suffix === "disable")) operation = suffix;
       else if (method === "POST" && automationId !== null && suffix === "run") {
         operation = "run";
@@ -75,6 +70,7 @@ function desktopTransport(workspaceId: string): AutomationTransport {
       if (routineId && !/^[A-Za-z0-9_-]{1,200}$/.test(routineId)) throw new Error("Routine selection is invalid.");
       if (method === "GET" && routineId === null) operation = "list_routines";
       else if (method === "GET" && routineId !== null && routineMatch[2] === "revisions") operation = "list_routine_revisions";
+      else if (method === "GET" && routineId !== null && routineMatch[2] === "health") operation = "routine_health";
       else if (method === "GET" && routineId !== null) operation = "get_routine";
       else throw new Error("Unsupported Routine selection operation.");
     } else if (coworkerMatch) {
@@ -100,10 +96,7 @@ function desktopTransport(workspaceId: string): AutomationTransport {
       name, routineRevision, triggers, executionPolicy, coworkerRef, automationRevision, inputs,
     });
     if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return new Response(decodeBase64(response.bodyBase64), {
-      status: response.status,
-      headers: { "Content-Type": response.contentType },
-    });
+    return operatorBridgeResponse(response, { signal: init.signal });
   };
 }
 

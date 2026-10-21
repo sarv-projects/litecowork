@@ -7,7 +7,6 @@ use super::*;
 use domain_responsibility::*;
 use serde::{Deserialize, Serialize};
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 type Decision = Box<dyn Fn(&mut dyn GoalTransaction) -> Result<Goal, GoalError> + Send>;
 type GoalRow = (Option<String>, String, u64, String, String, String, u64);
 const MAX_GOAL_PROGRESS_EVIDENCE_REFS: usize = 1_000;
@@ -63,7 +62,7 @@ impl SqliteGoalStore {
         let (reply, receive) = mpsc::channel();
         self.store
             .execute_command(
-                Command::GoalOperation {
+                Command::Operation {
                     operation: Box::new(move |connection| {
                         let _ = reply.send(Ok(operation(connection)));
                     }),

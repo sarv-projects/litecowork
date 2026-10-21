@@ -27,6 +27,54 @@ pub use delegation_admission::{
     unproven_child_admission_gates,
 };
 
+mod coworker_learning;
+pub use coworker_learning::{
+    CoworkerLearningPolicy, LearningCandidate, LearningCandidateKind, LearningCandidateState,
+    LearningCertainty, LearningConflict, LearningConversationClass, LearningDisposition,
+    LearningEvaluation, LearningEvaluationContext, LearningMemoryClass, LearningMemoryMode,
+    LearningMemoryScope, LearningNotificationMode, LearningReviewMode, LearningSensitivity,
+    LearningSourceChannel, LearningSourceKind, MemoryCandidatePayload, MemoryComparison,
+    MemoryRecordMetadata, RedactionReport, SensitiveFinding, SensitiveFindingKind,
+    classify_learning_conflict, evaluate_learning_candidate, learning_candidate_event_payload,
+    normalized_learning_value, normalized_memory_key, normalize_learning_text,
+    redact_sensitive_content, LEARNING_PAYLOAD_PREVIEW_MAX_BYTES, LEARNING_REASON_CODE_MAX,
+};
+
+mod discover;
+pub use discover::{
+    AuthRecipeDescriptor, AuthRecipeKind, CONNECTOR_MAX_ACTIONS, CONNECTOR_MAX_AUTH_RECIPES,
+    CONNECTOR_MAX_TRIGGERS, ConnectorActionDescriptor, ConnectorIdempotency,
+    ConnectorOperationClass, ConnectorPackageManifest, ConnectorTriggerDescriptor, DiscoverAuthState,
+    DiscoverAvailability, DiscoverCapabilitySummary, DiscoverCatalogEntry,
+    DiscoverCatalogEntryDetail, DiscoverCompatibility, DiscoverEntryKind, DiscoverEntrySource,
+    DiscoverError, DiscoverInstallState, RedirectPolicy, ScopeRisk,
+    connector_capability_summaries, connector_catalog_entry, derive_discover_availability,
+    validate_connector_package_manifest,
+};
+
+mod skill;
+pub use skill::{
+    CaptureDecision, CaptureRefusal, DemonstrationAction, DemonstrationCaptureConsent,
+    DemonstrationCapturePolicy, DemonstrationSessionRecord, DemonstrationStatus,
+    DemonstrationTrace, McpAppBridgeEnvelope, McpAppBridgeRequest, McpAppCsp,
+    McpAppFrameDescriptor, McpAppFramePolicy, McpAppFrameRecord, SensitiveRegionPolicy,
+    SkillActivation, SkillActivationGrant, SkillCapabilityRef, SkillDrift, SkillGuardError,
+    SkillKind, SkillManifest, SkillManifestKind, SkillManifestResource, SkillOrigin,
+    SkillPlaceholder, SkillPlaceholderKind, SkillProposalDecision, SkillProposalDraft,
+    SkillProposalRecord, SkillProposalReviewOutcome, SkillProposalReviewer, SkillProposalSource,
+    SkillProposalStatus, SkillRecord, SkillRedactionStatus, SkillRedactionSummary, SkillRevision,
+    SkillStatus,
+    APP_BRIDGE_METHODS, APP_BRIDGE_MAX_PAYLOAD_BYTES, CAPTURE_MAX_POLICY_ACTIONS,
+    CAPTURE_MAX_POLICY_DURATION_MS, CAPTURE_MAX_POLICY_TRACE_BYTES,
+    PACKAGE_SERVICE_NOT_QUALIFIED, SKILL_DECLARED_CAPABILITY_MAX, SKILL_DRIFT_BLOCKER_CODE,
+    SKILL_MANIFEST_MAX_FILES, SKILL_MANIFEST_MAX_TOTAL_BYTES, SKILL_MAX_REVISIONS,
+    SKILL_PLACEHOLDER_MAX, SKILL_SUMMARY_MAX_BYTES, SKILL_TITLE_MAX_BYTES, build_app_frame,
+    derive_skill_proposal_draft, detect_skill_drift, evaluate_capture_append,
+    evaluate_skill_activation, evaluate_skill_definition_write, evaluate_skill_proposal_review,
+    is_valid_identifier, is_valid_uri, validate_app_bridge_message, validate_skill_manifest,
+    validate_skill_revision,
+};
+
 mod artifact;
 pub use artifact::{
     ArtifactAppendHeads, ArtifactContentRecord, ArtifactLibraryAction, ArtifactLibraryCommand,
@@ -58,10 +106,12 @@ pub use effect_evidence::{
 };
 mod capability_invocation;
 pub use capability_invocation::{
+    AdmitCapabilityDispatchCommit, CapabilityDispatchEvents, CapabilityDispatchStore,
     CapabilityInvocationEventContext, CapabilityInvocationPageRequest,
     CapabilityInvocationProviderObservation, CapabilityInvocationReconciliationCommit,
     CapabilityInvocationRecord, CapabilityInvocationStore, CapabilityInvocationTransitionCommit,
-    CommittedCapabilityInvocation, InvocationProviderObservationSource, InvocationStatus,
+    CommittedCapabilityDispatch, CommittedCapabilityInvocation,
+    InvocationProviderObservationSource, InvocationStatus, TrustDispatchDecision,
 };
 mod verification_run;
 pub use verification_run::{
@@ -135,6 +185,18 @@ mod delegation_result;
 pub use delegation_result::{
     CommittedDelegationResult, DelegationResultPublishCommit, DelegationResultReadQuery,
     DelegationResultStore,
+};
+mod backup;
+pub use backup::{
+    BACKUP_BLOB_ROOT, BACKUP_CONTAINER_MAGIC, BACKUP_CONTAINER_VERSION,
+    BACKUP_CONTENT_ALGORITHM_XCHACHA20POLY1305, BACKUP_DATABASE_SNAPSHOT_PATH,
+    BACKUP_EXCLUDED_BLOB_PURPOSES, BACKUP_EXCLUDED_TABLES, BACKUP_KDF_DEFAULT_ITERATIONS,
+    BACKUP_KDF_MINIMUM_ITERATIONS, BACKUP_KDF_PBKDF2_HMAC_SHA256, BACKUP_MAX_BLOB_DESCRIPTORS,
+    BACKUP_MAX_CHUNK_BYTES, BACKUP_MAX_MANIFEST_BYTES, BACKUP_MAX_PAYLOAD_CHUNKS,
+    BACKUP_REVOKED_ON_RESTORE_TABLES, BackupArchiveManifest, BackupBlobDescriptor,
+    BackupCreateOutcome, BackupEventCursor, BackupIntegrityPayload, BackupKeyReference,
+    BackupPayloadDescriptor, BackupRestoreOutcome, BackupVerification, SchemaCompatibility,
+    backup_integrity_payload, check_schema_compatibility,
 };
 // Domain command values and their transactional write port are defined with the
 // domain service; storage-core re-exports the port as the adapter boundary.
@@ -1079,6 +1141,16 @@ pub struct AutomationTaskAdmission {
     pub occurrence_id: String,
     pub occurrence_key: String,
     pub claim_expires_at: String,
+    /// The trigger kind that produced this occurrence. `MANUAL` is the owner
+    /// one-shot path; `SCHEDULE` is the recurring host path. A scheduled
+    /// admission must also carry the resolved slot instant.
+    pub trigger_kind: String,
+    /// The resolved schedule slot, in Unix epoch milliseconds. It is `None` for
+    /// every trigger kind other than `SCHEDULE`.
+    pub scheduled_epoch_ms: Option<i64>,
+    /// The interval a coalesced misfire run covered. It is `None` when the
+    /// occurrence covers exactly one slot.
+    pub covered_misfire_range: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

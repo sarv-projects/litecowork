@@ -154,6 +154,17 @@ derived references before the snapshot becomes collectible. Pre-v19 ResourceInde
 objects with no surviving `resource_text_indexes` reference cannot be discovered because
 BlobStore deliberately has no inventory operation.
 
+The managed Resource index state is a read-only projection over the same tables. The
+daemon reads the current revision identity and digest, the projection bound to that
+revision, and the number of projection rows that belong to superseded revisions. It
+returns `READY` when the projection matches the current revision and its digest, `STALE`
+when a projection exists for an older revision or the head moved, `ABSENT` when the
+Resource has no projection at all, and `NOT_INDEXABLE` with a typed reason when the
+qualified local provider cannot index the Resource. The projection exposes no extracted
+text, no term token, and no blob digest, and it adds no table, column, or index. A
+superseded projection row stays registered until the owning Resource is deleted; removing
+it early needs a new writer command and is not part of the current storage contract.
+
 Migration v17 adds `resource_content_blob_registry`, a separate local recovery ledger for
 managed `RESOURCE` objects. Its identity is the exact `(WorkspaceId, digest, plaintext size,
 media type)`, because the encrypted BlobStore authenticates all of those fields. Direct

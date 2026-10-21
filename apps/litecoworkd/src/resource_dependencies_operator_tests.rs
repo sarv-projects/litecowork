@@ -263,14 +263,16 @@ async fn resource_dependents_route_is_owner_scoped_paginated_and_closed() {
     foreign_workspace_resource
         .extensions_mut()
         .insert(AuthenticatedLocalPeer);
+    let foreign_workspace_response = router
+        .clone()
+        .oneshot(foreign_workspace_resource)
+        .await
+        .unwrap();
+    assert_eq!(foreign_workspace_response.status(), StatusCode::NOT_FOUND);
     assert_eq!(
-        router
-            .clone()
-            .oneshot(foreign_workspace_resource)
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::NOT_FOUND
+        foreign_workspace_response.headers()[header::CACHE_CONTROL],
+        "no-store",
+        "a rejected dependency read must not be cacheable"
     );
 
     let mut missing_resource = Request::get("/v1/resources/missing-source/dependents")

@@ -16,7 +16,6 @@ type ConversationTurnStorageRow = (
 use domain_conversation::{ConversationTurn, TurnCommand};
 use storage_core::conversation::{validate_conversation_record, *};
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 #[derive(Clone)]
 pub struct SqliteConversationStore {
@@ -34,7 +33,7 @@ impl SqliteConversationStore {
     ) -> Result<T, StoreError> {
         let (send, recv) = mpsc::channel();
         self.store.execute_command(
-            Command::ConversationOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let _ = send.send(f(connection));
                 }),
@@ -196,25 +195,6 @@ impl ConversationTurnStore for SqliteConversationStore {
         let turn = commit.turn.clone();
         let turn_state = canonical_json(&turn)?;
         let blobs = Arc::clone(&self.store.inner.blobs);
-        let workspace_id = commit.workspace_id.clone();
-        let turn_blob = blobs.put(
-            &workspace_id,
-            BlobPurpose::AggregateState,
-            &turn_state,
-            super::STATE_MEDIA_TYPE,
-        )?;
-        if turn_blob.size_bytes != turn_state.len() as u64
-            || blobs.get(&workspace_id, BlobPurpose::AggregateState, &turn_blob)? != turn_state
-        {
-            return Err(StoreError::Integrity(
-                "ConversationTurn aggregate state failed BlobStore verification".to_owned(),
-            ));
-        }
-        let turn_state_ref = AggregateStateRef {
-            blob: turn_blob,
-            entity_revision: 1,
-            record_schema_version: 1,
-        };
         let principal = commit.request.principal_id.clone();
         self.run(move |connection| {
             let tx = connection
@@ -247,19 +227,33 @@ impl ConversationTurnStore for SqliteConversationStore {
                 )
                 .optional()
                 .map_err(map_database_error)?;
-            let Some((title, version, created_at, active_binding)) = conversation else {
+            let Some((title, version, created_at, conversation_binding)) = conversation else {
                 return Err(StoreError::NotFound);
             };
-            let Some(active_binding) = active_binding else {
+            // The Conversation's admitted AgentBinding selection is resolved inside
+            // this authoritative transaction: the explicit Conversation override
+            // first, then the Workspace default. The first configured selection is
+            // authoritative. A missing, disabled, or non-lead-eligible selection is
+            // never skipped in favour of a lower-precedence binding, and it never
+            // persists a partial message, turn, event, or receipt.
+            let workspace_default: Option<String> = tx
+                .query_row(
+                    "SELECT default_agent_binding_id FROM workspaces WHERE workspace_id=?1",
+                    params![commit.workspace_id],
+                    |row| row.get(0),
+                )
+                .map_err(map_database_error)?;
+            let selected_binding = conversation_binding.clone().or(workspace_default);
+            let Some(selected_binding) = selected_binding else {
                 return Err(StoreError::Invalid("AGENT_UNAVAILABLE".to_owned()));
             };
             let binding_eligible: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM agent_bindings WHERE workspace_id=?1 AND agent_binding_id=?2 AND enabled=1 AND lead_eligible=1)",
-                params![commit.workspace_id, active_binding],
+                params![commit.workspace_id, selected_binding],
                 |row| row.get(0),
             ).map_err(map_database_error)?;
             if !binding_eligible
-                || commit.turn_event.payload.get("agent_binding_id").and_then(Value::as_str) != Some(active_binding.as_str())
+                || commit.turn_event.payload.get("agent_binding_id").and_then(Value::as_str) != Some(selected_binding.as_str())
             {
                 return Err(StoreError::Invalid("AGENT_UNAVAILABLE".to_owned()));
             }
@@ -269,7 +263,7 @@ impl ConversationTurnStore for SqliteConversationStore {
             if i64::try_from(commit.message_event.entity_revision).ok() != Some(next_conversation_version)
                 || commit.turn_event.payload.get("aggregate_version").and_then(Value::as_u64) != Some(commit.turn.version)
             {
-                return Err(StoreError::Invalid("ConversationTurn event revision mismatch".to_owned()));
+                return Err(StoreError::Invalid(CONVERSATION_TURN_EVENT_REVISION_MISMATCH.to_owned()));
             }
             tx.execute(
                 "INSERT INTO conversation_messages(message_id,conversation_id,author_json,role,agent_session_id,agent_binding_id,turn_id,content_json,resource_refs_json,source_channel_ref_json,created_at) VALUES(?1,?2,?3,'USER',NULL,NULL,?4,?5,?6,NULL,?7)",
@@ -307,7 +301,11 @@ impl ConversationTurnStore for SqliteConversationStore {
                 conversation_id: commit.turn.conversation_id.clone(),
                 workspace_id: commit.workspace_id.clone(),
                 title,
-                active_agent_binding_id: Some(active_binding),
+                // The Conversation aggregate keeps the Conversation's own override.
+                // The binding this turn actually used is recorded on the turn
+                // event, so a later Workspace default change still reaches newly
+                // admitted turns instead of being frozen by this snapshot.
+                active_agent_binding_id: conversation_binding,
                 version: next_conversation_version as u64,
                 created_at,
             };
@@ -329,6 +327,28 @@ impl ConversationTurnStore for SqliteConversationStore {
                 record_schema_version: 1,
             };
             let message_event = insert_domain_event(&tx, &commit.message_event, &conversation_state_ref)?;
+            // The turn aggregate blob is written only after the receipt lookup. An exact
+            // replay therefore performs no BlobStore write and cannot leave an
+            // unreferenced snapshot of a fresh candidate timestamp.
+            let turn_blob = blobs.put(
+                &commit.workspace_id,
+                BlobPurpose::AggregateState,
+                &turn_state,
+                super::STATE_MEDIA_TYPE,
+            )?;
+            if turn_blob.size_bytes != turn_state.len() as u64
+                || blobs.get(&commit.workspace_id, BlobPurpose::AggregateState, &turn_blob)?
+                    != turn_state
+            {
+                return Err(StoreError::Integrity(
+                    "ConversationTurn aggregate state failed BlobStore verification".to_owned(),
+                ));
+            }
+            let turn_state_ref = AggregateStateRef {
+                blob: turn_blob,
+                entity_revision: 1,
+                record_schema_version: 1,
+            };
             let turn_event = insert_domain_event(&tx, &commit.turn_event, &turn_state_ref)?;
             let accepted = CommittedConversationTurn {
                 message: message.clone(),
@@ -376,7 +396,7 @@ impl ConversationTurnStore for SqliteConversationStore {
                 return Err(StoreError::Conflict { expected: Some(expected_version), actual: Some(current.version) });
             }
             if matches!(command, TurnCommand::Start { .. }) {
-                return Err(StoreError::Invalid("CONVERSATION_SESSION_ADMISSION_UNAVAILABLE".to_owned()));
+                return Err(StoreError::Invalid(CONVERSATION_SESSION_ADMISSION_UNAVAILABLE.to_owned()));
             }
             let next = domain_conversation::transition(&current, expected_version, command.clone())
                 .map_err(|error| match error {
@@ -569,7 +589,7 @@ fn validate_turn_transition_event(
         | TurnCommand::SettleCancelled { .. } => "conversation.turn.settled.v1",
         TurnCommand::Start { .. } => {
             return Err(StoreError::Invalid(
-                "CONVERSATION_SESSION_ADMISSION_UNAVAILABLE".to_owned(),
+                CONVERSATION_SESSION_ADMISSION_UNAVAILABLE.to_owned(),
             ));
         }
         _ => "conversation.turn.status.changed.v1",

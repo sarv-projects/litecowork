@@ -1,12 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
+import { type OperatorBridgeResponse as BridgeResponse, operatorBridgeResponse } from "../api/operator-bridge.ts";
 import { createCoworkerApi, type CoworkerTransport } from "./coworker-api";
-
-type BridgeResponse = { status: number; contentType: string; bodyBase64: string };
-
-function decodeBase64(encoded: string): Uint8Array {
-  const binary = atob(encoded);
-  return Uint8Array.from(binary, character => character.charCodeAt(0));
-}
 
 function parseBody(body: BodyInit | null | undefined): Record<string, unknown> {
   if (typeof body !== "string") throw new Error("Coworker command body is invalid.");
@@ -99,10 +93,7 @@ function desktopTransport(workspaceId: string): CoworkerTransport {
       requestId,
     });
     if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return new Response(decodeBase64(response.bodyBase64), {
-      status: response.status,
-      headers: { "Content-Type": response.contentType },
-    });
+    return operatorBridgeResponse(response, { signal: init.signal });
   };
 }
 

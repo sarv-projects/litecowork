@@ -110,6 +110,8 @@ mod coworker_operator;
 mod delegation_profiles_operator;
 #[path = "dependency_invalidations_operator.rs"]
 mod dependency_invalidations_operator;
+#[path = "discover_operator.rs"]
+mod discover_operator;
 #[path = "goal_operator.rs"]
 mod goal_operator;
 #[path = "needs_you_operator.rs"]
@@ -122,6 +124,10 @@ mod operator_ipc_tests;
 mod operator_runtime_binding_tests;
 #[path = "presentation_operator.rs"]
 mod presentation_operator;
+#[path = "rag_local_model_operator.rs"]
+mod rag_local_model_operator;
+#[path = "rag_retrieval_operator.rs"]
+mod rag_retrieval_operator;
 #[path = "resource_archive_operator.rs"]
 mod resource_archive_operator;
 #[cfg(all(test, unix))]
@@ -135,6 +141,8 @@ mod routine_operator;
 mod runtime_capability_hosts_operator;
 #[path = "runtime_offers_operator.rs"]
 mod runtime_offers_operator;
+#[path = "skill_operator.rs"]
+mod skill_operator;
 #[path = "suggestions_operator.rs"]
 mod suggestions_operator;
 #[path = "task_lead_handoff_operator.rs"]
@@ -143,6 +151,8 @@ mod task_lead_handoff_operator;
 mod trust_operator;
 #[path = "user_request_operator.rs"]
 mod user_request_operator;
+#[path = "verification_runs_operator.rs"]
+mod verification_runs_operator;
 #[path = "workspace_root_scan_operator.rs"]
 mod workspace_root_scan_operator;
 #[cfg(all(test, unix))]
@@ -338,6 +348,9 @@ pub struct OperatorServer {
     shutdown: Option<tokio_oneshot::Sender<()>>,
     admission_stopped: Option<mpsc::Receiver<()>>,
     thread: Option<JoinHandle<Result<(), String>>>,
+    /// The local recurring trigger host. It owns the settlement of every
+    /// Automation schedule trigger this Runtime hosts.
+    trigger_host_worker: Option<automation_operator::AutomationTriggerHostWorker>,
 }
 
 enum OperatorIpcEndpoint {
@@ -1222,10 +1235,25 @@ impl OperatorServer {
                 stream_shutdown,
             };
             let sweeper_state = state.clone();
+            let trigger_host_context = automation_operator::trigger_host_context(&state);
             let app = build_operator_router(state);
             let (shutdown, mut shutdown_receiver) = tokio_oneshot::channel();
             let (admission_stopped_sender, admission_stopped) = mpsc::sync_channel(1);
             let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+            // The local trigger host is the single recurring scheduler for local
+            // Automations. A Runtime that cannot host triggers must not claim to
+            // serve them, so a failed worker start fails the endpoint startup.
+            let trigger_host_worker =
+                match automation_operator::AutomationTriggerHostWorker::start(trigger_host_context)
+                {
+                    Ok(worker) => Some(worker),
+                    Err(_) => {
+                        let _ = ready_sender.send(false);
+                        return Err(
+                            "local Automation trigger host worker failed to initialize".to_owned()
+                        );
+                    }
+                };
             let thread = thread::Builder::new()
             .name("litecowork-operator-ipc".to_owned())
             .spawn(move || -> Result<(), String> {
@@ -1346,6 +1374,7 @@ impl OperatorServer {
                     shutdown: Some(shutdown),
                     admission_stopped: Some(admission_stopped),
                     thread: Some(thread),
+                    trigger_host_worker,
                 }),
                 _ => {
                     let _ = finish_operator_thread_with_timeout(
@@ -1392,6 +1421,11 @@ impl OperatorServer {
 
     fn shutdown_server(&mut self) -> Result<(), String> {
         let admission_result = self.stop_admission();
+        let trigger_host_result = self
+            .trigger_host_worker
+            .take()
+            .map(|worker| worker.stop())
+            .unwrap_or(Ok(()));
         let thread_result = self.thread.take().map_or(Ok(()), |thread| {
             #[cfg(any(unix, windows))]
             {
@@ -1402,7 +1436,7 @@ impl OperatorServer {
                 finish_operator_thread(thread.join())
             }
         });
-        admission_result.and(thread_result)
+        admission_result.and(trigger_host_result).and(thread_result)
     }
 }
 
@@ -1486,6 +1520,8 @@ fn build_operator_router(state: ApiState) -> Router {
         resource_dependencies_operator::ResourceDependenciesApiState::from_ref(&state);
     let needs_you_state = needs_you_operator::NeedsYouApiState::from_ref(&state);
     let user_request_state = user_request_operator::UserRequestApiState::from_ref(&state);
+    let verification_runs_state =
+        verification_runs_operator::VerificationRunsApiState::from_ref(&state);
     Router::new()
         .merge(artifact_operator::routes())
         .merge(capability_invocations_operator::routes())
@@ -1502,11 +1538,14 @@ fn build_operator_router(state: ApiState) -> Router {
         .merge(resource_dependencies_operator::routes().with_state(resource_dependencies_state))
         .merge(needs_you_operator::routes().with_state(needs_you_state))
         .merge(user_request_operator::routes().with_state(user_request_state))
+        .merge(verification_runs_operator::routes().with_state(verification_runs_state))
         .merge(automation_operator::router())
         .merge(coworker_operator::routes())
         .merge(conversation_operator::routes())
         .merge(delegation_profiles_operator::routes())
         .merge(goal_operator::routes())
+        .merge(skill_operator::routes())
+        .merge(discover_operator::routes())
         .merge(task_lead_handoff_operator::routes())
         .merge(suggestions_operator::routes())
         .merge(presentation_operator::routes())
@@ -1521,6 +1560,8 @@ fn build_operator_router(state: ApiState) -> Router {
                 .with_state(runtime_capability_hosts_state),
         )
         .merge(zip_intake_operator::routes())
+        .merge(rag_retrieval_operator::routes())
+        .merge(rag_local_model_operator::routes())
         // This route is accepted only over authenticated local IPC. It is not part of
         // OpenAPI and no HTTP listener is mounted by the desktop Runtime.
         .route(
@@ -4906,6 +4947,61 @@ fn ensure_workspace_owner_for(
                 "Workspace access is unavailable",
             )
         })
+}
+
+/// Authorize a Workspace route that can schedule, execute or replicate work.
+///
+/// Requires the selected Workspace owner and an ACTIVE `RuntimeWorkspaceBinding`
+/// for this installation's Runtime incarnation. `docs/SERVICES.md` requires
+/// `RuntimeWorkspaceBindingService::require_active` before Workspace-scoped
+/// execution, resource-root access, replication or Runtime-host assignment.
+///
+/// This is the default for Workspace routes. A module that reuses it inherits the
+/// stricter check rather than silently omitting it, which is how eight hand-written
+/// copies of this policy had already diverged.
+fn authorized_workspace(
+    state: &ApiState,
+    headers: &HeaderMap,
+) -> Result<Workspace, Response> {
+    let workspace_id = selected_workspace(headers)?;
+    let workspace = ensure_workspace_owner(state, &workspace_id)?;
+    let binding = state
+        .store
+        .get_current_local_binding(LocalRuntimeWorkspaceBindingLookup {
+            owner_principal_id: state.principal_id.clone(),
+            workspace_id,
+            runtime_id: state.runtime_id.clone(),
+            runtime_incarnation_id: state.local_incarnation_id.clone(),
+        })
+        .map_err(|_| {
+            operator_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "DEPENDENCY_UNAVAILABLE",
+                "Runtime Workspace binding is unavailable",
+            )
+        })?;
+    if !binding.is_some_and(|binding| binding.status == "ACTIVE") {
+        return Err(operator_error(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "Local Runtime Workspace access is unavailable",
+        ));
+    }
+    Ok(workspace)
+}
+
+/// Authorize an owner-scoped Core data route that does not schedule Runtime work.
+///
+/// Artifact Library reads and writes are owner-scoped Core data, not
+/// Workspace-scoped execution, so `docs/SERVICES.md` does not require an ACTIVE
+/// `RuntimeWorkspaceBinding` for them. The exception is named separately so that
+/// skipping the binding check is a recorded decision rather than a missing guard.
+fn authorized_data_workspace(
+    state: &ApiState,
+    headers: &HeaderMap,
+) -> Result<Workspace, Response> {
+    let workspace_id = selected_workspace(headers)?;
+    ensure_workspace_owner(state, &workspace_id)
 }
 
 fn parse_content_range(value: &str) -> Option<(u64, u64, u64)> {

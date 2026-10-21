@@ -15,7 +15,6 @@ type AutomationRevisionStorageRow = (
 use domain_responsibility::*;
 use serde::{Deserialize, Serialize};
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 type Decision = Box<
     dyn Fn(&mut dyn ResponsibilityTransaction) -> Result<CommittedResponsibility, DomainError>
         + Send,
@@ -88,7 +87,7 @@ impl SqliteCoworkerStore {
         let (reply, receive) = mpsc::channel();
         self.store
             .execute_command(
-                Command::CoworkerOperation {
+                Command::Operation {
                     operation: Box::new(move |connection| {
                         let _ = reply.send(Ok(operation(connection)));
                     }),
@@ -569,7 +568,7 @@ impl ResponsibilityTransaction for CoworkerTransaction<'_> {
     }
     fn validate_automation_references(
         &mut self,
-        _: Option<&AutomationRevision>,
+        _previous: Option<&AutomationRevision>,
         definition: &AutomationDefinition,
         enabling: bool,
     ) -> Result<(), DomainError> {
@@ -599,10 +598,12 @@ impl ResponsibilityTransaction for CoworkerTransaction<'_> {
             }
         }
         if enabling {
+            // A provider-backed trigger needs a qualified provider. The local
+            // trigger host qualifies manual and schedule triggers only.
             if definition
                 .triggers
                 .iter()
-                .any(|trigger| !matches!(trigger.trigger, TriggerDefinition::Manual))
+                .any(|trigger| !locally_reconcilable_trigger(trigger))
             {
                 return Err(DomainError::TriggerUnsupported);
             }
@@ -641,7 +642,7 @@ impl ResponsibilityTransaction for CoworkerTransaction<'_> {
                 .definition
                 .triggers
                 .iter()
-                .all(|trigger| matches!(trigger.trigger, TriggerDefinition::Manual));
+                .all(locally_reconcilable_trigger);
         Ok(AutomationLifecycleFacts {
             routine_active,
             coworker_active,
@@ -667,12 +668,26 @@ impl ResponsibilityTransaction for CoworkerTransaction<'_> {
     }
 }
 
+/// A trigger the local Runtime can host today.
+///
+/// A manual trigger is always local. A schedule trigger is local when its
+/// recurrence parses into an executable plan. Every other provider-backed
+/// trigger needs a qualified provider and cannot be enabled yet.
+fn locally_reconcilable_trigger(trigger: &TriggerSpec) -> bool {
+    match &trigger.trigger {
+        TriggerDefinition::Manual => true,
+        TriggerDefinition::Schedule { .. } => {
+            crate::automation_host::schedule_trigger(trigger).is_some()
+        }
+        _ => false,
+    }
+}
+
 fn lifecycle_facts(
     connection: &Connection,
     workspace: &str,
     id: &str,
-) -> Result<CoworkerLifecycleFacts, DomainError> {
-    let is_primary = connection
+) -> Result<CoworkerLifecycleFacts, DomainError> {    let is_primary = connection
         .query_row(
             "SELECT primary_coworker_id = ?2 FROM workspaces WHERE workspace_id = ?1",
             params![workspace, id],
@@ -1311,12 +1326,12 @@ fn persist_automation(
     if head.status == AutomationStatus::Enabled {
         let (_, revision) = load_automation(tx, &scope.workspace_id, &head.automation_id)?
             .ok_or(DomainError::Storage)?;
-        ensure_manual_trigger_cursors(tx, scope, context, head, &revision, blob)?;
+        ensure_trigger_cursors(tx, scope, context, head, &revision, blob)?;
     }
     Ok(mutation.aggregate.clone())
 }
 
-fn ensure_manual_trigger_cursors(
+fn ensure_trigger_cursors(
     tx: &Transaction<'_>,
     scope: &OwnerCommandScope,
     context: &CoworkerEventContext,
@@ -1328,7 +1343,7 @@ fn ensure_manual_trigger_cursors(
         .definition
         .triggers
         .iter()
-        .any(|trigger| !matches!(trigger.trigger, TriggerDefinition::Manual))
+        .any(|trigger| !locally_reconcilable_trigger(trigger))
     {
         return Err(DomainError::TriggerUnsupported);
     }

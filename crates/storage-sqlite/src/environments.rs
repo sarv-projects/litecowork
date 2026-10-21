@@ -17,7 +17,6 @@ use storage_core::{
     ProviderBindingCommit, RuntimeId, RuntimeIncarnationId, StoreError,
 };
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 #[derive(Clone)]
 pub struct SqliteEnvironmentStore {
@@ -36,7 +35,7 @@ impl SqliteEnvironmentStore {
     {
         let (reply, receive) = mpsc::channel();
         self.store.execute_command(
-            Command::EnvironmentOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let _ = reply.send(operation(connection));
                 }),

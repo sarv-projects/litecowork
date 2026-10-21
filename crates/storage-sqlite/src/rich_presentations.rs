@@ -6,7 +6,6 @@ use storage_core::rich_presentation::*;
 
 type SemanticMessageRow = (String, String, String, Option<String>, Option<String>);
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 #[derive(Clone)]
 pub struct SqliteRichPresentationStore {
     store: SqliteWorkspaceStore,
@@ -33,7 +32,7 @@ impl SqliteRichPresentationStore {
     ) -> Result<T, StoreError> {
         let (send, recv) = mpsc::channel();
         self.store.execute_command(
-            Command::RichPresentationOperation {
+            Command::Operation {
                 operation: Box::new(move |c| {
                     let _ = send.send(f(c));
                 }),

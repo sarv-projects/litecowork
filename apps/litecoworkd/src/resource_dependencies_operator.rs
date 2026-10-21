@@ -31,10 +31,21 @@ impl FromRef<ApiState> for ResourceDependenciesApiState {
 }
 
 pub(super) fn routes() -> Router<ResourceDependenciesApiState> {
-    Router::new().route(
-        "/v1/resources/{resource_id}/dependents",
-        get(list_resource_dependents),
-    )
+    Router::new()
+        .route(
+            "/v1/resources/{resource_id}/dependents",
+            get(list_resource_dependents),
+        )
+        // Dependency history is private Workspace state. Stamp rejected reads no-store too.
+        .route_layer(middleware::from_fn(dependents_no_store))
+}
+
+async fn dependents_no_store(request: Request<Body>, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 #[cfg(test)]

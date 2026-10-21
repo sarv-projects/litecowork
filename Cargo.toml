@@ -12,6 +12,7 @@ members = [
   "crates/domain-invocations",
   "crates/domain-environment",
   "crates/domain-conversation",
+  "crates/domain-rag",
   "crates/local-environment-staging",
   "crates/linux-process-scope",
 ]

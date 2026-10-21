@@ -1,14 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { validIdempotencyKey } from "../api/idempotency-key.ts";
+import { type OperatorBridgeResponse as BridgeResponse, operatorBridgeResponse } from "../api/operator-bridge.ts";
 import { createRoutineApi, type RoutineTransport } from "./routine-api";
-
-type BridgeResponse = { status: number; contentType: string; bodyBase64: string };
-function validIdempotencyKey(value: string): boolean {
-  return /^[\x21-\x7e]{1,200}$/.test(value);
-}
-function decodeBase64(encoded: string): Uint8Array {
-  const binary = atob(encoded);
-  return Uint8Array.from(binary, character => character.charCodeAt(0));
-}
 
 /** Narrow bridge to saved-Routine routes and save-only manual Task materialization. */
 function desktopTransport(workspaceId: string): RoutineTransport {
@@ -50,10 +43,7 @@ function desktopTransport(workspaceId: string): RoutineTransport {
       workspaceId, operation, routineId, cursor: url.searchParams.get("cursor"), expectedVersion, requestId, body,
     });
     if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    return new Response(decodeBase64(response.bodyBase64), {
-      status: response.status,
-      headers: { "Content-Type": response.contentType },
-    });
+    return operatorBridgeResponse(response, { signal: init.signal });
   };
 }
 

@@ -591,7 +591,9 @@ POST /v1/automations/{id}/resume
 POST /v1/automations/{id}/disable
 GET  /v1/automations/{id}/revisions?cursor=
 GET  /v1/automations/{id}/occurrences?cursor=&limit=
+GET  /v1/automations/{id}/health
 POST /v1/automations/{id}/run
+POST /v1/automations/host/settle
 ```
 
 RoutineRevision is the reusable work definition; each revision is immutable. A manual
@@ -651,6 +653,34 @@ boundary as the Automation revision. Creation persists `PAUSED`; revision requir
 `PAUSED` and preserves that state. Revising an `ENABLED` Automation returns
 `AUTOMATION_NOT_PAUSED` (409), and a `DISABLED` Automation remains terminal. This route does not expose Automation resume,
 manual run, or trigger execution in the current local build.
+
+The local trigger host owns recurring schedule settlement. `POST /v1/automations/host/settle`
+is an authenticated, selected-Workspace command that requires the local Runtime to hold an
+`ACTIVE` `TRIGGER_HOST` Workspace binding. It settles every due slot of the Automation
+triggers this Runtime owns, materializes each permitted slot as one ordinary `READY` Task,
+records every elapsed slot as a bounded `SKIPPED` occurrence with a typed reason, and
+advances the persisted cursor. It creates no Plan, Step, AgentSession, Attempt, lease,
+Environment, Effect, or capability grant. The daemon runs the same bounded settlement pass
+on its supervised trigger-host worker; the route and the worker never produce a second
+occurrence or a second Task for one logical slot, because the occurrence identity is derived
+from the trigger and the resolved slot instant. A misfire is never silently dropped and a
+slot is never fired twice.
+
+`GET /v1/automations/{id}/occurrences` is Workspace-scoped and returns the bounded run
+history of one Automation as the contracted `AutomationOccurrencePage`: the persisted
+occurrence status, the ordinary Task it links, the resolved slot instant, the occurrence
+version, and the exact Automation/Routine revision pins. Its opaque cursor is bound to the
+selected Workspace and Automation and names the ordered `(created_at, occurrence_id)`
+position. A completed schedule is not evidence that its Tasks succeeded; the Task outcome
+and the occurrence outcome stay separate facts.
+
+`GET /v1/automations/{id}/health` and `GET /v1/routines/{id}/health` are read-only
+projections over persisted facts. The Routine projection is the contracted `RoutineHealth`
+shape. The Automation projection adds the trigger-host readiness, the next and last
+observed slot, the occurrence counters, and the drift state of the pinned Routine revision.
+A projection never repairs, never re-enables, and never advances a cursor. The absence of
+an observation is `UNKNOWN`, never `HEALTHY`, and a failed Task alone is `WARNING`, never
+`DRIFTED`.
 
 Routine revisions require non-empty objective and instruction text. The saved Routine name
 is aggregate metadata and remains unchanged when appending a content revision; the current
@@ -1094,6 +1124,7 @@ free-text success criteria are satisfied.
 
 ```text
 POST /v1/demonstrations
+POST /v1/demonstrations/{id}/actions
 POST /v1/demonstrations/{id}/complete
 POST /v1/demonstrations/{id}/pause
 POST /v1/demonstrations/{id}/resume
@@ -1106,6 +1137,15 @@ class, and sensitive-region behavior). Pause/resume is owner-controlled; detecti
 sensitive region either pauses capture or omits sensitive fields according to the selected
 policy. Reaching a cap stops further observation. A completed trace creates a reviewable
 SkillProposal; it never installs or publishes a package.
+
+`POST /v1/demonstrations/{id}/actions` is the capture-provider path. It appends one
+observed semantic step to a running capture. The observation must name the very
+Environment the capture runs in, and the stored step keeps the semantics of the action:
+when the observation lands in a sensitive region the observed value and the pointer hint
+are dropped, so a raw coordinate is never the sole authority for a step. The capture
+duration, action, and trace-byte caps and the sensitive-region policy are re-checked in
+the same transaction, and a sensitive-region detection under the `PAUSE_ON_DETECTION`
+policy pauses the capture durably there and then.
 
 Capture requires an explicit user-controlled Environment and consent. The semantic trace
 is redacted and stored as a Resource. Completion creates a SkillProposal for review; it
@@ -1159,7 +1199,7 @@ structured schemas remain in the Operator's Needs You surface.
 ## Discover/capabilities
 
 ```text
-GET  /v1/discover/search?q=
+GET  /v1/discover/search?q=&kind=&cursor=&limit=
 GET  /v1/discover/items/{id}
 POST /v1/capabilities/{id}/connect-or-install
 POST /v1/capabilities/{id}/test
@@ -1169,6 +1209,81 @@ These are user-facing wrappers around LiteSPM/CapabilityBroker; they do not expo
 They never invoke LiteSPM from the client directly. The API implementation calls
 CapabilityBroker; the detailed LiteSPM wire contract remains deferred in
 `CAPABILITY-FABRIC.md`.
+
+`GET /v1/discover/search` returns a bounded page of user-facing candidates, the owning
+provider's truthfulness, and the Runtime's observed capability hosts as a separate
+observation stream. A catalog row is a projection and never authority: it never asserts
+that an entry is installed, authenticated, assigned, or authorized, it never carries a
+credential or a provider handle, and `authoritative` is always `false`. The LiteSPM
+package service is not qualified, so `provider_status.package_service_qualified` is
+`false` with reason `LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED` and the installable package
+catalog is empty until that contract is published and qualified. The host observations are
+not installable rows: mixing "installed", "offered", and "available" into one row is
+forbidden by the capability fabric.
+
+`GET /v1/discover/items/{id}` returns one bounded entry with its bounded operation
+summaries. It never contains a full provider tool schema, a provider handle, or a
+credential.
+
+`POST /v1/capabilities/{id}/connect-or-install` reports `DEPENDENCY_UNAVAILABLE` with
+reason `LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED` until the LiteSPM package contract is
+published and qualified. It never invents a package endpoint and never claims that a
+package was installed. `POST /v1/capabilities/{id}/test` reports health `UNKNOWN` with the
+same reason and contacts no provider, because a probe against an unqualified provider
+would be an invented probe.
+
+## Skills, SkillProposals, and MCP App frames
+
+```text
+GET   /v1/skills?cursor=&limit=
+GET   /v1/skills/{id}
+POST  /v1/skills
+PUT   /v1/skills/{id}
+
+GET   /v1/skill-proposals?status=&cursor=&limit=
+POST  /v1/skill-proposals
+POST  /v1/skill-proposals/{id}/approve
+POST  /v1/skill-proposals/{id}/reject
+
+POST  /v1/mcp-apps/frames
+POST  /v1/mcp-apps/messages
+```
+
+A Skill definition is procedural text. `POST /v1/skills` always creates the definition as
+`DRAFT`; the request body carries no status, and no API path can promote a definition
+into the loadable state. A Skill is loadable only through a scoped CapabilityGrant bound
+to the exact capability reference *and* the exact manifest digest. `PUT /v1/skills/{id}`
+appends one immutable revision and may only narrow the lifecycle (`ACTIVE` to `SUSPENDED`
+or `REVOKED`). The new revision has its own manifest digest, so a grant that pinned the
+previous revision stops matching and the Skill is no longer loadable until it is reviewed
+again.
+
+`POST /v1/skill-proposals` records an owner-authored draft and its redaction attestation;
+a draft whose redaction has not passed stays `DRAFT` and never becomes reviewable.
+`POST /v1/skill-proposals/{id}/approve` records the owner's decision only. It never
+installs a package, never activates a Skill, and never grants authority: publication stays
+with LiteSPM, whose package contract is not published, so the approval reports the
+publication blocker instead of simulating a package lifecycle. A service, runtime, or
+agent principal may never approve a proposal.
+
+`POST /v1/mcp-apps/frames` issues one host-owned MCP App frame and its sandbox contract.
+The App's server identity, resource URI, and content digest are resolved from the MCP
+capability host this Runtime already observes, never from the request body, so a client
+cannot claim another server's identity. The frame origin is host-assigned. The iframe
+sandbox never carries `allow-same-origin`, forms, popups, downloads, or top navigation,
+and the Content-Security-Policy applies `default-src 'none'` with only the exact declared
+domains. An absent or invalid declaration blocks every external connection and resource;
+the host never invents a fallback domain. The response carries the host-issued per-frame
+nonce the desktop injects into the isolated frame. The route issues the frame contract
+only: it fetches no App bytes and dispatches no tool call.
+
+`POST /v1/mcp-apps/messages` validates one App bridge message against the host-issued
+frame. The frame identity, the exact origin, the host-issued nonce, the bridge method
+allowlist, the payload size bound, and the credential check are all enforced before
+anything is accepted. A forged message, a CORS escape, a replayed nonce, an unknown
+method, or a payload that carries a credential is refused. The route validates and
+normalizes the message only; a tool call is dispatched solely through the
+CapabilityInvocation path with its own grant, Effect, and audit.
 
 ## Resource intake
 
@@ -1224,6 +1339,58 @@ GET  /v1/resources?limit=100&cursor=...    # requires X-Workspace-ID; keyset-pag
 GET  /v1/resources/{resource_id}/content?revision_id=...&max_bytes=...
                                          # optional exact immutable revision pin and read bound
 ```
+
+## Grounded retrieval and index state
+
+```text
+POST /v1/resources/retrieval
+GET  /v1/resources/{resource_id}/index-state
+GET  /v1/capabilities/local-models
+```
+
+`POST /v1/resources/retrieval` requires the selected Workspace header and the
+authenticated Workspace owner. The body is closed and carries `query`, an optional
+`scope` of authorized Resource references, an optional `max_results`, and an optional
+`request_id`. An absent `scope` means every `ACTIVE` Resource of the selected Workspace;
+an explicitly empty scope is refused, so an empty list can never widen the request.
+The response is one of three truthful states. `GROUNDED` carries citations, and every
+citation names the exact `resource_id`, `resource_revision_id`, and `content_digest` of
+the immutable revision the segment was read from, plus an exact UTF-8 byte locator.
+`INSUFFICIENT_EVIDENCE` carries no citation and a typed reason
+(`NO_AUTHORIZED_MATCH` or `PINNED_REVISION_NOT_INDEXED`); no response shape reports a
+claim without a source reference. `PROVIDER_UNAVAILABLE` reports that no qualified
+provider could serve the request, with a reason code, and never falls back to a cloud
+provider. The route is `no-store`, appends no event, receipt, Invocation, Effect, or
+Artifact, and changes no Resource history.
+
+Core owns Resource scope, revision, provenance, authorization, and deletion. The
+served provider is the deterministic local lexical index over the Core-owned encrypted
+local text index; it is not semantic retrieval, embeddings, vector recall, or
+reranking. Only the current head of a Resource is indexed, so a request that pins an
+older immutable revision reports insufficient evidence instead of substituting a newer
+revision. A segment produced by a different parser generation is never compared with
+the current index. Retrieved content is untrusted data: directive-like text is flagged
+with `EMBEDDED_INSTRUCTION_DETECTED` and cannot support a claim on its own. The
+provider rechecks Workspace scope, ContextDocument status, and the current head at the
+last boundary, so a revoked, deleted, superseded, or out-of-scope Resource is never
+served.
+
+`GET /v1/resources/{resource_id}/index-state` reports the owner-visible index state of
+one managed Resource as `READY`, `STALE`, `ABSENT`, or `NOT_INDEXABLE` with a typed
+reason. `READY` means the index matches the current revision and its content digest.
+`STALE` means a projection exists for an older revision and is never served. `ABSENT`
+means the Resource is uploaded but not searchable. The response contains no extracted
+text, no term token, and no blob digest.
+
+`GET /v1/capabilities/local-models` reports the local model inventory and the
+Agent-scoped selection policy. Local models are inventory only and there is no global
+Providers feature: a local model becomes selectable only through an Agent whose
+AgentModule reports compatibility for that exact model. The route never probes an
+endpoint, never accepts an Agent- or document-supplied URL, never returns a credential,
+and never claims that an engine present on the machine is connected. Until a qualified
+local provider is registered it reports `NOT_CONFIGURED` with reason code
+`LOCAL_MODEL_PROVIDER_NOT_QUALIFIED`, `inventory_only=true`, `surface=AGENT_SCOPED`, and
+an empty inventory.
 
 When `revision_id` is supplied, the endpoint resolves that exact immutable revision only
 after proving it belongs to the selected Resource and Workspace. It never substitutes the
@@ -1728,7 +1895,11 @@ UserRequest responses are validated against the pinned response schema and appen
 immutable records. For `DECISION` and `RESOURCE_SELECTION` requests, the owner may submit a
 safe `choice_id`; the source Runtime resolves it against immutable stored choices inside
 the same response transaction and validates the stored value against the pinned schema.
-The choice value and response schema are never returned to the UI. Other `FORM` answers are
+The choice value and response schema are never returned to the UI. The same rule applies
+to the list projection: `GET /v1/user-requests` returns the same bounded choice shape as
+the detail route — `choice_id`, `label` and `description` only — and omits the stored
+choice value and the pinned response schema, so the list and the detail cannot disagree
+about what the owner may see. Other `FORM` answers are
 non-secret Workspace input and can replicate under Workspace policy; credentials must never
 be entered there. `EXTERNAL_URL` requests accept only `{action: "accept" | "decline" | "cancel"}`
 from the response route. A stored response does not confirm provider delivery or resume a

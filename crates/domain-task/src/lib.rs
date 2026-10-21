@@ -24,7 +24,9 @@ pub use delegation_result_service::{
 };
 
 mod delegation_channel;
-pub use delegation_channel::{DelegationChannelParentScope, DelegationChannelResultReader};
+pub use delegation_channel::{
+    DelegationChannelParentScope, DelegationChannelResultReader, decide_child_recovery,
+};
 
 mod delegation_routing_impl;
 pub use delegation_routing_impl::{
@@ -38,12 +40,26 @@ pub use delegation_routing_impl::{
 #[cfg(test)]
 mod delegation_routing;
 
+mod delegation_selection;
+pub use delegation_selection::{RankableWorkerProfile, rank_worker_profiles};
+
+mod worker_selection_decision;
+pub use worker_selection_decision::{
+    StayReason, WorkerSelectionDecision, WorkerSelectionDiagnostics, WorkerSelectionInputs,
+    decide_worker_selection,
+};
+
 mod lead_failover;
 pub use lead_failover::{
     FailoverCandidate, FailoverCandidateReadiness, FailoverDecision, FailoverPolicy,
     FailoverPolicyMode, FailoverTrigger, FailoverTriggerObservation, FailoverTriggerState,
     InvalidFailoverPolicy, LeadFailoverBlocker, decide_lead_failover, resolve_task_failover_policy,
     validate_failover_policy_value,
+};
+
+mod lead_failover_service;
+pub use lead_failover_service::{
+    LeadFailoverCandidateProof, LeadFailoverCommand, LeadFailoverOutcome, LeadFailoverService,
 };
 
 mod lead_handoff;
@@ -64,7 +80,8 @@ pub use delegation_benchmark::{
     B83ArmSummary, B83BenchmarkArm, B83BenchmarkError, B83BenchmarkReport, B83CostMedian,
     B83CostObservation, B83ObservationConfidence, B83ObservationSource, B83PairedComparison,
     B83RunOutcome, B83RunSample, B83UsageMedian, B83UsageObservation, B83VerificationOutcome,
-    aggregate_b83_benchmark,
+    DelegationBenefitBlocker, DelegationBenefitDecision, DelegationBenefitObjective,
+    DelegationBenefitPolicy, aggregate_b83_benchmark, decide_delegation_benefit,
 };
 
 mod delegation_admission;
@@ -80,6 +97,12 @@ mod task_packet_preparation;
 pub use task_packet_preparation::{
     AcceptedTaskPacketContext, PreparedTaskPacket, TaskPacketPreparationError,
     TaskPacketSourcePins, prepare_task_packet, prepare_task_packet_for_accepted_step,
+};
+
+mod lead_handoff_packet;
+pub use lead_handoff_packet::{
+    LeadHandoffPacket, LeadHandoffPacketError, LeadHandoffSourcePins, LeadHandoffStep,
+    PreparedLeadHandoffPacket, prepare_lead_handoff_packet,
 };
 
 use domain_workspace::EventContext;

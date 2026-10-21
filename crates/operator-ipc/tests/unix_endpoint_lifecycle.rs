@@ -3,7 +3,7 @@
 use operator_ipc::{
     InFlightBodyBudget, LogicalHeader, PROTOCOL_VERSION, RequestFrame, RequestHeader,
     ResponseFrame, ResponseHeader,
-    unix::{TransportError, UnixEndpoint},
+    unix::{MAX_CONCURRENT_CONNECTIONS, TransportError, UnixEndpoint},
 };
 use std::{
     fs,
@@ -12,7 +12,7 @@ use std::{
     os::unix::net::{UnixListener, UnixStream},
     path::PathBuf,
     process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const CHILD_DATA_DIR_ENV: &str = "LITECOWORK_OPERATOR_IPC_ACTIVE_ENDPOINT_TEST_DIR";
@@ -251,5 +251,73 @@ fn authenticated_stream_session_has_correlated_handshake_messages_and_clean_eof(
             client.read_response(&budget).await,
             Err(operator_ipc::unix::TransportError::InvalidExchangeState)
         ));
+    });
+}
+
+#[test]
+fn connection_admission_is_bounded_and_releases_capacity_after_disconnect() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime builds");
+    runtime.block_on(async {
+        let directory = PrivateTempDir::new();
+        let endpoint = UnixEndpoint::derive(&directory.0).expect("endpoint derives");
+        let listener = endpoint.bind().expect("endpoint binds");
+
+        // Fill every admission slot with an authorized peer that stays connected.
+        let mut clients = Vec::new();
+        for _ in 0..MAX_CONCURRENT_CONNECTIONS {
+            clients.push(
+                UnixStream::connect(endpoint.socket_path()).expect("client reaches the backlog"),
+            );
+        }
+        let mut servers = Vec::new();
+        for _ in 0..MAX_CONCURRENT_CONNECTIONS {
+            servers.push(
+                listener
+                    .accept(|_| true)
+                    .await
+                    .expect("an authorized peer is admitted"),
+            );
+        }
+
+        // The next peer is refused without consuming a frame slot, and the
+        // refused peer observes the closed socket instead of a hung request.
+        let mut refused =
+            UnixStream::connect(endpoint.socket_path()).expect("client reaches the backlog");
+        refused
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("the refusal observation is bounded");
+        assert!(matches!(
+            listener.accept(|_| true).await,
+            Err(TransportError::CapacityExceeded)
+        ));
+        let mut refusal_byte = [0_u8; 1];
+        match refused.read(&mut refusal_byte) {
+            Ok(0) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe
+                ) => {}
+            result => panic!("a refused peer must observe socket closure, got {result:?}"),
+        }
+        drop(refused);
+
+        // Disconnecting one admitted peer returns its admission slot.
+        drop(servers.pop());
+        let replacement =
+            UnixStream::connect(endpoint.socket_path()).expect("client reaches the backlog");
+        let recovered = listener
+            .accept(|_| true)
+            .await
+            .expect("a released admission slot admits the next peer");
+        assert_eq!(
+            recovered.peer_credentials().uid,
+            servers[0].peer_credentials().uid,
+            "the admitted peer is the same operating-system user as the first peer"
+        );
+        drop((recovered, replacement, servers, clients));
     });
 }

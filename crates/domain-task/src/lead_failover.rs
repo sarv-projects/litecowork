@@ -27,6 +27,16 @@ pub enum FailoverTrigger {
     RuntimeUnavailable,
 }
 
+impl FailoverTrigger {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentUnavailable => "AGENT_UNAVAILABLE",
+            Self::QuotaExhausted => "QUOTA_EXHAUSTED",
+            Self::RuntimeUnavailable => "RUNTIME_UNAVAILABLE",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FailoverPolicy {
@@ -125,6 +135,9 @@ pub enum FailoverDecision {
     AskOwner {
         trigger: FailoverTrigger,
         observation_id: String,
+        /// Ordered, currently eligible fallback choices to present to the owner. The
+        /// order is the pinned policy order; the current lead is never offered.
+        fallback_agent_binding_ids: Vec<String>,
     },
     Recommend {
         agent_binding_id: String,
@@ -203,10 +216,41 @@ pub fn decide_lead_failover(
     if observed_at > now || expires_at <= now || expires_at <= observed_at {
         return FailoverDecision::Blocked(LeadFailoverBlocker::ObservationStale);
     }
+    let mut candidate_ids = std::collections::BTreeSet::new();
+    if candidates.iter().any(|candidate| {
+        !valid_id(&candidate.agent_binding_id) || !candidate_ids.insert(&candidate.agent_binding_id)
+    }) {
+        return FailoverDecision::Blocked(LeadFailoverBlocker::InvalidContext);
+    }
+    // The candidate list carries only the bindings that are eligible in this Task's
+    // Workspace. `policy.fallback_agent_binding_ids` fixes the order, and the current
+    // lead is never a candidate for itself. The first entry is therefore the same
+    // binding the durable handoff transaction independently derives, so a placement
+    // failure on it blocks instead of promoting a later fallback.
+    let ordered_candidates: Vec<&FailoverCandidate> = policy
+        .fallback_agent_binding_ids
+        .iter()
+        .filter(|candidate_id| candidate_id.as_str() != current_lead_binding_id)
+        .filter_map(|candidate_id| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.agent_binding_id == *candidate_id)
+        })
+        .collect();
+    let is_freshly_checked = |candidate: &FailoverCandidate| {
+        candidate.readiness == FailoverCandidateReadiness::Qualified
+            && candidate.checked_task_version == expected_task_version
+            && candidate.checked_task_spec_revision == task_spec_revision
+    };
     if policy.mode == FailoverPolicyMode::Ask {
         return FailoverDecision::AskOwner {
             trigger: observation.trigger,
             observation_id: observation.source_observation_id.clone(),
+            fallback_agent_binding_ids: ordered_candidates
+                .into_iter()
+                .filter(|candidate| is_freshly_checked(candidate))
+                .map(|candidate| candidate.agent_binding_id.clone())
+                .collect(),
         };
     }
     if prior_policy_failover_count >= policy.max_lead_changes {
@@ -215,28 +259,13 @@ pub fn decide_lead_failover(
     if !safe_boundary {
         return FailoverDecision::Blocked(LeadFailoverBlocker::UnsafeBoundary);
     }
-    let mut candidate_ids = std::collections::BTreeSet::new();
-    if candidates.iter().any(|candidate| {
-        !valid_id(&candidate.agent_binding_id) || !candidate_ids.insert(&candidate.agent_binding_id)
-    }) {
-        return FailoverDecision::Blocked(LeadFailoverBlocker::InvalidContext);
-    }
 
-    let next_candidate = policy
-        .fallback_agent_binding_ids
-        .iter()
-        .filter(|candidate_id| candidate_id.as_str() != current_lead_binding_id)
-        .find_map(|candidate_id| {
-            candidates.iter().find(|candidate| {
-                candidate.agent_binding_id == *candidate_id
-                    && candidate.readiness == FailoverCandidateReadiness::Qualified
-                    && candidate.checked_task_version == expected_task_version
-                    && candidate.checked_task_spec_revision == task_spec_revision
-            })
-        });
-    let Some(candidate) = next_candidate else {
+    let Some(candidate) = ordered_candidates.first().copied() else {
         return FailoverDecision::Blocked(LeadFailoverBlocker::NoEligibleFallback);
     };
+    if !is_freshly_checked(candidate) {
+        return FailoverDecision::Blocked(LeadFailoverBlocker::NoEligibleFallback);
+    }
     FailoverDecision::Recommend {
         agent_binding_id: candidate.agent_binding_id.clone(),
         expected_task_version,
@@ -507,6 +536,37 @@ mod tests {
             FailoverDecision::AskOwner {
                 trigger: FailoverTrigger::QuotaExhausted,
                 observation_id: "quota-observation-1".into(),
+                fallback_agent_binding_ids: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn ask_policy_presents_the_ordered_eligible_fallback_choices() {
+        let mut with_choices = policy(FailoverPolicyMode::Ask);
+        with_choices.fallback_agent_binding_ids = vec!["fallback-a".into(), "fallback-b".into()];
+        // `ASK` presents the ordered fallback list as the owner's choices, so a policy
+        // with an empty list cannot present a choice at all.
+        assert!(validate_failover_policy_value(
+            &serde_json::to_value(&with_choices).unwrap()
+        ));
+        let actual = decide(
+            &with_choices,
+            &observation(),
+            0,
+            true,
+            &[
+                candidate("fallback-b", FailoverCandidateReadiness::Qualified),
+                candidate("fallback-a", FailoverCandidateReadiness::Qualified),
+                candidate("fallback-c", FailoverCandidateReadiness::Ineligible),
+            ],
+        );
+        assert_eq!(
+            actual,
+            FailoverDecision::AskOwner {
+                trigger: FailoverTrigger::QuotaExhausted,
+                observation_id: "quota-observation-1".into(),
+                fallback_agent_binding_ids: vec!["fallback-a".into(), "fallback-b".into()],
             }
         );
     }
@@ -612,6 +672,51 @@ mod tests {
         assert_eq!(
             decide(&policy, &observation(), 0, true, &[stale]),
             FailoverDecision::Blocked(LeadFailoverBlocker::NoEligibleFallback)
+        );
+    }
+
+    #[test]
+    fn a_failed_first_fallback_never_promotes_a_later_one() {
+        // The durable handoff transaction independently derives the next fallback as the
+        // first same-Workspace enabled and lead-eligible binding in policy order. The
+        // domain must not recommend a later binding that the transaction cannot
+        // qualify, so a failed first candidate blocks the whole change.
+        let policy = policy(FailoverPolicyMode::AllowListed);
+        assert_eq!(
+            decide(
+                &policy,
+                &observation(),
+                0,
+                true,
+                &[
+                    candidate("fallback-a", FailoverCandidateReadiness::Ineligible),
+                    candidate("fallback-b", FailoverCandidateReadiness::Qualified),
+                ],
+            ),
+            FailoverDecision::Blocked(LeadFailoverBlocker::NoEligibleFallback)
+        );
+    }
+
+    #[test]
+    fn the_current_lead_is_never_offered_as_its_own_fallback() {
+        let mut with_lead = policy(FailoverPolicyMode::Ask);
+        with_lead.fallback_agent_binding_ids = vec!["lead".into(), "fallback-a".into()];
+        assert_eq!(
+            decide(
+                &with_lead,
+                &observation(),
+                0,
+                true,
+                &[
+                    candidate("lead", FailoverCandidateReadiness::Qualified),
+                    candidate("fallback-a", FailoverCandidateReadiness::Qualified),
+                ],
+            ),
+            FailoverDecision::AskOwner {
+                trigger: FailoverTrigger::QuotaExhausted,
+                observation_id: "quota-observation-1".into(),
+                fallback_agent_binding_ids: vec!["fallback-a".into()],
+            }
         );
     }
 

@@ -127,6 +127,19 @@ pub(crate) async fn automation_request(
                 if let Some(cursor) = cursor.as_deref() { request = request.query(&[("cursor", cursor)]); }
                 request
             }
+            "automation_health" => {
+                let id = automation_id.as_deref().ok_or_else(|| "Automation selection is invalid".to_owned())?;
+                client.get(format!("/v1/automations/{id}/health")).header("X-Workspace-ID", &workspace_id)
+            }
+            "automation_occurrences" => {
+                let id = automation_id.as_deref().ok_or_else(|| "Automation selection is invalid".to_owned())?;
+                client.get(format!("/v1/automations/{id}/occurrences"))
+                    .header("X-Workspace-ID", &workspace_id).query(&[("limit", "50")])
+            }
+            "routine_health" => {
+                let id = routine_id.as_deref().ok_or_else(|| "Routine selection is invalid".to_owned())?;
+                client.get(format!("/v1/routines/{id}/health")).header("X-Workspace-ID", &workspace_id)
+            }
             "list_routines" => {
                 let mut request = client.get("/v1/routines".to_owned()).header("X-Workspace-ID", &workspace_id).query(&[("limit", "50")]);
                 if let Some(cursor) = cursor.as_deref() { request = request.query(&[("cursor", cursor)]); }

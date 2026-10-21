@@ -1,0 +1,135 @@
+.discover-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.discover-page__header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.discover-page__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--lc-text-muted, #6b7280);
+}
+
+.discover-page__filters {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+}
+
+.discover-page__filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.discover-page__status {
+  margin: 0;
+  font-size: 13px;
+}
+
+.discover-page__status--error {
+  color: var(--lc-danger, #b42318);
+}
+
+.discover-page__provider {
+  margin: 0;
+  font-size: 12px;
+  color: var(--lc-text-muted, #6b7280);
+}
+
+.discover-page__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.discover-page__observations-title {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+.discover-page__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.discover-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid var(--lc-border, #e5e7eb);
+  border-radius: 6px;
+}
+
+.discover-row__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.discover-row__kind {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--lc-text-muted, #6b7280);
+}
+
+.discover-row__title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.discover-row__summary {
+  font-size: 12px;
+  color: var(--lc-text-muted, #6b7280);
+  overflow-wrap: anywhere;
+}
+
+.discover-row__state {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: right;
+}
+
+.discover-row__availability {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.discover-row__reason {
+  font-size: 11px;
+  color: var(--lc-text-muted, #6b7280);
+}
+
+.discover-row__action {
+  min-width: 72px;
+}
+
+.discover-row--ready .discover-row__availability {
+  color: var(--lc-success, #067647);
+}
+
+.discover-row--needs-action .discover-row__availability {
+  color: var(--lc-warning, #b54708);
+}
+
+.discover-row--unavailable .discover-row__availability,
+.discover-row--not-qualified .discover-row__availability {
+  color: var(--lc-text-muted, #6b7280);
+}

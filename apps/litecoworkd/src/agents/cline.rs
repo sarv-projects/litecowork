@@ -61,14 +61,28 @@ fn discover_npm_package_version() -> Option<String> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn is_executable_file(path: &std::path::Path) -> bool {
-    std::fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
-        && rustix::fs::accessat(
-            rustix::fs::CWD,
-            path,
-            rustix::fs::Access::EXEC_OK,
-            rustix::fs::AtFlags::EACCESS,
-        )
-        .is_ok()
+    // Mirror the CLI probe's own candidate rule exactly: resolve the symlink first
+    // and then require a regular file with an execute bit. Using a different rule
+    // here would let the metadata fast path describe a different binary than the
+    // one the version probe actually runs.
+    let Ok(canonical) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    let Ok(metadata) = std::fs::metadata(&canonical) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -166,12 +180,18 @@ mod tests {
 
     impl TemporaryDirectory {
         fn new() -> Self {
+            // The isolated inventory cases run concurrently inside one test
+            // process. A clock-derived name alone can collide when two threads
+            // sample the same instant, which would let one case overwrite the
+            // other's fixture. A per-process counter keeps every case disjoint.
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let unique = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("system clock is after Unix epoch")
                 .as_nanos();
+            let ordinal = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "litecowork-cline-inventory-{}-{unique}",
+                "litecowork-cline-inventory-{}-{unique}-{ordinal}",
                 std::process::id()
             ));
             fs::create_dir_all(&path).expect("create temporary Cline inventory directory");
@@ -276,6 +296,13 @@ mod tests {
                     InstallationState::Installed
                 ));
                 assert_eq!(installation.version.as_deref(), Some("9.8.7"));
+            }
+            "later_candidate" => {
+                assert!(matches!(
+                    installation.installation,
+                    InstallationState::Installed
+                ));
+                assert_eq!(installation.version.as_deref(), Some("4.5.6"));
             }
             "metadata_unusable" => {
                 assert!(
@@ -617,6 +644,77 @@ mod tests {
             temporary.0.as_os_str(),
         );
         assert_child_passed(&output);
+        temporary.remove();
+    }
+
+    #[test]
+    fn cline_inventory_skips_a_non_executable_path_entry_for_the_cli_probe_too() {
+        if run_child_case("later_candidate").is_some() {
+            return;
+        }
+
+        // The version probe must use the same candidate rule as the metadata fast
+        // path and as the shell: a PATH entry that exists but cannot be executed
+        // never shadows the CLI that would actually run.
+        let temporary = TemporaryDirectory::new();
+        let unusable = temporary.0.join("unusable-path-entry");
+        fs::create_dir_all(&unusable).expect("create unusable PATH entry");
+        let unusable_cli = unusable.join("cline");
+        fs::write(&unusable_cli, "not executable").expect("write unusable CLI candidate");
+        let mut permissions = fs::metadata(&unusable_cli)
+            .expect("read unusable candidate metadata")
+            .permissions();
+        permissions.set_mode(0o644);
+        fs::set_permissions(&unusable_cli, permissions).expect("make candidate unusable");
+
+        let usable = temporary.0.join("usable-path-entry");
+        fs::create_dir_all(&usable).expect("create usable PATH entry");
+        write_node_executable(&usable.join("cline"), "console.log('4.5.6');\n");
+        let joined_path = std::env::join_paths([unusable.as_os_str(), usable.as_os_str()])
+            .expect("combine isolated PATH entries");
+
+        let output = run_isolated_inventory_case(
+            "agents::cline::tests::cline_inventory_skips_a_non_executable_path_entry_for_the_cli_probe_too",
+            "later_candidate",
+            &joined_path,
+        );
+        assert_child_passed(&output);
+        temporary.remove();
+    }
+
+    #[test]
+    fn cline_inventory_describes_the_executable_that_would_actually_run() {
+        if run_child_case("later_candidate").is_some() {
+            return;
+        }
+
+        // An unrelated executable named `cline` earlier on PATH is the binary the
+        // shell would run. The inventory must describe that binary's own version
+        // and must not report a version that belongs to a different file.
+        let temporary = TemporaryDirectory::new();
+        let shadowing = temporary.0.join("shadowing-path-entry");
+        fs::create_dir_all(&shadowing).expect("create shadowing PATH entry");
+        write_node_executable(&shadowing.join("cline"), "console.log('4.5.6');\n");
+
+        let marker = temporary.0.join("shadowed-cli-was-executed");
+        let shadowed = write_fake_npm_package(
+            &temporary,
+            br#"{"name":"cline","version":"3.0.72"}"#,
+            &marker,
+        );
+        let joined_path = std::env::join_paths([shadowing.as_os_str(), shadowed.as_os_str()])
+            .expect("combine isolated PATH entries");
+
+        let output = run_isolated_inventory_case(
+            "agents::cline::tests::cline_inventory_describes_the_executable_that_would_actually_run",
+            "later_candidate",
+            &joined_path,
+        );
+        assert_child_passed(&output);
+        assert!(
+            !marker.exists(),
+            "the inventory described a Cline package that the shell would never run"
+        );
         temporary.remove();
     }
 

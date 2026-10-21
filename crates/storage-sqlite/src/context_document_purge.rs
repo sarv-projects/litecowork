@@ -9,7 +9,6 @@ use storage_core::{
     PendingEmptyContextDocumentPurge,
 };
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 type PurgeTargetGroupKey = (String, &'static str);
 type PurgeTargetRevisionAndChunkRefs = (Vec<String>, Vec<ContextDocumentPurgeUploadChunkRef>);
@@ -370,7 +369,7 @@ where
 {
     let (reply, receive) = mpsc::channel();
     store.execute_command(
-        Command::ContextDocumentPurgeOperation {
+        Command::Operation {
             operation: Box::new(move |connection| {
                 let _ = reply.send(operation(connection));
             }),

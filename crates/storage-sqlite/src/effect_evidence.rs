@@ -40,7 +40,6 @@ impl Replayable for CommittedEvidence {
     }
 }
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 #[derive(Clone)]
 pub struct SqliteEffectEvidenceStore {
@@ -59,7 +58,7 @@ impl SqliteEffectEvidenceStore {
     {
         let (reply, receive) = mpsc::channel();
         self.store.execute_command(
-            Command::EffectEvidenceOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let _ = reply.send(operation(connection));
                 }),

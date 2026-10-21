@@ -122,7 +122,6 @@ pub(super) fn validate_task_admission(
     }
 }
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 type RoutineRevisionStorageRow = (
     String,
@@ -201,7 +200,7 @@ impl SqliteRoutineStore {
         let (reply, receive) = mpsc::channel();
         self.store
             .execute_command(
-                Command::RoutineOperation {
+                Command::Operation {
                     operation: Box::new(move |connection| {
                         let _ = reply.send(Ok(operation(connection)));
                     }),
@@ -329,6 +328,87 @@ impl SqliteRoutineStore {
             Ok(RoutinePage { items, next })
         })
     }
+
+    /// Reads the persisted facts of a read-only Routine health projection.
+    ///
+    /// The projection is never an aggregate and never an execution authority.
+    /// It reports what the durable records prove and nothing else.
+    pub fn health_facts(
+        &self,
+        principal_id: &str,
+        workspace_id: &str,
+        routine_id: &str,
+    ) -> Result<Option<RoutineHealthFacts>, RoutineError> {
+        let (principal, workspace, routine) = (
+            principal_id.to_owned(),
+            workspace_id.to_owned(),
+            routine_id.to_owned(),
+        );
+        self.run(move |connection| {
+            let tx = connection.transaction().map_err(sql_error)?;
+            authorize(&tx, &principal, &workspace)?;
+            let head: Option<(u64, String, String)> = tx
+                .query_row(
+                    "SELECT current_revision, status, created_at FROM routines WHERE workspace_id = ?1 AND routine_id = ?2",
+                    params![workspace, routine],
+                    |row| Ok((from_row_u64(row, 0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+                )
+                .optional()
+                .map_err(sql_error)?;
+            let Some((current_revision, status, created_at)) = head else {
+                return Ok(None);
+            };
+            let mut statement = tx
+                .prepare(
+                    "SELECT status, created_at, completed_at FROM tasks
+                      WHERE workspace_id = ?1 AND routine_id = ?2 AND routine_revision = ?3
+                        AND status IN ('COMPLETED', 'FAILED', 'INCOMPLETE', 'CANCELLED')
+                      ORDER BY created_at DESC, task_id DESC LIMIT 10",
+                )
+                .map_err(sql_error)?;
+            let tasks = statement
+                .query_map(
+                    params![workspace, routine, sql_u64(current_revision, "Routine revision")?],
+                    |row| {
+                        Ok(RoutineTaskOutcome {
+                            status: row.get(0)?,
+                            created_at: row.get(1)?,
+                            completed_at: row.get(2)?,
+                        })
+                    },
+                )
+                .map_err(sql_error)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(sql_error)?;
+            Ok(Some(RoutineHealthFacts {
+                routine_id: routine,
+                workspace_id: workspace,
+                current_revision,
+                status,
+                created_at,
+                tasks,
+            }))
+        })
+    }
+}
+
+/// The persisted facts of a read-only Routine health projection.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoutineHealthFacts {
+    pub routine_id: String,
+    pub workspace_id: String,
+    pub current_revision: u64,
+    pub status: String,
+    pub created_at: String,
+    pub tasks: Vec<RoutineTaskOutcome>,
+}
+
+/// One terminal ordinary Task that was created from a Routine revision.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoutineTaskOutcome {
+    pub status: String,
+    pub created_at: String,
+    pub completed_at: Option<String>,
 }
 
 impl RoutineStore for SqliteRoutineStore {

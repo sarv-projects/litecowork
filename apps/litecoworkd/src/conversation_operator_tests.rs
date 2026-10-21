@@ -191,18 +191,195 @@ async fn submit_turn_body(
     conversation_id: &str,
     body: &str,
 ) -> Response {
+    submit_turn_body_with_key(
+        router,
+        workspace_id,
+        conversation_id,
+        "conversation-turn-submit-1",
+        body,
+    )
+    .await
+}
+
+async fn submit_turn_body_with_key(
+    router: &Router,
+    workspace_id: &str,
+    conversation_id: &str,
+    request_id: &str,
+    body: &str,
+) -> Response {
+    submit_turn_with(
+        router,
+        workspace_id,
+        conversation_id,
+        request_id,
+        body,
+        true,
+    )
+    .await
+}
+
+async fn submit_turn_with(
+    router: &Router,
+    workspace_id: &str,
+    conversation_id: &str,
+    request_id: &str,
+    body: &str,
+    authenticated: bool,
+) -> Response {
     let mut request = Request::post(format!("/v1/conversations/{conversation_id}/turns"))
         .header("x-workspace-id", workspace_id)
-        .header("idempotency-key", "conversation-turn-submit-1")
+        .header("idempotency-key", request_id)
         .header("content-type", "application/json")
         .body(Body::from(body.to_owned()))
         .expect("Conversation turn request is valid");
-    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    if authenticated {
+        request.extensions_mut().insert(AuthenticatedLocalPeer);
+    }
     router
         .clone()
         .oneshot(request)
         .await
-        .expect("authenticated Conversation turn route responds")
+        .expect("Conversation turn route responds")
+}
+
+/// Seeds an enabled, lead-eligible AgentBinding and pins it as the Conversation's
+/// already-admitted selection. The Operator has no route for that pin yet (E03-S01), so
+/// the test writes the same authorized rows the storage fixture uses.
+fn bind_conversation_agent(
+    database: &std::path::Path,
+    workspace_id: &str,
+    conversation_id: &str,
+    binding_id: &str,
+) {
+    seed_agent_binding(database, workspace_id, binding_id, true, true);
+    set_conversation_agent(database, workspace_id, conversation_id, binding_id);
+}
+
+/// Seeds an AgentBinding row with the exact admitted state the Workspace default
+/// and the Conversation override resolve against.
+fn seed_agent_binding(
+    database: &std::path::Path,
+    workspace_id: &str,
+    binding_id: &str,
+    enabled: bool,
+    lead_eligible: bool,
+) {
+    let profile_id = format!("{binding_id}-profile");
+    let connection = rusqlite::Connection::open(database).expect("seed AgentBinding");
+    connection
+        .execute_batch("PRAGMA foreign_keys=ON;")
+        .expect("enable seed foreign keys");
+    connection
+        .execute(
+            "INSERT INTO agent_profiles(agent_profile_id,provider_key,display_name,discovered_at) VALUES(?1,'codex','Codex',?2)",
+            rusqlite::params![profile_id, "2026-10-15T12:00:00.000000000Z"],
+        )
+        .expect("seed AgentProfile");
+    connection
+        .execute(
+            "INSERT INTO agent_endpoints(endpoint_id,agent_profile_id,protocol,topology,protocol_version,capabilities_json) VALUES(?1,?2,'CLI','PROCESS_ADAPTER',NULL,'{}')",
+            rusqlite::params![format!("{binding_id}-endpoint"), profile_id],
+        )
+        .expect("seed AgentEndpoint");
+    connection
+        .execute(
+            "INSERT INTO agent_bindings(agent_binding_id,workspace_id,agent_profile_id,runtime_id,endpoint_selection_policy_json,auth_ref,configuration_json,enabled,lead_eligible,created_at,version) VALUES(?1,?2,?3,NULL,'{}',NULL,'{}',?4,?5,?6,1)",
+            rusqlite::params![
+                binding_id,
+                workspace_id,
+                profile_id,
+                i64::from(enabled),
+                i64::from(lead_eligible),
+                "2026-10-15T12:00:00.000000000Z"
+            ],
+        )
+        .expect("seed AgentBinding");
+}
+
+/// Configures the Workspace default AgentBinding through the same guarded column
+/// the `PATCH /v1/workspaces/{id}/default-agent-binding` route writes.
+fn set_workspace_default_agent(
+    database: &std::path::Path,
+    workspace_id: &str,
+    binding_id: &str,
+) {
+    let connection = rusqlite::Connection::open(database).expect("seed Workspace default");
+    connection
+        .execute_batch("PRAGMA foreign_keys=ON;")
+        .expect("enable seed foreign keys");
+    let updated = connection
+        .execute(
+            "UPDATE workspaces SET default_agent_binding_id=?1 WHERE workspace_id=?2",
+            rusqlite::params![binding_id, workspace_id],
+        )
+        .expect("set the Workspace default AgentBinding");
+    assert_eq!(updated, 1, "the fixture Workspace must exist");
+}
+
+/// Pins the Conversation's own AgentBinding override.
+fn set_conversation_agent(
+    database: &std::path::Path,
+    workspace_id: &str,
+    conversation_id: &str,
+    binding_id: &str,
+) {
+    let connection = rusqlite::Connection::open(database).expect("seed Conversation binding");
+    connection
+        .execute_batch("PRAGMA foreign_keys=ON;")
+        .expect("enable seed foreign keys");
+    let updated = connection
+        .execute(
+            "UPDATE conversations SET active_agent_binding_id=?1 WHERE workspace_id=?2 AND conversation_id=?3",
+            rusqlite::params![binding_id, workspace_id, conversation_id],
+        )
+        .expect("pin Conversation AgentBinding");
+    assert_eq!(updated, 1, "the fixture Conversation must exist");
+}
+
+async fn read_operator_error(response: Response) -> (StatusCode, serde_json::Value) {
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), 8192)
+        .await
+        .expect("bounded Operator error body");
+    (
+        status,
+        serde_json::from_slice(&bytes).expect("Operator error JSON"),
+    )
+}
+
+fn count_rows(connection: &rusqlite::Connection, table: &str, workspace_id: &str) -> i64 {
+    let sql = match table {
+        "tasks" => "SELECT COUNT(*) FROM tasks WHERE workspace_id=?1",
+        "attempts" => {
+            "SELECT COUNT(*) FROM attempts a JOIN tasks t ON t.task_id=a.task_id WHERE t.workspace_id=?1"
+        }
+        "agent_sessions" => "SELECT COUNT(*) FROM agent_sessions WHERE workspace_id=?1",
+        "execution_leases" => {
+            "SELECT COUNT(*) FROM execution_leases l JOIN tasks t ON t.task_id=l.task_id WHERE t.workspace_id=?1"
+        }
+        "environments" => "SELECT COUNT(*) FROM environments WHERE owner_workspace_id=?1",
+        _ => panic!("unsupported test table"),
+    };
+    connection
+        .query_row(sql, [workspace_id], |row| row.get(0))
+        .expect("read execution-state row count")
+}
+
+fn assert_no_execution_state(connection: &rusqlite::Connection, workspace_id: &str) {
+    for table in [
+        "tasks",
+        "attempts",
+        "agent_sessions",
+        "execution_leases",
+        "environments",
+    ] {
+        assert_eq!(
+            count_rows(connection, table, workspace_id),
+            0,
+            "ordinary Conversation submit must not create {table} rows"
+        );
+    }
 }
 
 async fn read_page(response: Response) -> TestConversationPage {
@@ -468,7 +645,7 @@ async fn concurrent_conversation_create_retries_commit_only_one_identity() {
 }
 
 #[tokio::test]
-async fn conversation_turn_route_fails_closed_without_creating_an_unsettleable_turn() {
+async fn conversation_turn_route_requires_a_pinned_eligible_agent_before_persisting() {
     let directory = tempfile::tempdir().expect("temporary Conversation turn directory");
     #[cfg(unix)]
     std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
@@ -495,29 +672,465 @@ async fn conversation_turn_route_fails_closed_without_creating_an_unsettleable_t
     );
     let router = test_router(store.clone(), OWNER.to_owned(), RUNTIME.to_owned());
 
-    let response = submit_turn(&router, WORKSPACE_A, "a06-conversation-turn").await;
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(response.headers()["cache-control"], "no-store");
-    let body = to_bytes(response.into_body(), 8192)
-        .await
-        .expect("bounded unavailable response");
-    let error: serde_json::Value = serde_json::from_slice(&body).expect("Operator error JSON");
-    assert_eq!(error["code"], "DEPENDENCY_UNAVAILABLE");
-    assert!(
-        error["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("not sent"),
-        "the unavailable response must say the message was not sent"
-    );
+    let (status, error) =
+        read_operator_error(submit_turn(&router, WORKSPACE_A, "a06-conversation-turn").await).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error["code"], "AGENT_UNAVAILABLE");
     let conversation = SqliteConversationStore::new(store.clone())
         .get_conversation(OWNER, WORKSPACE_A, "a06-conversation-turn")
         .expect("conversation read succeeds")
         .expect("conversation remains available");
     assert_eq!(
         conversation.version, 1,
-        "no User message or OPEN turn was committed"
+        "an unavailable AgentBinding commits no User message, OPEN turn, event, or receipt"
     );
+    let connection = rusqlite::Connection::open(directory.path().join("state.sqlite3"))
+        .expect("inspect Conversation storage");
+    let (messages, turns, receipts): (i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM conversation_messages),
+               (SELECT COUNT(*) FROM conversation_turns),
+               (SELECT COUNT(*) FROM request_dedup WHERE request_id='conversation-turn-submit-1')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read durable turn counts");
+    assert_eq!((messages, turns, receipts), (0, 0, 0));
+    assert_no_execution_state(&connection, WORKSPACE_A);
+}
+
+#[tokio::test]
+async fn conversation_turn_submit_commits_durably_then_settles_unavailable_and_replays_exactly() {
+    let directory = tempfile::tempdir().expect("temporary durable Conversation turn directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private durable Conversation turn directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        database.clone(),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "turn-durable-workspace");
+    let conversation_id = "a06-conversation-turn-durable";
+    let binding_id = "turn-durable-binding";
+    seed_conversation(
+        &store,
+        WORKSPACE_A,
+        conversation_id,
+        "Durable conversation",
+        "2026-10-15T12:00:00.000000000Z",
+    );
+    bind_conversation_agent(&database, WORKSPACE_A, conversation_id, binding_id);
+    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+    let request_id = "conversation-turn-durable-request-1";
+    const BODY: &str = r#"{"content":[{"kind":"TEXT","text":"Please summarize this project."}],"resource_refs":[],"agent_binding_id":null,"presentation_preference":"SIMPLE"}"#;
+
+    // The response is still a truthful unavailable admission, but the USER message and
+    // the turn must already be durable and the turn must not remain OPEN.
+    let response =
+        submit_turn_body_with_key(&router, WORKSPACE_A, conversation_id, request_id, BODY).await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let (status, error) = read_operator_error(response).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(error["code"], "DEPENDENCY_UNAVAILABLE");
+    let message = error["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("was saved"),
+        "response names the durable message"
+    );
+    assert!(
+        message.contains("not sent"),
+        "response does not claim provider dispatch"
+    );
+
+    let connection =
+        rusqlite::Connection::open(&database).expect("inspect durable Conversation turn");
+    let (turn_id, user_message_id, turn_status, agent_session_id, settled_at, turn_version): (
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        i64,
+    ) = connection
+        .query_row(
+            "SELECT turn_id,user_message_id,status,agent_session_id,settled_at,version FROM conversation_turns WHERE conversation_id=?1",
+            [conversation_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .expect("the submitted turn is durable");
+    assert_eq!(turn_status, "FAILED");
+    assert_eq!(agent_session_id, None);
+    assert!(
+        settled_at.is_some(),
+        "a FAILED turn carries its settlement time"
+    );
+    assert_eq!(
+        turn_version, 2,
+        "the failure settlement is a second transaction"
+    );
+    let presentation: String = connection
+        .query_row(
+            "SELECT presentation_preference FROM conversation_turns WHERE turn_id=?1",
+            [&turn_id],
+            |row| row.get(0),
+        )
+        .expect("read pinned presentation preference");
+    assert_eq!(presentation, "SIMPLE");
+    let conversation_version: i64 = connection
+        .query_row(
+            "SELECT version FROM conversations WHERE conversation_id=?1",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .expect("read Conversation version");
+    assert_eq!(conversation_version, 2);
+    let message_content: String = connection
+        .query_row(
+            "SELECT content_json FROM conversation_messages WHERE message_id=?1",
+            [&user_message_id],
+            |row| row.get(0),
+        )
+        .expect("read durable USER message");
+    assert!(message_content.contains("Please summarize this project."));
+    let events: Vec<(String, String)> = connection
+        .prepare("SELECT type,payload_json FROM domain_events WHERE workspace_id=?1 AND (entity_id=?2 OR entity_id=?3) ORDER BY origin_sequence")
+        .expect("prepare event read")
+        .query_map(
+            rusqlite::params![WORKSPACE_A, conversation_id, turn_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read committed events")
+        .collect::<Result<_, _>>()
+        .expect("collect committed events");
+    assert_eq!(
+        events
+            .iter()
+            .map(|(kind, _)| kind.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "conversation.created.v1",
+            "conversation.message.added.v1",
+            "conversation.turn.created.v2",
+            "conversation.turn.settled.v1",
+        ],
+        "the durable submit commits its canonical events and one failure settlement"
+    );
+    assert!(events[2].1.contains(binding_id));
+    assert!(events[2].1.contains("SIMPLE"));
+    assert!(
+        events[3]
+            .1
+            .contains("CONVERSATION_SESSION_ADMISSION_UNAVAILABLE")
+    );
+    let receipts: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM request_dedup WHERE principal_id=?1 AND request_id=?2",
+            rusqlite::params![OWNER, request_id],
+            |row| row.get(0),
+        )
+        .expect("read idempotency receipt count");
+    assert_eq!(receipts, 1);
+    assert_no_execution_state(&connection, WORKSPACE_A);
+
+    // Exact replay resolves the committed receipt, writes nothing, and reports the same
+    // unavailable outcome.
+    let replay =
+        submit_turn_body_with_key(&router, WORKSPACE_A, conversation_id, request_id, BODY).await;
+    assert_eq!(replay.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(replay.headers()["cache-control"], "no-store");
+    let (_, replay_error) = read_operator_error(replay).await;
+    assert_eq!(replay_error["code"], "DEPENDENCY_UNAVAILABLE");
+    let connection = rusqlite::Connection::open(&database).expect("inspect storage after replay");
+    let (messages, turns, receipts, turn_events, settlements): (i64, i64, i64, i64, i64) =
+        connection
+            .query_row(
+                "SELECT
+                   (SELECT COUNT(*) FROM conversation_messages WHERE conversation_id=?1),
+                   (SELECT COUNT(*) FROM conversation_turns WHERE conversation_id=?1),
+                   (SELECT COUNT(*) FROM request_dedup WHERE principal_id=?2 AND request_id=?3),
+                   (SELECT COUNT(*) FROM domain_events WHERE type='conversation.turn.created.v2' AND workspace_id=?4),
+                   (SELECT COUNT(*) FROM domain_events WHERE type='conversation.turn.settled.v1' AND workspace_id=?4)",
+                rusqlite::params![conversation_id, OWNER, request_id, WORKSPACE_A],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .expect("read counts after replay");
+    assert_eq!((messages, turns, receipts), (1, 1, 1));
+    assert_eq!((turn_events, settlements), (1, 1));
+    let conversation_version: i64 = connection
+        .query_row(
+            "SELECT version FROM conversations WHERE conversation_id=?1",
+            [conversation_id],
+            |row| row.get(0),
+        )
+        .expect("read Conversation version after replay");
+    assert_eq!(conversation_version, 2);
+    assert_no_execution_state(&connection, WORKSPACE_A);
+
+    // A changed payload under the same key conflicts without another durable write.
+    let conflict = submit_turn_body_with_key(
+        &router,
+        WORKSPACE_A,
+        conversation_id,
+        request_id,
+        r#"{"content":[{"kind":"TEXT","text":"Different message under the same key."}],"resource_refs":[],"agent_binding_id":null,"presentation_preference":"SIMPLE"}"#,
+    )
+    .await;
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    let (_, conflict_error) = read_operator_error(conflict).await;
+    assert_eq!(conflict_error["code"], "CONFLICT");
+    let connection = rusqlite::Connection::open(&database).expect("inspect storage after conflict");
+    let (messages, turns, receipts): (i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM conversation_messages WHERE conversation_id=?1),
+               (SELECT COUNT(*) FROM conversation_turns WHERE conversation_id=?1),
+               (SELECT COUNT(*) FROM request_dedup WHERE principal_id=?2 AND request_id=?3)",
+            rusqlite::params![conversation_id, OWNER, request_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read counts after changed-payload conflict");
+    assert_eq!((messages, turns, receipts), (1, 1, 1));
+}
+
+#[tokio::test]
+async fn conversation_turn_submit_denies_foreign_owner_and_unauthenticated_callers_without_writing()
+{
+    let directory =
+        tempfile::tempdir().expect("temporary Conversation turn authorization directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private Conversation turn authorization directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        database.clone(),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "turn-authorization");
+    let conversation_id = "a06-conversation-turn-authorization";
+    seed_conversation(
+        &store,
+        WORKSPACE_A,
+        conversation_id,
+        "Authorized conversation",
+        "2026-10-15T12:00:00.000000000Z",
+    );
+    bind_conversation_agent(
+        &database,
+        WORKSPACE_A,
+        conversation_id,
+        "turn-authorization-binding",
+    );
+
+    let unauthenticated_router = test_router(store.clone(), OWNER.to_owned(), RUNTIME.to_owned());
+    let unauthenticated = submit_turn_with(
+        &unauthenticated_router,
+        WORKSPACE_A,
+        conversation_id,
+        "conversation-turn-unauthenticated",
+        r#"{"content":[{"kind":"TEXT","text":"No peer identity."}]}"#,
+        false,
+    )
+    .await;
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+    let foreign_owner_router = test_router(
+        store,
+        "a06-pagination-foreign-owner".to_owned(),
+        RUNTIME.to_owned(),
+    );
+    let foreign_owner = submit_turn_body_with_key(
+        &foreign_owner_router,
+        WORKSPACE_A,
+        conversation_id,
+        "conversation-turn-foreign-owner",
+        r#"{"content":[{"kind":"TEXT","text":"A foreign owner must not submit."}]}"#,
+    )
+    .await;
+    assert_eq!(foreign_owner.status(), StatusCode::NOT_FOUND);
+
+    let connection =
+        rusqlite::Connection::open(&database).expect("inspect authorized Conversation storage");
+    let (messages, turns, receipts): (i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM conversation_messages),
+               (SELECT COUNT(*) FROM conversation_turns),
+               (SELECT COUNT(*) FROM request_dedup WHERE request_id IN ('conversation-turn-unauthenticated','conversation-turn-foreign-owner'))",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read counts after denied submissions");
+    assert_eq!((messages, turns, receipts), (0, 0, 0));
+    assert_no_execution_state(&connection, WORKSPACE_A);
+}
+
+#[tokio::test]
+async fn conversation_turn_route_uses_the_workspace_default_binding_when_the_conversation_has_no_override()
+{
+    let directory = tempfile::tempdir().expect("temporary Conversation default directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private Conversation default directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        database.clone(),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "turn-workspace-default");
+    let conversation_id = "a06-conversation-turn-workspace-default";
+    seed_conversation(
+        &store,
+        WORKSPACE_A,
+        conversation_id,
+        "Default conversation",
+        "2026-10-15T12:00:00.000000000Z",
+    );
+    // The Conversation has no override of its own, so the Workspace default is the
+    // admitted selection.
+    seed_agent_binding(&database, WORKSPACE_A, "turn-default-binding", true, true);
+    set_workspace_default_agent(&database, WORKSPACE_A, "turn-default-binding");
+    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+
+    let response = submit_turn_body(
+        &router,
+        WORKSPACE_A,
+        conversation_id,
+        r#"{"content":[{"kind":"TEXT","text":"Please summarize this project."}],"resource_refs":[],"agent_binding_id":null,"presentation_preference":"AUTO"}"#,
+    )
+    .await;
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the durable turn is still not dispatched to a native agent"
+    );
+    let (_, error) = read_operator_error(response).await;
+    assert_eq!(error["code"], "DEPENDENCY_UNAVAILABLE");
+
+    let connection =
+        rusqlite::Connection::open(&database).expect("inspect the Workspace default turn");
+    let (turn_status, binding_payload): (String, String) = connection
+        .query_row(
+            "SELECT
+               (SELECT status FROM conversation_turns WHERE conversation_id=?1),
+               (SELECT payload_json FROM domain_events WHERE type='conversation.turn.created.v2' AND entity_id=(SELECT turn_id FROM conversation_turns WHERE conversation_id=?1))",
+            rusqlite::params![conversation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("read the durable turn and its creation event");
+    assert_eq!(turn_status, "FAILED");
+    assert!(
+        binding_payload.contains("turn-default-binding"),
+        "the turn records the AgentBinding it was admitted against"
+    );
+    assert_no_execution_state(&connection, WORKSPACE_A);
+}
+
+#[tokio::test]
+async fn conversation_turn_route_refuses_an_ineligible_conversation_override_without_falling_back() {
+    let directory = tempfile::tempdir().expect("temporary Conversation override directory");
+    #[cfg(unix)]
+    std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("private Conversation override directory");
+    let database = directory.path().join("state.sqlite3");
+    let store = SqliteWorkspaceStore::open(
+        database.clone(),
+        Arc::new(FileBlobStore::new(
+            directory.path().join("blobs"),
+            PaginationTestKeys,
+        )),
+        SqliteConfig {
+            writer_queue_capacity: 8,
+            busy_timeout: Duration::from_secs(2),
+        },
+    )
+    .expect("real temporary SQLite store opens");
+    create_workspace(&store, WORKSPACE_A, "turn-override-workspace");
+    let conversation_id = "a06-conversation-turn-override";
+    seed_conversation(
+        &store,
+        WORKSPACE_A,
+        conversation_id,
+        "Override conversation",
+        "2026-10-15T12:00:00.000000000Z",
+    );
+    // The Conversation's own override is configured but no longer enabled. It stays
+    // authoritative: the route must not silently use the Workspace default instead.
+    seed_agent_binding(
+        &database,
+        WORKSPACE_A,
+        "turn-override-binding",
+        false,
+        true,
+    );
+    set_conversation_agent(
+        &database,
+        WORKSPACE_A,
+        conversation_id,
+        "turn-override-binding",
+    );
+    seed_agent_binding(&database, WORKSPACE_A, "turn-fallback-binding", true, true);
+    set_workspace_default_agent(&database, WORKSPACE_A, "turn-fallback-binding");
+    let router = test_router(store, OWNER.to_owned(), RUNTIME.to_owned());
+
+    let (status, error) =
+        read_operator_error(submit_turn(&router, WORKSPACE_A, conversation_id).await).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(error["code"], "AGENT_UNAVAILABLE");
+
+    let connection =
+        rusqlite::Connection::open(&database).expect("inspect the refused Conversation turn");
+    let (messages, turns, receipts): (i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+               (SELECT COUNT(*) FROM conversation_messages),
+               (SELECT COUNT(*) FROM conversation_turns),
+               (SELECT COUNT(*) FROM request_dedup WHERE request_id='conversation-turn-submit-1')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read durable turn counts");
+    assert_eq!(
+        (messages, turns, receipts),
+        (0, 0, 0),
+        "an ineligible selection persists no message, turn, event, or receipt"
+    );
+    assert_no_execution_state(&connection, WORKSPACE_A);
 }
 
 #[tokio::test]

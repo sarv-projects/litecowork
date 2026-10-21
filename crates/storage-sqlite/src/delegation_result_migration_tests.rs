@@ -33,8 +33,8 @@ fn delegation_result_migration_is_atomic_and_records_immutable_storage() {
     migrate(&mut connection).expect("replay ResultEnvelope migration");
     verify_migration_record(&connection, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL, false)
         .expect("verify historical v24 migration receipt");
-    verify_migration_record(&connection, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL, true)
-        .expect("verify latest v25 migration receipt");
+    verify_migration_record(&connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, true)
+        .expect("verify latest v26 migration receipt");
 
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))

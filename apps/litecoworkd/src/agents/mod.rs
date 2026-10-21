@@ -222,6 +222,30 @@ fn discover_version_with_interpreters(
             }
         };
 
+        // The child can write its version and exit between the last nonblocking
+        // read and the status check above, so the pipe can still hold the output
+        // at that moment. Projecting the version without draining it would report
+        // an installed, working CLI as "version unavailable" purely because of
+        // scheduling. The process has already exited here, so its write end is
+        // closed and the remaining bytes are available immediately; the bounded
+        // read keeps the same output limit as the polling loop.
+        if status.is_some() {
+            while output.len() < 257 {
+                let mut buffer = [0_u8; 257];
+                let buffer = &mut buffer[..257 - output.len()];
+                match stdout.read(buffer) {
+                    Ok(0) => break,
+                    Ok(read) => output.extend_from_slice(&buffer[..read]),
+                    Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                    Err(_) => {
+                        read_failed = true;
+                        break;
+                    }
+                }
+            }
+        }
+
         // A Unix process group is a best-effort cleanup scope. A hostile
         // descendant can escape with setsid, so never block on EOF here; the
         // nonblocking pipe keeps escaped descendants from hanging discovery.
@@ -378,16 +402,32 @@ fn resolve_version_probe_target(
 
     fn find_on_path(name: &str) -> std::io::Result<PathBuf> {
         let path = std::env::var_os("PATH").unwrap_or_default();
+        // A PATH entry that exists but cannot be executed is skipped, exactly like
+        // the shell's own lookup order. Otherwise an unrelated non-executable file
+        // would shadow the CLI that would actually run and report an unusable
+        // version for a perfectly installable agent. The first unusable entry is
+        // still remembered so a Workspace with no executable candidate keeps
+        // reporting the more precise "installed but not runnable" state.
+        let mut unusable = None;
         for directory in std::env::split_paths(&path) {
             let candidate = directory.join(name);
-            if candidate.exists() {
-                return resolve_executable(&candidate);
+            if !candidate.exists() {
+                continue;
+            }
+            match resolve_executable(&candidate) {
+                Ok(resolved) => return Ok(resolved),
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                    unusable.get_or_insert(error);
+                }
+                Err(error) => return Err(error),
             }
         }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "version probe candidate was not found on PATH",
-        ))
+        Err(unusable.unwrap_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "version probe candidate was not found on PATH",
+            )
+        }))
     }
 
     let candidate = Path::new(binary);
@@ -688,12 +728,18 @@ mod tests {
 
     impl TemporaryDirectory {
         fn new() -> Self {
+            // The isolated probe cases run concurrently inside one test process.
+            // A clock-derived name alone can collide when two threads sample the
+            // same instant, which would let one case overwrite the other's
+            // fixture. A per-process counter keeps every case disjoint.
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let unique = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("system clock is after Unix epoch")
                 .as_nanos();
+            let ordinal = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "litecowork-agent-version-probe-{}-{unique}",
+                "litecowork-agent-version-probe-{}-{unique}-{ordinal}",
                 std::process::id()
             ));
             fs::create_dir_all(&path).expect("create temporary test directory");
@@ -915,8 +961,35 @@ mod tests {
     }
 
     #[test]
-    fn version_probe_uses_a_non_workspace_working_directory() {
+    fn version_probe_keeps_the_output_of_a_cli_that_exits_immediately() {
+        // A CLI that writes its version and exits can finish between the probe's
+        // nonblocking read and its exit check. Without draining the pipe the
+        // probe would report an installed, working CLI as "version unavailable"
+        // purely because of scheduling. Repeating the probe makes that race
+        // observable on a loaded host.
         let temporary = TemporaryDirectory::new();
+        let binary = temporary.0.join("fast-exiting-version");
+        write_executable(&binary, "#!/bin/sh\nprintf '%s\\n' '1.2.3'\nexit 0\n");
+
+        for _ in 0..32 {
+            let (installation, version) = discover_version_with_interpreters(
+                &binary.to_string_lossy(),
+                &["--version"],
+                "",
+                false,
+                std::time::Duration::from_secs(5),
+                &["sh"],
+            );
+            assert!(
+                matches!(installation, InstallationState::Installed),
+                "a fast-exiting CLI must not be reported as version unavailable"
+            );
+            assert_eq!(version.as_deref(), Some("1.2.3"));
+        }
+    }
+
+    #[test]
+    fn version_probe_uses_a_non_workspace_working_directory() {        let temporary = TemporaryDirectory::new();
         let binary = temporary.0.join("cwd-sensitive-version");
         let expected_cwd = version_probe_working_directory();
         let expected_cwd = expected_cwd.to_string_lossy().replace('\'', "'\\''");

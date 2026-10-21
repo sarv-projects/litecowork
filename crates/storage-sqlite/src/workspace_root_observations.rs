@@ -38,7 +38,7 @@ impl WorkspaceRootObservationStore for SqliteWorkspaceStore {
             let _ = reply.send(result);
         });
         self.execute_command(
-            Command::WorkspaceRootObservationOperation {
+            Command::Operation {
                 operation: operation as WorkspaceRootObservationWriterOperation,
             },
             receiver,

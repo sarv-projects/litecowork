@@ -37,7 +37,6 @@ type StoredSuggestionRow = (
     u64,
 );
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SuggestionReadError {
@@ -122,7 +121,7 @@ impl SqliteSuggestionStore {
         let visibility = visibility_name(visibility);
         let (reply, receive) = mpsc::channel();
         self.store.execute_command(
-            Command::SuggestionOperation { operation: Box::new(move |connection| {
+            Command::Operation { operation: Box::new(move |connection| {
                 let result = (|| {
                     let tx = connection.transaction().map_err(|_| SuggestionReadError::Storage)?;
                     authorize_owner(&tx, &principal, &workspace)?;
@@ -171,7 +170,7 @@ impl SqliteSuggestionStore {
         let (reply, receive) = mpsc::channel();
         self.store
             .execute_command(
-                Command::SuggestionOperation {
+                Command::Operation {
                     operation: Box::new(move |connection| {
                         let result = (|| {
                             let tx = connection
@@ -201,7 +200,7 @@ impl SuggestionPreferenceStore for SqliteSuggestionStore {
         let (owner, workspace) = (owner_principal_id.to_owned(), workspace_id.to_owned());
         let (reply, receive) = mpsc::channel();
         self.store.execute_command(
-            Command::SuggestionOperation { operation: Box::new(move |connection| {
+            Command::Operation { operation: Box::new(move |connection| {
                 let result = (|| {
                     let tx = connection.transaction().map_err(|_| SuggestionServiceError::Storage)?;
                     authorize_active_suggestion_owner(&tx, &owner, &workspace)?;
@@ -269,7 +268,7 @@ impl SuggestionPreferenceStore for SqliteSuggestionStore {
         let (reply, receive) = mpsc::channel();
         self.store
             .execute_command(
-                Command::SuggestionOperation {
+                Command::Operation {
                     operation: Box::new(move |connection| {
                         let result = execute_preference_change(
                             connection,
@@ -414,7 +413,7 @@ impl storage_core::SuggestionTaskAcceptanceStore for SqliteWorkspaceStore {
         });
         let (reply, receive) = mpsc::channel();
         self.execute_command(
-            Command::SuggestionOperation { operation: Box::new(move |connection| {
+            Command::Operation { operation: Box::new(move |connection| {
                 let result = (|| {
                     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(map_database_error)?;
                     authorize_active_suggestion_owner(&tx, &owner, &workspace).map_err(map_suggestion_store_error)?;
@@ -513,7 +512,7 @@ impl storage_core::SuggestionTaskAcceptanceStore for SqliteWorkspaceStore {
         }))?);
         let (reply, receive) = mpsc::channel();
         self.execute_command(
-            Command::SuggestionOperation { operation: Box::new(move |connection| {
+            Command::Operation { operation: Box::new(move |connection| {
                 let result = (|| {
                     let tx = connection.transaction().map_err(map_database_error)?;
                     authorize_active_suggestion_owner(&tx, &principal, &workspace)
@@ -1197,7 +1196,7 @@ impl SuggestionExpiryStore for SqliteSuggestionStore {
         let (reply, receive) = mpsc::channel();
         self.store
             .execute_command(
-                Command::SuggestionOperation {
+                Command::Operation {
                     operation: Box::new(move |connection| {
                         let result = settle_expired_bounded(
                             connection,
@@ -1251,7 +1250,7 @@ impl SuggestionOwnerActionStore for SqliteSuggestionStore {
         let (reply, receive) = mpsc::channel();
         self.store
             .execute_command(
-                Command::SuggestionOperation {
+                Command::Operation {
                     operation: Box::new(move |connection| {
                         let result = execute_owner_action(
                             connection,

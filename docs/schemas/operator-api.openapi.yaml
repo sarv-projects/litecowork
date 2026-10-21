@@ -21,6 +21,7 @@ tags:
 - {name: goals}
 - {name: suggestions}
 - {name: demonstrations}
+- {name: capabilities}
 - {name: connections}
 - {name: channels}
 - {name: discover}
@@ -1433,6 +1434,57 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/AutomationOccurrencePage'}
         default: {$ref: '#/components/responses/Error'}
+  /automations/{automationId}/health:
+    get:
+      tags: [automations]
+      operationId: getAutomationHealth
+      description: >-
+        Read-only health projection of one Automation over persisted facts. It
+        adds the trigger-host readiness, the next and last observed slot, the
+        occurrence counters, and the drift state of the pinned Routine revision
+        to the contracted RoutineHealth projection. A projection never repairs,
+        never re-enables, and never advances a cursor. The absence of an
+        observation is UNKNOWN, never HEALTHY, and a failed Task alone is
+        WARNING, never DRIFTED.
+      parameters:
+      - name: automationId
+        in: path
+        required: true
+        schema: {type: string}
+      responses:
+        '200':
+          description: Rebuildable health projection for the current immutable AutomationRevision
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AutomationHealth'}
+        default: {$ref: '#/components/responses/Error'}
+  /automations/host/settle:
+    post:
+      tags: [automations]
+      operationId: settleAutomationTriggers
+      description: >-
+        Runs one bounded local trigger-host settlement pass for the selected
+        Workspace. The command requires the local Runtime to hold an ACTIVE
+        TRIGGER_HOST Workspace binding. It settles every due slot of the
+        Automation triggers this Runtime owns, materializes each permitted slot
+        as one ordinary READY Task, records every elapsed slot as a bounded
+        SKIPPED occurrence with a typed reason, and advances the persisted
+        cursor. It creates no Plan, Step, AgentSession, Attempt, lease,
+        Environment, Effect, or capability grant. The route and the supervised
+        trigger-host worker never produce a second occurrence or a second Task
+        for one logical slot, because the occurrence identity is derived from
+        the trigger and the resolved slot instant.
+      responses:
+        '200':
+          description: The bounded settlement result for this Runtime
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AutomationHostSettlement'}
+        default: {$ref: '#/components/responses/Error'}
   /automations/{automationId}/pause:
     post:
       tags: [automations]
@@ -2370,6 +2422,14 @@ paths:
     post:
       tags: [demonstrations]
       operationId: startDemonstration
+      description: >-
+        Starts one bounded semantic demonstration capture in a single
+        Environment. Semantic capture requires explicit owner consent. The
+        capture policy caps the duration, the number of recorded steps, and the
+        recorded trace bytes, names the Environment class the capture may run
+        in, and selects what happens when a sensitive region is detected. The
+        capture Environment must be owned by the Task whose workflow is
+        demonstrated, because a SkillProposal always names its source Task.
       parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
       requestBody:
         required: true
@@ -2379,6 +2439,39 @@ paths:
       responses:
         '201':
           description: User-consented semantic capture started in the selected Environment
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DemonstrationSession'}
+        default: {$ref: '#/components/responses/Error'}
+  /demonstrations/{demonstrationId}/actions:
+    post:
+      tags: [demonstrations]
+      operationId: appendDemonstrationAction
+      description: >-
+        Appends one observed semantic step to a running capture. This is the
+        capture-provider path: the observation must come from the qualified
+        capture provider inside this Runtime, and it must name the very
+        Environment the capture runs in. The stored step keeps the semantics of
+        the action and drops the observed value and the pointer hint when the
+        observation lands in a sensitive region; a raw coordinate is never the
+        sole authority for a step. The capture duration, action, and trace-byte
+        caps and the sensitive-region policy are re-checked in the same
+        transaction, and a sensitive-region detection under the
+        PAUSE_ON_DETECTION policy pauses the capture durably there and then.
+      parameters:
+      - {name: demonstrationId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AppendDemonstrationActionRequest'}
+      responses:
+        '200':
+          description: The capture session with the recorded step
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DemonstrationSession'}
@@ -2387,6 +2480,12 @@ paths:
     post:
       tags: [demonstrations]
       operationId: completeDemonstration
+      description: >-
+        Converts one capture session into a draft SkillProposal. The captured
+        procedure is redacted before it is stored; a body that still carries
+        forbidden content is refused and never persisted. The resulting
+        proposal is a DRAFT or REVIEW item that an owner must review: it never
+        enables itself, never activates a Skill, and never installs a package.
       parameters:
       - {name: demonstrationId, in: path, required: true, schema: {type: string}}
       - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -2394,6 +2493,8 @@ paths:
       responses:
         '200':
           description: Capture finalized and converted to a reviewable SkillProposal
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DemonstrationSession'}
@@ -2402,6 +2503,11 @@ paths:
     post:
       tags: [demonstrations]
       operationId: pauseDemonstration
+      description: >-
+        Pauses one capture session. A paused session records nothing until an
+        explicit owner resume. A capture that detects a sensitive region under
+        the PAUSE_ON_DETECTION policy is paused durably in the same
+        transaction that observed it.
       parameters:
       - {name: demonstrationId, in: path, required: true, schema: {type: string}}
       - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -2409,6 +2515,8 @@ paths:
       responses:
         '200':
           description: Capture is paused; no further observations are appended until explicit resume.
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DemonstrationSession'}
@@ -2417,6 +2525,10 @@ paths:
     post:
       tags: [demonstrations]
       operationId: resumeDemonstration
+      description: >-
+        Resumes one paused capture session. Resuming does not relax the capture
+        policy: the duration, action, and trace-byte caps and the
+        sensitive-region policy still apply.
       parameters:
       - {name: demonstrationId, in: path, required: true, schema: {type: string}}
       - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -2424,6 +2536,8 @@ paths:
       responses:
         '200':
           description: Capture resumes after consent, Environment, and remaining limits are revalidated.
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DemonstrationSession'}
@@ -2432,6 +2546,10 @@ paths:
     post:
       tags: [demonstrations]
       operationId: abortDemonstration
+      description: >-
+        Aborts one capture session. The captured steps are retained but the
+        session never becomes a SkillProposal. A finished session cannot be
+        aborted.
       parameters:
       - {name: demonstrationId, in: path, required: true, schema: {type: string}}
       - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -2439,6 +2557,8 @@ paths:
       responses:
         '200':
           description: Capture stopped; partial trace follows Resource retention policy
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DemonstrationSession'}
@@ -2599,17 +2719,31 @@ paths:
     get:
       tags: [discover]
       operationId: searchDiscover
+      description: >-
+        Authenticated local Workspace owner read. Returns a bounded page of
+        user-facing Discover candidates and the owning provider's truthfulness.
+        A catalog row is a projection, never authority: it never asserts that
+        an entry is installed, authenticated, assigned, or authorized, and it
+        never carries a credential or a provider handle. The LiteSPM package
+        service is not qualified, so package_service_qualified is false and the
+        installable package catalog is empty until that contract is published.
+        The Runtime's observed capability hosts are reported separately as
+        observations, not as installable catalog rows.
       parameters:
       - name: q
         in: query
-        required: true
-        schema: {type: string, minLength: 1}
+        required: false
+        schema: {type: string, minLength: 1, maxLength: 512}
       - name: kind
         in: query
         schema: {type: string, enum: [APP, CAPABILITY, SKILL, AGENT]}
+      - {$ref: '#/components/parameters/Cursor'}
+      - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
           description: Bounded user-facing candidates; package details remain LiteSPM-owned
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DiscoverItemPage'}
@@ -2618,6 +2752,10 @@ paths:
     get:
       tags: [discover]
       operationId: describeDiscoverItem
+      description: >-
+        Authenticated local Workspace owner read. Returns one bounded catalog
+        entry with its bounded operation summaries. The detail never contains a
+        provider tool schema, a provider handle, or a credential.
       parameters:
       - name: itemId
         in: path
@@ -2626,14 +2764,23 @@ paths:
       responses:
         '200':
           description: Normalized user-facing capability/agent description
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/DiscoverItem'}
+              schema: {$ref: '#/components/schemas/DiscoverItemDetail'}
         default: {$ref: '#/components/responses/Error'}
   /capabilities/{capabilityId}/connect-or-install:
     post:
       tags: [discover]
       operationId: connectOrInstallCapability
+      description: >-
+        Requests the connection or installation of one capability. LiteSPM owns
+        package discovery, verification, and installation, and its wire
+        contract is not published, so the command currently reports
+        DEPENDENCY_UNAVAILABLE with reason LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED.
+        It never invents a package endpoint and never claims that a package was
+        installed.
       parameters:
       - name: capabilityId
         in: path
@@ -2656,6 +2803,11 @@ paths:
     post:
       tags: [discover]
       operationId: testCapabilityConnection
+      description: >-
+        Reads the bounded connection health of one capability. The LiteSPM
+        package service is not qualified, so no provider is contacted and the
+        result reports UNKNOWN with the reason; it never fabricates a health
+        value.
       parameters:
       - name: capabilityId
         in: path
@@ -2670,6 +2822,8 @@ paths:
       responses:
         '200':
           description: Bounded connection health result; no package-manager internals are returned
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
           content:
             application/json:
               schema: {$ref: '#/components/schemas/CapabilityHealthResult'}
@@ -3025,6 +3179,86 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ResourceSearchPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /capabilities/local-models:
+    get:
+      tags: [capabilities]
+      operationId: getLocalModelAvailability
+      description: >-
+        Read-only local model inventory observation. Local models are inventory only and
+        there is no global Providers feature; a local model becomes selectable only
+        through an Agent whose AgentModule reports compatibility for that exact model.
+        The operation never probes an endpoint, never accepts an Agent- or
+        document-supplied URL, never returns a credential, and never claims that an
+        engine present on the machine is connected. Until a qualified local provider is
+        registered it reports NOT_CONFIGURED with an empty inventory.
+      responses:
+        '200':
+          description: Local model inventory and Agent-scoped selection policy
+          headers:
+            Cache-Control: {schema: {type: string}, example: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/LocalModelAvailability'}
+        default: {$ref: '#/components/responses/Error'}
+  /resources/retrieval:
+    post:
+      tags: [resources]
+      operationId: groundedRetrieval
+      summary: Retrieve authorized Resource segments bound to an exact revision
+      description: >-
+        Authenticated local Workspace owner read. The request selects the authorized
+        Resource scope; an absent scope means every ACTIVE Resource of the selected
+        Workspace and an explicit empty scope is refused. The response carries segments
+        that name the exact resourceId, resourceRevisionId and contentDigest of the
+        immutable revision they were read from, plus an exact UTF-8 byte locator. A
+        request with no authorized evidence returns status INSUFFICIENT_EVIDENCE with a
+        typed reason and no citation; there is no response that reports a claim without a
+        source reference. The served provider is the deterministic local lexical index
+        over the Core-owned encrypted local text index. It is not semantic retrieval,
+        embeddings, vector recall, or reranking, and it never compares segments produced
+        by a different parser generation. Retrieved content is untrusted data and is
+        never an instruction. The operation appends no event, receipt, Effect, or
+        Artifact and changes no Resource history.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GroundedRetrievalRequest'}
+      responses:
+        '200':
+          description: Grounded citations, explicit insufficient evidence, or an unavailable provider
+          headers:
+            Cache-Control: {schema: {type: string}, example: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/GroundedRetrievalResponse'}
+        default: {$ref: '#/components/responses/Error'}
+  /resources/{resourceId}/index-state:
+    get:
+      tags: [resources]
+      operationId: getResourceIndexState
+      summary: Read the owner-visible index state of one managed Resource
+      description: >-
+        Authenticated local Workspace owner read. Reports READY, STALE, ABSENT, or
+        NOT_INDEXABLE for the current revision of the Resource. READY means the local
+        index matches the current revision and its content digest. STALE means an index
+        exists for an older revision; the stale projection is never served. ABSENT means
+        the Resource is uploaded but not searchable. The response contains no extracted
+        text, no term token, and no blob digest.
+      parameters:
+      - name: resourceId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 160}
+      responses:
+        '200':
+          description: The index state of the Resource
+          headers:
+            Cache-Control: {schema: {type: string}, example: no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ResourceIndexStateResponse'}
         default: {$ref: '#/components/responses/Error'}
   /resources/{resourceId}/text-index/rebuild:
     post:
@@ -3742,6 +3976,162 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/NotificationPreference'}
         default: {$ref: '#/components/responses/Error'}
+  /skills:
+    get:
+      tags: [capabilities]
+      operationId: listSkills
+      description: >-
+        Authenticated local Workspace owner read. Lists the bounded Skill
+        definitions LiteCowork holds for the selected Workspace. A Skill
+        definition is procedural text: listing one is never proof that it is
+        installed, authenticated, granted, or authorized to run.
+      parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200':
+          description: Bounded page of Skill definitions
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SkillPage'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      tags: [capabilities]
+      operationId: createSkill
+      description: >-
+        Authenticated local Workspace owner write. Creates one Skill definition
+        and its first immutable revision. The definition is always created as
+        DRAFT: a Skill becomes loadable only through a scoped CapabilityGrant
+        bound to the exact capability reference and the exact manifest digest,
+        so no API path can promote a definition into the loadable state. The
+        request body never carries a status.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WriteSkillRequest'}
+      responses:
+        '201':
+          description: The Skill definition and its first revision
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Skill'}
+        default: {$ref: '#/components/responses/Error'}
+  /skills/{skillId}:
+    get:
+      tags: [capabilities]
+      operationId: getSkill
+      description: >-
+        Authenticated local Workspace owner read. Returns one Skill definition
+        and its current immutable revision. The instruction content is never
+        inlined: the revision names the Resource revision that holds it.
+      parameters:
+      - name: skillId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256}
+      responses:
+        '200':
+          description: The Skill definition
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Skill'}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      tags: [capabilities]
+      operationId: reviseSkill
+      description: >-
+        Authenticated local Workspace owner write. Appends one new immutable
+        revision to an existing Skill definition. A revision may only narrow the
+        lifecycle (ACTIVE to SUSPENDED or REVOKED); it can never widen it. The
+        new revision has its own manifest digest, so a CapabilityGrant that
+        pinned the previous revision stops matching and the Skill is no longer
+        loadable until it is reviewed again.
+      parameters:
+      - name: skillId
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/WriteSkillRequest'}
+      responses:
+        '200':
+          description: The revised Skill definition
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Skill'}
+        default: {$ref: '#/components/responses/Error'}
+  /mcp-apps/frames:
+    post:
+      tags: [capabilities]
+      operationId: issueMcpAppFrame
+      description: >-
+        Issues one host-owned MCP App frame and its sandbox contract. The
+        App's server identity, resource URI, and content digest are resolved
+        from the MCP capability host this Runtime already observes, never from
+        the request body, so a client cannot claim another server's identity.
+        The frame origin is host-assigned, the iframe sandbox never carries
+        allow-same-origin, forms, popups, downloads, or top navigation, and the
+        Content-Security-Policy applies default-src 'none' with only the exact
+        declared domains. An absent or invalid declaration blocks every
+        external connection and resource; the host never invents a fallback
+        domain. The response carries the host-issued per-frame nonce that the
+        desktop injects into the isolated frame. This route issues the frame
+        contract only: it fetches no App bytes and dispatches no tool call.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateMcpAppFrameRequest'}
+      responses:
+        '201':
+          description: The issued frame, its sandbox contract, and its nonce
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/McpAppFrame'}
+        default: {$ref: '#/components/responses/Error'}
+  /mcp-apps/messages:
+    post:
+      tags: [capabilities]
+      operationId: validateMcpAppMessage
+      description: >-
+        Validates one App bridge message against the host-issued frame. The
+        frame identity, the exact origin, the host-issued nonce, the bridge
+        method allowlist, the payload size bound, and the credential check are
+        all enforced before anything is accepted. A forged message, a CORS
+        escape, a replayed nonce, an unknown method, or a payload that carries
+        a credential is refused. The route validates and normalizes the message
+        only; a tool call is dispatched solely through the CapabilityInvocation
+        path with its own grant, Effect, and audit.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/McpAppBridgeMessage'}
+      responses:
+        '200':
+          description: The accepted bridge message
+          headers:
+            Cache-Control: {required: true, schema: {type: string, const: no-store}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/McpAppBridgeRequest'}
+        default: {$ref: '#/components/responses/Error'}
   /skill-proposals:
     get:
       tags: [capabilities]
@@ -4224,15 +4614,6 @@ components:
       - type: object
         additionalProperties: {$ref: '#/components/schemas/JsonValue'}
     JsonSchema: {type: object, description: Bounded inline JSON Schema 2020-12 schema; remote references are forbidden., additionalProperties: true}
-    Choice:
-      type: object
-      additionalProperties: false
-      required: [choice_id, label, value]
-      properties:
-        choice_id: {type: string, minLength: 1}
-        label: {type: string, minLength: 1}
-        description: {type: string}
-        value: {$ref: '#/components/schemas/JsonValue'}
     QuietHours:
       type: object
       additionalProperties: false
@@ -5925,7 +6306,7 @@ components:
         event_id: {type: string}
     DiscoverItem:
       type: object
-      required: [item_ref, kind, display_name, summary, compatibility]
+      required: [item_ref, kind, display_name, summary, compatibility, availability, availability_reason, install_state, auth_state, source, grants_required, authoritative]
       properties:
         item_ref: {type: string}
         kind: {type: string, enum: [APP, CAPABILITY, SKILL, AGENT]}
@@ -5935,14 +6316,71 @@ components:
         compatibility: {type: string, enum: [COMPATIBLE, INCOMPATIBLE, UNKNOWN]}
         compatibility_reason: {type: [string, 'null']}
         requires_user_action: {type: boolean, default: false}
+        availability:
+          type: string
+          enum: [AVAILABLE, NEEDS_AUTH, UNSUPPORTED, ERROR, NOT_QUALIFIED]
+          description: The user-visible availability of the entry. NOT_QUALIFIED means the owning provider is not qualified, so the entry cannot be used at all.
+        availability_reason: {type: string, description: Stable reason code for the reported availability.}
+        install_state: {type: string, enum: [NOT_INSTALLED, INSTALLED, INSTALL_PENDING, UNKNOWN]}
+        auth_state: {type: string, enum: [NOT_REQUIRED, REQUIRED, AUTHENTICATED, UNKNOWN]}
+        source: {type: string, enum: [LITE_SPM_PACKAGE, MCP_SERVER, LITECOWORK_LOCAL]}
+        publisher: {type: [string, 'null']}
+        version: {type: [string, 'null']}
+        digest: {type: [string, 'null'], pattern: '^sha256:[a-f0-9]{64}$'}
+        grants_required:
+          type: array
+          description: Names of the grants the entry would need. Names only, never authority.
+          items: {type: string}
+        authoritative:
+          type: boolean
+          const: false
+          description: Always false. A catalog entry is never an authorization.
+    DiscoverProviderStatus:
+      type: object
+      required: [package_service_qualified, reason_code, message]
+      properties:
+        package_service_qualified:
+          type: boolean
+          const: false
+          description: Always false until the LiteSPM package contract is published and qualified.
+        reason_code: {type: string}
+        message: {type: string}
     DiscoverItemPage:
       type: object
-      required: [items]
+      required: [items, provider_status, runtime_capabilities]
       properties:
         items:
           type: array
           items: {$ref: '#/components/schemas/DiscoverItem'}
         next_cursor: {type: [string, 'null']}
+        provider_status: {$ref: '#/components/schemas/DiscoverProviderStatus'}
+        runtime_capabilities:
+          type: array
+          description: The Runtime's observed capability hosts. Observations, not installable catalog rows.
+          items: {$ref: '#/components/schemas/DiscoverItem'}
+    DiscoverItemDetail:
+      type: object
+      required: [item, capabilities]
+      properties:
+        item: {$ref: '#/components/schemas/DiscoverItem'}
+        capabilities:
+          type: array
+          description: Bounded operation summaries. Never a full provider tool schema.
+          items: {$ref: '#/components/schemas/DiscoverCapabilitySummary'}
+        provider_note: {type: [string, 'null']}
+    DiscoverCapabilitySummary:
+      type: object
+      required: [capability_id, display_name, operation_class, required_scopes]
+      properties:
+        capability_id: {type: string}
+        display_name: {type: string}
+        operation_class:
+          type: string
+          enum: [READ, WRITE, SEND, DELETE, PURCHASE_LIKE, ADMIN]
+          description: The provider-declared class only. TrustService keeps its own classification.
+        required_scopes:
+          type: array
+          items: {type: string}
     CapabilitySetupReceipt:
       type: object
       required: [operation_id, capability_id, state, correlation_id]
@@ -7242,6 +7680,90 @@ components:
         version: {type: integer, minimum: 1}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    AutomationOccurrenceCounts:
+      type: object
+      additionalProperties: false
+      required: [pending, claimed, waiting_dependency, started, completed, skipped, failed]
+      properties:
+        pending: {type: integer, minimum: 0}
+        claimed: {type: integer, minimum: 0}
+        waiting_dependency: {type: integer, minimum: 0}
+        started: {type: integer, minimum: 0}
+        completed: {type: integer, minimum: 0}
+        skipped: {type: integer, minimum: 0}
+        failed: {type: integer, minimum: 0}
+    AutomationHealth:
+      type: object
+      additionalProperties: false
+      required: [automation_id, current_revision, status, host_ready, blockers, next_occurrence_at, last_occurrence_at, nonterminal_occurrences, occurrence_counts, routine_health, drift_state, drift_evidence_refs]
+      properties:
+        automation_id: {type: string}
+        current_revision: {type: integer, minimum: 1}
+        status: {type: string, enum: [ENABLED, PAUSED, DISABLED]}
+        host_ready:
+          type: boolean
+          description: True when this Runtime currently owns an active trigger host binding for the Automation's triggers.
+        blockers: {type: array, items: {type: string}}
+        next_occurrence_at: {type: [string, 'null'], format: date-time}
+        last_occurrence_at: {type: [string, 'null'], format: date-time}
+        nonterminal_occurrences: {type: integer, minimum: 0}
+        occurrence_counts: {$ref: '#/components/schemas/AutomationOccurrenceCounts'}
+        routine_health: {$ref: '#/components/schemas/RoutineHealth'}
+        drift_state: {type: string, enum: [HEALTHY, WARNING, DRIFTED, UNKNOWN]}
+        drift_evidence_refs: {type: array, items: {type: string}}
+    AutomationHostSettlement:
+      type: object
+      additionalProperties: false
+      required: [runtime_id, checked_at, triggers]
+      properties:
+        runtime_id: {type: string}
+        checked_at: {type: string, format: date-time}
+        triggers:
+          type: array
+          items: {$ref: '#/components/schemas/AutomationHostTriggerSettlement'}
+    AutomationHostTriggerSettlement:
+      type: object
+      additionalProperties: false
+      required: [automation_id, automation_revision, trigger_id, next_scheduled_at, materialized, skipped, deferred, blockers]
+      properties:
+        automation_id: {type: string}
+        automation_revision: {type: integer, minimum: 1}
+        trigger_id: {type: string}
+        next_scheduled_at: {type: [string, 'null'], format: date-time}
+        materialized:
+          type: array
+          items: {$ref: '#/components/schemas/AutomationHostMaterialization'}
+        skipped:
+          type: array
+          items: {$ref: '#/components/schemas/AutomationHostSkip'}
+        deferred:
+          type: array
+          items: {$ref: '#/components/schemas/AutomationHostDeferral'}
+        blockers: {type: array, items: {type: string}}
+    AutomationHostMaterialization:
+      type: object
+      additionalProperties: false
+      required: [occurrence_id, scheduled_for, task_id, task_status]
+      properties:
+        occurrence_id: {type: string}
+        scheduled_for: {type: string, format: date-time}
+        task_id: {type: string}
+        task_status: {type: string}
+    AutomationHostSkip:
+      type: object
+      additionalProperties: false
+      required: [scheduled_for, reason, occurrence_recorded]
+      properties:
+        scheduled_for: {type: string, format: date-time}
+        reason: {type: string}
+        occurrence_recorded: {type: boolean}
+    AutomationHostDeferral:
+      type: object
+      additionalProperties: false
+      required: [scheduled_for, reason]
+      properties:
+        scheduled_for: {type: string, format: date-time}
+        reason: {type: string}
     AutomationRevision:
       type: object
       required: [automation_id, revision, routine_id, routine_revision, triggers, execution_policy, coworker_ref, authored_by, created_at]
@@ -7670,6 +8192,138 @@ components:
           type: [string, 'null']
           enum: [UNSUPPORTED_TYPE, OVER_SIZE_LIMIT, INVALID_UTF8, CONTROL_CHARACTERS, TERM_LIMIT_EXCEEDED, null]
           description: Required for NOT_INDEXABLE and null for INDEXED.
+    GroundedRetrievalRequest:
+      type: object
+      additionalProperties: false
+      required: [query]
+      properties:
+        query: {type: string, minLength: 1, maxLength: 2048}
+        scope:
+          type: array
+          maxItems: 200
+          items: {$ref: '#/components/schemas/AuthorizedResourceRef'}
+        maxResults: {type: integer, minimum: 1, maximum: 20}
+        requestId: {type: string, minLength: 1, maxLength: 128}
+    AuthorizedResourceRef:
+      type: object
+      additionalProperties: false
+      required: [resourceId]
+      properties:
+        resourceId: {type: string, minLength: 1, maxLength: 160}
+        resourceRevisionId: {type: string, minLength: 1, maxLength: 160}
+        contentDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+    GroundedRetrievalResponse:
+      type: object
+      additionalProperties: false
+      required: [requestId, workspaceId, status, provider, citations, scannedCandidates, truncated]
+      properties:
+        requestId: {type: string, minLength: 1, maxLength: 200}
+        workspaceId: {type: string, minLength: 1}
+        status: {type: string, enum: [GROUNDED, INSUFFICIENT_EVIDENCE, PROVIDER_UNAVAILABLE]}
+        provider: {$ref: '#/components/schemas/RetrievalProviderStatus'}
+        citations:
+          type: array
+          items: {$ref: '#/components/schemas/GroundedRetrievalCitation'}
+        insufficientReason:
+          type: [string, 'null']
+          enum: [NO_AUTHORIZED_MATCH, PINNED_REVISION_NOT_INDEXED, EMPTY_SCOPE, ALL_CANDIDATES_REVOKED, null]
+        scannedCandidates: {type: integer, minimum: 0}
+        truncated: {type: boolean}
+    GroundedRetrievalCitation:
+      type: object
+      additionalProperties: false
+      required: [citationId, resourceId, resourceRevisionId, contentDigest, locator, excerpt, providerId, providerVersion]
+      properties:
+        citationId: {type: string, minLength: 1, maxLength: 256}
+        resourceId: {type: string, minLength: 1, maxLength: 160}
+        resourceRevisionId: {type: string, minLength: 1, maxLength: 160}
+        contentDigest: {type: string, pattern: '^sha256:[0-9a-f]{64}$'}
+        locator: {$ref: '#/components/schemas/RetrievalSegmentLocator'}
+        matchedSpans:
+          type: array
+          items: {$ref: '#/components/schemas/RetrievalTextSpan'}
+        excerpt: {type: string, minLength: 1, maxLength: 2048}
+        providerId: {type: string, minLength: 1, maxLength: 160}
+        providerVersion: {type: string}
+        warnings:
+          type: array
+          items: {type: string, enum: [EMBEDDED_INSTRUCTION_DETECTED, EXCERPT_TRUNCATED, INCOMPATIBLE_INDEX_GENERATION]}
+    RetrievalSegmentLocator:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        required: [kind, span]
+        properties:
+          kind: {type: string, const: TEXT_SPAN}
+          span: {$ref: '#/components/schemas/RetrievalTextSpan'}
+      - type: object
+        additionalProperties: false
+        required: [kind, pageNumber]
+        properties:
+          kind: {type: string, const: PAGE}
+          pageNumber: {type: integer, minimum: 1}
+    RetrievalTextSpan:
+      type: object
+      additionalProperties: false
+      required: [startUtf8Byte, endUtf8ByteExclusive]
+      properties:
+        startUtf8Byte: {type: integer, minimum: 0}
+        endUtf8ByteExclusive: {type: integer, minimum: 1}
+    RetrievalProviderStatus:
+      type: object
+      additionalProperties: false
+      required: [providerId, providerVersion, availability, retrievalMode, placement]
+      properties:
+        providerId: {type: string, minLength: 1, maxLength: 160}
+        providerVersion: {type: string}
+        availability: {type: string, enum: [QUALIFIED, NOT_CONFIGURED, UNAVAILABLE, INCOMPATIBLE]}
+        retrievalMode: {type: string, enum: [LEXICAL_ONLY, HYBRID]}
+        placement: {type: string, enum: [LOCAL, CLOUD]}
+        reasonCode: {type: [string, 'null']}
+        reason: {type: [string, 'null']}
+    ResourceIndexStateResponse:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, resourceId, state, supersededIndexCount]
+      properties:
+        workspaceId: {type: string, minLength: 1}
+        resourceId: {type: string, minLength: 1, maxLength: 160}
+        state: {type: string, enum: [READY, STALE, ABSENT, NOT_INDEXABLE]}
+        reason:
+          type: [string, 'null']
+          enum: [UNSUPPORTED_TYPE, OVER_SIZE_LIMIT, INVALID_UTF8, CONTROL_CHARACTERS, TERM_LIMIT_EXCEEDED, null]
+        currentRevisionId: {type: [string, 'null']}
+        contentDigest: {type: [string, 'null'], pattern: '^sha256:[0-9a-f]{64}$'}
+        indexedRevisionId: {type: [string, 'null']}
+        indexedAt: {type: [string, 'null']}
+        parserId: {type: [string, 'null']}
+        supersededIndexCount: {type: integer, minimum: 0}
+    LocalModelAvailability:
+      type: object
+      additionalProperties: false
+      required: [capabilityId, status, reasonCode, reason, inventoryOnly, surface, agentBindingPolicy, models]
+      properties:
+        capabilityId: {type: string, const: litecowork.local-models}
+        status: {type: string, enum: [NOT_CONFIGURED, UNAVAILABLE, AVAILABLE]}
+        reasonCode: {type: string, minLength: 1}
+        reason: {type: string}
+        inventoryOnly: {type: boolean, const: true}
+        surface: {type: string, const: AGENT_SCOPED}
+        agentBindingPolicy: {type: string, const: AGENT_MODULE_COMPATIBILITY_REQUIRED}
+        models:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [modelId, engineId, displayName, state]
+            properties:
+              modelId: {type: string, minLength: 1, maxLength: 160}
+              engineId: {type: string}
+              displayName: {type: string}
+              state: {type: string, enum: [INVENTORY_ONLY, AGENT_COMPATIBLE, AGENT_INCOMPATIBLE, UNAVAILABLE]}
+              contextWindowTokens: {type: integer, minimum: 1}
+              agentModuleId: {type: [string, 'null']}
+              reasonCode: {type: [string, 'null']}
     ResourceContentScan:
       type: [object, 'null']
       required: [candidates_scanned, text_resources_checked, skipped_unsupported_type, skipped_over_file_limit, skipped_revision_changed, byte_budget_exhausted, candidate_budget_exhausted, max_candidates, max_file_bytes, max_total_bytes]
@@ -7734,10 +8388,13 @@ components:
         interaction_mode: {type: string, enum: [FORM, EXTERNAL_URL]}
         prompt: {type: string}
         response_schema:
-          oneOf: [{$ref: '#/components/schemas/JsonSchema'}, {type: 'null'}]
+          description: >-
+            Always null in this projection. The pinned response schema is never returned
+            to the UI, matching the choice value rule.
+          type: 'null'
         choices:
           type: array
-          items: {$ref: '#/components/schemas/Choice'}
+          items: {$ref: '#/components/schemas/UserRequestDetailChoice'}
         status: {type: string, enum: [PENDING, ANSWERED, DISMISSED, EXPIRED, CANCELLED]}
         expires_at: {type: [string, 'null'], format: date-time}
         created_at: {type: string, format: date-time}
@@ -8116,10 +8773,14 @@ components:
         next_cursor: {type: [string, 'null']}
     SkillProposal:
       type: object
-      required: [skill_proposal_id, workspace_id, source_task_id, source_artifact_id, draft_resource_ref, draft_digest, redaction_status, status, created_at, updated_at, version]
+      required: [skill_proposal_id, workspace_id, source, source_task_id, source_artifact_id, draft_resource_ref, draft_digest, redaction_status, status, placeholders, declared_capabilities, created_at, updated_at, version]
       properties:
         skill_proposal_id: {type: string}
         workspace_id: {type: string}
+        source:
+          type: string
+          enum: [DEMONSTRATION, LEARNING_CANDIDATE, OWNER_AUTHORED]
+          description: Where the proposal came from. A demonstrated workflow and a learning candidate are both proposals, never approvals.
         source_task_id: {type: string}
         source_artifact_id: {type: string}
         draft_resource_ref: {$ref: '#/components/schemas/ResourceRef'}
@@ -8130,9 +8791,207 @@ components:
           oneOf: [{$ref: '#/components/schemas/PrincipalRef'}, {type: 'null'}]
         published_capability_ref:
           oneOf: [{$ref: '#/components/schemas/CapabilityRef'}, {type: 'null'}]
+        placeholders:
+          type: array
+          description: Typed placeholders that replaced task-specific values in the captured procedure.
+          items: {$ref: '#/components/schemas/SkillPlaceholder'}
+        declared_capabilities:
+          type: array
+          description: Capability names the procedure asks for. A request, never authority.
+          items: {type: string}
+        drift:
+          oneOf: [{$ref: '#/components/schemas/SkillDrift'}, {type: 'null'}]
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
         version: {type: integer, minimum: 1}
+    SkillPlaceholder:
+      type: object
+      required: [name, kind]
+      properties:
+        name: {type: string}
+        kind: {type: string, enum: [PATH, URL, IDENTIFIER, LITERAL]}
+        sample:
+          type: [string, 'null']
+          description: A non-secret example of the observed shape. Never the original secret.
+    SkillDrift:
+      type: object
+      required: [expected_manifest_digest, observed_manifest_digest, drifted_resources, detected_at]
+      properties:
+        expected_manifest_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        observed_manifest_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        drifted_resources:
+          type: array
+          description: URIs whose digest changed. Names only, never content.
+          items: {type: string}
+        detected_at: {type: string, format: date-time}
+    SkillCapabilityRef:
+      type: object
+      required: [capability_id, identity_kind, source, digest, component]
+      properties:
+        capability_id: {type: string}
+        identity_kind: {type: string}
+        source: {type: string}
+        package_version: {type: [string, 'null']}
+        digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        component: {type: string}
+    SkillRevision:
+      type: object
+      required: [revision, title, summary, manifest_digest, content_digest, content_ref, declared_capabilities, declared_requirements, created_at, created_by]
+      properties:
+        revision: {type: integer, minimum: 1}
+        title: {type: string, maxLength: 200}
+        summary: {type: string, maxLength: 2000}
+        manifest_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        content_ref:
+          type: string
+          description: Resource reference holding the instruction content. Never inline text.
+        declared_capabilities:
+          type: array
+          items: {type: string}
+        declared_requirements:
+          type: array
+          items: {type: string}
+        created_at: {type: string, format: date-time}
+        created_by: {type: string}
+    Skill:
+      type: object
+      required: [skill_id, workspace_id, kind, status, capability_ref, current_revision, created_at, updated_at, version]
+      properties:
+        skill_id: {type: string}
+        workspace_id: {type: string}
+        kind: {type: string, enum: [LOCAL_PROCEDURE, MCP_SKILL, PACKAGE_COMPONENT]}
+        status:
+          type: string
+          enum: [DRAFT, ACTIVE, SUSPENDED, REVOKED]
+          description: ACTIVE means the definition may be loaded, never that it is authorized. Loading still requires a scoped CapabilityGrant bound to the exact capability reference and manifest digest.
+        capability_ref: {$ref: '#/components/schemas/SkillCapabilityRef'}
+        current_revision: {type: integer, minimum: 1}
+        revision:
+          oneOf: [{$ref: '#/components/schemas/SkillRevision'}, {type: 'null'}]
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        version: {type: integer, minimum: 1}
+    SkillPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Skill'}
+        next_cursor: {type: [string, 'null']}
+    WriteSkillRequest:
+      type: object
+      additionalProperties: false
+      required: [kind, capability_ref, revision]
+      properties:
+        skill_id:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 256
+          description: Optional stable identity. The host derives one when it is absent.
+        kind: {type: string, enum: [LOCAL_PROCEDURE, MCP_SKILL, PACKAGE_COMPONENT]}
+        capability_ref: {$ref: '#/components/schemas/SkillCapabilityRef'}
+        revision: {$ref: '#/components/schemas/SkillRevisionInput'}
+    SkillRevisionInput:
+      type: object
+      additionalProperties: false
+      required: [title, summary, manifest_digest, content_digest, content_ref, declared_capabilities, declared_requirements]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 200}
+        summary: {type: string, maxLength: 2000}
+        manifest_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        content_ref: {type: string, minLength: 1, maxLength: 256}
+        declared_capabilities:
+          type: array
+          maxItems: 64
+          items: {type: string}
+        declared_requirements:
+          type: array
+          maxItems: 64
+          items: {type: string}
+    McpAppCsp:
+      type: object
+      additionalProperties: false
+      required: [connect_domains, resource_domains]
+      properties:
+        connect_domains:
+          type: array
+          maxItems: 32
+          description: The exact origins the App declared. An absent or invalid declaration blocks every external connection.
+          items: {type: string, maxLength: 255}
+        resource_domains:
+          type: array
+          maxItems: 32
+          items: {type: string, maxLength: 255}
+    CreateMcpAppFrameRequest:
+      type: object
+      additionalProperties: false
+      required: [host_instance_id, csp, ttl_seconds]
+      properties:
+        host_instance_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: The Runtime-observed MCP capability host that publishes the App. The server identity, resource URI, and content digest are resolved from this observation, never from the request body.
+        csp: {$ref: '#/components/schemas/McpAppCsp'}
+        task_id: {type: [string, 'null'], minLength: 1, maxLength: 256}
+        ttl_seconds: {type: integer, minimum: 1, maximum: 3600}
+    McpAppFrame:
+      type: object
+      required: [frame_id, workspace_id, origin, sandbox, csp, connect_domains, resource_domains, bridge_methods, server_identity, resource_uri, content_digest, expires_at, nonce]
+      properties:
+        frame_id: {type: string}
+        workspace_id: {type: string}
+        origin:
+          type: string
+          description: The host-assigned exact origin the frame is served from. A client never declares it.
+        sandbox:
+          type: array
+          description: The iframe sandbox attribute. Never contains allow-same-origin, forms, popups, downloads, or top navigation.
+          items: {type: string}
+        csp:
+          type: string
+          description: The computed Content-Security-Policy value. It applies default-src 'none' with only the exact declared domains.
+        connect_domains:
+          type: array
+          items: {type: string}
+        resource_domains:
+          type: array
+          items: {type: string}
+        bridge_methods:
+          type: array
+          description: The only bridge methods the App may call.
+          items: {type: string}
+        server_identity: {type: string}
+        resource_uri: {type: string}
+        content_digest: {type: string, pattern: '^sha256:[a-f0-9]{64}$'}
+        package_version: {type: [string, 'null']}
+        task_id: {type: [string, 'null']}
+        expires_at: {type: string, format: date-time}
+        nonce:
+          type: string
+          description: The host-issued per-frame nonce the desktop injects into the isolated frame. It is bound to exactly one frame instance.
+    McpAppBridgeMessage:
+      type: object
+      additionalProperties: false
+      required: [frame_id, origin, nonce, method, payload]
+      properties:
+        frame_id: {type: string, minLength: 1, maxLength: 256}
+        origin: {type: string, minLength: 1, maxLength: 2048}
+        nonce: {type: string, minLength: 1, maxLength: 256}
+        method:
+          type: string
+          enum: [tool.invoke, resource.read, navigation.request, app.ready]
+        payload: {type: object, additionalProperties: true}
+    McpAppBridgeRequest:
+      type: object
+      required: [frame_id, method, payload]
+      properties:
+        frame_id: {type: string}
+        method: {type: string}
+        payload: {type: object, additionalProperties: true}
     SkillProposalPage:
       type: object
       required: [items]
@@ -8862,6 +9721,36 @@ components:
         max_trace_bytes: {type: integer, minimum: 1, maximum: 5242880}
         allowed_environment_class: {type: string, enum: [BROWSER, DESKTOP]}
         sensitive_region_policy: {type: string, enum: [PAUSE_ON_DETECTION, OMIT_SENSITIVE_FIELDS]}
+    AppendDemonstrationActionRequest:
+      type: object
+      additionalProperties: false
+      required: [environment_id, sequence, kind, target, sensitive]
+      properties:
+        environment_id:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: The capture Environment the observation came from. It must be the session's own Environment.
+        sequence: {type: integer, minimum: 1}
+        kind:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: The semantic kind of the observed step.
+        target:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: The semantic target of the observed step.
+        value:
+          type: [string, 'null']
+          description: The observed value, when the action produced one. It is dropped when the observation lands in a sensitive region.
+        sensitive:
+          type: boolean
+          description: True when the observation landed in a sensitive region.
+        coordinate_hint:
+          type: [string, 'null']
+          description: Optional pointer hint. Never the sole authority for the step.
     DemonstrationSession:
       type: object
       additionalProperties: false

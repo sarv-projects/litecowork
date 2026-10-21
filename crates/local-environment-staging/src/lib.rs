@@ -8,6 +8,17 @@
 //! staging applies a protected current-user/SYSTEM DACL but remains unqualified as an
 //! isolation provider. Other non-Unix targets fail closed.
 
+mod isolation_digest;
+mod output_budget;
+
+pub use isolation_digest::{
+    digest_of_canonical_json, digest_of_labels, digest_pinned_inputs, digest_root_set,
+};
+pub use output_budget::{
+    EnforcementStatus, FileRootMode, OutputQuota, OutputScanLimits, OutputUsage, RootModeSupport,
+    check_output_quota, measure_output_root, probe_root_mode_support,
+};
+
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -63,6 +74,21 @@ pub enum StagingError {
     DuplicatePin,
     DuplicatePath,
     InputLimitExceeded,
+    /// The staged output root contains a symlink. It is never followed and never
+    /// silently skipped, because either choice would misreport escaped bytes.
+    OutputRootSymlink(String),
+    /// The staged output root contains an entry that is neither a regular file nor a
+    /// directory.
+    OutputRootUnsupportedFile(String),
+    /// The usage observation exceeded its entry bound.
+    OutputScanLimitExceeded,
+    /// The observed output usage exceeded the requested quota.
+    OutputQuotaExceeded {
+        limit_bytes: u64,
+        observed_bytes: u64,
+        limit_files: usize,
+        observed_files: usize,
+    },
     Io(String),
 }
 
@@ -236,12 +262,48 @@ pub struct PreparedEnvironment {
     pub status: PreparationStatus,
     pub input_file_count: usize,
     pub input_bytes: u64,
+    /// Canonical digest of the exact pinned input set that was materialized.
+    pub input_set_digest: String,
+    /// Canonical digest of the readable root set, expressed as logical root names.
+    pub readable_root_set_digest: String,
+    /// Canonical digest of the writable root set, expressed as logical root names.
+    pub writable_root_set_digest: String,
 }
 
 impl PreparedEnvironment {
     /// Removes only this allocated staging root. It does not stop or fence processes.
     pub fn cleanup(self) -> Result<(), StagingError> {
         remove_private_tree(&self.root)
+    }
+
+    /// Observe the current size of the staged writable-output root.
+    ///
+    /// This is an observation, not enforcement: a same-user hostile process can write
+    /// between two observations. Aggregate output limits are enforced only by a
+    /// qualified provider, which reports its own
+    /// [`EnforcementStatus::Enforced`] result separately.
+    pub fn output_usage(&self, limits: OutputScanLimits) -> Result<OutputUsage, StagingError> {
+        measure_output_root(&self.output_root, limits)
+    }
+
+    /// Observe the output root and fail closed when it exceeds the requested quota.
+    pub fn assert_output_quota(
+        &self,
+        quota: &OutputQuota,
+        limits: OutputScanLimits,
+    ) -> Result<OutputUsage, StagingError> {
+        let usage = self.output_usage(limits)?;
+        check_output_quota(quota, usage)
+    }
+
+    /// Logical readable root names. Absolute host paths are never returned.
+    pub fn readable_root_names(&self) -> [&'static str; 1] {
+        ["inputs"]
+    }
+
+    /// Logical writable root names. Absolute host paths are never returned.
+    pub fn writable_root_names(&self) -> [&'static str; 1] {
+        ["outputs"]
     }
 }
 
@@ -368,6 +430,9 @@ pub fn stage_inputs(
         status: PreparationStatus::PreparedOnly,
         input_file_count: inputs.len(),
         input_bytes: total_bytes,
+        input_set_digest: digest_pinned_inputs(inputs),
+        readable_root_set_digest: digest_root_set(&["inputs"]),
+        writable_root_set_digest: digest_root_set(&["outputs"]),
     })
 }
 
@@ -1315,5 +1380,233 @@ mod tests {
             StagingError::UnsupportedPlatform
         );
         assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn output_usage_measures_bytes_and_files_in_the_output_root() {
+        let temp = tempdir().unwrap();
+        let prepared = stage_inputs(
+            temp.path(),
+            "workspace-1",
+            &[input("docs/README.md", b"hello")],
+            limits(),
+        )
+        .unwrap();
+        fs::write(prepared.output_root.join("result.txt"), b"0123456789").unwrap();
+        fs::create_dir(prepared.output_root.join("nested")).unwrap();
+        fs::write(prepared.output_root.join("nested/inner.bin"), b"abc").unwrap();
+
+        let usage = prepared
+            .output_usage(OutputScanLimits::new(64))
+            .expect("output usage");
+        assert_eq!(usage.total_bytes, 13);
+        assert_eq!(usage.file_count, 2);
+        prepared.cleanup().unwrap();
+    }
+
+    #[test]
+    fn output_usage_refuses_to_follow_a_symlink_into_the_output_root() {
+        let temp = tempdir().unwrap();
+        let prepared = stage_inputs(
+            temp.path(),
+            "workspace-1",
+            &[input("docs/README.md", b"hello")],
+            limits(),
+        )
+        .unwrap();
+        let outside = temp.path().join("outside.bin");
+        fs::write(&outside, b"secret").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, prepared.output_root.join("escape.bin")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&outside, prepared.output_root.join("escape.bin"))
+            .unwrap();
+
+        let error = prepared
+            .output_usage(OutputScanLimits::new(64))
+            .expect_err("symlinked output entry must not be measured");
+        assert!(matches!(error, StagingError::OutputRootSymlink(_)));
+        prepared.cleanup().unwrap();
+    }
+
+    #[test]
+    fn output_usage_is_bounded_by_the_scan_limit() {
+        let temp = tempdir().unwrap();
+        let prepared = stage_inputs(
+            temp.path(),
+            "workspace-1",
+            &[input("docs/README.md", b"hello")],
+            limits(),
+        )
+        .unwrap();
+        for index in 0..5 {
+            fs::write(
+                prepared.output_root.join(format!("file-{index}.bin")),
+                b"x",
+            )
+            .unwrap();
+        }
+
+        assert_eq!(
+            prepared
+                .output_usage(OutputScanLimits::new(3))
+                .unwrap_err(),
+            StagingError::OutputScanLimitExceeded
+        );
+        prepared.cleanup().unwrap();
+    }
+
+    #[test]
+    fn output_quota_rejects_an_oversized_output_root() {
+        let temp = tempdir().unwrap();
+        let prepared = stage_inputs(
+            temp.path(),
+            "workspace-1",
+            &[input("docs/README.md", b"hello")],
+            limits(),
+        )
+        .unwrap();
+        fs::write(prepared.output_root.join("result.bin"), vec![0_u8; 64]).unwrap();
+
+        let quota = OutputQuota {
+            max_total_bytes: 32,
+            max_file_count: 8,
+        };
+        let error = prepared
+            .assert_output_quota(&quota, OutputScanLimits::new(64))
+            .expect_err("oversized output root must fail closed");
+        assert!(matches!(
+            error,
+            StagingError::OutputQuotaExceeded {
+                limit_bytes: 32,
+                observed_bytes: 64,
+                ..
+            }
+        ));
+
+        let generous = OutputQuota {
+            max_total_bytes: 4096,
+            max_file_count: 8,
+        };
+        let usage = prepared
+            .assert_output_quota(&generous, OutputScanLimits::new(64))
+            .expect("within quota");
+        assert_eq!(usage.total_bytes, 64);
+        prepared.cleanup().unwrap();
+    }
+
+    #[test]
+    fn file_count_quota_rejects_too_many_output_entries() {
+        let temp = tempdir().unwrap();
+        let prepared = stage_inputs(
+            temp.path(),
+            "workspace-1",
+            &[input("docs/README.md", b"hello")],
+            limits(),
+        )
+        .unwrap();
+        fs::write(prepared.output_root.join("a.bin"), b"x").unwrap();
+        fs::write(prepared.output_root.join("b.bin"), b"x").unwrap();
+
+        let quota = OutputQuota {
+            max_total_bytes: 4096,
+            max_file_count: 1,
+        };
+        assert!(matches!(
+            prepared
+                .assert_output_quota(&quota, OutputScanLimits::new(64))
+                .unwrap_err(),
+            StagingError::OutputQuotaExceeded { limit_files: 1, .. }
+        ));
+        prepared.cleanup().unwrap();
+    }
+
+    #[test]
+    fn read_write_no_delete_mode_is_reported_as_not_enforced() {
+        // Deletion permission is a property of the parent directory on both POSIX and
+        // Windows, so a root that permits creation also permits removal. LiteCowork
+        // must report the gap instead of silently downgrading the mode.
+        assert_eq!(
+            probe_root_mode_support(FileRootMode::ReadWriteNoDelete),
+            RootModeSupport::NotEnforced
+        );
+        assert_eq!(
+            probe_root_mode_support(FileRootMode::ReadOnly),
+            RootModeSupport::Enforced
+        );
+        assert_eq!(
+            probe_root_mode_support(FileRootMode::ReadWrite),
+            RootModeSupport::Enforced
+        );
+    }
+
+    #[test]
+    fn pinned_input_set_digest_changes_with_the_pin_set() {
+        let first = input("docs/a.md", b"one");
+        let mut second = input("docs/b.md", b"two");
+        second.resource_id = "resource-2".to_owned();
+
+        let baseline = digest_pinned_inputs(&[first.clone()]);
+        assert_ne!(baseline, digest_pinned_inputs(&[first.clone(), second.clone()]));
+
+        let mut changed_revision = first.clone();
+        changed_revision.revision_id = "revision-4".to_owned();
+        assert_ne!(baseline, digest_pinned_inputs(&[changed_revision]));
+    }
+
+    #[test]
+    fn root_set_digest_is_order_independent_and_excludes_absolute_paths() {
+        assert_eq!(
+            digest_root_set(&["outputs", "inputs"]),
+            digest_root_set(&["inputs", "outputs"])
+        );
+        assert_ne!(digest_root_set(&["inputs"]), digest_root_set(&["inputs", "outputs"]));
+        // Absolute host paths must never enter an attestation digest.
+        assert_eq!(
+            digest_root_set(&["/workspace/inputs"]),
+            digest_root_set(&["workspace/inputs"])
+        );
+    }
+
+    #[test]
+    fn canonical_json_digest_ignores_object_key_order() {
+        let left = serde_json::json!({"b": 2, "a": 1});
+        let right = serde_json::json!({"a": 1, "b": 2});
+        assert_eq!(
+            digest_of_canonical_json(&left),
+            digest_of_canonical_json(&right)
+        );
+        assert_ne!(
+            digest_of_canonical_json(&left),
+            digest_of_canonical_json(&serde_json::json!({"a": 1, "b": 3}))
+        );
+    }
+
+    #[test]
+    fn prepared_environment_publishes_digests_without_host_paths() {
+        let temp = tempdir().unwrap();
+        let prepared = stage_inputs(
+            temp.path(),
+            "workspace-1",
+            &[input("docs/README.md", b"hello")],
+            limits(),
+        )
+        .unwrap();
+
+        assert!(prepared.input_set_digest.starts_with("sha256:"));
+        assert!(prepared.readable_root_set_digest.starts_with("sha256:"));
+        assert!(prepared.writable_root_set_digest.starts_with("sha256:"));
+        assert_ne!(
+            prepared.readable_root_set_digest,
+            prepared.writable_root_set_digest
+        );
+        let rendered = format!(
+            "{}|{}|{}",
+            prepared.input_set_digest,
+            prepared.readable_root_set_digest,
+            prepared.writable_root_set_digest
+        );
+        assert!(!rendered.contains(temp.path().to_string_lossy().as_ref()));
+        prepared.cleanup().unwrap();
     }
 }

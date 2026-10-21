@@ -123,7 +123,87 @@ export function parsePresentationItem(value: unknown): PresentationItem | null {
   return item as unknown as PresentationItem;
 }
 
+/** Strict ordering for callers that must reject invalid projections outright. The renderer
+ * does not use this: silently dropping a saved item loses transcript content, so
+ * `projectPresentationEntries` keeps a visible placeholder instead. */
 export function orderPresentationItems(items: readonly unknown[]): PresentationItem[] {
   return items.map(parsePresentationItem).filter((item): item is PresentationItem => item !== null)
     .sort((a, b) => a.order_key.localeCompare(b.order_key) || a.item_key.localeCompare(b.item_key));
+}
+
+/** A saved projection value that failed validation. Only bounded, individually revalidated
+ * identity metadata is retained; its payload is never interpreted or displayed. */
+export type RejectedPresentationItem = {
+  readonly reportedKind: string | null;
+  readonly reportedVersion: number | null;
+  readonly sourceRefs: PresentationSourceRef[];
+};
+
+/** Renderer input: a validated item, or a visible placeholder for one that could not be
+ * validated. No saved item silently disappears from the transcript (UIV1-054). */
+export type PresentationEntry =
+  | { readonly entry: "ITEM"; readonly key: string; readonly orderKey: string; readonly item: PresentationItem }
+  | { readonly entry: "REJECTED"; readonly key: string; readonly orderKey: string; readonly rejected: RejectedPresentationItem };
+
+export type PresentationProjection = {
+  readonly entries: readonly PresentationEntry[];
+  readonly rejectedCount: number;
+  readonly omittedCount: number;
+};
+
+/** More than this is a faulty projection, not a richer response. */
+export const MAX_DISPLAYED_PRESENTATION_ITEMS = 300;
+const DISPLAY_KIND = /^[A-Za-z0-9][A-Za-z0-9_.:@ /-]*$/;
+
+function displayKind(value: unknown): string | null {
+  if (!boundedText(value, 128)) return null;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > 0 && DISPLAY_KIND.test(normalized) ? normalized : null;
+}
+
+function displayVersion(value: unknown): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 1_000_000 ? value as number : null;
+}
+
+function salvagedSourceRefs(value: unknown): PresentationSourceRef[] {
+  const refs = object(value)?.source_refs;
+  return Array.isArray(refs) ? refs.slice(0, 64).filter(sourceRef) : [];
+}
+
+/**
+ * Project untrusted projection values for rendering. Valid values keep their typed payload;
+ * every invalid value becomes a bounded placeholder that states it could not be displayed,
+ * so the surface is honest about partial or unsupported content instead of hiding it.
+ */
+export function projectPresentationEntries(
+  items: readonly unknown[],
+  limit = MAX_DISPLAYED_PRESENTATION_ITEMS,
+): PresentationProjection {
+  const maximum = Number.isSafeInteger(limit)
+    ? Math.min(Math.max(1, limit), MAX_DISPLAYED_PRESENTATION_ITEMS)
+    : MAX_DISPLAYED_PRESENTATION_ITEMS;
+  const shown = items.slice(0, maximum);
+  let rejectedCount = 0;
+  const entries = shown.map((value, index): PresentationEntry => {
+    const parsed = parsePresentationItem(value);
+    if (parsed) {
+      return { entry: "ITEM", key: `item:${parsed.item_key}`, orderKey: parsed.order_key, item: parsed };
+    }
+    rejectedCount += 1;
+    const record = object(value);
+    const orderKey = record && boundedText(record.order_key, 256) ? record.order_key : "";
+    const key = `rejected:${index}`;
+    return {
+      entry: "REJECTED",
+      key,
+      orderKey,
+      rejected: {
+        reportedKind: record ? displayKind(record.kind) : null,
+        reportedVersion: record ? displayVersion(record.payload_version) : null,
+        sourceRefs: salvagedSourceRefs(value),
+      },
+    };
+  });
+  entries.sort((a, b) => a.orderKey.localeCompare(b.orderKey) || a.key.localeCompare(b.key));
+  return { entries, rejectedCount, omittedCount: Math.max(0, items.length - shown.length) };
 }

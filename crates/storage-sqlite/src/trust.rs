@@ -161,7 +161,6 @@ fn secret_store_error() -> StoreError {
     StoreError::Blob("OS SecretStore is unavailable or rejected the write".to_owned())
 }
 
-pub(super) type WriterOperation = Box<dyn FnOnce(&mut Connection) + Send>;
 
 #[derive(Clone)]
 pub struct SqliteApprovalStore {
@@ -180,7 +179,7 @@ impl SqliteApprovalStore {
     {
         let (reply, receive) = mpsc::channel();
         self.store.execute_command(
-            Command::TrustOperation {
+            Command::Operation {
                 operation: Box::new(move |connection| {
                     let _ = reply.send(operation(connection));
                 }),

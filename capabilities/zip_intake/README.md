@@ -30,12 +30,29 @@ records, counts, lengths, local offsets, and compressed ranges fail closed befor
 are opened; rejected names never expose truncated or substituted display paths.
 
 The caller must resolve and authorize the exact pinned Resource revision before handing
-bytes to this capability. The provider does not accept a filesystem destination and never
-extracts to disk. Paths are virtual provenance labels; they cannot grant filesystem access.
-Core owns Resource registration, immutable blob publication, provenance edges, grants,
-Invocation/Effect recording, retention, deletion, and UI projections. Payloads must be
-published only through those Core contracts, after scope/revocation checks. A successful
-extraction is not an Evidence or verification receipt.
+bytes to this capability. The in-memory provider port does not accept a filesystem
+destination. A separate `BoundedZipExtractor` in `extraction.py` can plan and materialize
+entries under an explicit provider-owned staging root; it still creates no Resources,
+provenance edges, Effects, receipts, or events. Paths are virtual provenance labels; they
+cannot grant filesystem access. Core owns Resource registration, immutable blob
+publication, provenance edges, grants, Invocation/Effect recording, retention, deletion,
+and UI projections. Payloads must be published only through those Core contracts, after
+scope/revocation checks. A successful extraction is not an Evidence or verification
+receipt.
+
+`BoundedZipExtractor.plan(SourceRevision, bytes)` returns a closed `ExtractionPlan` without
+expanding payloads. Entries remain in archive order; `order` lists admitted entry indexes
+sorted by UTF-8 path bytes, and each entry carries its stable identity (archive index plus
+raw-name SHA-256), declared bytes, measured compressed bytes, a bounded media-type hint,
+and a typed refusal code for every rejected path. `materialize(plan, bytes, staging_root)`
+rebuilds and compares the plan before any write, streams admitted entries in 64 KiB chunks
+under the per-entry, compression-ratio, and total expanded-byte budgets, and returns
+observed bytes, content SHA-256, and a content-checked media type (or `None`) in the
+required order. It refuses an unsafe or missing staging root, existing destination paths,
+symlink components, and any path outside that root; partial files are removed. It requires
+an existing non-symlink directory and anchored directory-relative OS support; otherwise it
+fails closed. Staging files are provider-owned private material until Core publishes them;
+they are not Resources, index entries, Task context, or Artifacts.
 
 ## Guards
 
@@ -74,8 +91,8 @@ namespace, or parser execution fail.
 
 Both worker calls accept an optional thread-safe cancellation event. The parent checks it
 while pumping the bounded pipes, kills the worker process group, and raises
-`WorkerCancelled`; cancellation does not create partial extraction state because the
-capability writes no files or database rows. The Runtime route and Library do not yet pass
+`WorkerCancelled`; cancellation does not create partial extraction state because the worker
+invocation writes no files or database rows. The Runtime route and Library do not yet pass
 such a token, so the product exposes no cancel control for ZIP processing.
 
 This boundary has only been exercised on the current Ubuntu development host (Bubblewrap

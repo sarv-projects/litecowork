@@ -285,6 +285,189 @@ pub fn aggregate_b83_benchmark(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DelegationBenefitObjective {
+    Cost,
+    Latency,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelegationBenefitPolicy {
+    /// Released policy identity that owns these thresholds. The function never invents
+    /// or tunes a threshold from an individual report.
+    pub policy_version: String,
+    pub objective: DelegationBenefitObjective,
+    pub minimum_improvement_basis_points: u16,
+    pub minimum_paired_samples: u64,
+    pub minimum_verification_coverage_basis_points: u16,
+    pub minimum_verified_success_rate_basis_points: u16,
+    pub require_exact_cost_confidence: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DelegationBenefitBlocker {
+    InvalidPolicy,
+    NoBaseline,
+    InsufficientSamples,
+    InsufficientVerificationCoverage,
+    QualityFloorUnmet,
+    UnqualifiedCostObservation,
+    BelowThreshold,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DelegationBenefitDecision {
+    StayWithCurrentOption(DelegationBenefitBlocker),
+    Delegate {
+        arm: B83BenchmarkArm,
+        objective: DelegationBenefitObjective,
+        measured_improvement_basis_points: u16,
+        paired_sample_count: u64,
+        policy_version: String,
+    },
+}
+
+/// Apply released B83 thresholds to one aggregated report. The decision is policy
+/// evaluation only: it cannot select a profile, override an explicit `REQUIRE`, or
+/// create an Attempt. Missing/incomparable observations, low coverage, a quality
+/// regression, or a benefit below the released threshold keep the current lead.
+pub fn decide_delegation_benefit(
+    report: &B83BenchmarkReport,
+    arm: B83BenchmarkArm,
+    policy: &DelegationBenefitPolicy,
+) -> DelegationBenefitDecision {
+    if policy.policy_version.trim().is_empty()
+        || policy.policy_version.len() > 128
+        || policy.policy_version.chars().any(char::is_control)
+        || arm == B83BenchmarkArm::LeadOnly
+        || policy.minimum_improvement_basis_points > 10_000
+        || policy.minimum_verification_coverage_basis_points > 10_000
+        || policy.minimum_verified_success_rate_basis_points > 10_000
+    {
+        return DelegationBenefitDecision::StayWithCurrentOption(
+            DelegationBenefitBlocker::InvalidPolicy,
+        );
+    }
+    let Some(comparison) = report
+        .comparisons_to_lead_only
+        .iter()
+        .find(|comparison| comparison.arm == arm)
+    else {
+        return DelegationBenefitDecision::StayWithCurrentOption(
+            DelegationBenefitBlocker::NoBaseline,
+        );
+    };
+    if comparison.paired_sample_count == 0
+        || comparison.paired_sample_count < policy.minimum_paired_samples
+    {
+        return DelegationBenefitDecision::StayWithCurrentOption(
+            DelegationBenefitBlocker::InsufficientSamples,
+        );
+    }
+    if comparison.candidate_verification_coverage_basis_points
+        < policy.minimum_verification_coverage_basis_points
+        || comparison.lead_only_verification_coverage_basis_points
+            < policy.minimum_verification_coverage_basis_points
+    {
+        return DelegationBenefitDecision::StayWithCurrentOption(
+            DelegationBenefitBlocker::InsufficientVerificationCoverage,
+        );
+    }
+    let (Some(candidate_rate), Some(lead_rate)) = (
+        comparison.candidate_verified_success_rate_basis_points,
+        comparison.lead_only_verified_success_rate_basis_points,
+    ) else {
+        return DelegationBenefitDecision::StayWithCurrentOption(
+            DelegationBenefitBlocker::QualityFloorUnmet,
+        );
+    };
+    if candidate_rate < policy.minimum_verified_success_rate_basis_points
+        || candidate_rate < lead_rate
+    {
+        return DelegationBenefitDecision::StayWithCurrentOption(
+            DelegationBenefitBlocker::QualityFloorUnmet,
+        );
+    }
+
+    let improvement = match policy.objective {
+        DelegationBenefitObjective::Cost => {
+            let Some(delta) = comparison.median_cost_delta_minor_units else {
+                return DelegationBenefitDecision::StayWithCurrentOption(
+                    DelegationBenefitBlocker::NoBaseline,
+                );
+            };
+            let Some(currency) = comparison.cost_currency.as_deref() else {
+                return DelegationBenefitDecision::StayWithCurrentOption(
+                    DelegationBenefitBlocker::NoBaseline,
+                );
+            };
+            if policy.require_exact_cost_confidence
+                && comparison.cost_delta_confidence != Some(B83ObservationConfidence::Exact)
+            {
+                return DelegationBenefitDecision::StayWithCurrentOption(
+                    DelegationBenefitBlocker::UnqualifiedCostObservation,
+                );
+            }
+            let lead = report
+                .arms
+                .iter()
+                .find(|summary| summary.arm == B83BenchmarkArm::LeadOnly)
+                .and_then(|summary| summary.median_cost.as_ref())
+                .filter(|cost| cost.currency == currency && cost.minor_units > 0);
+            let Some(lead) = lead else {
+                return DelegationBenefitDecision::StayWithCurrentOption(
+                    DelegationBenefitBlocker::NoBaseline,
+                );
+            };
+            improvement_basis_points(delta, lead.minor_units)
+        }
+        DelegationBenefitObjective::Latency => {
+            let lead = report
+                .arms
+                .iter()
+                .find(|summary| summary.arm == B83BenchmarkArm::LeadOnly)
+                .map(|summary| summary.median_end_to_end_latency_ms)
+                .filter(|latency| *latency > 0);
+            let Some(lead) = lead else {
+                return DelegationBenefitDecision::StayWithCurrentOption(
+                    DelegationBenefitBlocker::NoBaseline,
+                );
+            };
+            improvement_basis_points(
+                i128::from(comparison.median_end_to_end_latency_delta_ms),
+                lead,
+            )
+        }
+    };
+    let Some(improvement) = improvement else {
+        return DelegationBenefitDecision::StayWithCurrentOption(
+            DelegationBenefitBlocker::BelowThreshold,
+        );
+    };
+    if improvement < policy.minimum_improvement_basis_points {
+        return DelegationBenefitDecision::StayWithCurrentOption(
+            DelegationBenefitBlocker::BelowThreshold,
+        );
+    }
+    DelegationBenefitDecision::Delegate {
+        arm,
+        objective: policy.objective,
+        measured_improvement_basis_points: improvement,
+        paired_sample_count: comparison.paired_sample_count,
+        policy_version: policy.policy_version.clone(),
+    }
+}
+
+fn improvement_basis_points(delta: i128, baseline: u64) -> Option<u16> {
+    if delta >= 0 || baseline == 0 {
+        return None;
+    }
+    let improvement = u128::from(delta.unsigned_abs()) * 10_000 / u128::from(baseline);
+    u16::try_from(improvement).ok()
+}
+
 fn validate_sample(sample: &B83RunSample) -> Result<(), B83BenchmarkError> {
     let valid_text = |value: &str, max: usize| {
         !value.trim().is_empty() && value.len() <= max && !value.chars().any(char::is_control)
@@ -931,5 +1114,267 @@ mod tests {
         let encoded = serde_json::to_vec(&report).unwrap();
         let decoded: B83BenchmarkReport = serde_json::from_slice(&encoded).unwrap();
         assert_eq!(decoded, report);
+    }
+
+    fn arm_summary(
+        arm: B83BenchmarkArm,
+        latency_ms: u64,
+        cost_minor_units: Option<u64>,
+    ) -> B83ArmSummary {
+        B83ArmSummary {
+            arm,
+            sample_count: 10,
+            completed_count: 10,
+            failed_count: 0,
+            blocked_count: 0,
+            cancelled_count: 0,
+            median_end_to_end_latency_ms: latency_ms,
+            first_useful_observation_count: 10,
+            median_time_to_first_useful_ms: Some(latency_ms / 2),
+            handoff_observation_count: 10,
+            median_handoff_start_overhead_ms: Some(10),
+            verified_sample_count: 10,
+            verification_coverage_basis_points: 10_000,
+            verified_success_rate_basis_points: Some(9_500),
+            retry_observation_count: 10,
+            median_retry_count: Some(0),
+            recovery_observation_count: 10,
+            median_recovery_duration_ms: Some(0),
+            human_rescue_observation_count: 10,
+            median_human_rescue_count: Some(0),
+            usage_observation_count: 10,
+            median_usage: None,
+            cost_observation_count: u64::from(cost_minor_units.is_some()),
+            median_cost: cost_minor_units.map(|minor_units| B83CostMedian {
+                minor_units,
+                currency: "USD".into(),
+                sources: vec![B83ObservationSource::ProviderReported],
+                confidence: B83ObservationConfidence::Exact,
+            }),
+        }
+    }
+
+    fn comparison(
+        latency_delta_ms: i64,
+        cost_delta_minor_units: Option<i128>,
+        candidate_rate: Option<u16>,
+        lead_rate: Option<u16>,
+    ) -> B83PairedComparison {
+        B83PairedComparison {
+            arm: B83BenchmarkArm::QualifiedLowerCostWorker,
+            paired_sample_count: 10,
+            median_end_to_end_latency_delta_ms: latency_delta_ms,
+            median_cost_delta_minor_units: cost_delta_minor_units,
+            cost_currency: cost_delta_minor_units.map(|_| "USD".into()),
+            cost_delta_confidence: cost_delta_minor_units.map(|_| B83ObservationConfidence::Exact),
+            candidate_verification_coverage_basis_points: 10_000,
+            lead_only_verification_coverage_basis_points: 10_000,
+            candidate_verified_success_rate_basis_points: candidate_rate,
+            lead_only_verified_success_rate_basis_points: lead_rate,
+        }
+    }
+
+    fn report_with(comparison: B83PairedComparison) -> B83BenchmarkReport {
+        B83BenchmarkReport {
+            task_case_count: 10,
+            sample_count: 20,
+            arms: vec![
+                arm_summary(B83BenchmarkArm::LeadOnly, 1_000, Some(1_000)),
+                arm_summary(B83BenchmarkArm::QualifiedLowerCostWorker, 1_200, Some(800)),
+            ],
+            comparisons_to_lead_only: vec![comparison],
+            automatic_selection_qualified: false,
+        }
+    }
+
+    fn policy(objective: DelegationBenefitObjective) -> DelegationBenefitPolicy {
+        DelegationBenefitPolicy {
+            policy_version: "delegation-benefit-v1".into(),
+            objective,
+            minimum_improvement_basis_points: 1_000,
+            minimum_paired_samples: 5,
+            minimum_verification_coverage_basis_points: 9_000,
+            minimum_verified_success_rate_basis_points: 9_000,
+            require_exact_cost_confidence: false,
+        }
+    }
+
+    #[test]
+    fn measured_cost_reduction_above_the_released_threshold_delegates() {
+        let decision = decide_delegation_benefit(
+            &report_with(comparison(-100, Some(-200), Some(9_500), Some(9_500))),
+            B83BenchmarkArm::QualifiedLowerCostWorker,
+            &policy(DelegationBenefitObjective::Cost),
+        );
+        assert_eq!(
+            decision,
+            DelegationBenefitDecision::Delegate {
+                arm: B83BenchmarkArm::QualifiedLowerCostWorker,
+                objective: DelegationBenefitObjective::Cost,
+                measured_improvement_basis_points: 2_000,
+                paired_sample_count: 10,
+                policy_version: "delegation-benefit-v1".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn measured_latency_reduction_is_scored_separately_from_cost() {
+        let decision = decide_delegation_benefit(
+            &report_with(comparison(-300, Some(500), Some(9_500), Some(9_500))),
+            B83BenchmarkArm::QualifiedLowerCostWorker,
+            &policy(DelegationBenefitObjective::Latency),
+        );
+        assert_eq!(
+            decision,
+            DelegationBenefitDecision::Delegate {
+                arm: B83BenchmarkArm::QualifiedLowerCostWorker,
+                objective: DelegationBenefitObjective::Latency,
+                measured_improvement_basis_points: 3_000,
+                paired_sample_count: 10,
+                policy_version: "delegation-benefit-v1".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn below_threshold_unknown_or_incomparable_cost_stays_with_the_lead() {
+        let below = decide_delegation_benefit(
+            &report_with(comparison(-10, Some(-50), Some(9_500), Some(9_500))),
+            B83BenchmarkArm::QualifiedLowerCostWorker,
+            &policy(DelegationBenefitObjective::Cost),
+        );
+        assert_eq!(
+            below,
+            DelegationBenefitDecision::StayWithCurrentOption(
+                DelegationBenefitBlocker::BelowThreshold
+            )
+        );
+        let unknown = decide_delegation_benefit(
+            &report_with(comparison(-100, None, Some(9_500), Some(9_500))),
+            B83BenchmarkArm::QualifiedLowerCostWorker,
+            &policy(DelegationBenefitObjective::Cost),
+        );
+        assert_eq!(
+            unknown,
+            DelegationBenefitDecision::StayWithCurrentOption(DelegationBenefitBlocker::NoBaseline)
+        );
+        let more_expensive = decide_delegation_benefit(
+            &report_with(comparison(-100, Some(200), Some(9_500), Some(9_500))),
+            B83BenchmarkArm::QualifiedLowerCostWorker,
+            &policy(DelegationBenefitObjective::Cost),
+        );
+        assert_eq!(
+            more_expensive,
+            DelegationBenefitDecision::StayWithCurrentOption(
+                DelegationBenefitBlocker::BelowThreshold
+            )
+        );
+    }
+
+    #[test]
+    fn insufficient_samples_coverage_or_quality_regression_blocks_benefit_selection() {
+        let mut low_samples = comparison(-500, Some(-500), Some(9_500), Some(9_500));
+        low_samples.paired_sample_count = 2;
+        assert_eq!(
+            decide_delegation_benefit(
+                &report_with(low_samples),
+                B83BenchmarkArm::QualifiedLowerCostWorker,
+                &policy(DelegationBenefitObjective::Cost),
+            ),
+            DelegationBenefitDecision::StayWithCurrentOption(
+                DelegationBenefitBlocker::InsufficientSamples
+            )
+        );
+
+        let mut low_coverage = comparison(-500, Some(-500), Some(9_500), Some(9_500));
+        low_coverage.candidate_verification_coverage_basis_points = 8_000;
+        assert_eq!(
+            decide_delegation_benefit(
+                &report_with(low_coverage),
+                B83BenchmarkArm::QualifiedLowerCostWorker,
+                &policy(DelegationBenefitObjective::Cost),
+            ),
+            DelegationBenefitDecision::StayWithCurrentOption(
+                DelegationBenefitBlocker::InsufficientVerificationCoverage
+            )
+        );
+
+        assert_eq!(
+            decide_delegation_benefit(
+                &report_with(comparison(-500, Some(-500), Some(8_000), Some(9_500))),
+                B83BenchmarkArm::QualifiedLowerCostWorker,
+                &policy(DelegationBenefitObjective::Cost),
+            ),
+            DelegationBenefitDecision::StayWithCurrentOption(
+                DelegationBenefitBlocker::QualityFloorUnmet
+            )
+        );
+        assert_eq!(
+            decide_delegation_benefit(
+                &report_with(comparison(-500, Some(-500), None, Some(9_500))),
+                B83BenchmarkArm::QualifiedLowerCostWorker,
+                &policy(DelegationBenefitObjective::Cost),
+            ),
+            DelegationBenefitDecision::StayWithCurrentOption(
+                DelegationBenefitBlocker::QualityFloorUnmet
+            )
+        );
+    }
+
+    #[test]
+    fn estimated_cost_cannot_satisfy_an_exact_confidence_policy() {
+        let mut estimated = comparison(-100, Some(-200), Some(9_500), Some(9_500));
+        estimated.cost_delta_confidence = Some(B83ObservationConfidence::Estimated);
+        let mut exact_policy = policy(DelegationBenefitObjective::Cost);
+        exact_policy.require_exact_cost_confidence = true;
+        assert_eq!(
+            decide_delegation_benefit(
+                &report_with(estimated),
+                B83BenchmarkArm::QualifiedLowerCostWorker,
+                &exact_policy,
+            ),
+            DelegationBenefitDecision::StayWithCurrentOption(
+                DelegationBenefitBlocker::UnqualifiedCostObservation
+            )
+        );
+    }
+
+    #[test]
+    fn invalid_policy_missing_baseline_and_lead_only_arm_never_delegate() {
+        let mut invalid = policy(DelegationBenefitObjective::Cost);
+        invalid.minimum_improvement_basis_points = 10_001;
+        assert_eq!(
+            decide_delegation_benefit(
+                &report_with(comparison(-500, Some(-500), Some(9_500), Some(9_500))),
+                B83BenchmarkArm::QualifiedLowerCostWorker,
+                &invalid,
+            ),
+            DelegationBenefitDecision::StayWithCurrentOption(
+                DelegationBenefitBlocker::InvalidPolicy
+            )
+        );
+
+        let mut missing = report_with(comparison(-500, Some(-500), Some(9_500), Some(9_500)));
+        missing.comparisons_to_lead_only.clear();
+        assert_eq!(
+            decide_delegation_benefit(
+                &missing,
+                B83BenchmarkArm::QualifiedLowerCostWorker,
+                &policy(DelegationBenefitObjective::Cost),
+            ),
+            DelegationBenefitDecision::StayWithCurrentOption(DelegationBenefitBlocker::NoBaseline)
+        );
+
+        assert_eq!(
+            decide_delegation_benefit(
+                &report_with(comparison(-500, Some(-500), Some(9_500), Some(9_500))),
+                B83BenchmarkArm::LeadOnly,
+                &policy(DelegationBenefitObjective::Cost),
+            ),
+            DelegationBenefitDecision::StayWithCurrentOption(
+                DelegationBenefitBlocker::InvalidPolicy
+            )
+        );
     }
 }

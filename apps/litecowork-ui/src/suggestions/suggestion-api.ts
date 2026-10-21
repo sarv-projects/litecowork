@@ -1,3 +1,5 @@
+import { decodeBase64 } from "../api/operator-bridge.ts";
+
 export type SuggestionStatus = "PROPOSED" | "ACCEPTED" | "DISMISSED" | "EXPIRED";
 export type SuggestionVisibility = "VISIBLE" | "SNOOZED" | "ALL";
 export type SuggestionKind = "TASK_OPPORTUNITY" | "ROUTINE_OPPORTUNITY" | "AUTOMATION_OPPORTUNITY";
@@ -121,7 +123,7 @@ function decodeActionResponse(value: unknown, workspaceId: string): Suggestion {
       || typeof response.bodyBase64 !== "string") throw new SuggestionApiError("Local Runtime returned an invalid Suggestion action response.");
   let body: unknown;
   try {
-    const bytes = Uint8Array.from(atob(response.bodyBase64), character => character.charCodeAt(0));
+    const bytes = decodeBase64(response.bodyBase64);
     body = JSON.parse(new TextDecoder().decode(bytes));
   } catch { throw new SuggestionApiError("Local Runtime returned an unreadable Suggestion action response."); }
   if (response.status < 200 || response.status >= 300) {
@@ -152,7 +154,7 @@ function decodePreferenceActionResponse(value: unknown, workspaceId: string): Su
       || typeof response.bodyBase64 !== "string") throw new SuggestionApiError("Local Runtime returned an invalid preference response.");
   let body: unknown;
   try {
-    const bytes = Uint8Array.from(atob(response.bodyBase64), character => character.charCodeAt(0));
+    const bytes = decodeBase64(response.bodyBase64);
     body = JSON.parse(new TextDecoder().decode(bytes));
   } catch { throw new SuggestionApiError("Local Runtime returned an unreadable preference response."); }
   if (response.status < 200 || response.status >= 300) {

@@ -1,32 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  isWorkspaceRootObservationPage,
+  mergeWorkspaceRootObservationPage,
+  normalizeObservationQuery,
+  OBSERVATION_PAGE_LIMIT,
+  type WorkspaceRootObservation,
+  type WorkspaceRootObservationRequest,
+} from "./workspace-root-observations";
 import "./workspace-root-observations.css";
 
-export type WorkspaceRootObservation = {
-  observation_id: string;
-  display_name: string;
-  size_bytes: number;
-  modified_at: string | null;
-  observed_at: string;
-  freshness: "CURRENT" | "STALE" | "UNKNOWN";
-  resource_id: string | null;
-};
-
-export type WorkspaceRootObservationPage = {
-  workspace_id: string;
-  workspace_root_id: string;
-  items: WorkspaceRootObservation[];
-  next_cursor: string | null;
-};
-
-export type WorkspaceRootObservationRequest = {
-  workspaceId: string;
-  workspaceRootId: string;
-  rootVersion: number;
-  query: string;
-  freshness: "CURRENT" | "STALE" | "UNKNOWN" | "";
-  cursor: string | null;
-  limit: number;
-};
+export type {
+  WorkspaceRootObservation,
+  WorkspaceRootObservationPage,
+  WorkspaceRootObservationRequest,
+} from "./workspace-root-observations";
+export { isWorkspaceRootObservationPage } from "./workspace-root-observations";
 
 type Root = {
   workspaceId: string;
@@ -35,29 +23,6 @@ type Root = {
   version: number;
   status: string;
 };
-
-export function isWorkspaceRootObservationPage(
-  value: unknown,
-  workspaceId: string,
-  workspaceRootId: string,
-): value is WorkspaceRootObservationPage {
-  if (!value || typeof value !== "object") return false;
-  const page = value as Partial<WorkspaceRootObservationPage>;
-  return page.workspace_id === workspaceId
-    && page.workspace_root_id === workspaceRootId
-    && Array.isArray(page.items)
-    && (page.next_cursor === null || typeof page.next_cursor === "string")
-    && page.items.every((item) => Boolean(item)
-      && typeof item.observation_id === "string"
-      && typeof item.display_name === "string"
-      && typeof item.size_bytes === "number"
-      && Number.isSafeInteger(item.size_bytes)
-      && item.size_bytes >= 0
-      && (item.modified_at === null || typeof item.modified_at === "string")
-      && typeof item.observed_at === "string"
-      && ["CURRENT", "STALE", "UNKNOWN"].includes(item.freshness)
-      && (item.resource_id === null || (typeof item.resource_id === "string" && item.resource_id.length > 0)));
-}
 
 export function WorkspaceRootObservations({
   root,
@@ -95,6 +60,12 @@ export function WorkspaceRootObservations({
 
   const requestPage = useCallback(async (cursor: string | null, append: boolean) => {
     if (inFlight.current || root.status !== "ACTIVE") return;
+    const query = normalizeObservationQuery(submittedQuery);
+    if (query === null) {
+      setError("Search text is not available as a file-name query. Shorten it and try again.");
+      setLoaded(true);
+      return;
+    }
     const requestEpoch = epoch.current;
     inFlight.current = true;
     setBusy(true);
@@ -104,16 +75,16 @@ export function WorkspaceRootObservations({
         workspaceId: root.workspaceId,
         workspaceRootId: root.workspaceRootId,
         rootVersion: root.version,
-        query: submittedQuery.trim(),
+        query,
         freshness: submittedFreshness,
         cursor,
-        limit: 50,
+        limit: OBSERVATION_PAGE_LIMIT,
       });
       if (requestEpoch !== epoch.current) return;
-      if (!isWorkspaceRootObservationPage(response, root.workspaceId, root.workspaceRootId)) {
+      if (!isWorkspaceRootObservationPage(response, root.workspaceId, root.workspaceRootId, cursor)) {
         throw new Error("The folder returned an unexpected observation list.");
       }
-      setItems((current) => append ? [...current, ...response.items] : response.items);
+      setItems((current) => mergeWorkspaceRootObservationPage(current, response, !append).items);
       setNextCursor(response.next_cursor);
       setLoaded(true);
     } catch (cause) {

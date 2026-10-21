@@ -5,7 +5,6 @@ import {
   type Automation,
   type AutomationRevision,
 } from "../src/automations/automation-api.ts";
-
 const automation: Automation = {
   automation_id: "automation-1",
   workspace_id: "workspace-1",
@@ -126,4 +125,151 @@ test("manual Run accepts the shared 200 byte idempotency-key boundary", async ()
     /request identity or version is invalid/,
   );
   assert.equal(requestIds.length, 2, "a 201 byte key must not reach the transport");
+});
+
+function healthProjection(overrides: Record<string, unknown> = {}) {
+  return {
+    automation_id: "automation-1",
+    current_revision: 2,
+    status: "ENABLED",
+    host_ready: true,
+    blockers: [],
+    next_occurrence_at: "2026-10-10T09:00:00Z",
+    last_occurrence_at: "2026-10-09T09:00:00Z",
+    nonterminal_occurrences: 1,
+    occurrence_counts: {
+      pending: 0, claimed: 0, waiting_dependency: 0, started: 1,
+      completed: 2, skipped: 1, failed: 0,
+    },
+    routine_health: {
+      routine_id: "routine-1",
+      current_revision: 4,
+      last_run_at: "2026-10-09T09:05:00Z",
+      last_success_at: "2026-10-09T09:05:00Z",
+      recent_success_rate: 0.75,
+      sample_size: 4,
+      average_duration_ms: 1200,
+      observed_costs: [],
+      required_dependency_health: [],
+      drift_state: "HEALTHY",
+      drift_evidence_refs: [],
+    },
+    drift_state: "HEALTHY",
+    drift_evidence_refs: [],
+    ...overrides,
+  };
+}
+
+test("the health projection is read from the Workspace-scoped health route", async () => {
+  const requests: Array<{ path: string; init: RequestInit }> = [];
+  const api = createAutomationApi("workspace-1", async (path, init) => {
+    requests.push({ path, init });
+    return Response.json(healthProjection());
+  });
+
+  const health = await api.getHealth("automation-1");
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].path, "/v1/automations/automation-1/health");
+  assert.equal(new Headers(requests[0].init.headers).get("X-Workspace-ID"), "workspace-1");
+  assert.equal(health.host_ready, true);
+  assert.equal(health.occurrence_counts.skipped, 1);
+  assert.equal(health.routine_health.recent_success_rate, 0.75);
+  assert.equal(health.drift_state, "HEALTHY");
+});
+
+test("the health projection never invents a healthy verdict without an observation", async () => {
+  const api = createAutomationApi("workspace-1", async () => Response.json(healthProjection({
+    routine_health: {
+      routine_id: "routine-1",
+      current_revision: 4,
+      last_run_at: null,
+      last_success_at: null,
+      recent_success_rate: null,
+      sample_size: 0,
+      average_duration_ms: null,
+      observed_costs: [],
+      required_dependency_health: [],
+      drift_state: "UNKNOWN",
+      drift_evidence_refs: [],
+    },
+    drift_state: "UNKNOWN",
+  })));
+  const health = await api.getHealth("automation-1");
+  assert.equal(health.drift_state, "UNKNOWN");
+  assert.equal(health.routine_health.recent_success_rate, null);
+  assert.equal(health.routine_health.sample_size, 0);
+});
+
+test("a health projection for another definition is rejected", async () => {
+  const api = createAutomationApi("workspace-1", async () => Response.json(healthProjection({ automation_id: "automation-2" })));
+  await assert.rejects(api.getHealth("automation-1"), /different definition/);
+});
+
+test("the run history reports the persisted occurrence and its Task", async () => {
+  const requests: string[] = [];
+  const api = createAutomationApi("workspace-1", async (path) => {
+    requests.push(path);
+    return Response.json({
+      items: [{
+        occurrence_id: "occurrence-1",
+        automation_id: "automation-1",
+        automation_revision: 2,
+        routine_id: "routine-1",
+        routine_revision: 4,
+        trigger_id: "trigger-daily",
+        trigger_host_runtime_id: "runtime-1",
+        occurrence_key: "a".repeat(64),
+        version: 3,
+        claim_epoch: 1,
+        claim_expires_at: null,
+        status: "STARTED",
+        task_id: "task-1",
+        scheduled_for: "2026-03-01T09:00:00Z",
+        covered_misfire_range: null,
+        trigger_input_ref: null,
+        trigger_payload_digest: null,
+        blockers: [],
+        created_at: "2026-03-01T09:00:00Z",
+        updated_at: "2026-03-01T09:00:01Z",
+      }],
+      next_cursor: null,
+    });
+  });
+
+  const page = await api.listOccurrences("automation-1");
+
+  assert.equal(requests[0], "/v1/automations/automation-1/occurrences?limit=50");
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0].status, "STARTED");
+  assert.equal(page.items[0].task_id, "task-1");
+  assert.equal(page.next_cursor, null);
+});
+
+test("an unknown occurrence status is rejected instead of rendered", async () => {
+  const api = createAutomationApi("workspace-1", async () => Response.json({
+    items: [{
+      occurrence_id: "occurrence-1",
+      automation_id: "automation-1",
+      automation_revision: 2,
+      routine_id: "routine-1",
+      routine_revision: 4,
+      trigger_id: "trigger-daily",
+      trigger_host_runtime_id: "runtime-1",
+      occurrence_key: "a".repeat(64),
+      version: 1,
+      claim_epoch: 0,
+      claim_expires_at: null,
+      status: "SOMETHING_ELSE",
+      task_id: null,
+      scheduled_for: null,
+      covered_misfire_range: null,
+      trigger_input_ref: null,
+      trigger_payload_digest: null,
+      blockers: [],
+      created_at: "2026-03-01T09:00:00Z",
+      updated_at: "2026-03-01T09:00:01Z",
+    }],
+  }));
+  await assert.rejects(api.listOccurrences("automation-1"), /Invalid Automation occurrence status/);
 });

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { operatorBridgeResponse } from "../api/operator-bridge.ts";
 import { ArtifactApi } from "./artifact-api";
 import type { ArtifactSaveAsRequest, ArtifactSaveAsResult } from "./artifact-api";
 
@@ -79,9 +80,7 @@ export function desktopArtifactApi(workspaceId: string): ArtifactApi {
       });
     }
     if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const binary = atob(response.bodyBase64);
-    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
-    return new Response(bytes, { status: response.status, headers: { "Content-Type": response.contentType } });
+    return operatorBridgeResponse(response, { signal: init.signal });
   }, async (request: ArtifactSaveAsRequest): Promise<ArtifactSaveAsResult> => {
     if (request.workspace_id !== workspaceId) throw new Error("Artifact selection belongs to another Workspace.");
     const result = await invoke<unknown>("artifact_save_as", {

@@ -1,7 +1,21 @@
 use crate::{DomainEvent, EventDraft, StoreError, WorkspaceCreateRequest};
-use domain_conversation::{ConversationTurn, TurnCommand};
+pub use domain_conversation::{
+    ConversationTurn, ConversationTurnStatus, PresentationPreference, TurnCommand,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Stable reason code for a Conversation turn whose native AgentSession admission is
+/// unavailable. The storage transition gate is the only authority that returns it; an
+/// Operator route must not treat any other failure as an unavailable admission.
+pub const CONVERSATION_SESSION_ADMISSION_UNAVAILABLE: &str =
+    "CONVERSATION_SESSION_ADMISSION_UNAVAILABLE";
+
+/// A concurrent turn commit moved the Conversation aggregate version between the
+/// caller's read and its SQLite transaction. The caller must re-read and retry; the
+/// write transaction rolls back.
+pub const CONVERSATION_TURN_EVENT_REVISION_MISMATCH: &str =
+    "ConversationTurn event revision mismatch";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

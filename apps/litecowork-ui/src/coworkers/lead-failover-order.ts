@@ -47,7 +47,11 @@ export function isValidLeadFailoverDraft(
     return policy.triggers.length === 0 && fallbacks.length === 0 && policy.max_lead_changes === 0;
   }
   if (policy.triggers.length === 0 || new Set(policy.triggers).size !== policy.triggers.length) return false;
-  if (policy.mode === "ASK") return policy.max_lead_changes === 0;
+  // `ASK` presents the ordered fallback list as the owner's choices, so the list is
+  // still required and the automatic change budget stays at zero.
+  if (policy.mode === "ASK") {
+    return fallbacks.length > 0 && policy.max_lead_changes === 0;
+  }
   return fallbacks.length > 0
     && Number.isInteger(policy.max_lead_changes)
     && policy.max_lead_changes >= 1

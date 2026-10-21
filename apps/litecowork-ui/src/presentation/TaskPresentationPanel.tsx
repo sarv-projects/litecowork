@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { PresentationRuntime } from "./PresentationRuntime";
-import { parsePresentationItem, type PresentationItem } from "./presentation-types";
+import { partitionTaskPresentationItems } from "./task-presentation-items";
+import type { PresentationItem } from "./presentation-types";
 import { isTaskSnapshotEpochCurrent, TaskPresentationStreamController, type TaskPresentationStreamStatus, type TaskSnapshotStreamDriver, type TaskStreamEnvelope } from "../tasks/task-stream.ts";
 import "./task-presentation.css";
 
@@ -168,10 +169,10 @@ function TaskProgressSummary({ progress }: { progress: TaskProgress }) {
   </section>;
 }
 
-function TaskSnapshotView({ items }: { items: readonly PresentationItem[] }) {
-  const task = items.find((item) => item.kind === "TASK_CARD");
-  const activity = items.filter((item): item is Extract<PresentationItem, { kind: "ACTIVITY" }> => item.kind === "ACTIVITY");
-  const artifacts = items.filter((item): item is Extract<PresentationItem, { kind: "ARTIFACT" }> => item.kind === "ARTIFACT");
+function TaskSnapshotView({ items }: { items: readonly unknown[] }) {
+  // A saved item that cannot be validated is never silently dropped: it is projected
+  // into a bounded placeholder so the Task stays honestly described.
+  const { task, activity, artifacts, other, rejected, omittedCount } = partitionTaskPresentationItems(items);
   const recentActivity = [...activity].sort((a, b) => {
     const timeA = a.occurred_at ? Date.parse(a.occurred_at) : Number.NaN;
     const timeB = b.occurred_at ? Date.parse(b.occurred_at) : Number.NaN;
@@ -238,11 +239,23 @@ function TaskSnapshotView({ items }: { items: readonly PresentationItem[] }) {
       </div>
     </details>}
 
-    {items.some((item) => item.kind !== "TASK_CARD" && item.kind !== "ACTIVITY" && item.kind !== "ARTIFACT")
+    {other.length > 0
       && <details className="task-technical-details">
         <summary>Other saved presentation items</summary>
-        <PresentationRuntime items={items.filter((item) => item.kind !== "TASK_CARD" && item.kind !== "ACTIVITY" && item.kind !== "ARTIFACT")} ariaLabel="Other saved Task presentation items" />
+        <PresentationRuntime items={other} ariaLabel="Other saved Task presentation items" />
       </details>}
+
+    {rejected.length > 0 && <section className="task-rejected-items" aria-label="Saved items that could not be displayed">
+      <h4>Content not shown</h4>
+      <ul>
+        {rejected.map((entry) => <li key={entry.key}>
+          <strong>{entry.rejected.reportedKind ? `${entry.rejected.reportedKind.replaceAll("_", " ")} content` : "A saved item"}</strong>
+          <span>could not be displayed safely, so nothing from it was rendered. The rest of the saved Task is unchanged.</span>
+        </li>)}
+      </ul>
+    </section>}
+
+    {omittedCount > 0 && <p className="task-presentation-empty" role="note">{omittedCount} more saved {omittedCount === 1 ? "item is" : "items are"} not shown because this snapshot exceeded the display limit.</p>}
   </div>;
 }
 
@@ -260,7 +273,7 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
   taskVersion: number;
   operatorReady: boolean;
 }) {
-  const [items, setItems] = useState<readonly PresentationItem[]>([]);
+  const [items, setItems] = useState<readonly unknown[]>([]);
   const [loading, setLoading] = useState(false);
   // Keep transient UI state tied to the Task that produced it. The panel can be
   // reused while the user switches Tasks, before the next effect has reset state.
@@ -333,15 +346,15 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
       ]).then(([raw, progressResult]) => {
         const snapshot = validateSnapshot(raw, workspaceId, taskId);
         if (!mayRefresh()) return;
-        // Validate each projected item at the IPC boundary. Invalid records stay out of
-        // renderers while the owning Task remains viewable.
+        // Validate each projected item at the IPC boundary. An item that fails
+        // validation keeps a bounded placeholder so no saved content disappears
+        // silently while the owning Task remains viewable.
         if (isTaskSnapshotEpochCurrent(streamEpochAtRequestStart, streamSnapshotEpoch.current)) {
           // A stream snapshot accepted while this read was in flight is newer than
           // this request's captured SQLite view; never let the unary read roll it back.
-          const parsed = snapshot.items.map(parsePresentationItem);
-          const valid = parsed.filter((item): item is PresentationItem => item !== null);
-          setItems(valid);
-          setInvalidItemCount(parsed.length - valid.length);
+          const projection = partitionTaskPresentationItems(snapshot.items);
+          setItems(snapshot.items);
+          setInvalidItemCount(projection.rejected.length);
           setSnapshotAt(snapshot.computed_at);
           setFreshness(snapshot.freshness);
           setSavedSnapshotIdentity(identity);
@@ -480,7 +493,7 @@ export function TaskPresentationPanel({ workspaceId, taskId, taskVersion, operat
     {selectedFailure && <p role="status" className="task-presentation-note">{selectedFailure}</p>}
     {selectedSnapshotNotice && <p role="status" className="task-presentation-note">{selectedSnapshotNotice}</p>}
     {hasSelectedSnapshot && progressFailure && <p role="status" className="task-presentation-note">Latest saved progress is unavailable. The presentation snapshot remains available.</p>}
-    {hasSelectedSnapshot && invalidItemCount > 0 && <p role="status" className="task-presentation-note">{invalidItemCount} unsupported or invalid presentation item{invalidItemCount === 1 ? " was" : "s were"} hidden. The saved Task remains available.</p>}
+    {hasSelectedSnapshot && invalidItemCount > 0 && <p role="status" className="task-presentation-note">{invalidItemCount} saved presentation item{invalidItemCount === 1 ? " could" : "s could"} not be displayed safely. The saved Task remains available.</p>}
     {hasSelectedSnapshot && progress && <TaskProgressSummary progress={progress} />}
     {!loading && !selectedFailure && hasSelectedSnapshot && <TaskSnapshotView items={items} />}
   </section>;

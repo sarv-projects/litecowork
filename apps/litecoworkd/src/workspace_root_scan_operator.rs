@@ -1,7 +1,8 @@
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode, header},
+    extract::{Path, Query, Request, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -51,6 +52,17 @@ pub(super) fn routes() -> Router<super::ApiState> {
             "/v1/workspace-roots/{workspace_root_id}/observations",
             get(search_workspace_root_observations),
         )
+        // Folder scans and observed-file metadata are private Workspace/path state. Stamp
+        // every response, including idempotency, version and admission failures, no-store.
+        .route_layer(middleware::from_fn(root_scan_no_store))
+}
+
+async fn root_scan_no_store(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 #[derive(Deserialize)]
@@ -1120,16 +1132,54 @@ mod blocking_worker_tests {
 
 #[cfg(test)]
 mod error_mapping_tests {
-    use super::{map_store_error, map_workspace_preflight_result};
-    use axum::{body::to_bytes, http::StatusCode};
+    use super::{map_store_error, map_workspace_preflight_result, root_scan_no_store};
+    use axum::{
+        Router,
+        body::to_bytes,
+        http::{HeaderValue, StatusCode, header},
+        middleware,
+        routing::get,
+    };
     use serde_json::Value;
     use storage_core::StoreError;
+    use tower::ServiceExt;
 
     async fn error_body(response: axum::response::Response) -> Value {
         let bytes = to_bytes(response.into_body(), 4096)
             .await
             .expect("bounded Operator error response");
         serde_json::from_slice(&bytes).expect("Operator error response is JSON")
+    }
+
+    #[tokio::test]
+    async fn every_folder_scan_route_response_is_no_store() {
+        async fn private_ok() -> &'static str {
+            "ok"
+        }
+        async fn private_rejected() -> (StatusCode, &'static str) {
+            (StatusCode::BAD_REQUEST, "rejected")
+        }
+        let router = Router::new()
+            .route("/private/ok", get(private_ok))
+            .route("/private/rejected", get(private_rejected))
+            .route_layer(middleware::from_fn(root_scan_no_store));
+
+        for path in ["/private/ok", "/private/rejected"] {
+            let response = router
+                .clone()
+                .oneshot(
+                    axum::http::Request::get(path)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .expect("layered response");
+            assert_eq!(
+                response.headers().get(header::CACHE_CONTROL),
+                Some(&HeaderValue::from_static("no-store")),
+                "{path} must not be cacheable"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1179,6 +1229,388 @@ mod error_mapping_tests {
         let body = error_body(response).await;
         assert_eq!(body["code"], "SCAN_UNAVAILABLE");
         assert_eq!(body["retryable"], true);
+    }
+}
+
+/// Real-route coverage for the folder scan and observed-file projection.
+///
+/// The synthetic middleware test above proves the layer stamps a response, but not that
+/// the production routes are the ones being stamped. These checks drive the mounted
+/// routes against real SQLite and assert that an authorized page and every rejected
+/// read (foreign owner, stale root version, malformed cursor) are all `no-store`.
+#[cfg(test)]
+mod route_tests {
+    use super::routes;
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, StatusCode, header},
+    };
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use domain_workspace::{
+        AddWorkspaceRoot, CreateWorkspace, EventContext, WorkspaceRootService, WorkspaceService,
+    };
+    use serde_json::json;
+    use sha2::{Digest, Sha256};
+    use std::{sync::Arc, time::Duration};
+    use storage_core::{
+        BlobPurpose, DeviceIdentityRecord, LocalFileIdentityBindingRecord,
+        RuntimeIncarnationLocalObservationRecord, RuntimeIncarnationRecord,
+        RuntimeIncarnationStateUpdate, RuntimeLifecycleStore, RuntimeRecord,
+        RuntimeWorkspaceBindingStore, StoreError, WorkspaceCreateRequest,
+    };
+    use storage_sqlite::{
+        FileBlobStore, RuntimeOsPrincipalIdentity, SqliteConfig, SqliteWorkspaceStore,
+        WorkspaceBlobKey, WorkspaceBlobKeyProvider,
+    };
+    use tower::ServiceExt;
+    use zeroize::Zeroizing;
+
+    const OWNER: &str = "root-scan-route-owner";
+    const FOREIGN_OWNER: &str = "root-scan-route-other-owner";
+    const WORKSPACE: &str = "workspace-root-scan-route";
+    const ROOT: &str = "root-scan-route";
+    const RUNTIME: &str = "runtime-root-scan-route";
+    const INCARNATION: &str = "incarnation-root-scan-route";
+    const NOW: &str = "2026-10-20T10:00:00Z";
+
+    struct RouteTestKeys;
+
+    impl WorkspaceBlobKeyProvider for RouteTestKeys {
+        fn current_key(
+            &self,
+            _workspace_id: &str,
+            _purpose: BlobPurpose,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            Ok(WorkspaceBlobKey {
+                version: 1,
+                bytes: Zeroizing::new([41_u8; 32]),
+            })
+        }
+
+        fn key_by_version(
+            &self,
+            workspace_id: &str,
+            purpose: BlobPurpose,
+            version: u32,
+        ) -> Result<WorkspaceBlobKey, StoreError> {
+            if version != 1 {
+                return Err(StoreError::Blob("unknown test key version".to_owned()));
+            }
+            self.current_key(workspace_id, purpose)
+        }
+    }
+
+    struct RouteFixture {
+        _directory: tempfile::TempDir,
+        state: super::super::ApiState,
+    }
+
+    fn fixture() -> RouteFixture {
+        let directory = tempfile::tempdir().expect("temporary scan route store");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
+                .expect("restrict the test state directory to its owner");
+        }
+        let store = SqliteWorkspaceStore::open(
+            directory.path().join("state.sqlite3"),
+            Arc::new(FileBlobStore::new(directory.path().join("blobs"), RouteTestKeys)),
+            SqliteConfig {
+                writer_queue_capacity: 8,
+                busy_timeout: Duration::from_secs(2),
+            },
+        )
+        .expect("real SQLite store opens");
+        WorkspaceService::new(store.clone())
+            .create(CreateWorkspace {
+                workspace_id: WORKSPACE.to_owned(),
+                name: "Scan route workspace".to_owned(),
+                owner_principal_id: OWNER.to_owned(),
+                event: EventContext {
+                    event_id: "workspace-created-scan-route".to_owned(),
+                    origin_runtime_id: RUNTIME.to_owned(),
+                    hlc_timestamp: NOW.to_owned(),
+                    correlation_id: "correlation-scan-route".to_owned(),
+                    causation_id: None,
+                    recorded_at: NOW.to_owned(),
+                },
+            })
+            .expect("Workspace commits");
+        let public_key = [29_u8; 32];
+        store
+            .register_local_incarnation(
+                RuntimeRecord {
+                    runtime_id: RUNTIME.to_owned(),
+                    device_identity: DeviceIdentityRecord {
+                        device_id: format!("ed25519-sha256:{}", hex::encode(Sha256::digest(public_key))),
+                        public_key: format!("ed25519:{}", hex::encode(public_key)),
+                        key_version: 1,
+                        issued_at: NOW.to_owned(),
+                        display_name: None,
+                    },
+                    runtime_version: "0.1.0-scan-route".to_owned(),
+                    platform: "linux".to_owned(),
+                    architecture: "x86_64".to_owned(),
+                    roles: vec!["OPERATOR_ENDPOINT".to_owned()],
+                    trust_zone: "PERSONAL_DEVICE".to_owned(),
+                    availability: "RECOVERING".to_owned(),
+                    startup_policy: "MANUAL".to_owned(),
+                    current_incarnation_id: INCARNATION.to_owned(),
+                    resource_capacity: json!({"sampled_at": NOW}),
+                    last_seen: NOW.to_owned(),
+                },
+                RuntimeIncarnationRecord {
+                    runtime_incarnation_id: INCARNATION.to_owned(),
+                    runtime_id: RUNTIME.to_owned(),
+                    process_started_at: NOW.to_owned(),
+                    litecowork_version: "0.1.0-scan-route".to_owned(),
+                    recovered_from_unclean_shutdown: false,
+                    recovery_state: "RECOVERING".to_owned(),
+                    ready_at: None,
+                    stopped_at: None,
+                    version: 1,
+                },
+                RuntimeIncarnationLocalObservationRecord {
+                    runtime_incarnation_id: INCARNATION.to_owned(),
+                    os_boot_id: Some("scan-route-boot".to_owned()),
+                    observed_at: NOW.to_owned(),
+                },
+            )
+            .expect("local Runtime registers");
+        store
+            .transition_local_incarnation(RuntimeIncarnationStateUpdate {
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: INCARNATION.to_owned(),
+                expected_version: 1,
+                recovery_state: "DEGRADED".to_owned(),
+                availability: "DEGRADED".to_owned(),
+                observed_at: NOW.to_owned(),
+                stopped_at: None,
+            })
+            .expect("Runtime becomes available for local work");
+        store
+            .enroll_local_runtime(storage_core::LocalRuntimeWorkspaceEnrollmentRequest {
+                request: WorkspaceCreateRequest {
+                    principal_id: OWNER.to_owned(),
+                    request_id: "runtime-enrollment-scan-route".to_owned(),
+                    request_payload: json!({"workspace_id": WORKSPACE}),
+                },
+                expected_workspace_version: 1,
+                runtime_workspace_binding_id: "runtime-binding-scan-route".to_owned(),
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: INCARNATION.to_owned(),
+                workspace_id: WORKSPACE.to_owned(),
+                now: NOW.to_owned(),
+                correlation_id: "correlation-scan-route-enrollment".to_owned(),
+            })
+            .expect("Runtime enrolls in Workspace");
+        let marker = "scan-route-root-identity";
+        let identity_digest = format!("sha256:{}", hex::encode(Sha256::digest(marker.as_bytes())));
+        let file_identity_digest = hex::encode(Sha256::digest(marker.as_bytes()));
+        let path = URL_SAFE_NO_PAD.encode(b"/tmp/litecowork-scan-route");
+        WorkspaceRootService::new(store.clone())
+            .add_root(AddWorkspaceRoot {
+                workspace_id: WORKSPACE.to_owned(),
+                expected_workspace_version: 1,
+                principal_id: OWNER.to_owned(),
+                request_id: "root-create-scan-route".to_owned(),
+                resource_id: "resource-scan-route".to_owned(),
+                identity_digest: identity_digest.clone(),
+                file_identity: json!({
+                    "filesystem_instance_id": format!("sha256:{file_identity_digest}"),
+                    "volume_id": null,
+                    "file_id": format!("sha256:{file_identity_digest}"),
+                    "generation": null,
+                    "platform_kind": "LINUX_DEVICE_INODE",
+                }),
+                location_id: "location-scan-route".to_owned(),
+                locator_ref_id: "locator-ref-scan-route".to_owned(),
+                workspace_root_id: ROOT.to_owned(),
+                runtime_id: RUNTIME.to_owned(),
+                runtime_incarnation_id: INCARNATION.to_owned(),
+                private_locator: format!("unix-path-b64:{path}"),
+                file_identity_binding: LocalFileIdentityBindingRecord {
+                    location_id: "location-scan-route".to_owned(),
+                    runtime_id: RUNTIME.to_owned(),
+                    runtime_incarnation_id: INCARNATION.to_owned(),
+                    raw_filesystem_instance_id: "scan-route-device".to_owned(),
+                    raw_volume_id: None,
+                    raw_file_id: "scan-route-inode".to_owned(),
+                    raw_generation: None,
+                    platform_kind: "LINUX_DEVICE_INODE".to_owned(),
+                    observed_at: NOW.to_owned(),
+                },
+                display_name: "Scan route root".to_owned(),
+                watch_policy: "METADATA".to_owned(),
+                replication_policy: "NONE".to_owned(),
+                event: EventContext {
+                    event_id: "root-created-scan-route".to_owned(),
+                    origin_runtime_id: RUNTIME.to_owned(),
+                    hlc_timestamp: NOW.to_owned(),
+                    correlation_id: "correlation-root-scan-route".to_owned(),
+                    causation_id: None,
+                    recorded_at: NOW.to_owned(),
+                },
+            })
+            .expect("WorkspaceRoot commits");
+        let runtime_identity =
+            RuntimeOsPrincipalIdentity::test_support(RUNTIME).expect("test OS identity");
+        let (_shutdown_sender, stream_shutdown) = tokio::sync::watch::channel(false);
+        let state = super::super::ApiState {
+            store,
+            principal_id: OWNER.to_owned(),
+            runtime_id: RUNTIME.to_owned(),
+            local_incarnation_id: INCARNATION.to_owned(),
+            lifecycle_blockers: Vec::new(),
+            runtime_identity: Arc::new(runtime_identity),
+            stream_admission: Arc::new(tokio::sync::Semaphore::new(1)),
+            runtime_inventory_revision: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            stream_shutdown,
+        };
+        RouteFixture {
+            _directory: directory,
+            state,
+        }
+    }
+
+    fn fork_state(state: &super::super::ApiState, principal_id: &str) -> super::super::ApiState {
+        super::super::ApiState {
+            store: state.store.clone(),
+            principal_id: principal_id.to_owned(),
+            runtime_id: state.runtime_id.clone(),
+            local_incarnation_id: state.local_incarnation_id.clone(),
+            lifecycle_blockers: state.lifecycle_blockers.clone(),
+            runtime_identity: state.runtime_identity.clone(),
+            stream_admission: state.stream_admission.clone(),
+            runtime_inventory_revision: state.runtime_inventory_revision.clone(),
+            stream_shutdown: state.stream_shutdown.clone(),
+        }
+    }
+
+    fn observation_request(root_version: &str) -> Request<Body> {
+        Request::get(format!("/v1/workspace-roots/{ROOT}/observations"))
+            .header("x-workspace-id", WORKSPACE)
+            .header("if-match", root_version)
+            .body(Body::empty())
+            .expect("observation request builds")
+    }
+
+    fn scan_request(root_version: &str, key: &str) -> Request<Body> {
+        Request::post(format!("/v1/workspace-roots/{ROOT}/scan"))
+            .header("x-workspace-id", WORKSPACE)
+            .header("if-match", root_version)
+            .header("idempotency-key", key)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .expect("scan request builds")
+    }
+
+    fn assert_no_store(response: &axum::response::Response) {
+        assert_eq!(
+            response.headers().get(header::CACHE_CONTROL),
+            Some(&header::HeaderValue::from_static("no-store")),
+            "folder metadata must never be retained by a cache or intermediary",
+        );
+    }
+
+    #[tokio::test]
+    async fn an_authorized_observation_page_is_never_cacheable() {
+        let fixture = fixture();
+        let response = routes()
+            .with_state(fixture.state)
+            .oneshot(observation_request("1"))
+            .await
+            .expect("observation route responds");
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_no_store(&response);
+        let body = to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("bounded observation page");
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("observation page JSON");
+        assert_eq!(body["workspace_id"], WORKSPACE);
+        assert_eq!(body["workspace_root_id"], ROOT);
+        assert_eq!(body["items"].as_array().map(Vec::len), Some(0));
+        assert!(body["next_cursor"].is_null());
+    }
+
+    #[tokio::test]
+    async fn a_stale_root_version_rejection_is_never_cacheable() {
+        let fixture = fixture();
+        let response = routes()
+            .with_state(fixture.state)
+            .oneshot(observation_request("99"))
+            .await
+            .expect("observation route responds");
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_no_store(&response);
+    }
+
+    #[tokio::test]
+    async fn a_foreign_owner_rejection_is_nondisclosing_and_never_cacheable() {
+        let fixture = fixture();
+        let foreign = fork_state(&fixture.state, FOREIGN_OWNER);
+        let response = routes()
+            .with_state(foreign)
+            .oneshot(observation_request("1"))
+            .await
+            .expect("observation route responds");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_no_store(&response);
+        let body = to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .expect("bounded rejection body");
+        let body = String::from_utf8_lossy(&body).to_string();
+        assert!(!body.contains("Scan route root"));
+        assert!(!body.contains(ROOT));
+    }
+
+    #[tokio::test]
+    async fn a_rejected_scan_request_is_never_cacheable() {
+        let fixture = fixture();
+        let response = routes()
+            .with_state(fixture.state)
+            .oneshot(scan_request("99", "scan-route-stale-version"))
+            .await
+            .expect("scan route responds");
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_no_store(&response);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_scan_request_for_a_foreign_owner_is_never_cacheable() {
+        let fixture = fixture();
+        let foreign = fork_state(&fixture.state, FOREIGN_OWNER);
+        let response = routes()
+            .with_state(foreign)
+            .oneshot(scan_request("1", "scan-route-foreign-owner"))
+            .await
+            .expect("scan route responds");
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_no_store(&response);
+    }
+
+    #[tokio::test]
+    async fn a_malformed_observation_cursor_is_never_cacheable() {
+        let fixture = fixture();
+        let request = Request::get(format!("/v1/workspace-roots/{ROOT}/observations?cursor=not-a-cursor"))
+            .header("x-workspace-id", WORKSPACE)
+            .header("if-match", "1")
+            .body(Body::empty())
+            .expect("observation request builds");
+        let response = routes()
+            .with_state(fixture.state)
+            .oneshot(request)
+            .await
+            .expect("observation route responds");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_no_store(&response);
     }
 }
 

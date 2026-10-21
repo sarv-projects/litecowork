@@ -1,3 +1,5 @@
+import { validIdempotencyKey } from "../api/idempotency-key.ts";
+
 export type RoutineStatus = "ACTIVE" | "ARCHIVED";
 
 export type Routine = {
@@ -33,10 +35,6 @@ export type MaterializedRoutineTask = {
   current_spec_revision: number;
 };
 export type RoutineTransport = (path: string, init: RequestInit) => Promise<Response>;
-
-function validIdempotencyKey(value: string): boolean {
-  return /^[\x21-\x7e]{1,200}$/.test(value);
-}
 
 export interface RoutineApi {
   list(cursor?: string, signal?: AbortSignal): Promise<RoutinePage>;

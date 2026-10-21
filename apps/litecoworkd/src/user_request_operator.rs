@@ -485,7 +485,7 @@ fn add_no_store(mut response: Response) -> Response {
 }
 
 #[cfg(test)]
-fn test_router(store: SqliteWorkspaceStore, principal_id: String) -> Router {
+pub(super) fn test_router(store: SqliteWorkspaceStore, principal_id: String) -> Router {
     routes().with_state(UserRequestApiState {
         store,
         principal_id,

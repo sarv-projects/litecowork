@@ -28,6 +28,17 @@ pub(super) fn routes() -> Router<NeedsYouApiState> {
     Router::new()
         .route("/v1/needs-you", get(list_needs_you))
         .route_layer(middleware::from_fn(authenticate))
+        // The inbox projection is private Workspace state. Stamp every response, including
+        // cursor/validation failures, so no local cache or intermediary retains it.
+        .route_layer(middleware::from_fn(needs_you_no_store))
+}
+
+async fn needs_you_no_store(request: Request<Body>, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 #[derive(Default, Deserialize)]
