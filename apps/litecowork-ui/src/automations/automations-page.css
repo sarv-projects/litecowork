@@ -120,3 +120,13 @@
 .automation-run-actions .primary-button { justify-self: start; min-height: 38px; padding: 8px 13px; border: 1px solid #385b72; border-radius: 8px; background: #385b72; color: #fff; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
 .automation-run-actions .primary-button:disabled { opacity: .55; cursor: not-allowed; }
 .automation-run-actions .quiet-button { min-height: 38px; }
+
+.automation-setup { margin: 18px 0; padding: 14px 16px; border: 1px solid #d8e3e8; border-radius: 10px; background: #fbfcfd; }
+.automation-setup h3 { margin: 0 0 9px; color: var(--ink-strong, #202a35); font-size: 14px; }
+.automation-setup ol { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.automation-setup li { display: grid; gap: 2px; padding-left: 18px; position: relative; font-size: 12px; line-height: 1.45; }
+.automation-setup li::before { content: "○"; position: absolute; left: 0; color: #7a8b98; }
+.automation-setup li[data-state="DONE"]::before { content: "✓"; color: #2f6f48; }
+.automation-setup li[data-state="BLOCKED"]::before { content: "!"; color: #a44b2a; font-weight: 700; }
+.automation-setup li strong { color: var(--ink-strong, #202a35); font-size: 12px; }
+.automation-setup li span { color: var(--ink-muted, #627080); font-size: 11px; }

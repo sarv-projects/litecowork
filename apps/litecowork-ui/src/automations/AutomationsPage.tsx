@@ -3,6 +3,7 @@ import type { Automation, AutomationApi, AutomationHealth, AutomationOccurrence,
 import { routineInputFields, type ResourceOption } from "../routines/routine-inputs";
 import { AutomationEditor } from "./AutomationEditor";
 import { AutomationInputFields } from "./AutomationInputFields";
+import { automationSetupSteps } from "./automation-setup";
 import "./automations-page.css";
 
 type Props = { api: AutomationApi; workspaceId: string; resources: ResourceOption[]; resourcesNextCursor: string | null; resourcesPageBusy: boolean; onLoadMoreResources: () => Promise<void>; onOpenTask?: (taskId: string) => void };
@@ -440,6 +441,21 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
               {selected.status === "ENABLED" && <p className="automation-state-warning">Stored status is Enabled. The schedule only fires while this Runtime holds the trigger-host binding; a Manual Run now remains an explicit one-shot action.</p>}
               {selected.status === "PAUSED" && <p className="automation-state-note">Paused definition. Recurring triggers remain off. A Manual trigger can still create one Task when you choose Run now.</p>}
               {selected.status === "DISABLED" && <p className="automation-state-note">Disabled permanently. The definition remains available for history.</p>}
+              {selectedRevision && <section className="automation-setup" aria-labelledby="automation-setup-heading">
+                <h3 id="automation-setup-heading">Setup progress</h3>
+                <ol>
+                  {automationSetupSteps({
+                    status: selected.status,
+                    hasDefinition: Boolean(selectedRevision && pinnedRoutineRevision),
+                    hasTestTask: testResult?.automation_id === selected.automation_id,
+                    routineActive: pinnedRoutine?.status === "ACTIVE",
+                    hostReady: health?.host_ready ?? null,
+                  }).map(step => <li key={step.id} data-state={step.state}>
+                    <strong>{step.label}</strong>
+                    <span>{step.detail}</span>
+                  </li>)}
+                </ol>
+              </section>}
               {selectedRevision && manualTriggerCount(selectedRevision) > 1 && <p className="automation-state-warning">Run unavailable: this revision has multiple Manual triggers. Revise it to keep one unambiguous Manual trigger.</p>}
               {detailError && <p className="automation-inline-error" role="alert">{detailError}</p>}
               {actionError && <p className="automation-inline-error" role="alert">{actionError}</p>}
