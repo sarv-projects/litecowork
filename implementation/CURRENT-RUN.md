@@ -1,3 +1,28 @@
+## 2026-10-21 — E09-S05 authenticated Routine run route evidence
+
+- **Served route exercised.** `apps/litecoworkd/src/routine_run_operator_tests.rs` drives the
+  real `build_operator_router` and real SQLite store through
+  `POST /v1/routines/routine-1/run`, with an owner-enrolled local Runtime and one lead
+  AgentBinding.
+- **Auth and admission order.** An unauthenticated request is `401` even after a committed
+  run, so authentication precedes receipt replay. A foreign `X-Workspace-ID` is `403`; a
+  missing `Idempotency-Key` is `400`; non-object `inputs` are `422`.
+- **Created and replayed Task.** The first run is `201 CREATED` with one READY TaskView
+  (Routine pins, TaskSpec revision 1, automation null); the exact retry returns identical
+  JSON. The same key with changed inputs is `409`, and a new key creates a second independent
+  READY Task.
+- **Archive ordering.** After the Routine is ARCHIVED, the exact committed retry still
+  returns `201` and the same Task; a new key is `409`. Two Tasks, two specs, two
+  `task.created.v1` events, and zero Plan/Step/Attempt/AgentSession rows remain.
+- **Command.** `cargo test --locked --offline --jobs 2 -p litecoworkd --bin litecoworkd
+  routine_run_operator_tests::` — 1/1 passed, 2.42 s after cached compile.
+- **Still open (not claimed).** A forced late-failure atomicity injection, the scripted
+  ResourceRef stale/cross-Workspace path, the packaged Tauri SYSTEM run, and owner USER
+  acceptance. E09-S05 stays `IN_PROGRESS`.
+- **Cleanup/disk.** One worktree, 26 branches, no agent processes. `target` 29 GB, Tauri
+  target 2.6 GB, `/tmp/opencode` 28 KB; 818 GB free. The focused test log is removed after
+  this entry.
+
 ## 2026-10-21 — E09-S05 Routine run transaction evidence
 
 - **Served path unchanged.** `POST /v1/routines/{id}/run` already materialized one ordinary
