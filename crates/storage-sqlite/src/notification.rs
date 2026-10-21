@@ -15,6 +15,10 @@
 
 use super::*;
 use crate::workspace_access::{require_read_access, require_write_access};
+use domain_responsibility::{
+    AutomationExecutionPolicy, AutomationNotification, NotificationDecision, NotificationFacts,
+    NotificationOutcome, QuietHours as DomainQuietHours, decide_notification, event_class_for,
+};
 use storage_core::{NotificationPreferenceRecord, NotificationRecord, QuietHours};
 
 /// The OpenAPI `Limit` maximum is 200. The route asks for one extra row to
@@ -222,6 +226,69 @@ impl SqliteWorkspaceStore {
                 });
             }
             Ok(preferences)
+        })
+    }
+
+    /// Records one local notification for a persisted Automation outcome.
+    ///
+    /// The domain decision layer owns the Automation policy, the Workspace class
+    /// preference, the dedupe key, the local channel availability, and the quiet
+    /// window. A suppressed outcome never becomes a delivery row, and a delivery row
+    /// never claims that a Task completed: it only reports that a persisted outcome
+    /// exists and that nobody consumed it yet.
+    ///
+    /// The caller must have written `source_event_id` in the same transaction, because
+    /// the delivery row references the domain event that caused it.
+    pub fn record_automation_outcome_delivery(
+        &self,
+        workspace_id: &str,
+        automation_id: &str,
+        source_event_id: &str,
+        dedupe_key: &str,
+        outcome: NotificationOutcome,
+        now_epoch_ms: i64,
+        recorded_at: &str,
+        attempt_runtime_id: Option<&str>,
+        attempt_host_epoch: Option<u64>,
+    ) -> Result<Option<String>, StoreError> {
+        if invalid_identifier(workspace_id, 256)
+            || invalid_identifier(automation_id, 256)
+            || invalid_identifier(source_event_id, 256)
+            || dedupe_key.trim().is_empty()
+            || dedupe_key.len() > 256
+            || recorded_at.is_empty()
+            || recorded_at.len() > 64
+            || attempt_runtime_id.is_some() != attempt_host_epoch.is_some()
+        {
+            return Err(StoreError::Invalid(
+                "Notification delivery request is invalid".to_owned(),
+            ));
+        }
+        let workspace = workspace_id.to_owned();
+        let automation = automation_id.to_owned();
+        let source_event = source_event_id.to_owned();
+        let dedupe = dedupe_key.to_owned();
+        let recorded = recorded_at.to_owned();
+        let runtime = attempt_runtime_id.map(str::to_owned);
+        let epoch = attempt_host_epoch;
+        run(self, move |connection| {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_database_error)?;
+            let delivered = record_automation_outcome_delivery_in_transaction(
+                &tx,
+                &workspace,
+                &automation,
+                &source_event,
+                &dedupe,
+                outcome,
+                now_epoch_ms,
+                &recorded,
+                runtime.as_deref(),
+                epoch,
+            )?;
+            tx.commit().map_err(map_database_error)?;
+            Ok(delivered)
         })
     }
 
@@ -562,4 +629,154 @@ fn encode<T: serde::Serialize>(value: &T) -> Result<String, StoreError> {
     let bytes = canonical_json(value)?;
     String::from_utf8(bytes)
         .map_err(|_| StoreError::Integrity("notification preference is not UTF-8".to_owned()))
+}
+
+
+/// The transaction-scoped body of [`SqliteWorkspaceStore::record_automation_outcome_delivery`].
+#[allow(clippy::too_many_arguments)]
+pub(super) fn record_automation_outcome_delivery_in_transaction(
+    tx: &Transaction<'_>,
+    workspace_id: &str,
+    automation_id: &str,
+    source_event_id: &str,
+    dedupe_key: &str,
+    outcome: NotificationOutcome,
+    now_epoch_ms: i64,
+    recorded_at: &str,
+    attempt_runtime_id: Option<&str>,
+    attempt_host_epoch: Option<u64>,
+) -> Result<Option<String>, StoreError> {
+    let class = event_class_for(outcome);
+    // The Automation's own notification policy is the governing rule.
+    let policy_json: Option<String> = tx
+        .query_row(
+            "SELECT ar.execution_policy_json
+             FROM automations a
+             JOIN automation_revisions ar
+               ON ar.workspace_id = a.workspace_id
+              AND ar.automation_id = a.automation_id
+              AND ar.revision = a.current_revision
+             WHERE a.workspace_id = ?1 AND a.automation_id = ?2",
+            params![workspace_id, automation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some(policy_json) = policy_json else {
+        return Ok(None);
+    };
+    let execution_policy: AutomationExecutionPolicy = serde_json::from_str(&policy_json).map_err(
+        |error| {
+            StoreError::Integrity(format!(
+                "stored Automation execution policy is invalid: {error}"
+            ))
+        },
+    )?;
+
+    // The Workspace class preference may silence the class outright.
+    let preference: Option<(String, Option<String>)> = tx
+        .query_row(
+            "SELECT policy, quiet_hours_json FROM notification_preferences
+             WHERE workspace_id = ?1 AND event_class = ?2",
+            params![workspace_id, class.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let workspace_policy = match preference.as_ref() {
+        Some((policy, _)) => Some(
+            serde_json::from_value::<AutomationNotification>(json!(policy)).map_err(|error| {
+                StoreError::Integrity(format!(
+                    "stored notification preference policy is invalid: {error}"
+                ))
+            })?,
+        ),
+        None => None,
+    };
+    // An unparsable quiet window fails closed: the delivery is suppressed instead of
+    // being delivered outside the window the owner configured.
+    let quiet_hours = match preference.as_ref().and_then(|(_, quiet)| quiet.as_ref()) {
+        Some(quiet) => {
+            let value: Value = serde_json::from_str(quiet).map_err(|error| {
+                StoreError::Integrity(format!("stored notification quiet hours are invalid: {error}"))
+            })?;
+            match DomainQuietHours::parse(&value) {
+                Ok(parsed) => Some(parsed),
+                Err(_) => return Ok(None),
+            }
+        }
+        None => None,
+    };
+
+    let already_delivered: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM notification_deliveries WHERE workspace_id = ?1 AND dedupe_key = ?2)",
+            params![workspace_id, dedupe_key],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+
+    // The local desktop Runtime is the local delivery channel; an external channel
+    // binding is also a local channel for this Workspace.
+    let channel_binding_id: Option<String> = tx
+        .query_row(
+            "SELECT channel_binding_id FROM channel_bindings
+             WHERE workspace_id = ?1 AND status = 'ACTIVE'
+             ORDER BY channel_binding_id LIMIT 1",
+            params![workspace_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let has_local_channel = channel_binding_id.is_some()
+        || tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM runtime_workspace_bindings
+             WHERE workspace_id = ?1 AND status = 'ACTIVE')",
+            params![workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+
+    let facts = NotificationFacts {
+        automation_policy: execution_policy.notification_policy,
+        workspace_policy,
+        outcome,
+        dedupe_key,
+        quiet_hours: quiet_hours.as_ref(),
+        now_epoch_ms,
+        already_delivered,
+        has_local_channel,
+    };
+    let NotificationDecision::Deliver { .. } = decide_notification(&facts) else {
+        return Ok(None);
+    };
+
+    let fingerprint = digest(&canonical_json(&json!({
+        "workspace_id": workspace_id,
+        "dedupe_key": dedupe_key,
+    }))?);
+    let delivery_id = format!(
+        "ndl-{}",
+        fingerprint.strip_prefix("sha256:").unwrap_or(&fingerprint)
+    );
+    tx.execute(
+        "INSERT INTO notification_deliveries(
+            delivery_id, workspace_id, dedupe_key, source_event_id, channel_binding_id,
+            attempt_runtime_id, attempt_host_epoch, status, attempt_count, next_attempt_at,
+            last_error_code, created_at, settled_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'PENDING', 0, ?8, NULL, ?9, NULL)",
+        params![
+            delivery_id,
+            workspace_id,
+            dedupe_key,
+            source_event_id,
+            channel_binding_id,
+            attempt_runtime_id,
+            attempt_host_epoch.map(|value| value as i64),
+            recorded_at,
+            recorded_at,
+        ],
+    )
+    .map_err(map_database_error)?;
+    Ok(Some(delivery_id))
 }

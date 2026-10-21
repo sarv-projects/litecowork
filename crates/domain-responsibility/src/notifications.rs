@@ -349,7 +349,9 @@ fn policy_addresses(policy: AutomationNotification, outcome: NotificationOutcome
         ),
         AutomationNotification::OnFailure => matches!(
             outcome,
-            NotificationOutcome::Failed | NotificationOutcome::Blocked
+            NotificationOutcome::Failed
+                | NotificationOutcome::Blocked
+                | NotificationOutcome::OccurrenceSkipped
         ),
         AutomationNotification::OnCondition => matches!(outcome, NotificationOutcome::Blocked),
         AutomationNotification::Silent => false,

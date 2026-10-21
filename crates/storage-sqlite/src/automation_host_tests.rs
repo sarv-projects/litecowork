@@ -480,6 +480,20 @@ fn a_misfire_records_a_bounded_skipped_occurrence_and_advances_the_cursor() {
         )
         .unwrap();
     assert_eq!(tasks, 0, "a skipped misfire must not create a Task");
+    // Each skipped slot is a persisted outcome, so the local notification decision
+    // records exactly one pending delivery per skipped occurrence. A delivery is not a
+    // Task and never claims that work succeeded.
+    let (deliveries, delivery_status, distinct_keys): (i64, String, i64) = connection
+        .query_row(
+            "SELECT COUNT(*), MAX(status), COUNT(DISTINCT dedupe_key)
+             FROM notification_deliveries WHERE workspace_id = 'workspace-automation'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(deliveries, i64::try_from(recorded).unwrap());
+    assert_eq!(distinct_keys, deliveries, "one delivery per logical skipped outcome");
+    assert_eq!(delivery_status, "PENDING");
 }
 
 #[test]

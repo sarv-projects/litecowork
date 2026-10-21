@@ -599,6 +599,26 @@ impl SqliteAutomationHostStore {
                 }),
                 &recorded_at,
             )?;
+            // A skipped slot is a persisted outcome, so it may produce one local
+            // notification. The decision layer applies the Automation policy, the
+            // Workspace class preference, the quiet window, and the dedupe key; a
+            // suppressed outcome never becomes a delivery row.
+            if let Some(now_epoch_ms) =
+                domain_responsibility::parse_instant(&recorded_at)
+            {
+                crate::notification::record_automation_outcome_delivery_in_transaction(
+                    &tx,
+                    &workspace_id,
+                    &automation_id,
+                    &format!("{origin_runtime_id}:occ:{occurrence_id}:2"),
+                    &format!("occurrence:{occurrence_id}:SKIPPED"),
+                    domain_responsibility::NotificationOutcome::OccurrenceSkipped,
+                    now_epoch_ms,
+                    &recorded_at,
+                    None,
+                    None,
+                )?;
+            }
             tx.commit().map_err(map_database_error)?;
             Ok(true)
         })

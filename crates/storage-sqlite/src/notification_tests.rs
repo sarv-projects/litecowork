@@ -570,3 +570,189 @@ fn invalid_policy_values_are_rejected_before_any_write() {
         .expect("policy count reads");
     assert_eq!(policies, 0);
 }
+
+/// The Automation policy JSON stored in `automation_revisions.execution_policy_json`.
+const AUTOMATION_EXECUTION_POLICY: &str = "{\"placement_preference\":\"AUTO\",\"max_concurrent_occurrences\":1,\"overlap_policy\":\"SKIP\",\"retry_policy\":{\"max_attempts\":1,\"initial_backoff_ms\":100,\"max_backoff_ms\":100,\"multiplier\":1.0,\"jitter\":false,\"retryable_error_codes\":[]},\"budget_ceiling\":null,\"notification_policy\":\"ALWAYS\",\"wake_policy\":\"NEVER\"}";
+
+fn insert_automation(connection: &Connection, notification_policy: &str) {
+    connection
+        .execute(
+            "INSERT INTO automations(automation_id, workspace_id, name, current_revision, status,
+                created_at, updated_at, version)
+             VALUES ('automation-1', ?1, 'Automation', 1, 'PAUSED', ?2, ?2, 1)",
+            params![WORKSPACE, TIED_AT],
+        )
+        .expect("automation fixture inserts");
+    let policy =
+        AUTOMATION_EXECUTION_POLICY.replace("\"ALWAYS\"", &format!("\"{notification_policy}\""));
+    connection
+        .execute(
+            "INSERT INTO automation_revisions(workspace_id, automation_id, revision, routine_id,
+                routine_revision, coworker_id, coworker_revision, triggers_json,
+                execution_policy_json, authored_by_json, created_at)
+             VALUES (?1, 'automation-1', 1, 'routine-1', 1, NULL, NULL, '[]', ?2,
+                '{\"principal_id\":\"owner-local\",\"kind\":\"USER\"}', ?3)",
+            params![WORKSPACE, policy, TIED_AT],
+        )
+        .expect("automation revision fixture inserts");
+}
+
+fn insert_source_event(connection: &Connection, event_id: &str) {
+    connection
+        .execute(
+            "INSERT INTO domain_events(event_id, workspace_id, entity_type, entity_id,
+                origin_runtime_id, origin_sequence, entity_revision, hlc_timestamp,
+                correlation_id, schema_version, type, payload_json,
+                aggregate_state_ref_json, recorded_at, payload_digest)
+             VALUES (?1, ?2, 'AutomationOccurrence', 'occurrence-1', 'runtime-notification', 1, 2, ?3,
+                'correlation-1', 1, 'automation.occurrence.status.changed.v1', '{}',
+                '{\"blob\":{\"digest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"size_bytes\":2,\"media_type\":\"application/json\"},\"entity_revision\":2,\"record_schema_version\":1}',
+                ?3, 'sha256:0000000000000000000000000000000000000000000000000000000000000000')",
+            params![event_id, WORKSPACE, TIED_AT],
+        )
+        .expect("source event fixture inserts");
+}
+
+fn insert_local_channel(connection: &Connection) {
+    connection
+        .execute(
+            "INSERT INTO channel_bindings(channel_binding_id, workspace_id, connection_id,
+                provider_ref, external_account_ref, identity_ref_json, assurance_level,
+                allowed_actions_json, status, created_at, updated_at, version)
+             VALUES ('channel-1', ?1, NULL, 'local.desktop', 'local', '{}', 'LOCAL_STRONG',
+                '[]', 'ACTIVE', ?2, ?2, 1)",
+            params![WORKSPACE, TIED_AT],
+        )
+        .expect("local channel fixture inserts");
+}
+
+#[test]
+fn a_persisted_outcome_records_exactly_one_delivery() {
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = fixture_store(&directory);
+    let connection = fixture_connection(&directory);
+    insert_automation(&connection, "ALWAYS");
+    insert_source_event(&connection, "event-1");
+    insert_local_channel(&connection);
+    let now = domain_responsibility::parse_instant(TIED_AT).expect("the instant parses");
+
+    let delivery = store
+        .record_automation_outcome_delivery(
+            WORKSPACE,
+            "automation-1",
+            "event-1",
+            "occurrence:occurrence-1:SKIPPED",
+            domain_responsibility::NotificationOutcome::OccurrenceSkipped,
+            now,
+            TIED_AT,
+            None,
+            None,
+        )
+        .expect("the delivery decision commits");
+    assert!(delivery.is_some(), "an ALWAYS policy records one delivery");
+
+    let page = store
+        .list_notification_deliveries(OWNER, WORKSPACE, None, None, None, 50)
+        .expect("delivery history reads");
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].status, "PENDING");
+    assert_eq!(page[0].dedupe_key, "occurrence:occurrence-1:SKIPPED");
+    assert_eq!(page[0].source_event_id, "event-1");
+    assert_eq!(page[0].attempt_count, 0);
+    // A delivery row never claims that the Task completed.
+    assert_eq!(page[0].settled_at, None);
+
+    let repeat = store
+        .record_automation_outcome_delivery(
+            WORKSPACE,
+            "automation-1",
+            "event-1",
+            "occurrence:occurrence-1:SKIPPED",
+            domain_responsibility::NotificationOutcome::OccurrenceSkipped,
+            now,
+            TIED_AT,
+            None,
+            None,
+        )
+        .expect("the duplicate decision commits");
+    assert!(
+        repeat.is_none(),
+        "a duplicate outcome records no second delivery"
+    );
+    assert_eq!(
+        store
+            .list_notification_deliveries(OWNER, WORKSPACE, None, None, None, 50)
+            .expect("delivery history reads")
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn a_silent_preference_and_a_quiet_window_suppress_the_delivery() {
+    let directory = tempfile::tempdir().expect("temporary store directory");
+    let store = fixture_store(&directory);
+    let connection = fixture_connection(&directory);
+    insert_automation(&connection, "ALWAYS");
+    insert_source_event(&connection, "event-1");
+    insert_local_channel(&connection);
+    let now = domain_responsibility::parse_instant(TIED_AT).expect("the instant parses");
+
+    // A Workspace class preference of SILENT suppresses the class outright.
+    insert_preference(
+        &connection,
+        "AUTOMATION_OCCURRENCE_SKIPPED",
+        "SILENT",
+        "[]",
+        None,
+        1,
+    );
+    let silent = store
+        .record_automation_outcome_delivery(
+            WORKSPACE,
+            "automation-1",
+            "event-1",
+            "occurrence:occurrence-1:SILENT",
+            domain_responsibility::NotificationOutcome::OccurrenceSkipped,
+            now,
+            TIED_AT,
+            None,
+            None,
+        )
+        .expect("the silent decision commits");
+    assert!(silent.is_none());
+
+    // The stored quiet window covers the recorded instant, so the delivery is
+    // suppressed instead of being delivered outside the configured window.
+    connection
+        .execute(
+            "UPDATE notification_preferences SET policy = 'ALWAYS', quiet_hours_json = ?1
+             WHERE workspace_id = ?2 AND event_class = 'AUTOMATION_OCCURRENCE_SKIPPED'",
+            params![
+                "{\"timezone\":\"UTC\",\"weekdays\":[\"WEDNESDAY\"],\"start_local_time\":\"08:00\",\"end_local_time\":\"10:00\"}",
+                WORKSPACE
+            ],
+        )
+        .expect("preference fixture updates");
+    let quiet = store
+        .record_automation_outcome_delivery(
+            WORKSPACE,
+            "automation-1",
+            "event-1",
+            "occurrence:occurrence-1:QUIET",
+            domain_responsibility::NotificationOutcome::OccurrenceSkipped,
+            now,
+            TIED_AT,
+            None,
+            None,
+        )
+        .expect("the quiet decision commits");
+    assert!(quiet.is_none());
+    assert_eq!(
+        store
+            .list_notification_deliveries(OWNER, WORKSPACE, None, None, None, 50)
+            .expect("delivery history reads")
+            .len(),
+        0
+    );
+}
