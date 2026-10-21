@@ -726,3 +726,87 @@ fn foreign_or_unknown_resource_pins_are_refused_without_a_task() {
         .unwrap();
     assert_eq!((tasks, receipts), (0, 0));
 }
+
+#[test]
+fn late_failures_roll_back_the_task_spec_event_and_receipt() {
+    let (directory, store) = fixture("{}");
+    let connection = Connection::open(state_database(&directory)).unwrap();
+
+    fn counts(connection: &Connection) -> (i64, i64, i64, i64, i64) {
+        connection
+            .query_row(
+                "SELECT
+                   (SELECT COUNT(*) FROM tasks WHERE workspace_id = 'workspace-routine-admission'),
+                   (SELECT COUNT(*) FROM task_spec_revisions WHERE workspace_id = 'workspace-routine-admission'),
+                   (SELECT COUNT(*) FROM domain_events WHERE workspace_id = 'workspace-routine-admission' AND type = 'task.created.v1'),
+                   (SELECT COUNT(*) FROM request_dedup WHERE principal_id = 'owner-local' AND request_id LIKE 'routine-run-atomic%'),
+                   COALESCE((SELECT MAX(last_sequence) FROM workspace_origin_sequences WHERE workspace_id = 'workspace-routine-admission' AND origin_runtime_id = 'runtime-routine-admission'), 0)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap()
+    }
+    assert_eq!(counts(&connection), (0, 0, 0, 0, 0));
+
+    // Fail at the domain-event insert: the Task and TaskSpec rows are already
+    // written inside the transaction and must roll back with it.
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_routine_task_event BEFORE INSERT ON domain_events
+             WHEN NEW.event_id = 'ev-routine-task-routine-atomic'
+             BEGIN SELECT RAISE(ABORT, 'injected event failure'); END;",
+        )
+        .unwrap();
+    let first = routine_commit(
+        "task-routine-atomic",
+        "routine-run-atomic-1",
+        1,
+        serde_json::json!({}),
+    );
+    let error = store
+        .create_task(first.clone())
+        .expect_err("the injected event failure aborts the commit");
+    assert!(matches!(error, StoreError::Database(_)));
+    assert_eq!(counts(&connection), (0, 0, 0, 0, 0));
+
+    // The failed attempt does not poison the request key: after the fault is
+    // removed, the same commit succeeds and records one complete aggregate.
+    connection
+        .execute_batch("DROP TRIGGER fail_routine_task_event;")
+        .unwrap();
+    let committed = store
+        .create_task(first)
+        .expect("the same request commits after the fault is removed");
+    assert_eq!(committed.view.task.task_id, "task-routine-atomic");
+    assert_eq!(counts(&connection), (1, 1, 1, 1, 1));
+
+    // Fail at the receipt insert, after the Task, TaskSpec, event, and origin
+    // sequence were written. The whole transaction must still roll back.
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_routine_task_receipt BEFORE INSERT ON request_dedup
+             WHEN NEW.request_id = 'routine-run-atomic-2'
+             BEGIN SELECT RAISE(ABORT, 'injected receipt failure'); END;",
+        )
+        .unwrap();
+    let second = routine_commit(
+        "task-routine-atomic-2",
+        "routine-run-atomic-2",
+        1,
+        serde_json::json!({}),
+    );
+    let error = store
+        .create_task(second.clone())
+        .expect_err("the injected receipt failure aborts the commit");
+    assert!(matches!(error, StoreError::Database(_)));
+    assert_eq!(counts(&connection), (1, 1, 1, 1, 1));
+
+    connection
+        .execute_batch("DROP TRIGGER fail_routine_task_receipt;")
+        .unwrap();
+    let committed = store
+        .create_task(second)
+        .expect("the second request commits after the receipt fault is removed");
+    assert_eq!(committed.view.task.task_id, "task-routine-atomic-2");
+    assert_eq!(counts(&connection), (2, 2, 2, 2, 2));
+}
