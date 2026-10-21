@@ -15,7 +15,7 @@
 //! - a policy of `SILENT` never produces a delivery.
 
 use crate::{AutomationNotification, DomainError};
-use chrono::Timelike;
+use chrono::{Datelike, Timelike};
 use serde::{Deserialize, Serialize};
 
 /// The persisted event classes a notification preference can address.
@@ -123,16 +123,32 @@ pub enum NotificationDecision {
 
 /// The bounded quiet-hours window of a Workspace notification preference.
 ///
-/// The persisted shape is exactly
-/// `{"start":"HH:MM","end":"HH:MM","timezone":"<IANA zone>"}`.
+/// The persisted shape is exactly the owner-facing preference shape:
+/// `{"timezone":"<IANA zone>","weekdays":["MONDAY",...],"start_local_time":"HH:MM","end_local_time":"HH:MM"}`.
+/// It is the same shape `crates/storage-core` persists for
+/// `notification_preferences.quiet_hours_json`, so a stored preference can be evaluated
+/// instead of failing to parse.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QuietHours {
+    /// The IANA time zone the window is expressed in.
+    pub timezone: String,
+    /// The local weekdays the window applies to. An empty list is not a valid window.
+    pub weekdays: Vec<String>,
     /// Minutes after local midnight, inclusive.
     pub start_minute: u16,
     /// Minutes after local midnight, exclusive.
     pub end_minute: u16,
-    pub timezone: String,
 }
+
+const WEEKDAYS: [&str; 7] = [
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
+];
 
 impl QuietHours {
     /// Parses the bounded persisted shape.
@@ -140,18 +156,18 @@ impl QuietHours {
         let object = value
             .as_object()
             .ok_or(DomainError::InvalidDefinition)?;
-        if object.len() != 3 {
+        if object.len() != 4 {
             return Err(DomainError::InvalidDefinition);
         }
         let start = parse_minute(
             object
-                .get("start")
+                .get("start_local_time")
                 .and_then(serde_json::Value::as_str)
                 .ok_or(DomainError::InvalidDefinition)?,
         )?;
         let end = parse_minute(
             object
-                .get("end")
+                .get("end_local_time")
                 .and_then(serde_json::Value::as_str)
                 .ok_or(DomainError::InvalidDefinition)?,
         )?;
@@ -162,10 +178,26 @@ impl QuietHours {
         if timezone.trim().is_empty() || timezone.len() > 64 {
             return Err(DomainError::InvalidDefinition);
         }
+        let weekdays_value = object
+            .get("weekdays")
+            .and_then(serde_json::Value::as_array)
+            .ok_or(DomainError::InvalidDefinition)?;
+        if weekdays_value.is_empty() || weekdays_value.len() > 7 {
+            return Err(DomainError::InvalidDefinition);
+        }
+        let mut weekdays = Vec::with_capacity(weekdays_value.len());
+        for entry in weekdays_value {
+            let day = entry.as_str().ok_or(DomainError::InvalidDefinition)?;
+            if !WEEKDAYS.contains(&day) || weekdays.iter().any(|seen| seen == day) {
+                return Err(DomainError::InvalidDefinition);
+            }
+            weekdays.push(day.to_owned());
+        }
         Ok(Self {
             start_minute: start,
             end_minute: end,
             timezone: timezone.to_owned(),
+            weekdays,
         })
     }
 
@@ -179,6 +211,17 @@ impl QuietHours {
             .ok_or(DomainError::InvalidDefinition)?
             .with_timezone(&timezone);
         let minute = (local.minute() as u16) + (local.hour() as u16) * 60;
+        // An overnight window belongs to the weekday it starts on, so the early
+        // morning tail uses the previous day.
+        let weekday = if self.start_minute > self.end_minute && minute < self.end_minute {
+            local.weekday().pred()
+        } else {
+            local.weekday()
+        };
+        let weekday_token = WEEKDAYS[weekday.num_days_from_monday() as usize];
+        if !self.weekdays.iter().any(|day| day == weekday_token) {
+            return Ok(false);
+        }
         if self.start_minute == self.end_minute {
             return Ok(false);
         }

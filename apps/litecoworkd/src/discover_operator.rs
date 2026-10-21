@@ -344,6 +344,9 @@ async fn connect_or_install_capability(
     body: Bytes,
 ) -> Result<Response, Response> {
     let workspace = authorized_workspace(&state, &headers)?;
+    // The published contract requires an idempotency key. These commands change no
+    // state today, so the key is required and bounded but produces no receipt.
+    let _request_id = idempotency_key(&headers)?;
     if !valid_id(&capability_id) {
         return Err(invalid());
     }
@@ -377,6 +380,9 @@ async fn test_capability_connection(
     body: Bytes,
 ) -> Result<Response, Response> {
     let workspace = authorized_workspace(&state, &headers)?;
+    // The published contract requires an idempotency key. This probe changes no
+    // state, so the key is required and bounded but produces no receipt.
+    let _request_id = idempotency_key(&headers)?;
     if !valid_id(&capability_id) {
         return Err(invalid());
     }

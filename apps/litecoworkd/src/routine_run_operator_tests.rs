@@ -806,3 +806,57 @@ async fn resume_route_enables_a_paused_automation_with_the_local_trigger_host() 
         0
     );
 }
+
+#[tokio::test]
+async fn capability_commands_require_an_idempotency_key_and_stay_truthful() {
+    let (_directory, _store, router) = fixture();
+    let body = json!({
+        "workspace_id": WORKSPACE,
+        "runtime_id": null,
+        "requested_scope": null,
+    })
+    .to_string();
+
+    let mut request = Request::post("/v1/capabilities/cap-1/connect-or-install")
+        .header("x-workspace-id", WORKSPACE)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.clone()))
+        .expect("capability request builds");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    let response = router.clone().oneshot(request).await.expect("router responds");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let mut request = Request::post("/v1/capabilities/cap-1/connect-or-install")
+        .header("x-workspace-id", WORKSPACE)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", "capability-install-1")
+        .body(Body::from(body.clone()))
+        .expect("capability request builds");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    let response = router.clone().oneshot(request).await.expect("router responds");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("body reads");
+    let payload: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    assert_eq!(payload["code"], "DEPENDENCY_UNAVAILABLE");
+    assert_eq!(
+        payload["details"]["reason"],
+        "LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED"
+    );
+
+    let mut request = Request::post("/v1/capabilities/cap-1/test")
+        .header("x-workspace-id", WORKSPACE)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("idempotency-key", "capability-test-1")
+        .body(Body::from(body))
+        .expect("capability request builds");
+    request.extensions_mut().insert(AuthenticatedLocalPeer);
+    let response = router.oneshot(request).await.expect("router responds");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("body reads");
+    let payload: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    assert_eq!(payload["health"], "UNKNOWN");
+}

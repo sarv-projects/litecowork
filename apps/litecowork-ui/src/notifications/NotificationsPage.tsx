@@ -48,7 +48,7 @@ const STATUSES: readonly NotificationStatus[] = ["PENDING", "SENDING", "SENT", "
 const STATUS_LABEL: Record<NotificationStatus, string> = {
   PENDING: "Pending",
   SENDING: "Sending",
-  SENT: "Sent",
+  SENT: "Transport acknowledged",
   FAILED: "Failed",
   AMBIGUOUS: "Unknown outcome",
   SUPPRESSED: "Suppressed",
@@ -284,6 +284,7 @@ export function NotificationsPage({ api, workspaceId }: Props) {
           <div>
             <h2 id="notification-history-heading">Delivery history</h2>
             <p>A delivery exists only because a persisted outcome exists. A pending record is not a delivered message.</p>
+            <p>A transport-acknowledged delivery is not a Task outcome and is never proof that the work succeeded.</p>
           </div>
           <label className="notification-filter">
             <span>Status</span>

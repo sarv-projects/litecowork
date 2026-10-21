@@ -454,6 +454,36 @@ def check_error_registry() -> None:
             f"missing={sorted(machine_codes-documented_codes)}, "
             f"extra={sorted(documented_codes-machine_codes)}"
         )
+    # Every error code the daemon can actually return must be in the canonical
+    # registry, because the OpenAPI `ApiError.code` field references it.
+    emitted = set()
+    for source in sorted((ROOT / "apps/litecoworkd/src").rglob("*.rs")):
+        text = source.read_text(encoding="utf-8")
+        for match in re.finditer(
+            r'operator_error(?:_with_details)?\(\s*[^,]+,\s*"([A-Z][A-Z0-9_]+)"', text
+        ):
+            emitted.add(match.group(1))
+    unknown = sorted(emitted - machine_codes)
+    if unknown:
+        fail(
+            "Operator responses use error codes that are missing from the canonical "
+            f"ErrorCode registry: {unknown}"
+        )
+    # AutomationOccurrence blockers are persisted as `code` values and are
+    # projected through the `Blocker` schema, so they use the same registry.
+    occurrence_blockers = {
+        "MISFIRED_SLOT_SKIPPED",
+        "ROUTINE_NOT_ACTIVE",
+        "ROUTINE_REVISION_DRIFTED",
+        "SCHEDULE_PLAN_UNAVAILABLE",
+        "CLAIM_WINDOW_UNAVAILABLE",
+    }
+    missing_blockers = sorted(occurrence_blockers - machine_codes)
+    if missing_blockers:
+        fail(
+            "AutomationOccurrence blockers are missing from the canonical ErrorCode "
+            f"registry: {missing_blockers}"
+        )
     event_schema = load_json(DOCS / "schemas" / "domain-event.schema.json")
     event_codes = set(event_schema.get("$defs", {}).get("error_code", {}).get("enum", []))
     if event_codes != machine_codes:

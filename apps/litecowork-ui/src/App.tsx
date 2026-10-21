@@ -592,6 +592,7 @@ function App() {
   const resourcePauseRequested = useRef(false);
   const [resourcePausePending, setResourcePausePending] = useState(false);
   const [resourceMessage, setResourceMessage] = useState<string | null>(null);
+  const [resourceListFailed, setResourceListFailed] = useState(false);
   const [resourceUploadResumeForget, setResourceUploadResumeForget] = useState<ResourceUploadResumeForget | null>(null);
   const [previewResourceId, setPreviewResourceId] = useState<string | null>(null);
   const [previewResourceName, setPreviewResourceName] = useState<string | null>(null);
@@ -1032,6 +1033,7 @@ function App() {
     if (!selectedWorkspaceId) { setResources([]); return; }
     setResources([]);
     setResourceMessage(null);
+    setResourceListFailed(false);
     let active = true;
     void invoke<ResourcePageView>("list_resources", { workspaceId: selectedWorkspaceId, cursor: null }).then((page) => {
       if (active && generation === resourceListGeneration.current) {
@@ -1039,7 +1041,12 @@ function App() {
         setResourceNextCursor(page.nextCursor);
       }
     }).catch(() => {
-      if (active) setResourceMessage("Saved Resources are unavailable until the local Runtime is ready.");
+      // A failed read proves nothing about the Workspace, so the Library must not
+      // claim that the Workspace has no files.
+      if (active) {
+        setResourceListFailed(true);
+        setResourceMessage(null);
+      }
     });
     return () => { active = false; };
   }, [selectedWorkspaceId, runtime?.operatorReady, resourceCatalogRefreshNonce]);
@@ -2048,8 +2055,7 @@ function App() {
           </div>
           <div className="user-row">
             <span className="user-avatar" aria-hidden="true">S</span>
-            <span className="user-meta"><strong>Local desktop</strong><small>Personal Workspace</small></span>
-            <button className="icon-button more-button" aria-label="More account options" type="button">···</button>
+            <span className="user-meta"><strong>Local desktop</strong><small>Single-user local session</small></span>
           </div>
         </div>
       </aside>
@@ -2070,7 +2076,6 @@ function App() {
           </button>
           <div className="breadcrumbs"><span>LiteCowork</span><span className="crumb-separator">/</span><strong>{page}</strong></div>
           <div className="topbar-actions">
-            <button className="icon-button help-button" type="button" aria-label="Help">?</button>
           </div>
         </header>
 
@@ -2092,7 +2097,7 @@ function App() {
           <LibraryPage selectedWorkspaceId={selectedWorkspaceId} onSelectWorkspace={selectWorkspace} selectedWorkspaceIdRef={selectedWorkspaceIdRef} artifactApi={artifactApi} onOpenArtifactSource={openArtifactSource} rootStatusRequestKeys={rootStatusRequestKeys} resourceIndexRequestKeys={resourceIndexRequestKeys} workspaceVersion={workspaces.find((workspace) => workspace.workspaceId === selectedWorkspaceId)?.version ?? null} operatorReady={runtime?.operatorReady === true} resources={resources} onRevisionCommitted={(updated) => {
             setResources((current) => current.map((item) => item.resourceId === updated.resourceId ? updated : item));
             onLibraryDraftCommitted();
-          }} onDraftSaveFailure={onLibraryDraftSaveFailed} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => requestPageNavigation("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} uploadResumeForget={resourceUploadResumeForget} onForgetUploadResume={forgetResourceUploadResume} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
+          }} onDraftSaveFailure={onLibraryDraftSaveFailed} onRefreshResources={() => setResourceCatalogRefreshNonce((current) => current + 1)} selectedTaskInputs={taskInputSelections[selectedWorkspaceId] ?? []} onToggleTaskInput={toggleTaskInput} onClearTaskInputs={clearTaskInputs} onUseSelectedInTask={() => requestPageNavigation("Home")} nextCursor={resourceNextCursor} pageBusy={resourcePageBusy} onLoadMore={loadMoreResources} busy={resourceBusy} pausePending={resourcePausePending} onPauseImport={pauseResourceImport} message={resourceMessage} listFailed={resourceListFailed} uploadResumeForget={resourceUploadResumeForget} onForgetUploadResume={forgetResourceUploadResume} onFiles={importFiles} onPreview={previewText} onClosePreview={() => { previewGeneration.current += 1; setPreviewResourceId(null); setPreviewResourceName(null); setResourcePreview(null); setResourcePreviewHighlights(null); setPreviewError(null); }} previewResourceId={previewResourceId} previewResourceName={previewResourceName} preview={resourcePreview} previewHighlights={resourcePreviewHighlights} previewError={previewError} />
         ) : page === "Needs You" ? (
           <TaskAttentionPage key={selectedWorkspaceId} workspaceId={selectedWorkspaceId} operatorReady={runtime?.operatorReady === true} onOpenTask={(taskId) => { setOpenedTask({ workspaceId: selectedWorkspaceId, taskId }); requestPageNavigation("Work"); }} />
         ) : page === "Coworkers" && runtime?.operatorReady !== true && selectedWorkspaceId ? (
@@ -2824,7 +2829,8 @@ function TaskDetailPanel({ workspaceId, taskId, resourceNameCache, artifactApi, 
       {objectiveSaved && <p className="task-edit-success" role="status">{objectiveSaved}</p>}
       {busy && !visibleTask ? <div className="task-loading" role="status">Loading Task details…</div> : visibleTask ? (
         <>
-          <div className="task-detail-heading"><span className={`status-pill ${visibleTask.status === "COMPLETED" ? "success" : ""}`}>{taskStatusLabel(visibleTask.status)}</span><small>Task {visibleTask.taskId}</small></div>
+          <div className="task-detail-heading"><span className="status-pill">{taskStatusLabel(visibleTask.status)}</span><small>Task {visibleTask.taskId}</small></div>
+          {visibleTask.status === "COMPLETED" && <p className="task-verification-note">Completed means the Task reached a terminal successful state. Outputs are not verified in this view.</p>}
           {editingObjective ? <form className="task-objective-editor" onSubmit={(event) => { event.preventDefault(); void saveObjective(); }}>
             <label htmlFor="task-objective-edit">Objective</label>
             <textarea id="task-objective-edit" value={objectiveDraft} onChange={(event) => { setObjectiveDraft(event.target.value); setObjectiveError(null); setObjectiveSaved(null); }} maxLength={32_768} autoFocus />
@@ -3182,7 +3188,7 @@ function PlaceholderPage({ page, onSettings }: { page: Page; onSettings: () => v
   );
 }
 
-function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspaceIdRef, artifactApi, onOpenArtifactSource, rootStatusRequestKeys, resourceIndexRequestKeys, workspaceVersion, operatorReady, resources, onRevisionCommitted, onDraftSaveFailure, onRefreshResources, selectedTaskInputs, onToggleTaskInput, onClearTaskInputs, onUseSelectedInTask, nextCursor, pageBusy, onLoadMore, busy, pausePending, onPauseImport, message, uploadResumeForget, onForgetUploadResume, onFiles, onPreview, onClosePreview, previewResourceId, previewResourceName, preview, previewHighlights, previewError }: { selectedWorkspaceId: string; onSelectWorkspace: (workspaceId: string) => void; selectedWorkspaceIdRef: { current: string }; artifactApi: ReturnType<typeof desktopArtifactApi>; onOpenArtifactSource: (ref: PinnedResourceRef) => void; rootStatusRequestKeys: { current: Map<string, string> }; resourceIndexRequestKeys: { current: Map<string, string> }; workspaceVersion: number | null; operatorReady: boolean; resources: ResourceView[]; onRevisionCommitted: (resource: ResourceView) => void; onDraftSaveFailure: (message: string) => void; onRefreshResources: () => void; selectedTaskInputs: TaskInputSelection[]; onToggleTaskInput: (resource: { resourceId: string; resourceRevisionId: string; displayName: string }) => void; onClearTaskInputs: () => void; onUseSelectedInTask: () => void; nextCursor: string | null; pageBusy: boolean; onLoadMore: () => Promise<void>; busy: boolean; pausePending: boolean; onPauseImport: () => void; message: string | null; uploadResumeForget: ResourceUploadResumeForget | null; onForgetUploadResume: () => void; onFiles: (files: FileList | File[] | null, contextDocument?: ContextDocumentCreateMetadata | null) => Promise<void>; onPreview: (resourceId: string, displayName: string, revisionId: string, searchPin?: PreviewSearchPin) => Promise<void>; onClosePreview: () => void; previewResourceId: string | null; previewResourceName: string | null; preview: string | null; previewHighlights: SourceHighlightResult | null; previewError: string | null }) {
+function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspaceIdRef, artifactApi, onOpenArtifactSource, rootStatusRequestKeys, resourceIndexRequestKeys, workspaceVersion, operatorReady, resources, onRevisionCommitted, onDraftSaveFailure, onRefreshResources, selectedTaskInputs, onToggleTaskInput, onClearTaskInputs, onUseSelectedInTask, nextCursor, pageBusy, onLoadMore, busy, pausePending, onPauseImport, message, listFailed, uploadResumeForget, onForgetUploadResume, onFiles, onPreview, onClosePreview, previewResourceId, previewResourceName, preview, previewHighlights, previewError }: { selectedWorkspaceId: string; onSelectWorkspace: (workspaceId: string) => void; selectedWorkspaceIdRef: { current: string }; artifactApi: ReturnType<typeof desktopArtifactApi>; onOpenArtifactSource: (ref: PinnedResourceRef) => void; rootStatusRequestKeys: { current: Map<string, string> }; resourceIndexRequestKeys: { current: Map<string, string> }; workspaceVersion: number | null; operatorReady: boolean; resources: ResourceView[]; onRevisionCommitted: (resource: ResourceView) => void; onDraftSaveFailure: (message: string) => void; onRefreshResources: () => void; selectedTaskInputs: TaskInputSelection[]; onToggleTaskInput: (resource: { resourceId: string; resourceRevisionId: string; displayName: string }) => void; onClearTaskInputs: () => void; onUseSelectedInTask: () => void; nextCursor: string | null; pageBusy: boolean; onLoadMore: () => Promise<void>; busy: boolean; pausePending: boolean; onPauseImport: () => void; message: string | null; listFailed: boolean; uploadResumeForget: ResourceUploadResumeForget | null; onForgetUploadResume: () => void; onFiles: (files: FileList | File[] | null, contextDocument?: ContextDocumentCreateMetadata | null) => Promise<void>; onPreview: (resourceId: string, displayName: string, revisionId: string, searchPin?: PreviewSearchPin) => Promise<void>; onClosePreview: () => void; previewResourceId: string | null; previewResourceName: string | null; preview: string | null; previewHighlights: SourceHighlightResult | null; previewError: string | null }) {
   const folderInput = useRef<HTMLInputElement>(null);
   const rootListGeneration = useRef(0);
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRootView[]>([]);
@@ -3836,7 +3842,7 @@ function LibraryPage({ selectedWorkspaceId, onSelectWorkspace, selectedWorkspace
       {saveAsMessage && <p className="inline-status" role="status" aria-live="polite">{saveAsMessage}</p>}
       {saveAsError && <p className="inline-error" role="alert">{saveAsError}</p>}
       {indexActionError?.includes("Reload the Library") && <button className="quiet-button" type="button" disabled={!operatorReady} onClick={() => { setIndexActionError(null); onRefreshResources(); }}>Reload files</button>}
-      {resources.length === 0 ? <div className="empty-panel subpage-panel"><div className="empty-icon" aria-hidden="true">▧</div><h2>No files in this Workspace yet</h2><p>After adding files, find them by name or type. Small supported text files can also be scanned on demand; ZIP contents are not extracted.</p></div> : (
+      {resources.length === 0 && listFailed ? <div className="empty-panel subpage-panel" role="alert"><div className="empty-icon" aria-hidden="true">▧</div><h2>Saved Resources are unavailable</h2><p>The last read of this Workspace's file list failed. Nothing is known about whether this Workspace has files, so this is not an empty result.</p><button type="button" className="quiet-button" disabled={!operatorReady} onClick={onRefreshResources}>Retry file list</button></div> : resources.length === 0 ? <div className="empty-panel subpage-panel"><div className="empty-icon" aria-hidden="true">▧</div><h2>No files in this Workspace yet</h2><p>After adding files, find them by name or type. Small supported text files can also be scanned on demand; ZIP contents are not extracted.</p></div> : (
         <>
           <div className="library-search-block">
             <label htmlFor="resource-search">Find a saved file</label>

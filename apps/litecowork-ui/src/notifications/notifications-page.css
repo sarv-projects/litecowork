@@ -28,7 +28,7 @@
 .notification-source { max-width: 260px; overflow: hidden; color: var(--color-text-muted); font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .notification-status { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 99px; background: var(--lc-neutral-100); color: var(--color-text-muted); font-size: 10px; font-weight: 650; white-space: nowrap; }
 .notification-status-pending, .notification-status-sending { background: #fff4dd; color: #805817; }
-.notification-status-sent { background: #e8f5ee; color: #226b49; }
+.notification-status-sent { background: #f1f1f1; color: #4a5560; }
 .notification-status-failed { background: #fff0ee; color: #7b3029; }
 .notification-status-ambiguous { background: #f4ecfb; color: #5a3676; }
 .notification-status-suppressed { background: #f1f1f1; color: #666; }
