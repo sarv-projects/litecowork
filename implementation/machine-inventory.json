@@ -2306,7 +2306,7 @@
       "method": "GET",
       "operationId": "listUserRequests",
       "path": "/user-requests",
-      "sha256": "fea3d1a7ca2366bf4c203761795c3e299a70a234f2366c23822e2fdb469c468e"
+      "sha256": "e4f8b57372d6a36004beed7e521e4a4d79c07ad345e60dce93af921643b0ebf0"
     },
     {
       "method": "GET",
@@ -5139,12 +5139,8 @@
       "sha256": "07970b7c18c059be8fe4469116919bf2f87e222ad121ec54c0507cb15774a84d"
     },
     {
-      "name": "UserRequest",
-      "sha256": "faef3b5115cae67ed0b9f5528ba5a6380c847c241765fb13c258ee3a23c0a24d"
-    },
-    {
       "name": "UserRequestDetail",
-      "sha256": "543e14179fe9dbc47fc6366437e15efbdea2ebf677752db6998a02b393989f3e"
+      "sha256": "c83ec6f768d82b1aa96974be9f55aeda5ce460d3f831229f2e3ad0e7182c35e3"
     },
     {
       "name": "UserRequestDetailChoice",
@@ -5156,7 +5152,7 @@
     },
     {
       "name": "UserRequestPage",
-      "sha256": "22ea626ea43f6ad876472100cfdca68bc8f22f0aa60886a238eb8238addf803a"
+      "sha256": "b90ac083694b87b91df9ca3a5d5f9231d4f536bee6b044a40699a030186891ef"
     },
     {
       "name": "UserRequestResolutionReceipt",
@@ -5169,6 +5165,10 @@
     {
       "name": "UserRequestResponseInput",
       "sha256": "7642f70fc71aa06cf425e72297f77395465f5a56a78a984f506942b6f7106d8e"
+    },
+    {
+      "name": "UserRequestSummary",
+      "sha256": "d0958ffb0b8ccdfde44c393aeecb4c0539acb37af6cafb8e748c315d957fa66d"
     },
     {
       "name": "VerificationRun",
@@ -5620,7 +5620,6 @@
     "UpdateWorkspaceRootRequest",
     "UsageObservation",
     "UsageQuantity",
-    "UserRequest",
     "UserRequestDetail",
     "UserRequestDetailChoice",
     "UserRequestDetailScope",
@@ -5628,6 +5627,7 @@
     "UserRequestResolutionReceipt",
     "UserRequestResponse",
     "UserRequestResponseInput",
+    "UserRequestSummary",
     "VerificationRun",
     "VerificationRunPage",
     "WarmPolicy",

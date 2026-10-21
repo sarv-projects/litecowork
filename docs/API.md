@@ -147,6 +147,18 @@ details state that the provider address is private. Opening the detail performs 
 dismissal, Approval, Task, or Conversation mutation. The Needs You list remains a generic
 safe projection and does not return prompts, choices, or response schemas.
 
+```text
+GET /v1/user-requests?status=&cursor=&limit=
+```
+
+This owner-scoped list returns prompt-free `UserRequestSummary` rows for the selected
+Workspace, ordered by `created_at` descending and `request_id` ascending. `status` is an
+exact persisted status; the opaque cursor binds Workspace, normalized status, limit, and
+the last `(created_at, request_id)` pair, so a cursor cannot be reused across filters or
+Workspaces. The list omits prompts, choices, response schemas, agent-session handles,
+provider URLs, and response records. It is a navigation projection, not an answer or
+dismissal action; use the exact detail and response/dismiss routes for those operations.
+
 ## Workspace-persistent Environments
 
 ```text

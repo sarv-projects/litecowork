@@ -3,8 +3,8 @@
 This script read every line of every included first-party Markdown file and checked literal Markdown relative link targets. **Mechanical coverage does not imply that each statement was semantically audited, implemented or runtime-qualified.**
 
 - Files read: 210
-- Lines read: 76032
-- Bytes read: 5321802
+- Lines read: 76070
+- Bytes read: 5324295
 - Broken relative links: 0
 - Excluded: dependency/cache/output worktrees and generated audit reports; CSV inventory includes SHA-256 for every read Markdown source.
 
@@ -26,7 +26,7 @@ This script read every line of every included first-party Markdown file and chec
 | crates/domain-responsibility/README.md | 141 | 0e9811b3c3f5 | shell/settings/motion;workflow/recovery;trust/security |
 | docs/AGENT-CONTROL.md | 1212 | e0bd409a3063 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
 | docs/AGENT-FABRIC.md | 445 | dec95680c00a | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |
-| docs/API.md | 2211 | 482fdc9367f2 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| docs/API.md | 2223 | a3ae87513a83 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | docs/ARTIFACTS-EVIDENCE.md | 355 | 005fa9ba7aa7 | shell/settings/motion;workflow/recovery;trust/security |
 | docs/AUTOMATION.md | 513 | 26f08fda39b0 | workflow/recovery;trust/security |
 | docs/BENCHMARKS.md | 683 | 608779fb8632 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
@@ -120,7 +120,7 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/ARCHITECTURE-COVERAGE.md | 177 | 0a7b922779ae | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/AUDIT.md | 155 | a55491d42453 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/COVERAGE.md | 33 | de61a91ec685 | rendering |
-| implementation/CURRENT-RUN.md | 9646 | ab24f75b85a2 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/CURRENT-RUN.md | 9665 | e67aeaf67579 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/DOC-AUDIT-2026-10-10.md | 173 | ff27abd7e23a | shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/NEXT-SESSION-HANDOFF-2026-10-13.md | 316 | 938e000f5933 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/NEXT-SESSION-HANDOFF-2026-10-20.md | 149 | 2bf8dbc19b03 | browser/computer;rendering;workflow/recovery;trust/security |
@@ -148,7 +148,7 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/V1-SERVED-CAPABILITY-INVENTORY.md | 64 | ea4f34c1f61a | agent/composer;browser/computer;workflow/recovery;trust/security |
 | implementation/WORKFLOWS.md | 70 | 8c37420bf900 | browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/epics/E01.md | 799 | 0b72423e849d | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
-| implementation/epics/E02.md | 608 | 7aeff620bb04 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/epics/E02.md | 618 | 7a337ef1e29e | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/epics/E03.md | 584 | 42ee62a9f8a5 | agent/composer;shell/settings/motion;workflow/recovery;trust/security |
 | implementation/epics/E04.md | 134 | 27e02ac37fb0 | workflow/recovery;trust/security |
 | implementation/epics/E05.md | 236 | 8d314206d68a | shell/settings/motion;workflow/recovery;trust/security |
@@ -170,7 +170,7 @@ This script read every line of every included first-party Markdown file and chec
 | implementation/reviews/E02-S02-TAURI-IPC-2026-10-13.md | 86 | 316d19024d46 | shell/settings/motion;rendering;trust/security |
 | implementation/reviews/E02-S02.md | 835 | 8679a9672be1 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/reviews/E02-S03.md | 1941 | e947fe75a477 | browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
-| implementation/reviews/E02-S04.md | 571 | f2a33419189d | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
+| implementation/reviews/E02-S04.md | 568 | 7f8bf88980f4 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/reviews/E03-S01-agent-catalog-truthful-status-2026-10-16.md | 80 | 2bc00031d878 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery |
 | implementation/reviews/E03-S01.md | 687 | bd3188db69b1 | agent/composer;browser/computer;shell/settings/motion;rendering;workflow/recovery;trust/security |
 | implementation/reviews/E03-S02.md | 401 | a083a28b6056 | agent/composer;browser/computer;shell/settings/motion;workflow/recovery;trust/security |

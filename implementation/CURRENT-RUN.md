@@ -1,3 +1,22 @@
+## 2026-10-21 — E02-S04 owner-scoped UserRequest list
+
+- **Contract correction.** OpenAPI `UserRequestPage.items` now points at
+  `UserRequestSummary`, a prompt-free schema. The list omits prompts, choices, response
+  schemas, agent-session handles, provider URLs, and response records; the previously
+  unserved route is now consistent with `docs/API.md`.
+- **Read path.** `GET /v1/user-requests?status=&cursor=&limit=` is owner-scoped and served
+  with `Cache-Control: no-store`. SQLite orders by `created_at DESC, request_id ASC`, reads
+  one extra row, and returns an opaque cursor binding Workspace, status, limit, and the last
+  `(created_at, request_id)` pair. A cursor reused with a different filter/limit is `400`.
+- **Evidence.** Focused daemon test
+  `owner_lists_prompt_free_user_requests_with_bound_cursor_pages` passes 1/1: unauthenticated
+  `401`, foreign-owner `403`, two tied-timestamp pages in exact order, no private fields,
+  cursor/filter mismatch `400`, and an empty terminal status page. Full daemon `525/525`
+  (1 ignored); `pnpm api:check` passes.
+- **Still open (not claimed).** The external-handoff route, packaged SYSTEM, and owner USER
+  acceptance. E02-S04 stays `IN_PROGRESS`.
+- **Cleanup/disk.** No schema, worktree, branch, or agent process change; logs removed.
+
 ## 2026-10-21 — E09-S03 truthful setup-progress checklist
 
 - **UI only.** The Automation detail now derives Review/Test/Enable setup states from the

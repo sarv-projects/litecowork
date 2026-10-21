@@ -807,14 +807,15 @@ def check_async_capability_contract() -> None:
         status_changed_from = status_changed.get("properties", {}).get("from", {}).get("enum", [])
         if set(status_changed_from) != {"OPEN", "RUNNING", "WAITING_USER", "WAITING_DEPENDENCY"}:
             fail("conversation.turn.status.changed.v1 source states must exclude terminal/cancellation/retry states")
-        request = schemas["UserRequest"]
-        required = set(request.get("required", []))
-        if "conversation_id" in required:
-            fail("OpenAPI UserRequest must allow Task-originated requests without a Conversation")
-        if "provider_input_key" in request.get("properties", {}) or "external_url" in request.get("properties", {}):
+        detail = schemas["UserRequestDetail"]
+        if "provider_input_key" in detail.get("properties", {}) or "external_url" in detail.get("properties", {}):
             fail("OpenAPI must not expose provider input keys or URLs in ordinary UserRequest projections")
-        if "interaction_mode" not in request.get("properties", {}):
-            fail("OpenAPI UserRequest must expose the form/external URL interaction mode")
+        if "interaction_mode" not in detail.get("properties", {}):
+            fail("OpenAPI UserRequestDetail must expose the form/external URL interaction mode")
+        summary = schemas["UserRequestSummary"]
+        for forbidden in ("prompt", "choices", "response_schema", "agent_session_id", "invocation_id", "provider_url"):
+            if forbidden in summary.get("properties", {}):
+                fail(f"OpenAPI UserRequestSummary must not expose {forbidden}")
         handoff = api.get("paths", {}).get("/user-requests/{requestId}/external-handoff", {}).get("post", {})
         if not handoff or "no-store" not in str(handoff):
             fail("OpenAPI must define an explicit no-store external-auth handoff route")
@@ -824,36 +825,43 @@ def check_async_capability_contract() -> None:
             turn_status = schemas[turn_schema_name].get("properties", {}).get("status", {}).get("enum", [])
             if "WAITING_DEPENDENCY" not in turn_status:
                 fail(f"OpenAPI {turn_schema_name} must expose WAITING_DEPENDENCY")
-        if set(request.get("properties", {}).get("kind", {}).get("enum", [])) != {
+        if set(detail.get("properties", {}).get("kind", {}).get("enum", [])) != {
             "QUESTION", "DECISION", "RESOURCE_SELECTION", "EXTERNAL_AUTHORIZATION"
         }:
-            fail("OpenAPI UserRequest must distinguish external authorization from Approval")
+            fail("OpenAPI UserRequestDetail must distinguish external authorization from Approval")
         request_validator = jsonschema.Draft202012Validator(
-            {"components": {"schemas": schemas}, "$ref": "#/components/schemas/UserRequest"}
+            {"components": {"schemas": schemas}, "$ref": "#/components/schemas/UserRequestDetail"}
         )
         conversation_request = {
-            "request_id": "request", "workspace_id": "workspace", "conversation_id": "conversation",
-            "conversation_turn_id": "turn", "task_id": None, "attempt_id": None,
-            "agent_session_id": "session", "invocation_id": None, "kind": "QUESTION", "prompt": "Confirm",
-            "interaction_mode": "FORM",
-            "response_schema": None, "choices": [], "status": "PENDING", "expires_at": None,
-            "created_at": "2026-01-01T00:00:00Z", "resolved_at": None, "resolved_by": None,
-            "response_digest": None, "version": 1,
+            "request_id": "request", "workspace_id": "workspace",
+            "scope": {"kind": "CONVERSATION", "conversation_id": "conversation", "conversation_turn_id": "turn"},
+            "kind": "QUESTION", "interaction_mode": "FORM", "prompt": "Confirm",
+            "choices": [], "status": "PENDING", "version": 1,
+            "created_at": "2026-01-01T00:00:00Z", "expires_at": None, "resolved_at": None,
         }
         task_request = {
-            **conversation_request, "conversation_id": None, "conversation_turn_id": None, "task_id": "task"
+            **conversation_request,
+            "scope": {"kind": "TASK_PLANNING", "task_id": "task"},
         }
-        attempt_request = {**task_request, "attempt_id": "attempt"}
+        attempt_request = {
+            **task_request,
+            "scope": {"kind": "ATTEMPT_EXECUTION", "task_id": "task", "attempt_id": "attempt"},
+        }
         external_auth_request = {
-            **conversation_request, "kind": "EXTERNAL_AUTHORIZATION", "interaction_mode": "EXTERNAL_URL"
+            **conversation_request,
+            "kind": "EXTERNAL_AUTHORIZATION",
+            "interaction_mode": "EXTERNAL_URL",
+            "choices": [],
         }
         mismatched_external_auth_request = {
-            **conversation_request, "kind": "QUESTION", "interaction_mode": "EXTERNAL_URL"
+            **conversation_request,
+            "kind": "QUESTION",
+            "interaction_mode": "EXTERNAL_URL",
         }
         for candidate, expected in (
             (conversation_request, True),
-            ({**conversation_request, "conversation_turn_id": None}, False),
-            ({**conversation_request, "task_id": "task"}, False),
+            ({**conversation_request, "scope": {"kind": "CONVERSATION", "conversation_id": "conversation"}}, False),
+            ({**conversation_request, "scope": {"kind": "TASK_PLANNING", "task_id": "task", "attempt_id": "attempt"}}, False),
             (task_request, True),
             (attempt_request, True),
             (external_auth_request, True),
@@ -863,7 +871,7 @@ def check_async_capability_contract() -> None:
         ):
             accepted = not list(request_validator.iter_errors(candidate))
             if accepted != expected:
-                fail("OpenAPI UserRequest must require exactly one valid scope tuple including its ConversationTurn")
+                fail("OpenAPI UserRequestDetail must require exactly one valid scope tuple including its ConversationTurn")
     except Exception as exc:  # noqa: BLE001
         fail(f"Async invocation/UserRequest OpenAPI comparison failed: {exc}")
 
