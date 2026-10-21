@@ -43,7 +43,7 @@
   acceptance. E09-S03 stays `IN_PROGRESS`.
 - **Cleanup/disk.** One worktree, 26 branches; the full storage and daemon test runs
   completed. No agent-created worktree, branch, or test process remains. `target` 29 GB,
-  Tauri target 4.6 GB, `/tmp/opencode` 604 KB; 815 GB free. The Tauri target grew during the
+  Tauri target 4.7 GB, `/tmp/opencode` 20 KB; 815 GB free. The Tauri target grew during the
   bridge test and is retained as a useful shared cache; temporary logs are removed.
 
 ## 2026-10-21 — E09-S05 injected late-failure rollback evidence
