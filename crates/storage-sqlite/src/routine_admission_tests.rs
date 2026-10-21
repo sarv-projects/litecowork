@@ -9,6 +9,7 @@
 //! Attempt, or AgentSession row.
 
 use super::*;
+use domain_workspace::{CreateWorkspace, EventContext, WorkspaceService};
 use rusqlite::{Connection, params};
 use std::time::Duration;
 
@@ -18,13 +19,22 @@ const NOW: &str = "2026-10-21T10:00:00Z";
 /// A Workspace with one enabled lead AgentBinding, that binding as the
 /// Workspace default, and one ACTIVE Routine revision.
 fn fixture(input_schema_json: &str) -> (tempfile::TempDir, SqliteWorkspaceStore) {
-    fixture_with_lead(input_schema_json, None)
+    fixture_with(input_schema_json, None, "[]")
 }
 
 /// The same fixture with an optional alternate lead pinned by the revision.
 fn fixture_with_lead(
     input_schema_json: &str,
     preferred_lead: Option<&str>,
+) -> (tempfile::TempDir, SqliteWorkspaceStore) {
+    fixture_with(input_schema_json, preferred_lead, "[]")
+}
+
+/// The base fixture with explicit input bindings for ResourceRef coverage.
+fn fixture_with(
+    input_schema_json: &str,
+    preferred_lead: Option<&str>,
+    input_bindings_json: &str,
 ) -> (tempfile::TempDir, SqliteWorkspaceStore) {
     let directory = tempfile::tempdir().unwrap();
     let store = test_store(&directory, Duration::from_secs(1));
@@ -64,8 +74,8 @@ fn fixture_with_lead(
     .expect("fixture Routine");
     tx.execute(
         "INSERT INTO routine_revisions(workspace_id, routine_id, revision, objective_template, instructions, input_schema_json, constraints_json, non_goals_json, required_outputs_json, acceptance_criteria_json, approvals_required_json, input_bindings_json, required_capabilities_json, preferred_agent_binding_id, placement_preference_json, budget_ceiling_json, verification_policy_json, authored_by_json, created_at)
-         VALUES (?1, 'routine-1', 1, 'Review project', 'Review the project', ?2, '[]', '[]', '[]', '[]', '[]', '[]', '[]', ?3, '\"AUTO\"', NULL, '{}', '{\"principal_id\":\"owner-local\",\"kind\":\"USER\"}', '2026-10-20T08:00:00Z')",
-        params![WORKSPACE, input_schema_json, preferred_lead],
+         VALUES (?1, 'routine-1', 1, 'Review project', 'Review the project', ?2, '[]', '[]', '[]', '[]', '[]', ?4, '[]', ?3, '\"AUTO\"', NULL, '{}', '{\"principal_id\":\"owner-local\",\"kind\":\"USER\"}', '2026-10-20T08:00:00Z')",
+        params![WORKSPACE, input_schema_json, preferred_lead, input_bindings_json],
     )
     .expect("fixture Routine revision");
     tx.commit().unwrap();
@@ -95,6 +105,24 @@ fn routine_commit_with_lead(
     inputs: serde_json::Value,
     lead_binding: &str,
 ) -> storage_core::TaskCreateCommit {
+    routine_commit_with(
+        task_id,
+        request_id,
+        routine_revision,
+        inputs,
+        lead_binding,
+        Vec::new(),
+    )
+}
+
+fn routine_commit_with(
+    task_id: &str,
+    request_id: &str,
+    routine_revision: u64,
+    inputs: serde_json::Value,
+    lead_binding: &str,
+    input_refs: Vec<serde_json::Value>,
+) -> storage_core::TaskCreateCommit {
     let request_payload = serde_json::json!({
         "workspace_id": WORKSPACE,
         "conversation_id": null,
@@ -102,7 +130,7 @@ fn routine_commit_with_lead(
         "objective": "Review project",
         "constraints": ["Routine instructions (untrusted task context):\nReview the project"],
         "non_goals": [],
-        "input_refs": [],
+        "input_refs": input_refs.clone(),
         "required_outputs": [],
         "acceptance_criteria": [],
         "approvals_required": [],
@@ -172,7 +200,7 @@ fn routine_commit_with_lead(
                 "Routine instructions (untrusted task context):\nReview the project".to_owned(),
             ],
             non_goals: Vec::new(),
-            input_refs: Vec::new(),
+            input_refs,
             workspace_instruction_revision: None,
             required_outputs: Vec::new(),
             acceptance_criteria: Vec::new(),
@@ -459,4 +487,242 @@ fn a_foreign_principal_cannot_replay_a_routine_task_receipt() {
         )
         .unwrap();
     assert_eq!((tasks, receipts), (1, 1));
+}
+
+const RESOURCE_SCHEMA: &str = r#"{"type":"object","properties":{"ref":{"type":"object","properties":{"workspace_id":{"type":"string"},"resource_id":{"type":"string"},"revision_id":{"type":"string"}},"required":["workspace_id","resource_id","revision_id"],"additionalProperties":false}},"required":["ref"],"additionalProperties":false}"#;
+const RESOURCE_BINDINGS: &str = r#"[{"source_pointer":"/ref","template_variable":"ref","value_kind":"RESOURCE_REF","required":true}]"#;
+
+fn create_other_workspace(store: &SqliteWorkspaceStore, workspace_id: &str) {
+    WorkspaceService::new(store.clone())
+        .create(CreateWorkspace {
+            workspace_id: workspace_id.to_owned(),
+            name: "Other workspace".to_owned(),
+            owner_principal_id: "owner-local".to_owned(),
+            event: EventContext {
+                event_id: format!("event-create-{workspace_id}"),
+                origin_runtime_id: "runtime-routine-admission".to_owned(),
+                hlc_timestamp: NOW.to_owned(),
+                correlation_id: format!("correlation-{workspace_id}"),
+                causation_id: None,
+                recorded_at: NOW.to_owned(),
+            },
+        })
+        .expect("other Workspace commits");
+}
+
+fn create_resource(store: &SqliteWorkspaceStore, workspace_id: &str, resource_id: &str) {
+    let revision_id = format!("revision-{resource_id}");
+    let content = format!("routine resource content for {resource_id}");
+    let content_digest = digest(content.as_bytes());
+    let resource = storage_core::ResourceRecord {
+        resource_id: resource_id.to_owned(),
+        workspace_id: workspace_id.to_owned(),
+        kind: "FILE".to_owned(),
+        provider_identity: serde_json::json!({}),
+        identity_digest: None,
+        display_name: resource_id.to_owned(),
+        current_revision_id: Some(revision_id.clone()),
+        sensitivity: "PERSONAL".to_owned(),
+        provenance: serde_json::json!({
+            "source_inputs": [],
+            "transformations": [],
+            "tool_reports": []
+        }),
+        created_at: NOW.to_owned(),
+        updated_at: NOW.to_owned(),
+        version: 1,
+    };
+    let revision = storage_core::ResourceRevisionRecord {
+        resource_revision_id: revision_id,
+        resource_id: resource_id.to_owned(),
+        parent_revision_ids: Vec::new(),
+        provider_revision: None,
+        content_digest: Some(content_digest.clone()),
+        size_bytes: Some(content.len() as u64),
+        media_type: Some("text/plain".to_owned()),
+        observed_at: NOW.to_owned(),
+        created_by: serde_json::json!({"kind": "USER", "principal_id": "owner-local"}),
+    };
+    let event = storage_core::EventDraft {
+        event_id: format!("event-resource-{resource_id}"),
+        workspace_id: workspace_id.to_owned(),
+        entity_type: "Resource".to_owned(),
+        entity_id: resource_id.to_owned(),
+        origin_runtime_id: "runtime-routine-admission".to_owned(),
+        entity_revision: 1,
+        hlc_timestamp: NOW.to_owned(),
+        correlation_id: format!("event-resource-{resource_id}"),
+        causation_id: None,
+        schema_version: 1,
+        event_type: "resource.created.v1".to_owned(),
+        payload: serde_json::json!({
+            "resource_id": resource_id,
+            "workspace_id": workspace_id,
+            "kind": "FILE",
+            "provenance": {
+                "source_inputs": [],
+                "transformations": [],
+                "tool_reports": []
+            },
+            "aggregate_version": 1
+        }),
+        recorded_at: NOW.to_owned(),
+    };
+    store
+        .create_resource(
+            storage_core::WorkspaceCreateRequest {
+                principal_id: "owner-local".to_owned(),
+                request_id: format!("request-resource-{resource_id}"),
+                request_payload: serde_json::json!({
+                    "operation": "resource.quick_import.v1",
+                    "workspace_id": workspace_id,
+                    "resource_id": resource_id,
+                    "display_name": resource_id,
+                    "media_type": "text/plain",
+                    "content_digest": content_digest,
+                    "size_bytes": content.len(),
+                }),
+            },
+            resource,
+            revision,
+            event,
+            content.into_bytes(),
+        )
+        .expect("fixture Resource commits");
+}
+
+#[test]
+fn a_resource_ref_input_pins_the_exact_workspace_revision() {
+    let (directory, store) = fixture_with(RESOURCE_SCHEMA, None, RESOURCE_BINDINGS);
+    create_resource(&store, WORKSPACE, "resource-routine");
+    let pin = serde_json::json!({
+        "workspace_id": WORKSPACE,
+        "resource_id": "resource-routine",
+        "revision_id": "revision-resource-routine"
+    });
+    let commit = routine_commit_with(
+        "task-routine-ref",
+        "routine-run-ref",
+        1,
+        serde_json::json!({"ref": pin}),
+        "binding-routine",
+        vec![pin.clone()],
+    );
+    let committed = store
+        .create_task(commit.clone())
+        .expect("the exact ResourceRef pin materializes one READY Task");
+    assert_eq!(committed.view.task.status, "READY");
+    assert_eq!(
+        committed.view.current_spec_revision.input_refs,
+        vec![pin.clone()]
+    );
+
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    let (tasks, refs): (i64, String) = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM tasks WHERE workspace_id = ?1), input_refs_json FROM task_spec_revisions WHERE task_id = 'task-routine-ref'",
+            params![WORKSPACE],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(tasks, 1);
+    assert!(refs.contains("resource-routine"));
+    assert!(refs.contains("revision-resource-routine"));
+
+    let replay = store
+        .create_task(commit)
+        .expect("the exact ResourceRef request replays its receipt");
+    assert_eq!(replay.view.task.task_id, "task-routine-ref");
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM tasks WHERE workspace_id = ?1",
+                params![WORKSPACE],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn foreign_or_unknown_resource_pins_are_refused_without_a_task() {
+    const OTHER: &str = "workspace-routine-other";
+    let (directory, store) = fixture_with(RESOURCE_SCHEMA, None, RESOURCE_BINDINGS);
+    create_other_workspace(&store, OTHER);
+    create_resource(&store, OTHER, "resource-foreign");
+
+    let foreign = serde_json::json!({
+        "workspace_id": WORKSPACE,
+        "resource_id": "resource-foreign",
+        "revision_id": "revision-resource-foreign"
+    });
+    let error = store
+        .create_task(routine_commit_with(
+            "task-routine-foreign",
+            "routine-run-foreign",
+            1,
+            serde_json::json!({"ref": foreign}),
+            "binding-routine",
+            vec![serde_json::json!({
+                "workspace_id": WORKSPACE,
+                "resource_id": "resource-foreign",
+                "revision_id": "revision-resource-foreign"
+            })],
+        ))
+        .expect_err("a pin that exists only in another Workspace is refused");
+    assert!(matches!(error, StoreError::NotFound));
+
+    create_resource(&store, WORKSPACE, "resource-routine");
+    let stale = serde_json::json!({
+        "workspace_id": WORKSPACE,
+        "resource_id": "resource-routine",
+        "revision_id": "revision-missing"
+    });
+    let error = store
+        .create_task(routine_commit_with(
+            "task-routine-stale",
+            "routine-run-stale",
+            1,
+            serde_json::json!({"ref": stale}),
+            "binding-routine",
+            vec![serde_json::json!({
+                "workspace_id": WORKSPACE,
+                "resource_id": "resource-routine",
+                "revision_id": "revision-missing"
+            })],
+        ))
+        .expect_err("an unknown Resource revision is refused");
+    assert!(matches!(error, StoreError::NotFound));
+
+    let mislabelled = serde_json::json!({
+        "workspace_id": OTHER,
+        "resource_id": "resource-foreign",
+        "revision_id": "revision-resource-foreign"
+    });
+    let error = store
+        .create_task(routine_commit_with(
+            "task-routine-mislabelled",
+            "routine-run-mislabelled",
+            1,
+            serde_json::json!({"ref": mislabelled}),
+            "binding-routine",
+            vec![serde_json::json!({
+                "workspace_id": OTHER,
+                "resource_id": "resource-foreign",
+                "revision_id": "revision-resource-foreign"
+            })],
+        ))
+        .expect_err("a pin labelled for another Workspace is refused");
+    assert!(matches!(error, StoreError::Invalid(_)));
+
+    let connection = Connection::open(state_database(&directory)).unwrap();
+    let (tasks, receipts): (i64, i64) = connection
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM tasks WHERE workspace_id = ?1), (SELECT COUNT(*) FROM request_dedup WHERE request_id LIKE 'routine-run-%')",
+            params![WORKSPACE],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((tasks, receipts), (0, 0));
 }
