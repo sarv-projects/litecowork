@@ -166,6 +166,7 @@ fn routine_commit_with(
             inputs: request_payload["routine_inputs"].clone(),
         }),
         automation_admission: None,
+        automation_test_admission: None,
         task: storage_core::TaskRecord {
             task_id: task_id.to_owned(),
             workspace_id: WORKSPACE.to_owned(),
@@ -178,6 +179,7 @@ fn routine_commit_with(
             routine_revision: Some(routine_revision),
             automation_id: None,
             automation_occurrence_id: None,
+            automation_test_run_id: None,
             origin_coworker_id: None,
             origin_coworker_revision: None,
             lead_agent_binding_id: lead_binding.to_owned(),

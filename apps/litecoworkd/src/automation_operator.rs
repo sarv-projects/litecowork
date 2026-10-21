@@ -11,12 +11,13 @@ use domain_responsibility::{
     Automation, AutomationDefinition, AutomationRevision, AutomationStatus,
     CommittedResponsibility, DomainError, HostConcurrencyFacts, HostSlotDecision,
     OccurrenceIdentity, OwnerCommandScope, ResponsibilityCommand, ResponsibilityService,
-    SettlementWindow, SlotOutcomeReason, TriggerDefinition, materialize_routine_inputs,
-    plan_host_settlement,
+    SettlementWindow, SlotOutcomeReason, TestRunIdentity, TriggerDefinition,
+    materialize_routine_inputs, plan_host_settlement,
 };
 use domain_task::{CreateStandaloneTask, TaskService};
 use storage_core::{
-    AutomationTaskAdmission, RoutineTaskAdmission, RuntimeWorkspaceBindingStore, TaskStore,
+    AutomationTaskAdmission, AutomationTestAdmission, RoutineTaskAdmission,
+    RuntimeWorkspaceBindingStore, TaskStore,
 };
 use storage_sqlite::{
     AutomationHostContext, AutomationRevisionPage, CoworkerEventContext, DueSchedule,
@@ -62,6 +63,10 @@ pub(super) fn router() -> Router<ApiState> {
         .route(
             "/v1/automations/{automation_id}/run",
             post(run_automation_now),
+        )
+        .route(
+            "/v1/automations/{automation_id}/test-runs",
+            post(run_automation_test),
         )
         .route(
             "/v1/automations/host/settle",
@@ -146,6 +151,21 @@ struct ManualAutomationRunResponse {
     occurrence_id: String,
     occurrence_version: u64,
     occurrence_status: &'static str,
+    task: storage_core::TaskView,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RunAutomationTestBody {
+    automation_revision: u64,
+    inputs: serde_json::Value,
+}
+
+#[derive(Serialize)]
+struct AutomationTestRunResponse {
+    test_run_id: String,
+    automation_id: String,
+    automation_revision: u64,
     task: storage_core::TaskView,
 }
 
@@ -1440,6 +1460,400 @@ async fn run_automation_now(
         occurrence_id,
         occurrence_version: 3,
         occurrence_status: "STARTED",
+        task: committed.view,
+    };
+    let mut response = (StatusCode::CREATED, Json(response)).into_response();
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-store"),
+    );
+    if let Ok(value) = header::HeaderValue::from_str(&correlation) {
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static("x-correlation-id"), value);
+    }
+    Ok(response)
+}
+
+/// Admits one ordinary READY Task pinned to an exact saved AutomationRevision.
+/// A test run is not an occurrence: it requires no trigger identity or trigger-host
+/// binding, creates no AutomationOccurrence, and never advances a trigger cursor.
+async fn run_automation_test(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Response, Response> {
+    let workspace_id = selected_workspace(&headers)?;
+    let workspace = ensure_workspace_owner(&state, &workspace_id)?;
+    if !valid_id(&id) {
+        return Err(invalid());
+    }
+    let body: RunAutomationTestBody = parse_body(&body)?;
+    if body.automation_revision == 0 || !body.inputs.is_object() {
+        return Err(operator_error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "INVALID_ARGUMENT",
+            "Automation test inputs or revision are invalid",
+        ));
+    }
+    let expected_automation_version = expected_version(&headers)?;
+    let request_id = idempotency_key(&headers)?;
+    let scope = format!("automation.test_run.{}.{}", workspace.workspace_id, id);
+    let task_id = idempotent_id("tsk", &state.principal_id, &request_id, &scope);
+    let test_run_id = idempotent_id("trn", &state.principal_id, &request_id, &scope);
+    let correlation = idempotent_id(
+        "cor",
+        &state.principal_id,
+        &request_id,
+        &format!("{scope}.correlation"),
+    );
+    let command_key = TestRunIdentity {
+        automation_id: id.clone(),
+        automation_revision: body.automation_revision,
+        principal_id: state.principal_id.clone(),
+        request_id: request_id.clone(),
+    }
+    .key()
+    .map_err(|_| invalid())?;
+    let mut event = event_context(&state.runtime_id, &correlation).map_err(|_| {
+        unavailable()
+    })?;
+    event.event_id = idempotent_id(
+        "ev",
+        &state.principal_id,
+        &request_id,
+        &format!("{scope}.event"),
+    );
+
+    let automation_store = adapter(&state, &correlation)?;
+    // The exact revision is immutable and is resolved before receipt replay. Mutable
+    // head status/version/revision checks happen only after the receipt lookup.
+    let automation_revision = automation_store
+        .get_automation_revision(
+            &state.principal_id,
+            &workspace.workspace_id,
+            &id,
+            body.automation_revision,
+        )
+        .map_err(domain_error)?
+        .ok_or_else(|| domain_error(DomainError::NotFound))?;
+    if automation_revision.automation_id != id
+        || automation_revision.revision != body.automation_revision
+    {
+        return Err(unavailable());
+    }
+
+    let idempotency_payload = json!({
+        "operation": "automation.test_run.v1",
+        "workspace_id": workspace.workspace_id,
+        "automation_id": id,
+        "automation_revision": body.automation_revision,
+        "expected_automation_version": expected_automation_version,
+        "routine_id": automation_revision.definition.routine_id,
+        "routine_revision": automation_revision.definition.routine_revision,
+        "inputs": body.inputs,
+        "test_run_id": test_run_id,
+    });
+    let replay_store = state.store.clone();
+    let principal_id = state.principal_id.clone();
+    let replay_request_id = request_id.clone();
+    let replay_payload = idempotency_payload.clone();
+    let replay = tokio::task::spawn_blocking(move || {
+        replay_store.get_task_create_receipt(&principal_id, &replay_request_id, &replay_payload)
+    })
+    .await
+    .map_err(|_| {
+        unavailable()
+    })?
+    .map_err(|error| match error {
+        storage_core::StoreError::Conflict { .. } => operator_error(
+            StatusCode::CONFLICT,
+            "CONFLICT",
+            "Idempotency key was already used for a different command",
+        ),
+        _ => unavailable(),
+    })?;
+    if let Some(committed) = replay {
+        if committed.view.task.workspace_id != workspace.workspace_id
+            || committed.view.task.status != "READY"
+            || committed.view.task.automation_id.is_some()
+            || committed.view.task.automation_occurrence_id.is_some()
+            || committed.view.task.automation_test_run_id.as_deref() != Some(test_run_id.as_str())
+            || committed.view.task.routine_id.as_deref()
+                != Some(automation_revision.definition.routine_id.as_str())
+            || committed.view.task.routine_revision
+                != Some(automation_revision.definition.routine_revision)
+            || committed.event.entity_type != "Task"
+            || committed.event.entity_id != committed.view.task.task_id
+            || committed
+                .event
+                .payload
+                .get("automation_test_run_id")
+                .and_then(serde_json::Value::as_str)
+                != Some(test_run_id.as_str())
+        {
+            return Err(unavailable());
+        }
+        return Ok(no_store(
+            Json(AutomationTestRunResponse {
+                test_run_id,
+                automation_id: id,
+                automation_revision: body.automation_revision,
+                task: committed.view,
+            })
+            .into_response(),
+        ));
+    }
+
+    if workspace.status != "ACTIVE" {
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "WORKSPACE_ARCHIVED",
+            "Archived Workspaces cannot accept new Tasks",
+        ));
+    }
+    let (automation, current_revision) = automation_store
+        .get_automation(&state.principal_id, &workspace.workspace_id, &id)
+        .map_err(domain_error)?
+        .ok_or_else(|| domain_error(DomainError::NotFound))?;
+    if automation.automation_id != id
+        || current_revision.automation_id != id
+        || current_revision.revision != automation.current_revision
+    {
+        return Err(unavailable());
+    }
+    if current_revision.revision != body.automation_revision {
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "STALE_VERSION",
+            "The Automation revision is not the current saved revision",
+        ));
+    }
+    if automation.status == AutomationStatus::Disabled {
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "AUTOMATION_DISABLED",
+            "A disabled Automation cannot accept a test run",
+        ));
+    }
+    if automation.version != expected_automation_version
+        || automation.current_revision != body.automation_revision
+    {
+        return Err(operator_error(
+            StatusCode::CONFLICT,
+            "STALE_VERSION",
+            "The Automation changed while the test run was being prepared",
+        ));
+    }
+
+    let routine_context = RoutineEventContext {
+        event_id: event.event_id.clone(),
+        origin_runtime_id: event.origin_runtime_id.clone(),
+        hlc_timestamp: event.hlc_timestamp.clone(),
+        correlation_id: event.correlation_id.clone(),
+        causation_id: event.causation_id.clone(),
+        recorded_at: event.recorded_at.clone(),
+    };
+    let routine_store =
+        SqliteRoutineStore::new(state.store.clone(), routine_context).map_err(|_| {
+            unavailable()
+        })?;
+    let routine_revision = routine_store
+        .get_revision(
+            &state.principal_id,
+            &workspace.workspace_id,
+            &automation_revision.definition.routine_id,
+            automation_revision.definition.routine_revision,
+        )
+        .map_err(|_| unavailable())?
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::CONFLICT,
+                "ROUTINE_REVISION_NOT_FOUND",
+                "The pinned Routine revision is unavailable",
+            )
+        })?;
+    let materialized =
+        materialize_routine_inputs(&routine_revision, &body.inputs, &workspace.workspace_id)
+            .map_err(|_| {
+                operator_error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "INVALID_ARGUMENT",
+                    "Inputs do not match the pinned Routine schema and bindings",
+                )
+            })?;
+
+    let coworker_ref = automation_revision.definition.coworker_ref.as_ref();
+    let coworker_data = if let Some(pin) = coworker_ref {
+        let store = adapter(&state, &correlation)?;
+        let revision = store
+            .get_revision(
+                &state.principal_id,
+                &workspace.workspace_id,
+                &pin.coworker_id,
+                pin.revision,
+            )
+            .map_err(domain_error)?
+            .ok_or_else(|| {
+                operator_error(
+                    StatusCode::CONFLICT,
+                    "NOT_FOUND",
+                    "The pinned Coworker revision is unavailable",
+                )
+            })?;
+        if revision.revision != pin.revision || revision.coworker_id != pin.coworker_id {
+            return Err(unavailable());
+        }
+        Some((pin.coworker_id.clone(), pin.revision, revision))
+    } else {
+        None
+    };
+    let lead_binding_id = coworker_data
+        .as_ref()
+        .and_then(|(_, _, revision)| revision.definition.default_lead_agent_binding_id.clone())
+        .or_else(|| {
+            routine_revision
+                .definition
+                .preferred_agent_binding_id
+                .clone()
+        })
+        .or_else(|| workspace.default_agent_binding_id.clone())
+        .ok_or_else(|| {
+            operator_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "AGENT_UNAVAILABLE",
+                "Choose an enabled lead Agent before testing this Automation",
+            )
+        })?;
+
+    let request_payload = json!({
+        "workspace_id": workspace.workspace_id,
+        "conversation_id": null,
+        "source_message_refs": [],
+        "objective": materialized.objective,
+        "constraints": materialized.constraints,
+        "non_goals": materialized.non_goals,
+        "input_refs": materialized.input_refs,
+        "required_outputs": materialized.required_outputs,
+        "acceptance_criteria": materialized.acceptance_criteria,
+        "approvals_required": materialized.approvals_required,
+        "budget": materialized.budget_ceiling,
+        "placement_preference": materialized.placement_preference,
+        "preferred_lead_agent_binding_id": lead_binding_id,
+        "coworker_id": coworker_ref.map(|pin| pin.coworker_id.clone()),
+        "routine_id": automation_revision.definition.routine_id,
+        "routine_revision": automation_revision.definition.routine_revision,
+        "routine_inputs": body.inputs.clone(),
+        "automation_id": id.clone(),
+        "automation_revision": body.automation_revision,
+        "expected_automation_version": expected_automation_version,
+        "automation_test_run_id": test_run_id,
+    });
+    let command = CreateStandaloneTask {
+        task_id: task_id.clone(),
+        workspace_id: workspace.workspace_id.clone(),
+        workspace_instruction_revision: workspace.current_instruction_revision,
+        lead_agent_binding_id: lead_binding_id,
+        origin_coworker_id: coworker_data.as_ref().map(|(id, _, _)| id.clone()),
+        origin_coworker_revision: coworker_data.as_ref().map(|(_, revision, _)| *revision),
+        expected_coworker_version: None,
+        coworker_default_lead_failover_policy: coworker_data
+            .as_ref()
+            .and_then(|(_, _, revision)| revision.definition.lead_failover_policy.as_ref())
+            .map(|policy| serde_json::Value::Object(policy.clone().into_iter().collect())),
+        principal_id: state.principal_id.clone(),
+        request_id: request_id.clone(),
+        request_payload,
+        event: EventContext {
+            event_id: event.event_id.clone(),
+            origin_runtime_id: event.origin_runtime_id.clone(),
+            hlc_timestamp: event.hlc_timestamp.clone(),
+            correlation_id: event.correlation_id.clone(),
+            causation_id: event.causation_id.clone(),
+            recorded_at: event.recorded_at.clone(),
+        },
+    };
+    let mut commit = TaskService::new(state.store.clone())
+        .prepare_standalone(command)
+        .map_err(|_| {
+            operator_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_ARGUMENT",
+                "The pinned Routine could not be materialized as a Task",
+            )
+        })?;
+    commit.idempotency_payload = Some(idempotency_payload);
+    commit.task.routine_id = Some(automation_revision.definition.routine_id.clone());
+    commit.task.routine_revision = Some(automation_revision.definition.routine_revision);
+    commit.task.automation_id = None;
+    commit.task.automation_occurrence_id = None;
+    commit.task.automation_test_run_id = Some(test_run_id.clone());
+    commit.routine_admission = Some(RoutineTaskAdmission {
+        routine_id: automation_revision.definition.routine_id.clone(),
+        routine_revision: automation_revision.definition.routine_revision,
+        inputs: body.inputs.clone(),
+    });
+    commit.automation_admission = None;
+    commit.automation_test_admission = Some(AutomationTestAdmission {
+        test_run_id: test_run_id.clone(),
+        command_key,
+        automation_id: id.clone(),
+        automation_revision: body.automation_revision,
+        expected_automation_version,
+        routine_id: automation_revision.definition.routine_id.clone(),
+        routine_revision: automation_revision.definition.routine_revision,
+        inputs: body.inputs.clone(),
+    });
+    commit.event.payload["routine_id"] = json!(automation_revision.definition.routine_id);
+    commit.event.payload["routine_revision"] =
+        json!(automation_revision.definition.routine_revision);
+    commit.event.payload["automation_test_run_id"] = json!(test_run_id);
+
+    let store = state.store.clone();
+    let committed = tokio::task::spawn_blocking(move || store.create_task(commit))
+        .await
+        .map_err(|_| {
+            operator_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL",
+                "Automation test-run admission did not complete",
+            )
+        })?
+        .map_err(|error| match error {
+            storage_core::StoreError::Invalid(_) => operator_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_ARGUMENT",
+                "The Automation, pinned dependencies, or inputs are no longer eligible",
+            ),
+            storage_core::StoreError::Conflict { .. } => operator_error(
+                StatusCode::CONFLICT,
+                "CONFLICT",
+                "Automation or its dependencies changed while the test run was being admitted; refresh and retry",
+            ),
+            storage_core::StoreError::NotFound => operator_error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "INVALID_ARGUMENT",
+                "A pinned Resource or lead binding is unavailable",
+            ),
+            _ => unavailable(),
+        })?;
+    if committed.view.task.workspace_id != workspace.workspace_id
+        || committed.view.task.status != "READY"
+        || committed.view.task.automation_id.is_some()
+        || committed.view.task.automation_occurrence_id.is_some()
+        || committed.view.task.automation_test_run_id.as_deref() != Some(test_run_id.as_str())
+        || committed.view.task.routine_id.as_deref()
+            != Some(automation_revision.definition.routine_id.as_str())
+        || committed.view.task.routine_revision
+            != Some(automation_revision.definition.routine_revision)
+    {
+        return Err(unavailable());
+    }
+    let response = AutomationTestRunResponse {
+        test_run_id,
+        automation_id: id,
+        automation_revision: body.automation_revision,
         task: committed.view,
     };
     let mut response = (StatusCode::CREATED, Json(response)).into_response();

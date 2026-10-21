@@ -35,6 +35,45 @@ fn manual_run_request(
     automation_revision: Option<u64>,
     inputs: Option<&serde_json::Value>,
 ) -> Result<ManualRunRequest, String> {
+    run_request_with_suffix(
+        "run",
+        workspace_id,
+        automation_id,
+        expected_version,
+        request_id,
+        automation_revision,
+        inputs,
+    )
+}
+
+fn test_run_request(
+    workspace_id: &str,
+    automation_id: Option<&str>,
+    expected_version: Option<u64>,
+    request_id: Option<&str>,
+    automation_revision: Option<u64>,
+    inputs: Option<&serde_json::Value>,
+) -> Result<ManualRunRequest, String> {
+    run_request_with_suffix(
+        "test-runs",
+        workspace_id,
+        automation_id,
+        expected_version,
+        request_id,
+        automation_revision,
+        inputs,
+    )
+}
+
+fn run_request_with_suffix(
+    suffix: &str,
+    workspace_id: &str,
+    automation_id: Option<&str>,
+    expected_version: Option<u64>,
+    request_id: Option<&str>,
+    automation_revision: Option<u64>,
+    inputs: Option<&serde_json::Value>,
+) -> Result<ManualRunRequest, String> {
     let automation_id = automation_id
         .filter(|value| valid_id(value))
         .ok_or_else(|| "Automation selection is invalid".to_owned())?;
@@ -49,9 +88,9 @@ fn manual_run_request(
         .ok_or_else(|| "Automation revision is invalid".to_owned())?;
     let inputs = inputs
         .filter(|value| value.is_object())
-        .ok_or_else(|| "Manual Automation inputs are invalid".to_owned())?;
+        .ok_or_else(|| "Automation inputs are invalid".to_owned())?;
     Ok(ManualRunRequest {
-        path: format!("/v1/automations/{automation_id}/run"),
+        path: format!("/v1/automations/{automation_id}/{suffix}"),
         workspace_id: workspace_id.to_owned(),
         if_match: format!("\"{expected_version}\""),
         idempotency_key: request_id.to_owned(),
@@ -219,15 +258,26 @@ pub(crate) async fn automation_request(
                     .header("If-Match", format!("\"{expected_version}\""))
                     .header("Idempotency-Key", request_id)
             }
-            "run" => {
-                let request = manual_run_request(
-                    &workspace_id,
-                    automation_id.as_deref(),
-                    expected_version,
-                    request_id.as_deref(),
-                    automation_revision,
-                    inputs.as_ref(),
-                )?;
+            "run" | "test_run" => {
+                let request = if operation == "run" {
+                    manual_run_request(
+                        &workspace_id,
+                        automation_id.as_deref(),
+                        expected_version,
+                        request_id.as_deref(),
+                        automation_revision,
+                        inputs.as_ref(),
+                    )?
+                } else {
+                    test_run_request(
+                        &workspace_id,
+                        automation_id.as_deref(),
+                        expected_version,
+                        request_id.as_deref(),
+                        automation_revision,
+                        inputs.as_ref(),
+                    )?
+                };
                 client.post(request.path)
                     .header("X-Workspace-ID", request.workspace_id)
                     .header("If-Match", request.if_match)
@@ -266,7 +316,7 @@ fn validate_coworker_ref(value: &serde_json::Value) -> Result<(), String> {
 
 #[cfg(test)]
 mod manual_run_bridge_tests {
-    use super::manual_run_request;
+    use super::{manual_run_request, test_run_request};
     use serde_json::json;
 
     #[test]
@@ -285,6 +335,31 @@ mod manual_run_bridge_tests {
         assert_eq!(request.workspace_id, "workspace-1");
         assert_eq!(request.if_match, "\"7\"");
         assert_eq!(request.idempotency_key, "run-request-1");
+        assert_eq!(
+            request.body,
+            json!({
+                "automation_revision": 3,
+                "inputs": { "project": "LiteCowork" },
+            })
+        );
+    }
+
+    #[test]
+    fn test_run_bridge_uses_the_exact_revision_route_without_an_occurrence() {
+        let request = test_run_request(
+            "workspace-1",
+            Some("automation-1"),
+            Some(7),
+            Some("test-request-1"),
+            Some(3),
+            Some(&json!({ "project": "LiteCowork" })),
+        )
+        .expect("valid test run request");
+
+        assert_eq!(request.path, "/v1/automations/automation-1/test-runs");
+        assert_eq!(request.workspace_id, "workspace-1");
+        assert_eq!(request.if_match, "\"7\"");
+        assert_eq!(request.idempotency_key, "test-request-1");
         assert_eq!(
             request.body,
             json!({

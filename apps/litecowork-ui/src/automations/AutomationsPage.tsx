@@ -1,19 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import type { Automation, AutomationApi, AutomationHealth, AutomationOccurrence, AutomationRevision, AutomationStatus, MaterializedAutomationTask, Routine, RoutineRevision } from "./automation-api";
-import { pinnedResourceOptionKey, routineInputFields, type ResourceOption } from "../routines/routine-inputs";
+import type { Automation, AutomationApi, AutomationHealth, AutomationOccurrence, AutomationRevision, AutomationStatus, MaterializedAutomationTask, MaterializedAutomationTestTask, Routine, RoutineRevision } from "./automation-api";
+import { routineInputFields, type ResourceOption } from "../routines/routine-inputs";
 import { AutomationEditor } from "./AutomationEditor";
+import { AutomationInputFields } from "./AutomationInputFields";
 import "./automations-page.css";
 
 type Props = { api: AutomationApi; workspaceId: string; resources: ResourceOption[]; resourcesNextCursor: string | null; resourcesPageBusy: boolean; onLoadMoreResources: () => Promise<void>; onOpenTask?: (taskId: string) => void };
 type PendingRequest = { signature: string; id: string };
 type PendingRun = PendingRequest & { key: string; workspaceId: string; triggerId: string; automation: Automation; revision: AutomationRevision; inputs: Record<string, unknown> };
 const MAX_PENDING_RUNS = 32;
+const TEST_TRIGGER = "test-run:no-trigger";
 const statusLabel: Record<AutomationStatus, string> = { ENABLED: "Enabled", PAUSED: "Paused", DISABLED: "Disabled" };
 
 // Route-scoped React state is insufficient for an idempotent mutation: navigation can
 // unmount this page after the daemon commits but before the response is observed. Keep
-// only bounded request envelopes in process memory. Never use localStorage/sessionStorage
-// here; inputs may contain user text and ResourceRefs, but never Resource bytes.
+// only bounded envelopes for Manual runs and exact-revision test tasks in process memory.
+// Never use localStorage/sessionStorage here; inputs may contain user text and ResourceRefs,
+// but never Resource bytes.
 const pendingManualRuns = new Map<string, PendingRun>();
 const pendingRunListeners = new Set<() => void>();
 function publishPendingRunChange(): void {
@@ -114,6 +117,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
   const [revisionError, setRevisionError] = useState<string | null>(null);
   const [runInputs, setRunInputs] = useState<Record<string, unknown>>({});
   const [runResult, setRunResult] = useState<MaterializedAutomationTask | null>(null);
+  const [testResult, setTestResult] = useState<MaterializedAutomationTestTask | null>(null);
   const [unresolvedRuns, setUnresolvedRuns] = useState<PendingRun[]>([]);
   const [health, setHealth] = useState<AutomationHealth | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
@@ -129,7 +133,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
     const controller = new AbortController();
     const generation = ++listGeneration.current;
     ++detailGeneration.current;
-    setItems([]); setNextCursor(null); setSelectedId(null); setSelected(null); setSelectedRevision(null); setPinnedRoutine(null); setPinnedRoutineRevision(null); setRunInputs({}); setRunResult(null); setUnresolvedRuns(pendingRunsForWorkspace(workspaceId));
+    setItems([]); setNextCursor(null); setSelectedId(null); setSelected(null); setSelectedRevision(null); setPinnedRoutine(null); setPinnedRoutineRevision(null); setRunInputs({}); setRunResult(null); setTestResult(null); setUnresolvedRuns(pendingRunsForWorkspace(workspaceId));
     setListError(null); setDetailError(null); setActionError(null); setMessage(null); setConfirmDisable(false);
     setLoading(Boolean(workspaceId));
     if (!workspaceId) { setLoading(false); return () => controller.abort(); }
@@ -151,7 +155,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
     if (!selectedId) { setSelected(null); setSelectedRevision(null); setPinnedRoutine(null); setPinnedRoutineRevision(null); setHealth(null); setHealthError(null); setOccurrences([]); setOccurrencesError(null); setDetailLoading(false); return; }
     const controller = new AbortController();
     const generation = ++detailGeneration.current;
-    setSelected(null); setSelectedRevision(null); setPinnedRoutine(null); setPinnedRoutineRevision(null); setRunInputs({}); setRunResult(null); setDetailError(null); setConfirmDisable(false); setDetailLoading(true);
+    setSelected(null); setSelectedRevision(null); setPinnedRoutine(null); setPinnedRoutineRevision(null); setRunInputs({}); setRunResult(null); setTestResult(null); setDetailError(null); setConfirmDisable(false); setDetailLoading(true);
     setHealth(null); setHealthError(null); setOccurrences([]); setOccurrencesError(null);
     void (async () => {
       const found = await api.get(selectedId, controller.signal);
@@ -248,68 +252,78 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
     if (pending.workspaceId !== workspaceId || pending.automation.workspace_id !== workspaceId) {
       setActionError("This pending Run belongs to a different Workspace. Switch to its original Workspace to resolve it."); return;
     }
-    setBusy(true); setActionError(null); setMessage(null); setRunResult(null);
+    setBusy(true); setActionError(null); setMessage(null); setRunResult(null); setTestResult(null);
     try {
-      const task = await api.run(pending.automation, pending.revision, pending.inputs, pending.id);
-      pendingManualRuns.delete(pending.key);
-      publishPendingRunChange();
-      setUnresolvedRuns(pendingRunsForWorkspace(workspaceId));
-      setRunResult(task);
-      setMessage(`Saved Task ${task.task_id} is READY. Planning and agent execution have not started.`);
+      if (pending.triggerId === TEST_TRIGGER) {
+        const task = await api.testRun(pending.automation, pending.revision, pending.inputs, pending.id);
+        pendingManualRuns.delete(pending.key);
+        publishPendingRunChange();
+        setUnresolvedRuns(pendingRunsForWorkspace(workspaceId));
+        setTestResult(task);
+        setMessage(`Test Task ${task.task_id} is READY. No occurrence or cursor was created; planning and agent execution have not started.`);
+      } else {
+        const task = await api.run(pending.automation, pending.revision, pending.inputs, pending.id);
+        pendingManualRuns.delete(pending.key);
+        publishPendingRunChange();
+        setUnresolvedRuns(pendingRunsForWorkspace(workspaceId));
+        setRunResult(task);
+        setMessage(`Saved Task ${task.task_id} is READY. Planning and agent execution have not started.`);
+      }
     } catch (error) {
       setUnresolvedRuns(pendingRunsForWorkspace(workspaceId));
       setActionError(errorText(error));
     } finally { setBusy(false); }
   };
 
-  const runNow = async () => {
-    if (!selected || !selectedRevision || !pinnedRoutine || !pinnedRoutineRevision || busy) return;
-    setActionError(null); setMessage(null); setRunResult(null);
-    if (selected.status === "DISABLED") { setActionError("Disabled Automations cannot create new Tasks."); return; }
-    if (manualTriggerCount(selectedRevision) !== 1) { setActionError("This definition must contain exactly one Manual trigger to create a Task here."); return; }
-    const triggerId = manualTriggerId(selectedRevision);
-    if (!triggerId) { setActionError("The Manual trigger identity is unavailable. Reload the saved Automation before running it."); return; }
-    if (pinnedRoutine.status !== "ACTIVE") { setActionError("The pinned Routine is archived. Restore or revise the definition before creating a Task."); return; }
+  const buildRunInputs = (): Record<string, unknown> | null => {
+    if (!pinnedRoutineRevision) return null;
     const contract = routineInputFields(pinnedRoutineRevision);
-    if (contract.blockedReason) { setActionError(contract.blockedReason); return; }
+    if (contract.blockedReason) { setActionError(contract.blockedReason); return null; }
     const inputs: Record<string, unknown> = {};
     for (const field of contract.fields) {
       const value = runInputs[field.name] ?? (field.kind === "TEXT" ? "" : null);
       if (field.kind === "RESOURCE_REF") {
         if (value === null) {
-          if (field.required) { setActionError(`${field.label} is required.`); return; }
+          if (field.required) { setActionError(`${field.label} is required.`); return null; }
           continue;
         }
-        if (!value || typeof value !== "object" || Array.isArray(value)) { setActionError(`${field.label} must be selected from this Workspace's Resources.`); return; }
+        if (!value || typeof value !== "object" || Array.isArray(value)) { setActionError(`${field.label} must be selected from this Workspace's Resources.`); return null; }
         const ref = value as Record<string, unknown>;
         if (Object.keys(ref).sort().join(",") !== "resource_id,revision_id,workspace_id"
           || ref.workspace_id !== workspaceId || typeof ref.resource_id !== "string" || !ref.resource_id
-          || typeof ref.revision_id !== "string" || !ref.revision_id) { setActionError(`${field.label} selection is stale or belongs to another Workspace. Select it again from this Workspace's Resource catalog.`); return; }
-        // Preserve an exact selected ref for idempotent retry if the catalog head changes.
-        // Task admission rechecks Workspace ownership and historical revision availability.
+          || typeof ref.revision_id !== "string" || !ref.revision_id) { setActionError(`${field.label} selection is stale or belongs to another Workspace. Select it again from this Workspace's Resource catalog.`); return null; }
         inputs[field.name] = { workspace_id: workspaceId, resource_id: ref.resource_id, revision_id: ref.revision_id };
         continue;
       }
       const text = typeof value === "string" ? value : "";
-      if (field.enumValues && text.length > 0 && !field.enumValues.includes(text)) { setActionError(`${field.label} must be one of the listed choices.`); return; }
+      if (field.enumValues && text.length > 0 && !field.enumValues.includes(text)) { setActionError(`${field.label} must be one of the listed choices.`); return null; }
       const characters = Array.from(text).length;
       const bytes = new TextEncoder().encode(text).byteLength;
-      if (field.required && text.trim().length === 0) { setActionError(`${field.label} is required.`); return; }
+      if (field.required && text.trim().length === 0) { setActionError(`${field.label} is required.`); return null; }
       if (characters > field.maxLength || characters < field.minLength) {
-        setActionError(`${field.label} must be ${field.minLength ? `${field.minLength}–` : "at most "}${field.maxLength} characters.`); return;
+        setActionError(`${field.label} must be ${field.minLength ? `${field.minLength}–` : "at most "}${field.maxLength} characters.`); return null;
       }
-      if (bytes > field.maxBytes) { setActionError(`${field.label} exceeds its ${field.maxBytes}-byte UTF-8 limit.`); return; }
+      if (bytes > field.maxBytes) { setActionError(`${field.label} exceeds its ${field.maxBytes}-byte UTF-8 limit.`); return null; }
       if (text.length > 0) inputs[field.name] = text;
     }
-    const key = manualRunKey(workspaceId, selected.automation_id, selectedRevision.revision, triggerId);
+    return inputs;
+  };
+
+  const startRun = async (triggerId: string, key: string) => {
+    if (!selected || !selectedRevision || !pinnedRoutine || busy) return;
+    setActionError(null); setMessage(null); setRunResult(null); setTestResult(null);
+    if (selected.status === "DISABLED") { setActionError("Disabled Automations cannot create new Tasks."); return; }
+    if (pinnedRoutine.status !== "ACTIVE") { setActionError("The pinned Routine is archived. Restore or revise the definition before creating a Task."); return; }
+    const inputs = buildRunInputs();
+    if (!inputs) return;
     const signature = JSON.stringify([workspaceId, selected.automation_id, selected.version, selectedRevision.revision, triggerId, inputs]);
     const priorForAutomation = pendingRunsForWorkspace(workspaceId).find(run => run.automation.automation_id === selected.automation_id);
     if (priorForAutomation && priorForAutomation.key !== key) {
-      setActionError("A Run request for this Automation still has an unknown outcome. Resolve its original request before creating another Task."); return;
+      setActionError("A run request for this Automation still has an unknown outcome. Resolve its original request before creating another Task."); return;
     }
     const stored = pendingManualRuns.get(key);
     if (stored && stored.signature !== signature) {
-      setActionError("This Manual trigger has an unresolved request with different inputs. Retry its exact request or explicitly discard its retry record before creating another Task."); return;
+      setActionError("This action has an unresolved request with different inputs. Retry its exact request or explicitly discard its retry record before creating another Task."); return;
     }
     let pending = stored;
     if (!pending) {
@@ -323,6 +337,19 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
       setUnresolvedRuns(pendingRunsForWorkspace(workspaceId));
     }
     await runWithRequest(pending);
+  };
+
+  const runNow = async () => {
+    if (!selected || !selectedRevision || busy) return;
+    if (manualTriggerCount(selectedRevision) !== 1) { setActionError("This definition must contain exactly one Manual trigger to create a Task here."); return; }
+    const triggerId = manualTriggerId(selectedRevision);
+    if (!triggerId) { setActionError("The Manual trigger identity is unavailable. Reload the saved Automation before running it."); return; }
+    await startRun(triggerId, manualRunKey(workspaceId, selected.automation_id, selectedRevision.revision, triggerId));
+  };
+
+  const testNow = async () => {
+    if (!selected || !selectedRevision || busy) return;
+    await startRun(TEST_TRIGGER, manualRunKey(workspaceId, selected.automation_id, selectedRevision.revision, TEST_TRIGGER));
   };
 
   const discardUnresolvedRun = (pending: PendingRun) => {
@@ -358,7 +385,7 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
       </section>
 
       {unresolvedRuns.map(pending => <section className="automation-run-retry" role="alert" key={pending.key}>
-        <div><strong>{pending.automation.name} · revision {pending.revision.revision} has an unknown Run outcome.</strong><span>The exact request is held in this desktop process. Retry it to recover its receipt before creating another Task.</span></div>
+        <div><strong>{pending.automation.name} · revision {pending.revision.revision} has an unknown {pending.triggerId === TEST_TRIGGER ? "test " : ""}Run outcome.</strong><span>The exact request is held in this desktop process. Retry it to recover its receipt before creating another Task.</span></div>
         <button className="quiet-button" type="button" disabled={busy || pending.workspaceId !== workspaceId} onClick={() => void runWithRequest(pending)}>{busy ? "Checking…" : "Retry exact request"}</button>
         <button className="text-button" type="button" disabled={busy || pending.workspaceId !== workspaceId} onClick={() => discardUnresolvedRun(pending)}>Discard retry record</button>
         <small>Discarding may allow a duplicate Task if the original request committed.</small>
@@ -412,16 +439,31 @@ export function AutomationsPage({ api, workspaceId, resources, resourcesNextCurs
               {actionError && <p className="automation-inline-error" role="alert">{actionError}</p>}
               {revisionError && <p className="automation-inline-error" role="alert">{revisionError}</p>}
               {message && <p className="automation-inline-success" role="status">{message}</p>}
-              {selectedRevision && manualTriggerCount(selectedRevision) === 1 && pinnedRoutine && pinnedRoutineRevision && <section className="automation-run-form" aria-labelledby="automation-run-heading">
-                <h3 id="automation-run-heading">Create one Task</h3>
-                <p>This uses Automation revision {selectedRevision.revision} and Routine revision {selectedRevision.routine_revision}. It saves one Task as READY; it does not start planning or an agent.</p>
-                {routineInputFields(pinnedRoutineRevision).fields.map(field => field.kind === "TEXT" ? <label className="automation-field" key={field.name}><span>{field.label}{field.required ? " · required" : ""}</span>{field.enumValues ? <select required={field.required} disabled={busy || selectedPendingRuns.length > 0} value={typeof runInputs[field.name] === "string" ? runInputs[field.name] as string : ""} onChange={event => { const choice = event.currentTarget.value; setRunInputs(current => ({ ...current, [field.name]: choice })); }}><option value="">Choose…</option>{field.enumValues.map(choice => <option key={choice} value={choice}>{choice}</option>)}</select> : <textarea rows={2} maxLength={Math.min(field.maxLength * 2, 32_768)} minLength={field.minLength || undefined} required={field.required} disabled={busy || selectedPendingRuns.length > 0} value={typeof runInputs[field.name] === "string" ? runInputs[field.name] as string : ""} onChange={event => { const text = event.currentTarget.value; setRunInputs(current => ({ ...current, [field.name]: text })); }} />}<small>{field.enumValues ? "Choose one of the values defined by this Routine." : `Maximum ${field.maxLength} characters and ${field.maxBytes} UTF-8 bytes.`}</small></label> : <label className="automation-field" key={field.name}><span>{field.label}{field.required ? " · required" : ""}</span><select disabled={busy || selectedPendingRuns.length > 0} required={field.required} value={(() => { const ref = runInputs[field.name]; if (!ref || typeof ref !== "object" || Array.isArray(ref)) return ""; const source = ref as Record<string, unknown>; const item = resources.find(resource => resource.workspaceId === workspaceId && resource.resourceId === source.resource_id && resource.resourceRevisionId === source.revision_id); return item ? pinnedResourceOptionKey(item) : ""; })()} onChange={event => { const optionKey = event.currentTarget.value; const item = resources.find(resource => resource.workspaceId === workspaceId && pinnedResourceOptionKey(resource) === optionKey); setRunInputs(current => ({ ...current, [field.name]: item ? { workspace_id: workspaceId, resource_id: item.resourceId, revision_id: item.resourceRevisionId } : null })); }}><option value="">{field.required ? "Choose a Resource revision…" : "No Resource"}</option>{resources.filter(resource => resource.workspaceId === workspaceId).map(resource => <option key={pinnedResourceOptionKey(resource)} value={pinnedResourceOptionKey(resource)}>{resource.displayName} · {resource.mediaType} · {resource.resourceRevisionId}</option>)}</select><small>The exact Workspace, Resource, and immutable revision are pinned to the Task.</small></label>)}
-                {routineInputFields(pinnedRoutineRevision).fields.some(field => field.kind === "RESOURCE_REF") && resourcesNextCursor && <button type="button" className="text-button" disabled={resourcesPageBusy} onClick={() => void onLoadMoreResources()}>{resourcesPageBusy ? "Loading Resources…" : "Load more Resources"}</button>}
+              {selectedRevision && pinnedRoutine && pinnedRoutineRevision && <section className="automation-run-form" aria-labelledby="automation-run-heading">
+                <h3 id="automation-run-heading">Run this revision</h3>
+                <p>Inputs are validated against Automation revision {selectedRevision.revision} and Routine revision {selectedRevision.routine_revision}. Manual Run creates an occurrence and Task; Create test Task creates one ordinary READY Task pinned to the exact revisions without an occurrence or cursor. Neither starts planning here.</p>
+                <AutomationInputFields
+                  fields={routineInputFields(pinnedRoutineRevision).fields}
+                  values={runInputs}
+                  onChange={(name, value) => setRunInputs(current => ({ ...current, [name]: value }))}
+                  disabled={busy || selected.status === "DISABLED" || pinnedRoutine.status !== "ACTIVE" || Boolean(routineInputFields(pinnedRoutineRevision).blockedReason) || selectedPendingRuns.length > 0}
+                  workspaceId={workspaceId}
+                  resources={resources}
+                  resourcesNextCursor={resourcesNextCursor}
+                  resourcesPageBusy={resourcesPageBusy}
+                  onLoadMoreResources={onLoadMoreResources}
+                />
                 {routineInputFields(pinnedRoutineRevision).blockedReason && <p className="automation-inline-error" role="note">Run unavailable: {routineInputFields(pinnedRoutineRevision).blockedReason}</p>}
                 {pinnedRoutine.status !== "ACTIVE" && <p className="automation-inline-error" role="note">Run unavailable: the pinned Routine is archived.</p>}
                 {selected.status === "DISABLED" && <p className="automation-inline-error" role="note">Run unavailable: this Automation is disabled.</p>}
+                {manualTriggerCount(selectedRevision) > 1 && <p className="automation-state-warning">Manual Run unavailable: this revision has multiple Manual triggers. Revise it to keep one unambiguous Manual trigger. A test Task is still available.</p>}
+                {manualTriggerCount(selectedRevision) === 0 && <p className="automation-state-note">This revision has no Manual trigger. Use Create test Task, or revise the definition to add a Manual trigger for a real occurrence.</p>}
                 {runResult && runResult.automation_id === selected.automation_id && <div className="automation-run-result" role="status"><strong>Saved Task · READY</strong><span>{runResult.task_id} · Automation revision {runResult.automation_revision} · Routine revision {runResult.routine_revision}</span><p>Planning and agent execution have not started.</p>{onOpenTask && <button type="button" className="quiet-button" onClick={() => onOpenTask(runResult.task_id)}>Open Task in Work</button>}</div>}
-                <button type="button" className="primary-button" disabled={busy || selected.status === "DISABLED" || pinnedRoutine.status !== "ACTIVE" || Boolean(routineInputFields(pinnedRoutineRevision).blockedReason) || selectedPendingRuns.length > 0} onClick={() => void runNow()}>{busy ? "Saving Task…" : selectedPendingRuns.length > 0 ? "Resolve previous Run first" : "Run once"}</button>
+                {testResult && testResult.automation_id === selected.automation_id && <div className="automation-run-result" role="status"><strong>Test Task · READY</strong><span>{testResult.task_id} · test run {testResult.test_run_id} · Automation revision {testResult.automation_revision} · Routine revision {testResult.routine_revision}</span><p>No occurrence or trigger cursor was created. Planning and agent execution have not started.</p>{onOpenTask && <button type="button" className="quiet-button" onClick={() => onOpenTask(testResult.task_id)}>Open Task in Work</button>}</div>}
+                <div className="automation-run-actions">
+                  {manualTriggerCount(selectedRevision) === 1 && <button type="button" className="primary-button" disabled={busy || selected.status === "DISABLED" || pinnedRoutine.status !== "ACTIVE" || Boolean(routineInputFields(pinnedRoutineRevision).blockedReason) || selectedPendingRuns.length > 0} onClick={() => void runNow()}>{busy ? "Saving Task…" : selectedPendingRuns.length > 0 ? "Resolve previous Run first" : "Run once"}</button>}
+                  <button type="button" className="quiet-button" disabled={busy || selected.status === "DISABLED" || pinnedRoutine.status !== "ACTIVE" || Boolean(routineInputFields(pinnedRoutineRevision).blockedReason) || selectedPendingRuns.length > 0} onClick={() => void testNow()}>{busy ? "Saving Task…" : selectedPendingRuns.length > 0 ? "Resolve previous Run first" : "Create test Task"}</button>
+                </div>
               </section>}
               {confirmDisable && <div className="automation-confirm" role="group" aria-label="Confirm permanent disable"><p>Disable this definition permanently? This keeps the record but cannot be undone from this screen.</p><button type="button" className="quiet-button" disabled={busy} onClick={() => setConfirmDisable(false)}>Keep it</button><button type="button" className="danger-button" disabled={busy} onClick={() => void transition("disable")}>{busy ? "Disabling…" : "Confirm disable"}</button></div>}
               {selected.status !== "DISABLED" && <div className="automation-actions">

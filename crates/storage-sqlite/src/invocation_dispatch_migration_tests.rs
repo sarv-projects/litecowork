@@ -37,12 +37,14 @@ fn invocation_dispatch_migration_is_atomic_and_installs_the_approval_bound() {
     );
 
     migrate(&mut connection).expect("apply the invocation dispatch migration");
-    verify_migration_record(&connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, true)
+    verify_migration_record(&connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, false)
         .expect("verify the latest migration receipt");
+    verify_migration_record(&connection, 27, V27_MIGRATION_NAME, SQLITE_V27_DDL, true)
+        .expect("verify latest v27 migration receipt");
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("read current schema version");
-    assert_eq!(version, 26);
+    assert_eq!(version, SCHEMA_VERSION);
 
     // The blanket creation block is gone, so the combined writer may create an
     // Invocation, and the consumed-approval guard is installed in its place.

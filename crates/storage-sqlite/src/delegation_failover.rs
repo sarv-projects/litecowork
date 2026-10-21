@@ -332,7 +332,7 @@ mod tests {
                    resume_status TEXT, routine_id TEXT, routine_revision INTEGER, automation_id TEXT,
                    automation_occurrence_id TEXT, origin_coworker_id TEXT, origin_coworker_revision INTEGER,
                    lead_agent_binding_id TEXT, blocking_conditions_json TEXT, priority TEXT,
-                   created_by_json TEXT, created_at TEXT, updated_at TEXT, completed_at TEXT, version INTEGER
+                   created_by_json TEXT, created_at TEXT, updated_at TEXT, completed_at TEXT, version INTEGER, automation_test_run_id TEXT
                  );
                  CREATE TABLE task_spec_revisions(
                    task_id TEXT, workspace_id TEXT, revision INTEGER, parent_revisions_json TEXT,
@@ -368,7 +368,7 @@ mod tests {
                  INSERT INTO tasks VALUES (
                    '{TASK}','{WORKSPACE}',NULL,1,NULL,'READY',NULL,NULL,NULL,NULL,NULL,
                    NULL,NULL,'{LEAD}','[]','NORMAL','{{\"kind\":\"USER\",\"principal_id\":\"{OWNER}\"}}',
-                   '2026-10-17T09:00:00Z','2026-10-17T09:00:00Z',NULL,1
+                   '2026-10-17T09:00:00Z','2026-10-17T09:00:00Z',NULL,1,NULL
                  );
                  INSERT INTO task_spec_revisions VALUES (
                    '{TASK}','{WORKSPACE}',1,'[]','Task objective',NULL,'[]','[]','[]',NULL,
@@ -637,7 +637,7 @@ mod tests {
                 "INSERT INTO tasks VALUES (
                    'task-second','{WORKSPACE}',NULL,1,NULL,'READY',NULL,NULL,NULL,NULL,NULL,
                    NULL,NULL,'{LEAD}','[]','NORMAL','{{\"kind\":\"USER\",\"principal_id\":\"{OWNER}\"}}',
-                   '2026-10-17T09:00:00Z','2026-10-17T09:00:00Z',NULL,1);
+                   '2026-10-17T09:00:00Z','2026-10-17T09:00:00Z',NULL,1,NULL);
                  INSERT INTO task_spec_revisions VALUES (
                    'task-second','{WORKSPACE}',1,'[]','Second objective',NULL,'[]','[]','[]',NULL,
                    '[]','[]','[]',NULL,NULL,'{policy}',

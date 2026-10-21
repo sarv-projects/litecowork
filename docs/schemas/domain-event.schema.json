@@ -1677,6 +1677,10 @@
           "automation_occurrence_id": {
             "type": "string",
             "minLength": 1
+          },
+          "automation_test_run_id": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "allOf": [
@@ -1722,6 +1726,43 @@
                 "automation_id",
                 "automation_occurrence_id"
               ]
+            }
+          },
+          {
+            "if": {
+              "required": [
+                "automation_test_run_id"
+              ]
+            },
+            "then": {
+              "required": [
+                "routine_id",
+                "routine_revision"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "automation_id"
+                    ],
+                    "properties": {
+                      "automation_id": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "required": [
+                      "automation_occurrence_id"
+                    ],
+                    "properties": {
+                      "automation_occurrence_id": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
             }
           }
         ],

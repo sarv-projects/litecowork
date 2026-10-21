@@ -733,6 +733,7 @@ mod tests {
             routine_revision: None,
             automation_id: None,
             automation_occurrence_id: None,
+            automation_test_run_id: None,
             origin_coworker_id: None,
             origin_coworker_revision: None,
             lead_agent_binding_id: "agent".to_owned(),

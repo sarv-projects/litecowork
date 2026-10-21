@@ -1399,6 +1399,41 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ManualAutomationRunResponse'}
         default: {$ref: '#/components/responses/Error'}
+  /automations/{automationId}/test-runs:
+    post:
+      tags: [automations]
+      operationId: runAutomationTest
+      description: >-
+        Admits one ordinary READY Task pinned to the exact saved AutomationRevision
+        and its pinned RoutineRevision. The request is owner-only and requires the
+        current Automation version. It creates no AutomationOccurrence and advances
+        no trigger cursor. A DISABLED Automation is refused. The Task uses the
+        pinned Coworker lead when the revision has one and otherwise ordinary
+        Workspace/Routine lead admission.
+      parameters:
+      - name: automationId
+        in: path
+        required: true
+        schema: {type: string}
+      - {$ref: '#/components/parameters/IdempotencyKey'}
+      - {$ref: '#/components/parameters/IfMatch'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AutomationTestRunRequest'}
+      responses:
+        '200':
+          description: Exact idempotency receipt replay; the original READY test Task
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AutomationTestRunResponse'}
+        '201':
+          description: READY test Task atomically admitted; planning has not started and no occurrence exists
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AutomationTestRunResponse'}
+        default: {$ref: '#/components/responses/Error'}
   /automations/{automationId}/revisions:
     get:
       tags: [automations]
@@ -6868,6 +6903,7 @@ components:
         routine_revision: {type: [integer, 'null'], minimum: 1}
         automation_id: {type: [string, 'null']}
         automation_occurrence_id: {type: [string, 'null']}
+        automation_test_run_id: {type: [string, 'null'], description: Present only for an ordinary Task admitted by an exact-revision Automation test run; never an occurrence.}
         origin_coworker_id: {type: [string, 'null']}
         origin_coworker_revision: {type: [integer, 'null'], minimum: 1}
         lead_agent_binding_id: {type: string, minLength: 1}
@@ -6916,6 +6952,17 @@ components:
           properties: {routine_revision: {type: integer}}
           required: [routine_revision]
         then: {properties: {routine_id: {type: string, minLength: 1}}}
+      - if:
+          properties: {automation_test_run_id: {type: string}}
+          required: [automation_test_run_id]
+        then:
+          required: [routine_id, routine_revision]
+          not:
+            anyOf:
+            - required: [automation_id]
+              properties: {automation_id: {type: string}}
+            - required: [automation_occurrence_id]
+              properties: {automation_occurrence_id: {type: string}}
     TaskView:
       type: object
       additionalProperties: false
@@ -7644,6 +7691,22 @@ components:
         occurrence_id: {type: string}
         occurrence_version: {type: integer, const: 3}
         occurrence_status: {type: string, const: STARTED}
+        task: {$ref: '#/components/schemas/TaskView'}
+    AutomationTestRunRequest:
+      type: object
+      additionalProperties: false
+      required: [automation_revision, inputs]
+      properties:
+        automation_revision: {type: integer, minimum: 1}
+        inputs: {type: object, additionalProperties: true, description: Bounded values validated against the exact pinned Routine input schema and bindings.}
+    AutomationTestRunResponse:
+      type: object
+      additionalProperties: false
+      required: [test_run_id, automation_id, automation_revision, task]
+      properties:
+        test_run_id: {type: string, minLength: 1}
+        automation_id: {type: string, minLength: 1}
+        automation_revision: {type: integer, minimum: 1}
         task: {$ref: '#/components/schemas/TaskView'}
     CreateAutomationRequest:
       type: object

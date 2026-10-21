@@ -26,7 +26,7 @@ function desktopTransport(workspaceId: string): AutomationTransport {
     let automationRevision: number | null = null;
     let inputs: Record<string, unknown> | null = null;
     let expectedVersion: number | null = null;
-    const automationMatch = /^\/v1\/automations(?:\/([^/]+)(?:\/(pause|disable|revisions|run|health|occurrences))?)?$/.exec(url.pathname);
+    const automationMatch = /^\/v1\/automations(?:\/([^/]+)(?:\/(pause|disable|revisions|run|test-runs|health|occurrences))?)?$/.exec(url.pathname);
     const routineMatch = /^\/v1\/routines(?:\/([^/]+)(?:\/(revisions|health))?)?$/.exec(url.pathname);
     const coworkerMatch = /^\/v1\/coworkers(?:\/([^/]+))?$/.exec(url.pathname);
     if (automationMatch) {
@@ -39,11 +39,11 @@ function desktopTransport(workspaceId: string): AutomationTransport {
       else if (method === "GET" && automationId !== null && suffix === "health") operation = "automation_health";
       else if (method === "GET" && automationId !== null && suffix === "occurrences") operation = "automation_occurrences";
       else if (method === "POST" && automationId !== null && (suffix === "pause" || suffix === "disable")) operation = suffix;
-      else if (method === "POST" && automationId !== null && suffix === "run") {
-        operation = "run";
+      else if (method === "POST" && automationId !== null && (suffix === "run" || suffix === "test-runs")) {
+        operation = suffix === "run" ? "run" : "test_run";
         const body = parseObject(init.body);
         if (typeof body.automation_revision !== "number" || !Number.isSafeInteger(body.automation_revision) || body.automation_revision < 1
-          || !isObject(body.inputs)) throw new Error("Manual Automation Run request is invalid.");
+          || !isObject(body.inputs)) throw new Error("Automation Run request is invalid.");
         automationRevision = body.automation_revision;
         inputs = body.inputs;
       }

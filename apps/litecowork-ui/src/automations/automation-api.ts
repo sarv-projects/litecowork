@@ -32,6 +32,17 @@ export type MaterializedAutomationTask = {
   current_spec_revision: number;
   occurrence_id: string;
 };
+export type MaterializedAutomationTestTask = {
+  test_run_id: string;
+  task_id: string;
+  workspace_id: string;
+  automation_id: string;
+  automation_revision: number;
+  routine_id: string;
+  routine_revision: number;
+  status: "READY";
+  current_spec_revision: number;
+};
 export type CoworkerRevisionRef = { coworker_id: string; revision: number };
 export type DriftState = "HEALTHY" | "WARNING" | "DRIFTED" | "UNKNOWN";
 export type DependencyHealthState = "HEALTHY" | "DEGRADED" | "UNHEALTHY" | "UNKNOWN";
@@ -117,6 +128,7 @@ export interface AutomationApi {
   pause(automationId: string, expectedVersion: number, requestId: string): Promise<Automation>;
   disable(automationId: string, expectedVersion: number, requestId: string): Promise<Automation>;
   run(automation: Automation, revision: AutomationRevision, inputs: Record<string, unknown>, requestId: string): Promise<MaterializedAutomationTask>;
+  testRun(automation: Automation, revision: AutomationRevision, inputs: Record<string, unknown>, requestId: string): Promise<MaterializedAutomationTestTask>;
 }
 
 export class AutomationApiError extends Error {
@@ -124,7 +136,9 @@ export class AutomationApiError extends Error {
     super(status === 409
       ? code === "AUTOMATION_NOT_PAUSED"
         ? "Pause this Automation before changing its definition."
-        : "This Automation changed elsewhere. Refresh it before trying again."
+        : code === "AUTOMATION_DISABLED"
+          ? "This Automation is disabled and cannot create a new test Task."
+          : "This Automation changed elsewhere. Refresh it before trying again."
       : status === 401 || status === 403
         ? "You do not have access to Automations in this Workspace."
         : status === 404
@@ -213,6 +227,39 @@ function decodeManualRun(value: unknown, workspaceId: string, automation: Automa
     status: "READY",
     current_spec_revision: specRevision,
     occurrence_id: occurrenceId,
+  };
+}
+function decodeTestRun(value: unknown, workspaceId: string, automation: Automation, revision: AutomationRevision): MaterializedAutomationTestTask {
+  const response = object(value);
+  const testRunId = text(response.test_run_id);
+  if (text(response.automation_id) !== automation.automation_id
+    || positiveInteger(response.automation_revision) !== revision.revision) {
+    throw new Error("The Automation test-run receipt does not match the selected definition.");
+  }
+  const view = object(response.task);
+  const task = object(view.task);
+  const spec = object(view.current_spec_revision);
+  const taskId = text(task.task_id);
+  const specRevision = positiveInteger(spec.revision);
+  if (text(task.workspace_id) !== workspaceId || text(task.status) !== "READY"
+    || task.automation_id !== null || task.automation_occurrence_id !== null
+    || text(task.automation_test_run_id) !== testRunId
+    || text(task.routine_id) !== revision.routine_id
+    || positiveInteger(task.routine_revision) !== revision.routine_revision
+    || positiveInteger(task.current_spec_revision) !== specRevision
+    || text(spec.task_id) !== taskId || text(spec.workspace_id) !== workspaceId) {
+    throw new Error("The test Task response does not match this Workspace and Automation revision.");
+  }
+  return {
+    test_run_id: testRunId,
+    task_id: taskId,
+    workspace_id: workspaceId,
+    automation_id: automation.automation_id,
+    automation_revision: revision.revision,
+    routine_id: revision.routine_id,
+    routine_revision: revision.routine_revision,
+    status: "READY",
+    current_spec_revision: specRevision,
   };
 }
 function decodeCoworker(value: unknown, workspaceId: string): AutomationCoworker {
@@ -515,6 +562,26 @@ function decodeOccurrence(value: unknown): AutomationOccurrence {
       });
       if (response.status !== 200 && response.status !== 201) throw new Error("The Manual Automation response status is invalid.");
       return decodeManualRun(await response.json(), workspaceId, automation, revision);
+    },
+    async testRun(automation, revision, inputs, requestId) {
+      // A retry after an ambiguous response must reach the receipt-first replay
+      // path. New commands are still checked against current status/version by
+      // the Operator transaction.
+      if (revision.automation_id !== automation.automation_id) throw new Error("Automation revision identity is invalid.");
+      if (!Number.isSafeInteger(automation.version) || automation.version < 1 || !validIdempotencyKey(requestId)) {
+        throw new Error("Automation test request identity or version is invalid.");
+      }
+      const response = await request(`/v1/automations/${encodeURIComponent(automation.automation_id)}/test-runs`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": requestId,
+          "If-Match": `\"${automation.version}\"`,
+        },
+        body: JSON.stringify({ automation_revision: revision.revision, inputs }),
+      });
+      if (response.status !== 200 && response.status !== 201) throw new Error("The Automation test response status is invalid.");
+      return decodeTestRun(await response.json(), workspaceId, automation, revision);
     },
   };
 }

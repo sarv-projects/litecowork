@@ -1022,6 +1022,10 @@ pub struct TaskRecord {
     pub routine_revision: Option<u64>,
     pub automation_id: Option<String>,
     pub automation_occurrence_id: Option<String>,
+    /// Present only for an ordinary Task admitted by the exact-revision
+    /// Automation test-run path. It is never an AutomationOccurrence.
+    #[serde(default)]
+    pub automation_test_run_id: Option<String>,
     pub origin_coworker_id: Option<String>,
     pub origin_coworker_revision: Option<u64>,
     pub lead_agent_binding_id: String,
@@ -1113,6 +1117,10 @@ pub struct TaskCreateCommit {
     /// occurrence. Storage owns the occurrence insert/claim/materialization writes.
     #[serde(default)]
     pub automation_admission: Option<AutomationTaskAdmission>,
+    /// Present only for an exact-revision Automation test run. It creates no
+    /// occurrence and advances no trigger cursor.
+    #[serde(default)]
+    pub automation_test_admission: Option<AutomationTestAdmission>,
     pub task: TaskRecord,
     pub initial_spec_revision: TaskSpecRevisionRecord,
     pub event: EventDraft,
@@ -1153,6 +1161,21 @@ pub struct AutomationTaskAdmission {
     /// The interval a coalesced misfire run covered. It is `None` when the
     /// occurrence covers exactly one slot.
     pub covered_misfire_range: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutomationTestAdmission {
+    pub test_run_id: String,
+    /// The domain `TestRunIdentity` fingerprint. It is private and is never a
+    /// public occurrence key.
+    pub command_key: String,
+    pub automation_id: String,
+    pub automation_revision: u64,
+    pub expected_automation_version: u64,
+    pub routine_id: String,
+    pub routine_revision: u64,
+    pub inputs: serde_json::Value,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

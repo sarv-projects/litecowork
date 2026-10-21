@@ -1454,6 +1454,20 @@ fn downgrade_resource_content_schema_to_v16(connection: &Connection) {
 }
 
 fn downgrade_resource_index_schema_to_v18(connection: &Connection) {
+    // Version 27 adds Task test-run provenance; remove it before the v26 boundary.
+    connection
+        .execute_batch(
+            "DROP TRIGGER IF EXISTS task_automation_test_occurrence_exclusive;
+             DROP TRIGGER IF EXISTS task_automation_test_run_immutable;
+             DROP TRIGGER IF EXISTS task_automation_test_run_guard;
+             DROP TRIGGER IF EXISTS automation_test_run_link_guard;
+             DROP TRIGGER IF EXISTS automation_test_run_insert_guard;
+             ALTER TABLE tasks DROP COLUMN automation_test_run_id;
+             DROP TABLE IF EXISTS automation_test_runs;
+             DELETE FROM schema_migrations WHERE version = 27;
+             PRAGMA user_version = 26;",
+        )
+        .expect("restore the v26 migration boundary without test-run objects");
     // Version 26 redefined the v15 invocation guards, so a downgrade must restore the
     // v15 text before the fingerprint of any earlier version can match.
     connection

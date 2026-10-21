@@ -31,6 +31,8 @@ const INCARNATION: &str = "routine-run-route-incarnation";
 const NOW: &str = "2026-10-21T12:00:00Z";
 const ROUTINE: &str = "routine-1";
 const RUN_PATH: &str = "/v1/routines/routine-1/run";
+const AUTOMATION: &str = "automation-1";
+const TEST_RUN_PATH: &str = "/v1/automations/automation-1/test-runs";
 
 #[derive(Clone)]
 struct RoutineRunTestKeys;
@@ -206,6 +208,18 @@ fn fixture() -> (tempfile::TempDir, SqliteWorkspaceStore, axum::Router) {
         params![WORKSPACE, ROUTINE],
     )
     .expect("fixture Routine revision");
+    tx.execute(
+        "INSERT INTO automations(automation_id, workspace_id, name, current_revision, status, created_at, updated_at, version)
+         VALUES (?1, ?2, 'Test Automation', 1, 'PAUSED', '2026-10-20T08:00:00Z', '2026-10-20T08:00:00Z', 1)",
+        params![AUTOMATION, WORKSPACE],
+    )
+    .expect("fixture Automation");
+    tx.execute(
+        "INSERT INTO automation_revisions(workspace_id, automation_id, revision, routine_id, routine_revision, coworker_id, coworker_revision, triggers_json, execution_policy_json, authored_by_json, created_at)
+         VALUES (?1, ?2, 1, ?3, 1, NULL, NULL, '[]', '{\"placement_preference\":\"AUTO\",\"max_concurrent_occurrences\":1,\"overlap_policy\":\"SKIP\",\"retry_policy\":{\"max_attempts\":1,\"initial_backoff_ms\":100,\"max_backoff_ms\":100,\"multiplier\":1.0,\"jitter\":false,\"retryable_error_codes\":[]},\"budget_ceiling\":null,\"notification_policy\":\"ON_FAILURE\",\"wake_policy\":\"NEVER\"}', '{\"principal_id\":\"owner-local\",\"kind\":\"USER\"}', '2026-10-20T08:00:00Z')",
+        params![WORKSPACE, AUTOMATION, ROUTINE],
+    )
+    .expect("fixture Automation revision");
     tx.commit().expect("fixture Routine commits");
     drop(connection);
 
@@ -408,4 +422,276 @@ async fn routine_run_route_authenticates_replays_and_refuses_changed_or_archived
     assert_eq!(stored_task.1.as_deref(), Some(ROUTINE));
     assert_eq!(stored_task.2, Some(1));
     assert_eq!(stored_task.3, 1);
+}
+
+
+fn test_run_request(
+    workspace_id: &str,
+    idempotency_key: Option<&str>,
+    if_match: Option<&str>,
+    body: &str,
+    authenticated: bool,
+) -> Request<Body> {
+    let mut builder = Request::post(TEST_RUN_PATH)
+        .header("x-workspace-id", workspace_id)
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(key) = idempotency_key {
+        builder = builder.header("idempotency-key", key);
+    }
+    if let Some(version) = if_match {
+        builder = builder.header("if-match", version);
+    }
+    let mut request = builder
+        .body(Body::from(body.to_owned()))
+        .expect("Automation test-run request is valid HTTP");
+    if authenticated {
+        request.extensions_mut().insert(AuthenticatedLocalPeer);
+    }
+    request
+}
+
+fn test_run_body() -> String {
+    test_run_body_for(1)
+}
+
+fn test_run_body_for(revision: u64) -> String {
+    json!({"automation_revision": revision, "inputs": {}}).to_string()
+}
+
+#[tokio::test]
+async fn automation_test_run_creates_one_ready_task_without_occurrence_or_cursor() {
+    let (directory, _store, router) = fixture();
+    let key = "automation-test-run-route-key";
+    let original = test_run_body();
+
+    let (status, _) = send(
+        &router,
+        test_run_request(WORKSPACE, Some(key), Some("1"), &original, false),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = send(
+        &router,
+        test_run_request("another-workspace", Some(key), Some("1"), &original, true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = send(
+        &router,
+        test_run_request(WORKSPACE, None, Some("1"), &original, true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = send(
+        &router,
+        test_run_request(WORKSPACE, Some(key), None, &original, true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = send(
+        &router,
+        test_run_request(
+            WORKSPACE,
+            Some(key),
+            Some("1"),
+            &json!({"automation_revision": 1, "inputs": []}).to_string(),
+            true,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let (status, first) = send(
+        &router,
+        test_run_request(WORKSPACE, Some(key), Some("1"), &original, true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    assert_eq!(first["automation_id"], AUTOMATION);
+    assert_eq!(first["automation_revision"], 1);
+    assert_eq!(first["task"]["task"]["status"], "READY");
+    assert_eq!(first["task"]["task"]["routine_id"], ROUTINE);
+    assert_eq!(first["task"]["task"]["routine_revision"], 1);
+    assert_eq!(first["task"]["task"]["automation_id"], Value::Null);
+    assert_eq!(first["task"]["task"]["automation_occurrence_id"], Value::Null);
+    assert!(first["task"]["task"]["automation_test_run_id"].is_string());
+    assert_eq!(first["task"]["current_spec_revision"]["revision"], 1);
+    let task_id = first["task"]["task"]["task_id"]
+        .as_str()
+        .expect("the CREATED test Task carries its id")
+        .to_owned();
+
+    let (status, replay) = send(
+        &router,
+        test_run_request(WORKSPACE, Some(key), Some("1"), &original, true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replay, first);
+
+    let (status, _) = send(
+        &router,
+        test_run_request(
+            WORKSPACE,
+            Some(key),
+            Some("1"),
+            &json!({"automation_revision": 1, "inputs": {"changed": true}}).to_string(),
+            true,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // Advancing the immutable revision must not break an exact receipt replay:
+    // the exact revision is resolved first, and mutable head checks follow it.
+    let connection =
+        Connection::open(directory.path().join("state.sqlite3")).expect("state database opens");
+    connection
+        .execute(
+            "INSERT INTO automation_revisions(workspace_id, automation_id, revision, routine_id,
+                routine_revision, coworker_id, coworker_revision, triggers_json,
+                execution_policy_json, authored_by_json, created_at)
+             VALUES (?1, ?2, 2, ?3, 1, NULL, NULL, '[]',
+                '{\"placement_preference\":\"AUTO\",\"max_concurrent_occurrences\":1,\"overlap_policy\":\"SKIP\",\"retry_policy\":{\"max_attempts\":1,\"initial_backoff_ms\":100,\"max_backoff_ms\":100,\"multiplier\":1.0,\"jitter\":false,\"retryable_error_codes\":[]},\"budget_ceiling\":null,\"notification_policy\":\"ON_FAILURE\",\"wake_policy\":\"NEVER\"}',
+                '{\"principal_id\":\"owner-local\",\"kind\":\"USER\"}', '2026-10-21T12:01:00Z')",
+            params![WORKSPACE, AUTOMATION, ROUTINE],
+        )
+        .expect("fixture Automation revision 2");
+    connection
+        .execute(
+            "UPDATE automations SET current_revision = 2, version = 2 WHERE automation_id = ?1",
+            params![AUTOMATION],
+        )
+        .expect("the Automation advances to revision 2");
+    let (status, replay_after_advance) = send(
+        &router,
+        test_run_request(WORKSPACE, Some(key), Some("1"), &original, true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replay_after_advance, first);
+    let (status, _) = send(
+        &router,
+        test_run_request(
+            WORKSPACE,
+            Some("automation-test-run-stale-revision-key"),
+            Some("2"),
+            &test_run_body_for(1),
+            true,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // A disabled Automation refuses a new test run, but the committed receipt
+    // still replays exactly.
+    connection
+        .execute(
+            "UPDATE automations SET status = 'DISABLED', version = 3 WHERE automation_id = ?1",
+            params![AUTOMATION],
+        )
+        .expect("the Automation transitions to DISABLED");
+    let (status, _) = send(
+        &router,
+        test_run_request(
+            WORKSPACE,
+            Some("automation-test-run-disabled-key"),
+            Some("3"),
+            &test_run_body_for(2),
+            true,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, replay_after_disable) = send(
+        &router,
+        test_run_request(WORKSPACE, Some(key), Some("1"), &original, true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replay_after_disable, first);
+
+    // Archiving the Workspace refuses a new test run, while the exact committed
+    // receipt remains readable before mutable Workspace-status admission.
+    connection
+        .execute(
+            "UPDATE workspaces SET status = 'ARCHIVED', version = version + 1 WHERE workspace_id = ?1",
+            params![WORKSPACE],
+        )
+        .expect("the Workspace transitions to ARCHIVED");
+    let (status, _) = send(
+        &router,
+        test_run_request(
+            WORKSPACE,
+            Some("automation-test-run-archived-key"),
+            Some("3"),
+            &test_run_body_for(2),
+            true,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, replay_after_archive) = send(
+        &router,
+        test_run_request(WORKSPACE, Some(key), Some("1"), &original, true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replay_after_archive, first);
+
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM tasks WHERE workspace_id = 'routine-run-route-workspace'"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM task_spec_revisions WHERE workspace_id = 'routine-run-route-workspace'"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM automation_test_runs WHERE workspace_id = 'routine-run-route-workspace'"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM automation_occurrences WHERE workspace_id = 'routine-run-route-workspace'"
+        ),
+        0
+    );
+    assert_eq!(
+        count(
+            &connection,
+            "SELECT COUNT(*) FROM automation_cursors WHERE workspace_id = 'routine-run-route-workspace'"
+        ),
+        0
+    );
+    for sql in [
+        "SELECT COUNT(*) FROM plan_revisions",
+        "SELECT COUNT(*) FROM steps",
+        "SELECT COUNT(*) FROM attempts",
+        "SELECT COUNT(*) FROM agent_sessions WHERE task_id IS NOT NULL",
+    ] {
+        assert_eq!(count(&connection, sql), 0, "unexpected rows for {sql}");
+    }
+    let stored: (String, Option<String>, Option<String>, Option<String>) = connection
+        .query_row(
+            "SELECT status, automation_id, automation_occurrence_id, automation_test_run_id
+             FROM tasks WHERE task_id = ?1",
+            params![task_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("the test Task is persisted");
+    assert_eq!(stored.0, "READY");
+    assert_eq!(stored.1, None);
+    assert_eq!(stored.2, None);
+    assert!(stored.3.is_some());
 }

@@ -95,6 +95,88 @@ test("manual Run rejects a receipt that claims planning started instead of READY
   );
 });
 
+
+function testReceipt(overrides: Record<string, unknown> = {}) {
+  return {
+    test_run_id: "test-run-1",
+    automation_id: "automation-1",
+    automation_revision: 2,
+    task: {
+      task: {
+        task_id: "task-test-1",
+        workspace_id: "workspace-1",
+        status: "READY",
+        automation_id: null,
+        automation_occurrence_id: null,
+        automation_test_run_id: "test-run-1",
+        routine_id: "routine-1",
+        routine_revision: 4,
+        current_spec_revision: 1,
+      },
+      current_spec_revision: {
+        task_id: "task-test-1",
+        workspace_id: "workspace-1",
+        revision: 1,
+      },
+    },
+    ...overrides,
+  };
+}
+
+test("exact-revision test Run uses the test route and returns the pinned READY Task", async () => {
+  const requests: Array<{ path: string; init: RequestInit }> = [];
+  const api = createAutomationApi("workspace-1", async (path, init) => {
+    requests.push({ path, init });
+    return Response.json(testReceipt(), { status: 201 });
+  });
+
+  const result = await api.testRun(automation, revision, { project: "LiteCowork" }, "test-request-1");
+
+  assert.deepEqual(result, {
+    test_run_id: "test-run-1",
+    task_id: "task-test-1",
+    workspace_id: "workspace-1",
+    automation_id: "automation-1",
+    automation_revision: 2,
+    routine_id: "routine-1",
+    routine_revision: 4,
+    status: "READY",
+    current_spec_revision: 1,
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].path, "/v1/automations/automation-1/test-runs");
+  assert.equal(requests[0].init.method, "POST");
+  const headers = new Headers(requests[0].init.headers);
+  assert.equal(headers.get("Idempotency-Key"), "test-request-1");
+  assert.equal(headers.get("If-Match"), '"3"');
+  assert.deepEqual(JSON.parse(String(requests[0].init.body)), {
+    automation_revision: 2,
+    inputs: { project: "LiteCowork" },
+  });
+});
+
+test("test Run rejects a receipt that also carries occurrence provenance", async () => {
+  const receipt = testReceipt();
+  (receipt.task.task as Record<string, unknown>).automation_id = "automation-1";
+  const api = createAutomationApi("workspace-1", async () => Response.json(receipt, { status: 201 }));
+  await assert.rejects(
+    api.testRun(automation, revision, {}, "test-request-2"),
+    /test Task response does not match/,
+  );
+});
+
+test("test Run preserves the same request key across an ambiguous retry", async () => {
+  const requestIds: string[] = [];
+  const api = createAutomationApi("workspace-1", async (_path, init) => {
+    requestIds.push(new Headers(init.headers).get("Idempotency-Key") ?? "");
+    return Response.json(testReceipt(), { status: requestIds.length === 1 ? 201 : 200 });
+  });
+
+  await api.testRun(automation, revision, { project: "LiteCowork" }, "same-test-key");
+  await api.testRun(automation, revision, { project: "LiteCowork" }, "same-test-key");
+  assert.deepEqual(requestIds, ["same-test-key", "same-test-key"]);
+});
+
 test("manual Run preserves the same request key across an ambiguous retry", async () => {
   const requestIds: string[] = [];
   const api = createAutomationApi("workspace-1", async (_path, init) => {

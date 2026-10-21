@@ -64,9 +64,10 @@ pub(super) fn validate_task_admission(
                 return Err(StoreError::NotFound);
             };
             let current_revision = from_sql_i64(current_revision, "Routine current revision")?;
+            let exact_automation_pin = commit.automation_admission.is_some()
+                || commit.automation_test_admission.is_some();
             if status != "ACTIVE"
-                || (commit.automation_admission.is_none()
-                    && current_revision != admission.routine_revision)
+                || (!exact_automation_pin && current_revision != admission.routine_revision)
             {
                 return Err(StoreError::Conflict {
                     expected: Some(admission.routine_revision),
@@ -104,7 +105,9 @@ pub(super) fn validate_task_admission(
                     |row| row.get(0),
                 )
                 .map_err(map_database_error)?;
-            if commit.automation_admission.is_none() {
+            if commit.automation_admission.is_none()
+                && commit.automation_test_admission.is_none()
+            {
                 let expected_lead = revision
                     .definition
                     .preferred_agent_binding_id

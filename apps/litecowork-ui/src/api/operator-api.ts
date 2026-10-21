@@ -1098,6 +1098,23 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/automations/{automationId}/test-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Admits one ordinary READY Task pinned to the exact saved AutomationRevision and its pinned RoutineRevision. The request is owner-only and requires the current Automation version. It creates no AutomationOccurrence and advances no trigger cursor. A DISABLED Automation is refused. The Task uses the pinned Coworker lead when the revision has one and otherwise ordinary Workspace/Routine lead admission. */
+        post: operations["runAutomationTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/automations/{automationId}/revisions": {
         parameters: {
             query?: never;
@@ -5080,6 +5097,8 @@ export type components = {
             routine_revision?: number | null;
             automation_id?: string | null;
             automation_occurrence_id?: string | null;
+            /** @description Present only for an ordinary Task admitted by an exact-revision Automation test run; never an occurrence. */
+            automation_test_run_id?: string | null;
             origin_coworker_id: string | null;
             origin_coworker_revision: number | null;
             lead_agent_binding_id: string;
@@ -5100,7 +5119,7 @@ export type components = {
             updated_at: string;
             /** Format: date-time */
             completed_at?: string | null;
-        } & (unknown & unknown & unknown & unknown);
+        } & (unknown & unknown & unknown & unknown & unknown);
         TaskView: {
             task: components["schemas"]["Task"];
             current_spec_revision: components["schemas"]["TaskSpecRevision"];
@@ -5718,6 +5737,19 @@ export type components = {
             occurrence_version: 3;
             /** @constant */
             occurrence_status: "STARTED";
+            task: components["schemas"]["TaskView"];
+        };
+        AutomationTestRunRequest: {
+            automation_revision: number;
+            /** @description Bounded values validated against the exact pinned Routine input schema and bindings. */
+            inputs: {
+                [key: string]: unknown;
+            };
+        };
+        AutomationTestRunResponse: {
+            test_run_id: string;
+            automation_id: string;
+            automation_revision: number;
             task: components["schemas"]["TaskView"];
         };
         CreateAutomationRequest: {
@@ -9500,6 +9532,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ManualAutomationRunResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    runAutomationTest: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+                /** @description Expected aggregate version as a decimal integer for optimistic concurrency. Current Operator parsers also accept a decimal value surrounded by double quotes. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                automationId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutomationTestRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Exact idempotency receipt replay; the original READY test Task */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationTestRunResponse"];
+                };
+            };
+            /** @description READY test Task atomically admitted; planning has not started and no occurrence exists */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationTestRunResponse"];
                 };
             };
             default: components["responses"]["Error"];

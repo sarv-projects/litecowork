@@ -214,7 +214,8 @@ const SQLITE_V23_DDL: &str = include_str!("../../../docs/schemas/sqlite-v23.sql"
 const SQLITE_V24_DDL: &str = include_str!("../../../docs/schemas/sqlite-v24.sql");
 const SQLITE_V25_DDL: &str = include_str!("../../../docs/schemas/sqlite-v25.sql");
 const SQLITE_V26_DDL: &str = include_str!("../../../docs/schemas/sqlite-v26.sql");
-const SCHEMA_VERSION: i64 = 26;
+const SQLITE_V27_DDL: &str = include_str!("../../../docs/schemas/sqlite-v27.sql");
+const SCHEMA_VERSION: i64 = 27;
 const V3_SCHEMA_VERSION: i64 = 3;
 const V4_SCHEMA_VERSION: i64 = 4;
 const V5_SCHEMA_VERSION: i64 = 5;
@@ -239,6 +240,7 @@ const V23_SCHEMA_VERSION: i64 = 23;
 const V24_SCHEMA_VERSION: i64 = 24;
 const V25_SCHEMA_VERSION: i64 = 25;
 const V26_SCHEMA_VERSION: i64 = 26;
+const V27_SCHEMA_VERSION: i64 = 27;
 
 fn require_task_planning_isolation_admission() -> Result<(), StoreError> {
     // No qualified Runtime-owned admission proof producer is connected in this
@@ -273,6 +275,7 @@ const V23_MIGRATION_NAME: &str = "workspace_root_file_membership_cleanup_v23";
 const V24_MIGRATION_NAME: &str = "immutable_delegation_results_v24";
 const V25_MIGRATION_NAME: &str = "immutable_resource_edges_v25";
 const V26_MIGRATION_NAME: &str = "invocation_dispatch_admission_v26";
+const V27_MIGRATION_NAME: &str = "automation_test_runs_v27";
 #[cfg(test)]
 const MIGRATION_NAME: &str = V1_MIGRATION_NAME; // version-one compatibility for schema baseline assertions
 const STATE_MEDIA_TYPE: &str = "application/vnd.litecowork.aggregate-state+json";
@@ -12252,6 +12255,7 @@ fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreErr
         "expected_automation_version",
         "trigger_id",
         "occurrence_id",
+        "automation_test_run_id",
     ];
     if request_object
         .keys()
@@ -12274,6 +12278,10 @@ fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreErr
         || task.resume_status.is_some()
         || task.routine_id.is_some() != task.routine_revision.is_some()
         || task.automation_id.is_some() != task.automation_occurrence_id.is_some()
+        || task.automation_test_run_id.is_some()
+            != commit.automation_test_admission.is_some()
+        || (commit.automation_admission.is_some()
+            && commit.automation_test_admission.is_some())
         || task.version != 1
         || !task.blocking_conditions.is_empty()
         || task.priority != "NORMAL"
@@ -12332,6 +12340,11 @@ fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreErr
             .get("automation_occurrence_id")
             .and_then(Value::as_str)
             != task.automation_occurrence_id.as_deref()
+        || event
+            .payload
+            .get("automation_test_run_id")
+            .and_then(Value::as_str)
+            != task.automation_test_run_id.as_deref()
     {
         return Err(StoreError::Invalid(
             "Task create payload is inconsistent with the initial Task contract".to_owned(),
@@ -12358,6 +12371,53 @@ fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreErr
             "Routine provenance requires exact atomic admission".to_owned(),
         ));
     }
+    if let Some(test) = &commit.automation_test_admission {
+        if commit.automation_admission.is_some()
+            || task.automation_id.is_some()
+            || task.automation_occurrence_id.is_some()
+            || task.automation_test_run_id.as_deref() != Some(test.test_run_id.as_str())
+            || test.test_run_id.trim().is_empty()
+            || test.command_key.len() != 64
+            || !test
+                .command_key
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            || test.automation_id.trim().is_empty()
+            || test.automation_revision == 0
+            || test.expected_automation_version == 0
+            || test.routine_id != task.routine_id.as_deref().unwrap_or_default()
+            || Some(test.routine_revision) != task.routine_revision
+            || !test.inputs.is_object()
+            || request_object.get("automation_test_run_id").and_then(Value::as_str)
+                != Some(test.test_run_id.as_str())
+            || request_object.get("automation_id").and_then(Value::as_str)
+                != Some(test.automation_id.as_str())
+            || request_object
+                .get("automation_revision")
+                .and_then(Value::as_u64)
+                != Some(test.automation_revision)
+            || request_object
+                .get("expected_automation_version")
+                .and_then(Value::as_u64)
+                != Some(test.expected_automation_version)
+            || request_object.get("routine_id").and_then(Value::as_str)
+                != Some(test.routine_id.as_str())
+            || request_object
+                .get("routine_revision")
+                .and_then(Value::as_u64)
+                != Some(test.routine_revision)
+            || event
+                .payload
+                .get("automation_test_run_id")
+                .and_then(Value::as_str)
+                != Some(test.test_run_id.as_str())
+        {
+            return Err(StoreError::Invalid(
+                "Automation test-run provenance is inconsistent".to_owned(),
+            ));
+        }
+        return Ok(());
+    }
     match (
         &commit.automation_admission,
         task.automation_id.as_deref(),
@@ -12370,6 +12430,7 @@ fn validate_task_create_commit(commit: &TaskCreateCommit) -> Result<(), StoreErr
                 "expected_automation_version",
                 "trigger_id",
                 "occurrence_id",
+                "automation_test_run_id",
             ]
             .iter()
             .any(|field| request_object.contains_key(*field))
@@ -13502,6 +13563,7 @@ pub(crate) fn create_task_in_transaction(
     routines::validate_task_admission(tx, &commit)?;
     automation_admission::validate_task_admission(tx, &commit)?;
     begin_automation_occurrence_claim(tx, &commit, occurrence_state_refs.as_ref())?;
+    automation_admission::insert_automation_test_run(tx, &commit)?;
     validate_task_resource_inputs(tx, &task.workspace_id, &spec.input_refs)?;
     if state_ref.entity_revision != task.version || state_ref.record_schema_version != 1 {
         return Err(StoreError::Integrity(
@@ -13513,15 +13575,15 @@ pub(crate) fn create_task_in_transaction(
     let blocking_json = String::from_utf8(canonical_json(&task.blocking_conditions)?)
         .map_err(|error| StoreError::Invalid(error.to_string()))?;
     tx.execute(
-        "INSERT INTO tasks(task_id, workspace_id, conversation_id, routine_id, routine_revision, automation_id, automation_occurrence_id, origin_coworker_id, origin_coworker_revision, current_spec_revision, current_plan_revision, resume_status, status, lead_agent_binding_id, blocking_conditions_json, priority, created_by_json, created_at, updated_at, completed_at, version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, NULL, NULL, 'READY', ?10, ?11, ?12, ?13, ?14, ?15, NULL, 1)",
+        "INSERT INTO tasks(task_id, workspace_id, conversation_id, routine_id, routine_revision, automation_id, automation_occurrence_id, origin_coworker_id, origin_coworker_revision, current_spec_revision, current_plan_revision, resume_status, status, lead_agent_binding_id, blocking_conditions_json, priority, created_by_json, created_at, updated_at, completed_at, version, automation_test_run_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, NULL, NULL, 'READY', ?10, ?11, ?12, ?13, ?14, ?15, NULL, 1, ?16)",
         params![
             task.task_id, task.workspace_id, task.conversation_id, task.routine_id,
             task.routine_revision.map(|value| to_sql_i64(value, "Routine revision")).transpose()?,
             task.automation_id, task.automation_occurrence_id, task.origin_coworker_id,
             task.origin_coworker_revision.map(|value| to_sql_i64(value, "Coworker revision")).transpose()?,
             task.lead_agent_binding_id, blocking_json, task.priority, principal_json,
-            task.created_at, task.updated_at,
+            task.created_at, task.updated_at, task.automation_test_run_id,
         ],
     ).map_err(map_database_error)?;
 
@@ -13620,6 +13682,7 @@ pub(crate) fn create_task_in_transaction(
         ],
     ).map_err(map_database_error)?;
     settle_automation_occurrence_materialization(tx, &commit, occurrence_state_refs.as_ref())?;
+    automation_admission::link_automation_test_run(tx, &commit)?;
     let view = TaskView {
         task: commit.task,
         current_spec_revision: commit.initial_spec_revision,
@@ -15215,7 +15278,7 @@ fn load_task_view(
                 status, resume_status, routine_id, routine_revision, automation_id,
                 automation_occurrence_id, origin_coworker_id, origin_coworker_revision,
                 lead_agent_binding_id, blocking_conditions_json, priority, created_by_json,
-                created_at, updated_at, completed_at, version
+                created_at, updated_at, completed_at, version, automation_test_run_id
          FROM tasks WHERE workspace_id = ?1 AND task_id = ?2",
         params![workspace_id, task_id],
         task_from_row,
@@ -15497,6 +15560,7 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         updated_at: row.get(18)?,
         completed_at: row.get(19)?,
         version: from_row_u64(row, 20)?,
+        automation_test_run_id: row.get(21)?,
     })
 }
 
@@ -20145,7 +20209,8 @@ fn migrate_with_failpoint(
         verify_migration_record(connection, 23, V23_MIGRATION_NAME, SQLITE_V23_DDL, false)?;
         verify_migration_record(connection, 24, V24_MIGRATION_NAME, SQLITE_V24_DDL, false)?;
         verify_migration_record(connection, 25, V25_MIGRATION_NAME, SQLITE_V25_DDL, false)?;
-        verify_migration_record(connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, true)?;
+        verify_migration_record(connection, 26, V26_MIGRATION_NAME, SQLITE_V26_DDL, false)?;
+        verify_migration_record(connection, 27, V27_MIGRATION_NAME, SQLITE_V27_DDL, true)?;
         return Ok(());
     }
 
@@ -20392,6 +20457,15 @@ fn migrate_with_failpoint(
                 schema_version == V26_SCHEMA_VERSION,
             )?;
         }
+        if schema_version >= 27 {
+            verify_migration_record(
+                connection,
+                27,
+                V27_MIGRATION_NAME,
+                SQLITE_V27_DDL,
+                schema_version == V27_SCHEMA_VERSION,
+            )?;
+        }
         if schema_version == 1 {
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -20545,6 +20619,7 @@ fn migrate_with_failpoint(
             | V24_SCHEMA_VERSION
             | V25_SCHEMA_VERSION
             | V26_SCHEMA_VERSION
+            | V27_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -20557,7 +20632,7 @@ fn migrate_with_failpoint(
         migrate_workspace_root_file_membership(connection, failpoint)?;
     } else if !matches!(
         current_version,
-        V23_SCHEMA_VERSION | V24_SCHEMA_VERSION | V25_SCHEMA_VERSION | V26_SCHEMA_VERSION
+        V23_SCHEMA_VERSION | V24_SCHEMA_VERSION | V25_SCHEMA_VERSION | V26_SCHEMA_VERSION | V27_SCHEMA_VERSION
     ) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
@@ -20568,7 +20643,7 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V23_SCHEMA_VERSION {
         migrate_delegation_results(connection, failpoint)?;
-    } else if !matches!(current_version, V24_SCHEMA_VERSION | V25_SCHEMA_VERSION | V26_SCHEMA_VERSION) {
+    } else if !matches!(current_version, V24_SCHEMA_VERSION | V25_SCHEMA_VERSION | V26_SCHEMA_VERSION | V27_SCHEMA_VERSION) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -20578,7 +20653,7 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V24_SCHEMA_VERSION {
         migrate_resource_edges(connection, failpoint)?;
-    } else if !matches!(current_version, V25_SCHEMA_VERSION | V26_SCHEMA_VERSION) {
+    } else if !matches!(current_version, V25_SCHEMA_VERSION | V26_SCHEMA_VERSION | V27_SCHEMA_VERSION) {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
@@ -20588,12 +20663,45 @@ fn migrate_with_failpoint(
         .map_err(map_database_error)?;
     if current_version == V25_SCHEMA_VERSION {
         migrate_invocation_dispatch_admission(connection, failpoint)?;
-    } else if current_version != V26_SCHEMA_VERSION {
+    } else if !matches!(current_version, V26_SCHEMA_VERSION | V27_SCHEMA_VERSION) {
+        return Err(StoreError::CorruptSchema(format!(
+            "migration stopped at unexpected schema version {current_version}"
+        )));
+    }
+    let current_version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .map_err(map_database_error)?;
+    if current_version == V26_SCHEMA_VERSION {
+        migrate_automation_test_runs(connection, failpoint)?;
+    } else if current_version != V27_SCHEMA_VERSION {
         return Err(StoreError::CorruptSchema(format!(
             "migration stopped at unexpected schema version {current_version}"
         )));
     }
     Ok(())
+}
+
+/// Version twenty-seven adds the Automation test-run reservation and the
+/// nullable Task provenance that distinguishes a test Task from an occurrence
+/// Task. The table and column are additive; no existing Task is rewritten.
+fn migrate_automation_test_runs(
+    connection: &mut Connection,
+    failpoint: Option<Failpoint>,
+) -> Result<(), StoreError> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    transaction
+        .execute_batch(SQLITE_V27_DDL)
+        .map_err(map_database_error)?;
+    fail_if(failpoint, Failpoint::DuringV27Migration)?;
+    record_migration(&transaction, 27, V27_MIGRATION_NAME, SQLITE_V27_DDL)?;
+    transaction
+        .pragma_update(None, "user_version", V27_SCHEMA_VERSION)
+        .map_err(map_database_error)?;
+    validate_schema(&transaction)?;
+    transaction.commit().map_err(map_database_error)?;
+    validate_schema(connection)
 }
 
 /// Version twenty-six opens Invocation creation to the combined Trust, ApprovalUse,
@@ -21692,6 +21800,7 @@ enum Failpoint {
     DuringV24Migration,
     DuringV25Migration,
     DuringV26Migration,
+    DuringV27Migration,
     AfterAggregate,
     AfterSequence,
     AfterEvent,

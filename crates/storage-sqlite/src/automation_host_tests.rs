@@ -659,6 +659,7 @@ fn scheduled_task_commit(
             scheduled_epoch_ms: Some(scheduled_epoch_ms),
             covered_misfire_range: None,
         }),
+        automation_test_admission: None,
         task: storage_core::TaskRecord {
             task_id: task_id.to_owned(),
             workspace_id: WORKSPACE.to_owned(),
@@ -671,6 +672,7 @@ fn scheduled_task_commit(
             routine_revision: Some(1),
             automation_id: Some("automation-1".to_owned()),
             automation_occurrence_id: Some(occurrence_id.to_owned()),
+            automation_test_run_id: None,
             origin_coworker_id: None,
             origin_coworker_revision: None,
             lead_agent_binding_id: "binding-automation".to_owned(),

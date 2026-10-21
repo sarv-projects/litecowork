@@ -12,7 +12,7 @@
 //! the idempotency receipt in one storage transaction.
 use super::*;
 use domain_responsibility::{
-    OccurrenceIdentity, ScheduleTrigger, TriggerDefinition, TriggerSpec,
+    OccurrenceIdentity, ScheduleTrigger, TestRunIdentity, TriggerDefinition, TriggerSpec,
 };
 use storage_core::AutomationTaskAdmission;
 
@@ -31,15 +31,194 @@ pub(super) fn validate_task_admission(
     tx: &Transaction<'_>,
     commit: &TaskCreateCommit,
 ) -> Result<(), StoreError> {
-    let Some(admission) = commit.automation_admission.as_ref() else {
-        if commit.task.automation_id.is_some() || commit.task.automation_occurrence_id.is_some() {
+    if let Some(test) = commit.automation_test_admission.as_ref() {
+        if commit.automation_admission.is_some() {
             return Err(StoreError::Invalid(
-                "Automation provenance requires occurrence admission".to_owned(),
+                "A Task cannot combine Automation occurrence and test-run admission".to_owned(),
+            ));
+        }
+        return validate_test_admission(tx, commit, test);
+    }
+    let Some(admission) = commit.automation_admission.as_ref() else {
+        if commit.task.automation_id.is_some()
+            || commit.task.automation_occurrence_id.is_some()
+            || commit.task.automation_test_run_id.is_some()
+        {
+            return Err(StoreError::Invalid(
+                "Automation provenance requires occurrence or test-run admission".to_owned(),
             ));
         }
         return Ok(());
     };
     validate_admission(tx, commit, admission)
+}
+
+/// An Automation test run is an ordinary Task pinned to an exact saved
+/// AutomationRevision. It is allowed while the definition is PAUSED or ENABLED
+/// and is refused once the definition is DISABLED. It never requires a trigger
+/// identity, a trigger host binding, or an occurrence, and it never advances a
+/// cursor.
+fn validate_test_admission(
+    tx: &Transaction<'_>,
+    commit: &TaskCreateCommit,
+    admission: &storage_core::AutomationTestAdmission,
+) -> Result<(), StoreError> {
+    let task = &commit.task;
+    if task.automation_id.is_some()
+        || task.automation_occurrence_id.is_some()
+        || task.automation_test_run_id.as_deref() != Some(admission.test_run_id.as_str())
+        || admission.test_run_id.trim().is_empty()
+        || admission.command_key.len() != 64
+        || !admission
+            .command_key
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        || admission.automation_id.trim().is_empty()
+        || admission.automation_revision == 0
+        || admission.expected_automation_version == 0
+        || admission.routine_id.trim().is_empty()
+        || admission.routine_revision == 0
+    {
+        return Err(StoreError::Invalid(
+            "Automation test-run admission bounds are invalid".to_owned(),
+        ));
+    }
+    let expected_command_key = TestRunIdentity {
+        automation_id: admission.automation_id.clone(),
+        automation_revision: admission.automation_revision,
+        principal_id: commit.request.principal_id.clone(),
+        request_id: commit.request.request_id.clone(),
+    }
+    .key()
+    .map_err(|_| StoreError::Invalid("Automation test-run identity is invalid".to_owned()))?;
+    if admission.command_key != expected_command_key {
+        return Err(StoreError::Invalid(
+            "Automation test-run command fingerprint does not match its identity".to_owned(),
+        ));
+    }
+    let revision_sql = to_sql_i64(admission.automation_revision, "Automation revision")?;
+    let pinned: Option<(String, i64, i64, String, i64, Option<String>, Option<i64>)> = tx
+        .query_row(
+            "SELECT a.status, a.current_revision, a.version, ar.routine_id,
+                    ar.routine_revision, ar.coworker_id, ar.coworker_revision
+             FROM automations a JOIN automation_revisions ar
+               ON ar.workspace_id = a.workspace_id AND ar.automation_id = a.automation_id
+             WHERE a.workspace_id = ?1 AND a.automation_id = ?2 AND ar.revision = ?3",
+            params![task.workspace_id, admission.automation_id, revision_sql],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let Some((
+        status,
+        current_revision,
+        automation_version,
+        routine_id,
+        routine_revision,
+        coworker_id,
+        coworker_revision,
+    )) = pinned
+    else {
+        return Err(StoreError::NotFound);
+    };
+    if !matches!(status.as_str(), "PAUSED" | "ENABLED") {
+        return Err(StoreError::Invalid(
+            "Automation is DISABLED and cannot accept a test run".to_owned(),
+        ));
+    }
+    let current_revision = from_sql_i64(current_revision, "Automation current revision")?;
+    let automation_version = from_sql_i64(automation_version, "Automation version")?;
+    if current_revision != admission.automation_revision
+        || automation_version != admission.expected_automation_version
+        || routine_id != admission.routine_id
+        || from_sql_i64(routine_revision, "Routine revision")? != admission.routine_revision
+    {
+        return Err(StoreError::Conflict {
+            expected: Some(admission.automation_revision),
+            actual: Some(current_revision),
+        });
+    }
+    validate_coworker_provenance(tx, task, coworker_id, coworker_revision)?;
+    if admission.inputs != commit.routine_admission.as_ref().map_or_else(
+        || serde_json::Value::Null,
+        |routine| routine.inputs.clone(),
+    ) {
+        return Err(StoreError::Invalid(
+            "Automation test-run inputs differ from the pinned Routine materialization".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+/// Reserve the private test-run identity before the Task row is inserted. The
+/// Task insert trigger requires an unlinked reservation with the same exact
+/// Workspace/Routine pins.
+pub(super) fn insert_automation_test_run(
+    tx: &Transaction<'_>,
+    commit: &TaskCreateCommit,
+) -> Result<(), StoreError> {
+    let Some(admission) = commit.automation_test_admission.as_ref() else {
+        return Ok(());
+    };
+    let requested_by_json = String::from_utf8(canonical_json(&commit.task.created_by)?)
+        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+    tx.execute(
+        "INSERT INTO automation_test_runs(test_run_id, workspace_id, command_key,
+            automation_id, automation_revision, routine_id, routine_revision, task_id,
+            requested_by_json, created_at, version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, 1)",
+        params![
+            admission.test_run_id,
+            commit.task.workspace_id,
+            admission.command_key,
+            admission.automation_id,
+            to_sql_i64(admission.automation_revision, "Automation revision")?,
+            admission.routine_id,
+            to_sql_i64(admission.routine_revision, "Routine revision")?,
+            requested_by_json,
+            commit.task.created_at,
+        ],
+    )
+    .map_err(map_database_error)?;
+    Ok(())
+}
+
+/// Link the reservation to the Task exactly once after the Task row exists.
+pub(super) fn link_automation_test_run(
+    tx: &Transaction<'_>,
+    commit: &TaskCreateCommit,
+) -> Result<(), StoreError> {
+    let Some(admission) = commit.automation_test_admission.as_ref() else {
+        return Ok(());
+    };
+    let changed = tx
+        .execute(
+            "UPDATE automation_test_runs
+             SET task_id = ?1, version = 2
+             WHERE test_run_id = ?2 AND workspace_id = ?3 AND task_id IS NULL AND version = 1",
+            params![
+                commit.task.task_id,
+                admission.test_run_id,
+                commit.task.workspace_id
+            ],
+        )
+        .map_err(map_database_error)?;
+    if changed != 1 {
+        return Err(StoreError::Integrity(
+            "Automation test-run reservation is missing or already linked".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// The canonical trigger-kind tokens of an occurrence admission.
