@@ -279,7 +279,7 @@ ARCH_DOC,docs/RICH-RESPONSE.md,E08-S08,"Architecture contract; file sha256:83bbe
 ARCH_DOC,docs/ROUTINES.md,E09-S01,"Architecture contract; file sha256:ea5b091283262d4c67f341b3f07af419d9f860e3ebfa2b7d359f766beb96e2ad; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/RUNTIME-LIFECYCLE.md,E01-S03,"Architecture contract; file sha256:f3ae333e28b5da41dd06707e548878d4211e2dd605069dac55f63ab94ad8c0c3; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/RUNTIME-MESH.md,E11-S03,"Architecture contract; file sha256:2c05757095d5a14a65a182629d28d49b1fc98e82d6d718473146c0ff68e1692a; section rows below map implementation guardians, not completion."
-ARCH_DOC,docs/SCHEMAS.md,E01-S04,"Architecture contract; file sha256:5be26d9d9a194320dffc1a35705deacb1292c3c2fdc7635b118331a0d4e23a4b; section rows below map implementation guardians, not completion."
+ARCH_DOC,docs/SCHEMAS.md,E01-S04,"Architecture contract; file sha256:dfb9209be30d7aa852a366293b70d2e6c9ea1f6ea29d29e5ec6859eb81929b7f; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/SECURITY.md,E04-S01,"Architecture contract; file sha256:fa030468484c6d31815516e80244ac3702d0faede3135cff0722219bac232881; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/SERVICES.md,E01-S04,"Architecture contract; file sha256:92690c4cb268f2f054ee4ee89667c04cc9fa464e5048cc6c28f05bb2c1b318cf; section rows below map implementation guardians, not completion."
 ARCH_DOC,docs/SOURCE-RECONCILIATION.md,E01-S01,"Architecture contract; file sha256:e6839158941b19d19b4ac7b8d8327fc8b5ae30fa6e6f2dd4889228e6f9c34430; section rows below map implementation guardians, not completion."
@@ -485,8 +485,8 @@ BENCHMARK,B88 Long-running local Task workload,E13-S03,Qualify restart/sleep/rec
 BENCHMARK,B89 Rich Response security and recovery gauntlet,E08-S08,"Exercise semantic fallback, untrusted content, stale frames, and immutable downloads."
 BENCHMARK,B90 Local Environment containment and restart recovery,E07-S00,"Qualify exact-root OS containment, descendant-writer quiescence, and restart recovery for the local provider."
 CONTRACT_FILE,docs/schemas/delegation.schema.json,E05-S01,machine contract/tooling file sha256:46fb9f3a4611576e98480e5d9142caab81a208aca85e8e9d060cc57a08fef0e1; exact objects are enumerated below.
-CONTRACT_FILE,docs/schemas/domain-event.schema.json,E01-S02,machine contract/tooling file sha256:e3702c7875df6d6742b847336701e567ae69304199e225d34ea5edca9df50437; exact objects are enumerated below.
-CONTRACT_FILE,docs/schemas/error-codes.schema.json,E01-S04,machine contract/tooling file sha256:d37b4cc2519454f5a37c84d834ae72d5b56a6ed6d3dd402a786b36c739e72bf6; exact objects are enumerated below.
+CONTRACT_FILE,docs/schemas/domain-event.schema.json,E01-S02,machine contract/tooling file sha256:922548aca46ffa2691e35eb064c1e34a157bb8845ccfd5314935016e18ca5b11; exact objects are enumerated below.
+CONTRACT_FILE,docs/schemas/error-codes.schema.json,E01-S04,machine contract/tooling file sha256:909211c64b167c186e3befd6399aac8c9129c0b1be9ac1ee86e0c66b53798164; exact objects are enumerated below.
 CONTRACT_FILE,docs/schemas/operator-api.openapi.yaml,E01-S04,machine contract/tooling file sha256:6450b6b29f512a855eefa27d10303a435654af18e67533523249b42d19fdbb1b; exact objects are enumerated below.
 CONTRACT_FILE,docs/schemas/sqlite-v1.sql,E01-S02,machine contract/tooling file sha256:95e88db5fb02e239d8a61ffdda024d4f836ec069ee78233420f593c8fc58c2f6; exact objects are enumerated below.
 CONTRACT_FILE,docs/schemas/sqlite-v10.sql,E01-S01,machine contract/tooling file sha256:ad726b24b7fffc878ff0259f7dbc83e3201ecff1b900d5a8f4c85be3b114f739; exact objects are enumerated below.
@@ -515,7 +515,7 @@ CONTRACT_FILE,docs/schemas/sqlite-v6.sql,E01-S01,machine contract/tooling file s
 CONTRACT_FILE,docs/schemas/sqlite-v7.sql,E01-S01,machine contract/tooling file sha256:e64a43bced3f6b738d6df6e77ef5532d37fbb24643feede56cb3b0c5f7f10757; exact objects are enumerated below.
 CONTRACT_FILE,docs/schemas/sqlite-v8.sql,E01-S01,machine contract/tooling file sha256:e86f1f9b576a728502f6f7ace82f6dedb4958f40d76c4685cbd3ff98f5f86c6d; exact objects are enumerated below.
 CONTRACT_FILE,docs/schemas/sqlite-v9.sql,E01-S01,machine contract/tooling file sha256:764050e4fc07f593200b5aa7a72132a275b5c553ccbe066e92bcd98342b5ea12; exact objects are enumerated below.
-CONTRACT_FILE,scripts/validate_architecture.py,E01-S01,machine contract/tooling file sha256:5cc61c49afb6333ce69cadf0c0b1c768d5d17998a933494f6198d996a9ab338f; exact objects are enumerated below.
+CONTRACT_FILE,scripts/validate_architecture.py,E01-S01,machine contract/tooling file sha256:72c2890dcf5d42ee6b1bb0c20961734a1c650bc654ece72833701861fdccb7f6; exact objects are enumerated below.
 DOC_SECTION,AGENTS.md## LiteCowork Repository Instructions,E01-S01,section sha256:0a77bf1d580d97a8d79cde276bc9f3a7781700d8069e7b548dce2576cdc577a1; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,AGENTS.md### Architecture authority,E01-S01,section sha256:a205b11e6d66b137c31fe9340f8dcfa21cd6af4ac8dd4d982a55f6a4907fb52b; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,AGENTS.md### Archives and Git,E01-S01,section sha256:7661a81143df7940566fb7f248d865918541ab91498b90e868d34612467499cb; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -1713,13 +1713,13 @@ DOC_SECTION,docs/SCHEMAS.md## provenance-unavailable and must not be attributed 
 DOC_SECTION,docs/SCHEMAS.md## task.task_id. CREATED is built inside the atomic write transaction. REPLAYED comes,E03-S04,section sha256:c45f9f13c77993751aa7687329bfecf8f8ae662bcd1b0744910915b15e7c3010; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md## that row's proof_digest. SQL release_kind QUIESCENT maps to,E01-S04,section sha256:74266fb549ee7982f29e8576d2cab9c989dfc6de6c283d85c35b8a44a081fea9; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md## that row. An initial assignment has no source-release provenance.,E01-S04,section sha256:1b49dc299b208ed746acaf298f08c7fd6afabb802e21f02c53414e2e50952eb9; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/SCHEMAS.md## the retry increments retry_ordinal and starts a new AgentSession.,E03-S04,section sha256:a05038781a48501e194896ed54d8063fa76a7f36583690a48a3801d1c03c0c49; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/SCHEMAS.md## the retry increments retry_ordinal and starts a new AgentSession.,E03-S04,section sha256:42f9c97bfdbde8bd1cf061eb23a51d7b87f9cd415f276c246eed6513ebad8ff5; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md## the same-Workspace AuditRecord; a legacy projection without it remains explicitly,E01-S04,section sha256:35b32576d6686a6208e2650c210e79c8ad68387139bfc2f803709ecadf4ef64e; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md## the value shape and pair/continuity conditions.,E01-S04,section sha256:4cd7a90baf96f69549b9b1a60ea5200ee203995b3396c2a3ed6efd582c1a9457; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md## to the SQL ChannelHostDrainProof row (not a ResourceRef); source_drain_proof_digest is,E02-S03,section sha256:60165bc3832e7d13e78ac6f18ed788910e83408e20d925b6395fecac0844fc66; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md## whose source scope is the prior assignment at epoch N-1. GAP_ACCEPTED assignments have,E01-S04,section sha256:ea3079148356fb6bab11ff2ddf4b39cfa1f36adefd96b3b946ec1035a6775254; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md### Agent registry/control schemas,E01-S04,section sha256:c052bc38631298237bbca8a8d72bd8ab0835ee69530527f15b9eb50c5a800bd0; primary implementation guardian only; linked contracts and failure paths remain in scope.
-DOC_SECTION,docs/SCHEMAS.md### Assurance and errors,E01-S04,section sha256:9e2cd18b8307ae7553d69d9882a1690dd91a57741103fec751dc9c46f7b8f2e6; primary implementation guardian only; linked contracts and failure paths remain in scope.
+DOC_SECTION,docs/SCHEMAS.md### Assurance and errors,E01-S04,section sha256:7d542f2bb65efaa83ec1b7b915f1dd9897c24473f44f4f697000b0597d421632; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,"docs/SCHEMAS.md### Connector, workflow, learning, and follow-up target schema additions",E01-S04,section sha256:b0ee62d842d0f2f67fc2567774cb8eb8f89efa293d75b2458d2b32bf06ccadaf; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,docs/SCHEMAS.md### Conversation content,E03-S02,section sha256:8d2a3cb40e2763304eaa1a49d6e4261a4c1f8dd7d57ca788f5a9fedde223504f; primary implementation guardian only; linked contracts and failure paths remain in scope.
 DOC_SECTION,"docs/SCHEMAS.md### Criteria, outputs, budgets",E01-S04,section sha256:bf212af3313ca0558eeb9daa828c3ad64ea80e6d98241765dea7841de159de5c; primary implementation guardian only; linked contracts and failure paths remain in scope.
@@ -2221,10 +2221,16 @@ ERROR_CODE,AUTOMATION_NOT_FOUND,E09-S02,error taxonomy member; assert at the own
 ERROR_CODE,AUTOMATION_NOT_PAUSED,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,AUTOMATION_REVISION_NOT_FOUND,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,BUDGET_EXCEEDED,E05-S03,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,BUSY,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,CAPABILITY_UNAVAILABLE,E04-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,CAPABILITY_UNHEALTHY,E04-S02,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,CAPACITY_EXCEEDED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,CAPTURE_REFUSED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,CHANNEL_INGRESS_GAP_CONFIRMATION_REQUIRED,E11-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,CLAIM_WINDOW_UNAVAILABLE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,COMPUTER_PROVIDER_UNAVAILABLE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,CONFLICT,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,CONSENT_REQUIRED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,CONTEXT_DOCUMENT_NOT_ACTIVE,E08-S03,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,CONTEXT_DOCUMENT_OWNER_SCOPE_MISMATCH,E08-S03,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,COWORKER_ARCHIVED,E05-S03,error taxonomy member; assert at the owning operation/state boundary.
@@ -2241,9 +2247,13 @@ ERROR_CODE,DEMONSTRATION_CAPTURE_LIMIT_REACHED,E01-S04,error taxonomy member; as
 ERROR_CODE,DEPENDENCY_UNAVAILABLE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,EFFECT_AMBIGUOUS,E04-S03,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,EFFECT_RECONCILIATION_REQUIRED,E04-S03,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,EMPTY_CAPTURE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,ENVIRONMENT_CLASS_MISMATCH,E07-S01,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,ENVIRONMENT_MISMATCH,E07-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,ENVIRONMENT_UNAVAILABLE,E07-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,FORBIDDEN,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,GOAL_ARCHIVED,E08-S02,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,IDEMPOTENCY_CONFLICT,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,INTEGRITY_FAILURE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,INTERNAL,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,INVALID_ARGUMENT,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
@@ -2256,32 +2266,49 @@ ERROR_CODE,INVOCATION_AMBIGUOUS,E01-S04,error taxonomy member; assert at the own
 ERROR_CODE,INVOCATION_NOT_FOUND,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,LEAD_FAILOVER_POLICY_INVALID,E05-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,LEASE_CONFLICT,E03-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,LIMIT_EXCEEDED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,MISFIRED_SLOT_SKIPPED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,MISFIRE_LIMIT_EXCEEDED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,NOT_AN_APP_PUBLISHER,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,NOT_FOUND,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,OBSERVATION_PROVIDER_UNAVAILABLE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,OCCURRENCE_CONFLICT,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,OCCURRENCE_NOT_FOUND,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,PLACEMENT_UNAVAILABLE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,PLAN_CYCLE,E03-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,POLICY_DENIED,E04-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,PROVIDER_INPUT_UNSUPPORTED,E11-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,PROVIDER_UNAVAILABLE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RATE_LIMITED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RECOVERY_EXHAUSTED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,REDACTION_FAILED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RESOURCE_CONFLICT,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RESOURCE_CONTENT_EXTERNAL,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,RESOURCE_IDENTITY_CHANGED,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,RESOURCE_IDENTITY_UNAVAILABLE,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,RESOURCE_INDEX_UNAVAILABLE,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RESOURCE_LOCATION_UNAVAILABLE,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RESOURCE_REVISION_PARENT_MISMATCH,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RESOURCE_STALE,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RESOURCE_UNAVAILABLE,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,ROUTINE_ARCHIVED,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,ROUTINE_ARCHIVE_BLOCKED,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,ROUTINE_INPUT_INVALID,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,ROUTINE_NOT_ACTIVE,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,ROUTINE_NOT_FOUND,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,ROUTINE_REVISION_DRIFTED,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,ROUTINE_REVISION_NOT_FOUND,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,RUNTIME_MISMATCH,E07-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RUNTIME_STARTUP_UNAVAILABLE,E07-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RUNTIME_STOP_BLOCKED,E07-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,RUNTIME_UNAVAILABLE,E07-S01,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,SCAN_UNAVAILABLE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,SCAN_UNSUPPORTED_PLATFORM,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,SCHEDULE_PLAN_UNAVAILABLE,E03-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,SECRET_UNAVAILABLE,E04-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,SENSITIVE_INPUT_UNSUPPORTED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,SKILL_DRIFT_DETECTED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,SOURCE_REFERENCE_REQUIRED,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,STALE_CLAIM_EPOCH,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,STALE_FENCE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,STALE_SPEC_REVISION,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
@@ -2289,6 +2316,7 @@ ERROR_CODE,STALE_TASK_VERSION,E03-S04,error taxonomy member; assert at the ownin
 ERROR_CODE,STALE_VERSION,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,STALE_WORKSPACE_VERSION,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,STEP_NOT_READY,E03-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,STORE_BUSY,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,SUGGESTION_EXPIRED,E08-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,TASK_ALREADY_PAUSED,E03-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,TASK_NOT_FOUND,E03-S04,error taxonomy member; assert at the owning operation/state boundary.
@@ -2298,11 +2326,14 @@ ERROR_CODE,TIMEOUT,E01-S04,error taxonomy member; assert at the owning operation
 ERROR_CODE,TRIGGER_HOST_UNAVAILABLE,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,TRIGGER_UNSUPPORTED,E09-S02,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,UNAUTHORIZED,E04-S01,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,UNAVAILABLE,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,UNSUPPORTED_PROJECTION,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,UNSUPPORTED_VERSION,E01-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,UPLOAD_EXPIRED,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,UPLOAD_OFFSET_CONFLICT,E06-S01,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,USER_REQUEST_EXPIRED,E11-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,USER_REQUEST_NOT_FOUND,E11-S04,error taxonomy member; assert at the owning operation/state boundary.
+ERROR_CODE,USER_REQUEST_RESPONSE_TOO_LARGE,E11-S04,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,VERIFICATION_FAILED,E04-S05,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,WORKER_BUDGET_EXCEEDED,E05-S03,error taxonomy member; assert at the owning operation/state boundary.
 ERROR_CODE,WORKER_QUALITY_FLOOR_UNMET,E05-S04,error taxonomy member; assert at the owning operation/state boundary.
@@ -2316,7 +2347,7 @@ EVENT_DEF,domain-event.schema.json#capability_grant_scope,E01-S02,shared event s
 EVENT_DEF,domain-event.schema.json#capability_ref,E01-S02,shared event schema definition sha256:89eefef9cd2450067ba47e916b289456b8e0c807099c28d6da16f9962ef87e83.
 EVENT_DEF,domain-event.schema.json#channel_host_continuity_proof_ref,E01-S02,shared event schema definition sha256:2a09a17ac0a44f08cbf5058fa193dde79ce864a10f61d5786d8bff1c8e245965.
 EVENT_DEF,domain-event.schema.json#channel_host_drain_proof_ref,E01-S02,shared event schema definition sha256:b2f16afc7c66fe0048a6077abb653e92d96b17403657bd27723c00a9d51d2409.
-EVENT_DEF,domain-event.schema.json#error_code,E01-S02,shared event schema definition sha256:9b6a5979514998b0b58a9f19b24929375aff7ea3dbe940ca6fb59b1d51d37cee.
+EVENT_DEF,domain-event.schema.json#error_code,E01-S02,shared event schema definition sha256:a826ba64133c1408aea66565b6d4c7c8fc5d3ce784071510a766789562c4a250.
 EVENT_DEF,domain-event.schema.json#folder_import_metadata,E01-S02,shared event schema definition sha256:2728efd3805166348b2474d33e4a662901d19aab7eb4d529b5e472d88e3386a3.
 EVENT_DEF,domain-event.schema.json#payloads,E01-S02,shared event schema definition sha256:f7f41828b762df8919a75d764b26d3e3539507f983237396a1707a194d9c418d.
 EVENT_DEF,domain-event.schema.json#pinned_resource_ref,E01-S02,shared event schema definition sha256:77944cd6d815f29aeae771ebde3157eedeadd09a2d73b9df4fb1716197a23871.
@@ -3162,7 +3193,7 @@ OPENAPI_SCHEMA,ZipIntakeReadiness,E04-S02,schema sha256:5d61015f15d5d2eb7e539f0f
 PLAN_DOC,implementation/AGENT-MODULE-AUDIT.md,E03-S06,implementation-plan source sha256:9507efb440a7f68667bd5b89fe90c9a4fb682e88fb816a54dc616f85dafc3632; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/AGENT-PORTFOLIO-2026-10-16.md,E01-S01,implementation-plan source sha256:c3c53ff30e9068100cd1659a241a460356afe7fb8af4830afd3b0aa0597c4a7a; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/AUDIT.md,E01-S01,implementation-plan source sha256:a55491d4245364ded199718d9b6fdf513f531dc5ae4281fd95b1260bd8b8dc25; this file guides delivery and does not override architecture authority.
-PLAN_DOC,implementation/CODEBASE-AUDIT-2026-10-21.md,E01-S01,implementation-plan source sha256:770eb95bb804aadb8913d8bbd3ddd847d637b1f598fc4348ca3ffe26633bc13c; this file guides delivery and does not override architecture authority.
+PLAN_DOC,implementation/CODEBASE-AUDIT-2026-10-21.md,E01-S01,implementation-plan source sha256:7b66272ba46e9e785a101e29c264b717453b0e8082e43416103d0f82b834bb70; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/COVERAGE.md,E01-S01,implementation-plan source sha256:de61a91ec685c9bbfc359346fedbd14be20066ffbc2ace750bf0ceb29e60e945; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/NEXT-SESSION-HANDOFF-2026-10-13.md,E01-S01,implementation-plan source sha256:938e000f5933e0edaa3d08009202b5b9fc8a13f10128b939e6f732ffb488eaa0; this file guides delivery and does not override architecture authority.
 PLAN_DOC,implementation/NEXT-SESSION-HANDOFF-2026-10-20.md,E01-S01,implementation-plan source sha256:2bf8dbc19b03276796ef59bd749ac044666b109cc178bacbe30388ef81aedcfa; this file guides delivery and does not override architecture authority.
@@ -3295,7 +3326,7 @@ PLAN_SECTION,implementation/AUDIT.md### Findings and decisions,E01-S01,"section 
 PLAN_SECTION,implementation/AUDIT.md### Remaining evidence-dependent choices,E01-S01,"section sha256:2935ba93bd7e53553dd9024b1327f95900de1f1eb0456be3127f50587493e284; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/AUDIT.md#### Cross-module seam conclusions,E01-S01,"section sha256:a1ccd17d8c9b39552628929d7a25a47d34ca79ee5ff0bc75698d30ecb35e47d7; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/AUDIT.md#### Remaining intentional gaps after the audit,E01-S01,"section sha256:f02355c9f5e171643677b6af7138eacdef9561fb4baf74bcb7fd392034c0637e; implementation guidance, subordinate to linked architecture contracts."
-PLAN_SECTION,implementation/CODEBASE-AUDIT-2026-10-21.md## Whole-repository audit — 2026-10-21,E01-S01,"section sha256:770eb95bb804aadb8913d8bbd3ddd847d637b1f598fc4348ca3ffe26633bc13c; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,implementation/CODEBASE-AUDIT-2026-10-21.md## Whole-repository audit — 2026-10-21,E01-S01,"section sha256:7b66272ba46e9e785a101e29c264b717453b0e8082e43416103d0f82b834bb70; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/CODEBASE-AUDIT-2026-10-21.md### 1. The single largest finding: published ≠ served,E01-S01,"section sha256:240b5817ef48e9f551e771250839580a4880a9cf57aeda493ebf4fb10334ee70; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/CODEBASE-AUDIT-2026-10-21.md### 10. Verdict,E01-S01,"section sha256:25ff3670d13d20a988dde65de4204300fb47b435c9cd47e29e2d672136d8a557; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/CODEBASE-AUDIT-2026-10-21.md### 2. Domain modules that no production path calls,E01-S01,"section sha256:425ab9505484c54857a95e7485df81fcc6fe0769e9a6d0ec841276dc6ac34bbc; implementation guidance, subordinate to linked architecture contracts."
@@ -3304,7 +3335,7 @@ PLAN_SECTION,implementation/CODEBASE-AUDIT-2026-10-21.md### 4. Occurrence and Ta
 PLAN_SECTION,implementation/CODEBASE-AUDIT-2026-10-21.md### 5. Contract drift that breaks generated clients,E01-S01,"section sha256:8bf89bfd1d25454bada4f18650e9ae93020f4cb04a1b6c8d5ecc8d40095583df; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/CODEBASE-AUDIT-2026-10-21.md### 6. Desktop UI drift (all locally fixable),E01-S01,"section sha256:8972686b6c2ead578922b8bfe587c170efb85750d95976316ed7a2cba53eb66d; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,"implementation/CODEBASE-AUDIT-2026-10-21.md### 7. Docs, backlog and review-packet integrity",E01-S01,"section sha256:4fb360496975e24d97c22ab66886affaeb96e4def9a329c14da7d78bb699a34c; implementation guidance, subordinate to linked architecture contracts."
-PLAN_SECTION,"implementation/CODEBASE-AUDIT-2026-10-21.md### 8. Ranked local work queue (no owner, provider, or new contract)",E01-S01,"section sha256:abc931c5513932dd108f53834b9aaed1fa94759040663f183e5eaadb60c063b6; implementation guidance, subordinate to linked architecture contracts."
+PLAN_SECTION,"implementation/CODEBASE-AUDIT-2026-10-21.md### 8. Ranked local work queue (no owner, provider, or new contract)",E01-S01,"section sha256:1e852fd9719ceb29810fc6825a0aecb5771024adae589f2b806ead18a23ee20c; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/CODEBASE-AUDIT-2026-10-21.md### 9. Owner decisions that unblock multiple stories,E01-S01,"section sha256:3582165d58f89dd90439bef9e64fc5c3fcf208b36c40dddf674aa4541c9c5e1d; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/COVERAGE.md## Coverage map,E01-S01,"section sha256:de61a91ec685c9bbfc359346fedbd14be20066ffbc2ace750bf0ceb29e60e945; implementation guidance, subordinate to linked architecture contracts."
 PLAN_SECTION,implementation/COVERAGE.md### Target docs added after the 2026-10-10 generated coverage snapshot,E01-S01,"section sha256:1699f25828005687e8380dfbbc779f8b1a8d072142a637f8bea78bc017a95f4b; implementation guidance, subordinate to linked architecture contracts."

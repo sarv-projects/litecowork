@@ -1,3 +1,33 @@
+## 2026-10-21 — Audit follow-up: contract honesty fixes
+
+- **Error-code registry.** 31 codes the daemon already emitted (and the five
+  AutomationOccurrence blocker codes) were missing from the canonical registry while
+  `docs/API.md` states the schema is authoritative. They are now in
+  `docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json`, and the
+  documented list in `docs/SCHEMAS.md`. `scripts/validate_architecture.py` now fails the
+  build when a served route returns a code that is not registered, so the lie cannot return.
+- **Capability commands.** `POST /v1/capabilities/{id}/connect-or-install` and
+  `POST /v1/capabilities/{id}/test` declared `Idempotency-Key` but never enforced it —
+  the only two such operations of 225. Both now require a bounded key. Focused route test
+  `capability_commands_require_an_idempotency_key_and_stay_truthful` passes 1/1: missing key
+  `400`, install still truthfully `503 DEPENDENCY_UNAVAILABLE` with
+  `LITESPOM_PACKAGE_SERVICE_NOT_QUALIFIED`, and the probe still reports `UNKNOWN` health.
+- **Desktop truthfulness.** The Library no longer renders "No files in this Workspace yet"
+  after a failed read; it shows an alert that the list is unavailable plus a Retry, because
+  a failed read proves nothing about the Workspace. The Task detail "Completed" pill no
+  longer implies verification, a transport-acknowledged notification is no longer styled as
+  a success, and the two inert chrome buttons (a Help button and a fake account menu) are
+  gone. UI suite 497/497, tsc, and the Vite build pass.
+- **Quiet-hours contract.** The domain notification decision layer parsed a
+  `{start, end, timezone}` shape that no preference ever stores, so a stored quiet window
+  could not be evaluated. The domain now parses the contract shape
+  (`timezone`, `weekdays`, `start_local_time`, `end_local_time`), scopes an overnight
+  window to the weekday it starts on, and refuses an unparsable window instead of treating
+  it as "not quiet". Domain suite 96/96.
+- **Still open.** Discover and SkillProposal review pages remain unmounted, the Tauri
+  resource-import bridge still forwards an unvalidated `media_type`, and the documented
+  reduced-motion/dark-theme surfaces are not implemented.
+
 ## 2026-10-21 — Whole-repository audit and served-route drift gate
 
 - **Audit.** Five independent read-only lanes (Rust core, daemon/API, desktop UI,

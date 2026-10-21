@@ -185,7 +185,18 @@ open** and delivers during an unparsable quiet window.
 
 ## 8. Ranked local work queue (no owner, provider, or new contract)
 
-1. **Served-vs-target drift gate** — mark unserved OpenAPI operations
+**Closed in the same pass as this report (2026-10-21):** queue item 1 (served-vs-target
+drift gate, `scripts/audit_served_routes.py` + `implementation/served-route-inventory.json`
++ a `scripts/check.sh` stage), item 6 (31 missing ErrorCode values added to
+`docs/schemas/error-codes.schema.json`, `docs/schemas/domain-event.schema.json` and
+`docs/SCHEMAS.md`, plus a validator rule that every `operator_error` code and every
+AutomationOccurrence blocker code is registered), item 7 (`Idempotency-Key` is now enforced
+on `POST /v1/capabilities/{id}/connect-or-install` and `.../test`), and the first four
+truthfulness items of item 8 (the Library no longer claims an empty Workspace after a failed
+read, the Task "Completed" pill no longer implies verification, a transport-acknowledged
+notification is no longer styled as a success, and the two inert chrome buttons are gone).
+
+1. **Served-vs-target drift gate** — **DONE** — mark unserved OpenAPI operations
    `x-litecowork-status: TARGET_ONLY`, generate a served-route manifest from the router,
    assert agreement in a validator, and regenerate `V1-SERVED-CAPABILITY-INVENTORY.md`.
    Files: `docs/schemas/operator-api.openapi.yaml`, `scripts/audit_v1_contracts.py`,
@@ -201,16 +212,21 @@ open** and delivers during an unparsable quiet window.
    `crates/storage-sqlite/src/coworkers.rs`, `crates/storage-sqlite/src/workspace_archive.rs`.
 4. **Quiet-hours shape alignment** — teach the domain the persisted shape including
    weekdays, and fail closed on an unparsable window.
-   Files: `crates/domain-responsibility/src/notifications.rs`.
+   Files: `crates/domain-responsibility/src/notifications.rs`. **DONE** — the domain now
+   parses the contract shape (`timezone`, `weekdays`, `start_local_time`, `end_local_time`),
+   scopes the window to its start weekday for overnight intervals, and rejects an
+   unparsable window instead of treating it as "not quiet".
 5. **`notification_deliveries` writer + `decide_notification` wiring** — closes a served
    but always-empty endpoint. Files: `crates/storage-sqlite/src/notification.rs`,
    `crates/storage-sqlite/src/automation_host.rs`, `apps/litecoworkd/src/notification_operator.rs`.
 6. **Error-code enum completion + a validator rule** that every emitted code is in the enum.
+   **DONE** (31 codes added; the rule now fails the build on a new unregistered code).
    Files: `docs/schemas/error-codes.schema.json`, `scripts/validate_architecture.py`.
-7. **`Idempotency-Key` enforcement on the two capability commands.**
+7. **`Idempotency-Key` enforcement on the two capability commands.** **DONE.**
    Files: `apps/litecoworkd/src/discover_operator.rs`.
 8. **Library false-empty-state fix, "Completed" pill, "Sent" styling, inert chrome buttons,
-   Discover/SkillProposal mounts, bridge media_type/workspace validation.**
+   Discover/SkillProposal mounts, bridge media_type/workspace validation.** The first four
+   are **DONE**; Discover/SkillProposal mounts and the bridge validation remain.
    Files: `apps/litecowork-ui/src/App.tsx`,
    `apps/litecowork-ui/src/notifications/NotificationsPage.tsx`,
    `apps/litecowork-ui/src-tauri/src/lib.rs`.
